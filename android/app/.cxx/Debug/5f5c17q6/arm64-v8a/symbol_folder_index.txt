@@ -1,0 +1,1 @@
+/home/kuznetsov/AndroidStudioProjects/lineage_family_app/build/app/intermediates/cxx/Debug/5f5c17q6/obj/arm64-v8a

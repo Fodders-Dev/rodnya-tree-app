@@ -1,0 +1,116 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Разрешения -->
+    <!-- Разрешение для WorkManager для перезапуска задач после перезагрузки -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+    <!-- Разрешение на показ уведомлений (необходимо для Android 13+) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- Разрешение на вибрацию для уведомлений (если используется) -->
+    <uses-permission android:name="android.permission.VIBRATE"/>
+    <!-- Разрешение для точного планирования уведомлений (может потребоваться для flutter_local_notifications) -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>
+    <!-- Разрешение для запуска foreground служб (может потребоваться WorkManager или local_notifications) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Для Android 14+ специфичное разрешение для foreground служб типа dataSync -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
+    <!-- Интернет нужен для синхронизации -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Доступ к состоянию сети нужен WorkManager для ограничений по сети -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <!-- Разрешение WAKE_LOCK может помочь для надежности фоновых задач -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <application
+        android:label="Lineage"
+        android:name="${applicationName}"
+        android:icon="@mipmap/ic_launcher">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:taskAffinity=""
+            android:theme="@style/LaunchTheme"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+            android:hardwareAccelerated="true"
+            android:windowSoftInputMode="adjustResize">
+            <!-- Specifies an Android theme to apply to this Activity as soon as
+                 the Android process has started. This theme is visible to the user
+                 while the Flutter UI initializes. After that, this theme continues
+                 to determine the Window background behind the Flutter UI. -->
+            <meta-data
+              android:name="io.flutter.embedding.android.NormalTheme"
+              android:resource="@style/NormalTheme"
+              />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+
+            <!-- Добавляем Intent Filter для Deep Link биллинга -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="lineagebilling"/>
+            </intent-filter>
+
+        </activity>
+        <!-- FCM Default Channel ID, Icon and Color -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="high_importance_channel" /> <!-- ID канала по умолчанию -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_stat_notification" /> <!-- Иконка для уведомлений -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_color"
+            android:resource="@color/colorAccent" /> <!-- Цвет акцента -->
+        <!-- Don't delete the meta-data below.
+             This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
+        <meta-data
+            android:name="flutterEmbedding"
+            android:value="2" />
+
+        <!-- Meta-data для RuStore SDK -->
+        <meta-data 
+            android:name="ru.rustore.sdk.ApplicationId" 
+            android:value="ru.rustore.app.2063621085"/>
+
+        <!-- RuStore Push SDK - ЗАМЕНИТЕ YOUR_RUSTORE_PUSH_PROJECT_ID -->
+        <meta-data
+            android:name="ru.rustore.sdk.pushclient.project_id"
+            android:value="q9oXlaEo25nBYnMe2cn3BtGpaBVWH0Mb"/>
+
+        <!-- RuStore Push SDK Service - ПЕРЕМЕЩЕНО ВНУТРЬ <application> -->
+        <service
+            android:name="ru.rustore.flutter_rustore_push.service.RuStoreMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="ru.rustore.sdk.pushservice.ACTION_PROCESS_MESSAGE" />
+            </intent-filter>
+        </service>
+
+    </application>
+    
+    <!-- Meta-data для Google Play Services (должна быть вне <application>) -->
+    <meta-data
+        android:name="com.google.android.gms.version"
+        android:value="@integer/google_play_services_version" />
+    
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.PROCESS_TEXT"/>
+            <data android:mimeType="text/plain"/>
+        </intent>
+    </queries>
+
+    <!-- RuStore Push SDK Service - УДАЛЕНО ОТСЮДА -->
+    <!--
+    <service
+        android:name="ru.rustore.flutter_rustore_push.service.RuStoreMessagingService"
+        android:exported="false">
+        <intent-filter>
+            <action android:name="ru.rustore.sdk.pushservice.ACTION_PROCESS_MESSAGE" />
+        </intent-filter>
+    </service>
+    -->
+</manifest>

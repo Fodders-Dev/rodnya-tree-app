@@ -1,0 +1,1 @@
+/home/kuznetsov/AndroidStudioProjects/lineage_family_app/build/app/intermediates/cxx/RelWithDebInfo/1r5he431/obj/x86_64

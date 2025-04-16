@@ -1,0 +1,65 @@
+plugins {
+    id "com.android.application"
+    id "kotlin-android"
+    // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
+    id "dev.flutter.flutter-gradle-plugin"
+}
+
+apply plugin: 'com.google.gms.google-services'
+
+android {
+    namespace = "com.ahjkuio.lineage_family_app"
+    compileSdk = flutter.compileSdkVersion
+    ndkVersion = flutter.ndkVersion
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = JavaVersion.VERSION_17.toString()
+    }
+
+    signingConfigs {
+        release {
+            // Возвращаем АБСОЛЮТНЫЙ ПУТЬ, т.к. относительные не работают в release
+            def keystorePropertiesFile = file("/home/kuznetsov/AndroidStudioProjects/lineage_family_app/android/release-signing.properties")
+            // def keystorePropertiesFile = rootProject.file("android/release-signing.properties") // Не сработал в release
+            // def keystorePropertiesFile = file("${rootDir}/android/release-signing.properties") // Не сработал в release
+            if (keystorePropertiesFile.exists()) {
+                println "Reading signing properties from: ${keystorePropertiesFile.absolutePath}"
+                def keystoreProperties = new Properties()
+                keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+
+                storeFile file(keystoreProperties['storeFile'])
+                storePassword keystoreProperties['storePassword']
+                keyAlias keystoreProperties['keyAlias']
+                keyPassword keystoreProperties['keyPassword']
+            } else {
+                println "Warning: Signing config file ${keystorePropertiesFile.absolutePath} not found. Release build may not be signed correctly."
+            }
+        }
+    }
+
+    defaultConfig {
+        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
+        applicationId = "com.ahjkuio.lineage_family_app"
+        // You can update the following values to match your application needs.
+        // For more information, see: https://flutter.dev/to/review-gradle-config.
+        minSdk = 23
+        targetSdk = flutter.targetSdkVersion
+        versionCode = flutter.versionCode
+        versionName = flutter.versionName
+    }
+
+    buildTypes {
+        release {
+            signingConfig signingConfigs.release
+        }
+    }
+}
+
+flutter {
+    source = "../.."
+}

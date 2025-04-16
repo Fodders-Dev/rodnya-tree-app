@@ -1,0 +1,2 @@
+/home/kuznetsov/AndroidStudioProjects/lineage_family_app/android/app/.cxx/RelWithDebInfo/1r5he431/arm64-v8a/CMakeFiles/edit_cache.dir
+/home/kuznetsov/AndroidStudioProjects/lineage_family_app/android/app/.cxx/RelWithDebInfo/1r5he431/arm64-v8a/CMakeFiles/rebuild_cache.dir

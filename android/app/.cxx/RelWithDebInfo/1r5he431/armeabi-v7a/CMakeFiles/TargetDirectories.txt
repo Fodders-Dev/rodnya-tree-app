@@ -1,0 +1,2 @@
+/home/kuznetsov/AndroidStudioProjects/lineage_family_app/android/app/.cxx/RelWithDebInfo/1r5he431/armeabi-v7a/CMakeFiles/edit_cache.dir
+/home/kuznetsov/AndroidStudioProjects/lineage_family_app/android/app/.cxx/RelWithDebInfo/1r5he431/armeabi-v7a/CMakeFiles/rebuild_cache.dir
