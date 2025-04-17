@@ -285,11 +285,14 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
               _buildInfoRow(
                  'Родственная связь:',
                  () {
-                    // <<< ИСПРАВЛЕНИЕ: Показываем ПРЯМОЕ отношение (от пользователя к родственнику) >>>
-                    final relationToDisplay = _relationToCurrentUser!; 
-                    print('Отображаемая связь (от пользователя к ${_person!.id}): $relationToDisplay');
-                    // Используем ПРЯМОЕ отношение и ПОЛ РОДСТВЕННИКА для описания
-                    return FamilyRelation.getRelationName(relationToDisplay, _person!.gender);
+                    // Отношение пользователя к родственнику (результат getRelationBetween)
+                    final relationUserToRelative = _relationToCurrentUser!;
+                    // Получаем зеркальное отношение (родственника к пользователю)
+                    final relationRelativeToUser = FamilyRelation.getMirrorRelation(relationUserToRelative);
+                    print('Отображаемая связь (пользователь -> ${_person!.id}): $relationUserToRelative');
+                    print('Зеркальная связь (${_person!.id} -> пользователь): $relationRelativeToUser');
+                    // Используем ЗЕРКАЛЬНОЕ отношение и ПОЛ РОДСТВЕННИКА для имени
+                    return FamilyRelation.getRelationName(relationRelativeToUser, _person!.gender);
                  }()
               ),
           ]),

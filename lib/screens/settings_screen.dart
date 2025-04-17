@@ -36,10 +36,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
   // --- Состояние для разовой покупки --- 
   bool _oneTimePurchaseLoading = false;
   
+  // --- Состояние для оценки приложения ---
+  bool _hasRatedApp = false; // Изначально считаем, что не оценил
+  bool _checkingRatingStatus = true; // Индикатор загрузки статуса оценки
+  
   @override
   void initState() {
     super.initState();
     _checkPremiumStatus(); // Проверяем статус при инициализации
+    _checkAppRatingStatus(); // Проверяем статус оценки
   }
   
   // Функция для проверки статуса премиум
@@ -68,6 +73,35 @@ class _SettingsScreenState extends State<SettingsScreen> {
       setState(() { _isPremium = false; }); // Считаем не премиумом при ошибке
     } finally {
       setState(() { _billingLoading = false; });
+    }
+  }
+  
+  // --- НОВАЯ ФУНКЦИЯ: Проверка, оставлял ли пользователь отзыв ---
+  Future<void> _checkAppRatingStatus() async {
+    setState(() { _checkingRatingStatus = true; });
+    try {
+      // Предполагаем, что в RustoreService есть метод, который может
+      // косвенно определить, оставлял ли пользователь отзыв.
+      // Например, если requestReview() больше не показывает диалог.
+      // Или, если есть какой-то флаг в SharedPreferences, устанавливаемый после успешного запроса.
+      // **ВАЖНО:** На данный момент у RuStore SDK нет прямого способа проверить,
+      // был ли отзыв *фактически* оставлен. Мы можем только проверить,
+      // был ли *запущен* процесс оценки (requestReview) и не вызвал ли он ошибку.
+      // Будем использовать флаг в SharedPreferences как наиболее реалистичный вариант.
+      final bool hasRequestedReview = await _rustoreService.checkIfReviewWasRequested(); // Пример метода
+      // Исправлено: Проверяем mounted перед вызовом setState
+      if (mounted) {
+        setState(() {
+          _hasRatedApp = hasRequestedReview;
+        });
+      }
+    } catch (e) {
+      print("Error checking app rating status: $e");
+      // Оставляем _hasRatedApp = false при ошибке
+    } finally {
+      if (mounted) {
+         setState(() { _checkingRatingStatus = false; });
+      }
     }
   }
   
@@ -640,24 +674,53 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                   ),
                   
-                  // Кнопка Оценить приложение
-                  ListTile(
-                    leading: Icon(Icons.star_rate_outlined),
-                    title: Text('Оценить приложение'),
-                    subtitle: Text('Оставить отзыв в RuStore'),
-                    onTap: () async {
-                      // Используем _rustoreService, полученный из GetIt
-                      await _rustoreService.requestReview();
-                      if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text('Запрос на оценку отправлен. Окно может появиться не сразу.'),
-                            duration: Duration(seconds: 3),
-                          ),
-                        );
-                      }
-                    },
-                  ),
+                  // Кнопка Оценить приложение (с обновленной логикой)
+                  _checkingRatingStatus
+                  ? Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 16.0),
+                      child: Center(child: CircularProgressIndicator()), // Показываем загрузку
+                    )
+                  : ListTile(
+                      leading: Icon(_hasRatedApp ? Icons.thumb_up_alt : Icons.star_rate_outlined),
+                      title: Text(_hasRatedApp ? 'Спасибо за отзыв!' : 'Оценить приложение'),
+                      subtitle: _hasRatedApp ? Text('Мы ценим ваше мнение') : Text('Оставить отзыв в RuStore'),
+                      onTap: _hasRatedApp ? null : () async { // Делаем неактивной, если уже оценен
+                        final currentContext = context;
+                        try {
+                          print('Attempting to request RuStore review...');
+                          // Вызываем метод, он может выбросить исключение
+                          await _rustoreService.requestReview();
+                          
+                          // Если исключения не было, считаем запрос успешным
+                          print('Review request initiated successfully.');
+                          // Показываем сообщение и обновляем состояние
+                          if (currentContext.mounted) { 
+                            ScaffoldMessenger.of(currentContext).showSnackBar(
+                              SnackBar(
+                                content: Text('Запрос на оценку отправлен. Спасибо!'),
+                                duration: Duration(seconds: 3),
+                              ),
+                            );
+                            setState(() {
+                              _hasRatedApp = true; 
+                            });
+                            // await _rustoreService.markReviewAsRequested(); // Вызов уже внутри requestReview
+                          }
+                        } catch (e) {
+                           print('Error during requestReview call: $e');
+                           // Показываем ошибку пользователю
+                           if (currentContext.mounted) {
+                             ScaffoldMessenger.of(currentContext).showSnackBar(
+                               SnackBar(
+                                 content: Text('Не удалось открыть окно оценки. Возможно, вы уже оценивали приложение или произошла ошибка.'),
+                                 duration: Duration(seconds: 5),
+                               ),
+                             );
+                           }
+                        }
+                      },
+                      enabled: !_hasRatedApp, // Дополнительно отключаем плитку
+                    ),
                   
                   Divider(),
                 ],

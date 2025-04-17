@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:uuid/uuid.dart';
 import 'dart:collection';
+import 'package:collection/collection.dart'; // <<< Добавляем импорт
 import '../models/family_person.dart';
 import '../models/family_relation.dart';
 import '../models/relation_request.dart';
@@ -776,26 +777,64 @@ class FamilyService {
     // 0. Проверка на самого себя
     if (personAId == personBId) return RelationType.other; // Пока other, т.к. self не стандартный
 
-    // 1. Проверка прямой/обратной связи
-    RelationType? directRelation = await _findDirectRelation(treeId, personAId, personBId);
+    // Сначала пытаемся найти отношение в кэше
+    RelationType? cachedRelation = _localStorageService.getCachedRelationBetween(treeId, personAId, personBId);
+    if (cachedRelation != null) {
+        print('Relation between $personAId and $personBId found in cache: $cachedRelation');
+        return cachedRelation;
+    }
+    print('Relation between $personAId and $personBId not in cache, calculating...');
+
+    // 2. Загружаем ВСЕ связи для данного дерева (оптимизация: кэшировать)
+    // TODO: Оптимизировать загрузку связей, возможно, загружать только нужные?
+    List<FamilyRelation> allRelations = await getRelations(treeId); // Используем существующий метод
+
+    // 3. Проверяем, что оба пользователя существуют (опционально, если нужно)
+    // final person1Exists = allRelations.any((r) => r.person1Id == personAId || r.person2Id == personAId);
+    // final person2Exists = allRelations.any((r) => r.person1Id == personBId || r.person2Id == personBId);
+    // if (!person1Exists || !person2Exists) {
+    //   print('Один из пользователей ($personAId или $personBId) не найден в связях дерева $treeId');
+    //   return RelationType.other; // Или бросить исключение?
+    // }
+
+    // 4. Ищем прямую связь (personAId -> personBId)
+    final directRelation = allRelations.firstWhereOrNull(
+      (rel) => rel.person1Id == personAId && rel.person2Id == personBId,
+    );
+
     if (directRelation != null) {
-      print('Найдена прямая связь между $personAId и $personBId: $directRelation');
-      return directRelation;
-    }
-    print('Прямая связь между $personAId и $personBId не найдена. Ищем путь...');
-
-    // 2. Загрузка ВСЕХ связей для дерева
-    // Используем существующий getRelations, который должен бы использовать кеш
-    List<FamilyRelation> allRelations = await getRelations(treeId); 
-    if (allRelations.isEmpty) {
-      print('Нет связей для анализа в дереве $treeId');
-      return RelationType.other; // Нет связей для анализа
+      print('Найдена прямая связь между $personAId и $personBId: ${directRelation.relation1to2}');
+      // Прямая связь найдена, возвращаем отношение personAId к personBId
+      // Сохраняем в кеш перед возвратом
+      _localStorageService.cacheRelationBetween(treeId, personAId, personBId, directRelation.relation1to2);
+      return directRelation.relation1to2;
     }
 
-    // 3. Построение графа смежности (Map<String, List<String>>)
+    // 5. Ищем обратную связь (personBId -> personAId)
+    final reverseRelation = allRelations.firstWhereOrNull(
+      (rel) => rel.person1Id == personBId && rel.person2Id == personAId,
+    );
+
+    if (reverseRelation != null) {
+      // Найдена обратная связь (personBId -> personAId).
+      // Поле reverseRelation.relation1to2 содержит отношение personBId к personAId.
+      // Поле reverseRelation.relation2to1 содержит отношение personAId к personBId.
+      print('Найдена обратная связь: $personBId -> $personAId = ${reverseRelation.relation1to2}');
+      // <<< ИСПРАВЛЕНО: Возвращаем relation2to1 >>>
+      final relation1to2 = reverseRelation.relation2to1;
+      print('Возвращаем отношение personAId ($personAId) к personBId ($personBId): $relation1to2');
+       // Сохраняем в кеш перед возвратом
+      _localStorageService.cacheRelationBetween(treeId, personAId, personBId, relation1to2);
+      return relation1to2;
+    }
+
+    // 6. Если прямой или обратной связи нет, ищем путь
+    print('Прямая/обратная связь не найдена между $personAId и $personBId. Ищем путь...');
+
+    // 7. Построение графа смежности (Map<String, List<String>>)
     Map<String, List<String>> adjacencyList = _buildAdjacencyList(allRelations);
 
-    // 4. Поиск пути (BFS)
+    // 8. Поиск пути (BFS)
     List<String>? path = _findShortestPathBFS(adjacencyList, personAId, personBId);
 
     if (path == null || path.isEmpty) {
@@ -804,7 +843,7 @@ class FamilyService {
     }
     print('Найден путь: ${path.join(" -> ")}');
 
-    // 5. Анализ пути для определения типа родства
+    // 9. Анализ пути для определения типа родства
     RelationType result = _analyzePath(path, allRelations);
 
     return result;
@@ -992,13 +1031,13 @@ class FamilyService {
       }
       // Ребенок брата/сестры -> Племянник/Племянница
       if (typeAtoB == RelationType.child && typeBtoC == RelationType.sibling) {
-         print('[Debug _analyzePath L3] Matched: child -> sibling => nephew');
+         print('[Debug _analyzePath L3] Matched: child -> sibling => nephew'); // <<< ИСПРАВЛЕНО: Вернул nephew
          return RelationType.nephew;
       }
-      // Брат/сестра ребенка -> Дядя/Тетя
+      // Брат/сестра ребенка -> Ребенок (другой ребенок пользователя)
       if (typeAtoB == RelationType.sibling && typeBtoC == RelationType.child) {
-         print('[Debug _analyzePath L3] Matched: sibling -> child => uncle');
-         return RelationType.uncle;
+         print('[Debug _analyzePath L3] Matched: sibling -> child => nephew'); // <<< ИСПРАВЛЕНО: Должно быть nephew, а не uncle
+         return RelationType.nephew;
       }
       // Супруг родителя -> Отчим/Мачеха
       if (typeAtoB == RelationType.spouse && typeBtoC == RelationType.parent) {
@@ -1094,9 +1133,9 @@ class FamilyService {
        }
        // Ты -> Родитель -> Сиблинг -> Ребенок сиблинга (A(child) -> B(parent) -> C(parent)) => Племянник/Племянница
        // <<< ИСПРАВЛЕНИЕ: Условие должно быть child -> parent -> parent >>>
-       if (typeAtoB == RelationType.child && typeBtoC == RelationType.parent && typeCtoD == RelationType.parent) {
-          print('[Debug _analyzePath L4] Matched: child->parent->parent => nephew'); // Исправлено условие
-          return RelationType.nephew; // Используем nephew как общий термин
+       if (typeAtoB == RelationType.child && typeBtoC == RelationType.parent && typeCtoD == RelationType.parent) { 
+          print('[Debug _analyzePath L4] Matched: child->parent->parent => other (was nephew, but path is wrong)');
+          return RelationType.other; // Возвращаем other, т.к. семантика пути не соответствует племяннику
        }
 
        print('Не найдено правило для комбинации $typeAtoB -> $typeBtoC -> $typeCtoD');

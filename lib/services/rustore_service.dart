@@ -16,6 +16,9 @@ import 'package:flutter_rustore_billing/pigeons/rustore.dart' as billing; // Н�
 import 'package:flutter_rustore_push/flutter_rustore_push.dart'; // Содержит RustorePushClient
 // Типы Message, Notification доступны из основного импорта
 
+// <<< Добавляем импорт SharedPreferences >>>
+import 'package:shared_preferences/shared_preferences.dart';
+
 // Константы из update SDK (могут быть уже определены в SDK, но оставим для ясности, если нужны напрямую)
 // Используем целочисленные значения, т.к. доступ к enum вызывает ошибки
 const int UPDATE_AVAILABILITY_UNKNOWN = 0;
@@ -29,10 +32,17 @@ const int INSTALL_STATUS_DOWNLOADING = 2;
 const int INSTALL_STATUS_FAILED = 3;
 const int INSTALL_STATUS_PENDING = 5;
 
+// Ключ для сохранения статуса запроса отзыва
+const String _reviewRequestedKey = 'lineage_review_requested';
+
 class RustoreService {
   bool _isUpdateAvailable = false;
   bool _isReviewInitialized = false; // Флаг для инициализации Review SDK
   // StreamSubscription больше не нужен
+
+  // --- SharedPreferences Instance ---
+  // Делаем Future, чтобы можно было получить его асинхронно
+  late final Future<SharedPreferences> _prefs = SharedPreferences.getInstance();
 
   // Проверка наличия обновлений (возвращает UpdateInfo или null)
   Future<update.UpdateInfo?> checkForUpdate() async {
@@ -142,6 +152,7 @@ class RustoreService {
   }
 
   Future<void> requestReview() async {
+    print('[RustoreService] Attempting to initialize review...');
     await initializeReview();
     if (!_isReviewInitialized || kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
       print('Cannot request review: SDK not initialized or not Android.');
@@ -152,15 +163,42 @@ class RustoreService {
       print('Requesting RuStore review (v8 API - step 1: request)...');
       // Используем RustoreReviewClient
       await RustoreReviewClient.request();
-      print('Review request prepared. Showing dialog (step 2: review)...');
+      print('[RustoreService] Review request successful. Showing dialog (step 2: review)...');
       // Используем RustoreReviewClient
       await RustoreReviewClient.review();
-      print('Review dialog shown (or skipped by RuStore).');
+      print('[RustoreService] Review dialog shown (or skipped by RuStore).');
+      // <<< Помечаем, что запрос был сделан >>>
+      await markReviewAsRequested();
     } catch (e) {
        print('Error requesting/showing RuStore review (v8 API): $e');
        print('Review request failed. Error: $e');
     }
   }
+
+  // --- Методы для отслеживания статуса оценки --- 
+
+  /// Проверяет, был ли ранее успешно инициирован запрос на отзыв.
+  Future<bool> checkIfReviewWasRequested() async {
+    try {
+      final SharedPreferences prefs = await _prefs; // Получаем инстанс
+      return prefs.getBool(_reviewRequestedKey) ?? false;
+    } catch (e) {
+      print('Error reading review request status from SharedPreferences: $e');
+      return false; // В случае ошибки считаем, что не запрашивали
+    }
+  }
+
+  /// Помечает, что запрос на отзыв был успешно инициирован.
+  Future<void> markReviewAsRequested() async {
+    try {
+      final SharedPreferences prefs = await _prefs; // Получаем инстанс
+      await prefs.setBool(_reviewRequestedKey, true);
+      print('Review request status saved to SharedPreferences.');
+    } catch (e) {
+      print('Error saving review request status to SharedPreferences: $e');
+    }
+  }
+  // --- Конец методов для статуса оценки ---
 
   // --- Billing SDK Methods ---
 
@@ -168,12 +206,12 @@ class RustoreService {
   bool _isBillingInitialized = false; // Флаг инициализации биллинга
 
   // Инициализация биллинга (в v8 нет явного метода, проверяем доступность)
-  Future<void> initializeBilling() async {
+  Future<bool> initializeBilling() async {
     if (!_isBillingInitialized && !kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
       try {
         print('Initializing RuStore Billing Client...'); // Лог инициализации
-        // *** ИСПРАВЛЯЕМ ВЫЗОВ ИНИЦИАЛИЗАЦИИ С АРГУМЕНТАМИ ***
-        const String consoleAppId = 'ru.rustore.app.2063621085'; // Ваш ID из Manifest
+        // <<< Используем правильный числовой ID приложения >>>
+        const String consoleAppId = '2063621085'; 
         const String deeplinkScheme = 'lineagebilling'; // Выбранная схема
         await RustoreBillingClient.initialize(consoleAppId, deeplinkScheme, kDebugMode);
         print('RuStore Billing Client initialized successfully.');
@@ -186,11 +224,19 @@ class RustoreService {
         print('Billing available check completed. Assuming available if no error.');
          // Считаем инициализированным после первой проверки
         _isBillingInitialized = true;
+        return true;
       } catch (e) {
         print('Error during RuStore Billing initialization or availability check: $e'); // Обновляем лог ошибки
         _isBillingAvailable = false;
         _isBillingInitialized = false; // Не удалось инициализировать
+        return false;
       }
+    } else if (_isBillingInitialized) {
+      print('Billing already initialized.');
+      return true; // Уже инициализирован
+    } else {
+      print('Billing skipped (not Android or already attempted and failed).');
+      return false; // Не инициализировано
     }
   }
 
@@ -216,7 +262,9 @@ class RustoreService {
 
   // Получение информации о продуктах
   Future<List<billing.Product>> getProducts(List<String> productIds) async {
-     await initializeBilling();
+     final bool initialized = await initializeBilling();
+     if (!initialized) return [];
+     
      if (!_isBillingAvailable || kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
         print('Billing not available or not Android.');
         return [];
@@ -224,7 +272,7 @@ class RustoreService {
      if (productIds.isEmpty) return [];
 
      try {
-        print('Getting product info for: ${productIds.join(', ')}');
+        print('[RustoreService] Getting product info for IDs: ${productIds.join(", ")}');
         // Используем RustoreBillingClient.products()
         final billing.ProductsResponse response = await RustoreBillingClient.products(productIds);
         final validProducts = response.products?.whereType<billing.Product>().toList() ?? [];
@@ -238,13 +286,15 @@ class RustoreService {
 
   // Покупка продукта
   Future<billing.PaymentResult?> purchaseProduct(String productId) async {
-     await initializeBilling();
+     final bool initialized = await initializeBilling();
+     if (!initialized) return null;
+     
      if (!_isBillingAvailable || kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
         print('Billing not available or not Android.');
         return null;
      }
      try {
-        print('Attempting to purchase product: $productId');
+        print('[RustoreService] Attempting purchase for product ID: $productId');
         // Используем RustoreBillingClient.purchase()
         final billing.PaymentResult? result = await RustoreBillingClient.purchase(productId, null);
         // Временно убираем детальную проверку полей result, т.к. они вызывают ошибки

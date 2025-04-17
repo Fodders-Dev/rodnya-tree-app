@@ -228,20 +228,12 @@ class FamilyRelation extends HiveObject { // Наследуемся от HiveObj
         if (gender == Gender.female) return 'Двоюродная сестра';
         if (gender == Gender.male) return 'Двоюродный брат';
         return 'Двоюродный родственник';
-      case RelationType.aunt:
-        return 'Тётя';
       case RelationType.uncle:
-        return 'Дядя';
+        return gender == Gender.female ? 'Тётя' : 'Дядя';
       case RelationType.nephew:
-        if (gender == Gender.female) return 'Племянница';
-        return 'Племянник';
-      case RelationType.niece:
-        if (gender == Gender.male) return 'Племянник';
-        return 'Племянница';
+        return gender == Gender.female ? 'Племянница' : 'Племянник';
       case RelationType.nibling:
-        if (gender == Gender.female) return 'Племянница';
-        if (gender == Gender.male) return 'Племянник';
-        return 'Племянник(ца)';
+        return gender == Gender.female ? 'Племянница' : (gender == Gender.male ? 'Племянник' : 'Племянник(ца)');
       case RelationType.parentInLaw:
         return gender == Gender.female ? 'Свекровь/Тёща' : 'Свёкор/Тесть';
       case RelationType.childInLaw:
@@ -267,7 +259,7 @@ class FamilyRelation extends HiveObject { // Наследуемся от HiveObj
       case RelationType.colleague:
         return 'Коллега';
       default:
-        return 'Родственник';
+        return getGenericRelationTypeStringRu(relationType);
     }
   }
 
