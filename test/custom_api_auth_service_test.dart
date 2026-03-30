@@ -152,4 +152,58 @@ void main() {
     expect(invitationService.hasPendingInvitation, isFalse);
     expect(service.currentUserId, 'user-1');
   });
+
+  test('CustomApiAuthService clears stale session on unauthorized refresh',
+      () async {
+    final client = MockClient((request) async {
+      if (request.url.path == '/v1/auth/login') {
+        return http.Response(
+          jsonEncode({
+            'accessToken': 'access-token',
+            'refreshToken': 'refresh-token',
+            'user': {
+              'id': 'user-1',
+              'email': 'artem@example.com',
+              'displayName': 'Артем Кузнецов',
+              'providerIds': ['password'],
+            },
+            'profileStatus': {
+              'isComplete': true,
+              'missingFields': <String>[],
+            },
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+
+      if (request.url.path == '/v1/auth/session') {
+        return http.Response('{"message":"unauthorized"}', 401);
+      }
+
+      return http.Response('{"message":"not found"}', 404);
+    });
+
+    final prefs = await SharedPreferences.getInstance();
+    final service = await CustomApiAuthService.create(
+      httpClient: client,
+      preferences: prefs,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      invitationService: InvitationService(),
+    );
+
+    await service.loginWithEmail('artem@example.com', 'secret123');
+    expect(service.currentUserId, 'user-1');
+
+    final profileStatus = await service.checkProfileCompleteness();
+
+    expect(profileStatus, {
+      'isComplete': false,
+      'missingFields': ['auth'],
+    });
+    expect(service.currentUserId, isNull);
+    expect(prefs.getString('custom_api_session_v1'), isNull);
+  });
 }

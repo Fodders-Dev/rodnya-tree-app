@@ -186,7 +186,14 @@ class CustomApiAuthService implements AuthServiceInterface {
       final refreshedSession = _sessionFromResponse(response);
       await _saveSession(refreshedSession);
       return _profileStatusMap(refreshedSession);
-    } catch (_) {
+    } on CustomApiException catch (error) {
+      if (error.statusCode == 401 || error.statusCode == 403) {
+        await _clearSession();
+        return {
+          'isComplete': false,
+          'missingFields': ['auth'],
+        };
+      }
       return _profileStatusMap(_session!);
     }
   }

@@ -41,7 +41,7 @@ $env:RUSTORE_PRIVATE_KEY_BASE64="base64-private-key-from-rustore-console"
 powershell -ExecutionPolicy Bypass -File .\tool\publish_rustore_release.ps1 `
   -MinAndroidVersion 7 `
   -WhatsNewFile ".\docs\rustore_whatsnew_1.0.2.txt" `
-  -ModeratorComment "Тестовый аккаунт: codex.tree.20260327120500@example.com / Test123456" `
+  -ModeratorComment "Демо-аккаунт: alexey.petrov.family@example.com / RodnyaDemo2026!" `
   -SubmitForModeration
 ```
 

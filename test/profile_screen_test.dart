@@ -23,7 +23,7 @@ class _FakeAuthService implements AuthServiceInterface {
   String? get currentUserEmail => 'user@example.com';
 
   @override
-  String? get currentUserDisplayName => 'Кодекс Тест';
+  String? get currentUserDisplayName => 'Алексей Петров';
 
   @override
   String? get currentUserPhotoUrl => null;
@@ -80,7 +80,7 @@ class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
           id: 'self-person',
           treeId: treeId,
           userId: 'user-1',
-          name: 'Кодекс Тест',
+          name: 'Алексей Петров',
           gender: Gender.male,
           isAlive: true,
           createdAt: now,
@@ -133,8 +133,8 @@ class _FakeProfileService implements ProfileServiceInterface {
       UserProfile.create(
         id: userId,
         email: 'user@example.com',
-        displayName: 'Кодекс Тест',
-        username: 'codex',
+        displayName: 'Алексей Петров',
+        username: 'petrov',
         phoneNumber: '',
         gender: Gender.male,
       );

@@ -101,6 +101,14 @@ test("auth + profile bootstrap flow works end-to-end", async () => {
     const bootstrap = await bootstrapResponse.json();
     assert.equal(bootstrap.profile.firstName, "Иван");
     assert.equal(bootstrap.profileStatus.isComplete, true);
+    assert.equal(bootstrap.profile.displayName, "Иван Иванович Иванов");
+
+    const refreshedSessionResponse = await fetch(`${ctx.baseUrl}/v1/auth/session`, {
+      headers: {authorization: `Bearer ${token}`},
+    });
+    assert.equal(refreshedSessionResponse.status, 200);
+    const refreshedSession = await refreshedSessionResponse.json();
+    assert.equal(refreshedSession.user.displayName, "Иван Иванович Иванов");
 
     const searchResponse = await fetch(
       `${ctx.baseUrl}/v1/users/search?query=ivanov`,

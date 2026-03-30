@@ -153,8 +153,8 @@ void main() {
           'user-1': UserProfile.create(
             id: 'user-1',
             email: 'user-1@example.com',
-            displayName: 'Кодекс Тест',
-            username: 'codex',
+            displayName: 'Алексей Петров',
+            username: 'petrov',
             phoneNumber: '',
           ),
         },

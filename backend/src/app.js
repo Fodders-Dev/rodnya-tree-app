@@ -292,6 +292,7 @@ function createApp({store, config, realtimeHub = null, pushGateway = null}) {
   }
 
   function authResponse(user, sessionTokens) {
+    const profile = sanitizeProfile(user.profile);
     const profileStatus = computeProfileStatus(user.profile);
     return {
       accessToken: sessionTokens.token,
@@ -299,8 +300,8 @@ function createApp({store, config, realtimeHub = null, pushGateway = null}) {
       user: {
         id: user.id,
         email: user.email,
-        displayName: user.profile.displayName,
-        photoUrl: user.profile.photoUrl,
+        displayName: profile.displayName,
+        photoUrl: profile.photoUrl,
         providerIds: user.providerIds || ["password"],
       },
       profileStatus,
@@ -376,6 +377,7 @@ function createApp({store, config, realtimeHub = null, pushGateway = null}) {
 
   app.get("/v1/auth/session", requireAuth, async (req, res) => {
     const user = await store.findUserById(req.auth.user.id);
+    const profile = sanitizeProfile(user.profile);
     res.json({
       session: {
         accessToken: req.auth.token,
@@ -385,8 +387,8 @@ function createApp({store, config, realtimeHub = null, pushGateway = null}) {
       user: {
         id: user.id,
         email: user.email,
-        displayName: user.profile.displayName,
-        photoUrl: user.profile.photoUrl,
+        displayName: profile.displayName,
+        photoUrl: profile.photoUrl,
         providerIds: user.providerIds || ["password"],
       },
       profileStatus: computeProfileStatus(user.profile),
@@ -451,13 +453,14 @@ function createApp({store, config, realtimeHub = null, pushGateway = null}) {
       ...profile,
       ...req.body,
     }));
+    const sanitizedProfile = sanitizeProfile(updatedUser.profile);
 
     res.json({
       user: {
         id: updatedUser.id,
         email: updatedUser.email,
-        displayName: updatedUser.profile.displayName,
-        photoUrl: updatedUser.profile.photoUrl,
+        displayName: sanitizedProfile.displayName,
+        photoUrl: sanitizedProfile.photoUrl,
       },
       profileStatus: computeProfileStatus(updatedUser.profile),
     });
