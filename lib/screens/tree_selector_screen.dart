@@ -62,7 +62,17 @@ class _TreeSelectorScreenState extends State<TreeSelectorScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Выберите дерево')),
+      appBar: AppBar(
+        title: const Text('Выберите дерево'),
+        actions: [
+          TextButton.icon(
+            onPressed: () => context.push('/trees'),
+            icon: const Icon(Icons.explore_outlined),
+            label: const Text('Все деревья'),
+          ),
+          const SizedBox(width: 8),
+        ],
+      ),
       body: SafeArea(
         child: _isLoading
             ? const Center(child: CircularProgressIndicator())

@@ -21,9 +21,7 @@ class RelativesScreen extends StatefulWidget {
   State<RelativesScreen> createState() => _RelativesScreenState();
 }
 
-class _RelativesScreenState extends State<RelativesScreen>
-    with SingleTickerProviderStateMixin {
-  late TabController _tabController;
+class _RelativesScreenState extends State<RelativesScreen> {
   final FamilyTreeServiceInterface _familyService =
       GetIt.I<FamilyTreeServiceInterface>();
   final ChatServiceInterface _chatService = GetIt.I<ChatServiceInterface>();
@@ -50,10 +48,6 @@ class _RelativesScreenState extends State<RelativesScreen>
     super.initState();
 
     debugPrint('[_RelativesScreenState initState] called');
-    _tabController = TabController(length: 2, vsync: this);
-    debugPrint(
-      '[_RelativesScreenState initState] TabController initialized: ${_tabController.length} tabs',
-    );
 
     _currentUserId = _authService.currentUserId;
     debugPrint(
@@ -80,9 +74,6 @@ class _RelativesScreenState extends State<RelativesScreen>
           _isLoading = false;
         });
       }
-      debugPrint(
-        '[_RelativesScreenState initState] TabController initialized: ${_tabController.length} tabs',
-      );
     });
   }
 
@@ -90,7 +81,6 @@ class _RelativesScreenState extends State<RelativesScreen>
   void dispose() {
     _cancelSubscriptions();
     _treeProviderInstance?.removeListener(_handleTreeChange);
-    _tabController.dispose();
     super.dispose();
   }
 
@@ -302,9 +292,6 @@ class _RelativesScreenState extends State<RelativesScreen>
     final String currentUserId = _authService.currentUserId ?? '';
     final List<FamilyPerson> visibleRelatives =
         _allRelatives.where((p) => p.userId != currentUserId).toList();
-    final List<FamilyPerson> onlineRelatives = _allRelatives
-        .where((p) => p.userId != null && p.userId != currentUserId)
-        .toList();
     // -------------------------
 
     return Scaffold(
@@ -409,52 +396,22 @@ class _RelativesScreenState extends State<RelativesScreen>
           ),
         ],
       ),
-      body: Column(
-        children: [
-          Container(
-            color: Theme.of(context).primaryColorLight,
-            child: TabBar(
-              controller: _tabController,
-              labelColor: Theme.of(context).primaryColorDark,
-              unselectedLabelColor: Colors.grey[600],
-              indicatorColor: Theme.of(context).primaryColor,
-              tabs: const [
-                Tab(text: 'Чаты'),
-                Tab(text: 'Все родственники'),
-              ],
-            ),
-          ),
-          Expanded(
-            child: selectedTreeId == null
-                ? _buildNoTreeSelected()
-                : _isLoading
-                    ? Center(child: CircularProgressIndicator())
-                    : _errorMessage.isNotEmpty
-                        ? Center(
-                            child: Padding(
-                              padding: const EdgeInsets.all(16.0),
-                              child: Text(_errorMessage,
-                                  textAlign: TextAlign.center),
-                            ),
-                          )
-                        : TabBarView(
-                            controller: _tabController,
-                            children: [
-                              _buildRelativesList(
-                                key: ValueKey('online_tab_$selectedTreeId'),
-                                relativesForTab: onlineRelatives,
-                                isOnlineTab: true,
-                              ),
-                              _buildRelativesList(
-                                key: ValueKey('offline_tab_$selectedTreeId'),
-                                relativesForTab: visibleRelatives,
-                                isOnlineTab: false,
-                              ),
-                            ],
-                          ),
-          ),
-        ],
-      ),
+      body: selectedTreeId == null
+          ? _buildNoTreeSelected()
+          : _isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : _errorMessage.isNotEmpty
+                  ? Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16.0),
+                        child: Text(_errorMessage, textAlign: TextAlign.center),
+                      ),
+                    )
+                  : _buildRelativesList(
+                      key: ValueKey('relatives_$selectedTreeId'),
+                      relativesForTab: visibleRelatives,
+                      isOnlineTab: false,
+                    ),
       floatingActionButton: selectedTreeId == null
           ? null
           : FloatingActionButton(

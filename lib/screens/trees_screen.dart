@@ -114,15 +114,9 @@ class _TreesScreenState extends State<TreesScreen>
               ),
               const SizedBox(height: 8),
               Text(
-                'Создайте своё дерево или примите приглашение. После этого можно будет открыть схему семьи и редактировать её без лишних переходов.',
+                'Создайте своё дерево или примите приглашение (кнопка внизу экрана). После этого можно будет открыть схему семьи и редактировать её без лишних переходов.',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: Colors.grey[600]),
-              ),
-              const SizedBox(height: 20),
-              ElevatedButton.icon(
-                onPressed: _navigateToCreateTree,
-                icon: const Icon(Icons.add),
-                label: const Text('Создать новое дерево'),
               ),
             ],
           ),

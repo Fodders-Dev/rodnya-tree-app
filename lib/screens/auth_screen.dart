@@ -90,10 +90,17 @@ class _AuthScreenState extends State<AuthScreen> {
         throw Exception('Ошибка авторизации: пользователь не найден');
       }
     } catch (e) {
-      setState(() {
-        _errorMessage = _authService.describeError(e);
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(_authService.describeError(e)),
+            backgroundColor: Colors.red.shade800,
+          ),
+        );
+      }
     }
   }
 
@@ -112,9 +119,14 @@ class _AuthScreenState extends State<AuthScreen> {
         context.go('/');
       }
     } catch (e) {
-      setState(() {
-        _errorMessage = 'Ошибка входа через Google: $e';
-      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Ошибка входа через Google: $e'),
+            backgroundColor: Colors.red.shade800,
+          ),
+        );
+      }
     } finally {
       if (mounted) {
         setState(() {
@@ -128,236 +140,276 @@ class _AuthScreenState extends State<AuthScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: SafeArea(
-        child: SingleChildScrollView(
-          child: Padding(
-            padding: const EdgeInsets.all(24.0),
-            child: Form(
-              key: _formKey,
-              autovalidateMode: _hasSubmitted
-                  ? AutovalidateMode.onUserInteraction
-                  : AutovalidateMode.disabled,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const SizedBox(height: 40),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 400),
+            child: SingleChildScrollView(
+              child: Padding(
+                padding: const EdgeInsets.all(24.0),
+                child: Form(
+                  key: _formKey,
+                  autovalidateMode: _hasSubmitted
+                      ? AutovalidateMode.onUserInteraction
+                      : AutovalidateMode.disabled,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const SizedBox(height: 24),
 
-                  // Заголовок
-                  Text(
-                    _isLogin ? 'Вход в аккаунт' : 'Регистрация',
-                    style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                          fontWeight: FontWeight.bold,
+                      // --- Branding ---
+                      Container(
+                        width: 80,
+                        height: 80,
+                        decoration: BoxDecoration(
+                          color: Theme.of(context)
+                              .colorScheme
+                              .primaryContainer
+                              .withValues(alpha: 0.4),
+                          shape: BoxShape.circle,
                         ),
-                    textAlign: TextAlign.center,
-                  ),
-
-                  const SizedBox(height: 8),
-
-                  // Подзаголовок
-                  Text(
-                    _isLogin
-                        ? 'Введите свои данные для входа'
-                        : 'Создайте аккаунт в Родне',
-                    style: TextStyle(fontSize: 16, color: Colors.grey[600]),
-                    textAlign: TextAlign.center,
-                  ),
-
-                  const SizedBox(height: 40),
-
-                  // Сообщение об ошибке
-                  if (_errorMessage != null)
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      margin: const EdgeInsets.only(bottom: 16),
-                      decoration: BoxDecoration(
-                        color: Colors.red.shade100,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: Colors.red.shade300),
+                        child: Icon(
+                          Icons.account_tree_rounded,
+                          size: 40,
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
                       ),
-                      child: Text(
-                        _errorMessage!,
-                        style: TextStyle(color: Colors.red[900]),
+                      const SizedBox(height: 16),
+                      Text(
+                        'Родня',
+                        style:
+                            Theme.of(context).textTheme.headlineLarge?.copyWith(
+                                  fontWeight: FontWeight.w800,
+                                  color: Theme.of(context).colorScheme.primary,
+                                ),
+                        textAlign: TextAlign.center,
                       ),
-                    ),
-
-                  // Поле для имени (только при регистрации)
-                  if (!_isLogin)
-                    TextFormField(
-                      controller: _nameController,
-                      decoration: const InputDecoration(
-                        labelText: 'Ваше имя',
-                        prefixIcon: Icon(Icons.person),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Семейное дерево и чат для близких',
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: Colors.grey[500],
+                        ),
+                        textAlign: TextAlign.center,
                       ),
-                      keyboardType: TextInputType.name,
-                      textCapitalization: TextCapitalization.words,
-                      textInputAction: TextInputAction.next,
-                      validator: (value) {
-                        if (!_isLogin &&
-                            (value == null || value.trim().length < 2)) {
-                          return 'Имя должно содержать не менее 2 символов';
-                        }
-                        return null;
-                      },
-                    ),
+                      const SizedBox(height: 32),
 
-                  if (!_isLogin) const SizedBox(height: 16),
-
-                  // Поле для email
-                  TextFormField(
-                    controller: _emailController,
-                    decoration: const InputDecoration(
-                      labelText: 'Email',
-                      prefixIcon: Icon(Icons.email),
-                    ),
-                    keyboardType: TextInputType.emailAddress,
-                    textInputAction: TextInputAction.next,
-                    validator: (value) {
-                      if (value == null ||
-                          !value.contains('@') ||
-                          !value.contains('.')) {
-                        return 'Введите корректный email адрес';
-                      }
-                      return null;
-                    },
-                  ),
-
-                  const SizedBox(height: 16),
-
-                  // Поле для пароля
-                  TextFormField(
-                    controller: _passwordController,
-                    decoration: const InputDecoration(
-                      labelText: 'Пароль',
-                      prefixIcon: Icon(Icons.lock),
-                    ),
-                    obscureText: true,
-                    textInputAction:
-                        _isLogin ? TextInputAction.done : TextInputAction.next,
-                    validator: (value) {
-                      if (value == null || value.length < 6) {
-                        return 'Пароль должен содержать не менее 6 символов';
-                      }
-                      return null;
-                    },
-                  ),
-
-                  const SizedBox(height: 24),
-
-                  // Кнопка входа/регистрации
-                  ElevatedButton(
-                    onPressed: _isLoading ? null : _submit,
-                    child: _isLoading
-                        ? const SizedBox(
-                            height: 20,
-                            width: 20,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white,
-                            ),
-                          )
-                        : Text(_isLogin ? 'Войти' : 'Зарегистрироваться'),
-                    style: ElevatedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                    ),
-                  ),
-
-                  const SizedBox(height: 16),
-
-                  if (_supportsGoogleAuth) ...[
-                    Row(
-                      children: [
-                        Expanded(child: Divider()),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
-                          child: Text(
-                            'ИЛИ',
-                            style: TextStyle(
-                              color: Colors.grey[600],
+                      // Заголовок
+                      Text(
+                        _isLogin ? 'Вход в аккаунт' : 'Регистрация',
+                        style: Theme.of(context)
+                            .textTheme
+                            .headlineMedium
+                            ?.copyWith(
                               fontWeight: FontWeight.bold,
+                            ),
+                        textAlign: TextAlign.center,
+                      ),
+
+                      const SizedBox(height: 8),
+
+                      // Подзаголовок
+                      Text(
+                        _isLogin
+                            ? 'Введите свои данные для входа'
+                            : 'Создайте аккаунт в Родне',
+                        style: TextStyle(fontSize: 16, color: Colors.grey[600]),
+                        textAlign: TextAlign.center,
+                      ),
+
+                      const SizedBox(height: 40),
+
+                      // Поле для имени (только при регистрации)
+                      if (!_isLogin)
+                        TextFormField(
+                          controller: _nameController,
+                          decoration: const InputDecoration(
+                            labelText: 'Ваше имя',
+                            prefixIcon: Icon(Icons.person),
+                          ),
+                          keyboardType: TextInputType.name,
+                          textCapitalization: TextCapitalization.words,
+                          textInputAction: TextInputAction.next,
+                          validator: (value) {
+                            if (!_isLogin &&
+                                (value == null || value.trim().length < 2)) {
+                              return 'Имя должно содержать не менее 2 символов';
+                            }
+                            return null;
+                          },
+                        ),
+
+                      if (!_isLogin) const SizedBox(height: 16),
+
+                      // Поле для email
+                      TextFormField(
+                        controller: _emailController,
+                        decoration: const InputDecoration(
+                          labelText: 'Email',
+                          prefixIcon: Icon(Icons.email),
+                        ),
+                        keyboardType: TextInputType.emailAddress,
+                        textInputAction: TextInputAction.next,
+                        validator: (value) {
+                          if (value == null ||
+                              !value.contains('@') ||
+                              !value.contains('.')) {
+                            return 'Введите корректный email адрес';
+                          }
+                          return null;
+                        },
+                      ),
+
+                      const SizedBox(height: 16),
+
+                      // Поле для пароля
+                      TextFormField(
+                        controller: _passwordController,
+                        decoration: const InputDecoration(
+                          labelText: 'Пароль',
+                          prefixIcon: Icon(Icons.lock),
+                        ),
+                        obscureText: true,
+                        textInputAction: _isLogin
+                            ? TextInputAction.done
+                            : TextInputAction.next,
+                        onFieldSubmitted: (_) {
+                          if (_isLogin) {
+                            _submit();
+                          }
+                        },
+                        validator: (value) {
+                          if (value == null || value.length < 6) {
+                            return 'Пароль должен содержать не менее 6 символов';
+                          }
+                          return null;
+                        },
+                      ),
+
+                      const SizedBox(height: 24),
+
+                      // Кнопка входа/регистрации
+                      ElevatedButton(
+                        onPressed: _isLoading ? null : _submit,
+                        child: _isLoading
+                            ? const SizedBox(
+                                height: 20,
+                                width: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : Text(_isLogin ? 'Войти' : 'Зарегистрироваться'),
+                        style: ElevatedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                        ),
+                      ),
+
+                      const SizedBox(height: 16),
+
+                      if (_supportsGoogleAuth) ...[
+                        Row(
+                          children: [
+                            Expanded(child: Divider()),
+                            Padding(
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 16),
+                              child: Text(
+                                'ИЛИ',
+                                style: TextStyle(
+                                  color: Colors.grey[600],
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                            Expanded(child: Divider()),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        OutlinedButton.icon(
+                          onPressed:
+                              _isGoogleLoading ? null : _signInWithGoogle,
+                          icon: _isGoogleLoading
+                              ? SizedBox(
+                                  height: 18,
+                                  width: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Theme.of(context).primaryColor,
+                                  ),
+                                )
+                              : Icon(
+                                  Icons.g_mobiledata,
+                                  size: 24,
+                                  color: Colors.red,
+                                ),
+                          label: Text('Войти через Google'),
+                          style: OutlinedButton.styleFrom(
+                            padding: EdgeInsets.symmetric(vertical: 12),
+                            side: BorderSide(color: Colors.grey[300]!),
+                          ),
+                        ),
+                        const SizedBox(height: 24),
+                      ],
+
+                      // Переключение между входом и регистрацией
+                      TextButton(
+                        onPressed: _isLoading || _isGoogleLoading
+                            ? null
+                            : () {
+                                setState(() {
+                                  _isLogin = !_isLogin;
+                                  _hasSubmitted = false;
+                                  _errorMessage = null;
+                                });
+                              },
+                        child: Text(
+                          _isLogin
+                              ? 'Нет аккаунта? Зарегистрируйтесь'
+                              : 'Уже есть аккаунт? Войдите',
+                          style:
+                              TextStyle(color: Theme.of(context).primaryColor),
+                        ),
+                      ),
+
+                      // Ссылка на политику конфиденциальности
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8.0),
+                        child: GestureDetector(
+                          onTap: () {
+                            // Используем GoRouter для перехода
+                            GoRouter.of(context).push('/privacy');
+                          },
+                          child: Text(
+                            'Продолжая, вы соглашаетесь с Политикой конфиденциальности',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey[600],
+                              decoration: TextDecoration.underline,
                             ),
                           ),
                         ),
-                        Expanded(child: Divider()),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    OutlinedButton.icon(
-                      onPressed: _isGoogleLoading ? null : _signInWithGoogle,
-                      icon: _isGoogleLoading
-                          ? SizedBox(
-                              height: 18,
-                              width: 18,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Theme.of(context).primaryColor,
-                              ),
-                            )
-                          : Icon(
-                              Icons.g_mobiledata,
-                              size: 24,
-                              color: Colors.red,
-                            ),
-                      label: Text('Войти через Google'),
-                      style: OutlinedButton.styleFrom(
-                        padding: EdgeInsets.symmetric(vertical: 12),
-                        side: BorderSide(color: Colors.grey[300]!),
                       ),
-                    ),
-                    const SizedBox(height: 24),
-                  ],
 
-                  // Переключение между входом и регистрацией
-                  TextButton(
-                    onPressed: _isLoading || _isGoogleLoading
-                        ? null
-                        : () {
-                            setState(() {
-                              _isLogin = !_isLogin;
-                              _hasSubmitted = false;
-                              _errorMessage = null;
-                            });
-                          },
-                    child: Text(
-                      _isLogin
-                          ? 'Нет аккаунта? Зарегистрируйтесь'
-                          : 'Уже есть аккаунт? Войдите',
-                      style: TextStyle(color: Theme.of(context).primaryColor),
-                    ),
-                  ),
-
-                  // Ссылка на политику конфиденциальности
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8.0),
-                    child: GestureDetector(
-                      onTap: () {
-                        // Используем GoRouter для перехода
-                        GoRouter.of(context).push('/privacy');
-                      },
-                      child: Text(
-                        'Продолжая, вы соглашаетесь с Политикой конфиденциальности',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey[600],
-                          decoration: TextDecoration.underline,
+                      // Ссылка на восстановление пароля
+                      if (_isLogin)
+                        TextButton(
+                          onPressed: _isLoading
+                              ? null
+                              : () {
+                                  context.push('/password_reset');
+                                },
+                          child: Text(
+                            'Забыли пароль?',
+                            style: TextStyle(
+                                color: Theme.of(context).primaryColor),
+                          ),
                         ),
-                      ),
-                    ),
+                    ],
                   ),
-
-                  // Ссылка на восстановление пароля
-                  if (_isLogin)
-                    TextButton(
-                      onPressed: _isLoading
-                          ? null
-                          : () {
-                              context.push('/password_reset');
-                            },
-                      child: Text(
-                        'Забыли пароль?',
-                        style: TextStyle(color: Theme.of(context).primaryColor),
-                      ),
-                    ),
-                ],
+                ),
               ),
             ),
           ),

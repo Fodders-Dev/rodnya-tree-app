@@ -12,6 +12,7 @@ import '../screens/password_reset_screen.dart';
 import '../screens/complete_profile_screen.dart';
 import '../screens/relatives_screen.dart';
 import '../screens/trees_screen.dart';
+import '../screens/chats_list_screen.dart';
 import '../screens/tree_view_screen.dart';
 import '../screens/tree_selector_screen.dart';
 import '../screens/add_relative_screen.dart';
@@ -33,6 +34,7 @@ import '../providers/tree_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:get_it/get_it.dart';
 import '../backend/interfaces/auth_service_interface.dart';
+import '../backend/interfaces/chat_service_interface.dart';
 import '../services/invitation_service.dart';
 
 // Ключ для корневого навигатора
@@ -46,11 +48,26 @@ final rootNavigatorKey = GlobalKey<NavigatorState>();
 
 // --- Классы страниц GoRouter ---
 
+Widget _buildDesktopConstrainedScreen(Widget child) {
+  return Builder(
+    builder: (context) => Container(
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 500),
+          child: ClipRect(child: child),
+        ),
+      ),
+    ),
+  );
+}
+
 // Базовый класс для кастомных переходов, наследуемся от пакета go_router
 class LineageCustomTransitionPage<T> extends CustomTransitionPage<T> {
-  const LineageCustomTransitionPage({
-    required super.child,
+  LineageCustomTransitionPage({
+    required Widget child,
     required super.transitionsBuilder,
+    bool constrainWidth = false,
     super.key,
     super.name,
     super.arguments,
@@ -59,14 +76,16 @@ class LineageCustomTransitionPage<T> extends CustomTransitionPage<T> {
     super.reverseTransitionDuration = const Duration(milliseconds: 300),
     // maintainState убран
   }) : super(
+          child: constrainWidth ? _buildDesktopConstrainedScreen(child) : child,
           maintainState: true,
         ); // ВОЗВРАЩАЕМ maintainState, он важен для ShellRoute!
 }
 
 // Страница без анимации для вкладок ShellRoute
 class NoTransitionPage<T> extends LineageCustomTransitionPage<T> {
-  NoTransitionPage({required super.child, super.key})
+  NoTransitionPage({required Widget child, super.key})
       : super(
+          child: child,
           transitionsBuilder: (context, animation, secondaryAnimation, child) =>
               child,
           transitionDuration: Duration.zero,
@@ -192,70 +211,111 @@ class AppRouter {
       // Основной каркас приложения с нижней навигацией
       StatefulShellRoute.indexedStack(
         builder: (context, state, navigationShell) {
-          // Возвращаем Scaffold с BottomNavigationBar
-          return Scaffold(
-            body: Column(
-              children: [
-                OfflineIndicator(), // Индикатор офлайн-режима
-                Expanded(child: navigationShell), // Текущий навигатор ветки
-              ],
-            ),
-            bottomNavigationBar: BottomNavigationBar(
-              type: BottomNavigationBarType.fixed, // Важно для > 3 элементов
-              currentIndex: navigationShell.currentIndex,
-              selectedItemColor: Theme.of(
-                context,
-              ).colorScheme.primary, // Используем colorScheme
-              unselectedItemColor: Colors.grey,
-              onTap: (index) {
-                // Переход к ветке с сохранением состояния
-                navigationShell.goBranch(
-                  index,
-                  initialLocation: index == navigationShell.currentIndex,
-                );
-              },
-              items: [
-                BottomNavigationBarItem(
-                  icon: Icon(Icons.home_outlined),
-                  activeIcon: Icon(Icons.home), // Добавим активную иконку
-                  label: 'Главная',
-                ),
-                BottomNavigationBarItem(
-                  icon: Icon(Icons.people_outline),
-                  activeIcon: Icon(Icons.people),
-                  label: 'Родные',
-                ),
-                BottomNavigationBarItem(
-                  icon: Container(
-                    // Центральная кнопка "Дерево"
-                    padding: EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.primary, // Используем colorScheme
-                      shape: BoxShape.circle,
+          return Container(
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 500),
+                child: ClipRRect(
+                  borderRadius: const BorderRadius.only(
+                    topLeft: Radius.circular(0),
+                    topRight: Radius.circular(0),
+                  ),
+                  child: Scaffold(
+                    body: Column(
+                      children: [
+                        OfflineIndicator(), // Индикатор офлайн-режима
+                        Expanded(
+                            child: navigationShell), // Текущий навигатор ветки
+                      ],
                     ),
-                    child: Icon(
-                      Icons.account_tree,
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.onPrimary, // Цвет на фоне основной кнопки
-                      size: 20,
+                    bottomNavigationBar: StreamBuilder<int>(
+                      stream:
+                          GetIt.I<AuthServiceInterface>().currentUserId != null
+                              ? GetIt.I<ChatServiceInterface>()
+                                  .getTotalUnreadCountStream(
+                                      GetIt.I<AuthServiceInterface>()
+                                          .currentUserId!)
+                              : Stream.value(0),
+                      builder: (context, snapshot) {
+                        final unreadCount = snapshot.data ?? 0;
+                        return BottomNavigationBar(
+                          type: BottomNavigationBarType
+                              .fixed, // Важно для > 3 элементов
+                          currentIndex: navigationShell.currentIndex,
+                          selectedItemColor: Theme.of(context)
+                              .colorScheme
+                              .primary, // Используем colorScheme
+                          unselectedItemColor: Colors.grey,
+                          onTap: (index) {
+                            // Переход к ветке с сохранением состояния
+                            navigationShell.goBranch(
+                              index,
+                              initialLocation:
+                                  index == navigationShell.currentIndex,
+                            );
+                          },
+                          items: [
+                            BottomNavigationBarItem(
+                              icon: Icon(Icons.home_outlined),
+                              activeIcon:
+                                  Icon(Icons.home), // Добавим активную иконку
+                              label: 'Главная',
+                            ),
+                            BottomNavigationBarItem(
+                              icon: Icon(Icons.people_outline),
+                              activeIcon: Icon(Icons.people),
+                              label: 'Родные',
+                            ),
+                            BottomNavigationBarItem(
+                              icon: Container(
+                                // Центральная кнопка "Дерево"
+                                padding: EdgeInsets.all(8),
+                                decoration: BoxDecoration(
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .primary, // Используем colorScheme
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Icon(
+                                  Icons.account_tree,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onPrimary, // Цвет на фоне основной кнопки
+                                  size: 20,
+                                ),
+                              ),
+                              label: 'Моё дерево',
+                            ),
+                            BottomNavigationBarItem(
+                              icon: Badge(
+                                label: Text(unreadCount > 99
+                                    ? '99+'
+                                    : unreadCount.toString()),
+                                isLabelVisible: unreadCount > 0,
+                                child: const Icon(Icons.chat_bubble_outline),
+                              ),
+                              activeIcon: Badge(
+                                label: Text(unreadCount > 99
+                                    ? '99+'
+                                    : unreadCount.toString()),
+                                isLabelVisible: unreadCount > 0,
+                                child: const Icon(Icons.chat_bubble),
+                              ),
+                              label: 'Чаты',
+                            ),
+                            BottomNavigationBarItem(
+                              icon: Icon(Icons.person_outline),
+                              activeIcon: Icon(Icons.person),
+                              label: 'Профиль',
+                            ),
+                          ],
+                        );
+                      },
                     ),
                   ),
-                  label: 'Дерево',
                 ),
-                BottomNavigationBarItem(
-                  icon: Icon(Icons.forest_outlined),
-                  activeIcon: Icon(Icons.forest),
-                  label: 'Деревья',
-                ),
-                BottomNavigationBarItem(
-                  icon: Icon(Icons.person_outline),
-                  activeIcon: Icon(Icons.person),
-                  label: 'Профиль',
-                ),
-              ],
+              ),
             ),
           );
         },
@@ -278,6 +338,7 @@ class AppRouter {
                         LineageCustomTransitionPage(
                       key: state
                           .pageKey, // Используем ключ для уникальности страницы
+                      constrainWidth: true,
                       child: const CreatePostScreen(),
                       // Анимация "слайд снизу вверх" для модального эффекта
                       transitionsBuilder: slideUpTransition,
@@ -291,6 +352,7 @@ class AppRouter {
                       final userId = state.pathParameters['userId'] ?? '';
                       return LineageCustomTransitionPage(
                         key: state.pageKey,
+                        constrainWidth: true,
                         child: UserProfileEntryScreen(userId: userId),
                         transitionsBuilder: slideTransition,
                       );
@@ -321,6 +383,7 @@ class AppRouter {
                           extra['quickAddMode'] == true;
                       return LineageCustomTransitionPage(
                         key: state.pageKey,
+                        constrainWidth: true,
                         child: AddRelativeScreen(
                           treeId: treeId,
                           quickAddMode: quickAddMode,
@@ -352,6 +415,7 @@ class AppRouter {
 
                       return LineageCustomTransitionPage(
                         key: ValueKey('edit_relative_$personId'),
+                        constrainWidth: true,
                         child: AddRelativeScreen(
                           treeId: treeId,
                           person: personToEdit,
@@ -369,6 +433,7 @@ class AppRouter {
                       final treeId = state.pathParameters['treeId'] ?? '';
                       return LineageCustomTransitionPage(
                         key: state.pageKey,
+                        constrainWidth: true,
                         child: RelationRequestsScreen(treeId: treeId),
                         transitionsBuilder: slideTransition,
                       );
@@ -381,6 +446,7 @@ class AppRouter {
                       final treeId = state.pathParameters['treeId'] ?? '';
                       return LineageCustomTransitionPage(
                         key: state.pageKey,
+                        constrainWidth: true,
                         child: FindRelativeScreen(treeId: treeId),
                         transitionsBuilder: slideTransition,
                       );
@@ -394,6 +460,7 @@ class AppRouter {
                       final treeId = state.pathParameters['treeId'] ?? '';
                       return LineageCustomTransitionPage(
                         key: state.pageKey,
+                        constrainWidth: true,
                         child: SendRelationRequestScreen(treeId: treeId),
                         transitionsBuilder: slideTransition,
                       );
@@ -432,6 +499,7 @@ class AppRouter {
 
                       return LineageCustomTransitionPage(
                         key: state.pageKey,
+                        constrainWidth: true,
                         child: ChatScreen(
                           otherUserId: userId,
                           otherUserName: name,
@@ -497,26 +565,13 @@ class AppRouter {
             ],
           ),
 
-          // Ветка 4: Список Деревьев
+          // Ветка 4: Чаты
           StatefulShellBranch(
-            // navigatorKey: _shellNavigatorTreesKey,
             routes: [
               GoRoute(
-                path: '/trees',
+                path: '/chats',
                 pageBuilder: (context, state) =>
-                    NoTransitionPage(child: TreesScreen()),
-                routes: [
-                  GoRoute(
-                    path: 'create',
-                    parentNavigatorKey: rootNavigatorKey,
-                    pageBuilder: (context, state) =>
-                        LineageCustomTransitionPage(
-                      key: state.pageKey,
-                      child: const CreateTreeScreen(),
-                      transitionsBuilder: slideTransition,
-                    ),
-                  ),
-                ],
+                    NoTransitionPage(child: const ChatsListScreen()),
               ),
             ],
           ),
@@ -536,6 +591,7 @@ class AppRouter {
                     pageBuilder: (context, state) =>
                         LineageCustomTransitionPage(
                       key: state.pageKey,
+                      constrainWidth: true,
                       child: const ProfileEditScreen(),
                       transitionsBuilder: slideTransition,
                     ),
@@ -546,6 +602,7 @@ class AppRouter {
                     pageBuilder: (context, state) =>
                         LineageCustomTransitionPage(
                       key: state.pageKey,
+                      constrainWidth: true,
                       child: const SettingsScreen(),
                       transitionsBuilder: slideTransition,
                     ),
@@ -556,6 +613,7 @@ class AppRouter {
                     pageBuilder: (context, state) =>
                         LineageCustomTransitionPage(
                       key: state.pageKey,
+                      constrainWidth: true,
                       child: const AboutScreen(),
                       transitionsBuilder: slideTransition,
                     ),
@@ -566,6 +624,7 @@ class AppRouter {
                     pageBuilder: (context, state) =>
                         LineageCustomTransitionPage(
                       key: state.pageKey,
+                      constrainWidth: true,
                       child: const OfflineProfilesScreen(),
                       transitionsBuilder: slideTransition,
                     ),
@@ -576,8 +635,31 @@ class AppRouter {
           ),
         ],
       ),
-
       // --- Маршруты вне основного Shell (доступны без BottomNavigationBar) ---
+
+      // Деревья (перенесено из вкладки в отдельный маршрут)
+      GoRoute(
+        path: '/trees',
+        parentNavigatorKey: rootNavigatorKey,
+        pageBuilder: (context, state) => LineageCustomTransitionPage(
+          key: state.pageKey,
+          constrainWidth: true,
+          child: TreesScreen(),
+          transitionsBuilder: slideTransition,
+        ),
+        routes: [
+          GoRoute(
+            path: 'create',
+            parentNavigatorKey: rootNavigatorKey,
+            pageBuilder: (context, state) => LineageCustomTransitionPage(
+              key: state.pageKey,
+              constrainWidth: true,
+              child: const CreateTreeScreen(),
+              transitionsBuilder: slideTransition,
+            ),
+          ),
+        ],
+      ),
       GoRoute(
         path: '/login',
         parentNavigatorKey: rootNavigatorKey,
@@ -636,6 +718,7 @@ class AppRouter {
 
           return LineageCustomTransitionPage(
             key: state.pageKey,
+            constrainWidth: true,
             child: CompleteProfileScreen(requiredFields: requiredFields),
             transitionsBuilder: fadeTransition,
           );
@@ -668,6 +751,7 @@ class AppRouter {
 
           return LineageCustomTransitionPage(
             key: state.pageKey,
+            constrainWidth: true,
             child: ChatScreen(
               otherUserId: userId,
               otherUserName: name,
@@ -686,6 +770,7 @@ class AppRouter {
           final userId = state.pathParameters['userId'] ?? '';
           return LineageCustomTransitionPage(
             key: state.pageKey,
+            constrainWidth: true,
             child: UserProfileEntryScreen(userId: userId),
             transitionsBuilder: slideTransition,
           );
@@ -700,6 +785,7 @@ class AppRouter {
               '';
           return LineageCustomTransitionPage(
             key: state.pageKey,
+            constrainWidth: true,
             child: SendRelationRequestScreen(treeId: treeId),
             transitionsBuilder: slideTransition,
           );
@@ -711,6 +797,7 @@ class AppRouter {
         parentNavigatorKey: rootNavigatorKey,
         pageBuilder: (context, state) => LineageCustomTransitionPage(
           key: state.pageKey,
+          constrainWidth: true,
           child: const PrivacyPolicyScreen(),
           transitionsBuilder: slideTransition,
         ),

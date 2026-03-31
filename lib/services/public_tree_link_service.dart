@@ -8,8 +8,7 @@ class PublicTreeLinkService {
     final baseUri = Uri.parse(
       publicAppUrl ?? BackendRuntimeConfig.current.publicAppUrl,
     );
-    final normalizedBasePath =
-        baseUri.path.isEmpty ? '/' : baseUri.path;
+    final normalizedBasePath = baseUri.path.isEmpty ? '/' : baseUri.path;
     final normalizedRoute = '/public/tree/${publicTreeId.trim()}';
     final existingFragment = baseUri.fragment.trim();
 
