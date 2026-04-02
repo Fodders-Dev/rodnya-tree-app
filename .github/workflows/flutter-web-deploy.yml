@@ -21,7 +21,7 @@ jobs:
         run: flutter pub get
 
       - name: Build web
-        run: flutter build web --release
+        run: flutter build web --release --dart-define=LINEAGE_RUNTIME_PRESET=prod_custom_api
 
       - name: Setup SSH key
         run: |
