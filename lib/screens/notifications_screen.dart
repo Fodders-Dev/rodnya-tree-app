@@ -10,17 +10,25 @@ class NotificationsScreen extends StatefulWidget {
     super.key,
     this.notificationLoader,
     this.onOpenNotification,
+    this.onMarkNotificationRead,
+    this.onMarkAllNotificationsRead,
   });
 
   final Future<List<AppNotificationItem>> Function()? notificationLoader;
   final ValueChanged<AppNotificationItem>? onOpenNotification;
+  final Future<void> Function(AppNotificationItem item)? onMarkNotificationRead;
+  final Future<void> Function(List<AppNotificationItem> items)?
+      onMarkAllNotificationsRead;
 
   @override
   State<NotificationsScreen> createState() => _NotificationsScreenState();
 }
 
 class _NotificationsScreenState extends State<NotificationsScreen> {
-  late Future<List<AppNotificationItem>> _notificationsFuture;
+  bool _isLoading = true;
+  bool _isMutating = false;
+  Object? _loadError;
+  List<AppNotificationItem> _notifications = const <AppNotificationItem>[];
 
   CustomApiNotificationService? get _notificationService =>
       GetIt.I.isRegistered<CustomApiNotificationService>()
@@ -30,7 +38,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   @override
   void initState() {
     super.initState();
-    _notificationsFuture = _loadNotifications();
+    _refresh();
   }
 
   Future<List<AppNotificationItem>> _loadNotifications() {
@@ -49,12 +57,64 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
   Future<void> _refresh() async {
     setState(() {
-      _notificationsFuture = _loadNotifications();
+      _isLoading = true;
+      _loadError = null;
     });
-    await _notificationsFuture;
+
+    try {
+      final notifications = await _loadNotifications();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _notifications = notifications;
+        _isLoading = false;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _loadError = error;
+        _isLoading = false;
+      });
+    }
   }
 
-  void _openNotification(AppNotificationItem item) {
+  Future<void> _markNotificationRead(AppNotificationItem item) async {
+    final customHandler = widget.onMarkNotificationRead;
+    if (customHandler != null) {
+      await customHandler(item);
+    } else {
+      await _notificationService?.markNotificationRead(item.id);
+    }
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _notifications = _notifications
+          .where((notification) => notification.id != item.id)
+          .toList();
+    });
+  }
+
+  Future<void> _openNotification(AppNotificationItem item) async {
+    setState(() {
+      _isMutating = true;
+    });
+
+    try {
+      await _markNotificationRead(item);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isMutating = false;
+        });
+      }
+    }
+
     final customHandler = widget.onOpenNotification;
     if (customHandler != null) {
       customHandler(item);
@@ -64,68 +124,106 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     _notificationService?.openNotificationPayload(item.payload);
   }
 
+  Future<void> _markAllAsRead() async {
+    if (_notifications.isEmpty) {
+      return;
+    }
+
+    final notificationsToMark = List<AppNotificationItem>.from(_notifications);
+    setState(() {
+      _isMutating = true;
+    });
+
+    try {
+      final customHandler = widget.onMarkAllNotificationsRead;
+      if (customHandler != null) {
+        await customHandler(notificationsToMark);
+      } else {
+        await _notificationService?.markNotificationsRead(
+          notificationsToMark.map((item) => item.id),
+        );
+      }
+
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _notifications = const <AppNotificationItem>[];
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isMutating = false;
+        });
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Активность'),
         actions: [
+          if (_notifications.isNotEmpty)
+            IconButton(
+              tooltip: 'Прочитать всё',
+              onPressed: _isMutating ? null : _markAllAsRead,
+              icon: const Icon(Icons.done_all),
+            ),
           IconButton(
             icon: const Icon(Icons.refresh),
             tooltip: 'Обновить',
-            onPressed: _refresh,
+            onPressed: _isMutating ? null : _refresh,
           ),
         ],
       ),
       body: RefreshIndicator(
         onRefresh: _refresh,
-        child: FutureBuilder<List<AppNotificationItem>>(
-          future: _notificationsFuture,
-          builder: (context, snapshot) {
-            if (snapshot.connectionState == ConnectionState.waiting) {
-              return const Center(child: CircularProgressIndicator());
-            }
-
-            if (snapshot.hasError) {
-              return _NotificationsMessageState(
-                icon: Icons.error_outline,
-                title: 'Не удалось загрузить активность',
-                description:
-                    'Попробуйте обновить экран ещё раз. Новые сообщения и приглашения никуда не пропадут.',
-                actionLabel: 'Повторить',
-                onPressed: _refresh,
-              );
-            }
-
-            final notifications =
-                snapshot.data ?? const <AppNotificationItem>[];
-            if (notifications.isEmpty) {
-              return _NotificationsMessageState(
-                icon: Icons.notifications_none,
-                title: 'Пока нет новых уведомлений',
-                description:
-                    'Сюда придут приглашения в дерево, новые сообщения и важные семейные события.',
-                actionLabel: 'На главную',
-                onPressed: () => Navigator.of(context).maybePop(),
-              );
-            }
-
-            return ListView.separated(
-              physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
-              itemCount: notifications.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 12),
-              itemBuilder: (context, index) {
-                final item = notifications[index];
-                return _NotificationCard(
-                  item: item,
-                  onTap: () => _openNotification(item),
-                );
-              },
-            );
-          },
-        ),
+        child: _buildBody(),
       ),
+    );
+  }
+
+  Widget _buildBody() {
+    if (_isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (_loadError != null) {
+      return _NotificationsMessageState(
+        icon: Icons.error_outline,
+        title: 'Не удалось загрузить активность',
+        description:
+            'Попробуйте обновить экран ещё раз. Новые сообщения и приглашения никуда не пропадут.',
+        actionLabel: 'Повторить',
+        onPressed: _refresh,
+      );
+    }
+
+    if (_notifications.isEmpty) {
+      return _NotificationsMessageState(
+        icon: Icons.notifications_none,
+        title: 'Пока нет новых уведомлений',
+        description:
+            'Сюда придут приглашения в дерево, новые сообщения и важные семейные события.',
+        actionLabel: 'На главную',
+        onPressed: () => Navigator.of(context).maybePop(),
+      );
+    }
+
+    return ListView.separated(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+      itemCount: _notifications.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 12),
+      itemBuilder: (context, index) {
+        final item = _notifications[index];
+        return _NotificationCard(
+          item: item,
+          onTap: _isMutating ? null : () => _openNotification(item),
+        );
+      },
     );
   }
 }
@@ -137,7 +235,7 @@ class _NotificationCard extends StatelessWidget {
   });
 
   final AppNotificationItem item;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {

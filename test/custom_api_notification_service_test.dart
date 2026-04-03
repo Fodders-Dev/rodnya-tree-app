@@ -377,6 +377,84 @@ void main() {
       await service.dispose();
     },
   );
+
+  test(
+    'CustomApiNotificationService marks notification read and updates unread count',
+    () async {
+      var readCalls = 0;
+      final client = MockClient((request) async {
+        if (request.url.path == '/v1/notifications/unread-count' &&
+            request.method == 'GET') {
+          return http.Response(
+            jsonEncode({'totalUnread': 1}),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+
+        if (request.url.path == '/v1/notifications/notification-1/read' &&
+            request.method == 'POST') {
+          readCalls += 1;
+          expect(request.headers['authorization'], 'Bearer access-token');
+          return http.Response(
+            jsonEncode({
+              'notification': {
+                'id': 'notification-1',
+                'readAt': '2026-04-03T11:00:00.000Z',
+              },
+            }),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+
+        return http.Response('{"message":"not found"}', 404);
+      });
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        'custom_api_session_v1',
+        jsonEncode({
+          'accessToken': 'access-token',
+          'refreshToken': 'refresh-token',
+          'userId': 'user-1',
+          'email': 'dev@lineage.app',
+          'displayName': 'Dev User',
+          'providerIds': ['password'],
+          'isProfileComplete': true,
+          'missingFields': const [],
+        }),
+      );
+
+      final authService = await CustomApiAuthService.create(
+        httpClient: client,
+        preferences: prefs,
+        runtimeConfig: const BackendRuntimeConfig(
+          apiBaseUrl: 'https://api.example.ru',
+        ),
+        invitationService: InvitationService(),
+      );
+
+      final service = await CustomApiNotificationService.create(
+        preferences: prefs,
+        authService: authService,
+        runtimeConfig: const BackendRuntimeConfig(
+          apiBaseUrl: 'https://api.example.ru',
+        ),
+        httpClient: client,
+      );
+
+      await service.initialize();
+      await service.refreshUnreadNotificationsCount();
+      expect(service.unreadNotificationsCount, 1);
+      await service.markNotificationRead('notification-1');
+
+      expect(readCalls, 1);
+      expect(service.unreadNotificationsCount, 0);
+
+      await service.dispose();
+    },
+  );
 }
 
 class _FakeFlutterLocalNotificationsPlatform

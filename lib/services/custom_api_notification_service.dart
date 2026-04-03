@@ -383,6 +383,53 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     }
   }
 
+  Future<void> markNotificationRead(String notificationId) async {
+    final authService = _authService;
+    final runtimeConfig = _runtimeConfig;
+    if (authService == null || runtimeConfig == null) {
+      return;
+    }
+
+    final normalizedId = notificationId.trim();
+    if (normalizedId.isEmpty) {
+      return;
+    }
+
+    final token = authService.accessToken;
+    if (token == null || token.isEmpty) {
+      return;
+    }
+
+    try {
+      final response = await _httpClient.post(
+        _buildUri(runtimeConfig, '/v1/notifications/$normalizedId/read'),
+        headers: _headers(token),
+      );
+      _decodeResponse(response);
+      _updateUnreadNotificationsCount(_unreadNotificationsCount - 1);
+    } on CustomApiException catch (error) {
+      if (await _handleUnauthorizedError(error)) {
+        _updateUnreadNotificationsCount(0);
+        return;
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> markNotificationsRead(Iterable<String> notificationIds) async {
+    final ids = notificationIds
+        .map((id) => id.trim())
+        .where((id) => id.isNotEmpty)
+        .toSet();
+    if (ids.isEmpty) {
+      return;
+    }
+
+    for (final id in ids) {
+      await markNotificationRead(id);
+    }
+  }
+
   void openNotificationPayload(String payload) {
     if (payload.isEmpty) {
       return;

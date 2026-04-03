@@ -23,9 +23,10 @@ void main() {
   );
 
   testWidgets(
-    'NotificationsScreen показывает уведомление и открывает его по тапу',
+    'NotificationsScreen отмечает уведомление прочитанным и открывает его по тапу',
     (tester) async {
       AppNotificationItem? openedItem;
+      AppNotificationItem? readItem;
 
       await tester.pumpWidget(
         MaterialApp(
@@ -44,6 +45,9 @@ void main() {
             onOpenNotification: (item) {
               openedItem = item;
             },
+            onMarkNotificationRead: (item) async {
+              readItem = item;
+            },
           ),
         ),
       );
@@ -58,6 +62,55 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(openedItem?.id, 'notification-1');
+      expect(readItem?.id, 'notification-1');
+      expect(find.text('Пока нет новых уведомлений'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'NotificationsScreen даёт прочитать всё одним действием',
+    (tester) async {
+      List<AppNotificationItem>? markedItems;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: NotificationsScreen(
+            notificationLoader: () async => [
+              AppNotificationItem(
+                id: 'notification-1',
+                type: 'tree_invitation',
+                title: 'Семья Шуфляк',
+                body: 'Вас пригласили в дерево',
+                createdAt: DateTime(2026, 4, 3, 12, 30),
+                data: const {'treeId': 'tree-1'},
+                payload: '{"type":"tree_invitation"}',
+              ),
+              AppNotificationItem(
+                id: 'notification-2',
+                type: 'chat_message',
+                title: 'Анастасия',
+                body: 'Привет',
+                createdAt: DateTime(2026, 4, 3, 12, 31),
+                data: const {'chatId': 'chat-1'},
+                payload: '{"type":"chat"}',
+              ),
+            ],
+            onMarkAllNotificationsRead: (items) async {
+              markedItems = items;
+            },
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      expect(find.byTooltip('Прочитать всё'), findsOneWidget);
+
+      await tester.tap(find.byTooltip('Прочитать всё'));
+      await tester.pumpAndSettle();
+
+      expect(markedItems, hasLength(2));
+      expect(find.text('Пока нет новых уведомлений'), findsOneWidget);
     },
   );
 }
