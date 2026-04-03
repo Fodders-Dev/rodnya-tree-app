@@ -490,7 +490,7 @@ class CustomApiChatService implements ChatServiceInterface {
       final attachment = attachments[index];
       final uploadedUrl = await storageService.uploadImage(
         attachment,
-        'chat-images/$userId',
+        'chat-media/$userId',
       );
       if (uploadedUrl != null && uploadedUrl.isNotEmpty) {
         mediaUrls.add(uploadedUrl);

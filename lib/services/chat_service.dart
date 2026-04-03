@@ -242,7 +242,7 @@ class ChatService implements ChatServiceInterface {
       final attachment = attachments[index];
       final uploadedUrl = await _storageService.uploadImage(
         attachment,
-        'chat-images/${currentUser.uid}',
+        'chat-media/${currentUser.uid}',
       );
       if (uploadedUrl != null && uploadedUrl.isNotEmpty) {
         uploadedUrls.add(uploadedUrl);

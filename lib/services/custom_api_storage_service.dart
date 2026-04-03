@@ -187,6 +187,15 @@ class CustomApiStorageService implements StorageServiceInterface {
     if (normalizedName.endsWith('.webp')) {
       return '.webp';
     }
+    if (normalizedName.endsWith('.mp4')) {
+      return '.mp4';
+    }
+    if (normalizedName.endsWith('.mov')) {
+      return '.mov';
+    }
+    if (normalizedName.endsWith('.webm')) {
+      return '.webm';
+    }
 
     switch (mimeType) {
       case 'image/png':
@@ -197,6 +206,12 @@ class CustomApiStorageService implements StorageServiceInterface {
         return '.jpeg';
       case 'image/jpg':
         return '.jpg';
+      case 'video/mp4':
+        return '.mp4';
+      case 'video/quicktime':
+        return '.mov';
+      case 'video/webm':
+        return '.webm';
     }
     return fallback;
   }
@@ -209,8 +224,15 @@ class CustomApiStorageService implements StorageServiceInterface {
         return 'image/webp';
       case '.jpeg':
       case '.jpg':
-      default:
         return 'image/jpeg';
+      case '.mp4':
+        return 'video/mp4';
+      case '.mov':
+        return 'video/quicktime';
+      case '.webm':
+        return 'video/webm';
+      default:
+        return 'application/octet-stream';
     }
   }
 }

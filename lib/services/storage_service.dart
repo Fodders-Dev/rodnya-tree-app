@@ -36,8 +36,12 @@ class StorageService implements StorageServiceInterface {
   @override
   Future<String?> uploadImage(XFile imageFile, String folder) async {
     try {
-      // Генерируем уникальное имя файла
-      final String fileName = '${Uuid().v4()}.jpg';
+      final extension = _detectExtension(
+        imageFile.name,
+        mimeType: imageFile.mimeType,
+      );
+      final contentType = _contentTypeForExtension(extension);
+      final String fileName = '${Uuid().v4()}$extension';
       final String path = '$folder/$fileName';
 
       // Загружаем файл
@@ -45,13 +49,13 @@ class StorageService implements StorageServiceInterface {
         // Для веб-платформы
         final bytes = await imageFile.readAsBytes();
         final ref = _storage.ref().child(path);
-        await ref.putData(bytes, SettableMetadata(contentType: 'image/jpeg'));
+        await ref.putData(bytes, SettableMetadata(contentType: contentType));
         return await ref.getDownloadURL();
       } else {
         // Для мобильных платформ
         final file = File(imageFile.path);
         final ref = _storage.ref().child(path);
-        await ref.putFile(file);
+        await ref.putFile(file, SettableMetadata(contentType: contentType));
         return await ref.getDownloadURL();
       }
     } catch (e) {
@@ -178,6 +182,70 @@ class StorageService implements StorageServiceInterface {
     }
   }
   // <<< КОНЕЦ НОВОГО МЕТОДА >>>
+
+  String _detectExtension(String rawName, {String? mimeType}) {
+    final normalizedName = rawName.toLowerCase().trim();
+    if (normalizedName.endsWith('.png')) {
+      return '.png';
+    }
+    if (normalizedName.endsWith('.jpeg')) {
+      return '.jpeg';
+    }
+    if (normalizedName.endsWith('.jpg')) {
+      return '.jpg';
+    }
+    if (normalizedName.endsWith('.webp')) {
+      return '.webp';
+    }
+    if (normalizedName.endsWith('.mp4')) {
+      return '.mp4';
+    }
+    if (normalizedName.endsWith('.mov')) {
+      return '.mov';
+    }
+    if (normalizedName.endsWith('.webm')) {
+      return '.webm';
+    }
+
+    switch (mimeType) {
+      case 'image/png':
+        return '.png';
+      case 'image/webp':
+        return '.webp';
+      case 'image/jpeg':
+        return '.jpeg';
+      case 'image/jpg':
+        return '.jpg';
+      case 'video/mp4':
+        return '.mp4';
+      case 'video/quicktime':
+        return '.mov';
+      case 'video/webm':
+        return '.webm';
+      default:
+        return '.jpg';
+    }
+  }
+
+  String _contentTypeForExtension(String extension) {
+    switch (extension) {
+      case '.png':
+        return 'image/png';
+      case '.webp':
+        return 'image/webp';
+      case '.jpeg':
+      case '.jpg':
+        return 'image/jpeg';
+      case '.mp4':
+        return 'video/mp4';
+      case '.mov':
+        return 'video/quicktime';
+      case '.webm':
+        return 'video/webm';
+      default:
+        return 'application/octet-stream';
+    }
+  }
 
   // В будущем здесь можно добавить методы для загрузки других типов файлов, удаления и т.д.
   // Future<String?> uploadPostImage(String postId, File file) async { ... }

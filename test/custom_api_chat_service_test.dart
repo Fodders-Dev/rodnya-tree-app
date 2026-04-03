@@ -551,8 +551,10 @@ void main() {
 
   test('CustomApiChatService reports attachment upload progress', () async {
     final uploadedUrls = <String>[];
+    final uploadFolders = <String>[];
     final storageService = _FakeStorageService(
       onUpload: (index) => 'https://cdn.example.test/photo-$index.jpg',
+      onUploadFolder: uploadFolders.add,
     );
     final progressEvents = <ChatSendProgress>[];
 
@@ -618,6 +620,10 @@ void main() {
     expect(uploadedUrls, [
       'https://cdn.example.test/photo-1.jpg',
       'https://cdn.example.test/photo-2.jpg',
+    ]);
+    expect(uploadFolders, [
+      'chat-media/user-1',
+      'chat-media/user-1',
     ]);
     expect(
       progressEvents.map((event) => event.stage).toList(),
@@ -791,14 +797,19 @@ class _FakeWebSocketSink implements WebSocketSink {
 }
 
 class _FakeStorageService implements StorageServiceInterface {
-  _FakeStorageService({required this.onUpload});
+  _FakeStorageService({
+    required this.onUpload,
+    this.onUploadFolder,
+  });
 
   final String Function(int index) onUpload;
+  final void Function(String folder)? onUploadFolder;
   int _uploadCounter = 0;
 
   @override
   Future<String?> uploadImage(XFile imageFile, String folder) async {
     _uploadCounter += 1;
+    onUploadFolder?.call(folder);
     return onUpload(_uploadCounter);
   }
 
