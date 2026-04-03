@@ -179,7 +179,7 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
             const SizedBox(height: 8),
             Text(
               'Начните общение с родственниками — '
-              'откройте профиль родственника и нажмите «Написать»',
+              'нажмите «Написать» в списке родных или в профиле родственника',
               textAlign: TextAlign.center,
               style: theme.textTheme.bodyMedium?.copyWith(
                 color: Colors.grey[600],

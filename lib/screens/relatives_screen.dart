@@ -584,6 +584,7 @@ class _RelativesScreenState extends State<RelativesScreen> {
           final int unreadCount = chatPreview?.unreadCount ?? 0;
           final bool isLastMessageFromMe =
               chatPreview?.lastMessageSenderId == _currentUserId;
+          final bool canStartChat = _canStartChat(relative);
 
           return ListTile(
             leading: GestureDetector(
@@ -706,22 +707,23 @@ class _RelativesScreenState extends State<RelativesScreen> {
                         ),
                     ],
                   )
-                : null,
+                : Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (canStartChat)
+                        IconButton(
+                          icon: const Icon(Icons.message_outlined),
+                          tooltip: 'Написать ${relative.displayName}',
+                          visualDensity: VisualDensity.compact,
+                          onPressed: () => _openChatWithRelative(relative),
+                        ),
+                      const Icon(Icons.chevron_right),
+                    ],
+                  ),
             onTap: () {
               if (isOnlineTab) {
-                final userId = relative.userId;
-                if (userId != null && userId != _authService.currentUserId) {
-                  final nameParam = Uri.encodeComponent(relative.displayName);
-                  final photoParam = (relative.photoUrl != null &&
-                          relative.photoUrl!.isNotEmpty)
-                      ? Uri.encodeComponent(relative.photoUrl!)
-                      : '';
-                  debugPrint(
-                    'Navigating to chat with ${relative.displayName} (ID: $userId)',
-                  );
-                  context.push(
-                    '/relatives/chat/$userId?name=$nameParam&photo=$photoParam&relativeId=${relative.id}',
-                  );
+                if (canStartChat) {
+                  _openChatWithRelative(relative);
                 } else {
                   debugPrint(
                     'Cannot chat with self or invalid user, navigating to details for ${relative.displayName}',
@@ -778,23 +780,46 @@ class _RelativesScreenState extends State<RelativesScreen> {
       final RelationType relevantRelationType = userIsPerson1
           ? directRelation.relation2to1
           : directRelation.relation1to2;
-
-      switch (relevantRelationType) {
-        case RelationType.spouse:
-        case RelationType.partner:
-          return 'Супруг(а)/Партнер';
-        case RelationType.parent:
-          return 'Родитель';
-        case RelationType.child:
-          return 'Ребенок';
-        case RelationType.sibling:
-          return 'Брат/Сестра';
-        default:
-          return 'Родственник';
+      final relationLabel = FamilyRelation.getRelationName(
+        relevantRelationType,
+        relative.gender,
+      );
+      if (relationLabel.isNotEmpty &&
+          relationLabel !=
+              FamilyRelation.getGenericRelationTypeStringRu(
+                RelationType.other,
+              )) {
+        return relationLabel;
       }
     }
 
     return 'Родственник';
+  }
+
+  bool _canStartChat(FamilyPerson relative) {
+    final userId = relative.userId;
+    return userId != null &&
+        userId.isNotEmpty &&
+        userId != _authService.currentUserId;
+  }
+
+  void _openChatWithRelative(FamilyPerson relative) {
+    final userId = relative.userId;
+    if (userId == null || userId.isEmpty) {
+      return;
+    }
+
+    final nameParam = Uri.encodeComponent(relative.displayName);
+    final photoParam =
+        (relative.photoUrl != null && relative.photoUrl!.isNotEmpty)
+            ? Uri.encodeComponent(relative.photoUrl!)
+            : '';
+    debugPrint(
+      'Navigating to chat with ${relative.displayName} (ID: $userId)',
+    );
+    context.push(
+      '/relatives/chat/$userId?name=$nameParam&photo=$photoParam&relativeId=${relative.id}',
+    );
   }
 
   String _formatTimestamp(DateTime dateTime) {
