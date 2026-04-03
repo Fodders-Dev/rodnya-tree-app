@@ -4,12 +4,15 @@ import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lineage/backend/interfaces/auth_service_interface.dart';
 import 'package:lineage/backend/interfaces/family_tree_service_interface.dart';
+import 'package:lineage/backend/backend_runtime_config.dart';
 import 'package:lineage/backend/models/tree_invitation.dart';
 import 'package:lineage/models/family_tree.dart';
 import 'package:lineage/models/family_person.dart';
 import 'package:lineage/models/family_relation.dart';
 import 'package:lineage/providers/tree_provider.dart';
 import 'package:lineage/screens/home_screen.dart';
+import 'package:lineage/services/browser_notification_bridge.dart';
+import 'package:lineage/services/custom_api_notification_service.dart';
 import 'package:lineage/services/local_storage_service.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -73,6 +76,42 @@ class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _FakeBrowserNotificationBridge implements BrowserNotificationBridge {
+  _FakeBrowserNotificationBridge({
+    required this.permissionStatusValue,
+  });
+
+  BrowserNotificationPermissionStatus permissionStatusValue;
+  int permissionRequests = 0;
+
+  @override
+  bool get isSupported => true;
+
+  @override
+  BrowserNotificationPermissionStatus get permissionStatus =>
+      permissionStatusValue;
+
+  @override
+  Future<BrowserNotificationPermissionStatus> requestPermission({
+    bool prompt = true,
+  }) async {
+    permissionRequests += 1;
+    if (permissionStatusValue ==
+        BrowserNotificationPermissionStatus.defaultState) {
+      permissionStatusValue = BrowserNotificationPermissionStatus.granted;
+    }
+    return permissionStatusValue;
+  }
+
+  @override
+  Future<void> showNotification({
+    required String title,
+    required String body,
+    String? tag,
+    VoidCallback? onClick,
+  }) async {}
 }
 
 void main() {
@@ -209,6 +248,46 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('trees invitations'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'HomeScreen предлагает включить browser уведомления и скрывает prompt после разрешения',
+    (tester) async {
+      final bridge = _FakeBrowserNotificationBridge(
+        permissionStatusValue: BrowserNotificationPermissionStatus.defaultState,
+      );
+      final notificationService = await CustomApiNotificationService.create(
+        runtimeConfig: const BackendRuntimeConfig(),
+        browserNotificationBridge: bridge,
+      );
+      await notificationService.setNotificationsEnabled(false);
+      getIt
+          .registerSingleton<CustomApiNotificationService>(notificationService);
+
+      final treeProvider = TreeProvider();
+      await treeProvider.selectTree('tree-1', 'Тестовое дерево');
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider<TreeProvider>.value(
+          value: treeProvider,
+          child: const MaterialApp(home: HomeScreen()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Включите уведомления о семье'), findsOneWidget);
+      expect(find.text('Включить уведомления'), findsOneWidget);
+
+      await tester.tap(find.text('Включить уведомления'));
+      await tester.pumpAndSettle();
+
+      expect(notificationService.notificationsEnabled, isTrue);
+      expect(find.text('Включите уведомления о семье'), findsNothing);
+      expect(
+        find.textContaining('Уведомления включены'),
+        findsOneWidget,
+      );
     },
   );
 }

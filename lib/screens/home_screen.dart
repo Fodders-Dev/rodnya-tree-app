@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import '../services/post_service.dart';
 import '../models/post.dart';
@@ -14,6 +15,8 @@ import '../backend/models/tree_invitation.dart';
 import '../widgets/post_card.dart';
 import '../backend/interfaces/auth_service_interface.dart';
 import '../services/sync_service.dart';
+import '../services/browser_notification_bridge.dart';
+import '../services/custom_api_notification_service.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({Key? key}) : super(key: key);
@@ -36,6 +39,12 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _currentTreeId;
   TreeProvider? _treeProviderInstance;
   String? _selectedFeedBranchPersonId;
+  bool _isEnablingBrowserNotifications = false;
+
+  CustomApiNotificationService? get _customNotificationService =>
+      GetIt.I.isRegistered<CustomApiNotificationService>()
+          ? GetIt.I<CustomApiNotificationService>()
+          : null;
 
   @override
   void initState() {
@@ -234,6 +243,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 if (pendingInvitations.isNotEmpty)
                   SliverToBoxAdapter(
                     child: _buildPendingInvitationsBanner(pendingInvitations),
+                  ),
+                if (_shouldShowBrowserNotificationPrompt)
+                  SliverToBoxAdapter(
+                    child: _buildBrowserNotificationsPrompt(),
                   ),
                 if (_currentTreeId == null) ...[
                   SliverToBoxAdapter(child: _buildNoTreeSelectedHero()),
@@ -440,6 +453,139 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ),
     );
+  }
+
+  bool get _shouldShowBrowserNotificationPrompt {
+    final notificationService = _customNotificationService;
+    if (notificationService == null) {
+      return false;
+    }
+
+    if (!notificationService.notificationsEnabled) {
+      return true;
+    }
+
+    if (!kIsWeb) {
+      return false;
+    }
+
+    final permissionStatus = notificationService.browserPermissionStatus;
+    if (permissionStatus == BrowserNotificationPermissionStatus.unsupported) {
+      return false;
+    }
+
+    return permissionStatus != BrowserNotificationPermissionStatus.granted;
+  }
+
+  Widget _buildBrowserNotificationsPrompt() {
+    final notificationService = _customNotificationService;
+    if (notificationService == null) {
+      return const SizedBox.shrink();
+    }
+
+    final permissionStatus = notificationService.browserPermissionStatus;
+    final theme = Theme.of(context);
+    final title =
+        kIsWeb && permissionStatus == BrowserNotificationPermissionStatus.denied
+            ? 'Уведомления в браузере отключены'
+            : 'Включите уведомления о семье';
+    final description = kIsWeb &&
+            permissionStatus == BrowserNotificationPermissionStatus.denied
+        ? 'Без разрешения браузера можно пропустить новое сообщение или приглашение в дерево.'
+        : 'Родня сможет сразу показать новые сообщения, приглашения в дерево и важные семейные события.';
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.secondaryContainer,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.notifications_active_outlined,
+                  color: theme.colorScheme.onSecondaryContainer,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700,
+                      color: theme.colorScheme.onSecondaryContainer,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              description,
+              style: TextStyle(
+                color: theme.colorScheme.onSecondaryContainer,
+                height: 1.4,
+              ),
+            ),
+            const SizedBox(height: 14),
+            FilledButton.icon(
+              onPressed: _isEnablingBrowserNotifications
+                  ? null
+                  : _enableBrowserNotifications,
+              icon: _isEnablingBrowserNotifications
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.notifications_outlined),
+              label: const Text('Включить уведомления'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _enableBrowserNotifications() async {
+    final notificationService = _customNotificationService;
+    if (notificationService == null) {
+      return;
+    }
+
+    setState(() {
+      _isEnablingBrowserNotifications = true;
+    });
+
+    try {
+      final enabled = await notificationService.setNotificationsEnabled(
+        true,
+        promptForBrowserPermission: true,
+      );
+      if (!mounted) {
+        return;
+      }
+
+      final message = enabled
+          ? 'Уведомления включены. Родня сможет показать новые сообщения и приглашения.'
+          : 'Браузер не дал разрешение на уведомления. Это можно изменить позже в настройках браузера.';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message)),
+      );
+      setState(() {});
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isEnablingBrowserNotifications = false;
+        });
+      }
+    }
   }
 
   Widget _buildNoTreeSelectedNextSteps() {
