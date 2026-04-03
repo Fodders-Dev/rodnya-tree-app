@@ -5,6 +5,7 @@ import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
+import 'package:path/path.dart' as path;
 
 import '../backend/interfaces/chat_service_interface.dart';
 import '../models/chat_message.dart';
@@ -60,6 +61,8 @@ class ChatScreen extends StatefulWidget {
     this.photoUrl,
     this.relativeId,
     this.chatType = 'direct',
+    this.pickImages,
+    this.pickVideo,
   }) : assert(
           (chatId != null && chatId != '') ||
               (otherUserId != null && otherUserId != ''),
@@ -72,6 +75,8 @@ class ChatScreen extends StatefulWidget {
   final String? photoUrl;
   final String? relativeId;
   final String chatType;
+  final Future<List<XFile>> Function()? pickImages;
+  final Future<XFile?> Function()? pickVideo;
 
   bool get isGroup => chatType == 'group' || chatType == 'branch';
 
@@ -175,21 +180,23 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  Future<void> _pickAttachments() async {
+  Future<void> _pickImageAttachments() async {
     if (_selectedAttachments.length >= _maxAttachments) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Можно прикрепить не более 6 изображений.'),
+          content: Text('Можно прикрепить не более 6 вложений.'),
         ),
       );
       return;
     }
 
     try {
-      final picked = await _imagePicker.pickMultiImage(
-        imageQuality: 80,
-        maxWidth: 1600,
-      );
+      final picked = widget.pickImages != null
+          ? await widget.pickImages!()
+          : await _imagePicker.pickMultiImage(
+              imageQuality: 80,
+              maxWidth: 1600,
+            );
       if (picked.isEmpty || !mounted) {
         return;
       }
@@ -203,7 +210,7 @@ class _ChatScreenState extends State<ChatScreen> {
       if (_selectedAttachments.length < next.length && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Можно прикрепить не более 6 изображений.'),
+            content: Text('Можно прикрепить не более 6 вложений.'),
           ),
         );
       }
@@ -212,9 +219,85 @@ class _ChatScreenState extends State<ChatScreen> {
         return;
       }
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Не удалось выбрать изображения.')),
+        const SnackBar(content: Text('Не удалось выбрать фотографии.')),
       );
     }
+  }
+
+  Future<void> _pickVideoAttachment() async {
+    if (_selectedAttachments.length >= _maxAttachments) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Можно прикрепить не более 6 вложений.'),
+        ),
+      );
+      return;
+    }
+
+    try {
+      final picked = widget.pickVideo != null
+          ? await widget.pickVideo!()
+          : await _imagePicker.pickVideo(
+              source: ImageSource.gallery,
+              maxDuration: const Duration(minutes: 10),
+            );
+      if (picked == null || !mounted) {
+        return;
+      }
+
+      setState(() {
+        _selectedAttachments.add(picked);
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Не удалось выбрать видео.')),
+      );
+    }
+  }
+
+  Future<void> _openAttachmentPicker() async {
+    final choice = await showModalBottomSheet<_AttachmentPickerChoice>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text('Фото'),
+              subtitle:
+                  const Text('Сожмём перед отправкой, чтобы быстрее дошло'),
+              onTap: () => Navigator.of(context).pop(
+                _AttachmentPickerChoice.images,
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.videocam_outlined),
+              title: const Text('Видео'),
+              subtitle: const Text('Добавится как вложение в чат'),
+              onTap: () => Navigator.of(context).pop(
+                _AttachmentPickerChoice.video,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (!mounted || choice == null) {
+      return;
+    }
+
+    if (choice == _AttachmentPickerChoice.images) {
+      await _pickImageAttachments();
+      return;
+    }
+
+    await _pickVideoAttachment();
   }
 
   Future<void> _sendCurrentMessage() async {
@@ -529,46 +612,68 @@ class _ChatScreenState extends State<ChatScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             if (_selectedAttachments.isNotEmpty)
-              SizedBox(
-                height: 74,
-                child: ListView.separated(
-                  scrollDirection: Axis.horizontal,
-                  itemCount: _selectedAttachments.length,
-                  separatorBuilder: (_, __) => const SizedBox(width: 8),
-                  itemBuilder: (context, index) {
-                    final attachment = _selectedAttachments[index];
-                    return Stack(
-                      clipBehavior: Clip.none,
-                      children: [
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(14),
-                          child: SizedBox(
-                            width: 74,
-                            height: 74,
-                            child: _LocalImagePreview(file: attachment),
-                          ),
-                        ),
-                        Positioned(
-                          top: -6,
-                          right: -6,
-                          child: IconButton.filledTonal(
-                            onPressed: () {
-                              setState(() {
-                                _selectedAttachments.removeAt(index);
-                              });
-                            },
-                            icon: const Icon(Icons.close, size: 16),
-                            visualDensity: VisualDensity.compact,
-                            style: IconButton.styleFrom(
-                              minimumSize: const Size(28, 28),
-                              padding: EdgeInsets.zero,
+              Column(
+                children: [
+                  Row(
+                    children: [
+                      Text(
+                        _attachmentSummaryLabel(_selectedAttachments),
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                              fontWeight: FontWeight.w600,
                             ),
-                          ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Фото будут ужаты, видео отправится как файл.',
+                          style: Theme.of(context).textTheme.bodySmall,
                         ),
-                      ],
-                    );
-                  },
-                ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    height: 74,
+                    child: ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      itemCount: _selectedAttachments.length,
+                      separatorBuilder: (_, __) => const SizedBox(width: 8),
+                      itemBuilder: (context, index) {
+                        final attachment = _selectedAttachments[index];
+                        return Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(14),
+                              child: SizedBox(
+                                width: 74,
+                                height: 74,
+                                child: _LocalMediaTile(file: attachment),
+                              ),
+                            ),
+                            Positioned(
+                              top: -6,
+                              right: -6,
+                              child: IconButton.filledTonal(
+                                onPressed: () {
+                                  setState(() {
+                                    _selectedAttachments.removeAt(index);
+                                  });
+                                },
+                                icon: const Icon(Icons.close, size: 16),
+                                visualDensity: VisualDensity.compact,
+                                style: IconButton.styleFrom(
+                                  minimumSize: const Size(28, 28),
+                                  padding: EdgeInsets.zero,
+                                ),
+                              ),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+                  ),
+                ],
               ),
             if (_selectedAttachments.isNotEmpty) const SizedBox(height: 8),
             Row(
@@ -577,9 +682,9 @@ class _ChatScreenState extends State<ChatScreen> {
                 IconButton(
                   onPressed: _selectedAttachments.length >= _maxAttachments
                       ? null
-                      : _pickAttachments,
-                  tooltip: 'Добавить фото',
-                  icon: const Icon(Icons.photo_library_outlined),
+                      : _openAttachmentPicker,
+                  tooltip: 'Добавить вложение',
+                  icon: const Icon(Icons.attach_file_rounded),
                 ),
                 Expanded(
                   child: Container(
@@ -699,20 +804,30 @@ class _ChatScreenState extends State<ChatScreen> {
 
     switch (message.progress?.stage) {
       case ChatSendProgressStage.preparing:
-        return 'Подготовка фото...';
+        return 'Подготовка вложений...';
       case ChatSendProgressStage.uploading:
         final total = message.progress?.total ?? 0;
         final completed = message.progress?.completed ?? 0;
         if (total > 1) {
-          return 'Загрузка фото $completed/$total';
+          return 'Загрузка вложений $completed/$total';
         }
-        return 'Загрузка фото...';
+        return 'Загрузка вложения...';
       case ChatSendProgressStage.sending:
       case null:
         return 'Отправляется...';
     }
   }
+
+  String _attachmentSummaryLabel(List<XFile> files) {
+    final count = files.length;
+    final noun = count == 1
+        ? 'вложение'
+        : (count >= 2 && count <= 4 ? 'вложения' : 'вложений');
+    return '$count $noun';
+  }
 }
+
+enum _AttachmentPickerChoice { images, video }
 
 class _ChatBubble extends StatelessWidget {
   const _ChatBubble({
@@ -822,19 +937,10 @@ class _RemoteMediaGrid extends StatelessWidget {
     if (urls.length == 1) {
       return ClipRRect(
         borderRadius: BorderRadius.circular(14),
-        child: Image.network(
-          urls.first,
+        child: SizedBox(
           width: 220,
           height: 220,
-          fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => const SizedBox(
-            width: 220,
-            height: 220,
-            child: ColoredBox(
-              color: Color(0x11000000),
-              child: Center(child: Icon(Icons.broken_image_outlined)),
-            ),
-          ),
+          child: _RemoteMediaTile(url: urls.first),
         ),
       );
     }
@@ -849,19 +955,10 @@ class _RemoteMediaGrid extends StatelessWidget {
             .map(
               (url) => ClipRRect(
                 borderRadius: BorderRadius.circular(12),
-                child: Image.network(
-                  url,
+                child: SizedBox(
                   width: 106,
                   height: 106,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => const SizedBox(
-                    width: 106,
-                    height: 106,
-                    child: ColoredBox(
-                      color: Color(0x11000000),
-                      child: Center(child: Icon(Icons.broken_image_outlined)),
-                    ),
-                  ),
+                  child: _RemoteMediaTile(url: url),
                 ),
               ),
             )
@@ -884,7 +981,7 @@ class _LocalMediaGrid extends StatelessWidget {
         child: SizedBox(
           width: 220,
           height: 220,
-          child: _LocalImagePreview(file: files.first),
+          child: _LocalMediaTile(file: files.first),
         ),
       );
     }
@@ -902,7 +999,7 @@ class _LocalMediaGrid extends StatelessWidget {
                 child: SizedBox(
                   width: 106,
                   height: 106,
-                  child: _LocalImagePreview(file: file),
+                  child: _LocalMediaTile(file: file),
                 ),
               ),
             )
@@ -940,4 +1037,140 @@ class _LocalImagePreview extends StatelessWidget {
       },
     );
   }
+}
+
+class _LocalMediaTile extends StatelessWidget {
+  const _LocalMediaTile({required this.file});
+
+  final XFile file;
+
+  @override
+  Widget build(BuildContext context) {
+    final kind = _attachmentKindFromName(file.name, file.path);
+    if (kind == _ChatAttachmentKind.image) {
+      return _LocalImagePreview(file: file);
+    }
+
+    return _AttachmentPlaceholder(
+      icon: kind == _ChatAttachmentKind.video
+          ? Icons.videocam_outlined
+          : Icons.insert_drive_file_outlined,
+      label:
+          kind == _ChatAttachmentKind.video ? 'Видео' : _displayName(file.name),
+    );
+  }
+}
+
+class _RemoteMediaTile extends StatelessWidget {
+  const _RemoteMediaTile({required this.url});
+
+  final String url;
+
+  @override
+  Widget build(BuildContext context) {
+    final kind = _attachmentKindFromName(url, url);
+    if (kind == _ChatAttachmentKind.image) {
+      return Image.network(
+        url,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => const _AttachmentPlaceholder(
+          icon: Icons.broken_image_outlined,
+          label: 'Файл',
+        ),
+      );
+    }
+
+    return _AttachmentPlaceholder(
+      icon: kind == _ChatAttachmentKind.video
+          ? Icons.videocam_outlined
+          : Icons.insert_drive_file_outlined,
+      label: kind == _ChatAttachmentKind.video ? 'Видео' : _displayName(url),
+    );
+  }
+}
+
+class _AttachmentPlaceholder extends StatelessWidget {
+  const _AttachmentPlaceholder({
+    required this.icon,
+    required this.label,
+  });
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return ColoredBox(
+      color: const Color(0x11000000),
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(10),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon),
+              const SizedBox(height: 6),
+              Text(
+                label,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+enum _ChatAttachmentKind { image, video, other }
+
+_ChatAttachmentKind _attachmentKindFromName(
+  String? preferredName,
+  String? fallbackPath,
+) {
+  final fileName = (preferredName?.trim().isNotEmpty ?? false)
+      ? preferredName!.trim()
+      : (fallbackPath ?? '');
+  final extension = path.extension(fileName).toLowerCase();
+  const imageExtensions = <String>{
+    '.jpg',
+    '.jpeg',
+    '.png',
+    '.webp',
+    '.gif',
+    '.bmp',
+    '.heic',
+    '.heif',
+  };
+  if (imageExtensions.contains(extension)) {
+    return _ChatAttachmentKind.image;
+  }
+
+  const videoExtensions = <String>{
+    '.mp4',
+    '.mov',
+    '.webm',
+    '.m4v',
+    '.avi',
+    '.mkv',
+    '.3gp',
+  };
+  if (videoExtensions.contains(extension)) {
+    return _ChatAttachmentKind.video;
+  }
+
+  return _ChatAttachmentKind.other;
+}
+
+String _displayName(String? value) {
+  if (value == null || value.trim().isEmpty) {
+    return 'Файл';
+  }
+  final normalized = value.split('/').last.split('?').first;
+  return normalized.length > 24
+      ? '${normalized.substring(0, 21)}...'
+      : normalized;
 }

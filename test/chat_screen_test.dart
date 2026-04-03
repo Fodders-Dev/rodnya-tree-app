@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -134,5 +135,38 @@ void main() {
     await tester.pump();
 
     expect(find.text('Отправлено'), findsOneWidget);
+  });
+
+  testWidgets('ChatScreen lets user choose video attachment from picker sheet',
+      (tester) async {
+    final chatService = _FakeChatService();
+    getIt.registerSingleton<ChatServiceInterface>(chatService);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ChatScreen(
+          chatId: 'chat-1',
+          title: 'Тестовый чат',
+          pickVideo: () async => XFile.fromData(
+            Uint8List.fromList(<int>[1, 2, 3]),
+            name: 'clip.mp4',
+            mimeType: 'video/mp4',
+          ),
+        ),
+      ),
+    );
+
+    chatService._messagesController.add(const <ChatMessage>[]);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Добавить вложение'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Видео'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('1 вложение'), findsOneWidget);
+    expect(find.text('Фото будут ужаты, видео отправится как файл.'),
+        findsOneWidget);
   });
 }
