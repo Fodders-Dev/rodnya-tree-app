@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'dart:async';
 import 'package:get_it/get_it.dart';
 import 'package:intl/intl.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../models/family_person.dart';
 import '../models/family_relation.dart';
@@ -12,7 +13,18 @@ import '../providers/tree_provider.dart';
 import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/chat_service_interface.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
+import '../backend/interfaces/invitation_link_service_interface.dart';
 import '../services/crashlytics_service.dart';
+
+class _ContactStatus {
+  const _ContactStatus({
+    required this.label,
+    required this.color,
+  });
+
+  final String label;
+  final Color color;
+}
 
 class RelativesScreen extends StatefulWidget {
   const RelativesScreen({super.key});
@@ -26,6 +38,8 @@ class _RelativesScreenState extends State<RelativesScreen> {
       GetIt.I<FamilyTreeServiceInterface>();
   final ChatServiceInterface _chatService = GetIt.I<ChatServiceInterface>();
   final AuthServiceInterface _authService = GetIt.I<AuthServiceInterface>();
+  final InvitationLinkServiceInterface _invitationLinkService =
+      GetIt.I<InvitationLinkServiceInterface>();
   final CrashlyticsService _crashlyticsService = CrashlyticsService();
 
   StreamSubscription? _relativesSubscription;
@@ -585,6 +599,8 @@ class _RelativesScreenState extends State<RelativesScreen> {
           final bool isLastMessageFromMe =
               chatPreview?.lastMessageSenderId == _currentUserId;
           final bool canStartChat = _canStartChat(relative);
+          final bool canInvite = _canInviteRelative(relative);
+          final contactStatus = _getContactStatus(relative);
 
           return ListTile(
             leading: GestureDetector(
@@ -624,6 +640,33 @@ class _RelativesScreenState extends State<RelativesScreen> {
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(color: Colors.grey[600], fontSize: 13),
                 ),
+                if (!isOnlineTab)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 8,
+                          height: 8,
+                          decoration: BoxDecoration(
+                            color: contactStatus.color,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          contactStatus.label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: contactStatus.color,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 if (isOnlineTab && lastMessageText.isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.only(top: 2.0),
@@ -717,6 +760,13 @@ class _RelativesScreenState extends State<RelativesScreen> {
                           visualDensity: VisualDensity.compact,
                           onPressed: () => _openChatWithRelative(relative),
                         ),
+                      if (canInvite)
+                        IconButton(
+                          icon: const Icon(Icons.person_add_alt_1_outlined),
+                          tooltip: 'Пригласить ${relative.displayName}',
+                          visualDensity: VisualDensity.compact,
+                          onPressed: () => _shareInviteForRelative(relative),
+                        ),
                       const Icon(Icons.chevron_right),
                     ],
                   ),
@@ -803,6 +853,34 @@ class _RelativesScreenState extends State<RelativesScreen> {
         userId != _authService.currentUserId;
   }
 
+  bool _canInviteRelative(FamilyPerson relative) {
+    final userId = relative.userId;
+    return (userId == null || userId.isEmpty) &&
+        relative.id != _currentUserPersonId &&
+        _currentTreeId != null;
+  }
+
+  _ContactStatus _getContactStatus(FamilyPerson relative) {
+    if (_canStartChat(relative)) {
+      return _ContactStatus(
+        label: 'Можно написать',
+        color: Colors.green.shade700,
+      );
+    }
+
+    if (_canInviteRelative(relative)) {
+      return _ContactStatus(
+        label: 'Нужно пригласить',
+        color: Colors.orange.shade700,
+      );
+    }
+
+    return _ContactStatus(
+      label: 'Только просмотр',
+      color: Colors.grey.shade600,
+    );
+  }
+
   void _openChatWithRelative(FamilyPerson relative) {
     final userId = relative.userId;
     if (userId == null || userId.isEmpty) {
@@ -820,6 +898,32 @@ class _RelativesScreenState extends State<RelativesScreen> {
     context.push(
       '/relatives/chat/$userId?name=$nameParam&photo=$photoParam&relativeId=${relative.id}',
     );
+  }
+
+  Future<void> _shareInviteForRelative(FamilyPerson relative) async {
+    if (!_canInviteRelative(relative) || _currentTreeId == null) {
+      return;
+    }
+
+    try {
+      final inviteUrl = _invitationLinkService.buildInvitationLink(
+        treeId: _currentTreeId!,
+        personId: relative.id,
+      );
+      await Share.share(
+        'Присоединяйтесь к нашему семейному древу в Родне: ${inviteUrl.toString()}',
+        subject: 'Приглашение в Родню',
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Не удалось подготовить приглашение.'),
+        ),
+      );
+    }
   }
 
   String _formatTimestamp(DateTime dateTime) {

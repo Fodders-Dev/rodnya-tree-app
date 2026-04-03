@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:lineage/backend/interfaces/auth_service_interface.dart';
 import 'package:lineage/backend/interfaces/chat_service_interface.dart';
 import 'package:lineage/backend/interfaces/family_tree_service_interface.dart';
+import 'package:lineage/backend/interfaces/invitation_link_service_interface.dart';
 import 'package:lineage/models/chat_message.dart';
 import 'package:lineage/models/chat_preview.dart';
 import 'package:lineage/models/family_person.dart';
@@ -131,7 +132,23 @@ class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
     updatedAt: DateTime(2024, 1, 1),
   );
 
-  late final List<FamilyPerson> _people = [_me, _father, _wife, _sister];
+  final _grandfather = FamilyPerson(
+    id: 'grandfather',
+    treeId: 'tree-1',
+    name: 'Кузнецов Анатолий Степанович',
+    gender: Gender.male,
+    isAlive: true,
+    createdAt: DateTime(2024, 1, 1),
+    updatedAt: DateTime(2024, 1, 1),
+  );
+
+  late final List<FamilyPerson> _people = [
+    _me,
+    _father,
+    _wife,
+    _sister,
+    _grandfather,
+  ];
   late final List<FamilyRelation> _relations = [
     FamilyRelation(
       id: 'father-me',
@@ -160,6 +177,16 @@ class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
       person2Id: 'me',
       relation1to2: RelationType.sibling,
       relation2to1: RelationType.sibling,
+      isConfirmed: true,
+      createdAt: DateTime(2024, 1, 1),
+    ),
+    FamilyRelation(
+      id: 'grandfather-father',
+      treeId: 'tree-1',
+      person1Id: 'grandfather',
+      person2Id: 'father',
+      relation1to2: RelationType.parent,
+      relation2to1: RelationType.child,
       isConfirmed: true,
       createdAt: DateTime(2024, 1, 1),
     ),
@@ -196,6 +223,13 @@ class _FakeLocalStorageService implements LocalStorageService {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
+class _FakeInvitationLinkService implements InvitationLinkServiceInterface {
+  @override
+  Uri buildInvitationLink({required String treeId, required String personId}) {
+    return Uri.parse('https://example.com/invite/$treeId/$personId');
+  }
+}
+
 void main() {
   final getIt = GetIt.instance;
 
@@ -207,6 +241,9 @@ void main() {
     getIt.registerSingleton<FamilyTreeServiceInterface>(
         _FakeFamilyTreeService());
     getIt.registerSingleton<LocalStorageService>(_FakeLocalStorageService());
+    getIt.registerSingleton<InvitationLinkServiceInterface>(
+      _FakeInvitationLinkService(),
+    );
   });
 
   tearDown(() async {
@@ -255,8 +292,14 @@ void main() {
     expect(find.text('Отец'), findsOneWidget);
     expect(find.text('Жена'), findsOneWidget);
     expect(find.text('Сестра'), findsOneWidget);
+    expect(find.text('Можно написать'), findsNWidgets(3));
+    expect(find.text('Нужно пригласить'), findsOneWidget);
     expect(
       find.byTooltip('Написать Кузнецов Андрей Анатольевич'),
+      findsOneWidget,
+    );
+    expect(
+      find.byTooltip('Пригласить Кузнецов Анатолий Степанович'),
       findsOneWidget,
     );
   });
