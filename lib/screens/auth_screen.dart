@@ -264,9 +264,52 @@ class _AuthScreenState extends State<AuthScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _buildHeroPanel(theme, compact: true),
-          const SizedBox(height: 18),
           _buildAuthCard(theme, compact: true),
+          const SizedBox(height: 14),
+          _buildCompactSupportPanel(theme),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCompactSupportPanel(ThemeData theme) {
+    final colorScheme = theme.colorScheme;
+
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: colorScheme.primary.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: colorScheme.primary.withValues(alpha: 0.12)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'После входа',
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Откроются дерево семьи, родственники, профиль и личные сообщения.',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: colorScheme.onSurfaceVariant,
+              height: 1.4,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: const [
+              _CompactFeatureChip(label: 'Семейное дерево'),
+              _CompactFeatureChip(label: 'Родственники'),
+              _CompactFeatureChip(label: 'Профиль'),
+              _CompactFeatureChip(label: 'Личные сообщения'),
+            ],
+          ),
         ],
       ),
     );
@@ -308,7 +351,7 @@ class _AuthScreenState extends State<AuthScreen> {
                 border: Border.all(color: Colors.white24),
               ),
               child: const Text(
-                'Rodnya MVP',
+                'Родня',
                 style: TextStyle(
                   color: Colors.white,
                   fontSize: 12,
@@ -319,7 +362,7 @@ class _AuthScreenState extends State<AuthScreen> {
             ),
             SizedBox(height: compact ? 18 : 24),
             Text(
-              'Семейное дерево для близких, а не для дев-стенда',
+              'Семейное дерево и связи для близких',
               style: theme.textTheme.displaySmall?.copyWith(
                 color: Colors.white,
                 fontWeight: FontWeight.w800,
@@ -328,7 +371,7 @@ class _AuthScreenState extends State<AuthScreen> {
             ),
             const SizedBox(height: 14),
             Text(
-              'Войдите в Родню, чтобы открыть дерево семьи, профили родственников, личные сообщения и публичный web-вход из одного места.',
+              'Вход и регистрация открывают дерево семьи, профили родственников, личные сообщения и публичный просмотр дерева.',
               style: theme.textTheme.titleMedium?.copyWith(
                 color: Colors.white.withValues(alpha: 0.9),
                 fontWeight: FontWeight.w400,
@@ -340,9 +383,9 @@ class _AuthScreenState extends State<AuthScreen> {
               spacing: 10,
               runSpacing: 10,
               children: const [
-                _HeroChip(label: 'Web-first вход'),
-                _HeroChip(label: 'Android не сломан'),
-                _HeroChip(label: 'Приватные связи'),
+                _HeroChip(label: 'Семейное дерево'),
+                _HeroChip(label: 'Личные связи'),
+                _HeroChip(label: 'Профиль семьи'),
                 _HeroChip(label: 'Публичный просмотр дерева'),
               ],
             ),
@@ -378,7 +421,7 @@ class _AuthScreenState extends State<AuthScreen> {
                             _focusPrimaryField();
                           },
                     icon: const Icon(Icons.family_restroom_outlined),
-                    label: const Text('Создать семейный круг'),
+                    label: const Text('Зарегистрироваться'),
                     style: OutlinedButton.styleFrom(
                       foregroundColor: Colors.white,
                       side: const BorderSide(color: Colors.white38),
@@ -756,6 +799,32 @@ class _FeatureCard extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _CompactFeatureChip extends StatelessWidget {
+  const _CompactFeatureChip({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: theme.colorScheme.outlineVariant),
+      ),
+      child: Text(
+        label,
+        style: theme.textTheme.bodySmall?.copyWith(
+          fontWeight: FontWeight.w700,
+        ),
       ),
     );
   }

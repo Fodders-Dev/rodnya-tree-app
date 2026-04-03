@@ -55,12 +55,9 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    expect(
-      find.text('Семейное дерево для близких, а не для дев-стенда'),
-      findsOneWidget,
-    );
+    expect(find.text('Семейное дерево и связи для близких'), findsOneWidget);
     expect(find.text('Войти сейчас'), findsOneWidget);
-    expect(find.text('Создать семейный круг'), findsOneWidget);
+    expect(find.text('Зарегистрироваться'), findsOneWidget);
     expect(find.text('Публичный вход с web'), findsOneWidget);
     expect(find.text('Вход в Родню'), findsOneWidget);
     expect(find.text('Email'), findsOneWidget);
@@ -78,11 +75,30 @@ void main() {
     );
 
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Создать семейный круг'));
+    await tester.tap(find.text('Зарегистрироваться'));
     await tester.pumpAndSettle();
 
     expect(find.text('Создать аккаунт'), findsOneWidget);
     expect(find.text('Как вас зовут'), findsOneWidget);
-    expect(find.text('Зарегистрироваться'), findsOneWidget);
+    expect(find.text('Зарегистрироваться'), findsWidgets);
+  });
+
+  testWidgets('AuthScreen keeps login form first on mobile layouts',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: AuthScreen(),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(find.text('Вход в Родню'), findsOneWidget);
+    expect(find.text('Email'), findsOneWidget);
+    expect(find.text('После входа'), findsOneWidget);
+    expect(find.text('Семейное дерево и связи для близких'), findsNothing);
   });
 }
