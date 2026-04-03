@@ -152,6 +152,11 @@ class AppStartupService implements AppStartupServiceInterface {
 
       _registerOrReplaceSingleton<AuthServiceInterface>(customApiAuthService);
 
+      // Clear stale persisted sessions before other startup services hit the API.
+      if (customApiAuthService.currentUserId != null) {
+        await customApiAuthService.checkProfileCompleteness();
+      }
+
       final customApiRealtimeService = CustomApiRealtimeService(
         authService: customApiAuthService,
         runtimeConfig: runtimeConfig,

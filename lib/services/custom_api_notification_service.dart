@@ -212,8 +212,10 @@ class CustomApiNotificationService implements NotificationServiceInterface {
       return;
     }
 
-    await _registerRemotePushDevice();
-    await _registerBrowserPushDevice();
+    final hasActiveSession = await _registerPushDevicesSafely();
+    if (!hasActiveSession) {
+      return;
+    }
 
     if (_realtimeService != null) {
       await _realtimeService!.connect();
@@ -471,7 +473,13 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     _notificationsEnabled = enabled;
     await _preferences.setBool(_notificationsEnabledStorageKey, enabled);
     if (enabled && kIsWeb) {
-      await _registerBrowserPushDevice();
+      final hasActiveSession = await _registerPushDevicesSafely(
+        registerRemoteDevice: false,
+      );
+      if (!hasActiveSession) {
+        _notificationsEnabled = false;
+        await _preferences.setBool(_notificationsEnabledStorageKey, false);
+      }
     }
     return _notificationsEnabled;
   }
@@ -704,6 +712,33 @@ class CustomApiNotificationService implements NotificationServiceInterface {
       _registeredPushTokenStorageKey,
       nextFingerprint,
     );
+  }
+
+  Future<bool> _registerPushDevicesSafely({
+    bool registerRemoteDevice = true,
+    bool registerBrowserDevice = true,
+  }) async {
+    try {
+      if (registerRemoteDevice) {
+        await _registerRemotePushDevice();
+      }
+      if (registerBrowserDevice) {
+        await _registerBrowserPushDevice();
+      }
+      return true;
+    } on CustomApiException catch (error) {
+      if (await _handleUnauthorizedError(error)) {
+        _updateUnreadNotificationsCount(0);
+        return false;
+      }
+
+      debugPrint('Custom API push registration failed: ${error.message}');
+      return true;
+    } catch (error, stackTrace) {
+      debugPrint('Custom API push registration failed: $error');
+      debugPrintStack(stackTrace: stackTrace);
+      return true;
+    }
   }
 
   Future<void> _registerBrowserPushDevice() async {

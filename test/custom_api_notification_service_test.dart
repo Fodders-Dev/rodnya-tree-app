@@ -455,6 +455,74 @@ void main() {
       await service.dispose();
     },
   );
+
+  test(
+    'CustomApiNotificationService signs out cleanly when push registration gets unauthorized',
+    () async {
+      final client = MockClient((request) async {
+        if (request.url.path == '/v1/push/devices' &&
+            request.method == 'POST') {
+          return http.Response(
+            jsonEncode({'message': 'Сессия не найдена или истекла'}),
+            401,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+
+        if (request.url.path == '/v1/auth/logout' && request.method == 'POST') {
+          return http.Response('', 204);
+        }
+
+        return http.Response('{"message":"not found"}', 404);
+      });
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        'custom_api_session_v1',
+        jsonEncode({
+          'accessToken': 'access-token',
+          'refreshToken': 'refresh-token',
+          'userId': 'user-1',
+          'email': 'dev@lineage.app',
+          'displayName': 'Dev User',
+          'providerIds': ['password'],
+          'isProfileComplete': true,
+          'missingFields': const [],
+        }),
+      );
+
+      final authService = await CustomApiAuthService.create(
+        httpClient: client,
+        preferences: prefs,
+        runtimeConfig: const BackendRuntimeConfig(
+          apiBaseUrl: 'https://api.example.ru',
+        ),
+        invitationService: InvitationService(),
+      );
+
+      final service = await CustomApiNotificationService.create(
+        preferences: prefs,
+        authService: authService,
+        runtimeConfig: const BackendRuntimeConfig(
+          apiBaseUrl: 'https://api.example.ru',
+        ),
+        httpClient: client,
+        pollInterval: const Duration(hours: 1),
+        remotePushTokenProvider: () async => 'rustore-token-1',
+      );
+
+      await service.startForegroundSync();
+
+      expect(authService.currentUserId, isNull);
+      expect(service.unreadNotificationsCount, 0);
+      expect(
+        prefs.containsKey('custom_api_session_v1'),
+        isFalse,
+      );
+
+      await service.dispose();
+    },
+  );
 }
 
 class _FakeFlutterLocalNotificationsPlatform
