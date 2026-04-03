@@ -26,6 +26,19 @@ def releaseStoreFile = (releaseSigningProperties['storeFile'] ?: System.getenv("
 def releaseStorePassword = (releaseSigningProperties['storePassword'] ?: System.getenv("LINEAGE_KEYSTORE_PASSWORD"))?.toString()
 def releaseKeyAlias = (releaseSigningProperties['keyAlias'] ?: System.getenv("LINEAGE_KEY_ALIAS"))?.toString()
 def releaseKeyPassword = (releaseSigningProperties['keyPassword'] ?: System.getenv("LINEAGE_KEY_PASSWORD"))?.toString()
+def resolveSigningFile = { String path ->
+    if (path == null || path.trim().isEmpty()) {
+        return null
+    }
+
+    final candidates = [
+            file(path),
+            rootProject.file(path),
+            rootProject.file(path.replace("../", "")),
+    ]
+
+    return candidates.find { it.exists() } ?: file(path)
+}
 def hasReleaseSigning = [releaseStoreFile, releaseStorePassword, releaseKeyAlias, releaseKeyPassword]
         .every { it != null && !it.trim().isEmpty() }
 def rustoreApplicationId = (System.getenv("LINEAGE_RUSTORE_APPLICATION_ID")
@@ -53,7 +66,7 @@ android {
     signingConfigs {
         release {
             if (hasReleaseSigning) {
-                storeFile file(releaseStoreFile)
+                storeFile resolveSigningFile(releaseStoreFile)
                 storePassword releaseStorePassword
                 keyAlias releaseKeyAlias
                 keyPassword releaseKeyPassword
