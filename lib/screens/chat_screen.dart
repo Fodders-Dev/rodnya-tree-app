@@ -467,7 +467,11 @@ class _ChatScreenState extends State<ChatScreen> {
                     ),
                   ),
                   Text(
-                    widget.isGroup ? 'Групповой чат' : 'Личные сообщения',
+                    widget.chatType == 'branch'
+                        ? 'Чат ветки'
+                        : (widget.isGroup
+                            ? 'Групповой чат'
+                            : 'Личные сообщения'),
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ],
@@ -727,6 +731,9 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget _buildRemoteBubble(ChatMessage message, bool isMe) {
     return _ChatBubble(
       isMe: isMe,
+      senderLabel: widget.isGroup && !isMe
+          ? _groupSenderLabel(message.senderName, message.senderId)
+          : null,
       text: message.text,
       timeLabel: DateFormat.Hm('ru').format(message.timestamp),
       isRead: message.isRead,
@@ -825,6 +832,17 @@ class _ChatScreenState extends State<ChatScreen> {
         : (count >= 2 && count <= 4 ? 'вложения' : 'вложений');
     return '$count $noun';
   }
+
+  String? _groupSenderLabel(String? senderName, String senderId) {
+    final normalizedName = senderName?.trim();
+    if (normalizedName != null && normalizedName.isNotEmpty) {
+      return normalizedName;
+    }
+    if (senderId == _currentUserId) {
+      return 'Вы';
+    }
+    return 'Участник';
+  }
 }
 
 enum _AttachmentPickerChoice { images, video }
@@ -835,6 +853,7 @@ class _ChatBubble extends StatelessWidget {
     required this.text,
     required this.timeLabel,
     required this.isRead,
+    this.senderLabel,
     this.mediaUrls = const <String>[],
     this.localAttachments = const <XFile>[],
   });
@@ -843,6 +862,7 @@ class _ChatBubble extends StatelessWidget {
   final String text;
   final String timeLabel;
   final bool isRead;
+  final String? senderLabel;
   final List<String> mediaUrls;
   final List<XFile> localAttachments;
 
@@ -870,6 +890,19 @@ class _ChatBubble extends StatelessWidget {
             crossAxisAlignment:
                 isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
             children: [
+              if (senderLabel != null && senderLabel!.isNotEmpty) ...[
+                Text(
+                  senderLabel!,
+                  style: TextStyle(
+                    color: isMe
+                        ? Colors.white.withValues(alpha: 0.92)
+                        : Colors.black54,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 6),
+              ],
               if (mediaUrls.isNotEmpty) ...[
                 _RemoteMediaGrid(urls: mediaUrls),
                 const SizedBox(height: 8),

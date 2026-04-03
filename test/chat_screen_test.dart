@@ -89,6 +89,10 @@ class _FakeChatService implements ChatServiceInterface {
     String? title,
   }) async =>
       'chat-branch-1';
+
+  void emitMessages(List<ChatMessage> messages) {
+    _messagesController.add(messages);
+  }
 }
 
 void main() {
@@ -168,5 +172,39 @@ void main() {
     expect(find.text('1 вложение'), findsOneWidget);
     expect(find.text('Фото будут ужаты, видео отправится как файл.'),
         findsOneWidget);
+  });
+
+  testWidgets('ChatScreen shows sender labels for incoming branch messages',
+      (tester) async {
+    final chatService = _FakeChatService();
+    getIt.registerSingleton<ChatServiceInterface>(chatService);
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: ChatScreen(
+          chatId: 'chat-branch-1',
+          title: 'Ветка Кузнецовых',
+          chatType: 'branch',
+        ),
+      ),
+    );
+
+    chatService.emitMessages([
+      ChatMessage(
+        id: 'm-1',
+        chatId: 'chat-branch-1',
+        senderId: 'user-2',
+        senderName: 'Андрей Кузнецов',
+        text: 'Сбор у дома в 19:00',
+        timestamp: DateTime(2026, 4, 3, 19, 0),
+        isRead: false,
+        participants: const ['user-1', 'user-2', 'user-3'],
+      ),
+    ]);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Чат ветки'), findsOneWidget);
+    expect(find.text('Андрей Кузнецов'), findsOneWidget);
+    expect(find.text('Сбор у дома в 19:00'), findsOneWidget);
   });
 }
