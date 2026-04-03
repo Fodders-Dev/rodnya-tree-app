@@ -186,6 +186,18 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
                 height: 1.4,
               ),
             ),
+            const SizedBox(height: 24),
+            FilledButton.icon(
+              onPressed: () => context.go('/relatives'),
+              icon: const Icon(Icons.people_outline),
+              label: const Text('Открыть родных'),
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: () => context.go('/tree'),
+              icon: const Icon(Icons.account_tree_outlined),
+              label: const Text('Открыть дерево'),
+            ),
           ],
         ),
       ),
