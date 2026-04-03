@@ -28,6 +28,7 @@
 - `DELETE /v1/media`
 - `POST /v1/trees`
 - `GET /v1/trees`
+- `DELETE /v1/trees/:treeId`
 - `GET /v1/trees/selectable`
 - `GET /v1/trees/:treeId/persons`
 - `POST /v1/trees/:treeId/persons`

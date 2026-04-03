@@ -562,6 +562,20 @@ class CustomApiFamilyTreeService implements FamilyTreeServiceInterface {
   }
 
   @override
+  Future<void> removeTree(String treeId) async {
+    await _requestDelete(path: '/v1/trees/$treeId');
+
+    final localStorageService = _localStorageService;
+    if (localStorageService != null) {
+      await localStorageService.deleteTree(treeId);
+      await localStorageService.deletePersonsByTreeId(treeId);
+      await localStorageService.deleteRelationsByTreeId(treeId);
+    }
+
+    _personTreeIds.removeWhere((_, cachedTreeId) => cachedTreeId == treeId);
+  }
+
+  @override
   Future<void> deleteRelative(String treeId, String personId) async {
     final resolvedPersonId = await _resolvePersonIdForTree(treeId, personId);
     if (resolvedPersonId == null) {

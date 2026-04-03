@@ -226,6 +226,9 @@ class _TreesScreenState extends State<TreesScreen>
                   onCopyPublicLink: currentTree.isPublic
                       ? () => _copyPublicLink(currentTree)
                       : null,
+                  destructiveActionLabel:
+                      _destructiveActionLabelForTree(currentTree),
+                  onDestructiveAction: () => _confirmRemoveTree(currentTree),
                   onTap: () => _openTree(currentTree),
                 ),
               ],
@@ -242,6 +245,9 @@ class _TreesScreenState extends State<TreesScreen>
                     role: _resolveRole(tree),
                     onCopyPublicLink:
                         tree.isPublic ? () => _copyPublicLink(tree) : null,
+                    destructiveActionLabel:
+                        _destructiveActionLabelForTree(tree),
+                    onDestructiveAction: () => _confirmRemoveTree(tree),
                     onTap: () => _openTree(tree),
                   ),
                 ),
@@ -259,6 +265,9 @@ class _TreesScreenState extends State<TreesScreen>
                     role: _resolveRole(tree),
                     onCopyPublicLink:
                         tree.isPublic ? () => _copyPublicLink(tree) : null,
+                    destructiveActionLabel:
+                        _destructiveActionLabelForTree(tree),
+                    onDestructiveAction: () => _confirmRemoveTree(tree),
                     onTap: () => _openTree(tree),
                   ),
                 ),
@@ -541,6 +550,94 @@ class _TreesScreenState extends State<TreesScreen>
     );
   }
 
+  String _destructiveActionLabelForTree(FamilyTree tree) {
+    return tree.creatorId == _authService.currentUserId
+        ? 'Удалить'
+        : 'Покинуть';
+  }
+
+  Future<void> _confirmRemoveTree(FamilyTree tree) async {
+    final isOwner = tree.creatorId == _authService.currentUserId;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: Text(isOwner ? 'Удалить дерево?' : 'Покинуть дерево?'),
+          content: Text(
+            isOwner
+                ? 'Дерево "${tree.name}" исчезнет для всех участников вместе с его карточками и связями.'
+                : 'Вы перестанете видеть дерево "${tree.name}" в своём списке. Само дерево останется у остальных участников.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Отмена'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: Theme.of(dialogContext).colorScheme.error,
+                foregroundColor: Theme.of(dialogContext).colorScheme.onError,
+              ),
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: Text(isOwner ? 'Удалить дерево' : 'Покинуть дерево'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true || !mounted) {
+      return;
+    }
+
+    final messenger = ScaffoldMessenger.of(context);
+    final treeProvider = Provider.of<TreeProvider>(context, listen: false);
+    final wasSelected = treeProvider.selectedTreeId == tree.id;
+
+    try {
+      await _familyTreeService.removeTree(tree.id);
+      await _loadUserTrees();
+      if (!mounted) {
+        return;
+      }
+
+      if (wasSelected) {
+        if (_myTrees.isNotEmpty) {
+          final nextTree = _myTrees.first;
+          await treeProvider.selectTree(nextTree.id, nextTree.name);
+        } else {
+          await treeProvider.clearSelection();
+        }
+      }
+
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            isOwner ? 'Дерево удалено.' : 'Вы покинули дерево.',
+          ),
+        ),
+      );
+    } catch (e, stackTrace) {
+      _crashlyticsService.logError(
+        e,
+        stackTrace,
+        reason: 'RemoveTreeError',
+      );
+      if (!mounted) {
+        return;
+      }
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            isOwner
+                ? 'Не удалось удалить дерево.'
+                : 'Не удалось покинуть дерево.',
+          ),
+        ),
+      );
+    }
+  }
+
   MemberRole _resolveRole(FamilyTree tree) {
     return tree.creatorId == _authService.currentUserId
         ? MemberRole.owner
@@ -656,6 +753,8 @@ class TreeCard extends StatelessWidget {
   final MemberRole role;
   final bool isSelected;
   final VoidCallback? onCopyPublicLink;
+  final String? destructiveActionLabel;
+  final VoidCallback? onDestructiveAction;
   final VoidCallback onTap;
 
   const TreeCard({
@@ -664,6 +763,8 @@ class TreeCard extends StatelessWidget {
     required this.role,
     this.isSelected = false,
     this.onCopyPublicLink,
+    this.destructiveActionLabel,
+    this.onDestructiveAction,
     required this.onTap,
   }) : super(key: key);
 
@@ -810,6 +911,17 @@ class TreeCard extends StatelessWidget {
                   ],
                 ),
               ),
+              if (onDestructiveAction != null && destructiveActionLabel != null)
+                IconButton(
+                  tooltip: destructiveActionLabel,
+                  onPressed: onDestructiveAction,
+                  color: Theme.of(context).colorScheme.error,
+                  icon: Icon(
+                    destructiveActionLabel == 'Удалить'
+                        ? Icons.delete_outline
+                        : Icons.logout,
+                  ),
+                ),
               if (onCopyPublicLink != null)
                 IconButton(
                   tooltip: 'Скопировать публичную ссылку',

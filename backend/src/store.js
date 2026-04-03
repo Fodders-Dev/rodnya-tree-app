@@ -537,6 +537,86 @@ class FileStore {
     return tree ? structuredClone(tree) : null;
   }
 
+  async removeTreeForUser({treeId, userId}) {
+    const db = await this._read();
+    const treeIndex = db.trees.findIndex((entry) => entry.id === treeId);
+    if (treeIndex < 0) {
+      return null;
+    }
+
+    const tree = db.trees[treeIndex];
+    tree.memberIds = Array.isArray(tree.memberIds) ? tree.memberIds : [];
+    tree.members = Array.isArray(tree.members) ? tree.members : [];
+
+    const isCreator = tree.creatorId === userId;
+    const isMember = tree.memberIds.includes(userId) || tree.members.includes(userId);
+    if (!isCreator && !isMember) {
+      return false;
+    }
+
+    if (isCreator) {
+      db.trees.splice(treeIndex, 1);
+      db.persons = db.persons.filter((entry) => entry.treeId !== treeId);
+      db.relations = db.relations.filter((entry) => entry.treeId !== treeId);
+      db.relationRequests = db.relationRequests.filter(
+        (entry) => entry.treeId !== treeId,
+      );
+      db.treeInvitations = db.treeInvitations.filter(
+        (entry) => entry.treeId !== treeId,
+      );
+      db.notifications = db.notifications.filter(
+        (entry) => entry.data?.treeId !== treeId,
+      );
+
+      const creator = db.users.find((entry) => entry.id === userId);
+      if (creator && Array.isArray(creator.creatorOfTreeIds)) {
+        creator.creatorOfTreeIds = creator.creatorOfTreeIds.filter(
+          (entry) => entry !== treeId,
+        );
+        creator.updatedAt = nowIso();
+      }
+
+      await this._write(db);
+      return {
+        action: "deleted",
+        tree: structuredClone(tree),
+      };
+    }
+
+    tree.memberIds = tree.memberIds.filter((entry) => entry !== userId);
+    tree.members = tree.members.filter((entry) => entry !== userId);
+    tree.updatedAt = nowIso();
+
+    for (const person of db.persons) {
+      if (person.treeId === treeId && person.userId === userId) {
+        person.userId = null;
+        person.updatedAt = nowIso();
+      }
+    }
+
+    db.relationRequests = db.relationRequests.filter((entry) => {
+      return !(
+        entry.treeId === treeId &&
+        (entry.senderId === userId || entry.recipientId === userId)
+      );
+    });
+    db.treeInvitations = db.treeInvitations.filter((entry) => {
+      return !(entry.treeId === treeId && entry.userId === userId);
+    });
+    db.notifications = db.notifications.filter((entry) => {
+      return !(
+        entry.userId === userId &&
+        entry.data?.treeId === treeId
+      );
+    });
+
+    await this._write(db);
+    return {
+      action: "left",
+      tree: structuredClone(tree),
+    };
+  }
+
   async findPublicTreeByRouteId(publicTreeId) {
     const db = await this._read();
     const normalizedRouteId = String(publicTreeId || "").trim();

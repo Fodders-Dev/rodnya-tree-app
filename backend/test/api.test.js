@@ -534,6 +534,164 @@ test("public tree endpoints expose read-only tree data without auth", async () =
   }
 });
 
+test("tree delete removes owned trees and lets members leave invited trees", async () => {
+  const ctx = await startTestServer();
+
+  try {
+    const ownerResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "tree-delete-owner@lineage.app",
+        password: "secret123",
+        displayName: "Tree Delete Owner",
+      }),
+    });
+    assert.equal(ownerResponse.status, 201);
+    const owner = await ownerResponse.json();
+
+    const inviteeResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "tree-delete-member@lineage.app",
+        password: "secret123",
+        displayName: "Tree Delete Member",
+      }),
+    });
+    assert.equal(inviteeResponse.status, 201);
+    const invitee = await inviteeResponse.json();
+
+    const createOwnedTreeResponse = await fetch(`${ctx.baseUrl}/v1/trees`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${owner.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "Удаляемое дерево",
+        description: "Будет удалено создателем",
+        isPrivate: true,
+      }),
+    });
+    assert.equal(createOwnedTreeResponse.status, 201);
+    const ownedTreePayload = await createOwnedTreeResponse.json();
+    const ownedTreeId = ownedTreePayload.tree.id;
+
+    const createSharedTreeResponse = await fetch(`${ctx.baseUrl}/v1/trees`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${owner.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "Общее дерево",
+        description: "Из него участник выйдет",
+        isPrivate: true,
+      }),
+    });
+    assert.equal(createSharedTreeResponse.status, 201);
+    const sharedTreePayload = await createSharedTreeResponse.json();
+    const sharedTreeId = sharedTreePayload.tree.id;
+
+    const createInvitationResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${sharedTreeId}/invitations`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${owner.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          recipientUserId: invitee.user.id,
+          relationToTree: "родственник",
+        }),
+      },
+    );
+    assert.equal(createInvitationResponse.status, 201);
+    const createdInvitation = await createInvitationResponse.json();
+
+    const acceptInvitationResponse = await fetch(
+      `${ctx.baseUrl}/v1/tree-invitations/${createdInvitation.invitation.invitationId}/respond`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${invitee.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({accept: true}),
+      },
+    );
+    assert.equal(acceptInvitationResponse.status, 200);
+
+    const leaveTreeResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${sharedTreeId}`,
+      {
+        method: "DELETE",
+        headers: {
+          authorization: `Bearer ${invitee.accessToken}`,
+        },
+      },
+    );
+    assert.equal(leaveTreeResponse.status, 200);
+    const leavePayload = await leaveTreeResponse.json();
+    assert.equal(leavePayload.action, "left");
+
+    const inviteeTreesAfterLeaveResponse = await fetch(`${ctx.baseUrl}/v1/trees`, {
+      headers: {authorization: `Bearer ${invitee.accessToken}`},
+    });
+    assert.equal(inviteeTreesAfterLeaveResponse.status, 200);
+    const inviteeTreesAfterLeave = await inviteeTreesAfterLeaveResponse.json();
+    assert.equal(inviteeTreesAfterLeave.trees.length, 0);
+
+    const ownerSharedTreePersonsResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${sharedTreeId}/persons`,
+      {
+        headers: {authorization: `Bearer ${owner.accessToken}`},
+      },
+    );
+    assert.equal(ownerSharedTreePersonsResponse.status, 200);
+    const ownerSharedTreePersons = await ownerSharedTreePersonsResponse.json();
+    assert.equal(
+      ownerSharedTreePersons.persons.some(
+        (person) => person.userId === invitee.user.id,
+      ),
+      false,
+    );
+
+    const deleteOwnedTreeResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${ownedTreeId}`,
+      {
+        method: "DELETE",
+        headers: {
+          authorization: `Bearer ${owner.accessToken}`,
+        },
+      },
+    );
+    assert.equal(deleteOwnedTreeResponse.status, 200);
+    const deletePayload = await deleteOwnedTreeResponse.json();
+    assert.equal(deletePayload.action, "deleted");
+
+    const ownerTreesAfterDeleteResponse = await fetch(`${ctx.baseUrl}/v1/trees`, {
+      headers: {authorization: `Bearer ${owner.accessToken}`},
+    });
+    assert.equal(ownerTreesAfterDeleteResponse.status, 200);
+    const ownerTreesAfterDelete = await ownerTreesAfterDeleteResponse.json();
+    assert.equal(ownerTreesAfterDelete.trees.length, 1);
+    assert.equal(ownerTreesAfterDelete.trees[0].id, sharedTreeId);
+
+    const deletedTreePersonsResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${ownedTreeId}/persons`,
+      {
+        headers: {authorization: `Bearer ${owner.accessToken}`},
+      },
+    );
+    assert.equal(deletedTreePersonsResponse.status, 404);
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
 test("chat endpoints cover preview list, history, send and mark as read", async () => {
   const ctx = await startTestServer();
 

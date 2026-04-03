@@ -144,6 +144,47 @@ class LocalStorageService {
     return box.get(treeId);
   }
 
+  Future<void> deleteTree(String treeId) async {
+    try {
+      await Hive.box<FamilyTree>(_boxTrees).delete(treeId);
+      debugPrint('LocalStorage: Deleted tree $treeId');
+    } catch (e) {
+      debugPrint('LocalStorage: Error deleting tree $treeId: $e');
+    }
+  }
+
+  Future<void> deletePersonsByTreeId(String treeId) async {
+    final box = Hive.box<FamilyPerson>(_boxPersons);
+    final keysToDelete = box.keys.where((key) {
+      final person = box.get(key);
+      return person?.treeId == treeId;
+    }).toList();
+    if (keysToDelete.isEmpty) {
+      return;
+    }
+    await box.deleteAll(keysToDelete);
+    debugPrint(
+      'LocalStorage: Deleted ${keysToDelete.length} persons for tree $treeId',
+    );
+  }
+
+  Future<void> deleteRelationsByTreeId(String treeId) async {
+    final box = Hive.box<FamilyRelation>(_boxRelations);
+    final keysToDelete = box.keys.where((key) {
+      final relation = box.get(key);
+      return relation?.treeId == treeId;
+    }).toList();
+    if (keysToDelete.isEmpty) {
+      clearRelationCacheForTree(treeId);
+      return;
+    }
+    await box.deleteAll(keysToDelete);
+    clearRelationCacheForTree(treeId);
+    debugPrint(
+      'LocalStorage: Deleted ${keysToDelete.length} relations for tree $treeId',
+    );
+  }
+
   // --- Операции с персонами ---
   Future<void> savePerson(FamilyPerson person) async {
     final box = Hive.box<FamilyPerson>(_boxPersons);

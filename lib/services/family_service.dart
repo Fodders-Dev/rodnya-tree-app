@@ -73,6 +73,105 @@ class FamilyService implements FamilyTreeServiceInterface {
     return treeId;
   }
 
+  @override
+  Future<void> removeTree(String treeId) async {
+    final user = _auth.currentUser;
+    if (user == null) {
+      throw Exception('Пользователь не авторизован');
+    }
+
+    final treeRef = _firestore.collection('family_trees').doc(treeId);
+    final treeDoc = await treeRef.get();
+    if (!treeDoc.exists) {
+      throw Exception('Дерево не найдено');
+    }
+
+    final tree = FamilyTree.fromFirestore(treeDoc);
+    final isCreator = tree.creatorId == user.uid;
+    final isMember =
+        tree.memberIds.contains(user.uid) || tree.members.contains(user.uid);
+    if (!isCreator && !isMember) {
+      throw Exception('Нет доступа к дереву');
+    }
+
+    if (isCreator) {
+      final batch = _firestore.batch();
+      batch.delete(treeRef);
+
+      final treeMembers = await _firestore
+          .collection('tree_members')
+          .where('treeId', isEqualTo: treeId)
+          .get();
+      for (final doc in treeMembers.docs) {
+        batch.delete(doc.reference);
+      }
+
+      final persons = await _firestore
+          .collection('family_persons')
+          .where('treeId', isEqualTo: treeId)
+          .get();
+      for (final doc in persons.docs) {
+        batch.delete(doc.reference);
+      }
+
+      final relations = await _firestore
+          .collection('family_relations')
+          .where('treeId', isEqualTo: treeId)
+          .get();
+      for (final doc in relations.docs) {
+        batch.delete(doc.reference);
+      }
+
+      final requests = await _firestore
+          .collection('relation_requests')
+          .where('treeId', isEqualTo: treeId)
+          .get();
+      for (final doc in requests.docs) {
+        batch.delete(doc.reference);
+      }
+
+      batch.update(_firestore.collection('users').doc(user.uid), {
+        'creatorOfTreeIds': FieldValue.arrayRemove([treeId]),
+      });
+
+      await batch.commit();
+    } else {
+      final batch = _firestore.batch();
+      final memberships = await _firestore
+          .collection('tree_members')
+          .where('treeId', isEqualTo: treeId)
+          .where('userId', isEqualTo: user.uid)
+          .get();
+      for (final doc in memberships.docs) {
+        batch.delete(doc.reference);
+      }
+
+      batch.update(treeRef, {
+        'memberIds': FieldValue.arrayRemove([user.uid]),
+        'members': FieldValue.arrayRemove([user.uid]),
+        'updatedAt': DateTime.now(),
+      });
+
+      final linkedPersons = await _firestore
+          .collection('family_persons')
+          .where('treeId', isEqualTo: treeId)
+          .where('userId', isEqualTo: user.uid)
+          .get();
+      for (final doc in linkedPersons.docs) {
+        batch.update(doc.reference, {
+          'userId': null,
+          'updatedAt': DateTime.now(),
+        });
+      }
+
+      await batch.commit();
+    }
+
+    await _localStorageService.deleteTree(treeId);
+    await _localStorageService.deletePersonsByTreeId(treeId);
+    await _localStorageService.deleteRelationsByTreeId(treeId);
+  }
+
   // Создание нового offline-родственника
   Future<FamilyPerson> createOfflineRelative({
     required String treeId,

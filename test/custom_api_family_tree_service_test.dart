@@ -16,6 +16,57 @@ void main() {
     SharedPreferences.setMockInitialValues({});
   });
 
+  test('CustomApiFamilyTreeService removes tree via backend route', () async {
+    var deleteCalls = 0;
+
+    final client = MockClient((request) async {
+      if (request.url.path == '/v1/trees/tree-1' &&
+          request.method == 'DELETE') {
+        deleteCalls += 1;
+        expect(request.headers['authorization'], 'Bearer access-token');
+        return http.Response('', 204);
+      }
+
+      return http.Response('{"message":"not found"}', 404);
+    });
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'custom_api_session_v1',
+      jsonEncode({
+        'accessToken': 'access-token',
+        'refreshToken': 'refresh-token',
+        'userId': 'user-1',
+        'email': 'dev@lineage.app',
+        'displayName': 'Dev User',
+        'providerIds': ['password'],
+        'isProfileComplete': true,
+        'missingFields': const [],
+      }),
+    );
+
+    final authService = await CustomApiAuthService.create(
+      httpClient: client,
+      preferences: prefs,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      invitationService: InvitationService(),
+    );
+
+    final treeService = CustomApiFamilyTreeService(
+      authService: authService,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      httpClient: client,
+    );
+
+    await treeService.removeTree('tree-1');
+
+    expect(deleteCalls, 1);
+  });
+
   test('CustomApiFamilyTreeService covers tree CRUD and direct relations',
       () async {
     final trees = <Map<String, dynamic>>[];

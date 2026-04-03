@@ -358,6 +358,11 @@ class PendingBackendFamilyTreeService implements FamilyTreeServiceInterface {
   }
 
   @override
+  Future<void> removeTree(String treeId) {
+    throw UnsupportedError(_pendingProviderMessage('tree'));
+  }
+
+  @override
   Future<void> sendOfflineRelationRequestByEmail({
     required String treeId,
     required String email,

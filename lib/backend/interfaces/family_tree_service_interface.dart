@@ -68,6 +68,7 @@ abstract class FamilyTreeServiceInterface {
     required String targetPersonId,
     required RelationType relationType,
   });
+  Future<void> removeTree(String treeId);
   Future<void> deleteRelative(String treeId, String personId);
   Future<bool> hasDirectRelation({
     required String treeId,

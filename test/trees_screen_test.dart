@@ -43,6 +43,7 @@ class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
 
   final List<FamilyTree> _trees;
   final List<TreeInvitation> _invitations;
+  final List<String> removedTreeIds = <String>[];
 
   @override
   Future<List<FamilyTree>> getUserTrees() async => _trees;
@@ -54,6 +55,12 @@ class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
   @override
   Future<void> respondToTreeInvitation(
       String invitationId, bool accept) async {}
+
+  @override
+  Future<void> removeTree(String treeId) async {
+    removedTreeIds.add(treeId);
+    _trees.removeWhere((tree) => tree.id == treeId);
+  }
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -233,5 +240,49 @@ void main() {
     expect(find.text('Другие деревья'), findsOneWidget);
     expect(find.text('Дерево родственников'), findsOneWidget);
     expect(find.text('Участник'), findsOneWidget);
+  });
+
+  testWidgets('TreesScreen даёт удалить своё дерево и покинуть чужое',
+      (tester) async {
+    treeService = _FakeFamilyTreeService(
+      trees: [
+        _buildTree(id: 'tree-own', name: 'Моё дерево'),
+        _buildTree(
+          id: 'tree-member',
+          name: 'Чужое дерево',
+          creatorId: 'user-2',
+          memberIds: const ['user-1', 'user-2'],
+        ),
+      ],
+      invitations: const [],
+    );
+    getIt.registerSingleton<FamilyTreeServiceInterface>(treeService!);
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider(
+        create: (_) => TreeProvider(),
+        child: const MaterialApp(home: TreesScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byTooltip('Удалить'), findsOneWidget);
+    await tester.dragUntilVisible(
+      find.byTooltip('Покинуть'),
+      find.byType(Scrollable).first,
+      const Offset(0, -250),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('Покинуть'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Удалить').first);
+    await tester.pumpAndSettle();
+    expect(find.text('Удалить дерево?'), findsOneWidget);
+
+    await tester.tap(find.text('Удалить дерево'));
+    await tester.pumpAndSettle();
+
+    expect(treeService!.removedTreeIds, contains('tree-own'));
+    expect(find.text('Моё дерево'), findsNothing);
   });
 }

@@ -678,6 +678,43 @@ function createApp({store, config, realtimeHub = null, pushGateway = null}) {
     });
   });
 
+  app.delete("/v1/trees/:treeId", requireAuth, async (req, res) => {
+    const tree = await store.findTree(req.params.treeId);
+    if (!tree) {
+      res.status(404).json({message: "Дерево не найдено"});
+      return;
+    }
+
+    const memberIds = Array.isArray(tree.memberIds) ? tree.memberIds : [];
+    const members = Array.isArray(tree.members) ? tree.members : [];
+    const hasAccess =
+      tree.creatorId === req.auth.user.id ||
+      memberIds.includes(req.auth.user.id) ||
+      members.includes(req.auth.user.id);
+    if (!hasAccess) {
+      res.status(403).json({message: "Доступ к дереву запрещён"});
+      return;
+    }
+
+    const result = await store.removeTreeForUser({
+      treeId: req.params.treeId,
+      userId: req.auth.user.id,
+    });
+    if (result === null) {
+      res.status(404).json({message: "Дерево не найдено"});
+      return;
+    }
+    if (result === false) {
+      res.status(403).json({message: "Доступ к дереву запрещён"});
+      return;
+    }
+
+    res.json({
+      action: result.action,
+      tree: mapTree(result.tree),
+    });
+  });
+
   app.get("/v1/public/trees/:publicTreeId", async (req, res) => {
     const tree = await requirePublicTree(req, res, req.params.publicTreeId);
     if (!tree) {
