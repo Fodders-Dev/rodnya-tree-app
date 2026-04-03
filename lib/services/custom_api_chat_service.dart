@@ -71,7 +71,7 @@ class CustomApiChatService implements ChatServiceInterface {
         try {
           controller.add(await _fetchChatPreviews());
         } on CustomApiException catch (error, stackTrace) {
-          if (await _handleUnauthorizedError(error)) {
+          if (await _handleSessionError(error)) {
             pollingEnabled = false;
             timer?.cancel();
             await realtimeSubscription?.cancel();
@@ -80,6 +80,13 @@ class CustomApiChatService implements ChatServiceInterface {
           }
           controller.addError(error, stackTrace);
         } catch (error, stackTrace) {
+          if (await _handleSessionError(error)) {
+            pollingEnabled = false;
+            timer?.cancel();
+            await realtimeSubscription?.cancel();
+            controller.add(const <ChatPreview>[]);
+            return;
+          }
           controller.addError(error, stackTrace);
         }
       }
@@ -126,7 +133,7 @@ class CustomApiChatService implements ChatServiceInterface {
         try {
           controller.add(await _fetchTotalUnreadCount());
         } on CustomApiException catch (error, stackTrace) {
-          if (await _handleUnauthorizedError(error)) {
+          if (await _handleSessionError(error)) {
             pollingEnabled = false;
             timer?.cancel();
             await realtimeSubscription?.cancel();
@@ -135,6 +142,13 @@ class CustomApiChatService implements ChatServiceInterface {
           }
           controller.addError(error, stackTrace);
         } catch (error, stackTrace) {
+          if (await _handleSessionError(error)) {
+            pollingEnabled = false;
+            timer?.cancel();
+            await realtimeSubscription?.cancel();
+            controller.add(0);
+            return;
+          }
           controller.addError(error, stackTrace);
         }
       }
@@ -181,7 +195,7 @@ class CustomApiChatService implements ChatServiceInterface {
         try {
           controller.add(await _fetchMessages(chatId));
         } on CustomApiException catch (error, stackTrace) {
-          if (await _handleUnauthorizedError(error)) {
+          if (await _handleSessionError(error)) {
             pollingEnabled = false;
             timer?.cancel();
             await realtimeSubscription?.cancel();
@@ -190,6 +204,13 @@ class CustomApiChatService implements ChatServiceInterface {
           }
           controller.addError(error, stackTrace);
         } catch (error, stackTrace) {
+          if (await _handleSessionError(error)) {
+            pollingEnabled = false;
+            timer?.cancel();
+            await realtimeSubscription?.cancel();
+            controller.add(const <ChatMessage>[]);
+            return;
+          }
           controller.addError(error, stackTrace);
         }
       }
@@ -459,12 +480,21 @@ class CustomApiChatService implements ChatServiceInterface {
         userId.isNotEmpty;
   }
 
-  Future<bool> _handleUnauthorizedError(CustomApiException error) async {
-    final isUnauthorized = error.statusCode == 401 ||
-        error.statusCode == 403 ||
-        error.message.contains('Нет активной customApi session');
-    if (!isUnauthorized) {
+  Future<bool> _handleSessionError(Object error) async {
+    final isUnauthorized = error is CustomApiException &&
+        (error.statusCode == 401 ||
+            error.statusCode == 403 ||
+            error.message.contains('Нет активной customApi session'));
+    final normalized = error.toString().toLowerCase();
+    final looksLikeExpiredSession = normalized.contains('сесс') ||
+        normalized.contains('unauthorized') ||
+        normalized.contains('expired');
+    if (!isUnauthorized && !looksLikeExpiredSession) {
       return false;
+    }
+
+    if (_authService.currentUserId == null) {
+      return true;
     }
 
     await _authService.signOut();

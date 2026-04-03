@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:lineage/backend/backend_runtime_config.dart';
+import 'package:lineage/models/chat_message.dart';
 import 'package:lineage/services/custom_api_auth_service.dart';
 import 'package:lineage/services/custom_api_chat_service.dart';
 import 'package:lineage/services/custom_api_realtime_service.dart';
@@ -451,6 +452,40 @@ void main() {
           await chatService.getTotalUnreadCountStream('user-1').first;
       expect(unreadCount, 0);
       expect(authService.currentUserId, isNull);
+    },
+  );
+
+  test(
+    'CustomApiChatService returns safe defaults immediately without active session',
+    () async {
+      final prefs = await SharedPreferences.getInstance();
+      final authService = await CustomApiAuthService.create(
+        httpClient: MockClient((request) async {
+          return http.Response('{"message":"not found"}', 404);
+        }),
+        preferences: prefs,
+        runtimeConfig: const BackendRuntimeConfig(
+          apiBaseUrl: 'https://api.example.ru',
+        ),
+        invitationService: InvitationService(),
+      );
+
+      final chatService = CustomApiChatService(
+        authService: authService,
+        runtimeConfig: const BackendRuntimeConfig(
+          apiBaseUrl: 'https://api.example.ru',
+        ),
+        httpClient: MockClient((request) async {
+          return http.Response('{"message":"not found"}', 404);
+        }),
+      );
+
+      expect(await chatService.getUserChatsStream('user-1').first, isEmpty);
+      expect(await chatService.getTotalUnreadCountStream('user-1').first, 0);
+      expect(
+        await chatService.getMessagesStream('chat-1').first,
+        const <ChatMessage>[],
+      );
     },
   );
 }

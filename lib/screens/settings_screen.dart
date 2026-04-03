@@ -9,6 +9,7 @@ import 'package:get_it/get_it.dart'; // Для доступа к RustoreService
 import 'package:go_router/go_router.dart';
 import '../backend/interfaces/auth_service_interface.dart';
 import '../providers/tree_provider.dart';
+import '../services/custom_api_notification_service.dart';
 
 // --- ID нашего тестового продукта ---
 const String PREMIUM_PRODUCT_ID = 'lineage_premium';
@@ -47,9 +48,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void initState() {
     super.initState();
     _loadAppVersion();
+    _loadNotificationSettings();
     _checkPremiumStatus(); // Проверяем статус при инициализации
     _checkAppRatingStatus(); // Проверяем статус оценки
   }
+
+  CustomApiNotificationService? get _customNotificationService =>
+      GetIt.I.isRegistered<CustomApiNotificationService>()
+          ? GetIt.I<CustomApiNotificationService>()
+          : null;
 
   Future<void> _loadAppVersion() async {
     final packageInfo = await PackageInfo.fromPlatform();
@@ -59,6 +66,51 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() {
       _appVersionLabel =
           'Версия ${packageInfo.version} (сборка ${packageInfo.buildNumber})';
+    });
+  }
+
+  Future<void> _loadNotificationSettings() async {
+    final notificationService = _customNotificationService;
+    if (notificationService == null || !mounted) {
+      return;
+    }
+
+    setState(() {
+      _notificationsEnabled = notificationService.notificationsEnabled;
+    });
+  }
+
+  Future<void> _toggleNotifications(bool value) async {
+    final notificationService = _customNotificationService;
+    var nextValue = value;
+
+    if (notificationService != null) {
+      nextValue = await notificationService.setNotificationsEnabled(
+        value,
+        promptForBrowserPermission: value,
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      if (value && !nextValue) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Разрешите уведомления в браузере, чтобы Родня могла показать новые сообщения и приглашения.',
+            ),
+          ),
+        );
+      }
+    }
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _notificationsEnabled = nextValue;
     });
   }
 
@@ -629,12 +681,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     title: Text('Уведомления'),
                     subtitle: Text('Получать уведомления о новых событиях'),
                     value: _notificationsEnabled,
-                    onChanged: (value) {
-                      setState(() {
-                        _notificationsEnabled = value;
-                        // Сохраняем настройки
-                      });
-                    },
+                    onChanged: _toggleNotifications,
                     secondary: Icon(Icons.notifications),
                   ),
 

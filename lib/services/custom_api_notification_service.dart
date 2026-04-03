@@ -15,6 +15,7 @@ import '../backend/interfaces/notification_service_interface.dart';
 import '../models/family_person.dart' as lineage_models;
 import '../navigation/app_router.dart';
 import '../providers/tree_provider.dart';
+import 'browser_notification_bridge.dart';
 import 'custom_api_auth_service.dart';
 import 'custom_api_realtime_service.dart';
 import 'rustore_service.dart';
@@ -58,6 +59,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     RemotePushTokenProvider? remotePushTokenProvider,
     ChatNotificationCallback? onChatNotification,
     GenericNotificationCallback? onGenericNotification,
+    BrowserNotificationBridge? browserNotificationBridge,
   })  : _plugin = plugin,
         _preferences = preferences,
         _authService = authService,
@@ -68,12 +70,16 @@ class CustomApiNotificationService implements NotificationServiceInterface {
         _pollInterval = pollInterval ?? const Duration(seconds: 5),
         _remotePushTokenProvider = remotePushTokenProvider,
         _onChatNotification = onChatNotification,
-        _onGenericNotification = onGenericNotification;
+        _onGenericNotification = onGenericNotification,
+        _browserNotificationBridge =
+            browserNotificationBridge ?? createBrowserNotificationBridge();
 
   static const String _deliveredIdsStorageKey =
       'custom_api_delivered_notification_ids_v1';
   static const String _registeredPushTokenStorageKey =
       'custom_api_registered_push_token_v1';
+  static const String _notificationsEnabledStorageKey =
+      'custom_api_notifications_enabled_v1';
 
   static Future<CustomApiNotificationService> create({
     FlutterLocalNotificationsPlugin? plugin,
@@ -87,6 +93,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     RemotePushTokenProvider? remotePushTokenProvider,
     ChatNotificationCallback? onChatNotification,
     GenericNotificationCallback? onGenericNotification,
+    BrowserNotificationBridge? browserNotificationBridge,
   }) async {
     return CustomApiNotificationService._(
       plugin: plugin ?? FlutterLocalNotificationsPlugin(),
@@ -100,6 +107,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
       remotePushTokenProvider: remotePushTokenProvider,
       onChatNotification: onChatNotification,
       onGenericNotification: onGenericNotification,
+      browserNotificationBridge: browserNotificationBridge,
     );
   }
 
@@ -114,8 +122,10 @@ class CustomApiNotificationService implements NotificationServiceInterface {
   final RemotePushTokenProvider? _remotePushTokenProvider;
   final ChatNotificationCallback? _onChatNotification;
   final GenericNotificationCallback? _onGenericNotification;
+  final BrowserNotificationBridge _browserNotificationBridge;
 
   bool _isInitialized = false;
+  bool _notificationsEnabled = true;
   String? _pendingNavigationPayload;
   Timer? _pollingTimer;
   StreamSubscription<CustomApiRealtimeEvent>? _realtimeSubscription;
@@ -136,8 +146,15 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     _deliveredNotificationIds
       ..clear()
       ..addAll(_preferences.getStringList(_deliveredIdsStorageKey) ?? const []);
+    _notificationsEnabled =
+        _preferences.getBool(_notificationsEnabledStorageKey) ?? true;
 
-    if (kIsWeb || _isInitialized) {
+    if (_isInitialized) {
+      _isInitialized = true;
+      return;
+    }
+
+    if (kIsWeb) {
       _isInitialized = true;
       return;
     }
@@ -183,7 +200,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
 
   Future<void> startForegroundSync() async {
     await initialize();
-    if (kIsWeb || _authService == null || _runtimeConfig == null) {
+    if (_authService == null || _runtimeConfig == null) {
       return;
     }
 
@@ -199,14 +216,14 @@ class CustomApiNotificationService implements NotificationServiceInterface {
         if (notification == null) {
           return;
         }
-        unawaited(_handleRealtimeNotification(notification));
+        unawaited(_handleRealtimeNotificationSafely(notification));
       });
     }
 
     _pollingTimer?.cancel();
-    await syncPendingNotifications();
+    await _syncPendingNotificationsSafely();
     _pollingTimer = Timer.periodic(_pollInterval, (_) {
-      unawaited(syncPendingNotifications());
+      unawaited(_syncPendingNotificationsSafely());
     });
 
     final pendingPayload = _pendingNavigationPayload;
@@ -231,41 +248,85 @@ class CustomApiNotificationService implements NotificationServiceInterface {
       return;
     }
 
-    final response = await _httpClient.get(
-      _buildUri(runtimeConfig, '/v1/notifications?status=unread&limit=20'),
-      headers: _headers(token),
-    );
+    try {
+      final response = await _httpClient.get(
+        _buildUri(runtimeConfig, '/v1/notifications?status=unread&limit=20'),
+        headers: _headers(token),
+      );
 
-    final payload = _decodeResponse(response);
-    final rawNotifications = payload['notifications'];
-    if (rawNotifications is! List<dynamic>) {
-      return;
+      final payload = _decodeResponse(response);
+      final rawNotifications = payload['notifications'];
+      if (rawNotifications is! List<dynamic>) {
+        return;
+      }
+
+      final notifications = rawNotifications
+          .whereType<Map<String, dynamic>>()
+          .where((notification) {
+        final id = notification['id']?.toString() ?? '';
+        return id.isNotEmpty && !_deliveredNotificationIds.contains(id);
+      }).toList()
+        ..sort((left, right) {
+          return (left['createdAt']?.toString() ?? '')
+              .compareTo(right['createdAt']?.toString() ?? '');
+        });
+
+      for (final notification in notifications) {
+        await _showBackendNotification(notification);
+        final id = notification['id']!.toString();
+        _deliveredNotificationIds.add(id);
+        await _persistDeliveredNotificationIds();
+      }
+    } on CustomApiException catch (error) {
+      if (await _handleUnauthorizedError(error)) {
+        return;
+      }
+      rethrow;
+    }
+  }
+
+  bool get notificationsEnabled => _notificationsEnabled;
+
+  BrowserNotificationPermissionStatus get browserPermissionStatus =>
+      _browserNotificationBridge.permissionStatus;
+
+  Future<bool> setNotificationsEnabled(
+    bool enabled, {
+    bool promptForBrowserPermission = false,
+  }) async {
+    if (enabled && kIsWeb) {
+      final permission = await _browserNotificationBridge.requestPermission(
+        prompt: promptForBrowserPermission,
+      );
+      if (permission != BrowserNotificationPermissionStatus.granted) {
+        _notificationsEnabled = false;
+        await _preferences.setBool(_notificationsEnabledStorageKey, false);
+        return false;
+      }
     }
 
-    final notifications = rawNotifications
-        .whereType<Map<String, dynamic>>()
-        .where((notification) {
-      final id = notification['id']?.toString() ?? '';
-      return id.isNotEmpty && !_deliveredNotificationIds.contains(id);
-    }).toList()
-      ..sort((left, right) {
-        return (left['createdAt']?.toString() ?? '')
-            .compareTo(right['createdAt']?.toString() ?? '');
-      });
-
-    for (final notification in notifications) {
-      await _showBackendNotification(notification);
-      final id = notification['id']!.toString();
-      _deliveredNotificationIds.add(id);
-      await _persistDeliveredNotificationIds();
-    }
+    _notificationsEnabled = enabled;
+    await _preferences.setBool(_notificationsEnabledStorageKey, enabled);
+    return _notificationsEnabled;
   }
 
   @override
   Future<void> showBirthdayNotification(
     lineage_models.FamilyPerson person,
   ) async {
+    if (!_notificationsEnabled) {
+      return;
+    }
     if (kIsWeb) {
+      await _showBrowserNotification(
+        title: 'День рождения',
+        body: 'Сегодня день рождения у ${person.name}',
+        tag: 'birthday-${person.id}',
+        payload: jsonEncode({
+          'type': 'birthday',
+          'personId': person.id,
+        }),
+      );
       return;
     }
     await initialize();
@@ -300,7 +361,28 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     required String messageText,
     required int notificationId,
   }) async {
+    if (!_notificationsEnabled) {
+      return;
+    }
+
+    final payload = jsonEncode({
+      'type': 'chat',
+      'chatId': chatId,
+      'senderId': senderId,
+      'senderName': senderName,
+      'messageText': messageText,
+    });
+
     if (kIsWeb) {
+      final shortText = messageText.length > 120
+          ? '${messageText.substring(0, 117)}...'
+          : messageText;
+      await _showBrowserNotification(
+        title: senderName,
+        body: shortText,
+        tag: 'chat-$chatId',
+        payload: payload,
+      );
       return;
     }
     await initialize();
@@ -339,13 +421,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
           presentSound: true,
         ),
       ),
-      payload: jsonEncode({
-        'type': 'chat',
-        'chatId': chatId,
-        'senderId': senderId,
-        'senderName': senderName,
-        'messageText': messageText,
-      }),
+      payload: payload,
     );
   }
 
@@ -461,6 +537,18 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     required int notificationId,
     String? payload,
   }) async {
+    if (!_notificationsEnabled) {
+      return;
+    }
+    if (kIsWeb) {
+      await _showBrowserNotification(
+        title: title,
+        body: body,
+        tag: 'generic-$notificationId',
+        payload: payload,
+      );
+      return;
+    }
     await initialize();
 
     if (_onGenericNotification != null) {
@@ -493,6 +581,28 @@ class CustomApiNotificationService implements NotificationServiceInterface {
         ),
       ),
       payload: payload,
+    );
+  }
+
+  Future<void> _showBrowserNotification({
+    required String title,
+    required String body,
+    required String tag,
+    String? payload,
+  }) async {
+    if (!_browserNotificationBridge.isSupported ||
+        _browserNotificationBridge.permissionStatus !=
+            BrowserNotificationPermissionStatus.granted) {
+      return;
+    }
+
+    await _browserNotificationBridge.showNotification(
+      title: title,
+      body: body,
+      tag: tag,
+      onClick: payload == null || payload.isEmpty
+          ? null
+          : () => _schedulePayloadNavigation(payload),
     );
   }
 
@@ -715,6 +825,43 @@ class CustomApiNotificationService implements NotificationServiceInterface {
       _deliveredIdsStorageKey,
       trimmedIds,
     );
+  }
+
+  Future<void> _syncPendingNotificationsSafely() async {
+    try {
+      await syncPendingNotifications();
+    } catch (error, stackTrace) {
+      debugPrint('Custom API notification sync failed: $error');
+      debugPrintStack(stackTrace: stackTrace);
+    }
+  }
+
+  Future<void> _handleRealtimeNotificationSafely(
+    Map<String, dynamic> notification,
+  ) async {
+    try {
+      await _handleRealtimeNotification(notification);
+    } catch (error, stackTrace) {
+      debugPrint('Custom API realtime notification failed: $error');
+      debugPrintStack(stackTrace: stackTrace);
+    }
+  }
+
+  Future<bool> _handleUnauthorizedError(CustomApiException error) async {
+    final normalizedMessage = error.message.toLowerCase();
+    final isUnauthorized = error.statusCode == 401 ||
+        error.statusCode == 403 ||
+        normalizedMessage.contains('сесс') ||
+        normalizedMessage.contains('unauthorized');
+    if (!isUnauthorized) {
+      return false;
+    }
+
+    final authService = _authService;
+    if (authService != null) {
+      await authService.signOut();
+    }
+    return true;
   }
 
   Future<void> dispose() async {
