@@ -122,7 +122,6 @@ class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
   final _grandmother = FamilyPerson(
     id: 'grandmother',
     treeId: 'tree-1',
-    userId: 'user-grandmother',
     name: 'Кузнецова Валентина',
     gender: Gender.female,
     isAlive: true,
@@ -251,6 +250,12 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Кузнецов Андрей Анатольевич'), findsWidgets);
+      expect(find.text('Есть аккаунт в Родне'), findsOneWidget);
+      expect(
+          find.text(
+              'С этим родственником уже можно общаться в личных сообщениях.'),
+          findsOneWidget);
+      expect(find.text('Написать'), findsOneWidget);
       expect(find.text('Родственная связь:'), findsOneWidget);
       expect(find.text('Отец'), findsOneWidget);
       expect(find.text('Семья'), findsOneWidget);
@@ -261,6 +266,36 @@ void main() {
       expect(find.text('Дочь'), findsOneWidget);
       expect(find.text('Жена'), findsOneWidget);
       expect(find.text('Мать'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'RelativeDetailsScreen показывает приглашение для родственника без аккаунта',
+    (tester) async {
+      final treeProvider = TreeProvider();
+      await treeProvider.selectTree('tree-1', 'Семья Кузнецовых');
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider<TreeProvider>.value(
+          value: treeProvider,
+          child: const MaterialApp(
+            home: RelativeDetailsScreen(personId: 'grandmother'),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      expect(find.text('Кузнецова Валентина'), findsWidgets);
+      expect(find.text('Пока без аккаунта'), findsOneWidget);
+      expect(
+        find.text(
+          'Отправьте приглашение, чтобы родственник подключился к дереву и чату.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Пригласить в Родню'), findsOneWidget);
+      expect(find.text('Написать'), findsNothing);
     },
   );
 }
