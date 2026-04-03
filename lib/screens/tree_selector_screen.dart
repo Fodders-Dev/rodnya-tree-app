@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../backend/backend_runtime_config.dart';
+import '../backend/interfaces/auth_service_interface.dart';
 import '../providers/tree_provider.dart';
 import 'package:get_it/get_it.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
@@ -19,6 +20,10 @@ class TreeSelectorScreen extends StatefulWidget {
 }
 
 class _TreeSelectorScreenState extends State<TreeSelectorScreen> {
+  final AuthServiceInterface? _authService =
+      GetIt.I.isRegistered<AuthServiceInterface>()
+          ? GetIt.I<AuthServiceInterface>()
+          : null;
   final FamilyTreeServiceInterface _familyTreeService =
       GetIt.I<FamilyTreeServiceInterface>();
   bool _isLoading = true;
@@ -169,197 +174,264 @@ class _TreeSelectorScreenState extends State<TreeSelectorScreen> {
     final selectedTreeId = context.select<TreeProvider, String?>(
       (provider) => provider.selectedTreeId,
     );
+    final currentTree = selectedTreeId == null
+        ? null
+        : _userTrees.cast<FamilyTree?>().firstWhere(
+              (tree) => tree?.id == selectedTreeId,
+              orElse: () => null,
+            );
+    final ownTrees = _userTrees
+        .where(
+            (tree) => _isOwnedByCurrentUser(tree) && tree.id != selectedTreeId)
+        .toList()
+      ..sort((left, right) => left.name.compareTo(right.name));
+    final memberTrees = _userTrees
+        .where(
+          (tree) => !_isOwnedByCurrentUser(tree) && tree.id != selectedTreeId,
+        )
+        .toList()
+      ..sort((left, right) => left.name.compareTo(right.name));
+
     return RefreshIndicator(
       onRefresh: _loadUserTrees,
-      child: ListView.builder(
+      child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-        itemCount: _userTrees.length + 1,
-        itemBuilder: (context, index) {
-          if (index == 0) {
-            return Container(
-              margin: const EdgeInsets.only(bottom: 12),
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Theme.of(
-                  context,
-                ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                  color: Theme.of(context).colorScheme.outlineVariant,
+        children: [
+          Container(
+            margin: const EdgeInsets.only(bottom: 12),
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Theme.of(
+                context,
+              ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: Theme.of(context).colorScheme.outlineVariant,
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Откройте нужное дерево',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Активное дерево идёт первым. Остальные разделены на ваши и те, куда вас пригласили.',
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    FilledButton.icon(
+                      onPressed: _openCreateTree,
+                      icon: const Icon(Icons.add),
+                      label: const Text('Создать дерево'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: _loadUserTrees,
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Обновить'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          if (currentTree != null) ...[
+            const _SelectorSectionHeader(
+              title: 'Активное дерево',
+              subtitle: 'Откроется первым и уже выбрано для текущей сессии.',
+            ),
+            _buildTreeCard(
+              tree: currentTree,
+              treeProvider: treeProvider,
+              isSelected: true,
+            ),
+          ],
+          if (ownTrees.isNotEmpty) ...[
+            _SelectorSectionHeader(
+              title: 'Мои деревья',
+              subtitle: ownTrees.length == 1
+                  ? 'Дерево, которое вы создали.'
+                  : 'Деревья, которые вы создали сами.',
+            ),
+            ...ownTrees.map(
+              (tree) => _buildTreeCard(
+                tree: tree,
+                treeProvider: treeProvider,
+                isSelected: false,
+              ),
+            ),
+          ],
+          if (memberTrees.isNotEmpty) ...[
+            _SelectorSectionHeader(
+              title: 'Другие деревья',
+              subtitle: memberTrees.length == 1
+                  ? 'Дерево, куда вас пригласили.'
+                  : 'Деревья, куда вас пригласили другие родственники.',
+            ),
+            ...memberTrees.map(
+              (tree) => _buildTreeCard(
+                tree: tree,
+                treeProvider: treeProvider,
+                isSelected: false,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTreeCard({
+    required FamilyTree tree,
+    required TreeProvider treeProvider,
+    required bool isSelected,
+  }) {
+    final treeId = tree.id;
+    final treeName = tree.name;
+    final createdAt = tree.createdAt;
+    final certificationNote = tree.certificationNote?.trim();
+    final isSelecting = _selectingTreeId == treeId;
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      color: isSelected
+          ? Theme.of(context).colorScheme.primaryContainer.withValues(
+                alpha: 0.45,
+              )
+          : null,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: isSelecting
+            ? null
+            : () async {
+                print(
+                  '[TreeSelectorScreen] Selecting tree: $treeId ($treeName)',
+                );
+                setState(() {
+                  _selectingTreeId = treeId;
+                });
+                await treeProvider.selectTree(treeId, treeName);
+                if (!mounted) {
+                  return;
+                }
+                setState(() {
+                  _selectingTreeId = null;
+                });
+                final encodedName = Uri.encodeComponent(treeName);
+                if (!context.mounted) {
+                  return;
+                }
+                context.go('/tree/view/$treeId?name=$encodedName');
+              },
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              CircleAvatar(
+                radius: 24,
+                backgroundColor: Theme.of(context).colorScheme.primary,
+                child: const Icon(
+                  Icons.account_tree,
+                  color: Colors.white,
                 ),
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Откройте нужное дерево',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'Выбор занимает один тап. Новое дерево можно создать сразу отсюда.',
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      FilledButton.icon(
-                        onPressed: _openCreateTree,
-                        icon: const Icon(Icons.add),
-                        label: const Text('Создать дерево'),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      treeName,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
                       ),
-                      OutlinedButton.icon(
-                        onPressed: _loadUserTrees,
-                        icon: const Icon(Icons.refresh),
-                        label: const Text('Обновить'),
+                    ),
+                    const SizedBox(height: 4),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: [
+                        _SelectorChip(
+                          icon: tree.isPrivate
+                              ? Icons.lock_outline
+                              : Icons.public,
+                          label: tree.isPrivate ? 'Приватное' : 'Публичное',
+                        ),
+                        _SelectorChip(
+                          icon: _isOwnedByCurrentUser(tree)
+                              ? Icons.star_outline
+                              : Icons.groups_2_outlined,
+                          label: _isOwnedByCurrentUser(tree)
+                              ? 'Создатель'
+                              : 'Участник',
+                        ),
+                        if (tree.isCertified)
+                          _SelectorChip(
+                            icon: Icons.verified_outlined,
+                            label: 'Сертифицировано',
+                            highlighted: true,
+                          ),
+                        if (isSelected)
+                          _SelectorChip(
+                            icon: Icons.check_circle_outline,
+                            label: 'Открыто сейчас',
+                            highlighted: true,
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Создано ${_formatDate(createdAt)}',
+                      style: TextStyle(color: Colors.grey[700]),
+                    ),
+                    if (certificationNote != null &&
+                        certificationNote.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        certificationNote,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Theme.of(context).colorScheme.primary,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ],
-                  ),
-                ],
-              ),
-            );
-          }
-
-          final tree = _userTrees[index - 1];
-          final treeId = tree.id;
-          final treeName = tree.name;
-          final createdAt = tree.createdAt;
-          final certificationNote = tree.certificationNote?.trim();
-          final isSelected = selectedTreeId == treeId;
-          final isSelecting = _selectingTreeId == treeId;
-
-          return Card(
-            margin: const EdgeInsets.only(bottom: 12),
-            color: isSelected
-                ? Theme.of(context).colorScheme.primaryContainer.withValues(
-                      alpha: 0.45,
-                    )
-                : null,
-            child: InkWell(
-              borderRadius: BorderRadius.circular(12),
-              onTap: isSelecting
-                  ? null
-                  : () async {
-                      print(
-                        '[TreeSelectorScreen] Selecting tree: $treeId ($treeName)',
-                      );
-                      setState(() {
-                        _selectingTreeId = treeId;
-                      });
-                      await treeProvider.selectTree(treeId, treeName);
-                      if (!mounted) {
-                        return;
-                      }
-                      setState(() {
-                        _selectingTreeId = null;
-                      });
-                      final encodedName = Uri.encodeComponent(treeName);
-                      if (!context.mounted) {
-                        return;
-                      }
-                      context.go('/tree/view/$treeId?name=$encodedName');
-                    },
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Row(
-                  children: [
-                    CircleAvatar(
-                      radius: 24,
-                      backgroundColor: Theme.of(context).colorScheme.primary,
-                      child: const Icon(
-                        Icons.account_tree,
-                        color: Colors.white,
-                      ),
-                    ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            treeName,
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Wrap(
-                            spacing: 6,
-                            runSpacing: 6,
-                            children: [
-                              _SelectorChip(
-                                icon: tree.isPrivate
-                                    ? Icons.lock_outline
-                                    : Icons.public,
-                                label:
-                                    tree.isPrivate ? 'Приватное' : 'Публичное',
-                              ),
-                              if (tree.isCertified)
-                                _SelectorChip(
-                                  icon: Icons.verified_outlined,
-                                  label: 'Сертифицировано',
-                                  highlighted: true,
-                                ),
-                              if (isSelected)
-                                _SelectorChip(
-                                  icon: Icons.check_circle_outline,
-                                  label: 'Открыто сейчас',
-                                  highlighted: true,
-                                ),
-                            ],
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            'Создано ${_formatDate(createdAt)}',
-                            style: TextStyle(color: Colors.grey[700]),
-                          ),
-                          if (certificationNote != null &&
-                              certificationNote.isNotEmpty) ...[
-                            const SizedBox(height: 4),
-                            Text(
-                              certificationNote,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Theme.of(context).colorScheme.primary,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    isSelecting
-                        ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              if (tree.isPublic)
-                                IconButton(
-                                  tooltip: 'Скопировать публичную ссылку',
-                                  onPressed: () => _copyPublicLink(tree),
-                                  icon: const Icon(Icons.link_outlined),
-                                ),
-                              const Icon(Icons.chevron_right),
-                            ],
-                          ),
                   ],
                 ),
               ),
-            ),
-          );
-        },
+              const SizedBox(width: 8),
+              isSelecting
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (tree.isPublic)
+                          IconButton(
+                            tooltip: 'Скопировать публичную ссылку',
+                            onPressed: () => _copyPublicLink(tree),
+                            icon: const Icon(Icons.link_outlined),
+                          ),
+                        const Icon(Icons.chevron_right),
+                      ],
+                    ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -390,6 +462,50 @@ class _TreeSelectorScreenState extends State<TreeSelectorScreen> {
         _loadUserTrees();
       }
     });
+  }
+
+  bool _isOwnedByCurrentUser(FamilyTree tree) {
+    final currentUserId = _authService?.currentUserId;
+    if (currentUserId == null || currentUserId.isEmpty) {
+      return true;
+    }
+    return tree.creatorId == currentUserId;
+  }
+}
+
+class _SelectorSectionHeader extends StatelessWidget {
+  const _SelectorSectionHeader({
+    required this.title,
+    required this.subtitle,
+  });
+
+  final String title;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 12, 4, 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            subtitle,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 

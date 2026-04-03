@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
+import 'package:lineage/backend/interfaces/auth_service_interface.dart';
 import 'package:lineage/backend/interfaces/family_tree_service_interface.dart';
 import 'package:lineage/models/family_tree.dart';
 import 'package:lineage/providers/tree_provider.dart';
@@ -27,21 +28,31 @@ class _FakeLocalStorageService implements LocalStorageService {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
+class _FakeAuthService implements AuthServiceInterface {
+  @override
+  String? get currentUserId => 'user-1';
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
 FamilyTree _buildTree({
   required String id,
   required String name,
+  String creatorId = 'user-1',
+  List<String> memberIds = const ['user-1'],
 }) {
   final now = DateTime(2024, 1, 1);
   return FamilyTree(
     id: id,
     name: name,
     description: '',
-    creatorId: 'user-1',
-    memberIds: const ['user-1'],
+    creatorId: creatorId,
+    memberIds: memberIds,
     createdAt: now,
     updatedAt: now,
     isPrivate: true,
-    members: const ['user-1'],
+    members: memberIds,
   );
 }
 
@@ -51,6 +62,7 @@ void main() {
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
     await getIt.reset();
+    getIt.registerSingleton<AuthServiceInterface>(_FakeAuthService());
     getIt.registerSingleton<LocalStorageService>(_FakeLocalStorageService());
   });
 
@@ -148,5 +160,70 @@ void main() {
     expect(find.text('Создать дерево'), findsOneWidget);
     expect(find.text('Семья Ивановых'), findsOneWidget);
     expect(find.text('Семья Петровых'), findsOneWidget);
+  });
+
+  testWidgets('TreeSelectorScreen группирует активное, свои и чужие деревья',
+      (tester) async {
+    getIt.registerSingleton<FamilyTreeServiceInterface>(
+      _FakeFamilyTreeService([
+        _buildTree(id: 'tree-current', name: 'Сейчас открыто'),
+        _buildTree(id: 'tree-own', name: 'Моё второе дерево'),
+        _buildTree(
+          id: 'tree-member',
+          name: 'Дерево родственников',
+          creatorId: 'user-2',
+          memberIds: const ['user-1', 'user-2'],
+        ),
+      ]),
+    );
+
+    final treeProvider = TreeProvider();
+    await treeProvider.selectTree('tree-current', 'Сейчас открыто');
+
+    final router = GoRouter(
+      initialLocation: '/tree',
+      routes: [
+        GoRoute(
+          path: '/tree',
+          builder: (context, state) => const TreeSelectorScreen(),
+        ),
+        GoRoute(
+          path: '/tree/view/:treeId',
+          builder: (context, state) => Scaffold(
+            body: Center(child: Text(state.pathParameters['treeId']!)),
+          ),
+        ),
+        GoRoute(
+          path: '/trees',
+          builder: (context, state) => const Scaffold(body: SizedBox.shrink()),
+        ),
+        GoRoute(
+          path: '/trees/create',
+          builder: (context, state) => const Scaffold(body: SizedBox.shrink()),
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: treeProvider,
+        child: MaterialApp.router(routerConfig: router),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Активное дерево'), findsOneWidget);
+    expect(find.text('Мои деревья'), findsOneWidget);
+    expect(find.text('Сейчас открыто'), findsOneWidget);
+    expect(find.text('Моё второе дерево'), findsOneWidget);
+    await tester.dragUntilVisible(
+      find.text('Дерево родственников'),
+      find.byType(Scrollable).first,
+      const Offset(0, -250),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Другие деревья'), findsOneWidget);
+    expect(find.text('Дерево родственников'), findsOneWidget);
+    expect(find.text('Участник'), findsOneWidget);
   });
 }
