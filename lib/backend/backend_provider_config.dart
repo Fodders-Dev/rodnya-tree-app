@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
+
 enum BackendProviderKind { firebase, supabase, hybridLegacy, customApi }
 
 class BackendProviderConfig {
@@ -60,12 +62,16 @@ class BackendProviderConfig {
     }
 
     return resolve(
+      runtimePresetRaw: _runtimePresetEnv,
+      hostRaw: Uri.base.host,
       authProviderRaw: _authProviderEnv,
       profileProviderRaw: _profileProviderEnv,
       treeProviderRaw: _treeProviderEnv,
       chatProviderRaw: _chatProviderEnv,
       storageProviderRaw: _storageProviderEnv,
       notificationProviderRaw: _notificationProviderEnv,
+      isWebRuntime: kIsWeb,
+      hasWebFirebaseOptions: _hasRequiredWebFirebaseOptions,
     );
   }
 
@@ -78,8 +84,31 @@ class BackendProviderConfig {
     String chatProviderRaw = '',
     String storageProviderRaw = '',
     String notificationProviderRaw = '',
+    bool isWebRuntime = false,
+    bool hasWebFirebaseOptions = true,
   }) {
     if (_usesProdCustomApiPreset(runtimePresetRaw, hostRaw)) {
+      return const BackendProviderConfig(
+        authProvider: BackendProviderKind.customApi,
+        profileProvider: BackendProviderKind.customApi,
+        treeProvider: BackendProviderKind.customApi,
+        chatProvider: BackendProviderKind.customApi,
+        storageProvider: BackendProviderKind.customApi,
+        notificationProvider: BackendProviderKind.customApi,
+      );
+    }
+
+    if (_usesFirebaselessWebFallback(
+      runtimePresetRaw: runtimePresetRaw,
+      authProviderRaw: authProviderRaw,
+      profileProviderRaw: profileProviderRaw,
+      treeProviderRaw: treeProviderRaw,
+      chatProviderRaw: chatProviderRaw,
+      storageProviderRaw: storageProviderRaw,
+      notificationProviderRaw: notificationProviderRaw,
+      isWebRuntime: isWebRuntime,
+      hasWebFirebaseOptions: hasWebFirebaseOptions,
+    )) {
       return const BackendProviderConfig(
         authProvider: BackendProviderKind.customApi,
         profileProvider: BackendProviderKind.customApi,
@@ -145,4 +174,54 @@ class BackendProviderConfig {
     return normalizedHost == 'rodnya-tree.ru' ||
         normalizedHost == 'www.rodnya-tree.ru';
   }
+
+  static bool _usesFirebaselessWebFallback({
+    required String runtimePresetRaw,
+    required String authProviderRaw,
+    required String profileProviderRaw,
+    required String treeProviderRaw,
+    required String chatProviderRaw,
+    required String storageProviderRaw,
+    required String notificationProviderRaw,
+    required bool isWebRuntime,
+    required bool hasWebFirebaseOptions,
+  }) {
+    if (!isWebRuntime || hasWebFirebaseOptions) {
+      return false;
+    }
+
+    if (runtimePresetRaw.trim().isNotEmpty) {
+      return false;
+    }
+
+    return authProviderRaw.trim().isEmpty &&
+        profileProviderRaw.trim().isEmpty &&
+        treeProviderRaw.trim().isEmpty &&
+        chatProviderRaw.trim().isEmpty &&
+        storageProviderRaw.trim().isEmpty &&
+        notificationProviderRaw.trim().isEmpty;
+  }
+
+  static const String _webApiKeyEnv = String.fromEnvironment(
+    'LINEAGE_FIREBASE_WEB_API_KEY',
+    defaultValue: '',
+  );
+  static const String _webAppIdEnv = String.fromEnvironment(
+    'LINEAGE_FIREBASE_WEB_APP_ID',
+    defaultValue: '',
+  );
+  static const String _messagingSenderIdEnv = String.fromEnvironment(
+    'LINEAGE_FIREBASE_MESSAGING_SENDER_ID',
+    defaultValue: '',
+  );
+  static const String _projectIdEnv = String.fromEnvironment(
+    'LINEAGE_FIREBASE_PROJECT_ID',
+    defaultValue: '',
+  );
+
+  static bool get _hasRequiredWebFirebaseOptions =>
+      _webApiKeyEnv.isNotEmpty &&
+      _webAppIdEnv.isNotEmpty &&
+      _messagingSenderIdEnv.isNotEmpty &&
+      _projectIdEnv.isNotEmpty;
 }

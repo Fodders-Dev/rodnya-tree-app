@@ -53,14 +53,17 @@ class BackendRuntimeConfig {
   final bool enableLegacyDynamicLinks;
 
   static BackendRuntimeConfig get current {
+    final providerConfig = BackendProviderConfig.current;
     return resolve(
       runtimePresetRaw: _runtimePresetEnv,
+      hostRaw: Uri.base.host,
       publicAppUrlRaw: _publicAppUrlEnv,
       apiBaseUrlRaw: _apiBaseUrlEnv,
       webSocketBaseUrlRaw: _webSocketBaseUrlEnv,
       supabaseUrlRaw: _supabaseUrlEnv,
       supabaseAnonKeyRaw: _supabaseAnonKeyEnv,
       legacyDynamicLinksRaw: _legacyDynamicLinksEnv,
+      providerConfig: providerConfig,
     );
   }
 

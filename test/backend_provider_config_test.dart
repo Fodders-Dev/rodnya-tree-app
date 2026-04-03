@@ -70,4 +70,39 @@ void main() {
       expect(config.notificationProvider, BackendProviderKind.customApi);
     },
   );
+
+  test(
+    'BackendProviderConfig falls back to customApi on web when Firebase web config is missing',
+    () {
+      final config = BackendProviderConfig.resolve(
+        isWebRuntime: true,
+        hasWebFirebaseOptions: false,
+      );
+
+      expect(config.authProvider, BackendProviderKind.customApi);
+      expect(config.profileProvider, BackendProviderKind.customApi);
+      expect(config.treeProvider, BackendProviderKind.customApi);
+      expect(config.chatProvider, BackendProviderKind.customApi);
+      expect(config.storageProvider, BackendProviderKind.customApi);
+      expect(config.notificationProvider, BackendProviderKind.customApi);
+    },
+  );
+
+  test(
+    'BackendProviderConfig keeps explicit provider overrides on web without Firebase config',
+    () {
+      final config = BackendProviderConfig.resolve(
+        isWebRuntime: true,
+        hasWebFirebaseOptions: false,
+        authProviderRaw: 'firebase',
+      );
+
+      expect(config.authProvider, BackendProviderKind.firebase);
+      expect(config.profileProvider, BackendProviderKind.firebase);
+      expect(config.treeProvider, BackendProviderKind.firebase);
+      expect(config.chatProvider, BackendProviderKind.firebase);
+      expect(config.storageProvider, BackendProviderKind.hybridLegacy);
+      expect(config.notificationProvider, BackendProviderKind.firebase);
+    },
+  );
 }

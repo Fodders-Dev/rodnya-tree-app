@@ -40,31 +40,36 @@ String _getSafeDisplayName(UserProfile profile) {
   // Если displayName пустой или равен "Профиль", используем альтернативные источники
   if (rawDisplayName.isEmpty || rawDisplayName == 'Профиль') {
     final parts = <String>[];
-    if (profile.firstName != null && profile.firstName!.trim().isNotEmpty) {
-      parts.add(profile.firstName!.trim());
+    final firstName = profile.firstName.trim();
+    if (firstName.isNotEmpty) {
+      parts.add(firstName);
     }
-    if (profile.middleName != null && profile.middleName!.trim().isNotEmpty) {
-      parts.add(profile.middleName!.trim());
+
+    final middleName = profile.middleName.trim();
+    if (middleName.isNotEmpty) {
+      parts.add(middleName);
     }
-    if (profile.lastName != null && profile.lastName!.trim().isNotEmpty) {
-      parts.add(profile.lastName!.trim());
+
+    final lastName = profile.lastName.trim();
+    if (lastName.isNotEmpty) {
+      parts.add(lastName);
     }
 
     if (parts.isNotEmpty) {
       return parts.join(' ');
     }
 
-    if (profile.username != null && profile.username!.trim().isNotEmpty) {
-      return profile.username!.trim();
+    final username = profile.username.trim();
+    if (username.isNotEmpty) {
+      return username;
     }
 
-    if (profile.email != null && profile.email!.trim().isNotEmpty) {
-      return profile.email!.trim();
+    final email = profile.email.trim();
+    if (email.isNotEmpty) {
+      return email;
     }
   } else {
     // Проверяем, является ли displayName мусорным
-    final lower = rawDisplayName.toLowerCase();
-
     bool looksBad(String value) {
       final trimmed = value.trim();
       if (trimmed.isEmpty) return true;
