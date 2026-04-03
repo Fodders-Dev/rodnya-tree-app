@@ -7,10 +7,17 @@
       return;
     }
 
+    const applicationOrigin = window.location.origin;
+    const pushWorkerScope = `${applicationOrigin}/push/`;
+
     try {
       const registrations = await navigator.serviceWorker.getRegistrations();
       await Promise.all(
         registrations.map(async (registration) => {
+          if (registration.scope === pushWorkerScope) {
+            return;
+          }
+
           try {
             await registration.unregister();
           } catch (error) {
