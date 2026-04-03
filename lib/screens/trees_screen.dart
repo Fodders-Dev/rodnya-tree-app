@@ -64,31 +64,61 @@ class _TreesScreenState extends State<TreesScreen>
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Семейные деревья'),
-        bottom: TabBar(
-          controller: _tabController,
-          tabs: const [
-            Tab(text: 'Мои деревья'),
-            Tab(text: 'Приглашения'),
-          ],
-        ),
-      ),
-      body: TabBarView(
-        controller: _tabController,
-        children: [_buildMyTreesTab(), _buildInvitationsTab()],
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _navigateToCreateTree,
-        icon: const Icon(Icons.add),
-        label: const Text('Новое дерево'),
-        tooltip: 'Создать семейное дерево',
-      ),
+    final userId = _authService.currentUserId;
+    return StreamBuilder<List<TreeInvitation>>(
+      stream: userId == null
+          ? null
+          : _familyTreeService.getPendingTreeInvitations(),
+      builder: (context, snapshot) {
+        final pendingInvitations = snapshot.data ?? const <TreeInvitation>[];
+        final invitationCount = pendingInvitations.length;
+        final isInvitationsLoading =
+            snapshot.connectionState == ConnectionState.waiting &&
+                !snapshot.hasData;
+
+        return Scaffold(
+          appBar: AppBar(
+            title: const Text('Семейные деревья'),
+            bottom: TabBar(
+              controller: _tabController,
+              tabs: [
+                const Tab(text: 'Мои деревья'),
+                Tab(
+                  text: invitationCount > 0
+                      ? 'Приглашения ($invitationCount)'
+                      : 'Приглашения',
+                ),
+              ],
+            ),
+          ),
+          body: TabBarView(
+            controller: _tabController,
+            children: [
+              _buildMyTreesTab(
+                pendingInvitations: pendingInvitations,
+                isInvitationsLoading: isInvitationsLoading,
+              ),
+              _buildInvitationsTab(
+                pendingInvitations: pendingInvitations,
+                isInvitationsLoading: isInvitationsLoading,
+              ),
+            ],
+          ),
+          floatingActionButton: FloatingActionButton.extended(
+            onPressed: _navigateToCreateTree,
+            icon: const Icon(Icons.add),
+            label: const Text('Новое дерево'),
+            tooltip: 'Создать семейное дерево',
+          ),
+        );
+      },
     );
   }
 
-  Widget _buildMyTreesTab() {
+  Widget _buildMyTreesTab({
+    required List<TreeInvitation> pendingInvitations,
+    required bool isInvitationsLoading,
+  }) {
     final userId = _authService.currentUserId;
     if (userId == null) {
       return Center(child: Text('Необходимо войти в систему'));
@@ -99,86 +129,82 @@ class _TreesScreenState extends State<TreesScreen>
     }
 
     if (_myTrees.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.family_restroom, size: 64, color: Colors.grey),
-              const SizedBox(height: 16),
-              Text(
-                'У вас пока нет семейных деревьев',
-                style: TextStyle(fontSize: 18, color: Colors.grey[700]),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Создайте своё дерево или примите приглашение (кнопка внизу экрана). После этого можно будет открыть схему семьи и редактировать её без лишних переходов.',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.grey[600]),
-              ),
-            ],
-          ),
-        ),
+      return _buildEmptyTreesState(
+        pendingInvitations: pendingInvitations,
+        isInvitationsLoading: isInvitationsLoading,
       );
     }
 
     return RefreshIndicator(
       onRefresh: _refreshTrees,
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-        children: [
-          Container(
-            margin: const EdgeInsets.only(bottom: 12),
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Theme.of(
-                context,
-              ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: Theme.of(context).colorScheme.outlineVariant,
+      child: Builder(
+        builder: (context) {
+          final selectedTreeId = context.select<TreeProvider, String?>(
+            (provider) => provider.selectedTreeId,
+          );
+          return ListView(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+            children: [
+              if (pendingInvitations.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: _PendingInvitationsBanner(
+                    invitations: pendingInvitations,
+                    onOpenInvitations: _openInvitationsTab,
+                  ),
+                ),
+              Container(
+                margin: const EdgeInsets.only(bottom: 12),
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Theme.of(context)
+                      .colorScheme
+                      .surfaceContainerHighest
+                      .withValues(alpha: 0.45),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: Theme.of(context).colorScheme.outlineVariant,
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Быстрый вход в дерево',
+                      style:
+                          TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Открывайте нужное дерево сразу в интерактивной схеме. Количество веток: ${_myTrees.length}.',
+                    ),
+                  ],
+                ),
               ),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Быстрый вход в дерево',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  'Открывайте нужное дерево сразу в интерактивной схеме. Количество веток: ${_myTrees.length}.',
-                ),
-              ],
-            ),
-          ),
-          ...(() {
-            final selectedTreeId = context.select<TreeProvider, String?>(
-              (provider) => provider.selectedTreeId,
-            );
-            return _myTrees.map((tree) {
-              final role = tree.creatorId == _authService.currentUserId
-                  ? MemberRole.owner
-                  : MemberRole.editor;
-              return TreeCard(
-                tree: tree,
-                role: role,
-                isSelected: selectedTreeId == tree.id,
-                onCopyPublicLink:
-                    tree.isPublic ? () => _copyPublicLink(tree) : null,
-                onTap: () => _openTree(tree),
-              );
-            });
-          })(),
-        ],
+              ..._myTrees.map((tree) {
+                final role = tree.creatorId == _authService.currentUserId
+                    ? MemberRole.owner
+                    : MemberRole.editor;
+                return TreeCard(
+                  tree: tree,
+                  role: role,
+                  isSelected: selectedTreeId == tree.id,
+                  onCopyPublicLink:
+                      tree.isPublic ? () => _copyPublicLink(tree) : null,
+                  onTap: () => _openTree(tree),
+                );
+              }),
+            ],
+          );
+        },
       ),
     );
   }
 
-  Widget _buildInvitationsTab() {
+  Widget _buildInvitationsTab({
+    required List<TreeInvitation> pendingInvitations,
+    required bool isInvitationsLoading,
+  }) {
     final userId = _authService.currentUserId;
     if (userId == null) {
       return Center(child: Text('Необходимо войти в систему'));
@@ -189,33 +215,41 @@ class _TreesScreenState extends State<TreesScreen>
         setState(() {});
         return Future.value();
       },
-      child: StreamBuilder<List<TreeInvitation>>(
-        stream: _familyTreeService.getPendingTreeInvitations(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return Center(child: CircularProgressIndicator());
+      child: Builder(
+        builder: (context) {
+          if (isInvitationsLoading) {
+            return const Center(child: CircularProgressIndicator());
           }
 
-          if (!snapshot.hasData || snapshot.data!.isEmpty) {
+          if (pendingInvitations.isEmpty) {
             return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.mail, size: 64, color: Colors.grey),
-                  SizedBox(height: 16),
-                  Text(
-                    'У вас нет приглашений в семейные деревья',
-                    style: TextStyle(fontSize: 18, color: Colors.grey[700]),
-                  ),
-                ],
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.mail, size: 64, color: Colors.grey),
+                    const SizedBox(height: 16),
+                    Text(
+                      'У вас нет приглашений в семейные деревья',
+                      style: TextStyle(fontSize: 18, color: Colors.grey[700]),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Когда кто-то пригласит вас в дерево, оно появится здесь.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.grey[600]),
+                    ),
+                  ],
+                ),
               ),
             );
           }
 
-          final invitations = snapshot.data!;
           return ListView(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-            children: invitations
+            children: pendingInvitations
                 .map(
                   (invitation) => InvitationCard(
                     tree: invitation.tree,
@@ -236,8 +270,12 @@ class _TreesScreenState extends State<TreesScreen>
   Future<void> _handleInvitation(String invitationId, bool accept) async {
     try {
       await _familyTreeService.respondToTreeInvitation(invitationId, accept);
+      await _loadUserTrees();
       if (!mounted) {
         return;
+      }
+      if (accept) {
+        _tabController.animateTo(0);
       }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -252,6 +290,97 @@ class _TreesScreenState extends State<TreesScreen>
         SnackBar(content: Text('Произошла ошибка. Попробуйте еще раз.')),
       );
     }
+  }
+
+  Widget _buildEmptyTreesState({
+    required List<TreeInvitation> pendingInvitations,
+    required bool isInvitationsLoading,
+  }) {
+    final hasPendingInvitations = pendingInvitations.isNotEmpty;
+    final title = hasPendingInvitations
+        ? 'У вас уже есть приглашение в дерево'
+        : 'У вас пока нет семейных деревьев';
+    final description = hasPendingInvitations
+        ? _buildPendingInvitationsDescription(pendingInvitations)
+        : 'Создайте своё дерево или примите приглашение. После этого можно будет открыть схему семьи и редактировать её без лишних переходов.';
+
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              hasPendingInvitations
+                  ? Icons.mail_outline
+                  : Icons.family_restroom,
+              size: 64,
+              color: Colors.grey,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              title,
+              style: TextStyle(fontSize: 18, color: Colors.grey[700]),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              description,
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.grey[600]),
+            ),
+            const SizedBox(height: 16),
+            Wrap(
+              alignment: WrapAlignment.center,
+              spacing: 12,
+              runSpacing: 12,
+              children: [
+                if (hasPendingInvitations && !isInvitationsLoading)
+                  FilledButton.icon(
+                    onPressed: _openInvitationsTab,
+                    icon: const Icon(Icons.mark_email_unread_outlined),
+                    label: const Text('Открыть приглашения'),
+                  ),
+                OutlinedButton.icon(
+                  onPressed: _navigateToCreateTree,
+                  icon: const Icon(Icons.add),
+                  label: const Text('Создать своё дерево'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _buildPendingInvitationsDescription(
+    List<TreeInvitation> pendingInvitations,
+  ) {
+    final treeNames = pendingInvitations
+        .take(2)
+        .map((invitation) => invitation.tree.name)
+        .where((name) => name.trim().isNotEmpty)
+        .toList();
+
+    if (treeNames.isEmpty) {
+      return pendingInvitations.length == 1
+          ? 'Примите приглашение, чтобы дерево появилось в вашем списке.'
+          : 'Примите приглашения, чтобы деревья появились в вашем списке.';
+    }
+
+    final names = treeNames.join(' и ');
+    if (pendingInvitations.length == 1) {
+      return 'Вас ждут в дереве "$names". Примите приглашение, и оно сразу появится в списке.';
+    }
+
+    final remainingCount = pendingInvitations.length - treeNames.length;
+    final tail = remainingCount > 0 ? ' и ещё $remainingCount' : '';
+    return 'Вас ждут в деревьях $names$tail. Примите приглашение, и они сразу появятся в списке.';
+  }
+
+  void _openInvitationsTab() {
+    _tabController.animateTo(1);
   }
 
   // --- НОВАЯ РЕАЛИЗАЦИЯ ЗАГРУЗКИ ДЕРЕВЬЕВ ---
@@ -344,6 +473,71 @@ class _TreesScreenState extends State<TreesScreen>
   }
 
   // --- КОНЕЦ РЕАЛИЗАЦИИ REFRESH ---
+}
+
+class _PendingInvitationsBanner extends StatelessWidget {
+  const _PendingInvitationsBanner({
+    required this.invitations,
+    required this.onOpenInvitations,
+  });
+
+  final List<TreeInvitation> invitations;
+  final VoidCallback onOpenInvitations;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final firstTreeName = invitations.first.tree.name.trim();
+    final title = invitations.length == 1
+        ? 'Вас пригласили в дерево'
+        : 'У вас ${invitations.length} приглашения в деревья';
+    final description = invitations.length == 1 && firstTreeName.isNotEmpty
+        ? 'Примите "$firstTreeName", и оно сразу появится в списке.'
+        : 'Откройте приглашения, чтобы принять дерево и начать пользоваться им.';
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: colorScheme.tertiaryContainer,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.mark_email_unread_outlined,
+                color: colorScheme.onTertiaryContainer,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w700,
+                    color: colorScheme.onTertiaryContainer,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            description,
+            style: TextStyle(color: colorScheme.onTertiaryContainer),
+          ),
+          const SizedBox(height: 14),
+          FilledButton.icon(
+            onPressed: onOpenInvitations,
+            icon: const Icon(Icons.arrow_forward),
+            label: const Text('Открыть приглашения'),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class TreeCard extends StatelessWidget {
