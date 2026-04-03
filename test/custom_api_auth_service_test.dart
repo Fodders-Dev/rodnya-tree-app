@@ -206,4 +206,35 @@ void main() {
     expect(service.currentUserId, isNull);
     expect(prefs.getString('custom_api_session_v1'), isNull);
   });
+
+  test('CustomApiAuthService describeError hides technical backend details',
+      () async {
+    final service = await CustomApiAuthService.create(
+      httpClient: MockClient((request) async => http.Response('{}', 200)),
+      preferences: await SharedPreferences.getInstance(),
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      invitationService: InvitationService(),
+    );
+
+    expect(
+      service.describeError(
+        const CustomApiException('backend (500)', statusCode: 500),
+      ),
+      'Сервис временно недоступен. Попробуйте чуть позже.',
+    );
+    expect(
+      service.describeError(
+        const CustomApiException('SocketException: Connection refused'),
+      ),
+      'Не удалось подключиться к серверу. Проверьте интернет и попробуйте ещё раз.',
+    );
+    expect(
+      service.describeError(
+        const CustomApiException('TypeError: Failed to fetch'),
+      ),
+      'Не удалось выполнить вход. Попробуйте ещё раз.',
+    );
+  });
 }

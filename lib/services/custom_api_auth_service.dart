@@ -461,13 +461,56 @@ class CustomApiAuthService implements AuthServiceInterface {
   @override
   String describeError(Object error) {
     if (error is CustomApiException) {
-      return error.message;
+      final normalizedMessage = error.message.trim();
+      final lowerMessage = normalizedMessage.toLowerCase();
+
+      if (error.statusCode == 401 || error.statusCode == 403) {
+        return 'Не удалось войти. Проверьте email и пароль.';
+      }
+      if (error.statusCode == 409) {
+        return 'Аккаунт с таким email уже существует.';
+      }
+      if (error.statusCode == 429) {
+        return 'Слишком много попыток. Попробуйте чуть позже.';
+      }
+      if ((error.statusCode ?? 0) >= 500) {
+        return 'Сервис временно недоступен. Попробуйте чуть позже.';
+      }
+      if (lowerMessage.contains('socketexception') ||
+          lowerMessage.contains('failed host lookup') ||
+          lowerMessage.contains('connection refused') ||
+          lowerMessage.contains('connection reset') ||
+          lowerMessage.contains('network is unreachable') ||
+          lowerMessage.contains('timed out')) {
+        return 'Не удалось подключиться к серверу. Проверьте интернет и попробуйте ещё раз.';
+      }
+
+      return _sanitizeErrorMessage(normalizedMessage);
     }
 
     final rawMessage = error.toString();
     if (rawMessage.startsWith('Exception: ')) {
-      return rawMessage.substring('Exception: '.length);
+      return _sanitizeErrorMessage(rawMessage.substring('Exception: '.length));
     }
-    return rawMessage;
+    return _sanitizeErrorMessage(rawMessage);
+  }
+
+  String _sanitizeErrorMessage(String message) {
+    final trimmed = message.trim();
+    final lowerMessage = trimmed.toLowerCase();
+
+    if (trimmed.isEmpty) {
+      return 'Не удалось выполнить вход. Попробуйте ещё раз.';
+    }
+    if (lowerMessage.startsWith('error:') ||
+        lowerMessage.contains('typeerror') ||
+        lowerMessage.contains('stack trace') ||
+        lowerMessage.contains('exception:') ||
+        lowerMessage.contains('status code') ||
+        lowerMessage.contains('backend (')) {
+      return 'Не удалось выполнить вход. Попробуйте ещё раз.';
+    }
+
+    return trimmed;
   }
 }

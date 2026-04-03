@@ -15,10 +15,12 @@ import 'services/rustore_service.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_rustore_update/pigeons/rustore.dart' as update;
 import 'package:flutter/scheduler.dart'; // Для postFrameCallback
+import 'package:shared_preferences/shared_preferences.dart';
 import 'backend/interfaces/app_startup_service_interface.dart';
 import 'backend/interfaces/dynamic_link_service_interface.dart';
 import 'services/app_startup_service.dart';
 import 'services/background_task_runner.dart';
+import 'widgets/startup_failure_view.dart';
 
 // Вспомогательная функция для расчета задержки до следующего запуска проверки дней рождения (9 утра)
 Duration _calculateInitialDelayForBirthdayCheck() {
@@ -41,6 +43,10 @@ final GlobalKey<ScaffoldMessengerState> scaffoldMessengerKey =
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  await _bootstrapAndRunApp();
+}
+
+Future<void> _bootstrapAndRunApp() async {
   try {
     // Инициализация Workmanager (только не для веба)
     if (!kIsWeb) {
@@ -150,9 +156,36 @@ void main() async {
       _StartupFailureApp(
         error: error,
         stackTrace: stackTrace,
+        onRetry: _bootstrapAndRunApp,
+        onResetSessionAndRetry: _looksLikeRecoverableSessionIssue(error)
+            ? _resetRecoverableSessionAndRetry
+            : null,
       ),
     );
   }
+}
+
+Future<void> _resetRecoverableSessionAndRetry() async {
+  final preferences = await SharedPreferences.getInstance();
+  await preferences.remove('custom_api_session_v1');
+  await _bootstrapAndRunApp();
+}
+
+bool _looksLikeRecoverableSessionIssue(Object error) {
+  final normalized = error.toString().toLowerCase();
+  return normalized.contains('сесс') ||
+      normalized.contains('session') ||
+      normalized.contains('unauthorized') ||
+      normalized.contains('401') ||
+      normalized.contains('403');
+}
+
+String _startupFailureMessageFor(Object error) {
+  if (_looksLikeRecoverableSessionIssue(error)) {
+    return 'Старая сессия входа больше не подходит. Сбросьте её и откройте экран входа заново.';
+  }
+
+  return 'Не удалось открыть Родню. Попробуйте ещё раз. Если проблема повторится, проверьте интернет и повторите позже.';
 }
 
 // --- Функция для проверки обновлений и показа SnackBar ---
@@ -318,10 +351,14 @@ class _StartupFailureApp extends StatelessWidget {
   const _StartupFailureApp({
     required this.error,
     required this.stackTrace,
+    required this.onRetry,
+    this.onResetSessionAndRetry,
   });
 
   final Object error;
   final StackTrace stackTrace;
+  final Future<void> Function() onRetry;
+  final Future<void> Function()? onResetSessionAndRetry;
 
   @override
   Widget build(BuildContext context) {
@@ -334,33 +371,17 @@ class _StartupFailureApp extends StatelessWidget {
               padding: const EdgeInsets.all(24),
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 760),
-                child: Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(24),
-                  decoration: BoxDecoration(
-                    color: Colors.red.shade50,
-                    borderRadius: BorderRadius.circular(24),
-                    border: Border.all(color: Colors.red.shade200),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Приложение не смогло запуститься',
-                        style: TextStyle(
-                          fontSize: 24,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      Text(error.toString()),
-                      const SizedBox(height: 16),
-                      SelectableText(
-                        stackTrace.toString(),
-                        style: const TextStyle(fontSize: 12, height: 1.4),
-                      ),
-                    ],
-                  ),
+                child: StartupFailureView(
+                  title: 'Не удалось открыть Родню',
+                  message: _startupFailureMessageFor(error),
+                  onRetry: onRetry,
+                  onResetSessionAndRetry: onResetSessionAndRetry,
+                  showTechnicalDetails: kDebugMode,
+                  technicalDetails: [
+                    error.toString(),
+                    '',
+                    stackTrace.toString(),
+                  ].join('\n'),
                 ),
               ),
             ),
