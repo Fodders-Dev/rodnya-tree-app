@@ -451,14 +451,14 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
 
     for (final relation in _relations) {
       late final String relatedPersonId;
-      late final RelationType relationType;
+      late final RelationType relationFromRelatedPerson;
 
       if (relation.person1Id == _person!.id) {
         relatedPersonId = relation.person2Id;
-        relationType = relation.relation1to2;
+        relationFromRelatedPerson = relation.relation2to1;
       } else if (relation.person2Id == _person!.id) {
         relatedPersonId = relation.person1Id;
-        relationType = relation.relation2to1;
+        relationFromRelatedPerson = relation.relation1to2;
       } else {
         continue;
       }
@@ -486,7 +486,7 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
                 const SizedBox(width: 12),
                 Text(
                   FamilyRelation.getRelationName(
-                    relationType,
+                    relationFromRelatedPerson,
                     relatedPerson.gender,
                   ),
                   style: TextStyle(color: Colors.grey[700]),
