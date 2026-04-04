@@ -47,6 +47,13 @@ class AppTheme {
       error: Colors.redAccent,
       onError: Colors.white,
     ),
+    iconTheme: const IconThemeData(
+      color: Colors.black87, // Гарантируем видимость иконок в светлой теме
+      size: 24,
+    ),
+    primaryIconTheme: const IconThemeData(
+      color: Colors.white, // Иконки на фоне primary ( AppBar и т.д.)
+    ),
     scaffoldBackgroundColor: waLightBg,
     appBarTheme: AppBarTheme(
       backgroundColor: waGreen,
@@ -146,6 +153,13 @@ class AppTheme {
       onSurface: Colors.white, // Цвет текста на карточках/диалогах
       error: Colors.redAccent,
       onError: Colors.black,
+    ),
+    iconTheme: const IconThemeData(
+      color: Colors.white, // Гарантируем видимость иконок в темной теме
+      size: 24,
+    ),
+    primaryIconTheme: const IconThemeData(
+      color: Colors.white,
     ),
     scaffoldBackgroundColor: waDarkBg,
     appBarTheme: AppBarTheme(

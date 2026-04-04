@@ -58,36 +58,4 @@ class ThemeProvider extends ChangeNotifier {
       await setThemeMode(ThemeMode.dark);
     }
   }
-
-  ThemeData get darkTheme {
-    return ThemeData(
-      brightness: Brightness.dark,
-      primaryColor: Colors.deepPurple,
-      primarySwatch: Colors.deepPurple,
-      colorScheme: ColorScheme.dark(
-        primary: Colors.deepPurple,
-        secondary: Colors.deepPurpleAccent,
-        surface: Colors.grey[850]!,
-        background: Colors.grey[900]!,
-      ),
-      scaffoldBackgroundColor: Colors.black,
-      cardColor: Colors.grey[850],
-      dividerColor: Colors.grey[800],
-      textTheme: TextTheme(
-        bodyMedium: TextStyle(color: Colors.white),
-        bodyLarge: TextStyle(color: Colors.white),
-        titleLarge: TextStyle(color: Colors.white),
-      ),
-      appBarTheme: AppBarTheme(
-        backgroundColor: Colors.black,
-        foregroundColor: Colors.white,
-        elevation: 0,
-      ),
-      bottomNavigationBarTheme: BottomNavigationBarThemeData(
-        backgroundColor: Colors.black,
-        selectedItemColor: Colors.deepPurpleAccent,
-        unselectedItemColor: Colors.grey,
-      ),
-    );
-  }
 }

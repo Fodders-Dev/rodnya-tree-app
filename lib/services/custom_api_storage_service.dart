@@ -154,8 +154,11 @@ class CustomApiStorageService implements StorageServiceInterface {
       '',
     );
     // Force HTTPS for web to prevent Mixed Content blocking on POST/DELETE
-    if (base.startsWith('http://')) {
-      base = 'https://${base.substring(7)}';
+    // Also explicitly check for rodnya-tree.ru to be safe
+    if (base.startsWith('http://') || base.contains('rodnya-tree.ru')) {
+      if (!base.startsWith('https://')) {
+        base = 'https://${base.replaceFirst(RegExp(r'^http://'), '')}';
+      }
     }
     return Uri.parse('$base$path');
   }

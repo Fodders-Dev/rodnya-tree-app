@@ -16,7 +16,7 @@ function createApp({store, config, realtimeHub = null, pushGateway = null}) {
     pushGateway ?? new PushGateway({store, config});
 
   app.use(cors({origin: config.corsOrigin}));
-  app.use(express.json({limit: "10mb"}));
+  app.use(express.json({limit: "50mb"}));
   app.use("/media", express.static(config.mediaRootPath));
 
   app.get("/health", async (req, res) => {

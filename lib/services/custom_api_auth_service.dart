@@ -409,11 +409,17 @@ class CustomApiAuthService implements AuthServiceInterface {
   }
 
   Uri _buildUri(String path) {
-    final normalizedBase = _runtimeConfig.apiBaseUrl.replaceAll(
+    var base = _runtimeConfig.apiBaseUrl.replaceAll(
       RegExp(r'/$'),
       '',
     );
-    return Uri.parse('$normalizedBase$path');
+    // Force HTTPS for web to prevent Mixed Content blocking
+    if (base.startsWith('http://') || base.contains('rodnya-tree.ru')) {
+      if (!base.startsWith('https://')) {
+        base = 'https://${base.replaceFirst(RegExp(r'^http://'), '')}';
+      }
+    }
+    return Uri.parse('$base$path');
   }
 
   Map<String, String> _jsonHeaders({bool authenticated = false}) {

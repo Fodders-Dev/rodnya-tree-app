@@ -871,6 +871,15 @@ class _ChatScreenState extends State<ChatScreen> {
           top: 8,
           bottom: MediaQuery.of(context).padding.bottom + 8,
         ),
+        decoration: BoxDecoration(
+          color: Theme.of(context).cardColor,
+          border: Border(
+            top: BorderSide(
+              color: Theme.of(context).dividerColor,
+              width: 0.5,
+            ),
+          ),
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -947,7 +956,10 @@ class _ChatScreenState extends State<ChatScreen> {
                       ? null
                       : _openAttachmentPicker,
                   tooltip: 'Добавить вложение',
-                  icon: const Icon(Icons.attach_file_rounded),
+                  icon: Icon(
+                    Icons.attach_file_rounded,
+                    color: Theme.of(context).iconTheme.color,
+                  ),
                 ),
                 Expanded(
                   child: Container(

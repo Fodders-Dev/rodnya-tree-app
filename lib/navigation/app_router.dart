@@ -61,7 +61,7 @@ Widget _buildDesktopConstrainedScreen(Widget child) {
       child: Center(
         child: ConstrainedBox(
           constraints:
-              const BoxConstraints(maxWidth: 700), // Increased from 500
+              const BoxConstraints(maxWidth: 1200), // Increased from 700
           child: ClipRect(child: child),
         ),
       ),

@@ -305,6 +305,8 @@ class _MyAppState extends State<MyApp> {
 
   @override
   Widget build(BuildContext context) {
+    final themeProvider = Provider.of<ThemeProvider>(context);
+
     // Возвращаем MaterialApp.router и передаем scaffoldMessengerKey и routerConfig
     return MaterialApp.router(
       scaffoldMessengerKey: scaffoldMessengerKey, // Передаем ключ сюда
@@ -312,11 +314,9 @@ class _MyAppState extends State<MyApp> {
 
       title: 'Родня',
       debugShowCheckedModeBanner: false,
-      theme: Provider.of<ThemeProvider>(context).themeMode == ThemeMode.dark
-          ? AppTheme.darkTheme
-          : AppTheme.lightTheme,
+      theme: AppTheme.lightTheme,
       darkTheme: AppTheme.darkTheme,
-      themeMode: Provider.of<ThemeProvider>(context).themeMode,
+      themeMode: themeProvider.themeMode,
       localizationsDelegates: [
         GlobalMaterialLocalizations.delegate,
         GlobalWidgetsLocalizations.delegate,
