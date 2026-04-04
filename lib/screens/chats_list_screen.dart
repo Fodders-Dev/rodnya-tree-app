@@ -281,15 +281,20 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
           ? const Center(child: CircularProgressIndicator())
           : _errorMessage != null
               ? _buildErrorState()
-              : Column(
-                  children: [
-                    _buildSearchBar(theme),
-                    Expanded(
-                      child: _chatPreviews.isEmpty && _searchQuery.isEmpty
-                          ? _buildEmptyState(theme)
-                          : _buildChatList(theme, currentUserId),
+              : Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 1400),
+                    child: Column(
+                      children: [
+                        _buildSearchBar(theme),
+                        Expanded(
+                          child: _chatPreviews.isEmpty && _searchQuery.isEmpty
+                              ? _buildEmptyState(theme)
+                              : _buildChatList(theme, currentUserId),
+                        ),
+                      ],
                     ),
-                  ],
+                  ),
                 ),
     );
   }

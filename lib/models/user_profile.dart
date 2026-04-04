@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:hive/hive.dart';
 import '../models/family_person.dart';
+import '../utils/url_utils.dart';
 
 part 'user_profile.g.dart';
 
@@ -21,7 +22,7 @@ class UserProfile extends HiveObject {
   @HiveField(6)
   final String username;
   @HiveField(7)
-  final String? photoURL;
+  final String? _photoURL;
   @HiveField(8)
   final String phoneNumber;
   @HiveField(9)
@@ -49,6 +50,8 @@ class UserProfile extends HiveObject {
   @HiveField(20)
   final List<String>? fcmTokens;
 
+  String? get photoURL => _photoURL;
+
   UserProfile({
     required this.id,
     required this.email,
@@ -57,7 +60,7 @@ class UserProfile extends HiveObject {
     this.lastName = '',
     this.middleName = '',
     required this.username,
-    this.photoURL,
+    String? photoURL,
     required this.phoneNumber,
     this.isPhoneVerified = false,
     this.gender,
@@ -71,7 +74,7 @@ class UserProfile extends HiveObject {
     this.creatorOfTreeIds,
     this.accessibleTreeIds,
     this.fcmTokens,
-  });
+  }) : _photoURL = UrlUtils.normalizeImageUrl(photoURL);
 
   factory UserProfile.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>? ?? {};

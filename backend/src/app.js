@@ -487,6 +487,34 @@ function createApp({store, config, realtimeHub = null, pushGateway = null}) {
     res.json(authResponse(user, sessionTokens));
   });
 
+  app.post("/v1/auth/refresh", async (req, res) => {
+    const {refreshToken} = req.body || {};
+    if (!refreshToken) {
+      res.status(400).json({message: "Нужен refreshToken"});
+      return;
+    }
+
+    const session = await store.findSessionByRefreshToken(refreshToken);
+    if (!session) {
+      res.status(401).json({message: "Сессия по refreshToken не найдена"});
+      return;
+    }
+
+    const user = await store.findUserById(session.userId);
+    if (!user) {
+      res.status(401).json({message: "Пользователь сессии не найден"});
+      return;
+    }
+
+    // Удаляем старую сессию (используем токен старой сессии, если он есть)
+    if (session.token) {
+      await store.deleteSession(session.token);
+    }
+
+    const nextSessionTokens = await store.createSession(user.id);
+    res.json(authResponse(user, nextSessionTokens));
+  });
+
   app.get("/v1/auth/session", requireAuth, async (req, res) => {
     const user = await store.findUserById(req.auth.user.id);
     const profile = sanitizeProfile(user.profile);

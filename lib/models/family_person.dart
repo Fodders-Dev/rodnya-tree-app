@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:hive/hive.dart';
+import '../utils/url_utils.dart';
 
 part 'family_person.g.dart';
 
@@ -26,7 +27,7 @@ class Person {
   final String lastName;
   final String? middleName;
   final String? maidenName;
-  final String? photoUrl;
+  final String? _photoUrl;
   final Gender gender;
   final DateTime? birthDate;
   final String? birthPlace;
@@ -42,14 +43,16 @@ class Person {
     required this.lastName,
     this.middleName,
     this.maidenName,
-    this.photoUrl,
+    String? photoUrl,
     required this.gender,
     this.birthDate,
     this.birthPlace,
     this.deathDate,
     this.deathPlace,
     this.notes,
-  });
+  }) : _photoUrl = UrlUtils.normalizeImageUrl(photoUrl);
+
+  String? get photoUrl => _photoUrl;
 
   // Геттер для получения полного имени
   String get name {
@@ -159,7 +162,7 @@ class FamilyPerson extends HiveObject {
   @HiveField(4)
   final String? maidenName; // Девичья фамилия (если применимо)
   @HiveField(5)
-  final String? photoUrl;
+  final String? _photoUrl;
   @HiveField(6)
   final Gender gender;
   @HiveField(7)
@@ -196,6 +199,8 @@ class FamilyPerson extends HiveObject {
   final FamilyPersonDetails?
       details; // Подробная информация (образование, карьера и т.д.)
 
+  String? get photoUrl => _photoUrl;
+
   // Добавляем необходимые геттеры для работы с древовидной структурой
   List<String> get spouseIds =>
       _getListOrEmpty(spouseId != null ? [spouseId!] : []);
@@ -212,7 +217,7 @@ class FamilyPerson extends HiveObject {
     this.userId,
     required this.name,
     this.maidenName,
-    this.photoUrl,
+    String? photoUrl,
     required this.gender,
     this.birthDate,
     this.birthPlace,
@@ -230,7 +235,7 @@ class FamilyPerson extends HiveObject {
     this.spouseId,
     this.siblingIds,
     this.details,
-  });
+  }) : _photoUrl = UrlUtils.normalizeImageUrl(photoUrl);
 
   /// Возвращает отображаемое имя (синоним для поля `name`).
   String get displayName => name;

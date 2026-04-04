@@ -1,27 +1,30 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../utils/url_utils.dart';
 
 class Comment {
   final String id;
   final String postId;
   final String authorId;
   final String? authorName;
-  final String? authorPhotoUrl;
+  final String? _authorPhotoUrl;
   final String content;
   final DateTime createdAt;
   final int likeCount;
   final List<String> likedBy;
+
+  String? get authorPhotoUrl => _authorPhotoUrl;
 
   Comment({
     required this.id,
     required this.postId,
     required this.authorId,
     this.authorName,
-    this.authorPhotoUrl,
+    String? authorPhotoUrl,
     required this.content,
     required this.createdAt,
     this.likeCount = 0,
     this.likedBy = const [],
-  });
+  }) : _authorPhotoUrl = UrlUtils.normalizeImageUrl(authorPhotoUrl);
 
   factory Comment.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;

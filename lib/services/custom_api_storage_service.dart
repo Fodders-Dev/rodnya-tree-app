@@ -149,11 +149,15 @@ class CustomApiStorageService implements StorageServiceInterface {
   }
 
   Uri _buildUri(String path) {
-    final normalizedBase = _runtimeConfig.apiBaseUrl.replaceAll(
+    var base = _runtimeConfig.apiBaseUrl.replaceAll(
       RegExp(r'/$'),
       '',
     );
-    return Uri.parse('$normalizedBase$path');
+    // Force HTTPS for web to prevent Mixed Content blocking on POST/DELETE
+    if (base.startsWith('http://')) {
+      base = 'https://${base.substring(7)}';
+    }
+    return Uri.parse('$base$path');
   }
 
   Map<String, String> _headers() {

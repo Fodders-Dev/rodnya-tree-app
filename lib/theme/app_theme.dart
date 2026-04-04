@@ -59,24 +59,24 @@ class AppTheme {
     ),
     textTheme: GoogleFonts.robotoTextTheme()
         .apply(
-          bodyColor: Colors.black87, // Цвет основного текста
-          displayColor: Colors.black87, // Цвет заголовков
+          bodyColor: Colors.black, // Более глубокий черный для контента
+          displayColor: Colors.black, // Более глубокий черный для заголовков
         )
         .copyWith(
           titleLarge: GoogleFonts.roboto(
             fontWeight: FontWeight.bold,
             fontSize: 18,
-            color: Colors.black87,
+            color: Colors.black,
           ),
           titleMedium: GoogleFonts.roboto(
             fontWeight: FontWeight.bold,
             fontSize: 16,
-            color: Colors.black87,
+            color: Colors.black,
           ),
           bodySmall: GoogleFonts.roboto(
             fontSize: 12,
-            color: Colors.grey[600],
-          ), // Для дат, статусов
+            color: Colors.black87, // Значительно темнее для дат/статусов
+          ),
         ),
     cardTheme: CardThemeData(
       color: waLightSurface,
@@ -92,7 +92,7 @@ class AppTheme {
     ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
-      fillColor: Colors.grey[100], // Светло-серый фон поля ввода
+      fillColor: Colors.grey[200], // Сделали фон поля чуть темнее для контраста
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(8),
         borderSide: BorderSide.none, // Без рамки по умолчанию
@@ -102,7 +102,10 @@ class AppTheme {
         borderSide: const BorderSide(color: waGreen, width: 1.5),
       ),
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      hintStyle: TextStyle(color: Colors.grey[500]),
+      hintStyle: const TextStyle(
+        color: Colors.black45, // Более видимый серый для подсказок
+        fontWeight: FontWeight.w400,
+      ),
     ),
     elevatedButtonTheme: ElevatedButtonThemeData(
       style: ElevatedButton.styleFrom(
@@ -139,40 +142,42 @@ class AppTheme {
       surface: waDarkSurface, // Фон карточек, диалогов
       onPrimary: Colors.white, // Текст/иконки на primary цвете
       onSecondary: Colors.white, // Текст/иконки на secondary цвете
-      onBackground: Colors.white70, // Основной цвет текста
-      onSurface: Colors.white70, // Цвет текста на карточках/диалогах
+      onBackground: Colors.white, // Основной цвет текста - сделали ярче
+      onSurface: Colors.white, // Цвет текста на карточках/диалогах
       error: Colors.redAccent,
       onError: Colors.black,
     ),
     scaffoldBackgroundColor: waDarkBg,
     appBarTheme: AppBarTheme(
       backgroundColor: waDarkSurface, // В темной теме WA AppBar не зеленый
-      foregroundColor: Colors.white70, // Цвет текста и иконок в AppBar
+      foregroundColor:
+          Colors.white, // Цвет текста и иконок в AppBar - сделали ярче
       elevation: 1.0,
       titleTextStyle: GoogleFonts.roboto(
         fontSize: 20,
         fontWeight: FontWeight.w500,
+        color: Colors.white,
       ),
     ),
     textTheme: GoogleFonts.robotoTextTheme()
         .apply(
-          bodyColor: Colors.white70, // Цвет основного текста
-          displayColor: Colors.white70, // Цвет заголовков
+          bodyColor: Colors.white, // Цвет основного текста - сделали ярче
+          displayColor: Colors.white, // Цвет заголовков
         )
         .copyWith(
           titleLarge: GoogleFonts.roboto(
             fontWeight: FontWeight.bold,
             fontSize: 18,
-            color: Colors.white70,
+            color: Colors.white,
           ),
           titleMedium: GoogleFonts.roboto(
             fontWeight: FontWeight.bold,
             fontSize: 16,
-            color: Colors.white70,
+            color: Colors.white,
           ),
           bodySmall: GoogleFonts.roboto(
             fontSize: 12,
-            color: Colors.grey[400],
+            color: Colors.white60, // Более контрастный серый для темной темы
           ), // Для дат, статусов
         ),
     cardTheme: CardThemeData(
@@ -187,7 +192,7 @@ class AppTheme {
     ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
-      fillColor: Colors.grey[800], // Темно-серый фон поля ввода
+      fillColor: Colors.grey[900], // Темно-серый фон поля ввода
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(8),
         borderSide: BorderSide.none, // Без рамки по умолчанию
@@ -197,7 +202,8 @@ class AppTheme {
         borderSide: const BorderSide(color: waDarkGreen, width: 1.5),
       ),
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      hintStyle: TextStyle(color: Colors.grey[500]),
+      hintStyle:
+          TextStyle(color: Colors.white38), // Видимый, но ненавязчивый хинт
     ),
     elevatedButtonTheme: ElevatedButtonThemeData(
       style: ElevatedButton.styleFrom(

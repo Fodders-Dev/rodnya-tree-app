@@ -2,6 +2,7 @@ import 'package:hive/hive.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import 'chat_attachment.dart';
+import '../utils/url_utils.dart';
 
 part 'chat_message.g.dart';
 
@@ -42,11 +43,11 @@ class ChatMessage extends HiveObject {
     for (final attachment in attachments) {
       if (attachment.type == ChatAttachmentType.image &&
           attachment.url.trim().isNotEmpty) {
-        return attachment.url;
+        return UrlUtils.normalizeImageUrl(attachment.url);
       }
     }
     if (attachments.isNotEmpty) {
-      return attachments.first.url;
+      return UrlUtils.normalizeImageUrl(attachments.first.url);
     }
     return null;
   }
@@ -58,6 +59,7 @@ class ChatMessage extends HiveObject {
     return attachments
         .map((attachment) => attachment.url.trim())
         .where((url) => url.isNotEmpty)
+        .map((url) => UrlUtils.normalizeImageUrl(url)!)
         .toList();
   }
 

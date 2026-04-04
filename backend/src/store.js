@@ -619,20 +619,35 @@ class FileStore {
     const token = crypto.randomBytes(32).toString("hex");
     const refreshToken = crypto.randomBytes(32).toString("hex");
 
-    db.sessions = db.sessions.filter((session) => session.userId !== userId);
-    db.sessions.push({
-      token,
-      refreshToken,
-      userId,
-      createdAt,
-      lastSeenAt: createdAt,
-    });
+    // Keep last 5 sessions for this user to allow multiple devices
+    const userSessions = db.sessions.filter((s) => s.userId === userId);
+    const otherSessions = db.sessions.filter((s) => s.userId !== userId);
+    
+    const sessionsToKeep = userSessions.slice(-4); // Keep 4 previous, total 5 after push
+    
+    db.sessions = [
+      ...otherSessions,
+      ...sessionsToKeep,
+      {
+        token,
+        refreshToken,
+        userId,
+        createdAt,
+        lastSeenAt: createdAt,
+      }
+    ];
 
     await this._write(db);
     return {
       token,
       refreshToken,
     };
+  }
+
+  async findSessionByRefreshToken(refreshToken) {
+    const db = await this._read();
+    const session = db.sessions.find((entry) => entry.refreshToken === refreshToken);
+    return session ? structuredClone(session) : null;
   }
 
   async findSession(token) {

@@ -580,9 +580,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 children: [
                   // Раздел Аккаунт
                   Padding(
-                    padding: const EdgeInsets.only(top: 32.0, bottom: 16.0),
+                    padding: const EdgeInsets.only(top: 24.0, bottom: 8.0),
                     child: Text(
-                      'Аккаунт',
+                      'Аккаунт и безопасность',
                       style: TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.bold,
@@ -605,6 +605,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     },
                   ),
 
+                  const Divider(height: 32),
+
                   // Кнопка удаления аккаунта
                   ListTile(
                     leading: Icon(Icons.delete_forever, color: Colors.red),
@@ -612,10 +614,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       'Удалить аккаунт',
                       style: TextStyle(color: Colors.red),
                     ),
+                    subtitle: const Text('Это действие нельзя отменить'),
                     onTap: _showDeleteAccountConfirmation,
                   ),
 
-                  SizedBox(height: 40),
+                  const SizedBox(height: 60),
 
                   // Информация о приложении
                   Center(

@@ -192,82 +192,92 @@ class _HomeScreenState extends State<HomeScreen> {
             await _loadBranchPeople(_currentTreeId!);
           }
         },
-        child: StreamBuilder<List<TreeInvitation>>(
-          stream: _familyTreeService.getPendingTreeInvitations(),
-          builder: (context, snapshot) {
-            final pendingInvitations =
-                snapshot.data ?? const <TreeInvitation>[];
-            return CustomScrollView(
-              slivers: [
-                SliverToBoxAdapter(
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 24,
-                    ),
-                    color: Theme.of(
-                      context,
-                    ).colorScheme.primary.withValues(alpha: 0.05),
-                    child: Row(
-                      children: [
-                        CircleAvatar(
-                          radius: 30,
-                          backgroundImage:
-                              _authService.currentUserPhotoUrl != null
-                                  ? NetworkImage(
-                                      _authService.currentUserPhotoUrl!,
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 1400),
+            child: StreamBuilder<List<TreeInvitation>>(
+              stream: _familyTreeService.getPendingTreeInvitations(),
+              builder: (context, snapshot) {
+                final pendingInvitations =
+                    snapshot.data ?? const <TreeInvitation>[];
+                return CustomScrollView(
+                  slivers: [
+                    SliverToBoxAdapter(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 24,
+                        ),
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.primary.withValues(alpha: 0.05),
+                        child: Row(
+                          children: [
+                            CircleAvatar(
+                              radius: 30,
+                              backgroundImage:
+                                  _authService.currentUserPhotoUrl != null
+                                      ? NetworkImage(
+                                          _authService.currentUserPhotoUrl!,
+                                        )
+                                      : null,
+                              child: _authService.currentUserPhotoUrl == null
+                                  ? Icon(
+                                      Icons.person,
+                                      size: 30,
+                                      color: Colors.white,
                                     )
                                   : null,
-                          child: _authService.currentUserPhotoUrl == null
-                              ? Icon(
-                                  Icons.person,
-                                  size: 30,
-                                  color: Colors.white,
-                                )
-                              : null,
-                          backgroundColor: Theme.of(context).primaryColor,
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Привет, ${_authService.currentUserDisplayName ?? 'пользователь'}!',
-                                style: Theme.of(context).textTheme.titleLarge,
+                              backgroundColor: Theme.of(context).primaryColor,
+                            ),
+                            const SizedBox(width: 16),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Привет, ${_authService.currentUserDisplayName ?? 'пользователь'}!',
+                                    style:
+                                        Theme.of(context).textTheme.titleLarge,
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    'Добро пожаловать в Родню',
+                                    style:
+                                        Theme.of(context).textTheme.bodyMedium,
+                                  ),
+                                ],
                               ),
-                              const SizedBox(height: 4),
-                              Text(
-                                'Добро пожаловать в Родню',
-                                style: Theme.of(context).textTheme.bodyMedium,
-                              ),
-                            ],
-                          ),
+                            ),
+                          ],
                         ),
-                      ],
+                      ),
                     ),
-                  ),
-                ),
-                if (pendingInvitations.isNotEmpty)
-                  SliverToBoxAdapter(
-                    child: _buildPendingInvitationsBanner(pendingInvitations),
-                  ),
-                if (_shouldShowBrowserNotificationPrompt)
-                  SliverToBoxAdapter(
-                    child: _buildBrowserNotificationsPrompt(),
-                  ),
-                if (_currentTreeId == null) ...[
-                  SliverToBoxAdapter(child: _buildNoTreeSelectedHero()),
-                  SliverToBoxAdapter(child: _buildNoTreeSelectedNextSteps()),
-                ] else ...[
-                  if (_supportsLegacyPostFeed)
-                    SliverToBoxAdapter(child: _buildStoriesSection()),
-                  SliverToBoxAdapter(child: _buildUpcomingEventsSection()),
-                  ..._buildPostSlivers(),
-                ],
-              ],
-            );
-          },
+                    if (pendingInvitations.isNotEmpty)
+                      SliverToBoxAdapter(
+                        child:
+                            _buildPendingInvitationsBanner(pendingInvitations),
+                      ),
+                    if (_shouldShowBrowserNotificationPrompt)
+                      SliverToBoxAdapter(
+                        child: _buildBrowserNotificationsPrompt(),
+                      ),
+                    if (_currentTreeId == null) ...[
+                      SliverToBoxAdapter(child: _buildNoTreeSelectedHero()),
+                      SliverToBoxAdapter(
+                        child: _buildNoTreeSelectedNextSteps(),
+                      ),
+                    ] else ...[
+                      if (_supportsLegacyPostFeed)
+                        SliverToBoxAdapter(child: _buildStoriesSection()),
+                      SliverToBoxAdapter(child: _buildUpcomingEventsSection()),
+                      ..._buildPostSlivers(),
+                    ],
+                  ],
+                );
+              },
+            ),
+          ),
         ),
       ),
       floatingActionButton: _supportsLegacyPostFeed

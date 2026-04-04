@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../utils/url_utils.dart';
 
 enum TreeContentScopeType { wholeTree, branches }
 
@@ -7,9 +8,9 @@ class Post {
   final String treeId;
   final String authorId;
   final String authorName;
-  final String? authorPhotoUrl;
+  final String? _authorPhotoUrl;
   final String content;
-  final List<String>? imageUrls;
+  final List<String>? _imageUrls;
   final DateTime createdAt;
   final List<String> likedBy; // Список user ID
   final int commentCount;
@@ -17,7 +18,9 @@ class Post {
   final TreeContentScopeType scopeType;
   final List<String> anchorPersonIds;
 
-  // Геттер для удобства
+  // Геттеры для нормализованных URL
+  String? get authorPhotoUrl => _authorPhotoUrl;
+  List<String>? get imageUrls => _imageUrls;
   int get likeCount => likedBy.length;
 
   Post({
@@ -25,20 +28,29 @@ class Post {
     required this.treeId,
     required this.authorId,
     required this.authorName,
-    this.authorPhotoUrl,
+    String? authorPhotoUrl,
     required this.content,
-    this.imageUrls,
+    List<String>? imageUrls,
     required this.createdAt,
-    List<String>? likedBy, // Делаем nullable для удобства в fromFirestore
+    List<String>? likedBy,
     this.commentCount = 0,
     this.isPublic = false,
     this.scopeType = TreeContentScopeType.wholeTree,
     List<String>? anchorPersonIds,
-  })  : likedBy = likedBy ?? [],
+  })  : _authorPhotoUrl = UrlUtils.normalizeImageUrl(authorPhotoUrl),
+        _imageUrls = imageUrls
+            ?.map((url) => UrlUtils.normalizeImageUrl(url))
+            .whereType<String>()
+            .toList(),
+        likedBy = likedBy ?? [],
         anchorPersonIds = anchorPersonIds ?? [];
 
   factory Post.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>? ?? {};
+    final rawImageUrls = (data['imageUrls'] as List<dynamic>? ?? [])
+        .map((e) => e.toString())
+        .toList();
+
     return Post(
       id: doc.id,
       treeId: data['treeId'] ?? '',
@@ -46,9 +58,7 @@ class Post {
       authorName: data['authorName'] ?? 'Аноним',
       authorPhotoUrl: data['authorPhotoUrl'] as String?,
       content: data['content'] ?? '',
-      imageUrls: (data['imageUrls'] as List<dynamic>? ?? [])
-          .map((e) => e.toString())
-          .toList(),
+      imageUrls: rawImageUrls,
       createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       likedBy: (data['likedBy'] as List<dynamic>? ?? [])
           .map((e) => e.toString())

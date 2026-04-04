@@ -2,6 +2,8 @@ import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'dart:async';
+import '../utils/url_utils.dart';
+
 import '../screens/home_screen.dart';
 import '../screens/auth_screen.dart';
 import '../screens/profile_screen.dart';
@@ -58,7 +60,8 @@ Widget _buildDesktopConstrainedScreen(Widget child) {
       color: Theme.of(context).colorScheme.surfaceContainerHighest,
       child: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 500),
+          constraints:
+              const BoxConstraints(maxWidth: 700), // Increased from 500
           child: ClipRect(child: child),
         ),
       ),
@@ -212,62 +215,87 @@ class AppRouter {
     },
 
     routes: [
-      // Основной каркас приложения с нижней навигацией
+      // Основной каркас приложения с адаптивной навигацией
       StatefulShellRoute.indexedStack(
         builder: (context, state, navigationShell) {
-          return Container(
-            color: Theme.of(context).colorScheme.surfaceContainerHighest,
-            child: Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 500),
-                child: ClipRRect(
-                  borderRadius: const BorderRadius.only(
-                    topLeft: Radius.circular(0),
-                    topRight: Radius.circular(0),
-                  ),
-                  child: Scaffold(
-                    body: Column(
-                      children: [
-                        OfflineIndicator(), // Индикатор офлайн-режима
-                        Expanded(
-                            child: navigationShell), // Текущий навигатор ветки
-                      ],
+          final currentUserId = GetIt.I<AuthServiceInterface>().currentUserId;
+          final unreadNotificationsStream =
+              GetIt.I.isRegistered<CustomApiNotificationService>()
+                  ? GetIt.I<CustomApiNotificationService>()
+                      .unreadNotificationsCountStream
+                  : Stream.value(0);
+          final unreadChatsStream = currentUserId != null
+              ? GetIt.I<ChatServiceInterface>()
+                  .getTotalUnreadCountStream(currentUserId)
+              : Stream.value(0);
+          final pendingInvitationsCountStream = currentUserId != null
+              ? GetIt.I<FamilyTreeServiceInterface>()
+                  .getPendingTreeInvitations()
+                  .map((invitations) => invitations.length)
+              : Stream.value(0);
+
+          return LayoutBuilder(
+            builder: (context, constraints) {
+              final isDesktop = constraints.maxWidth >= 900;
+              final isTreeBranch =
+                  navigationShell.currentIndex == 2; // Tree is branch 2
+
+              // Вспомогательный виджет для контента
+              Widget bodyContent = Column(
+                children: [
+                  const OfflineIndicator(),
+                  Expanded(child: navigationShell),
+                ],
+              );
+
+              // Если десктоп -> добавляем ограничение ширины контента и центрируем
+              if (isDesktop) {
+                bodyContent = Center(
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxWidth:
+                          isTreeBranch ? double.infinity : 1400, // Fluid tree
                     ),
-                    bottomNavigationBar: StreamBuilder<int>(
-                      stream: Stream.value(navigationShell.currentIndex),
-                      builder: (context, snapshot) {
-                        final currentUserId =
-                            GetIt.I<AuthServiceInterface>().currentUserId;
-                        return MainNavigationBar(
-                          currentIndex: navigationShell.currentIndex,
-                          onTap: (index) {
-                            navigationShell.goBranch(
-                              index,
-                              initialLocation:
-                                  index == navigationShell.currentIndex,
-                            );
-                          },
-                          unreadNotificationsStream: GetIt.I
-                                  .isRegistered<CustomApiNotificationService>()
-                              ? GetIt.I<CustomApiNotificationService>()
-                                  .unreadNotificationsCountStream
-                              : Stream.value(0),
-                          unreadChatsStream: currentUserId != null
-                              ? GetIt.I<ChatServiceInterface>()
-                                  .getTotalUnreadCountStream(currentUserId)
-                              : Stream.value(0),
-                          pendingInvitationsCountStream: currentUserId != null
-                              ? GetIt.I<FamilyTreeServiceInterface>()
-                                  .getPendingTreeInvitations()
-                                  .map((invitations) => invitations.length)
-                              : Stream.value(0),
-                        );
-                      },
-                    ),
+                    child: bodyContent,
                   ),
-                ),
-              ),
-            ),
+                );
+              }
+
+              if (isDesktop) {
+                return Scaffold(
+                  body: Row(
+                    children: [
+                      _AdaptiveNavigationRail(
+                        navigationShell: navigationShell,
+                        unreadNotificationsStream: unreadNotificationsStream,
+                        unreadChatsStream: unreadChatsStream,
+                        pendingInvitationsCountStream:
+                            pendingInvitationsCountStream,
+                      ),
+                      const VerticalDivider(thickness: 1, width: 1),
+                      Expanded(child: bodyContent),
+                    ],
+                  ),
+                );
+              } else {
+                return Scaffold(
+                  body: bodyContent,
+                  bottomNavigationBar: MainNavigationBar(
+                    currentIndex: navigationShell.currentIndex,
+                    onTap: (index) {
+                      navigationShell.goBranch(
+                        index,
+                        initialLocation: index == navigationShell.currentIndex,
+                      );
+                    },
+                    unreadNotificationsStream: unreadNotificationsStream,
+                    unreadChatsStream: unreadChatsStream,
+                    pendingInvitationsCountStream:
+                        pendingInvitationsCountStream,
+                  ),
+                );
+              }
+            },
           );
         },
         branches: [
@@ -454,9 +482,7 @@ class AppRouter {
                         child: ChatScreen(
                           otherUserId: userId,
                           title: name,
-                          photoUrl: photoUrl != null && photoUrl.isNotEmpty
-                              ? photoUrl
-                              : null,
+                          photoUrl: UrlUtils.normalizeImageUrl(photoUrl),
                           relativeId: relativeId,
                           chatType: 'direct',
                         ),
@@ -920,5 +946,139 @@ class AppRouter {
     var offsetAnimation = animation.drive(tween);
 
     return SlideTransition(position: offsetAnimation, child: child);
+  }
+}
+
+class _AdaptiveNavigationRail extends StatelessWidget {
+  const _AdaptiveNavigationRail({
+    required this.navigationShell,
+    required this.unreadNotificationsStream,
+    required this.unreadChatsStream,
+    required this.pendingInvitationsCountStream,
+  });
+
+  final StatefulNavigationShell navigationShell;
+  final Stream<int> unreadNotificationsStream;
+  final Stream<int> unreadChatsStream;
+  final Stream<int> pendingInvitationsCountStream;
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<int>(
+      stream: unreadNotificationsStream,
+      initialData: 0,
+      builder: (context, notificationsSnapshot) {
+        final notificationsCount = notificationsSnapshot.data ?? 0;
+        return StreamBuilder<int>(
+          stream: unreadChatsStream,
+          initialData: 0,
+          builder: (context, chatsSnapshot) {
+            final chatsCount = chatsSnapshot.data ?? 0;
+            return StreamBuilder<int>(
+              stream: pendingInvitationsCountStream,
+              initialData: 0,
+              builder: (context, invitationsSnapshot) {
+                final invitationsCount = invitationsSnapshot.data ?? 0;
+
+                return NavigationRail(
+                  selectedIndex: navigationShell.currentIndex,
+                  onDestinationSelected: (index) {
+                    navigationShell.goBranch(
+                      index,
+                      initialLocation: index == navigationShell.currentIndex,
+                    );
+                  },
+                  labelType: NavigationRailLabelType.all,
+                  groupAlignment: -0.8,
+                  leading: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 24),
+                    child: CircleAvatar(
+                      backgroundColor: Theme.of(context).colorScheme.primary,
+                      radius: 20,
+                      child: const Icon(Icons.family_restroom,
+                          color: Colors.white, size: 24),
+                    ),
+                  ),
+                  destinations: [
+                    NavigationRailDestination(
+                      icon: _RailBadgeIcon(
+                        count: notificationsCount,
+                        icon: Icons.home_outlined,
+                      ),
+                      selectedIcon: _RailBadgeIcon(
+                        count: notificationsCount,
+                        icon: Icons.home,
+                      ),
+                      label: const Text('Главная'),
+                    ),
+                    const NavigationRailDestination(
+                      icon: Icon(Icons.people_outline),
+                      selectedIcon: Icon(Icons.people),
+                      label: const Text('Родные'),
+                    ),
+                    NavigationRailDestination(
+                      icon: _buildTreeIcon(context, invitationsCount),
+                      label: const Text('Дерево'),
+                    ),
+                    NavigationRailDestination(
+                      icon: _RailBadgeIcon(
+                        count: chatsCount,
+                        icon: Icons.chat_bubble_outline,
+                      ),
+                      selectedIcon: _RailBadgeIcon(
+                        count: chatsCount,
+                        icon: Icons.chat_bubble,
+                      ),
+                      label: const Text('Чаты'),
+                    ),
+                    const NavigationRailDestination(
+                      icon: Icon(Icons.person_outline),
+                      selectedIcon: Icon(Icons.person),
+                      label: const Text('Профиль'),
+                    ),
+                  ],
+                );
+              },
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildTreeIcon(BuildContext context, int count) {
+    final icon = Container(
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.primary,
+        shape: BoxShape.circle,
+      ),
+      child: const Icon(
+        Icons.account_tree,
+        color: Colors.white,
+        size: 18,
+      ),
+    );
+
+    if (count <= 0) return icon;
+    return Badge(
+      label: Text(count.toString()),
+      child: icon,
+    );
+  }
+}
+
+class _RailBadgeIcon extends StatelessWidget {
+  const _RailBadgeIcon({required this.count, required this.icon});
+  final int count;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    if (count <= 0) return Icon(icon);
+    return Badge(
+      label: Text(count > 99 ? '99+' : count.toString()),
+      child: Icon(icon),
+    );
   }
 }

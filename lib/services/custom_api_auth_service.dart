@@ -8,6 +8,7 @@ import '../backend/backend_runtime_config.dart';
 import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/models/custom_api_session.dart';
 import 'invitation_service.dart';
+import '../utils/url_utils.dart';
 
 class CustomApiException implements Exception {
   const CustomApiException(this.message, {this.statusCode});
@@ -40,6 +41,8 @@ class CustomApiAuthService implements AuthServiceInterface {
       StreamController<String?>.broadcast();
 
   CustomApiSession? _session;
+  bool _isRefreshing = false;
+  Future<void>? _refreshTask;
 
   static Future<CustomApiAuthService> create({
     http.Client? httpClient,
@@ -69,7 +72,8 @@ class CustomApiAuthService implements AuthServiceInterface {
   String? get currentUserDisplayName => _session?.displayName;
 
   @override
-  String? get currentUserPhotoUrl => _session?.photoUrl;
+  String? get currentUserPhotoUrl =>
+      UrlUtils.normalizeImageUrl(_session?.photoUrl);
 
   @override
   List<String> get currentProviderIds => _session?.providerIds ?? const [];
@@ -78,21 +82,67 @@ class CustomApiAuthService implements AuthServiceInterface {
   Stream<String?> get authStateChanges => _authStateController.stream;
 
   Future<void> restoreSession() async {
-    final rawValue = _preferences.getString(_sessionStorageKey);
-    if (rawValue == null || rawValue.isEmpty) {
-      _session = null;
-      return;
-    }
-
     try {
+      final rawValue = _preferences.getString(_sessionStorageKey);
+      if (rawValue == null || rawValue.isEmpty) {
+        _session = null;
+        return;
+      }
+
       final json = jsonDecode(rawValue);
       if (json is Map<String, dynamic>) {
         final session = CustomApiSession.fromJson(json);
         _session = session.userId.isEmpty ? null : session;
+        if (_session != null) {
+          _authStateController.add(_session!.userId);
+        }
       }
     } catch (_) {
       _session = null;
       await _preferences.remove(_sessionStorageKey);
+    }
+  }
+
+  Future<void>? refreshSession() async {
+    if (_isRefreshing) {
+      return _refreshTask;
+    }
+
+    final refreshToken = _session?.refreshToken;
+    if (refreshToken == null || refreshToken.isEmpty) {
+      await _clearSession();
+      throw const CustomApiException('Нет refresh token для обновления сессии');
+    }
+
+    _isRefreshing = true;
+    _refreshTask = _performRefresh(refreshToken);
+
+    try {
+      await _refreshTask;
+    } finally {
+      _isRefreshing = false;
+      _refreshTask = null;
+    }
+  }
+
+  Future<void> _performRefresh(String refreshToken) async {
+    try {
+      final response = await _httpClient.post(
+        _buildUri('/v1/auth/refresh'),
+        headers: _jsonHeaders(authenticated: false),
+        body: jsonEncode({'refreshToken': refreshToken}),
+      );
+
+      if (response.statusCode == 401 || response.statusCode == 403) {
+        await _clearSession();
+        throw const CustomApiException('Сессия истекла. Войдите заново.');
+      }
+
+      final body = _decodeResponse(response);
+      final newSession = _sessionFromResponse(body);
+      await _saveSession(newSession);
+    } catch (e) {
+      rethrow;
     }
   }
 
@@ -215,9 +265,7 @@ class CustomApiAuthService implements AuthServiceInterface {
         },
       );
       _invitationService.clearPendingInvitation();
-    } catch (_) {
-      // Не ломаем auth flow, пока invite-путь ещё мигрирует.
-    }
+    } catch (_) {}
   }
 
   @override
@@ -286,32 +334,55 @@ class CustomApiAuthService implements AuthServiceInterface {
     Map<String, dynamic>? body,
   }) async {
     final uri = _buildUri(path);
+    try {
+      return await _executeRequest(method, uri, authenticated, body);
+    } on CustomApiException catch (e) {
+      if (authenticated && (e.statusCode == 401 || e.statusCode == 403)) {
+        if (_session?.refreshToken != null) {
+          try {
+            await refreshSession();
+            return await _executeRequest(method, uri, authenticated, body);
+          } catch (_) {
+            rethrow;
+          }
+        } else {
+          await _clearSession();
+        }
+      }
+      rethrow;
+    }
+  }
+
+  Future<Map<String, dynamic>> _executeRequest(
+    String method,
+    Uri uri,
+    bool authenticated,
+    Map<String, dynamic>? body,
+  ) async {
     late http.Response response;
+    final headers = _jsonHeaders(authenticated: authenticated);
 
     switch (method) {
       case 'GET':
-        response = await _httpClient.get(
-          uri,
-          headers: _jsonHeaders(authenticated: authenticated),
-        );
+        response = await _httpClient.get(uri, headers: headers);
         break;
       case 'POST':
         response = await _httpClient.post(
           uri,
-          headers: _jsonHeaders(authenticated: authenticated),
+          headers: headers,
           body: jsonEncode(body ?? const {}),
         );
         break;
       case 'PATCH':
         response = await _httpClient.patch(
           uri,
-          headers: _jsonHeaders(authenticated: authenticated),
+          headers: headers,
           body: jsonEncode(body ?? const {}),
         );
         break;
       case 'DELETE':
         final request = http.Request('DELETE', uri)
-          ..headers.addAll(_jsonHeaders(authenticated: authenticated))
+          ..headers.addAll(headers)
           ..body = jsonEncode(body ?? const {});
         final streamedResponse = await _httpClient.send(request);
         response = await http.Response.fromStream(streamedResponse);
