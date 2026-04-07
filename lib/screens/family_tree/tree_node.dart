@@ -10,18 +10,18 @@ class TreeNode extends StatelessWidget {
   final VoidCallback onNodeTap;
 
   const TreeNode({
-    Key? key,
+    super.key,
     required this.person,
     required this.isEditMode,
     required this.onAddRelative,
     required this.onNodeTap,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: onNodeTap,
-      child: Container(
+      child: SizedBox(
         width: 150,
         height: 200,
         child: Stack(

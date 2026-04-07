@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:uuid/uuid.dart';
 import 'dart:collection';
@@ -9,12 +10,11 @@ import '../models/relation_request.dart';
 import '../models/family_tree.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import '../services/local_storage_service.dart';
-import 'package:get_it/get_it.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 // Добавляем импорт SyncService
 import 'sync_service.dart';
 import '../models/user_profile.dart'; // <<< Добавляем импорт UserProfile
-import '../services/auth_service.dart'; // <<< Добавляем импорт AuthService
+// <<< Добавляем импорт AuthService
 import '../backend/interfaces/family_tree_service_interface.dart';
 import '../backend/models/selectable_tree.dart';
 import '../backend/models/tree_invitation.dart';
@@ -245,6 +245,7 @@ class FamilyService implements FamilyTreeServiceInterface {
   }
 
   // Создание новой родственной связи (с поддержкой оффлайн)
+  @override
   Future<FamilyRelation> createRelation({
     required String treeId,
     required String person1Id,
@@ -279,22 +280,22 @@ class FamilyService implements FamilyTreeServiceInterface {
     try {
       // 2. Сохраняем в ЛОКАЛЬНЫЙ кэш ВСЕГДА
       await _localStorageService.saveRelation(relation);
-      print('Связь ${relation.id} сохранена локально.');
+      debugPrint('Связь ${relation.id} сохранена локально.');
 
       // 3. Проверяем сеть и отправляем в Firestore, если онлайн
       if (_syncService.isOnline) {
-        print('Сеть есть. Отправляем связь ${relation.id} в Firestore...');
+        debugPrint('Сеть есть. Отправляем связь ${relation.id} в Firestore...');
         await _firestore
             .collection('family_relations')
             .doc(relationId)
             .set(relation.toMap());
-        print('Связь ${relation.id} успешно добавлена в Firestore.');
+        debugPrint('Связь ${relation.id} успешно добавлена в Firestore.');
       } else {
-        print('Сети нет. Связь ${relation.id} сохранена только локально.');
+        debugPrint('Сети нет. Связь ${relation.id} сохранена только локально.');
         // TODO: Механизм отложенной синхронизации
       }
     } catch (e) {
-      print('Ошибка при создании/сохранении связи ${relation.id}: $e');
+      debugPrint('Ошибка при создании/сохранении связи ${relation.id}: $e');
       rethrow;
     }
 
@@ -406,7 +407,7 @@ class FamilyService implements FamilyTreeServiceInterface {
 
       if (targetPersonId != null) {
         // Есть офлайн-запись для связывания
-        print(
+        debugPrint(
           'Принятие запроса: Связывание офлайн-записи $targetPersonId с пользователем ${request.recipientId}',
         );
         try {
@@ -439,12 +440,12 @@ class FamilyService implements FamilyTreeServiceInterface {
           // Возможно, нужно добавить проверку и создание связи здесь, если она отсутствует?
           // Пока оставим как есть, предполагая, что связь уже существует.
         } catch (e) {
-          print('Ошибка при обновлении userId для $targetPersonId: $e');
+          debugPrint('Ошибка при обновлении userId для $targetPersonId: $e');
           // Можно добавить логику отката или повторной попытки
         }
       } else {
         // Нет офлайн-записи для связывания, создаем новую связь между двумя пользователями
-        print(
+        debugPrint(
           'Принятие запроса: Создание новой связи между ${request.senderId} и ${request.recipientId}',
         );
         await createRelation(
@@ -588,7 +589,7 @@ class FamilyService implements FamilyTreeServiceInterface {
   Future<void> createRequiredIndexes() async {
     // Этот метод просто пустышка, в реальности индексы создаются через Firebase Console
     // или через вызов REST API Firebase
-    print('Индексы должны быть созданы в Firebase Console');
+    debugPrint('Индексы должны быть созданы в Firebase Console');
     return;
   }
 
@@ -662,12 +663,13 @@ class FamilyService implements FamilyTreeServiceInterface {
             .add(reverseRelationData);
       }
     } catch (e) {
-      print('Ошибка при создании семейной связи: $e');
-      throw e;
+      debugPrint('Ошибка при создании семейной связи: $e');
+      rethrow;
     }
   }
 
   // Обновим метод getUserTrees, чтобы он правильно искал деревья пользователя
+  @override
   Future<List<FamilyTree>> getUserTrees() async {
     try {
       final user = _auth.currentUser;
@@ -691,7 +693,7 @@ class FamilyService implements FamilyTreeServiceInterface {
             .map((doc) => doc.data()['treeId'] as String)
             .toList();
 
-        print('Найдено членств в деревьях: ${treeIds.length}');
+        debugPrint('Найдено членств в деревьях: ${treeIds.length}');
 
         if (treeIds.isEmpty) return [];
 
@@ -717,20 +719,20 @@ class FamilyService implements FamilyTreeServiceInterface {
           }
         }
 
-        print('Загружено деревьев: ${trees.length}');
+        debugPrint('Загружено деревьев: ${trees.length}');
         return trees;
       } else {
         // Если офлайн, используем данные из локального хранилища
         return await _localStorageService.getAllTrees();
       }
     } catch (e) {
-      print('Ошибка при получении деревьев пользователя: $e');
+      debugPrint('Ошибка при получении деревьев пользователя: $e');
 
       // В случае ошибки, пытаемся получить данные из локального хранилища
       try {
         return await _localStorageService.getAllTrees();
       } catch (e) {
-        print('Ошибка при получении локальных данных: $e');
+        debugPrint('Ошибка при получении локальных данных: $e');
         return [];
       }
     }
@@ -890,6 +892,7 @@ class FamilyService implements FamilyTreeServiceInterface {
   }
 
   // Добавляем метод удаления родственника (с поддержкой оффлайн)
+  @override
   Future<void> deleteRelative(String treeId, String personId) async {
     final user = _auth.currentUser;
     if (user == null) throw Exception('Необходимо авторизоваться');
@@ -906,11 +909,11 @@ class FamilyService implements FamilyTreeServiceInterface {
         treeId,
         personId,
       ); // Удаляем связанные отношения
-      print('Родственник $personId и его связи удалены локально.');
+      debugPrint('Родственник $personId и его связи удалены локально.');
 
       // 2. Если есть сеть, удаляем из Firestore
       if (_syncService.isOnline) {
-        print('Сеть есть. Удаляем $personId и его связи из Firestore...');
+        debugPrint('Сеть есть. Удаляем $personId и его связи из Firestore...');
         WriteBatch batch = _firestore.batch();
 
         // Удаляем родственника из КОРНЕВОЙ коллекции family_persons
@@ -934,15 +937,15 @@ class FamilyService implements FamilyTreeServiceInterface {
         }
 
         await batch.commit();
-        print(
+        debugPrint(
           'Родственник $personId и его связи успешно удалены из Firestore.',
         );
       } else {
-        print('Сети нет. Удаление $personId выполнено только локально.');
+        debugPrint('Сети нет. Удаление $personId выполнено только локально.');
         // TODO: Механизм отложенной синхронизации для удаления
       }
     } catch (e) {
-      print('Ошибка при удалении родственника $personId: $e');
+      debugPrint('Ошибка при удалении родственника $personId: $e');
       // Подумать о логике восстановления, если удаление в Firestore не удалось,
       // но локально уже удалено. Пока просто пробрасываем ошибку.
       rethrow;
@@ -996,7 +999,7 @@ class FamilyService implements FamilyTreeServiceInterface {
                 relation2to1: RelationType.spouse,
               );
 
-              print(
+              debugPrint(
                 'Создана связь между родителями: $newParentId и $otherParentId',
               );
             }
@@ -1004,12 +1007,13 @@ class FamilyService implements FamilyTreeServiceInterface {
         }
       }
     } catch (e) {
-      print('Ошибка при создании связи между родителями: $e');
+      debugPrint('Ошибка при создании связи между родителями: $e');
     }
   }
 
   // Модифицируем метод addRelative для работы с КОРНЕВОЙ коллекцией family_persons
   // и для поддержки ОФФЛАЙН добавления
+  @override
   Future<String> addRelative(
     String treeId,
     Map<String, dynamic> personData,
@@ -1070,24 +1074,25 @@ class FamilyService implements FamilyTreeServiceInterface {
     try {
       // 2. Сохраняем в ЛОКАЛЬНЫЙ кэш ВСЕГДА
       await _localStorageService.savePerson(person);
-      print('Офлайн-родственник сохранен локально: $personId');
+      debugPrint('Офлайн-родственник сохранен локально: $personId');
 
       // 3. Проверяем сеть и отправляем в Firestore, если онлайн
       if (_syncService.isOnline) {
-        print('Сеть есть. Отправляем $personId в Firestore...');
+        debugPrint('Сеть есть. Отправляем $personId в Firestore...');
         // Используем toMap() модели для отправки в Firestore
         // toMap() снова корректно преобразует DateTime? в Timestamp
         await _firestore
             .collection('family_persons')
             .doc(personId)
             .set(person.toMap());
-        print('Офлайн-родственник успешно добавлен в Firestore: $personId');
+        debugPrint(
+            'Офлайн-родственник успешно добавлен в Firestore: $personId');
       } else {
-        print('Сети нет. $personId сохранен только локально.');
+        debugPrint('Сети нет. $personId сохранен только локально.');
         // TODO: Добавить механизм отложенной синхронизации для таких записей
       }
     } catch (e) {
-      print('Ошибка при добавлении/сохранении родственника $personId: $e');
+      debugPrint('Ошибка при добавлении/сохранении родственника $personId: $e');
       rethrow; // Пробрасываем ошибку
     }
 
@@ -1096,6 +1101,7 @@ class FamilyService implements FamilyTreeServiceInterface {
 
   // Добавляем метод updateRelative (для работы с корневой коллекцией)
   // Обновляем метод updateRelative для работы с кэшем и оффлайн
+  @override
   Future<void> updateRelative(
     String personId,
     Map<String, dynamic> personData,
@@ -1203,11 +1209,11 @@ class FamilyService implements FamilyTreeServiceInterface {
 
       // 3. Сохраняем обновленный объект в ЛОКАЛЬНЫЙ кэш ВСЕГДА
       await _localStorageService.savePerson(updatedPerson);
-      print('Родственник $personId обновлен локально.');
+      debugPrint('Родственник $personId обновлен локально.');
 
       // 4. Проверяем сеть и отправляем обновление в Firestore, если онлайн
       if (_syncService.isOnline) {
-        print('Сеть есть. Обновляем $personId в Firestore...');
+        debugPrint('Сеть есть. Обновляем $personId в Firestore...');
         // Готовим данные для Firestore (могут отличаться от локальных, если надо)
         final firestoreUpdateData = updatedPerson.toMap();
         // Удаляем поля, которые не должны обновляться напрямую (например, createdAt)
@@ -1219,13 +1225,14 @@ class FamilyService implements FamilyTreeServiceInterface {
             .collection('family_persons')
             .doc(personId)
             .update(firestoreUpdateData);
-        print('Родственник $personId успешно обновлен в Firestore.');
+        debugPrint('Родственник $personId успешно обновлен в Firestore.');
       } else {
-        print('Сети нет. Обновление для $personId сохранено только локально.');
+        debugPrint(
+            'Сети нет. Обновление для $personId сохранено только локально.');
         // TODO: Механизм отложенной синхронизации
       }
     } catch (e) {
-      print('Ошибка при обновлении родственника $personId: $e');
+      debugPrint('Ошибка при обновлении родственника $personId: $e');
       rethrow;
     }
   }
@@ -1272,25 +1279,27 @@ class FamilyService implements FamilyTreeServiceInterface {
   // <<< НАЧАЛО: НОВЫЕ МЕТОДЫ РАСЧЕТА СВЯЗЕЙ >>>
 
   // Основной метод для определения отношения между двумя людьми
+  @override
   Future<RelationType> getRelationBetween(
     String treeId,
     String personAId,
     String personBId,
   ) async {
     // 0. Проверка на самого себя
-    if (personAId == personBId)
+    if (personAId == personBId) {
       return RelationType.other; // Пока other, т.к. self не стандартный
+    }
 
     // Сначала пытаемся найти отношение в кэше
     RelationType? cachedRelation = _localStorageService
         .getCachedRelationBetween(treeId, personAId, personBId);
     if (cachedRelation != null) {
-      print(
+      debugPrint(
         'Relation between $personAId and $personBId found in cache: $cachedRelation',
       );
       return cachedRelation;
     }
-    print(
+    debugPrint(
       'Relation between $personAId and $personBId not in cache, calculating...',
     );
 
@@ -1304,7 +1313,7 @@ class FamilyService implements FamilyTreeServiceInterface {
     // final person1Exists = allRelations.any((r) => r.person1Id == personAId || r.person2Id == personAId);
     // final person2Exists = allRelations.any((r) => r.person1Id == personBId || r.person2Id == personBId);
     // if (!person1Exists || !person2Exists) {
-    //   print('Один из пользователей ($personAId или $personBId) не найден в связях дерева $treeId');
+    //   debugPrint('Один из пользователей ($personAId или $personBId) не найден в связях дерева $treeId');
     //   return RelationType.other; // Или бросить исключение?
     // }
 
@@ -1314,7 +1323,7 @@ class FamilyService implements FamilyTreeServiceInterface {
     );
 
     if (directRelation != null) {
-      print(
+      debugPrint(
         'Найдена прямая связь между $personAId и $personBId: ${directRelation.relation1to2}',
       );
       // Прямая связь найдена, возвращаем отношение personAId к personBId
@@ -1337,12 +1346,12 @@ class FamilyService implements FamilyTreeServiceInterface {
       // Найдена обратная связь (personBId -> personAId).
       // Поле reverseRelation.relation1to2 содержит отношение personBId к personAId.
       // Поле reverseRelation.relation2to1 содержит отношение personAId к personBId.
-      print(
+      debugPrint(
         'Найдена обратная связь: $personBId -> $personAId = ${reverseRelation.relation1to2}',
       );
       // <<< ИСПРАВЛЕНО: Возвращаем relation2to1 >>>
       final relation1to2 = reverseRelation.relation2to1;
-      print(
+      debugPrint(
         'Возвращаем отношение personAId ($personAId) к personBId ($personBId): $relation1to2',
       );
       // Сохраняем в кеш перед возвратом
@@ -1356,7 +1365,7 @@ class FamilyService implements FamilyTreeServiceInterface {
     }
 
     // 6. Если прямой или обратной связи нет, ищем путь
-    print(
+    debugPrint(
       'Прямая/обратная связь не найдена между $personAId и $personBId. Ищем путь...',
     );
 
@@ -1371,10 +1380,10 @@ class FamilyService implements FamilyTreeServiceInterface {
     );
 
     if (path == null || path.isEmpty) {
-      print('Путь не найден между $personAId и $personBId');
+      debugPrint('Путь не найден между $personAId и $personBId');
       return RelationType.other; // Путь не найден
     }
-    print('Найден путь: ${path.join(" -> ")}');
+    debugPrint('Найден путь: ${path.join(" -> ")}');
 
     // 9. Анализ пути для определения типа родства
     RelationType result = _analyzePath(path, allRelations);
@@ -1420,7 +1429,7 @@ class FamilyService implements FamilyTreeServiceInterface {
 
       return null; // Связь не найдена
     } catch (e) {
-      print('Ошибка при поиске прямой связи: $e');
+      debugPrint('Ошибка при поиске прямой связи: $e');
       return null;
     }
   }
@@ -1507,7 +1516,7 @@ class FamilyService implements FamilyTreeServiceInterface {
 
     if (path.length == 2) {
       // Прямая связь (A -> B)
-      print('Анализ пути: Прямая связь (длина 2)');
+      debugPrint('Анализ пути: Прямая связь (длина 2)');
       final relation = findRelation(path[0], path[1]);
       if (relation != null) {
         // Возвращаем отношение ОТ path[0] К path[1]
@@ -1515,7 +1524,7 @@ class FamilyService implements FamilyTreeServiceInterface {
             ? relation.relation1to2
             : relation.relation2to1;
       }
-      print(
+      debugPrint(
         'Предупреждение: Не найдена прямая связь для пути ${path.join(" -> ")}',
       );
       return RelationType.other;
@@ -1523,12 +1532,12 @@ class FamilyService implements FamilyTreeServiceInterface {
 
     if (path.length == 3) {
       // Путь через одного посредника (A -> B -> C)
-      print('Анализ пути: Длина 3 (${path.join(" -> ")})');
+      debugPrint('Анализ пути: Длина 3 (${path.join(" -> ")})');
       final relAB = findRelation(path[0], path[1]);
       final relBC = findRelation(path[1], path[2]);
 
       if (relAB == null || relBC == null) {
-        print('Ошибка: Не удалось найти связи для анализа пути.');
+        debugPrint('Ошибка: Не удалось найти связи для анализа пути.');
         return RelationType.other;
       }
 
@@ -1538,48 +1547,48 @@ class FamilyService implements FamilyTreeServiceInterface {
       RelationType typeBtoC =
           relBC.person1Id == path[1] ? relBC.relation1to2 : relBC.relation2to1;
 
-      print('Шаги пути: $typeAtoB -> $typeBtoC');
+      debugPrint('Шаги пути: $typeAtoB -> $typeBtoC');
       // DEBUG ЛОГИРОВАНИЕ ДЛЯ ДЛИНЫ 3
-      print(
+      debugPrint(
         '[Debug _analyzePath L3] Comparing for sibling (child->parent): typeAtoB == RelationType.child (${typeAtoB == RelationType.child}) && typeBtoC == RelationType.parent (${typeBtoC == RelationType.parent})',
       );
-      print(
+      debugPrint(
         '[Debug _analyzePath L3] Comparing for sibling (child->child): typeAtoB == RelationType.child (${typeAtoB == RelationType.child}) && typeBtoC == RelationType.child (${typeBtoC == RelationType.child})',
       );
-      print(
+      debugPrint(
         '[Debug _analyzePath L3] Comparing for grandparent: typeAtoB == RelationType.parent (${typeAtoB == RelationType.parent}) && typeBtoC == RelationType.parent (${typeBtoC == RelationType.parent})',
       );
-      print(
+      debugPrint(
         '[Debug _analyzePath L3] Comparing for grandchild: typeAtoB == RelationType.child (${typeAtoB == RelationType.child}) && typeBtoC == RelationType.child (${typeBtoC == RelationType.child})',
       ); // Повтор, но для наглядности
-      print(
+      debugPrint(
         '[Debug _analyzePath L3] Comparing for parent (parent->sibling): typeAtoB == RelationType.parent (${typeAtoB == RelationType.parent}) && typeBtoC == RelationType.sibling (${typeBtoC == RelationType.sibling})',
       );
-      print(
+      debugPrint(
         '[Debug _analyzePath L3] Comparing for uncle (sibling->parent): typeAtoB == RelationType.sibling (${typeAtoB == RelationType.sibling}) && typeBtoC == RelationType.parent (${typeBtoC == RelationType.parent})',
       );
-      print(
+      debugPrint(
         '[Debug _analyzePath L3] Comparing for nephew (child->sibling): typeAtoB == RelationType.child (${typeAtoB == RelationType.child}) && typeBtoC == RelationType.sibling (${typeBtoC == RelationType.sibling})',
       );
-      print(
+      debugPrint(
         '[Debug _analyzePath L3] Comparing for uncle (sibling->child): typeAtoB == RelationType.sibling (${typeAtoB == RelationType.sibling}) && typeBtoC == RelationType.child (${typeBtoC == RelationType.child})',
       );
-      print(
+      debugPrint(
         '[Debug _analyzePath L3] Comparing for stepparent (spouse->parent): typeAtoB == RelationType.spouse (${typeAtoB == RelationType.spouse}) && typeBtoC == RelationType.parent (${typeBtoC == RelationType.parent})',
       );
-      print(
+      debugPrint(
         '[Debug _analyzePath L3] Comparing for parentInLaw (parent->spouse): typeAtoB == RelationType.parent (${typeAtoB == RelationType.parent}) && typeBtoC == RelationType.spouse (${typeBtoC == RelationType.spouse})',
       );
-      print(
+      debugPrint(
         '[Debug _analyzePath L3] Comparing for childInLaw (spouse->child): typeAtoB == RelationType.spouse (${typeAtoB == RelationType.spouse}) && typeBtoC == RelationType.child (${typeBtoC == RelationType.child})',
       );
-      print(
+      debugPrint(
         '[Debug _analyzePath L3] Comparing for child (child->spouse): typeAtoB == RelationType.child (${typeAtoB == RelationType.child}) && typeBtoC == RelationType.spouse (${typeBtoC == RelationType.spouse})',
       );
-      print(
+      debugPrint(
         '[Debug _analyzePath L3] Comparing for siblingInLaw (spouse->sibling): typeAtoB == RelationType.spouse (${typeAtoB == RelationType.spouse}) && typeBtoC == RelationType.sibling (${typeBtoC == RelationType.sibling})',
       );
-      print(
+      debugPrint(
         '[Debug _analyzePath L3] Comparing for siblingInLaw (sibling->spouse): typeAtoB == RelationType.sibling (${typeAtoB == RelationType.sibling}) && typeBtoC == RelationType.spouse (${typeBtoC == RelationType.spouse})',
       );
 
@@ -1587,100 +1596,104 @@ class FamilyService implements FamilyTreeServiceInterface {
 
       // Ребенок родителя -> Брат/Сестра
       if (typeAtoB == RelationType.child && typeBtoC == RelationType.parent) {
-        print('[Debug _analyzePath L3] Matched: child -> parent => sibling');
+        debugPrint(
+            '[Debug _analyzePath L3] Matched: child -> parent => sibling');
         return RelationType.sibling;
       }
       // Ребенок ребенка -> Внук/Внучка
       if (typeAtoB == RelationType.child && typeBtoC == RelationType.child) {
-        print(
+        debugPrint(
           '[Debug _analyzePath L3] Matched: child -> child => grandchild',
         ); // ИЗМЕНЕНО: grandchild вместо sibling
         return RelationType.grandchild;
       }
       // Родитель родителя -> Дедушка/Бабушка
       if (typeAtoB == RelationType.parent && typeBtoC == RelationType.parent) {
-        print(
+        debugPrint(
           '[Debug _analyzePath L3] Matched: parent -> parent => grandparent',
         );
         return RelationType.grandparent;
       }
       // Родитель брата/сестры -> Родитель
       if (typeAtoB == RelationType.parent && typeBtoC == RelationType.sibling) {
-        print('[Debug _analyzePath L3] Matched: parent -> sibling => parent');
+        debugPrint(
+            '[Debug _analyzePath L3] Matched: parent -> sibling => parent');
         return RelationType.parent;
       }
       // Брат/сестра родителя -> Дядя/Тетя
       if (typeAtoB == RelationType.sibling && typeBtoC == RelationType.parent) {
-        print('[Debug _analyzePath L3] Matched: sibling -> parent => uncle');
+        debugPrint(
+            '[Debug _analyzePath L3] Matched: sibling -> parent => uncle');
         return RelationType.uncle;
       }
       // Ребенок брата/сестры -> Племянник/Племянница
       if (typeAtoB == RelationType.child && typeBtoC == RelationType.sibling) {
-        print(
+        debugPrint(
           '[Debug _analyzePath L3] Matched: child -> sibling => nephew',
         ); // <<< ИСПРАВЛЕНО: Вернул nephew
         return RelationType.nephew;
       }
       // Брат/сестра ребенка -> Ребенок (другой ребенок пользователя)
       if (typeAtoB == RelationType.sibling && typeBtoC == RelationType.child) {
-        print(
+        debugPrint(
           '[Debug _analyzePath L3] Matched: sibling -> child => nephew',
         ); // <<< ИСПРАВЛЕНО: Должно быть nephew, а не uncle
         return RelationType.nephew;
       }
       // Супруг родителя -> Отчим/Мачеха
       if (typeAtoB == RelationType.spouse && typeBtoC == RelationType.parent) {
-        print(
+        debugPrint(
           '[Debug _analyzePath L3] Matched: spouse -> parent => stepparent',
         );
         return RelationType.stepparent;
       }
       // Родитель супруга -> Тесть/Теща/Свекор/Свекровь
       if (typeAtoB == RelationType.parent && typeBtoC == RelationType.spouse) {
-        print(
+        debugPrint(
           '[Debug _analyzePath L3] Matched: parent -> spouse => parentInLaw',
         );
         return RelationType.parentInLaw;
       }
       // Супруг ребенка -> Зять/Невестка
       if (typeAtoB == RelationType.spouse && typeBtoC == RelationType.child) {
-        print('[Debug _analyzePath L3] Matched: spouse -> child => childInLaw');
+        debugPrint(
+            '[Debug _analyzePath L3] Matched: spouse -> child => childInLaw');
         return RelationType.childInLaw;
       }
       // Ребенок супруга -> Ребенок (пасынок/падчерица - частный случай ребенка)
       if (typeAtoB == RelationType.child && typeBtoC == RelationType.spouse) {
-        print('[Debug _analyzePath L3] Matched: child -> spouse => child');
+        debugPrint('[Debug _analyzePath L3] Matched: child -> spouse => child');
         return RelationType.child;
       }
       // Супруг брата/сестры -> Свояк/Свояченица
       if (typeAtoB == RelationType.spouse && typeBtoC == RelationType.sibling) {
-        print(
+        debugPrint(
           '[Debug _analyzePath L3] Matched: spouse -> sibling => siblingInLaw',
         );
         return RelationType.siblingInLaw;
       }
       // Брат/сестра супруга -> Свояк/Свояченица
       if (typeAtoB == RelationType.sibling && typeBtoC == RelationType.spouse) {
-        print(
+        debugPrint(
           '[Debug _analyzePath L3] Matched: sibling -> spouse => siblingInLaw',
         );
         return RelationType.siblingInLaw;
       }
 
       // Если ни одно правило не подошло для пути длиной 3
-      print('Не найдено правило для комбинации $typeAtoB -> $typeBtoC');
+      debugPrint('Не найдено правило для комбинации $typeAtoB -> $typeBtoC');
       return RelationType.other;
     }
 
     if (path.length == 4) {
       // Путь A -> B -> C -> D (Анализируем связь A к D)
-      print('Анализ пути: Длина 4 (${path.join(" -> ")})');
+      debugPrint('Анализ пути: Длина 4 (${path.join(" -> ")})');
       final relAB = findRelation(path[0], path[1]);
       final relBC = findRelation(path[1], path[2]);
       final relCD = findRelation(path[2], path[3]);
 
       if (relAB == null || relBC == null || relCD == null) {
-        print('Ошибка: Не удалось найти связи для анализа пути.');
+        debugPrint('Ошибка: Не удалось найти связи для анализа пути.');
         return RelationType.other;
       }
 
@@ -1691,22 +1704,22 @@ class FamilyService implements FamilyTreeServiceInterface {
       RelationType typeCtoD =
           relCD.person1Id == path[2] ? relCD.relation1to2 : relCD.relation2to1;
 
-      print('Шаги пути: $typeAtoB -> $typeBtoC -> $typeCtoD');
+      debugPrint('Шаги пути: $typeAtoB -> $typeBtoC -> $typeCtoD');
 
       // DEBUG ЛОГИРОВАНИЕ ДЛЯ ДЛИНЫ 4
-      print(
+      debugPrint(
         '[Debug _analyzePath L4] Comparing for cousin (parent->sibling->child): A($typeAtoB)==parent && B($typeBtoC)==sibling && C($typeCtoD)==child',
       );
-      print(
+      debugPrint(
         '[Debug _analyzePath L4] Comparing for grandNephew (sibling->child->child): A($typeAtoB)==sibling && B($typeBtoC)==child && C($typeCtoD)==child',
       );
-      print(
+      debugPrint(
         '[Debug _analyzePath L4] Comparing for sibling (child->parent->sibling): A($typeAtoB)==child && B($typeBtoC)==parent && C($typeCtoD)==sibling',
       );
-      print(
+      debugPrint(
         '[Debug _analyzePath L4] Comparing for siblingInLaw (child->parent->spouse): A($typeAtoB)==child && B($typeBtoC)==parent && C($typeCtoD)==spouse',
       );
-      print(
+      debugPrint(
         '[Debug _analyzePath L4] Comparing for nephew (child->parent->child): A($typeAtoB)==child && B($typeBtoC)==parent && C($typeCtoD)==child',
       );
 
@@ -1716,7 +1729,7 @@ class FamilyService implements FamilyTreeServiceInterface {
       if (typeAtoB == RelationType.parent &&
           typeBtoC == RelationType.sibling &&
           typeCtoD == RelationType.child) {
-        print(
+        debugPrint(
           '[Debug _analyzePath L4] Matched: parent->sibling->child => cousin',
         );
         return RelationType.cousin;
@@ -1725,7 +1738,7 @@ class FamilyService implements FamilyTreeServiceInterface {
       if (typeAtoB == RelationType.sibling &&
           typeBtoC == RelationType.child &&
           typeCtoD == RelationType.child) {
-        print(
+        debugPrint(
           "[Debug _analyzePath L4] Matched: sibling->child->child => grandNephew (returning other for now)",
         );
         return RelationType.other; // TODO: Добавить grandNephew?
@@ -1734,14 +1747,14 @@ class FamilyService implements FamilyTreeServiceInterface {
       if (typeAtoB == RelationType.child &&
           typeBtoC == RelationType.parent &&
           typeCtoD == RelationType.sibling) {
-        print(
+        debugPrint(
           '[Debug _analyzePath L4] Matched: child->parent->sibling => sibling',
         );
         return RelationType.sibling;
       }
       // Ты -> Родитель -> Сиблинг -> Супруг сиблинга (A(child) -> B(parent) -> C(sibling) -> D(spouse)) = Супруг свояка/свояченицы (не очень стандартно, вернем other)
       // if (typeAtoB == RelationType.child && typeBtoC == RelationType.parent && typeCtoD == RelationType.spouse) {
-      //    print('[Debug _analyzePath L4] Matched: child->parent->sibling->spouse => other (spouse of sibling-in-law)');
+      //    debugPrint('[Debug _analyzePath L4] Matched: child->parent->sibling->spouse => other (spouse of sibling-in-law)');
       //    return RelationType.other; // Или создать новый тип?
       // }
 
@@ -1751,7 +1764,7 @@ class FamilyService implements FamilyTreeServiceInterface {
       if (typeAtoB == RelationType.child &&
           typeBtoC == RelationType.parent &&
           typeCtoD == RelationType.spouse) {
-        print(
+        debugPrint(
           '[Debug _analyzePath L4] Matched: child->parent->spouse => siblingInLaw',
         );
         return RelationType.siblingInLaw;
@@ -1761,21 +1774,21 @@ class FamilyService implements FamilyTreeServiceInterface {
       if (typeAtoB == RelationType.child &&
           typeBtoC == RelationType.parent &&
           typeCtoD == RelationType.parent) {
-        print(
+        debugPrint(
           '[Debug _analyzePath L4] Matched: child->parent->parent => other (was nephew, but path is wrong)',
         );
         return RelationType
             .other; // Возвращаем other, т.к. семантика пути не соответствует племяннику
       }
 
-      print(
+      debugPrint(
         'Не найдено правило для комбинации $typeAtoB -> $typeBtoC -> $typeCtoD',
       );
       return RelationType.other;
     }
 
     // Если путь длиннее 4, пока считаем его слишком сложным
-    print(
+    debugPrint(
       '_analyzePath: Анализ пути пока не реализован для длины ${path.length}',
     );
     return RelationType.other;
@@ -1791,7 +1804,8 @@ class FamilyService implements FamilyTreeServiceInterface {
   ) async {
     final currentUserId = _auth.currentUser?.uid;
     if (currentUserId == null) {
-      print('Ошибка: deduceRelation вызван без авторизованного пользователя.');
+      debugPrint(
+          'Ошибка: deduceRelation вызван без авторизованного пользователя.');
       return RelationType
           .other; // Нет пользователя, не можем определить отношение
     }
@@ -1801,7 +1815,7 @@ class FamilyService implements FamilyTreeServiceInterface {
       return RelationType.other; // Или можно ввести RelationType.self
     }
 
-    print(
+    debugPrint(
       'Вычисляем отношение между новым человеком ($newPersonId) и текущим пользователем ($currentUserId) в дереве $treeId',
     );
     // Используем существующий метод для расчета пути и отношения
@@ -1809,12 +1823,13 @@ class FamilyService implements FamilyTreeServiceInterface {
       // Важно: Определяем отношение ОТ нового человека (newPersonId) К текущему пользователю (currentUserId)
       return await getRelationBetween(treeId, newPersonId, currentUserId);
     } catch (e) {
-      print('Ошибка при вычислении отношения в deduceRelation: $e');
+      debugPrint('Ошибка при вычислении отношения в deduceRelation: $e');
       return RelationType.other;
     }
   }
 
   // Обновляем старый метод getRelationToUser, чтобы он использовал новый
+  @override
   Future<RelationType> getRelationToUser(
     String treeId,
     String relativeId,
@@ -1844,12 +1859,13 @@ class FamilyService implements FamilyTreeServiceInterface {
         orElse: () => RelationType.other,
       );
     } catch (e) {
-      print('Ошибка при преобразовании отношения: $e');
+      debugPrint('Ошибка при преобразовании отношения: $e');
       return RelationType.other;
     }
   }
 
   // Метод для добавления отношения между родственниками
+  @override
   Future<void> addRelation(
     String treeId,
     String person1Id,
@@ -1906,7 +1922,7 @@ class FamilyService implements FamilyTreeServiceInterface {
         reverseRelationType,
       );
 
-      print(
+      debugPrint(
         'Обновляем связи: person1Id=$person1Id получает связь=$relationString, person2Id=$person2Id получает связь=$reverseRelationString',
       );
 
@@ -1978,9 +1994,9 @@ class FamilyService implements FamilyTreeServiceInterface {
             .update({'relation': reverseRelationString});
       }
 
-      print('Отношения успешно обновлены между $person1Id и $person2Id');
+      debugPrint('Отношения успешно обновлены между $person1Id и $person2Id');
     } catch (e) {
-      print('Ошибка при обновлении поля relation: $e');
+      debugPrint('Ошибка при обновлении поля relation: $e');
     }
   }
 
@@ -2008,10 +2024,10 @@ class FamilyService implements FamilyTreeServiceInterface {
         'updatedAt': DateTime.now(),
       });
 
-      print('Типы отношений успешно обновлены в документе $relationId');
+      debugPrint('Типы отношений успешно обновлены в документе $relationId');
     } catch (e) {
-      print('Ошибка при обновлении типов отношений: $e');
-      throw e;
+      debugPrint('Ошибка при обновлении типов отношений: $e');
+      rethrow;
     }
   }
 
@@ -2021,6 +2037,7 @@ class FamilyService implements FamilyTreeServiceInterface {
   }
 
   // НОВЫЙ метод для получения родственников дерева из корневой коллекции
+  @override
   Future<List<FamilyPerson>> getRelatives(String treeId) async {
     try {
       // Проверяем соединение (можно убрать, если LocalStorage не используется для кеша)
@@ -2038,7 +2055,7 @@ class FamilyService implements FamilyTreeServiceInterface {
       final relatives =
           snapshot.docs.map((doc) => FamilyPerson.fromFirestore(doc)).toList();
 
-      print(
+      debugPrint(
         'Загружено ${relatives.length} родственников для дерева $treeId из корневой коллекции.',
       );
 
@@ -2049,7 +2066,7 @@ class FamilyService implements FamilyTreeServiceInterface {
 
       return relatives;
     } catch (e) {
-      print('Ошибка при получении родственников для дерева $treeId: $e');
+      debugPrint('Ошибка при получении родственников для дерева $treeId: $e');
       return []; // Возвращаем пустой список в случае ошибки
     }
   }
@@ -2062,7 +2079,8 @@ class FamilyService implements FamilyTreeServiceInterface {
     if (isOnline) {
       try {
         // 1. Если онлайн, ВСЕГДА пытаемся загрузить из Firestore
-        print('Relations for tree $treeId: Online, fetching from Firestore...');
+        debugPrint(
+            'Relations for tree $treeId: Online, fetching from Firestore...');
         final relationsQuery = await _firestore
             .collection('family_relations')
             .where('treeId', isEqualTo: treeId)
@@ -2074,80 +2092,84 @@ class FamilyService implements FamilyTreeServiceInterface {
 
         // 4. Сохраняем свежие данные в кэш
         await _localStorageService.saveRelations(relationsFromFirestore);
-        print(
+        debugPrint(
           'Fetched ${relationsFromFirestore.length} relations for tree $treeId from Firestore and updated cache.',
         );
         return relationsFromFirestore; // Возвращаем свежие данные
       } catch (e) {
-        print('Error fetching relations from Firestore for tree $treeId: $e');
+        debugPrint(
+            'Error fetching relations from Firestore for tree $treeId: $e');
         // Ошибка Firestore, попробуем вернуть из кэша ниже
         relationsFromFirestore = null; // Сбрасываем, чтобы использовать кэш
       }
     }
 
     // 2. Если ОФФЛАЙН или произошла ошибка Firestore, пробуем из кэша
-    print(
+    debugPrint(
       'Relations for tree $treeId: Offline or Firestore error, trying cache...',
     );
     try {
       final cachedRelations = await _localStorageService.getRelationsByTreeId(
         treeId,
       );
-      print(
+      debugPrint(
         'Found ${cachedRelations.length} relations for tree $treeId in cache.',
       );
       return cachedRelations;
     } catch (cacheError) {
-      print('Error reading relations cache for tree $treeId: $cacheError');
+      debugPrint('Error reading relations cache for tree $treeId: $cacheError');
       return []; // Возвращаем пустой список, если и кэш недоступен
     }
   }
 
   // Метод getRelations просто вызывает getRelationsByTreeId
+  @override
   Future<List<FamilyRelation>> getRelations(String treeId) async {
     return await getRelationsByTreeId(treeId);
   }
 
   // <<< НАЧАЛО: АВТОМАТИЧЕСКОЕ СОЗДАНИЕ СВЯЗИ СУПРУГОВ >>>
+  @override
   Future<void> checkAndCreateSpouseRelationIfNeeded(
     String treeId,
     String childId,
     String newParentId,
   ) async {
-    print('Check Spouse: Start for child $childId, new parent $newParentId');
+    debugPrint(
+        'Check Spouse: Start for child $childId, new parent $newParentId');
     try {
       // 1. Находим ВСЕ связи, где childId является ребенком (person2Id)
-      print('Check Spouse: Querying parent relations for child $childId');
+      debugPrint('Check Spouse: Querying parent relations for child $childId');
       final parentRelationsQuery = await _firestore
           .collection('family_relations')
           .where('treeId', isEqualTo: treeId)
           .where('person2Id', isEqualTo: childId)
           .where('relation1to2', isEqualTo: 'parent')
           .get();
-      print(
+      debugPrint(
         'Check Spouse: Found ${parentRelationsQuery.docs.length} parent relations.',
       );
 
       // 2. Собираем ID всех родителей этого ребенка
       final parentIds = parentRelationsQuery.docs.map((doc) {
         // Логируем данные документа перед извлечением ID
-        print('Check Spouse: Parent relation doc data: ${doc.data()}');
+        debugPrint('Check Spouse: Parent relation doc data: ${doc.data()}');
         return doc['person1Id'] as String;
       }).toList();
 
-      print('Check Spouse: Found parent IDs for $childId: $parentIds');
+      debugPrint('Check Spouse: Found parent IDs for $childId: $parentIds');
 
       // 3. Исключаем только что добавленного родителя
       final otherParentIds =
           parentIds.where((id) => id != newParentId).toList();
-      print(
+      debugPrint(
         'Check Spouse: Other parent IDs (excluding $newParentId): $otherParentIds',
       );
 
       // 4. Если есть ХОТЯ БЫ ОДИН другой родитель
       if (otherParentIds.isNotEmpty) {
         final otherParentId = otherParentIds.first;
-        print(
+        debugPrint(
           'Check Spouse: Found other parent $otherParentId. Checking spouse relation with $newParentId',
         );
 
@@ -2160,13 +2182,13 @@ class FamilyService implements FamilyTreeServiceInterface {
             .where('relation1to2', isEqualTo: 'spouse')
             .limit(1)
             .get();
-        print(
+        debugPrint(
           'Check Spouse: Found ${existingSpouseRelationQuery.docs.length} existing spouse relations.',
         );
 
         // 6. Если связь "spouse" НЕ найдена, создаем ее
         if (existingSpouseRelationQuery.docs.isEmpty) {
-          print('Check Spouse: Spouse relation not found. Creating...');
+          debugPrint('Check Spouse: Spouse relation not found. Creating...');
           await createRelation(
             treeId: treeId,
             person1Id: newParentId,
@@ -2174,61 +2196,64 @@ class FamilyService implements FamilyTreeServiceInterface {
             relation1to2: RelationType.spouse,
             isConfirmed: true,
           );
-          print(
+          debugPrint(
             'Check Spouse: Spouse relation created between $newParentId and $otherParentId.',
           );
         } else {
-          print(
+          debugPrint(
             'Check Spouse: Spouse relation already exists between $newParentId and $otherParentId.',
           );
         }
       } else {
-        print('Check Spouse: No other parent found for $childId.');
+        debugPrint('Check Spouse: No other parent found for $childId.');
       }
     } catch (e, s) {
       // Добавляем StackTrace в лог
-      print('Check Spouse: Error: $e\n$s');
+      debugPrint('Check Spouse: Error: $e\n$s');
       FirebaseCrashlytics.instance.recordError(
         e,
         s,
         reason: 'CheckSpouseRelationError',
       );
     }
-    print('Check Spouse: End for child $childId, new parent $newParentId');
+    debugPrint('Check Spouse: End for child $childId, new parent $newParentId');
   }
   // <<< КОНЕЦ: АВТОМАТИЧЕСКОЕ СОЗДАНИЕ СВЯЗИ СУПРУГОВ >>>
 
   // <<< НАЧАЛО: АВТОМАТИЧЕСКОЕ СОЗДАНИЕ СВЯЗЕЙ РОДИТЕЛЬ-СИБЛИНГ >>>
+  @override
   Future<void> checkAndCreateParentSiblingRelations(
     String treeId,
     String existingSiblingId,
     String newSiblingId,
   ) async {
-    print(
+    debugPrint(
       'Check ParentSibling: Start for new sibling $newSiblingId based on existing $existingSiblingId',
     );
     try {
       // 1. Находим всех родителей для existingSiblingId
-      print('Check ParentSibling: Querying parents for $existingSiblingId');
+      debugPrint(
+          'Check ParentSibling: Querying parents for $existingSiblingId');
       final parentRelationsQuery = await _firestore
           .collection('family_relations')
           .where('treeId', isEqualTo: treeId)
           .where('person2Id', isEqualTo: existingSiblingId)
           .where('relation1to2', isEqualTo: 'parent')
           .get();
-      print(
+      debugPrint(
         'Check ParentSibling: Found ${parentRelationsQuery.docs.length} parents for $existingSiblingId.',
       );
 
       final parentIds = parentRelationsQuery.docs.map((doc) {
-        print('Check ParentSibling: Parent relation doc data: ${doc.data()}');
+        debugPrint(
+            'Check ParentSibling: Parent relation doc data: ${doc.data()}');
         return doc['person1Id'] as String;
       }).toList();
-      print('Check ParentSibling: Found parent IDs: $parentIds');
+      debugPrint('Check ParentSibling: Found parent IDs: $parentIds');
 
       // 2. Для каждого найденного родителя создаем связь с newSiblingId
       for (var parentId in parentIds) {
-        print(
+        debugPrint(
           'Check ParentSibling: Processing parent $parentId for new sibling $newSiblingId',
         );
         // Проверяем, есть ли уже связь parentId -> parent -> newSiblingId
@@ -2240,12 +2265,12 @@ class FamilyService implements FamilyTreeServiceInterface {
             .where('relation1to2', isEqualTo: 'parent')
             .limit(1)
             .get();
-        print(
+        debugPrint(
           'Check ParentSibling: Found ${existingRelationQuery.docs.length} existing parent relations for $parentId -> $newSiblingId.',
         );
 
         if (existingRelationQuery.docs.isEmpty) {
-          print(
+          debugPrint(
             'Check ParentSibling: Creating parent relation between $parentId and $newSiblingId...',
           );
           await createRelation(
@@ -2255,33 +2280,34 @@ class FamilyService implements FamilyTreeServiceInterface {
             relation1to2: RelationType.parent,
             isConfirmed: true,
           );
-          print(
+          debugPrint(
             'Check ParentSibling: Parent/child relation created between $parentId and $newSiblingId.',
           );
         } else {
-          print(
+          debugPrint(
             'Check ParentSibling: Parent/child relation already exists between $parentId and $newSiblingId.',
           );
         }
       }
     } catch (e, s) {
       // Добавляем StackTrace
-      print('Check ParentSibling: Error: $e\n$s');
+      debugPrint('Check ParentSibling: Error: $e\n$s');
       FirebaseCrashlytics.instance.recordError(
         e,
         s,
         reason: 'CheckParentSiblingRelationsError',
       );
     }
-    print('Check ParentSibling: End for new sibling $newSiblingId');
+    debugPrint('Check ParentSibling: End for new sibling $newSiblingId');
   }
   // <<< КОНЕЦ: АВТОМАТИЧЕСКОЕ СОЗДАНИЕ СВЯЗЕЙ РОДИТЕЛЬ-СИБЛИНГ >>>
 
   // --- НОВЫЕ STREAM МЕТОДЫ ---
 
   /// Возвращает поток списка родственников для указанного дерева.
+  @override
   Stream<List<FamilyPerson>> getRelativesStream(String treeId) {
-    print(
+    debugPrint(
       '[Stream] Запрос родственников для дерева $treeId из корневой коллекции family_persons',
     );
     return _firestore
@@ -2291,7 +2317,7 @@ class FamilyService implements FamilyTreeServiceInterface {
         .where('treeId', isEqualTo: treeId)
         .snapshots()
         .map((snapshot) {
-      print(
+      debugPrint(
         '[Stream] Получено ${snapshot.docs.length} документов родственников для дерева $treeId',
       );
       try {
@@ -2299,13 +2325,13 @@ class FamilyService implements FamilyTreeServiceInterface {
         final relatives = snapshot.docs
             .map<FamilyPerson>((doc) => FamilyPerson.fromFirestore(doc))
             .toList();
-        print(
+        debugPrint(
           '[Stream] Успешно смаплено ${relatives.length} родственников',
         );
         return relatives;
       } catch (e, s) {
-        print('[Stream] Ошибка маппинга родственников: $e');
-        print(s); // Печатаем стек для отладки
+        debugPrint('[Stream] Ошибка маппинга родственников: $e');
+        debugPrint(s.toString()); // Печатаем стек для отладки
         FirebaseCrashlytics.instance.recordError(
           e,
           s,
@@ -2314,7 +2340,7 @@ class FamilyService implements FamilyTreeServiceInterface {
         return <FamilyPerson>[]; // Возвращаем пустой список при ошибке маппинга
       }
     }).handleError((error, stackTrace) {
-      print('[Stream] Ошибка в потоке родственников: $error');
+      debugPrint('[Stream] Ошибка в потоке родственников: $error');
       FirebaseCrashlytics.instance.recordError(
         error,
         stackTrace,
@@ -2326,8 +2352,9 @@ class FamilyService implements FamilyTreeServiceInterface {
   }
 
   /// Возвращает поток списка связей для указанного дерева.
+  @override
   Stream<List<FamilyRelation>> getRelationsStream(String treeId) {
-    print(
+    debugPrint(
       '[Stream] Запрос связей для дерева $treeId из корневой коллекции family_relations',
     );
     return _firestore
@@ -2337,7 +2364,7 @@ class FamilyService implements FamilyTreeServiceInterface {
         .where('treeId', isEqualTo: treeId)
         .snapshots()
         .map((snapshot) {
-      print(
+      debugPrint(
         '[Stream] Получено ${snapshot.docs.length} документов связей для дерева $treeId',
       );
       try {
@@ -2345,11 +2372,11 @@ class FamilyService implements FamilyTreeServiceInterface {
         final relations = snapshot.docs
             .map<FamilyRelation>((doc) => FamilyRelation.fromFirestore(doc))
             .toList();
-        print('[Stream] Успешно смаплено ${relations.length} связей');
+        debugPrint('[Stream] Успешно смаплено ${relations.length} связей');
         return relations;
       } catch (e, s) {
-        print('[Stream] Ошибка маппинга связей: $e');
-        print(s); // Печатаем стек для отладки
+        debugPrint('[Stream] Ошибка маппинга связей: $e');
+        debugPrint(s.toString()); // Печатаем стек для отладки
         FirebaseCrashlytics.instance.recordError(
           e,
           s,
@@ -2358,7 +2385,7 @@ class FamilyService implements FamilyTreeServiceInterface {
         return <FamilyRelation>[]; // Возвращаем пустой список при ошибке маппинга
       }
     }).handleError((error, stackTrace) {
-      print('[Stream] Ошибка в потоке связей: $error');
+      debugPrint('[Stream] Ошибка в потоке связей: $error');
       FirebaseCrashlytics.instance.recordError(
         error,
         stackTrace,
@@ -2374,12 +2401,13 @@ class FamilyService implements FamilyTreeServiceInterface {
   /// Получает список оффлайн-профилей (FamilyPerson), созданных указанным
   /// пользователем (creatorId) в указанном дереве (treeId).
   /// Оффлайн-профили идентифицируются по отсутствию `userId`.
+  @override
   Future<List<FamilyPerson>> getOfflineProfilesByCreator(
     String treeId,
     String creatorId,
   ) async {
     try {
-      print(
+      debugPrint(
         'FamilyService: Запрос оффлайн профилей для дерева $treeId, созданных $creatorId',
       );
 
@@ -2401,12 +2429,12 @@ class FamilyService implements FamilyTreeServiceInterface {
           ) // Локальная фильтрация
           .toList();
 
-      print('FamilyService: Найдено ${persons.length} оффлайн профилей.');
+      debugPrint('FamilyService: Найдено ${persons.length} оффлайн профилей.');
       return persons;
     } catch (e, s) {
       // Изменяем вывод ошибки и стектрейса
-      print('Ошибка получения оффлайн профилей: $e');
-      print('Стек вызовов: $s');
+      debugPrint('Ошибка получения оффлайн профилей: $e');
+      debugPrint('Стек вызовов: $s');
       // Можно добавить логирование в AnalyticsService
       // GetIt.I<AnalyticsService>().logError('GetOfflineProfilesError', e.toString(), s);
       throw Exception('Не удалось загрузить список профилей.');
@@ -2414,8 +2442,10 @@ class FamilyService implements FamilyTreeServiceInterface {
   }
 
   /// Получает конкретного человека по его ID из корневой коллекции.
+  @override
   Future<FamilyPerson> getPersonById(String treeId, String personId) async {
-    print('FamilyService: Запрос данных для person $personId в дереве $treeId');
+    debugPrint(
+        'FamilyService: Запрос данных для person $personId в дереве $treeId');
     try {
       final docSnapshot =
           await _firestore.collection('family_persons').doc(personId).get();
@@ -2424,10 +2454,10 @@ class FamilyService implements FamilyTreeServiceInterface {
         // Проверяем, принадлежит ли человек к запрашиваемому дереву
         final person = FamilyPerson.fromFirestore(docSnapshot);
         if (person.treeId == treeId) {
-          print('FamilyService: Человек $personId найден.');
+          debugPrint('FamilyService: Человек $personId найден.');
           return person;
         } else {
-          print(
+          debugPrint(
             'FamilyService: Ошибка - Человек $personId найден, но принадлежит другому дереву (${person.treeId}).',
           );
           // Возможно, стоит бросить специфическую ошибку?
@@ -2436,12 +2466,12 @@ class FamilyService implements FamilyTreeServiceInterface {
           );
         }
       } else {
-        print('FamilyService: Ошибка - Человек с ID $personId не найден.');
+        debugPrint('FamilyService: Ошибка - Человек с ID $personId не найден.');
         throw Exception('Человек не найден.');
       }
     } catch (e, s) {
-      print('Ошибка при получении Person по ID: $e');
-      print(s);
+      debugPrint('Ошибка при получении Person по ID: $e');
+      debugPrint(s.toString());
       FirebaseCrashlytics.instance.recordError(
         e,
         s,
@@ -2457,20 +2487,21 @@ class FamilyService implements FamilyTreeServiceInterface {
       // 1. Пробуем из кэша
       final cachedPerson = await _localStorageService.getPerson(personId);
       if (cachedPerson != null) {
-        print('FamilyPerson $personId found in cache.');
+        debugPrint('FamilyPerson $personId found in cache.');
         return cachedPerson;
       }
 
       // 2. Проверяем сеть
       if (!_syncService.isOnline) {
-        print(
+        debugPrint(
           'FamilyPerson $personId not in cache and offline. Returning null.',
         );
         return null;
       }
 
       // 3. Загружаем из Firestore
-      print('FamilyPerson $personId not in cache, fetching from Firestore...');
+      debugPrint(
+          'FamilyPerson $personId not in cache, fetching from Firestore...');
       final doc =
           await _firestore.collection('family_persons').doc(personId).get();
 
@@ -2478,25 +2509,27 @@ class FamilyService implements FamilyTreeServiceInterface {
         final personFromFirestore = FamilyPerson.fromFirestore(doc);
         // 4. Сохраняем в кэш
         await _localStorageService.savePerson(personFromFirestore);
-        print(
+        debugPrint(
           'FamilyPerson $personId fetched from Firestore and saved to cache.',
         );
         return personFromFirestore;
       } else {
-        print('FamilyPerson $personId not found in Firestore.');
+        debugPrint('FamilyPerson $personId not found in Firestore.');
         return null;
       }
     } catch (e) {
-      print('Error getting family person $personId: $e');
+      debugPrint('Error getting family person $personId: $e');
       // Попробуем вернуть из кэша в случае ошибки
       try {
         final cachedPerson = await _localStorageService.getPerson(personId);
         if (cachedPerson != null) {
-          print('Returning cached person $personId after Firestore error.');
+          debugPrint(
+              'Returning cached person $personId after Firestore error.');
           return cachedPerson;
         }
       } catch (cacheError) {
-        print('Error reading person cache after Firestore error: $cacheError');
+        debugPrint(
+            'Error reading person cache after Firestore error: $cacheError');
       }
       return null;
     }
@@ -2511,7 +2544,7 @@ class FamilyService implements FamilyTreeServiceInterface {
       );
       // Если кэш не пуст, возвращаем его (даже если оффлайн)
       if (cachedPersons.isNotEmpty) {
-        print(
+        debugPrint(
           'Found ${cachedPersons.length} persons for tree $treeId in cache.',
         );
         // Опционально: Если онлайн, можно в фоне запустить проверку обновлений из Firestore
@@ -2521,14 +2554,14 @@ class FamilyService implements FamilyTreeServiceInterface {
 
       // 2. Если кэш пуст, проверяем сеть
       if (!_syncService.isOnline) {
-        print(
+        debugPrint(
           'Persons for tree $treeId not in cache and offline. Returning empty list.',
         );
         return []; // Кэш пуст и нет сети
       }
 
       // 3. Если есть сеть и кэш пуст, загружаем из Firestore
-      print(
+      debugPrint(
         'Persons for tree $treeId not in cache, fetching from Firestore...',
       );
       final personsQuery = await _firestore
@@ -2542,23 +2575,23 @@ class FamilyService implements FamilyTreeServiceInterface {
 
       // 4. Сохраняем в кэш (даже если список пуст, чтобы пометить, что мы проверили Firestore)
       await _localStorageService.savePersons(personsFromFirestore);
-      print(
+      debugPrint(
         'Fetched ${personsFromFirestore.length} persons for tree $treeId from Firestore and saved to cache.',
       );
       return personsFromFirestore;
     } catch (e) {
-      print('Error getting family persons for tree $treeId: $e');
+      debugPrint('Error getting family persons for tree $treeId: $e');
       // Попробуем вернуть из кэша в случае ошибки
       try {
         final cachedPersons = await _localStorageService.getPersonsByTreeId(
           treeId,
         );
-        print(
+        debugPrint(
           'Returning ${cachedPersons.length} cached persons for tree $treeId after Firestore error.',
         );
         return cachedPersons; // Возвращаем то, что есть в кэше (может быть пустым)
       } catch (cacheError) {
-        print(
+        debugPrint(
           'Error reading persons cache for tree $treeId after Firestore error: $cacheError',
         );
         return []; // Возвращаем пустой список в случае двойной ошибки
@@ -2569,8 +2602,9 @@ class FamilyService implements FamilyTreeServiceInterface {
   // <<< НАЧАЛО: ПОИСК СУПРУГА >>>
   /// Находит ID супруга для указанного человека в дереве.
   /// Возвращает null, если супруг не найден.
+  @override
   Future<String?> findSpouseId(String treeId, String personId) async {
-    print('Finding spouse for person $personId in tree $treeId...');
+    debugPrint('Finding spouse for person $personId in tree $treeId...');
     try {
       // Ищем связь, где personId - первый участник и тип - spouse
       final query1 = await _firestore
@@ -2586,7 +2620,7 @@ class FamilyService implements FamilyTreeServiceInterface {
 
       if (query1.docs.isNotEmpty) {
         final spouseId = query1.docs.first.data()['person2Id'] as String?;
-        print('Spouse found (query1): $spouseId');
+        debugPrint('Spouse found (query1): $spouseId');
         return spouseId;
       }
 
@@ -2606,14 +2640,14 @@ class FamilyService implements FamilyTreeServiceInterface {
 
       if (query2.docs.isNotEmpty) {
         final spouseId = query2.docs.first.data()['person1Id'] as String?;
-        print('Spouse found (query2): $spouseId');
+        debugPrint('Spouse found (query2): $spouseId');
         return spouseId;
       }
 
-      print('Spouse not found for person $personId.');
+      debugPrint('Spouse not found for person $personId.');
       return null;
     } catch (e, s) {
-      print('Error finding spouse for person $personId: $e\n$s');
+      debugPrint('Error finding spouse for person $personId: $e\n$s');
       FirebaseCrashlytics.instance.recordError(
         e,
         s,
@@ -2631,7 +2665,7 @@ class FamilyService implements FamilyTreeServiceInterface {
     String personId,
     String userId,
   ) async {
-    print('Linking user $userId to person $personId in tree $treeId...');
+    debugPrint('Linking user $userId to person $personId in tree $treeId...');
     try {
       // Получаем ссылку на документ FamilyPerson в КОРНЕВОЙ коллекции
       final personDocRef =
@@ -2640,7 +2674,7 @@ class FamilyService implements FamilyTreeServiceInterface {
       // Проверяем, что документ принадлежит нужному дереву (дополнительная проверка)
       final personDoc = await personDocRef.get();
       if (!personDoc.exists || personDoc.data()?['treeId'] != treeId) {
-        print(
+        debugPrint(
           'Error linking: Person $personId not found or does not belong to tree $treeId.',
         );
         // Можно выбросить исключение или просто завершить
@@ -2653,7 +2687,7 @@ class FamilyService implements FamilyTreeServiceInterface {
       if (existingUserId != null &&
           existingUserId.isNotEmpty &&
           existingUserId != userId) {
-        print(
+        debugPrint(
           'Warning: Person $personId is already linked to a different user ($existingUserId). Cannot link to $userId.',
         );
         // Возможно, стоит показать ошибку пользователю
@@ -2662,7 +2696,7 @@ class FamilyService implements FamilyTreeServiceInterface {
       }
       // Проверяем, не совпадает ли ID пользователя с уже существующим ID
       if (existingUserId == userId) {
-        print(
+        debugPrint(
           'Info: Person $personId is already linked to this user ($userId). No update needed.',
         );
         return;
@@ -2674,10 +2708,10 @@ class FamilyService implements FamilyTreeServiceInterface {
         'updatedAt': Timestamp.now(), // Обновляем дату изменения
       });
 
-      print('Successfully linked user $userId to person $personId.');
+      debugPrint('Successfully linked user $userId to person $personId.');
 
       // --- NEW: Добавляем дерево в список доступных для пользователя ---
-      print('Adding tree $treeId to accessible trees for user $userId');
+      debugPrint('Adding tree $treeId to accessible trees for user $userId');
       try {
         final userProfileRef = _firestore.collection('users').doc(userId);
         // Используем set с merge: true, чтобы создать поле, если его нет
@@ -2686,15 +2720,15 @@ class FamilyService implements FamilyTreeServiceInterface {
           // Используем arrayUnion для безопасного добавления без дубликатов
           'accessibleTreeIds': FieldValue.arrayUnion([treeId]),
         }, SetOptions(merge: true)); // <-- Добавляем SetOptions
-        print('Successfully added tree $treeId to user $userId profile.');
+        debugPrint('Successfully added tree $treeId to user $userId profile.');
 
         // --- NEW: Инвалидируем локальный кеш профиля пользователя ---
         try {
           // Предполагаем, что LocalStorageService доступен как _localStorageService
           await _localStorageService.deleteUser(userId);
-          print('Invalidated local cache for user $userId.');
+          debugPrint('Invalidated local cache for user $userId.');
         } catch (cacheError) {
-          print('Error invalidating user cache for $userId: $cacheError');
+          debugPrint('Error invalidating user cache for $userId: $cacheError');
           // Логируем, но не считаем критической ошибкой
           FirebaseCrashlytics.instance.recordError(
             cacheError,
@@ -2704,7 +2738,7 @@ class FamilyService implements FamilyTreeServiceInterface {
         }
         // --- END NEW ---
       } catch (profileUpdateError) {
-        print(
+        debugPrint(
           'Error updating user profile ($userId) with tree $treeId: $profileUpdateError',
         );
         // Логируем ошибку, но не прерываем процесс, т.к. основное связывание прошло
@@ -2716,7 +2750,7 @@ class FamilyService implements FamilyTreeServiceInterface {
       }
       // --- END NEW ---
     } catch (e, s) {
-      print('Error linking user $userId to person $personId: $e\n$s');
+      debugPrint('Error linking user $userId to person $personId: $e\n$s');
       FirebaseCrashlytics.instance.recordError(
         e,
         s,
@@ -2729,10 +2763,12 @@ class FamilyService implements FamilyTreeServiceInterface {
   // <<< КОНЕЦ: СВЯЗЫВАНИЕ ПРИГЛАШЕННОГО ПОЛЬЗОВАТЕЛЯ >>>
 
   // <<< НОВЫЙ МЕТОД: Проверка, есть ли текущий пользователь в дереве >>>
+  @override
   Future<bool> isCurrentUserInTree(String treeId) async {
     final user = _auth.currentUser;
-    if (user == null)
+    if (user == null) {
       return false; // Неавторизованный пользователь не может быть в дереве
+    }
 
     try {
       // Сначала ищем в локальном кэше
@@ -2746,7 +2782,7 @@ class FamilyService implements FamilyTreeServiceInterface {
           FamilyPerson.empty.id; // Проверяем, нашелся ли реальный объект
 
       if (foundLocally) {
-        print(
+        debugPrint(
           'Текущий пользователь ${user.uid} (Person ID: ${cachedPerson.id}) найден локально в дереве $treeId.',
         );
         // Не возвращаем true сразу, сначала проверим Firestore, если онлайн
@@ -2754,7 +2790,7 @@ class FamilyService implements FamilyTreeServiceInterface {
 
       // Если не нашли локально и есть сеть, проверяем Firestore
       if (_syncService.isOnline) {
-        print(
+        debugPrint(
           'Проверяем Firestore для пользователя ${user.uid} в дереве $treeId...',
         );
         final querySnapshot = await _firestore
@@ -2765,25 +2801,25 @@ class FamilyService implements FamilyTreeServiceInterface {
             .get();
         final foundInFirestore = querySnapshot.docs.isNotEmpty;
         if (foundInFirestore) {
-          print(
+          debugPrint(
             'Текущий пользователь ${user.uid} найден в Firestore в дереве $treeId.',
           );
           // Опционально: можно сохранить найденную персону в кэш для консистентности
           // final person = FamilyPerson.fromFirestore(querySnapshot.docs.first);
           // await _localStorageService.savePerson(person);
         } else {
-          print(
+          debugPrint(
             'Текущий пользователь ${user.uid} НЕ найден в Firestore в дереве $treeId.',
           );
           // <<< НОВОЕ: Очистка кэша, если Firestore и кэш расходятся >>>
           if (foundLocally) {
-            print(
+            debugPrint(
               'Несоответствие Firestore и кэша! Удаляем устаревшую запись ${cachedPerson.id} из кэша...',
             );
             try {
               await _localStorageService.deleteRelative(cachedPerson.id);
             } catch (e) {
-              print(
+              debugPrint(
                 'Ошибка при удалении устаревшей записи ${cachedPerson.id} из кэша: $e',
               );
               // Не критично, продолжаем
@@ -2794,13 +2830,13 @@ class FamilyService implements FamilyTreeServiceInterface {
         return foundInFirestore;
       } else {
         // Если сети нет, возвращаем результат локального поиска
-        print(
+        debugPrint(
           'Сети нет. Результат проверки наличия пользователя ${user.uid} в дереве $treeId (локально): $foundLocally',
         );
         return foundLocally;
       }
     } catch (e, s) {
-      print('Ошибка при проверке наличия пользователя $treeId: $e\\n$s');
+      debugPrint('Ошибка при проверке наличия пользователя $treeId: $e\\n$s');
       FirebaseCrashlytics.instance.recordError(
         e,
         s,
@@ -2811,6 +2847,7 @@ class FamilyService implements FamilyTreeServiceInterface {
   }
 
   // <<< НОВЫЙ МЕТОД: Добавление текущего пользователя в дерево со связью >>>
+  @override
   Future<void> addCurrentUserToTree({
     required String treeId,
     required String targetPersonId, // ID человека, к которому привязываемся
@@ -2826,7 +2863,7 @@ class FamilyService implements FamilyTreeServiceInterface {
 
     // 1. Проверяем, не добавлен ли пользователь уже
     if (await isCurrentUserInTree(treeId)) {
-      print(
+      debugPrint(
         'Пользователь ${currentUser.uid} уже добавлен в дерево $treeId. Добавление отменено.',
       );
       // Можно выбросить исключение или просто выйти
@@ -2842,7 +2879,7 @@ class FamilyService implements FamilyTreeServiceInterface {
     try {
       userProfile = await _localStorageService.getUser(currentUser.uid);
       if (userProfile == null && _syncService.isOnline) {
-        print(
+        debugPrint(
           'Профиль ${currentUser.uid} не найден локально, ищем в Firestore...',
         );
         final userDoc =
@@ -2851,11 +2888,11 @@ class FamilyService implements FamilyTreeServiceInterface {
           userProfile = UserProfile.fromFirestore(userDoc);
           await _localStorageService.saveUser(userProfile); // Сохраняем в кеш
         } else {
-          print('Профиль ${currentUser.uid} не найден и в Firestore.');
+          debugPrint('Профиль ${currentUser.uid} не найден и в Firestore.');
         }
       }
     } catch (e, s) {
-      print(
+      debugPrint(
         'Ошибка при получении профиля пользователя ${currentUser.uid}: $e\\n$s',
       );
       FirebaseCrashlytics.instance.recordError(
@@ -2868,7 +2905,7 @@ class FamilyService implements FamilyTreeServiceInterface {
 
     if (userProfile == null) {
       // Если профиль не найден (маловероятно, но возможно), создаем базовую запись
-      print(
+      debugPrint(
         'Профиль для ${currentUser.uid} не найден. Создается базовая запись UserProfile.',
       );
       userProfile = UserProfile(
@@ -2927,24 +2964,25 @@ class FamilyService implements FamilyTreeServiceInterface {
     // 4. Сохраняем новую FamilyPerson (локально и в Firestore, если онлайн)
     try {
       await _localStorageService.savePerson(selfPerson);
-      print(
+      debugPrint(
         'FamilyPerson для текущего пользователя ${selfPerson.id} сохранена локально.',
       );
       if (_syncService.isOnline) {
-        print('Отправляем FamilyPerson ${selfPerson.id} в Firestore...');
+        debugPrint('Отправляем FamilyPerson ${selfPerson.id} в Firestore...');
         await _firestore
             .collection('family_persons')
             .doc(selfPerson.id)
             .set(selfPerson.toMap());
-        print('FamilyPerson ${selfPerson.id} успешно добавлена в Firestore.');
+        debugPrint(
+            'FamilyPerson ${selfPerson.id} успешно добавлена в Firestore.');
       } else {
-        print(
+        debugPrint(
           'Сети нет. FamilyPerson ${selfPerson.id} сохранена только локально.',
         );
         // TODO: Отложенная синхронизация
       }
     } catch (e, s) {
-      print(
+      debugPrint(
         'Ошибка при сохранении FamilyPerson для текущего пользователя: $e\\n$s',
       );
       FirebaseCrashlytics.instance.recordError(
@@ -2964,7 +3002,7 @@ class FamilyService implements FamilyTreeServiceInterface {
         relationType,
       );
 
-      print(
+      debugPrint(
         'Создание связи: $targetPersonId -> ${selfPerson.id} ($relationType) / ${selfPerson.id} -> $targetPersonId ($reverseRelationType)',
       );
 
@@ -2975,7 +3013,7 @@ class FamilyService implements FamilyTreeServiceInterface {
         relation1to2: relationType,
         isConfirmed: true, // Связь подтверждена, т.к. создается пользователем
       );
-      print('Связь успешно создана.');
+      debugPrint('Связь успешно создана.');
 
       // Опционально: После добавления себя как ребенка, можно попробовать создать связь между родителями
       if (relationType == RelationType.child) {
@@ -2984,7 +3022,8 @@ class FamilyService implements FamilyTreeServiceInterface {
         // await _createSpouseRelationForParentsIfNeeded(treeId, targetPersonId, selfPerson.id);
       }
     } catch (e, s) {
-      print('Ошибка при создании связи для текущего пользователя: $e\\n$s');
+      debugPrint(
+          'Ошибка при создании связи для текущего пользователя: $e\\n$s');
       FirebaseCrashlytics.instance.recordError(
         e,
         s,

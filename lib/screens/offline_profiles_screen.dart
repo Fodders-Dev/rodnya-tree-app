@@ -1,3 +1,4 @@
+// ignore_for_file: library_private_types_in_public_api
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
@@ -9,7 +10,7 @@ import '../models/family_person.dart';
 import '../backend/interfaces/auth_service_interface.dart';
 
 class OfflineProfilesScreen extends StatefulWidget {
-  const OfflineProfilesScreen({Key? key}) : super(key: key);
+  const OfflineProfilesScreen({super.key});
 
   @override
   _OfflineProfilesScreenState createState() => _OfflineProfilesScreenState();
@@ -75,7 +76,7 @@ class _OfflineProfilesScreenState extends State<OfflineProfilesScreen> {
         });
       }
     } catch (e) {
-      print('Ошибка загрузки оффлайн профилей: $e');
+      debugPrint('Ошибка загрузки оффлайн профилей: $e');
       if (mounted) {
         setState(() {
           _isLoading = false;
@@ -133,19 +134,16 @@ class _OfflineProfilesScreenState extends State<OfflineProfilesScreen> {
           leading: CircleAvatar(
             backgroundImage:
                 person.photoUrl != null ? NetworkImage(person.photoUrl!) : null,
+            backgroundColor: Theme.of(context).colorScheme.secondaryContainer,
             child: person.photoUrl == null
                 // Используем инициалы или иконку по полу
                 ? Text(person.initials, style: TextStyle(color: Colors.white))
                 // ? Icon(person.gender == Gender.male ? Icons.person : Icons.female, color: Colors.white)
                 : null,
-            backgroundColor: Theme.of(context).colorScheme.secondaryContainer,
           ),
           title: Text(person.displayName),
           subtitle: Text(
-            'Оффлайн-профиль' +
-                (person.birthDate != null
-                    ? ', Род: ${person.birthDate!.year}'
-                    : ''),
+            'Оффлайн-профиль${person.birthDate != null ? ', Род: ${person.birthDate!.year}' : ''}',
           ),
           onTap: () {
             context.push('/relative/details/${person.id}');

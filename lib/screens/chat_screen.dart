@@ -864,7 +864,7 @@ class _ChatScreenState extends State<ChatScreen> {
     return Material(
       elevation: 5,
       color: Theme.of(context).cardColor,
-      child: Padding(
+      child: Container(
         padding: EdgeInsets.only(
           left: 8,
           right: 8,
@@ -1864,11 +1864,12 @@ class _VoicePlayerWidgetState extends State<_VoicePlayerWidget> {
       if (mounted) setState(() => _position = p);
     });
     _compSub = _player.onPlayerComplete.listen((_) {
-      if (mounted)
+      if (mounted) {
         setState(() {
           _playerState = PlayerState.stopped;
           _position = Duration.zero;
         });
+      }
     });
   }
 

@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:get_it/get_it.dart';
 import 'package:image_picker/image_picker.dart';
@@ -29,9 +30,9 @@ class ChatService implements ChatServiceInterface {
       // Обновляем или создаем информацию о чате
       await _updateChatPreview(message);
 
-      print('Сообщение отправлено с ID: ${docRef.id}');
+      debugPrint('Сообщение отправлено с ID: ${docRef.id}');
     } catch (e) {
-      print('Ошибка при отправке сообщения: $e');
+      debugPrint('Ошибка при отправке сообщения: $e');
       rethrow;
     }
   }
@@ -106,7 +107,7 @@ class ChatService implements ChatServiceInterface {
         'lastMessageSenderId': message.senderId,
       }, SetOptions(merge: true));
     } catch (e) {
-      print('Ошибка при обновлении информации о чате: $e');
+      debugPrint('Ошибка при обновлении информации о чате: $e');
     }
   }
 
@@ -135,7 +136,7 @@ class ChatService implements ChatServiceInterface {
 
       await batch.commit();
     } catch (e) {
-      print('Ошибка при отметке чата как прочитанного: $e');
+      debugPrint('Ошибка при отметке чата как прочитанного: $e');
     }
   }
 
@@ -410,7 +411,7 @@ class ChatService implements ChatServiceInterface {
 
       return chatId;
     } catch (e) {
-      print('Ошибка при создании/получении чата: $e');
+      debugPrint('Ошибка при создании/получении чата: $e');
       return null;
     }
   }
@@ -479,7 +480,7 @@ class ChatService implements ChatServiceInterface {
 
       return chatId;
     } catch (e) {
-      print('Ошибка при создании группового чата: $e');
+      debugPrint('Ошибка при создании группового чата: $e');
       return null;
     }
   }

@@ -1,3 +1,4 @@
+// ignore_for_file: library_private_types_in_public_api
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
@@ -17,7 +18,7 @@ const String PREMIUM_PRODUCT_ID = 'lineage_premium';
 const String ONE_TIME_PRODUCT_ID = 'lineage_premium_product';
 
 class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({Key? key}) : super(key: key);
+  const SettingsScreen({super.key});
 
   @override
   _SettingsScreenState createState() => _SettingsScreenState();
@@ -140,11 +141,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
         // Конкретные значения статусов (1=CREATED, 2=PAID, 3=CONFIRMED, 4=CANCELLED) предполагаются.
         // Пока будем считать активным, если статус не null (т.е. покупка существует).
         _isPremium = premiumPurchase.productId == PREMIUM_PRODUCT_ID &&
-            premiumPurchase.purchaseState == 3;
+            premiumPurchase.purchaseState == '3';
         _lastPurchaseId = _isPremium ? premiumPurchase.purchaseId : null;
       });
     } catch (e) {
-      print("Error checking premium status: $e");
+      debugPrint("Error checking premium status: $e");
       setState(() {
         _isPremium = false;
       }); // Считаем не премиумом при ошибке
@@ -178,7 +179,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         });
       }
     } catch (e) {
-      print("Error checking app rating status: $e");
+      debugPrint("Error checking app rating status: $e");
       // Оставляем _hasRatedApp = false при ошибке
     } finally {
       if (mounted) {
@@ -198,7 +199,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       // Сначала получим информацию о продукте
       final products = await _rustoreService.getProducts([PREMIUM_PRODUCT_ID]);
       if (products.isEmpty) {
-        print("Product $PREMIUM_PRODUCT_ID not found in RuStore.");
+        debugPrint("Product $PREMIUM_PRODUCT_ID not found in RuStore.");
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('Товар $PREMIUM_PRODUCT_ID не найден.')),
@@ -215,21 +216,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
       // Временно упрощаем проверку из-за ошибок с полями PaymentResult
       if (result != null) {
-        print("Purchase flow finished. Result: ${result.toString()}");
-        print("Purchase successful (assumed)! Now attempting to confirm...");
+        debugPrint("Purchase flow finished. Result: ${result.toString()}");
+        debugPrint(
+            "Purchase successful (assumed)! Now attempting to confirm...");
 
         // --- ДОБАВЛЯЕМ ПОДТВЕРЖДЕНИЕ ПОКУПКИ ---
         try {
           // Небольшая пауза, чтобы дать серверам RuStore обработать покупку
           await Future.delayed(const Duration(seconds: 2));
 
-          print('Checking purchases again to find the one to confirm...');
+          debugPrint('Checking purchases again to find the one to confirm...');
           final purchases = await _rustoreService.checkPurchases();
           final purchaseToConfirm = purchases.firstWhere(
             (p) =>
                 p.productId == PREMIUM_PRODUCT_ID &&
                 p.purchaseState !=
-                    3, // Ищем НЕ подтвержденную (state 3 = CONFIRMED)
+                    '3', // Ищем НЕ подтвержденную (state 3 = CONFIRMED)
             orElse: () => billing.Purchase(
               purchaseId: '',
               productId: '',
@@ -243,24 +245,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
           final String? currentPurchaseId = purchaseToConfirm.purchaseId;
           if (currentPurchaseId != null && currentPurchaseId.isNotEmpty) {
             // Сначала проверка на null!
-            print('Found purchase to confirm: $currentPurchaseId');
+            debugPrint('Found purchase to confirm: $currentPurchaseId');
             await _rustoreService.confirmPurchase(
               currentPurchaseId,
             ); // Передаем не-null ID
-            print('Purchase $currentPurchaseId confirmed successfully.');
+            debugPrint('Purchase $currentPurchaseId confirmed successfully.');
             if (mounted) {
               ScaffoldMessenger.of(
                 context,
               ).showSnackBar(SnackBar(content: Text('Покупка подтверждена!')));
             }
           } else {
-            print(
+            debugPrint(
               'Could not find the new purchase to confirm (it might be already confirmed or in error state). Status will be checked.',
             );
             // Не показываем ошибку пользователю, просто проверим статус позже
           }
         } catch (confirmError) {
-          print('Error confirming purchase: $confirmError');
+          debugPrint('Error confirming purchase: $confirmError');
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
@@ -276,7 +278,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
         await _checkPremiumStatus(); // Обновляем статус после покупки и попытки подтверждения
       } else {
-        print(
+        debugPrint(
           "Purchase flow returned null result (likely cancelled or failed).",
         );
         if (mounted) {
@@ -286,7 +288,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         }
       }
     } catch (e) {
-      print("Error during purchase process: $e");
+      debugPrint("Error during purchase process: $e");
       if (mounted) {
         ScaffoldMessenger.of(
           context,
@@ -307,10 +309,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _oneTimePurchaseLoading = true;
     });
     try {
-      print('Attempting to get one-time product info: $ONE_TIME_PRODUCT_ID');
+      debugPrint(
+          'Attempting to get one-time product info: $ONE_TIME_PRODUCT_ID');
       final products = await _rustoreService.getProducts([ONE_TIME_PRODUCT_ID]);
       if (products.isEmpty) {
-        print("Product $ONE_TIME_PRODUCT_ID not found in RuStore.");
+        debugPrint("Product $ONE_TIME_PRODUCT_ID not found in RuStore.");
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('Товар $ONE_TIME_PRODUCT_ID не найден.')),
@@ -322,28 +325,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
         return;
       }
       // Добавим лог с информацией о продукте
-      print('Product info found: ${products.first.toString()}');
+      debugPrint('Product info found: ${products.first.toString()}');
 
-      print('Attempting to purchase one-time product: $ONE_TIME_PRODUCT_ID');
+      debugPrint(
+          'Attempting to purchase one-time product: $ONE_TIME_PRODUCT_ID');
       final billing.PaymentResult? result =
           await _rustoreService.purchaseProduct(ONE_TIME_PRODUCT_ID);
 
       if (result != null) {
-        print("One-time purchase flow finished. Result: ${result.toString()}");
-        print(
+        debugPrint(
+            "One-time purchase flow finished. Result: ${result.toString()}");
+        debugPrint(
           "One-time purchase successful (assumed)! Now attempting to confirm/consume...",
         );
 
         // Подтверждение/Потребление разовой покупки (логика та же, что и для подписки)
         try {
           await Future.delayed(const Duration(seconds: 2));
-          print(
+          debugPrint(
             'Checking purchases again to find the one-time purchase to confirm...',
           );
           final purchases = await _rustoreService.checkPurchases();
           // Ищем по ID разового продукта, НЕ подтвержденную
           final purchaseToConfirm = purchases.firstWhere(
-            (p) => p.productId == ONE_TIME_PRODUCT_ID && p.purchaseState != 3,
+            (p) => p.productId == ONE_TIME_PRODUCT_ID && p.purchaseState != '3',
             orElse: () => billing.Purchase(
               purchaseId: '',
               productId: '',
@@ -355,11 +360,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
           final String? currentPurchaseId = purchaseToConfirm.purchaseId;
           if (currentPurchaseId != null && currentPurchaseId.isNotEmpty) {
-            print(
+            debugPrint(
               'Found one-time purchase to confirm/consume: $currentPurchaseId',
             );
             await _rustoreService.confirmPurchase(currentPurchaseId);
-            print(
+            debugPrint(
               'One-time purchase $currentPurchaseId confirmed/consumed successfully.',
             );
             if (mounted) {
@@ -370,12 +375,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
               );
             }
           } else {
-            print(
+            debugPrint(
               'Could not find the new one-time purchase to confirm/consume.',
             );
           }
         } catch (confirmError) {
-          print('Error confirming/consuming one-time purchase: $confirmError');
+          debugPrint(
+              'Error confirming/consuming one-time purchase: $confirmError');
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
@@ -389,7 +395,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         // Статус премиума не обновляем, т.к. это разовая покупка
         // Можно добавить отдельную логику для отслеживания разовых покупок, если нужно
       } else {
-        print(
+        debugPrint(
           "One-time purchase flow returned null result (likely cancelled or failed).",
         );
         if (mounted) {
@@ -401,7 +407,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         }
       }
     } catch (e) {
-      print("Error during one-time purchase process: $e");
+      debugPrint("Error during one-time purchase process: $e");
       if (mounted) {
         ScaffoldMessenger.of(
           context,
@@ -761,8 +767,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               trailing: _isPremium
                                   ? null // Не показываем кнопку, если уже премиум
                                   : ElevatedButton(
-                                      child: Text('Купить'),
                                       onPressed: _purchasePremium,
+                                      child: Text('Купить'),
                                     ),
                             ),
                             // Кнопка для удаления тестовой покупки (только если премиум активен)
@@ -773,11 +779,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                   vertical: 8.0,
                                 ),
                                 child: TextButton(
+                                  onPressed: _deleteTestPurchase,
                                   child: Text(
                                     'Сбросить тестовую покупку',
                                     style: TextStyle(color: Colors.grey),
                                   ),
-                                  onPressed: _deleteTestPurchase,
                                 ),
                               ),
                           ],
@@ -802,19 +808,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     title: Text('Купить тестовый товар'),
                     subtitle: Text('Проверка покупки разового товара'),
                     trailing: ElevatedButton(
-                      child: _oneTimePurchaseLoading
-                          ? SizedBox(
-                              height: 18,
-                              width: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : Text('Купить (' + ONE_TIME_PRODUCT_ID + ')'),
                       onPressed: _oneTimePurchaseLoading
                           ? null
                           : _purchaseOneTimeProduct,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.orange[700],
                       ),
+                      child: _oneTimePurchaseLoading
+                          ? SizedBox(
+                              height: 18,
+                              width: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : Text('Купить ($ONE_TIME_PRODUCT_ID)'),
                     ),
                   ),
                   Divider(),
@@ -863,14 +869,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                   // Делаем неактивной, если уже оценен
                                   final currentContext = context;
                                   try {
-                                    print(
+                                    debugPrint(
                                       'Attempting to request RuStore review...',
                                     );
                                     // Вызываем метод, он может выбросить исключение
                                     await _rustoreService.requestReview();
 
                                     // Если исключения не было, считаем запрос успешным
-                                    print(
+                                    debugPrint(
                                       'Review request initiated successfully.',
                                     );
                                     // Показываем сообщение и обновляем состояние
@@ -891,7 +897,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                       // await _rustoreService.markReviewAsRequested(); // Вызов уже внутри requestReview
                                     }
                                   } catch (e) {
-                                    print(
+                                    debugPrint(
                                       'Error during requestReview call: $e',
                                     );
                                     // Показываем ошибку пользователю

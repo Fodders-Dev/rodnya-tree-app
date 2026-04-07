@@ -3,6 +3,7 @@
 
 // Убираем import 'package:firebase_storage/firebase_storage.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -35,6 +36,7 @@ class ProfileService implements ProfileServiceInterface {
   // Допустимые форматы файлов
   static const List<String> allowedExtensions = ['.jpg', '.jpeg', '.png'];
 
+  @override
   Future<String?> uploadProfilePhoto(XFile photo) async {
     final user = _auth.currentUser;
     if (user == null) {
@@ -64,7 +66,8 @@ class ProfileService implements ProfileServiceInterface {
       final timestamp = DateTime.now().millisecondsSinceEpoch;
       final storagePath = '${user.uid}/avatar_$timestamp$fileExtension';
 
-      print('Вызов _storageService.uploadBytes для пользователя ${user.uid}');
+      debugPrint(
+          'Вызов _storageService.uploadBytes для пользователя ${user.uid}');
       final downloadUrl = await _storageService.uploadBytes(
         bucket: 'avatars',
         path: storagePath,
@@ -77,23 +80,23 @@ class ProfileService implements ProfileServiceInterface {
       );
 
       if (downloadUrl == null) {
-        print('Ошибка: _storageService.uploadBytes вернул null.');
+        debugPrint('Ошибка: _storageService.uploadBytes вернул null.');
         throw Exception('Не удалось загрузить фото в хранилище.');
       }
 
-      print('Получен URL изображения профиля: $downloadUrl');
+      debugPrint('Получен URL изображения профиля: $downloadUrl');
 
       await _firestore.collection('users').doc(user.uid).update({
         'photoURL': downloadUrl,
       });
-      print('Firestore обновлен с новым URL.');
+      debugPrint('Firestore обновлен с новым URL.');
 
       await user.updatePhotoURL(downloadUrl);
-      print('FirebaseAuth обновлен с новым URL.');
+      debugPrint('FirebaseAuth обновлен с новым URL.');
 
       return downloadUrl;
     } catch (e) {
-      print('Ошибка при загрузке фото профиля (ProfileService): $e');
+      debugPrint('Ошибка при загрузке фото профиля (ProfileService): $e');
       rethrow; // Пробрасываем ошибку для обработки в UI
     }
   }
@@ -109,51 +112,54 @@ class ProfileService implements ProfileServiceInterface {
     }
   }
 
+  @override
   Future<UserProfile?> getUserProfile(String userId) async {
     try {
       // 1. Пытаемся получить профиль из локального кэша
       final cachedProfile = await _localStorage.getUser(userId);
       if (cachedProfile != null) {
-        print('UserProfile for $userId found in cache.');
+        debugPrint('UserProfile for $userId found in cache.');
         return cachedProfile;
       }
 
       // 2. Если в кэше нет, проверяем сеть
       if (!_syncService.isOnline) {
-        print(
+        debugPrint(
           'UserProfile for $userId not in cache and offline. Returning null.',
         );
         return null; // Нет в кэше и нет сети
       }
 
       // 3. Если есть сеть, загружаем из Firestore
-      print('UserProfile for $userId not in cache, fetching from Firestore...');
+      debugPrint(
+          'UserProfile for $userId not in cache, fetching from Firestore...');
       final doc = await _firestore.collection('users').doc(userId).get();
 
       if (doc.exists) {
         final profileFromFirestore = UserProfile.fromFirestore(doc);
         // 4. Сохраняем в кэш
         await _localStorage.saveUser(profileFromFirestore);
-        print(
+        debugPrint(
           'UserProfile for $userId fetched from Firestore and saved to cache.',
         );
         return profileFromFirestore;
       } else {
-        print('UserProfile for $userId not found in Firestore.');
+        debugPrint('UserProfile for $userId not found in Firestore.');
         return null;
       }
     } catch (e) {
-      print('Error getting user profile (ProfileService): $e');
+      debugPrint('Error getting user profile (ProfileService): $e');
       // В случае ошибки можно попробовать вернуть данные из кэша, если они там вдруг появились
       // Или просто вернуть null
       try {
         final cachedProfile = await _localStorage.getUser(userId);
         if (cachedProfile != null) {
-          print('Returning cached profile for $userId after Firestore error.');
+          debugPrint(
+              'Returning cached profile for $userId after Firestore error.');
           return cachedProfile;
         }
       } catch (cacheError) {
-        print('Error reading cache after Firestore error: $cacheError');
+        debugPrint('Error reading cache after Firestore error: $cacheError');
       }
       return null;
     }
@@ -280,17 +286,19 @@ class ProfileService implements ProfileServiceInterface {
     });
   }
 
+  @override
   Future<void> updateUserProfile(String userId, UserProfile profile) async {
     try {
       await _firestore.collection('users').doc(userId).update(profile.toMap());
-      print('User profile updated successfully.');
+      debugPrint('User profile updated successfully.');
     } catch (e) {
-      print('Error updating user profile: $e');
+      debugPrint('Error updating user profile: $e');
       rethrow; // Пробрасываем ошибку дальше
     }
   }
 
   // Получение потока заметок пользователя
+  @override
   Stream<List<ProfileNote>> getProfileNotesStream(String userId) {
     return _firestore
         .collection('users')
@@ -310,6 +318,7 @@ class ProfileService implements ProfileServiceInterface {
   }
 
   // Добавление новой заметки
+  @override
   Future<void> addProfileNote(
     String userId,
     String title,
@@ -325,14 +334,15 @@ class ProfileService implements ProfileServiceInterface {
         'content': content,
         'createdAt': FieldValue.serverTimestamp(), // Используем серверное время
       });
-      print('Profile note added successfully.');
+      debugPrint('Profile note added successfully.');
     } catch (e) {
-      print('Error adding profile note: $e');
+      debugPrint('Error adding profile note: $e');
       rethrow;
     }
   }
 
   // Обновление существующей заметки
+  @override
   Future<void> updateProfileNote(String userId, ProfileNote note) async {
     try {
       await _firestore
@@ -341,14 +351,15 @@ class ProfileService implements ProfileServiceInterface {
           .collection('profile_notes')
           .doc(note.id) // Используем ID заметки
           .update(note.toMap()); // Используем toMap для обновления полей
-      print('Profile note updated successfully.');
+      debugPrint('Profile note updated successfully.');
     } catch (e) {
-      print('Error updating profile note: $e');
+      debugPrint('Error updating profile note: $e');
       rethrow;
     }
   }
 
   // Удаление заметки
+  @override
   Future<void> deleteProfileNote(String userId, String noteId) async {
     try {
       await _firestore
@@ -357,9 +368,9 @@ class ProfileService implements ProfileServiceInterface {
           .collection('profile_notes')
           .doc(noteId) // Используем ID заметки
           .delete();
-      print('Profile note deleted successfully.');
+      debugPrint('Profile note deleted successfully.');
     } catch (e) {
-      print('Error deleting profile note: $e');
+      debugPrint('Error deleting profile note: $e');
       rethrow;
     }
   }

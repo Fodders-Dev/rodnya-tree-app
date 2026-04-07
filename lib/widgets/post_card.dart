@@ -186,11 +186,11 @@ class _PostCardState extends State<PostCard> {
                       widget.post.authorPhotoUrl!.isNotEmpty
                   ? CachedNetworkImageProvider(widget.post.authorPhotoUrl!)
                   : null,
+              backgroundColor: Colors.grey.shade200,
               child: widget.post.authorPhotoUrl == null ||
                       widget.post.authorPhotoUrl!.isEmpty
                   ? const Icon(Icons.person, size: 20, color: Colors.grey)
                   : null,
-              backgroundColor: Colors.grey.shade200,
             ),
           ),
           const SizedBox(width: 12),

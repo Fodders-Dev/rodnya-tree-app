@@ -1,3 +1,4 @@
+// ignore_for_file: library_private_types_in_public_api
 import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
 
@@ -12,8 +13,7 @@ import '../models/user_profile.dart';
 class RelationRequestsScreen extends StatefulWidget {
   final String treeId;
 
-  const RelationRequestsScreen({Key? key, required this.treeId})
-      : super(key: key);
+  const RelationRequestsScreen({super.key, required this.treeId});
 
   @override
   _RelationRequestsScreenState createState() => _RelationRequestsScreenState();
@@ -79,7 +79,7 @@ class _RelationRequestsScreenState extends State<RelationRequestsScreen> {
         try {
           profiles[senderId] = await _profileService.getUserProfile(senderId);
         } catch (e) {
-          print('Ошибка загрузки профиля отправителя $senderId: $e');
+          debugPrint('Ошибка загрузки профиля отправителя $senderId: $e');
           profiles[senderId] = null;
         }
       }
@@ -94,7 +94,7 @@ class _RelationRequestsScreenState extends State<RelationRequestsScreen> {
         _isLoading = false;
       });
     } catch (e) {
-      print('Ошибка при загрузке запросов: $e');
+      debugPrint('Ошибка при загрузке запросов: $e');
       if (!mounted) {
         return;
       }
@@ -131,7 +131,7 @@ class _RelationRequestsScreenState extends State<RelationRequestsScreen> {
         ),
       );
     } catch (e) {
-      print('Ошибка при обработке запроса: $e');
+      debugPrint('Ошибка при обработке запроса: $e');
       if (!mounted) {
         return;
       }

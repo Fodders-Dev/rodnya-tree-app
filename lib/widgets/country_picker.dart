@@ -5,10 +5,10 @@ class CountryPicker extends StatefulWidget {
   final Function(String country, String countryCode) onCountryChanged;
 
   const CountryPicker({
-    Key? key,
+    super.key,
     this.initialCountry,
     required this.onCountryChanged,
-  }) : super(key: key);
+  });
 
   @override
   _CountryPickerState createState() => _CountryPickerState();
@@ -40,7 +40,7 @@ class _CountryPickerState extends State<CountryPicker> {
   @override
   Widget build(BuildContext context) {
     return DropdownButtonFormField<String>(
-      value: _selectedCountry,
+      initialValue: _selectedCountry,
       decoration: InputDecoration(
         labelText: 'Страна',
         prefixIcon: Icon(Icons.flag),

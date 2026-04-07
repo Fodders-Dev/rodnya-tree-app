@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:get_it/get_it.dart';
@@ -24,7 +25,7 @@ class PostService {
 
   // Получение потока постов для конкретного дерева
   Stream<List<Post>> getPostsStream(String treeId) {
-    print('[PostService] Запрос потока постов для дерева $treeId');
+    debugPrint('[PostService] Запрос потока постов для дерева $treeId');
     return _postsCollection
         .where('treeId', isEqualTo: treeId) // Фильтруем по дереву
         .orderBy(
@@ -33,12 +34,12 @@ class PostService {
         ) // Сортируем по дате (новые сверху)
         .snapshots()
         .map((snapshot) {
-      print(
+      debugPrint(
         '[PostService] Получено ${snapshot.docs.length} постов для $treeId',
       );
       return snapshot.docs.map((doc) => Post.fromFirestore(doc)).toList();
     }).handleError((error) {
-      print('[PostService] Ошибка в потоке постов для $treeId: $error');
+      debugPrint('[PostService] Ошибка в потоке постов для $treeId: $error');
       return []; // Возвращаем пустой список при ошибке
     });
   }
@@ -67,7 +68,7 @@ class PostService {
           }
         }
       } catch (e) {
-        print('Ошибка получения профиля в createPost: $e');
+        debugPrint('Ошибка получения профиля в createPost: $e');
         // Можно не прерывать, если имя/фото из Auth достаточно
       }
     }
@@ -81,11 +82,11 @@ class PostService {
 
     List<String>? uploadedImageUrls;
     if (images != null && images.isNotEmpty) {
-      print(
+      debugPrint(
         'Загрузка ${images.length} изображений для поста ${newPostRef.id}...',
       );
       uploadedImageUrls = await _uploadImagesSupabase(images);
-      print('URL загруженных изображений: $uploadedImageUrls');
+      debugPrint('URL загруженных изображений: $uploadedImageUrls');
     }
 
     final post = Post(
@@ -106,7 +107,7 @@ class PostService {
     );
 
     await newPostRef.set(post.toMap());
-    print('[PostService] Пост ${newPostRef.id} создан в дереве $treeId');
+    debugPrint('[PostService] Пост ${newPostRef.id} создан в дереве $treeId');
   }
 
   // Загрузка изображений в Supabase Storage
@@ -125,7 +126,7 @@ class PostService {
       // Генерируем уникальное имя файла
       final fileName = '${user.uid}/${Uuid().v4()}.$fileExt';
 
-      print(
+      debugPrint(
         '[PostService] Загрузка изображения в Supabase: $bucketName/$fileName',
       );
       try {
@@ -139,15 +140,15 @@ class PostService {
         );
         if (publicUrl != null) {
           urls.add(publicUrl);
-          print('[PostService] Изображение загружено: $publicUrl');
+          debugPrint('[PostService] Изображение загружено: $publicUrl');
         } else {
-          print(
+          debugPrint(
             '[PostService] Ошибка: Не удалось получить public URL для $fileName',
           );
           // Можно пробросить ошибку или просто пропустить файл
         }
       } catch (e) {
-        print(
+        debugPrint(
           '[PostService] Ошибка загрузки изображения $fileName в Supabase: $e',
         );
         // Обработка ошибки (пробросить, логировать, пропустить)
@@ -178,13 +179,13 @@ class PostService {
 
       if (currentLikedBy.contains(user.uid)) {
         // Убираем лайк
-        print('[PostService] Убираем лайк с поста $postId от ${user.uid}');
+        debugPrint('[PostService] Убираем лайк с поста $postId от ${user.uid}');
         transaction.update(postRef, {
           'likedBy': FieldValue.arrayRemove([user.uid]),
         });
       } else {
         // Ставим лайк
-        print('[PostService] Ставим лайк на пост $postId от ${user.uid}');
+        debugPrint('[PostService] Ставим лайк на пост $postId от ${user.uid}');
         transaction.update(postRef, {
           'likedBy': FieldValue.arrayUnion([user.uid]),
         });

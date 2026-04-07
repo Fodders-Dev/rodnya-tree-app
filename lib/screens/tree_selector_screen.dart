@@ -1,3 +1,4 @@
+// ignore_for_file: library_private_types_in_public_api
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 // Убираем импорт TreeViewScreen, так как переход будет в другое место
@@ -13,7 +14,7 @@ import '../models/family_tree.dart';
 import '../services/public_tree_link_service.dart';
 
 class TreeSelectorScreen extends StatefulWidget {
-  const TreeSelectorScreen({Key? key}) : super(key: key);
+  const TreeSelectorScreen({super.key});
 
   @override
   _TreeSelectorScreenState createState() => _TreeSelectorScreenState();
@@ -54,7 +55,7 @@ class _TreeSelectorScreenState extends State<TreeSelectorScreen> {
         });
       }
     } catch (e) {
-      print('Ошибка загрузки деревьев: $e');
+      debugPrint('Ошибка загрузки деревьев: $e');
       if (mounted) {
         setState(() {
           _errorMessage = 'Не удалось загрузить список деревьев.';
@@ -312,7 +313,7 @@ class _TreeSelectorScreenState extends State<TreeSelectorScreen> {
         onTap: isSelecting
             ? null
             : () async {
-                print(
+                debugPrint(
                   '[TreeSelectorScreen] Selecting tree: $treeId ($treeName)',
                 );
                 setState(() {

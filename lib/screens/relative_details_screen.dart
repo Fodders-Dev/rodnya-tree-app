@@ -1,3 +1,4 @@
+// ignore_for_file: library_private_types_in_public_api
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart'; // Для форматирования дат
@@ -31,8 +32,7 @@ class _RelativeContactStatus {
 class RelativeDetailsScreen extends StatefulWidget {
   final String personId;
 
-  const RelativeDetailsScreen({required this.personId, Key? key})
-      : super(key: key);
+  const RelativeDetailsScreen({required this.personId, super.key});
 
   @override
   _RelativeDetailsScreenState createState() => _RelativeDetailsScreenState();
@@ -100,7 +100,7 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
         try {
           await _profileService.getUserProfile(currentUserId);
         } catch (profileError) {
-          print(
+          debugPrint(
             'Не удалось загрузить профиль текущего пользователя: $profileError',
           );
           // Не считаем критичной ошибкой для отображения деталей родственника
@@ -131,10 +131,10 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
           _currentUserPersonId!,
           _person!.id,
         );
-        print(
+        debugPrint(
           'Связь ${widget.personId} с текущим пользователем ($_currentUserPersonId): $_relationToCurrentUser',
         );
-        print('Пол родственника ${_person!.id}: ${_person!.gender}');
+        debugPrint('Пол родственника ${_person!.id}: ${_person!.gender}');
       }
 
       if (mounted) {
@@ -143,7 +143,7 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
         });
       }
     } catch (e) {
-      print('Ошибка загрузки данных родственника ${widget.personId}: $e');
+      debugPrint('Ошибка загрузки данных родственника ${widget.personId}: $e');
       if (mounted) {
         setState(() {
           _isLoading = false;
@@ -360,10 +360,10 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
                 final relationRelativeToUser = FamilyRelation.getMirrorRelation(
                   relationUserToRelative,
                 );
-                print(
+                debugPrint(
                   'Отображаемая связь (пользователь -> ${_person!.id}): $relationUserToRelative',
                 );
-                print(
+                debugPrint(
                   'Зеркальная связь (${_person!.id} -> пользователь): $relationRelativeToUser',
                 );
                 // Используем ЗЕРКАЛЬНОЕ отношение и ПОЛ РОДСТВЕННИКА для имени
@@ -625,7 +625,7 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
   void _editRelative() {
     if (!_canEditOrDelete() || _currentTreeId == null) return;
 
-    print(
+    debugPrint(
       'Переход на редактирование: personId=${_person!.id}, treeId=$_currentTreeId',
     );
     context
@@ -635,7 +635,7 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
     )
         .then((result) {
       if (result == true && mounted) {
-        print('Возврат с экрана редактирования, перезагрузка данных...');
+        debugPrint('Возврат с экрана редактирования, перезагрузка данных...');
         _loadData();
       }
     });
@@ -688,7 +688,7 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
           context.pop();
         }
       } catch (e) {
-        print('Ошибка удаления родственника: $e');
+        debugPrint('Ошибка удаления родственника: $e');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('Ошибка при удалении профиля: $e')),
@@ -725,7 +725,7 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
         );
       }
     } catch (e) {
-      print('Ошибка при генерации или отправке ссылки: $e');
+      debugPrint('Ошибка при генерации или отправке ссылки: $e');
       if (mounted) {
         ScaffoldMessenger.of(
           context,
@@ -756,7 +756,7 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
         '/relatives/chat/${_person!.userId}?name=$nameParam&photo=$photoParam&relativeId=$relativeIdParam',
       );
     } catch (e) {
-      print('Ошибка при переходе в чат: $e');
+      debugPrint('Ошибка при переходе в чат: $e');
       if (!mounted) {
         return;
       }

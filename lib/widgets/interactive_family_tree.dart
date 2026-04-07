@@ -52,7 +52,7 @@ class InteractiveFamilyTree extends StatefulWidget {
   static const double contentInsetBottom = 56;
 
   const InteractiveFamilyTree({
-    Key? key,
+    super.key,
     required this.peopleData,
     required this.relations,
     required this.onPersonTap,
@@ -66,7 +66,7 @@ class InteractiveFamilyTree extends StatefulWidget {
     this.onBranchFocusCleared,
     this.selectedEditPersonId,
     this.onEditPersonSelected,
-  }) : super(key: key);
+  });
 
   @override
   State<InteractiveFamilyTree> createState() => _InteractiveFamilyTreeState();
@@ -488,10 +488,10 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
     if (finalPositions.isNotEmpty) {
       double minX = double.infinity;
       double maxX = double.negativeInfinity;
-      finalPositions.values.forEach((pos) {
+      for (var pos in finalPositions.values) {
         minX = min(minX, pos.dx);
         maxX = max(maxX, pos.dx);
-      });
+      }
       maxTreeWidth = (maxX + InteractiveFamilyTree.nodeWidth / 2) -
           (minX - InteractiveFamilyTree.nodeWidth / 2);
 
@@ -629,10 +629,12 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
         childrenByParent.putIfAbsent(parentId, () => <String>{}).add(childId);
       }
       if (_isSpouseRelation(relation)) {
-        spousesByPerson.putIfAbsent(relation.person1Id, () => <String>{})
-          ..add(relation.person2Id);
-        spousesByPerson.putIfAbsent(relation.person2Id, () => <String>{})
-          ..add(relation.person1Id);
+        spousesByPerson
+            .putIfAbsent(relation.person1Id, () => <String>{})
+            .add(relation.person2Id);
+        spousesByPerson
+            .putIfAbsent(relation.person2Id, () => <String>{})
+            .add(relation.person1Id);
       }
     }
 
@@ -838,18 +840,22 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
       if (_isSpouseRelation(relation) &&
           nodePositions.containsKey(relation.person1Id) &&
           nodePositions.containsKey(relation.person2Id)) {
-        spousesByPerson.putIfAbsent(relation.person1Id, () => <String>{})
-          ..add(relation.person2Id);
-        spousesByPerson.putIfAbsent(relation.person2Id, () => <String>{})
-          ..add(relation.person1Id);
+        spousesByPerson
+            .putIfAbsent(relation.person1Id, () => <String>{})
+            .add(relation.person2Id);
+        spousesByPerson
+            .putIfAbsent(relation.person2Id, () => <String>{})
+            .add(relation.person1Id);
       }
       if (_isSiblingRelation(relation) &&
           nodePositions.containsKey(relation.person1Id) &&
           nodePositions.containsKey(relation.person2Id)) {
-        siblingsByPerson.putIfAbsent(relation.person1Id, () => <String>{})
-          ..add(relation.person2Id);
-        siblingsByPerson.putIfAbsent(relation.person2Id, () => <String>{})
-          ..add(relation.person1Id);
+        siblingsByPerson
+            .putIfAbsent(relation.person1Id, () => <String>{})
+            .add(relation.person2Id);
+        siblingsByPerson
+            .putIfAbsent(relation.person2Id, () => <String>{})
+            .add(relation.person1Id);
       }
     }
 
@@ -2133,8 +2139,10 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
             .toList();
 
         // --- Определяем членов группы (узел + супруги) ---
-        final List<String> groupMembers = [nodeId, ...spousesOnLevel]
-            .toSet() // Удаляем дубликаты, если spouseMap двунаправленный
+        final List<String> groupMembers = {
+          nodeId,
+          ...spousesOnLevel
+        } // Удаляем дубликаты, если spouseMap двунаправленный
             .toList();
 
         // --- Place the sorted group members (Original logic before revision) ---
@@ -2359,17 +2367,21 @@ class _TreeLayoutEngine {
         adjacency[parentId]!.add(childId);
         adjacency[childId]!.add(parentId);
       } else if (_isSpouseRelation(relation)) {
-        spousesByPerson.putIfAbsent(relation.person1Id, () => <String>{})
-          ..add(relation.person2Id);
-        spousesByPerson.putIfAbsent(relation.person2Id, () => <String>{})
-          ..add(relation.person1Id);
+        spousesByPerson
+            .putIfAbsent(relation.person1Id, () => <String>{})
+            .add(relation.person2Id);
+        spousesByPerson
+            .putIfAbsent(relation.person2Id, () => <String>{})
+            .add(relation.person1Id);
         adjacency[relation.person1Id]!.add(relation.person2Id);
         adjacency[relation.person2Id]!.add(relation.person1Id);
       } else if (_isSiblingRelation(relation)) {
-        siblingsByPerson.putIfAbsent(relation.person1Id, () => <String>{})
-          ..add(relation.person2Id);
-        siblingsByPerson.putIfAbsent(relation.person2Id, () => <String>{})
-          ..add(relation.person1Id);
+        siblingsByPerson
+            .putIfAbsent(relation.person1Id, () => <String>{})
+            .add(relation.person2Id);
+        siblingsByPerson
+            .putIfAbsent(relation.person2Id, () => <String>{})
+            .add(relation.person1Id);
         adjacency[relation.person1Id]!.add(relation.person2Id);
         adjacency[relation.person2Id]!.add(relation.person1Id);
       }

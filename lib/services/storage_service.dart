@@ -59,7 +59,7 @@ class StorageService implements StorageServiceInterface {
         return await ref.getDownloadURL();
       }
     } catch (e) {
-      print('Ошибка загрузки изображения: $e');
+      debugPrint('Ошибка загрузки изображения: $e');
       return null;
     }
   }
@@ -73,7 +73,7 @@ class StorageService implements StorageServiceInterface {
       await ref.delete();
       return true;
     } catch (e) {
-      print('Ошибка удаления изображения: $e');
+      debugPrint('Ошибка удаления изображения: $e');
       return false;
     }
   }
@@ -93,7 +93,7 @@ class StorageService implements StorageServiceInterface {
       // Получаем расширение файла
       final fileExtension = p.extension(file.path).toLowerCase();
       if (fileExtension.isEmpty) {
-        print('Ошибка: Не удалось определить расширение файла.');
+        debugPrint('Ошибка: Не удалось определить расширение файла.');
         return null; // Или выбросить исключение
       }
 
@@ -103,7 +103,7 @@ class StorageService implements StorageServiceInterface {
       final timestamp = DateTime.now().millisecondsSinceEpoch;
       final filePath = '$userId/avatar_$timestamp$fileExtension';
 
-      print('Загрузка файла в Supabase Storage: $_bucketName/$filePath');
+      debugPrint('Загрузка файла в Supabase Storage: $_bucketName/$filePath');
 
       // Загружаем файл
       final response = await _supabaseClient.storage.from(_bucketName).upload(
@@ -120,7 +120,7 @@ class StorageService implements StorageServiceInterface {
       // Supabase Storage API не всегда явно выбрасывает исключения при ошибках загрузки,
       // но response может содержать информацию об ошибке или быть null/пустым в некоторых случаях.
       // Более надежная проверка может потребоваться в зависимости от версии supabase_flutter
-      print(
+      debugPrint(
         'Ответ Supabase Storage upload: $response',
       ); // Логируем ответ для отладки
 
@@ -130,16 +130,16 @@ class StorageService implements StorageServiceInterface {
       final publicUrl =
           _supabaseClient.storage.from(_bucketName).getPublicUrl(filePath);
 
-      print('Получен публичный URL: $publicUrl');
+      debugPrint('Получен публичный URL: $publicUrl');
       return publicUrl;
     } on StorageException catch (e) {
       // Обрабатываем специфичные ошибки Supabase Storage
-      print('Ошибка Supabase Storage при загрузке аватара: ${e.message}');
+      debugPrint('Ошибка Supabase Storage при загрузке аватара: ${e.message}');
       // Можно добавить более специфичную обработку разных кодов ошибок
       return null;
     } catch (e) {
       // Обрабатываем другие возможные ошибки
-      print('Непредвиденная ошибка при загрузке аватара: $e');
+      debugPrint('Непредвиденная ошибка при загрузке аватара: $e');
       return null;
     }
   }
@@ -153,7 +153,7 @@ class StorageService implements StorageServiceInterface {
     FileOptions? fileOptions,
   }) async {
     try {
-      print('Загрузка байтов в Supabase Storage: $bucket/$path');
+      debugPrint('Загрузка байтов в Supabase Storage: $bucket/$path');
       // Загружаем байты
       final response = await _supabaseClient.storage.from(bucket).uploadBinary(
             path,
@@ -164,20 +164,21 @@ class StorageService implements StorageServiceInterface {
                   upsert: false,
                 ), // Настройки по умолчанию
           );
-      print('Ответ Supabase Storage uploadBinary: $response');
+      debugPrint('Ответ Supabase Storage uploadBinary: $response');
 
       // Получаем публичный URL
       final publicUrl = _supabaseClient.storage.from(bucket).getPublicUrl(path);
 
-      print('Получен публичный URL: $publicUrl');
+      debugPrint('Получен публичный URL: $publicUrl');
       return publicUrl;
     } on StorageException catch (e) {
-      print(
+      debugPrint(
         'Ошибка Supabase Storage при загрузке байтов ($bucket/$path): ${e.message}',
       );
       return null;
     } catch (e) {
-      print('Непредвиденная ошибка при загрузке байтов ($bucket/$path): $e');
+      debugPrint(
+          'Непредвиденная ошибка при загрузке байтов ($bucket/$path): $e');
       return null;
     }
   }

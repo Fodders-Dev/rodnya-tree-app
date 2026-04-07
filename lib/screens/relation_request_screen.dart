@@ -1,3 +1,4 @@
+// ignore_for_file: library_private_types_in_public_api
 import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
 import '../models/family_relation.dart';
@@ -11,11 +12,11 @@ class SendRelationRequestScreen extends StatefulWidget {
       offlineRelative; // Офлайн родственник, который будет заменен
 
   const SendRelationRequestScreen({
-    Key? key,
+    super.key,
     required this.treeId,
     required this.treeName,
     required this.offlineRelative,
-  }) : super(key: key);
+  });
 
   @override
   _SendRelationRequestScreenState createState() =>
@@ -75,7 +76,7 @@ class _SendRelationRequestScreenState extends State<SendRelationRequestScreen> {
               ),
               SizedBox(height: 8),
               DropdownButtonFormField<RelationType>(
-                value: _relationType,
+                initialValue: _relationType,
                 decoration: InputDecoration(border: OutlineInputBorder()),
                 items: RelationType.values.map((type) {
                   return DropdownMenuItem<RelationType>(
@@ -94,10 +95,10 @@ class _SendRelationRequestScreenState extends State<SendRelationRequestScreen> {
                   ? Center(child: CircularProgressIndicator())
                   : ElevatedButton(
                       onPressed: _sendRequest,
-                      child: Text('Отправить запрос'),
                       style: ElevatedButton.styleFrom(
                         minimumSize: Size(double.infinity, 50),
                       ),
+                      child: Text('Отправить запрос'),
                     ),
             ],
           ),

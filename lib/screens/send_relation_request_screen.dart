@@ -1,3 +1,5 @@
+// ignore_for_file: library_private_types_in_public_api
+// ignore_for_file: dead_null_aware_expression
 import 'package:flutter/material.dart';
 import '../models/user_profile.dart';
 import 'package:get_it/get_it.dart';
@@ -7,8 +9,7 @@ import '../backend/interfaces/profile_service_interface.dart';
 class SendRelationRequestScreen extends StatefulWidget {
   final String treeId;
 
-  const SendRelationRequestScreen({Key? key, required this.treeId})
-      : super(key: key);
+  const SendRelationRequestScreen({super.key, required this.treeId});
 
   @override
   _SendRelationRequestScreenState createState() =>

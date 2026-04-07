@@ -20,7 +20,7 @@ class InvitationService extends ChangeNotifier {
     required String treeId,
     required String personId,
   }) {
-    print(
+    debugPrint(
       '[InvitationService] Setting pending invitation: treeId=$treeId, personId=$personId',
     );
     _pendingTreeId = treeId;
@@ -29,7 +29,7 @@ class InvitationService extends ChangeNotifier {
   }
 
   void clearPendingInvitation() {
-    print('[InvitationService] Clearing pending invitation.');
+    debugPrint('[InvitationService] Clearing pending invitation.');
     _pendingTreeId = null;
     _pendingPersonId = null;
     notifyListeners();

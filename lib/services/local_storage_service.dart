@@ -299,7 +299,7 @@ class LocalStorageService {
           ); // Если user1Id=id2, сохраняем зеркальное
 
     _relationCache[treeId]![pairKey] = relationToCache;
-    // print('Cached relation for $treeId: $pairKey = $relationToCache'); // Для отладки
+    // debugPrint('Cached relation for $treeId: $pairKey = $relationToCache'); // Для отладки
   }
 
   /// Очищает кеш отношений для конкретного дерева.

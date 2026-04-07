@@ -5,7 +5,7 @@ import 'package:go_router/go_router.dart';
 class EventCard extends StatelessWidget {
   final AppEvent event;
 
-  const EventCard({required this.event, Key? key}) : super(key: key);
+  const EventCard({required this.event, super.key});
 
   @override
   Widget build(BuildContext context) {

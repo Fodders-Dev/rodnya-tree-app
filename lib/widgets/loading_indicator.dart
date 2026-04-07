@@ -4,8 +4,7 @@ class LoadingIndicator extends StatelessWidget {
   final double strokeWidth;
   final Color? color;
 
-  const LoadingIndicator({Key? key, this.strokeWidth = 4.0, this.color})
-      : super(key: key);
+  const LoadingIndicator({super.key, this.strokeWidth = 4.0, this.color});
 
   @override
   Widget build(BuildContext context) {

@@ -1132,10 +1132,12 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
         childrenByParent.putIfAbsent(parentId, () => <String>{}).add(childId);
       }
       if (_isSpouseRelation(relation)) {
-        spousesByPerson.putIfAbsent(relation.person1Id, () => <String>{})
-          ..add(relation.person2Id);
-        spousesByPerson.putIfAbsent(relation.person2Id, () => <String>{})
-          ..add(relation.person1Id);
+        spousesByPerson
+            .putIfAbsent(relation.person1Id, () => <String>{})
+            .add(relation.person2Id);
+        spousesByPerson
+            .putIfAbsent(relation.person2Id, () => <String>{})
+            .add(relation.person1Id);
       }
     }
 

@@ -1,0 +1,21 @@
+You are working on a Flutter project on Windows.
+
+Rules:
+- Work in very small steps.
+- Fix only one analyzer error at a time.
+- Read the relevant file section before editing.
+- Do not repeat the same failed edit more than once.
+- If an edit fails, reread the file and choose a different strategy.
+- Do not use Unix commands like grep, sed, awk, ls, rm.
+- Use Windows-compatible commands only.
+- Do not perform large refactors.
+- Do not change multiple files unless strictly necessary.
+- Keep responses short.
+- After each step output only:
+  Problem:
+  Fix:
+  Validation:
+  Next:
+- Prefer editing the smallest possible code region.
+- If a file is large, only inspect the exact area around the analyzer error.
+- If two edit attempts fail, stop changing code and instead output a precise manual patch.

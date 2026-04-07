@@ -1,3 +1,4 @@
+// ignore_for_file: library_private_types_in_public_api
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
@@ -66,7 +67,8 @@ class _TreesScreenState extends State<TreesScreen>
     // Загружаем деревья только когда выбрана первая вкладка (индекс 0)
     // и когда переход между вкладками завершен (!indexIsChanging)
     if (!_tabController.indexIsChanging && _tabController.index == 0) {
-      print("[_TreesScreen] Tab changed to 'Мои деревья', reloading trees...");
+      debugPrint(
+          "[_TreesScreen] Tab changed to 'Мои деревья', reloading trees...");
       _loadUserTrees(); // Вызываем загрузку/обновление
     }
   }
@@ -363,7 +365,7 @@ class _TreesScreenState extends State<TreesScreen>
         ),
       );
     } catch (e) {
-      print('Ошибка при обработке приглашения: $e');
+      debugPrint('Ошибка при обработке приглашения: $e');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Произошла ошибка. Попробуйте еще раз.')),
       );
@@ -758,7 +760,7 @@ class TreeCard extends StatelessWidget {
   final VoidCallback onTap;
 
   const TreeCard({
-    Key? key,
+    super.key,
     required this.tree,
     required this.role,
     this.isSelected = false,
@@ -766,7 +768,7 @@ class TreeCard extends StatelessWidget {
     this.destructiveActionLabel,
     this.onDestructiveAction,
     required this.onTap,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -999,12 +1001,12 @@ class InvitationCard extends StatelessWidget {
   final VoidCallback onDecline;
 
   const InvitationCard({
-    Key? key,
+    super.key,
     required this.tree,
     this.invitedBy,
     required this.onAccept,
     required this.onDecline,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1069,19 +1071,19 @@ class InvitationCard extends StatelessWidget {
               children: [
                 TextButton(
                   onPressed: onDecline,
-                  child: Text('Отклонить'),
                   style: TextButton.styleFrom(
                     foregroundColor: Colors.grey[700],
                   ),
+                  child: Text('Отклонить'),
                 ),
                 SizedBox(width: 8),
                 ElevatedButton(
                   onPressed: onAccept,
-                  child: Text('Принять'),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Theme.of(context).primaryColor,
                     foregroundColor: Colors.white,
                   ),
+                  child: Text('Принять'),
                 ),
               ],
             ),

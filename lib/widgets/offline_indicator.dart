@@ -6,6 +6,8 @@ import 'package:get_it/get_it.dart';
 import '../services/sync_service.dart';
 
 class OfflineIndicator extends StatelessWidget {
+  const OfflineIndicator({super.key});
+
   // Не инициализируем поле здесь
   // final syncService = GetIt.I<SyncService>();
 

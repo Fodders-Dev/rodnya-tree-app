@@ -90,9 +90,8 @@ class LineageCustomTransitionPage<T> extends CustomTransitionPage<T> {
 
 // Страница без анимации для вкладок ShellRoute
 class NoTransitionPage<T> extends LineageCustomTransitionPage<T> {
-  NoTransitionPage({required Widget child, super.key})
+  NoTransitionPage({required super.child, super.key})
       : super(
-          child: child,
           transitionsBuilder: (context, animation, secondaryAnimation, child) =>
               child,
           transitionDuration: Duration.zero,
@@ -242,8 +241,8 @@ class AppRouter {
 
               // Вспомогательный виджет для контента
               Widget bodyContent = Column(
-                children: [
-                  const OfflineIndicator(),
+                children: <Widget>[
+                  OfflineIndicator(),
                   Expanded(child: navigationShell),
                 ],
               );
@@ -1014,7 +1013,7 @@ class _AdaptiveNavigationRail extends StatelessWidget {
                     const NavigationRailDestination(
                       icon: Icon(Icons.people_outline),
                       selectedIcon: Icon(Icons.people),
-                      label: const Text('Родные'),
+                      label: Text('Родные'),
                     ),
                     NavigationRailDestination(
                       icon: _buildTreeIcon(context, invitationsCount),
@@ -1034,7 +1033,7 @@ class _AdaptiveNavigationRail extends StatelessWidget {
                     const NavigationRailDestination(
                       icon: Icon(Icons.person_outline),
                       selectedIcon: Icon(Icons.person),
-                      label: const Text('Профиль'),
+                      label: Text('Профиль'),
                     ),
                   ],
                 );

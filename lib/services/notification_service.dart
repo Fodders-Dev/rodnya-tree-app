@@ -164,9 +164,9 @@ class NotificationService implements NotificationServiceInterface {
       // Запрос разрешения на точное планирование (если необходимо)
       // Это специальное разрешение, которое может требовать навигации в настройки
       // PermissionStatus exactAlarmStatus = await Permission.scheduleExactAlarm.request();
-      // print('Schedule exact alarm permission status: $exactAlarmStatus');
+      // debugPrint('Schedule exact alarm permission status: $exactAlarmStatus');
       // if (!exactAlarmStatus.isGranted) {
-      //   print('Exact alarm permission not granted. Notifications might be delayed.');
+      //   debugPrint('Exact alarm permission not granted. Notifications might be delayed.');
       // }
       // Пока закомментируем запрос scheduleExactAlarm, т.к. он часто требует доп. действий
       // и не всегда критичен для базовых уведомлений о ДР.

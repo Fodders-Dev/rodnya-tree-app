@@ -106,6 +106,6 @@ class AnalyticsService {
       parameters: {'string': 'string', 'int': 42, 'double': 3.14, 'bool': true},
     );
 
-    print('Тестовое событие отправлено в Analytics');
+    debugPrint('Тестовое событие отправлено в Analytics');
   }
 }

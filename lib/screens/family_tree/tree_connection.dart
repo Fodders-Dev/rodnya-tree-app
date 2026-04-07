@@ -8,12 +8,12 @@ class TreeConnection extends StatelessWidget {
   final double scale;
 
   const TreeConnection({
-    Key? key,
+    super.key,
     required this.startPerson,
     required this.endPerson,
     required this.connectionType,
     this.scale = 1.0,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {

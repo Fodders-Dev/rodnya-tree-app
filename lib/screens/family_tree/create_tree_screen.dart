@@ -1,3 +1,4 @@
+// ignore_for_file: library_private_types_in_public_api
 import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
@@ -6,7 +7,7 @@ import '../../backend/interfaces/family_tree_service_interface.dart';
 import '../../providers/tree_provider.dart';
 
 class CreateTreeScreen extends StatefulWidget {
-  const CreateTreeScreen({Key? key}) : super(key: key);
+  const CreateTreeScreen({super.key});
 
   @override
   _CreateTreeScreenState createState() => _CreateTreeScreenState();

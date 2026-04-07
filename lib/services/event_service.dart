@@ -14,7 +14,7 @@ class EventService {
     String treeId, {
     int limit = 5,
   }) async {
-    print('[EventService] Запрос событий для дерева $treeId...');
+    debugPrint('[EventService] Запрос событий для дерева $treeId...');
     List<AppEvent> allEvents = [];
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
@@ -22,7 +22,7 @@ class EventService {
     try {
       // 1. Получаем всех родственников для дерева
       final relatives = await _familyTreeService.getRelatives(treeId);
-      print('[EventService] Найдено ${relatives.length} родственников.');
+      debugPrint('[EventService] Найдено ${relatives.length} родственников.');
 
       for (final person in relatives) {
         // 2. Вычисляем дни рождения
@@ -100,7 +100,7 @@ class EventService {
       // 4. Сортируем события по дате
       allEvents.sort((a, b) => a.date.compareTo(b.date));
 
-      print('[EventService] Всего вычислено ${allEvents.length} событий.');
+      debugPrint('[EventService] Всего вычислено ${allEvents.length} событий.');
 
       // 5. Отфильтровываем прошедшие события (на всякий случай, хотя выше уже есть проверка)
       final upcomingEvents = allEvents.where((event) {
@@ -112,14 +112,14 @@ class EventService {
         return eventDay.isAfter(today) || eventDay.isAtSameMomentAs(today);
       }).toList();
 
-      print(
+      debugPrint(
         '[EventService] Найдено ${upcomingEvents.length} предстоящих событий.',
       );
 
       // 6. Возвращаем запрошенное количество
       return upcomingEvents.take(limit).toList();
     } catch (e, s) {
-      print('[EventService] Ошибка при получении событий: $e\n$s');
+      debugPrint('[EventService] Ошибка при получении событий: $e\n$s');
       // Логирование ошибки
       return []; // Возвращаем пустой список в случае ошибки
     }

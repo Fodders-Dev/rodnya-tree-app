@@ -37,12 +37,10 @@ class AppTheme {
     primaryColor: waGreen,
     colorScheme: const ColorScheme.light(
       primary: waGreen, // Основной цвет элементов управления, AppBar
-      secondary: waLightGreen, // Плавающие кнопки, активные переключатели
-      background: waLightBg, // Фон Scaffold
+      secondary: waLightGreen, // Фон Scaffold
       surface: waLightSurface, // Фон карточек, диалогов
       onPrimary: Colors.white, // Текст/иконки на primary цвете
-      onSecondary: Colors.white, // Текст/иконки на secondary цвете
-      onBackground: Colors.black87, // Основной цвет текста
+      onSecondary: Colors.white, // Основной цвет текста
       onSurface: Colors.black87, // Цвет текста на карточках/диалогах
       error: Colors.redAccent,
       onError: Colors.white,
@@ -144,12 +142,10 @@ class AppTheme {
     primaryColor: waDarkGreen,
     colorScheme: const ColorScheme.dark(
       primary: waDarkGreen, // Основной цвет элементов управления, AppBar
-      secondary: waDarkGreen, // Плавающие кнопки, активные переключатели
-      background: waDarkBg, // Фон Scaffold
+      secondary: waDarkGreen, // Фон Scaffold
       surface: waDarkSurface, // Фон карточек, диалогов
       onPrimary: Colors.white, // Текст/иконки на primary цвете
-      onSecondary: Colors.white, // Текст/иконки на secondary цвете
-      onBackground: Colors.white, // Основной цвет текста - сделали ярче
+      onSecondary: Colors.white, // Основной цвет текста - сделали ярче
       onSurface: Colors.white, // Цвет текста на карточках/диалогах
       error: Colors.redAccent,
       onError: Colors.black,

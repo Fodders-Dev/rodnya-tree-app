@@ -1,3 +1,4 @@
+// ignore_for_file: library_private_types_in_public_api
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import '../services/post_service.dart';
@@ -19,7 +20,7 @@ import '../services/browser_notification_bridge.dart';
 import '../services/custom_api_notification_service.dart';
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({Key? key}) : super(key: key);
+  const HomeScreen({super.key});
 
   @override
   _HomeScreenState createState() => _HomeScreenState();
@@ -87,7 +88,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!mounted) return;
     final newTreeId = _treeProviderInstance?.selectedTreeId;
     if (_currentTreeId != newTreeId) {
-      print(
+      debugPrint(
         'HomeScreen: Обнаружено изменение дерева с $_currentTreeId на $newTreeId',
       );
       _currentTreeId = newTreeId;
@@ -120,7 +121,7 @@ class _HomeScreenState extends State<HomeScreen> {
         });
       }
     } catch (e) {
-      print('Ошибка загрузки событий: $e');
+      debugPrint('Ошибка загрузки событий: $e');
       if (mounted) {
         setState(() {
           _isLoadingEvents = false;
@@ -221,6 +222,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                           _authService.currentUserPhotoUrl!,
                                         )
                                       : null,
+                              backgroundColor: Theme.of(context).primaryColor,
                               child: _authService.currentUserPhotoUrl == null
                                   ? Icon(
                                       Icons.person,
@@ -228,7 +230,6 @@ class _HomeScreenState extends State<HomeScreen> {
                                       color: Colors.white,
                                     )
                                   : null,
-                              backgroundColor: Theme.of(context).primaryColor,
                             ),
                             const SizedBox(width: 16),
                             Expanded(
@@ -978,7 +979,7 @@ class _HomeScreenState extends State<HomeScreen> {
           );
         }
         if (snapshot.hasError) {
-          print('Ошибка в StreamBuilder постов: ${snapshot.error}');
+          debugPrint('Ошибка в StreamBuilder постов: ${snapshot.error}');
           return SliverToBoxAdapter(
             child: Center(
               child: Padding(

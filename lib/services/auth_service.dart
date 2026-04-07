@@ -1,4 +1,5 @@
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import '../models/user_profile.dart';
@@ -36,6 +37,7 @@ class AuthService implements AuthServiceInterface {
       _auth.authStateChanges().map((user) => user?.uid);
 
   // Регистрация с email и паролем
+  @override
   Future<UserCredential> registerWithEmail({
     required String email,
     required String password,
@@ -60,7 +62,7 @@ class AuthService implements AuthServiceInterface {
 
       // Опционально: отправить верификационное письмо
       await userCredential.user!.sendEmailVerification();
-      print('Verification email sent to ${userCredential.user!.email}');
+      debugPrint('Verification email sent to ${userCredential.user!.email}');
 
       // --- NEW: Проверяем и связываем приглашение после регистрации ---
       await checkAndLinkInvitationIfNeeded(userCredential.user!.uid);
@@ -69,12 +71,13 @@ class AuthService implements AuthServiceInterface {
       // Возвращаем UserCredential, как и ожидается сигнатурой функции
       return userCredential;
     } on FirebaseAuthException catch (e) {
-      print('Ошибка при регистрации: $e');
+      debugPrint('Ошибка при регистрации: $e');
       rethrow;
     }
   }
 
   // Вход с email и паролем
+  @override
   Future<UserCredential> loginWithEmail(String email, String password) async {
     try {
       final result = await _auth.signInWithEmailAndPassword(
@@ -89,12 +92,13 @@ class AuthService implements AuthServiceInterface {
 
       return result;
     } catch (e) {
-      print('Ошибка при входе: $e');
+      debugPrint('Ошибка при входе: $e');
       rethrow;
     }
   }
 
   // Вход через Google
+  @override
   Future<UserCredential> signInWithGoogle() async {
     try {
       final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
@@ -118,12 +122,13 @@ class AuthService implements AuthServiceInterface {
 
       return userCredential;
     } catch (e) {
-      print('Ошибка при входе через Google: $e');
+      debugPrint('Ошибка при входе через Google: $e');
       rethrow;
     }
   }
 
   // Выход из аккаунта
+  @override
   Future<void> signOut() async {
     await _googleSignIn.signOut(); // Выход из Google, если использовался
     await _auth.signOut();
@@ -155,23 +160,24 @@ class AuthService implements AuthServiceInterface {
           'createdAt': FieldValue.serverTimestamp(),
           'authProvider': user.providerData.first.providerId,
         });
-        print('Creating initial user profile for ${user.uid}');
+        debugPrint('Creating initial user profile for ${user.uid}');
         await docRef.set(userData);
       } else {
-        print('Updating last login for user ${user.uid}');
+        debugPrint('Updating last login for user ${user.uid}');
         await docRef.update(userData);
       }
     } catch (e) {
-      print('Ошибка при _handleUserAfterAuth: $e');
+      debugPrint('Ошибка при _handleUserAfterAuth: $e');
     }
   }
 
   // Восстановление пароля
+  @override
   Future<void> resetPassword(String email) async {
     try {
       await _auth.sendPasswordResetEmail(email: email);
     } catch (e) {
-      print('Ошибка при отправке ссылки для сброса пароля: $e');
+      debugPrint('Ошибка при отправке ссылки для сброса пароля: $e');
       rethrow;
     }
   }
@@ -194,6 +200,7 @@ class AuthService implements AuthServiceInterface {
   }
 
   // Обновленный метод удаления аккаунта
+  @override
   Future<void> deleteAccount([String? password]) async {
     final user = _auth.currentUser;
     if (user == null) {
@@ -227,7 +234,7 @@ class AuthService implements AuthServiceInterface {
       // Удаление аккаунта
       await user.delete();
     } catch (e) {
-      print('Ошибка при удалении аккаунта: $e');
+      debugPrint('Ошибка при удалении аккаунта: $e');
       rethrow;
     }
   }
@@ -242,7 +249,7 @@ class AuthService implements AuthServiceInterface {
       if (!doc.exists) {
         // Такого быть не должно после рефакторинга _handleUserAfterAuth
         // но на всякий случай возвращаем статус неполного профиля
-        print(
+        debugPrint(
           'Warning: User document not found during completeness check for ${user.uid}',
         );
         return {
@@ -270,16 +277,16 @@ class AuthService implements AuthServiceInterface {
 
       // Возвращаем результат
       if (missingFields.isEmpty) {
-        print('Profile is complete for ${user.uid}');
+        debugPrint('Profile is complete for ${user.uid}');
         return {'isComplete': true};
       } else {
-        print(
+        debugPrint(
           'Profile is incomplete for ${user.uid}. Missing: ${missingFields.join(', ')}',
         );
         return {'isComplete': false, 'missingFields': missingFields};
       }
     } catch (e) {
-      print('Error checking profile completeness: $e');
+      debugPrint('Error checking profile completeness: $e');
       // В случае ошибки считаем профиль неполным, чтобы пользователь мог его исправить
       return {
         'isComplete': false,
@@ -319,10 +326,8 @@ class AuthService implements AuthServiceInterface {
     try {
       await _firestore.collection('users').doc(userId).update({
         if (profile.displayName.isNotEmpty) 'displayName': profile.displayName,
-        if (profile.username != null && profile.username!.isNotEmpty)
-          'username': profile.username,
-        if (profile.phoneNumber != null && profile.phoneNumber!.isNotEmpty)
-          'phoneNumber': profile.phoneNumber,
+        if (profile.username.isNotEmpty) 'username': profile.username,
+        if (profile.phoneNumber.isNotEmpty) 'phoneNumber': profile.phoneNumber,
         if (profile.gender != null) 'gender': _genderToString(profile.gender!),
         if (profile.birthDate != null)
           'birthDate': Timestamp.fromDate(profile.birthDate!),
@@ -333,7 +338,7 @@ class AuthService implements AuthServiceInterface {
         'updatedAt': Timestamp.now(),
       });
     } catch (e) {
-      print('Error updating profile: $e');
+      debugPrint('Error updating profile: $e');
       throw Exception('Ошибка при обновлении профиля: $e');
     }
   }
@@ -358,7 +363,7 @@ class AuthService implements AuthServiceInterface {
 
       return querySnapshot.docs.isEmpty;
     } catch (e) {
-      print('Ошибка при проверке email: $e');
+      debugPrint('Ошибка при проверке email: $e');
       return false;
     }
   }
@@ -373,7 +378,7 @@ class AuthService implements AuthServiceInterface {
 
       return querySnapshot.docs.isEmpty;
     } catch (e) {
-      print('Ошибка при проверке телефона: $e');
+      debugPrint('Ошибка при проверке телефона: $e');
       return false;
     }
   }
@@ -388,7 +393,7 @@ class AuthService implements AuthServiceInterface {
 
       return querySnapshot.docs.isEmpty;
     } catch (e) {
-      print('Ошибка при проверке никнейма: $e');
+      debugPrint('Ошибка при проверке никнейма: $e');
       return false;
     }
   }
@@ -414,17 +419,17 @@ class AuthService implements AuthServiceInterface {
     if (invitationService.hasPendingInvitation) {
       final treeId = invitationService.pendingTreeId!;
       final personId = invitationService.pendingPersonId!;
-      print(
+      debugPrint(
         'Found pending invitation after auth. Attempting to link user $userId to person $personId in tree $treeId',
       );
       try {
         final familyService = GetIt.I<FamilyService>();
         await familyService.linkInvitedUser(treeId, personId, userId);
-        print('Link attempt finished.');
+        debugPrint('Link attempt finished.');
         // Опционально: показать пользователю сообщение об успехе
         // Например, через какой-то глобальный сервис уведомлений или EventBus
       } catch (linkError) {
-        print('Error during post-auth linking: $linkError');
+        debugPrint('Error during post-auth linking: $linkError');
         // Логируем, но не прерываем основной поток
       } finally {
         invitationService.clearPendingInvitation();
@@ -435,10 +440,11 @@ class AuthService implements AuthServiceInterface {
 
   // <<< НОВЫЙ МЕТОД: Обновление FCM токена пользователя >>>
   Future<void> updateUserFcmToken(String userId, String? token) async {
-    if (token == null || userId.isEmpty)
+    if (token == null || userId.isEmpty) {
       return; // Не сохраняем null токен или для пустого userId
+    }
 
-    print('[AuthService] Updating FCM token for user $userId');
+    debugPrint('[AuthService] Updating FCM token for user $userId');
     final userRef = _firestore.collection('users').doc(userId);
 
     try {
@@ -448,13 +454,14 @@ class AuthService implements AuthServiceInterface {
         // Обновляем время последнего обновления профиля, если нужно
         // 'updatedAt': FieldValue.serverTimestamp(),
       });
-      print('[AuthService] FCM token updated via arrayUnion for user $userId');
+      debugPrint(
+          '[AuthService] FCM token updated via arrayUnion for user $userId');
     } catch (e) {
       // Если поле fcmTokens еще не существует или другая ошибка при update
       if (e
           is FirebaseException /* && (e.code == 'not-found' || e.code == ...) */) {
         // Проверка кода ошибки может быть не универсальной
-        print(
+        debugPrint(
           '[AuthService] Field fcmTokens might not exist for $userId or update failed. Trying set with merge...',
         );
         try {
@@ -465,17 +472,18 @@ class AuthService implements AuthServiceInterface {
             },
             SetOptions(merge: true),
           ); // Используем merge, чтобы не затереть другие поля
-          print(
+          debugPrint(
             '[AuthService] FCM token field created/updated via set(merge:true) for user $userId',
           );
         } catch (setErr) {
-          print(
+          debugPrint(
             '[AuthService] Error setting FCM token field for user $userId: $setErr',
           );
         }
       } else {
         // Другая ошибка при обновлении
-        print('[AuthService] Error updating FCM token for user $userId: $e');
+        debugPrint(
+            '[AuthService] Error updating FCM token for user $userId: $e');
       }
     }
   }
