@@ -1,3 +1,4 @@
+// ignore_for_file: constant_identifier_names, unused_field, use_build_context_synchronously
 // ignore_for_file: library_private_types_in_public_api
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';

@@ -1,3 +1,4 @@
+// ignore_for_file: unused_element, unnecessary_null_comparison, dead_null_aware_expression, unrelated_type_equality_checks
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:firebase_auth/firebase_auth.dart';

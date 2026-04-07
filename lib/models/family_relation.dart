@@ -1,3 +1,4 @@
+// ignore_for_file: constant_identifier_names
 import 'package:hive/hive.dart'; // Импорт Hive
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'family_person.dart'; // Добавляем импорт для доступа к типу Gender
