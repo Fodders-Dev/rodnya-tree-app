@@ -23,6 +23,28 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function normalizeOptionalIsoTimestamp(value) {
+  const rawValue = String(value || "").trim();
+  if (!rawValue) {
+    return null;
+  }
+
+  const parsedDate = new Date(rawValue);
+  if (Number.isNaN(parsedDate.getTime())) {
+    return null;
+  }
+
+  return parsedDate.toISOString();
+}
+
+function isExpiredAt(value, referenceTimeMs = Date.now()) {
+  const normalizedValue = normalizeOptionalIsoTimestamp(value);
+  if (!normalizedValue) {
+    return false;
+  }
+  return new Date(normalizedValue).getTime() <= referenceTimeMs;
+}
+
 function createProfileNote({title, content}) {
   const timestamp = nowIso();
   return {
@@ -320,6 +342,24 @@ function normalizeMessageAttachments(message) {
     height: null,
     thumbnailUrl: null,
   }));
+}
+
+function normalizeReplyReference(replyTo) {
+  if (!replyTo || typeof replyTo !== "object") {
+    return null;
+  }
+
+  const messageId = String(replyTo.messageId || replyTo.id || "").trim();
+  if (!messageId) {
+    return null;
+  }
+
+  return {
+    messageId,
+    senderId: String(replyTo.senderId || "").trim(),
+    senderName: String(replyTo.senderName || "Участник").trim() || "Участник",
+    text: String(replyTo.text || "").trim(),
+  };
 }
 
 function sameNormalizedIds(left, right) {
@@ -803,9 +843,12 @@ class FileStore {
     await this._write(db);
   }
 
-  async createTree({creatorId, name, description, isPrivate}) {
+  async createTree({creatorId, name, description, isPrivate, kind}) {
     const db = await this._read();
     const createdAt = nowIso();
+    const normalizedKind = String(kind || "family").trim().toLowerCase() === "friends"
+      ? "friends"
+      : "family";
     const tree = {
       id: crypto.randomUUID(),
       name: String(name || "").trim(),
@@ -816,6 +859,7 @@ class FileStore {
       createdAt,
       updatedAt: createdAt,
       isPrivate: isPrivate !== false,
+      kind: normalizedKind,
       publicSlug: null,
       isCertified: false,
       certificationNote: null,
@@ -2343,6 +2387,11 @@ class FileStore {
 
   async listChatMessages(chatId) {
     const db = await this._read();
+    const purgedChatIds = this._purgeExpiredMessages(db);
+    if (purgedChatIds.size > 0) {
+      this._syncChatUpdatedAt(db, purgedChatIds);
+      await this._write(db);
+    }
     return db.messages
       .filter((message) => message.chatId === chatId)
       .sort((left, right) =>
@@ -2358,8 +2407,12 @@ class FileStore {
     attachments = [],
     mediaUrls = [],
     imageUrl = null,
+    clientMessageId = null,
+    expiresAt = null,
+    replyTo = null,
   }) {
     const db = await this._read();
+    const purgedChatIds = this._purgeExpiredMessages(db);
     let chat = this._resolveChat(db, chatId);
     if (!chat) {
       return null;
@@ -2386,8 +2439,26 @@ class FileStore {
       normalizedAttachments.find((entry) => entry.type === "image")?.url ||
       normalizedAttachments[0]?.url ||
       null;
+    const normalizedClientMessageId = String(clientMessageId || "").trim() || null;
+    const normalizedExpiresAt = normalizeOptionalIsoTimestamp(expiresAt);
+    const normalizedReplyTo = normalizeReplyReference(replyTo);
     if (!normalizedText && normalizedAttachments.length === 0) {
       return false;
+    }
+
+    if (normalizedClientMessageId) {
+      const existingMessage = db.messages.find(
+        (entry) =>
+          entry.chatId === chatId &&
+          entry.senderId === senderId &&
+          entry.clientMessageId === normalizedClientMessageId,
+      );
+      if (existingMessage) {
+        return {
+          ...structuredClone(existingMessage),
+          _deduplicated: true,
+        };
+      }
     }
 
     const timestamp = nowIso();
@@ -2403,6 +2474,9 @@ class FileStore {
       attachments: normalizedAttachments,
       imageUrl: normalizedImageUrl,
       mediaUrls: normalizedMediaUrls.length > 0 ? normalizedMediaUrls : null,
+      clientMessageId: normalizedClientMessageId,
+      expiresAt: normalizedExpiresAt,
+      replyTo: normalizedReplyTo,
     };
 
     const storedChat = db.chats.find((entry) => entry.id === chat.id);
@@ -2411,12 +2485,95 @@ class FileStore {
     }
 
     db.messages.push(message);
+    if (purgedChatIds.size > 0) {
+      purgedChatIds.add(chat.id);
+      this._syncChatUpdatedAt(db, purgedChatIds);
+    }
+    await this._write(db);
+    return structuredClone(message);
+  }
+
+  async updateChatMessage({
+    chatId,
+    messageId,
+    userId,
+    text,
+  }) {
+    const db = await this._read();
+    const purgedChatIds = this._purgeExpiredMessages(db);
+    const chat = this._resolveChat(db, chatId);
+    if (!chat || !chat.participantIds.includes(userId)) {
+      return false;
+    }
+
+    const message = db.messages.find(
+      (entry) => entry.id === messageId && entry.chatId === chatId,
+    );
+    if (!message) {
+      return null;
+    }
+    if (message.senderId !== userId) {
+      return undefined;
+    }
+
+    const normalizedText = String(text || "").trim();
+    const attachments = normalizeMessageAttachments(message);
+    if (!normalizedText && attachments.length === 0) {
+      return "EMPTY_MESSAGE";
+    }
+
+    message.text = normalizedText;
+    message.updatedAt = nowIso();
+    const storedChat = db.chats.find((entry) => entry.id === chat.id);
+    if (storedChat) {
+      storedChat.updatedAt = message.updatedAt;
+    }
+    if (purgedChatIds.size > 0) {
+      purgedChatIds.add(chat.id);
+      this._syncChatUpdatedAt(db, purgedChatIds);
+    }
+    await this._write(db);
+    return structuredClone(message);
+  }
+
+  async deleteChatMessage({
+    chatId,
+    messageId,
+    userId,
+  }) {
+    const db = await this._read();
+    const purgedChatIds = this._purgeExpiredMessages(db);
+    const chat = this._resolveChat(db, chatId);
+    if (!chat || !chat.participantIds.includes(userId)) {
+      return false;
+    }
+
+    const messageIndex = db.messages.findIndex(
+      (entry) => entry.id === messageId && entry.chatId === chatId,
+    );
+    if (messageIndex === -1) {
+      return null;
+    }
+
+    const message = db.messages[messageIndex];
+    if (message.senderId !== userId) {
+      return undefined;
+    }
+
+    db.messages.splice(messageIndex, 1);
+    const storedChat = db.chats.find((entry) => entry.id === chat.id);
+    if (storedChat) {
+      storedChat.updatedAt = nowIso();
+    }
+    purgedChatIds.add(chat.id);
+    this._syncChatUpdatedAt(db, purgedChatIds);
     await this._write(db);
     return structuredClone(message);
   }
 
   async markChatAsRead(chatId, userId) {
     const db = await this._read();
+    const purgedChatIds = this._purgeExpiredMessages(db);
     const chat = this._resolveChat(db, chatId);
     if (!chat || !chat.participantIds.includes(userId)) {
       return false;
@@ -2435,7 +2592,11 @@ class FileStore {
       }
     }
 
-    if (changed) {
+    if (purgedChatIds.size > 0) {
+      this._syncChatUpdatedAt(db, purgedChatIds);
+    }
+
+    if (changed || purgedChatIds.size > 0) {
       await this._write(db);
     }
 
@@ -2444,6 +2605,11 @@ class FileStore {
 
   async listChatPreviews(userId) {
     const db = await this._read();
+    const purgedChatIds = this._purgeExpiredMessages(db);
+    if (purgedChatIds.size > 0) {
+      this._syncChatUpdatedAt(db, purgedChatIds);
+      await this._write(db);
+    }
     const previews = new Map();
     const relatedChats = new Map();
 
@@ -2531,6 +2697,56 @@ class FileStore {
         ),
       )
       .map((preview) => structuredClone(preview));
+  }
+
+  async listRelatedChatParticipantIds(userId) {
+    const db = await this._read();
+    const relatedParticipantIds = new Set();
+
+    for (const chat of db.chats) {
+      if (!Array.isArray(chat.participantIds) || !chat.participantIds.includes(userId)) {
+        continue;
+      }
+      for (const participantId of chat.participantIds) {
+        if (participantId && participantId !== userId) {
+          relatedParticipantIds.add(participantId);
+        }
+      }
+    }
+
+    return Array.from(relatedParticipantIds);
+  }
+
+  _purgeExpiredMessages(db) {
+    const expiredChatIds = new Set();
+    const referenceTimeMs = Date.now();
+    db.messages = db.messages.filter((message) => {
+      if (isExpiredAt(message.expiresAt, referenceTimeMs)) {
+        if (message.chatId) {
+          expiredChatIds.add(message.chatId);
+        }
+        return false;
+      }
+      return true;
+    });
+    return expiredChatIds;
+  }
+
+  _syncChatUpdatedAt(db, chatIds) {
+    for (const chatId of chatIds) {
+      const chat = db.chats.find((entry) => entry.id === chatId);
+      if (!chat) {
+        continue;
+      }
+
+      const latestMessage = db.messages
+        .filter((entry) => entry.chatId === chatId)
+        .sort((left, right) =>
+          String(right.timestamp || "").localeCompare(String(left.timestamp || "")),
+        )[0];
+
+      chat.updatedAt = latestMessage?.timestamp || chat.createdAt || chat.updatedAt;
+    }
   }
 
   async listProfileNotes(userId) {

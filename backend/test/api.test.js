@@ -1159,6 +1159,126 @@ test("group chat endpoints create previews before first message and keep media p
   }
 });
 
+test("chat message edit and delete endpoints enforce ownership", async () => {
+  const ctx = await startTestServer();
+
+  try {
+    const registerAliceResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "edit-alice@lineage.app",
+        password: "secret123",
+        displayName: "Alice Edit",
+      }),
+    });
+    assert.equal(registerAliceResponse.status, 201);
+    const alice = await registerAliceResponse.json();
+
+    const registerBobResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "edit-bob@lineage.app",
+        password: "secret123",
+        displayName: "Bob Edit",
+      }),
+    });
+    assert.equal(registerBobResponse.status, 201);
+    const bob = await registerBobResponse.json();
+
+    const createChatResponse = await fetch(`${ctx.baseUrl}/v1/chats/direct`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${alice.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({otherUserId: bob.user.id}),
+    });
+    assert.equal(createChatResponse.status, 200);
+    const directChat = await createChatResponse.json();
+
+    const sendMessageResponse = await fetch(
+      `${ctx.baseUrl}/v1/chats/${directChat.chatId}/messages`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${alice.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({text: "Исходный текст"}),
+      },
+    );
+    assert.equal(sendMessageResponse.status, 201);
+    const sentMessagePayload = await sendMessageResponse.json();
+    const messageId = sentMessagePayload.message.id;
+
+    const editByOwnerResponse = await fetch(
+      `${ctx.baseUrl}/v1/chats/${directChat.chatId}/messages/${messageId}`,
+      {
+        method: "PATCH",
+        headers: {
+          authorization: `Bearer ${alice.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({text: "Обновленный текст"}),
+      },
+    );
+    assert.equal(editByOwnerResponse.status, 200);
+    const editedPayload = await editByOwnerResponse.json();
+    assert.equal(editedPayload.message.text, "Обновленный текст");
+
+    const editByOtherResponse = await fetch(
+      `${ctx.baseUrl}/v1/chats/${directChat.chatId}/messages/${messageId}`,
+      {
+        method: "PATCH",
+        headers: {
+          authorization: `Bearer ${bob.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({text: "Чужое редактирование"}),
+      },
+    );
+    assert.equal(editByOtherResponse.status, 403);
+
+    const deleteByOtherResponse = await fetch(
+      `${ctx.baseUrl}/v1/chats/${directChat.chatId}/messages/${messageId}`,
+      {
+        method: "DELETE",
+        headers: {
+          authorization: `Bearer ${bob.accessToken}`,
+        },
+      },
+    );
+    assert.equal(deleteByOtherResponse.status, 403);
+
+    const deleteByOwnerResponse = await fetch(
+      `${ctx.baseUrl}/v1/chats/${directChat.chatId}/messages/${messageId}`,
+      {
+        method: "DELETE",
+        headers: {
+          authorization: `Bearer ${alice.accessToken}`,
+        },
+      },
+    );
+    assert.equal(deleteByOwnerResponse.status, 200);
+    const deletePayload = await deleteByOwnerResponse.json();
+    assert.equal(deletePayload.messageId, messageId);
+
+    const historyResponse = await fetch(
+      `${ctx.baseUrl}/v1/chats/${directChat.chatId}/messages`,
+      {
+        headers: {authorization: `Bearer ${alice.accessToken}`},
+      },
+    );
+    assert.equal(historyResponse.status, 200);
+    const historyPayload = await historyResponse.json();
+    assert.equal(historyPayload.messages.length, 0);
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
 test("group chat details and participant management work for ordinary groups", async () => {
   const ctx = await startTestServer();
 
@@ -2178,6 +2298,276 @@ test("websocket realtime and push queue work for chat delivery", async () => {
     );
 
     socket.close();
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("chat message idempotency and auto-delete TTL work end-to-end", async () => {
+  const ctx = await startTestServer();
+
+  try {
+    const aliceResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "ttl-alice@lineage.app",
+        password: "secret123",
+        displayName: "Alice TTL",
+      }),
+    });
+    assert.equal(aliceResponse.status, 201);
+    const alice = await aliceResponse.json();
+
+    const bobResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "ttl-bob@lineage.app",
+        password: "secret123",
+        displayName: "Bob TTL",
+      }),
+    });
+    assert.equal(bobResponse.status, 201);
+    const bob = await bobResponse.json();
+
+    const createChatResponse = await fetch(`${ctx.baseUrl}/v1/chats/direct`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${alice.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({otherUserId: bob.user.id}),
+    });
+    assert.equal(createChatResponse.status, 200);
+    const chatPayload = await createChatResponse.json();
+
+    const firstSendResponse = await fetch(
+      `${ctx.baseUrl}/v1/chats/${chatPayload.chatId}/messages`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${alice.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          text: "Без дублей",
+          clientMessageId: "local-1",
+        }),
+      },
+    );
+    assert.equal(firstSendResponse.status, 201);
+    const firstSendPayload = await firstSendResponse.json();
+
+    const retrySendResponse = await fetch(
+      `${ctx.baseUrl}/v1/chats/${chatPayload.chatId}/messages`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${alice.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          text: "Без дублей",
+          clientMessageId: "local-1",
+        }),
+      },
+    );
+    assert.equal(retrySendResponse.status, 200);
+    const retrySendPayload = await retrySendResponse.json();
+    assert.equal(retrySendPayload.message.id, firstSendPayload.message.id);
+
+    const historyAfterRetryResponse = await fetch(
+      `${ctx.baseUrl}/v1/chats/${chatPayload.chatId}/messages`,
+      {
+        headers: {authorization: `Bearer ${alice.accessToken}`},
+      },
+    );
+    assert.equal(historyAfterRetryResponse.status, 200);
+    const historyAfterRetry = await historyAfterRetryResponse.json();
+    assert.equal(historyAfterRetry.messages.length, 1);
+
+    const expiringMessageResponse = await fetch(
+      `${ctx.baseUrl}/v1/chats/${chatPayload.chatId}/messages`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${alice.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          text: "Скоро исчезну",
+          clientMessageId: "local-ttl",
+          expiresInSeconds: 1,
+        }),
+      },
+    );
+    assert.equal(expiringMessageResponse.status, 201);
+
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+
+    const historyAfterExpiryResponse = await fetch(
+      `${ctx.baseUrl}/v1/chats/${chatPayload.chatId}/messages`,
+      {
+        headers: {authorization: `Bearer ${alice.accessToken}`},
+      },
+    );
+    assert.equal(historyAfterExpiryResponse.status, 200);
+    const historyAfterExpiry = await historyAfterExpiryResponse.json();
+    assert.equal(historyAfterExpiry.messages.length, 1);
+    assert.equal(historyAfterExpiry.messages[0].text, "Без дублей");
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("presence, typing and read-state realtime updates reach chat participants", async () => {
+  const ctx = await startTestServer();
+
+  const waitFor = async (predicate, timeoutMs = 3000) => {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      const result = predicate();
+      if (result) {
+        return result;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    throw new Error("Timed out waiting for realtime condition");
+  };
+
+  try {
+    const aliceResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "presence-alice@lineage.app",
+        password: "secret123",
+        displayName: "Alice Presence",
+      }),
+    });
+    assert.equal(aliceResponse.status, 201);
+    const alice = await aliceResponse.json();
+
+    const bobResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "presence-bob@lineage.app",
+        password: "secret123",
+        displayName: "Bob Presence",
+      }),
+    });
+    assert.equal(bobResponse.status, 201);
+    const bob = await bobResponse.json();
+
+    const createChatResponse = await fetch(`${ctx.baseUrl}/v1/chats/direct`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${alice.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({otherUserId: bob.user.id}),
+    });
+    assert.equal(createChatResponse.status, 200);
+    const chatPayload = await createChatResponse.json();
+
+    const bobSocket = new WebSocket(
+      `${ctx.wsBaseUrl}/v1/realtime?accessToken=${bob.accessToken}`,
+    );
+    const bobEvents = [];
+    bobSocket.addEventListener("message", (event) => {
+      bobEvents.push(JSON.parse(String(event.data)));
+    });
+    await new Promise((resolve, reject) => {
+      bobSocket.addEventListener("open", resolve, {once: true});
+      bobSocket.addEventListener("error", reject, {once: true});
+    });
+
+    const aliceSocket = new WebSocket(
+      `${ctx.wsBaseUrl}/v1/realtime?accessToken=${alice.accessToken}`,
+    );
+    const aliceEvents = [];
+    aliceSocket.addEventListener("message", (event) => {
+      aliceEvents.push(JSON.parse(String(event.data)));
+    });
+    await new Promise((resolve, reject) => {
+      aliceSocket.addEventListener("open", resolve, {once: true});
+      aliceSocket.addEventListener("error", reject, {once: true});
+    });
+
+    const aliceReadyPayload = await waitFor(() =>
+      aliceEvents.find((item) => item.type === "connection.ready"),
+    );
+    assert.ok(aliceReadyPayload.onlineUserIds.includes(bob.user.id));
+
+    const bobPresenceUpdate = await waitFor(() =>
+      bobEvents.find(
+        (item) =>
+          item.type === "presence.updated" &&
+          item.userId === alice.user.id &&
+          item.isOnline === true,
+      ),
+    );
+    assert.equal(bobPresenceUpdate.userId, alice.user.id);
+
+    aliceSocket.send(
+      JSON.stringify({
+        action: "chat.typing.set",
+        chatId: chatPayload.chatId,
+        isTyping: true,
+      }),
+    );
+
+    const typingPayload = await waitFor(() =>
+      bobEvents.find(
+        (item) =>
+          item.type === "chat.typing.updated" &&
+          item.chatId === chatPayload.chatId &&
+          item.userId === alice.user.id &&
+          item.isTyping === true,
+      ),
+    );
+    assert.equal(typingPayload.chatId, chatPayload.chatId);
+
+    const sendMessageResponse = await fetch(
+      `${ctx.baseUrl}/v1/chats/${chatPayload.chatId}/messages`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${alice.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({text: "Отметь как прочитанное"}),
+      },
+    );
+    assert.equal(sendMessageResponse.status, 201);
+
+    const readResponse = await fetch(
+      `${ctx.baseUrl}/v1/chats/${chatPayload.chatId}/read`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${bob.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({}),
+      },
+    );
+    assert.equal(readResponse.status, 200);
+
+    const readPayload = await waitFor(() =>
+      aliceEvents.find(
+        (item) =>
+          item.type === "chat.read.updated" &&
+          item.chatId === chatPayload.chatId &&
+          item.userId === bob.user.id,
+      ),
+    );
+    assert.equal(readPayload.userId, bob.user.id);
+
+    aliceSocket.close();
+    bobSocket.close();
   } finally {
     await stopTestServer(ctx);
   }

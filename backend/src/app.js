@@ -143,6 +143,7 @@ function createApp({store, config, realtimeHub = null, pushGateway = null}) {
       createdAt: tree.createdAt,
       updatedAt: tree.updatedAt,
       isPrivate: tree.isPrivate !== false,
+      kind: tree.kind === "friends" ? "friends" : "family",
       publicSlug: tree.publicSlug || null,
       isCertified: tree.isCertified === true,
       certificationNote: tree.certificationNote || null,
@@ -349,6 +350,7 @@ function createApp({store, config, realtimeHub = null, pushGateway = null}) {
       senderId: message.senderId,
       text: message.text,
       timestamp: message.timestamp,
+      updatedAt: message.updatedAt || null,
       isRead: message.isRead === true,
       attachments,
       imageUrl: message.imageUrl || null,
@@ -357,6 +359,9 @@ function createApp({store, config, realtimeHub = null, pushGateway = null}) {
         ? message.participants
         : [],
       senderName: message.senderName,
+      clientMessageId: message.clientMessageId || null,
+      expiresAt: message.expiresAt || null,
+      replyTo: message.replyTo || null,
     };
   }
 
@@ -1043,7 +1048,7 @@ function createApp({store, config, realtimeHub = null, pushGateway = null}) {
   );
 
   app.post("/v1/trees", requireAuth, async (req, res) => {
-    const {name, description, isPrivate} = req.body || {};
+    const {name, description, isPrivate, kind} = req.body || {};
     if (!String(name || "").trim()) {
       res.status(400).json({message: "Нужно название дерева"});
       return;
@@ -1054,6 +1059,7 @@ function createApp({store, config, realtimeHub = null, pushGateway = null}) {
       name,
       description,
       isPrivate,
+      kind,
     });
 
     res.status(201).json({tree: mapTree(tree)});
@@ -2008,6 +2014,11 @@ function createApp({store, config, realtimeHub = null, pushGateway = null}) {
       : [];
     const mediaUrls = Array.isArray(req.body?.mediaUrls) ? req.body.mediaUrls : [];
     const imageUrl = req.body?.imageUrl;
+    const clientMessageId = String(req.body?.clientMessageId || "").trim() || null;
+    const expiresInSeconds = Number(req.body?.expiresInSeconds || 0);
+    const expiresAt = expiresInSeconds > 0
+      ? new Date(Date.now() + expiresInSeconds * 1000).toISOString()
+      : req.body?.expiresAt;
     if (
       !text &&
       attachments.length === 0 &&
@@ -2025,6 +2036,9 @@ function createApp({store, config, realtimeHub = null, pushGateway = null}) {
       attachments,
       mediaUrls,
       imageUrl,
+      clientMessageId,
+      expiresAt,
+      replyTo: req.body?.replyTo,
     });
 
     if (message === false) {
@@ -2037,55 +2051,138 @@ function createApp({store, config, realtimeHub = null, pushGateway = null}) {
     }
 
     const mappedMessage = mapChatMessage(message);
+    const isDeduplicated = message._deduplicated === true;
     const recipientIds = (chat.participantIds || []).filter(
       (participantId) => participantId !== req.auth.user.id,
     );
-    for (const recipientId of recipientIds) {
-      const firstAttachmentType = Array.isArray(mappedMessage.attachments)
-        ? mappedMessage.attachments.find((attachment) =>
-            String(attachment?.url || "").trim(),
-          )?.type
-        : null;
-      await createAndDispatchNotification({
-        userId: recipientId,
-        type: "chat_message",
-        title:
-          chat.type === "group" || chat.type === "branch"
-            ? chat.title || message.senderName || "Групповой чат"
-            : message.senderName || "Новое сообщение",
-        body:
-          message.text ||
-          (firstAttachmentType === "video"
-            ? "Видео"
-            : firstAttachmentType === "audio"
-              ? "Голосовое"
-              : firstAttachmentType === "file"
-                ? "Файл"
-                : (Array.isArray(message.mediaUrls) && message.mediaUrls.length > 0)
-                  ? "Фото"
-                  : "Новое сообщение"),
-        data: {
+    if (!isDeduplicated) {
+      for (const recipientId of recipientIds) {
+        const firstAttachmentType = Array.isArray(mappedMessage.attachments)
+          ? mappedMessage.attachments.find((attachment) =>
+              String(attachment?.url || "").trim(),
+            )?.type
+          : null;
+        await createAndDispatchNotification({
+          userId: recipientId,
+          type: "chat_message",
+          title:
+            chat.type === "group" || chat.type === "branch"
+              ? chat.title || message.senderName || "Групповой чат"
+              : message.senderName || "Новое сообщение",
+          body:
+            message.text ||
+            (firstAttachmentType === "video"
+              ? "Видео"
+              : firstAttachmentType === "audio"
+                ? "Голосовое"
+                : firstAttachmentType === "file"
+                  ? "Файл"
+                  : (Array.isArray(message.mediaUrls) && message.mediaUrls.length > 0)
+                    ? "Фото"
+                    : "Новое сообщение"),
+          data: {
+            chatId: message.chatId,
+            chatType: chat.type || "direct",
+            chatTitle: chat.title || null,
+            senderId: message.senderId,
+            senderName: message.senderName,
+            messageId: message.id,
+            attachments: mappedMessage.attachments,
+          },
+        });
+      }
+
+      for (const participantId of chat.participantIds || []) {
+        realtimeHub?.publishToUser(participantId, {
+          type: "chat.message.created",
           chatId: message.chatId,
-          chatType: chat.type || "direct",
-          chatTitle: chat.title || null,
-          senderId: message.senderId,
-          senderName: message.senderName,
-          messageId: message.id,
-          attachments: mappedMessage.attachments,
-        },
-      });
+          chat: mapChatRecord(chat),
+          message: mappedMessage,
+        });
+      }
     }
 
+    res.status(isDeduplicated ? 200 : 201).json({message: mappedMessage});
+  });
+
+  app.patch("/v1/chats/:chatId/messages/:messageId", requireAuth, async (req, res) => {
+    const chat = await requireChatAccess(req, res, req.params.chatId);
+    if (!chat) {
+      return;
+    }
+
+    const message = await store.updateChatMessage({
+      chatId: req.params.chatId,
+      messageId: req.params.messageId,
+      userId: req.auth.user.id,
+      text: req.body?.text,
+    });
+
+    if (message === false) {
+      res.status(404).json({message: "Чат не найден"});
+      return;
+    }
+    if (message === null) {
+      res.status(404).json({message: "Сообщение не найдено"});
+      return;
+    }
+    if (message === undefined) {
+      res.status(403).json({message: "Можно редактировать только свои сообщения"});
+      return;
+    }
+    if (message === "EMPTY_MESSAGE") {
+      res.status(400).json({message: "Сообщение не должно быть пустым"});
+      return;
+    }
+
+    const mappedMessage = mapChatMessage(message);
     for (const participantId of chat.participantIds || []) {
       realtimeHub?.publishToUser(participantId, {
-        type: "chat.message.created",
+        type: "chat.message.updated",
         chatId: message.chatId,
         chat: mapChatRecord(chat),
         message: mappedMessage,
       });
     }
 
-    res.status(201).json({message: mappedMessage});
+    res.json({message: mappedMessage});
+  });
+
+  app.delete("/v1/chats/:chatId/messages/:messageId", requireAuth, async (req, res) => {
+    const chat = await requireChatAccess(req, res, req.params.chatId);
+    if (!chat) {
+      return;
+    }
+
+    const message = await store.deleteChatMessage({
+      chatId: req.params.chatId,
+      messageId: req.params.messageId,
+      userId: req.auth.user.id,
+    });
+
+    if (message === false) {
+      res.status(404).json({message: "Чат не найден"});
+      return;
+    }
+    if (message === null) {
+      res.status(404).json({message: "Сообщение не найдено"});
+      return;
+    }
+    if (message === undefined) {
+      res.status(403).json({message: "Можно удалять только свои сообщения"});
+      return;
+    }
+
+    for (const participantId of chat.participantIds || []) {
+      realtimeHub?.publishToUser(participantId, {
+        type: "chat.message.deleted",
+        chatId: message.chatId,
+        chat: mapChatRecord(chat),
+        messageId: message.id,
+      });
+    }
+
+    res.json({ok: true, messageId: message.id});
   });
 
   app.post("/v1/chats/:chatId/read", requireAuth, async (req, res) => {
@@ -2095,12 +2192,14 @@ function createApp({store, config, realtimeHub = null, pushGateway = null}) {
     }
 
     await store.markChatAsRead(req.params.chatId, req.auth.user.id);
-    realtimeHub?.publishToUser(req.auth.user.id, {
-      type: "chat.read.updated",
-      chatId: req.params.chatId,
-      chat: mapChatRecord(chat),
-      userId: req.auth.user.id,
-    });
+    for (const participantId of chat.participantIds || []) {
+      realtimeHub?.publishToUser(participantId, {
+        type: "chat.read.updated",
+        chatId: req.params.chatId,
+        chat: mapChatRecord(chat),
+        userId: req.auth.user.id,
+      });
+    }
     res.json({ok: true});
   });
 

@@ -1,5 +1,8 @@
+import 'dart:async';
+import 'dart:typed_data';
 import 'package:image_picker/image_picker.dart';
 
+import '../models/chat_attachment.dart';
 import '../models/chat_message.dart';
 import '../models/chat_details.dart';
 import '../models/chat_preview.dart';
@@ -10,10 +13,16 @@ import '../models/family_tree.dart';
 import '../models/profile_note.dart';
 import '../models/relation_request.dart';
 import '../models/user_profile.dart';
+import '../models/post.dart';
+import '../models/comment.dart';
+
 import 'interfaces/auth_service_interface.dart';
 import 'interfaces/chat_service_interface.dart';
 import 'interfaces/family_tree_service_interface.dart';
 import 'interfaces/profile_service_interface.dart';
+import 'interfaces/storage_service_interface.dart';
+import 'interfaces/notification_service_interface.dart';
+import 'interfaces/post_service_interface.dart';
 import 'models/profile_form_data.dart';
 import 'models/selectable_tree.dart';
 import 'models/tree_invitation.dart';
@@ -205,6 +214,7 @@ class PendingBackendFamilyTreeService implements FamilyTreeServiceInterface {
     required String name,
     required String description,
     required bool isPrivate,
+    TreeKind kind = TreeKind.family,
   }) {
     throw UnsupportedError(_pendingProviderMessage('tree'));
   }
@@ -449,6 +459,10 @@ class PendingBackendChatService implements ChatServiceInterface {
     required String chatId,
     String text = '',
     List<XFile> attachments = const <XFile>[],
+    List<ChatAttachment> forwardedAttachments = const <ChatAttachment>[],
+    ChatReplyReference? replyTo,
+    String? clientMessageId,
+    int? expiresInSeconds,
     void Function(ChatSendProgress progress)? onProgress,
   }) {
     throw UnsupportedError(_pendingProviderMessage('chat'));
@@ -460,6 +474,23 @@ class PendingBackendChatService implements ChatServiceInterface {
     required String text,
   }) {
     return sendMessage(otherUserId: otherUserId, text: text);
+  }
+
+  @override
+  Future<void> editChatMessage({
+    required String chatId,
+    required String messageId,
+    required String text,
+  }) {
+    throw UnsupportedError(_pendingProviderMessage('chat'));
+  }
+
+  @override
+  Future<void> deleteChatMessage({
+    required String chatId,
+    required String messageId,
+  }) {
+    throw UnsupportedError(_pendingProviderMessage('chat'));
   }
 
   @override
@@ -508,4 +539,88 @@ class PendingBackendChatService implements ChatServiceInterface {
   }) {
     throw UnsupportedError(_pendingProviderMessage('chat'));
   }
+}
+
+class PendingBackendPostService implements PostServiceInterface {
+  const PendingBackendPostService();
+
+  @override
+  Future<List<Post>> getPosts(
+      {String? treeId, String? authorId, bool onlyBranches = false}) async {
+    return const [];
+  }
+
+  @override
+  Future<Post> createPost({
+    required String treeId,
+    required String content,
+    List<XFile> images = const [],
+    bool isPublic = false,
+    TreeContentScopeType scopeType = TreeContentScopeType.wholeTree,
+    List<String> anchorPersonIds = const [],
+  }) {
+    throw UnsupportedError(_pendingProviderMessage('post'));
+  }
+
+  @override
+  Future<void> deletePost(String postId) {
+    throw UnsupportedError(_pendingProviderMessage('post'));
+  }
+
+  @override
+  Future<void> toggleLike(String postId) {
+    throw UnsupportedError(_pendingProviderMessage('post'));
+  }
+
+  @override
+  Future<List<Comment>> getComments(String postId) async {
+    return const [];
+  }
+
+  @override
+  Future<Comment> addComment(String postId, String content) {
+    throw UnsupportedError(_pendingProviderMessage('post'));
+  }
+
+  @override
+  Future<void> deleteComment(String postId, String commentId) {
+    throw UnsupportedError(_pendingProviderMessage('post'));
+  }
+}
+
+class NoopStorageService implements StorageServiceInterface {
+  const NoopStorageService();
+
+  @override
+  Future<String?> uploadImage(XFile imageFile, String folder) async => null;
+  @override
+  Future<bool> deleteImage(String imageUrl) async => true;
+  @override
+  Future<String?> uploadProfileImage(XFile imageFile) async => null;
+  @override
+  Future<String?> uploadBytes({
+    required String bucket,
+    required String path,
+    required Uint8List fileBytes,
+    FileOptions? fileOptions,
+  }) async =>
+      null;
+}
+
+class NoopNotificationService implements NotificationServiceInterface {
+  const NoopNotificationService();
+
+  @override
+  Future<void> initialize() async {}
+  @override
+  Future<void> showBirthdayNotification(FamilyPerson person) async {}
+  @override
+  Future<void> showChatMessageNotification({
+    required String chatId,
+    required String senderId,
+    required String senderName,
+    required String messageText,
+    required int notificationId,
+    bool playSound = true,
+  }) async {}
 }

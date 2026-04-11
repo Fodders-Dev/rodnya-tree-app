@@ -964,4 +964,85 @@ void main() {
     await treeService.respondToTreeInvitation('invite-1', true);
     expect(invitations, isEmpty);
   });
+
+  test(
+      'CustomApiFamilyTreeService shares pending tree invitations polling across listeners',
+      () async {
+    var pendingRequestsCount = 0;
+
+    final client = MockClient((request) async {
+      if (request.url.path == '/v1/tree-invitations/pending' &&
+          request.method == 'GET') {
+        pendingRequestsCount++;
+        return http.Response(
+          jsonEncode({
+            'invitations': [
+              {
+                'invitationId': 'invite-1',
+                'treeId': 'tree-7',
+                'invitedBy': 'owner-1',
+                'tree': {
+                  'id': 'tree-7',
+                  'name': 'Семья Смирновых',
+                  'description': 'Приглашение в дерево',
+                  'creatorId': 'owner-1',
+                  'memberIds': ['owner-1'],
+                  'members': ['owner-1'],
+                  'createdAt': '2026-03-27T13:00:00.000Z',
+                  'updatedAt': '2026-03-27T13:00:00.000Z',
+                  'isPrivate': true,
+                },
+              },
+            ],
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+
+      return http.Response('{"message":"not found"}', 404);
+    });
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'custom_api_session_v1',
+      jsonEncode({
+        'accessToken': 'access-token',
+        'refreshToken': 'refresh-token',
+        'userId': 'user-1',
+        'email': 'dev@lineage.app',
+        'displayName': 'Dev User',
+        'providerIds': ['password'],
+        'isProfileComplete': true,
+        'missingFields': const [],
+      }),
+    );
+
+    final authService = await CustomApiAuthService.create(
+      httpClient: client,
+      preferences: prefs,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      invitationService: InvitationService(),
+    );
+
+    final treeService = CustomApiFamilyTreeService(
+      authService: authService,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      httpClient: client,
+    );
+
+    final stream = treeService.getPendingTreeInvitations();
+    final firstListener = stream.first;
+    final secondListener = stream.first;
+
+    final results = await Future.wait([firstListener, secondListener]);
+
+    expect(results.first, hasLength(1));
+    expect(results.last, hasLength(1));
+    expect(pendingRequestsCount, 1);
+  });
 }

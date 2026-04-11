@@ -11,12 +11,42 @@ import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/chat_service_interface.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
 import '../models/chat_preview.dart';
+import '../models/family_tree.dart';
 import '../models/family_person.dart';
 import '../models/family_relation.dart';
 import '../providers/tree_provider.dart';
+import '../services/chat_archive_store.dart';
+import '../services/chat_draft_store.dart';
+import '../services/chat_notification_settings_store.dart';
+
+String _countLabel(
+  int count, {
+  required String one,
+  required String few,
+  required String many,
+}) {
+  final mod10 = count % 10;
+  final mod100 = count % 100;
+  if (mod10 == 1 && mod100 != 11) {
+    return '$count $one';
+  }
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) {
+    return '$count $few';
+  }
+  return '$count $many';
+}
 
 class ChatsListScreen extends StatefulWidget {
-  const ChatsListScreen({super.key});
+  const ChatsListScreen({
+    super.key,
+    this.draftStore,
+    this.archiveStore,
+    this.notificationSettingsStore,
+  });
+
+  final ChatDraftStore? draftStore;
+  final ChatArchiveStore? archiveStore;
+  final ChatNotificationSettingsStore? notificationSettingsStore;
 
   @override
   State<ChatsListScreen> createState() => _ChatsListScreenState();
@@ -25,20 +55,36 @@ class ChatsListScreen extends StatefulWidget {
 class _ChatsListScreenState extends State<ChatsListScreen> {
   final ChatServiceInterface _chatService = GetIt.I<ChatServiceInterface>();
   final AuthServiceInterface _authService = GetIt.I<AuthServiceInterface>();
+  ChatDraftStore get _draftStore =>
+      widget.draftStore ?? const SharedPreferencesChatDraftStore();
+  ChatArchiveStore get _archiveStore =>
+      widget.archiveStore ?? const SharedPreferencesChatArchiveStore();
+  ChatNotificationSettingsStore get _notificationSettingsStore =>
+      widget.notificationSettingsStore ??
+      const SharedPreferencesChatNotificationSettingsStore();
 
   StreamSubscription<List<ChatPreview>>? _chatsSubscription;
   List<ChatPreview> _chatPreviews = [];
   List<_GroupChatParticipant> _relatives = [];
+  Map<String, ChatArchiveSnapshot> _archivedChats =
+      <String, ChatArchiveSnapshot>{};
+  Map<String, ChatDraftSnapshot> _drafts = <String, ChatDraftSnapshot>{};
+  Map<String, ChatNotificationSettingsSnapshot> _notificationSettings =
+      <String, ChatNotificationSettingsSnapshot>{};
   bool _isLoading = true;
   String? _errorMessage;
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
+  _ChatsVisibilityFilter _activeFilter = _ChatsVisibilityFilter.all;
 
   @override
   void initState() {
     super.initState();
     _loadChats();
     _loadRelatives();
+    unawaited(_loadArchivedChats());
+    unawaited(_loadDrafts());
+    unawaited(_loadNotificationSettings());
   }
 
   @override
@@ -69,6 +115,9 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
           _isLoading = false;
           _errorMessage = null;
         });
+        unawaited(_loadArchivedChats());
+        unawaited(_loadDrafts());
+        unawaited(_loadNotificationSettings());
       },
       onError: (_) {
         if (!mounted) {
@@ -80,6 +129,36 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
         });
       },
     );
+  }
+
+  Future<void> _loadDrafts() async {
+    final drafts = await _draftStore.getAllDrafts();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _drafts = drafts;
+    });
+  }
+
+  Future<void> _loadArchivedChats() async {
+    final archivedChats = await _archiveStore.getAllArchivedChats();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _archivedChats = archivedChats;
+    });
+  }
+
+  Future<void> _loadNotificationSettings() async {
+    final settings = await _notificationSettingsStore.getAllSettings();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _notificationSettings = settings;
+    });
   }
 
   String _formatTimestamp(DateTime timestamp) {
@@ -103,6 +182,117 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
     }
 
     return DateFormat('d MMM', 'ru').format(timestamp);
+  }
+
+  String _archiveKey(ChatPreview chat) =>
+      SharedPreferencesChatArchiveStore.chatKey(chat.chatId);
+
+  bool _isArchived(ChatPreview chat) => _archivedChats.containsKey(
+        _archiveKey(chat),
+      );
+
+  int _archivedPreviewCount() {
+    return _chatPreviews.where(_isArchived).length;
+  }
+
+  int _archivedUnreadCount() {
+    return _chatPreviews
+        .where(_isArchived)
+        .fold<int>(0, (sum, chat) => sum + chat.unreadCount);
+  }
+
+  Future<void> _setChatArchived(ChatPreview chat, bool archived) async {
+    final key = _archiveKey(chat);
+    if (archived) {
+      await _archiveStore.saveArchivedChat(
+        key,
+        ChatArchiveSnapshot(archivedAt: DateTime.now()),
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _archivedChats[key] = ChatArchiveSnapshot(archivedAt: DateTime.now());
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Чат "${chat.displayName}" отправлен в архив'),
+          action: SnackBarAction(
+            label: 'Архив',
+            onPressed: () {
+              if (!mounted) {
+                return;
+              }
+              setState(() {
+                _activeFilter = _ChatsVisibilityFilter.archived;
+              });
+            },
+          ),
+        ),
+      );
+      return;
+    }
+
+    await _archiveStore.clearArchivedChat(key);
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _archivedChats.remove(key);
+      if (_activeFilter == _ChatsVisibilityFilter.archived &&
+          _archivedPreviewCount() == 0) {
+        _activeFilter = _ChatsVisibilityFilter.all;
+      }
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Чат "${chat.displayName}" возвращен в список')),
+    );
+  }
+
+  Future<void> _openChatActions(ChatPreview chat) async {
+    final isArchived = _isArchived(chat);
+    final action = await showModalBottomSheet<_ChatListAction>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: Icon(
+                isArchived ? Icons.unarchive_outlined : Icons.archive_outlined,
+              ),
+              title: Text(
+                isArchived ? 'Вернуть в основной список' : 'Архивировать чат',
+              ),
+              subtitle: Text(
+                isArchived
+                    ? 'Чат снова появится в обычной ленте.'
+                    : 'Скрыть чат из основного списка без удаления истории.',
+              ),
+              onTap: () => Navigator.of(context).pop(
+                isArchived
+                    ? _ChatListAction.unarchive
+                    : _ChatListAction.archive,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (action == null || !mounted) {
+      return;
+    }
+
+    switch (action) {
+      case _ChatListAction.archive:
+        await _setChatArchived(chat, true);
+        break;
+      case _ChatListAction.unarchive:
+        await _setChatArchived(chat, false);
+        break;
+    }
   }
 
   void _loadRelatives() async {
@@ -151,7 +341,11 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
     if (selectedTreeId == null || selectedTreeId.isEmpty) {
       messenger.showSnackBar(
         SnackBar(
-          content: const Text('Сначала выберите семейное дерево.'),
+          content: Text(
+            treeProvider.selectedTreeKind == TreeKind.friends
+                ? 'Сначала выберите активный круг друзей.'
+                : 'Сначала выберите семейное дерево.',
+          ),
           action: SnackBarAction(
             label: 'Открыть',
             onPressed: () => context.go('/tree?selector=1'),
@@ -264,6 +458,8 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
   Widget _buildDesktopShell({
     required ThemeData theme,
     required String currentUserId,
+    required bool isFriendsTree,
+    required String? selectedTreeName,
   }) {
     final listPanel = Container(
       decoration: BoxDecoration(
@@ -275,7 +471,9 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
       ),
       child: Column(
         children: [
+          _buildChatsOverview(theme, isFriendsTree: isFriendsTree),
           _buildSearchBar(theme),
+          _buildFilterBar(theme),
           Expanded(
             child: _chatPreviews.isEmpty && _searchQuery.isEmpty
                 ? _buildEmptyState(theme)
@@ -318,6 +516,41 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
                   ),
                 ),
                 const SizedBox(height: 12),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.primary.withValues(alpha: 0.10),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        isFriendsTree
+                            ? Icons.diversity_3_outlined
+                            : Icons.account_tree_outlined,
+                        size: 16,
+                        color: theme.colorScheme.primary,
+                      ),
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: Text(
+                          selectedTreeName ??
+                              (isFriendsTree
+                                  ? 'Круг друзей'
+                                  : 'Семейное дерево'),
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.labelLarge?.copyWith(
+                            color: theme.colorScheme.primary,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
                 Text(
                   'На большом экране удобнее держать поиск, список диалогов и быстрые переходы в одной зоне.',
                   style: theme.textTheme.bodyMedium?.copyWith(
@@ -326,18 +559,42 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
                   ),
                 ),
                 const SizedBox(height: 18),
+                FilledButton.icon(
+                  onPressed: _openChatComposer,
+                  icon: const Icon(Icons.add_comment_outlined),
+                  label: const Text('Создать чат'),
+                ),
+                const SizedBox(height: 10),
+                OutlinedButton.icon(
+                  onPressed: () => context.go('/relatives'),
+                  icon: const Icon(Icons.people_outline),
+                  label: Text(
+                    isFriendsTree ? 'Открыть связи' : 'Открыть родных',
+                  ),
+                ),
+                const SizedBox(height: 10),
+                OutlinedButton.icon(
+                  onPressed: () => context.go('/tree'),
+                  icon: const Icon(Icons.account_tree_outlined),
+                  label: const Text('Открыть дерево'),
+                ),
+                const SizedBox(height: 18),
                 _buildDesktopHint(
                   theme,
                   icon: Icons.search,
                   title: 'Поиск',
-                  subtitle: 'Ищите и чаты, и родственников из одного поля.',
+                  subtitle: isFriendsTree
+                      ? 'Ищите и чаты, и людей из круга из одного поля.'
+                      : 'Ищите и чаты, и родственников из одного поля.',
                 ),
                 const SizedBox(height: 12),
                 _buildDesktopHint(
                   theme,
                   icon: Icons.group_add_outlined,
                   title: 'Новый чат',
-                  subtitle: 'Создавайте личные, групповые и веточные чаты.',
+                  subtitle: isFriendsTree
+                      ? 'Создавайте личные, групповые и сетевые чаты для круга.'
+                      : 'Создавайте личные, групповые и веточные чаты.',
                 ),
                 const SizedBox(height: 12),
                 _buildDesktopHint(
@@ -345,6 +602,14 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
                   icon: Icons.mark_chat_read_outlined,
                   title: 'Непрочитанное',
                   subtitle: 'Свежие сообщения остаются заметными в списке.',
+                ),
+                const SizedBox(height: 12),
+                _buildDesktopHint(
+                  theme,
+                  icon: Icons.archive_outlined,
+                  title: 'Архив',
+                  subtitle:
+                      'Редкие чаты можно убрать из потока и вернуть в один тап.',
                 ),
               ],
             ),
@@ -398,14 +663,151 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
     );
   }
 
+  Widget _buildChatsOverview(
+    ThemeData theme, {
+    required bool isFriendsTree,
+  }) {
+    final unreadCount = _chatPreviews.fold<int>(
+      0,
+      (sum, chat) => sum + chat.unreadCount,
+    );
+    final archivedCount = _archivedPreviewCount();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+      child: Wrap(
+        spacing: 10,
+        runSpacing: 10,
+        children: [
+          _buildChatStatChip(
+            theme,
+            icon: Icons.forum_outlined,
+            label: _countLabel(
+              _chatPreviews.length,
+              one: 'чат',
+              few: 'чата',
+              many: 'чатов',
+            ),
+          ),
+          _buildChatStatChip(
+            theme,
+            icon: Icons.mark_chat_unread_outlined,
+            label: unreadCount > 0
+                ? _countLabel(
+                    unreadCount,
+                    one: 'непрочитанный',
+                    few: 'непрочитанных',
+                    many: 'непрочитанных',
+                  )
+                : 'Все прочитано',
+          ),
+          _buildChatStatChip(
+            theme,
+            icon: isFriendsTree
+                ? Icons.diversity_3_outlined
+                : Icons.people_outline,
+            label: '${_countLabel(
+              _relatives.length,
+              one: isFriendsTree ? 'человек' : 'родной',
+              few: isFriendsTree ? 'человека' : 'родных',
+              many: isFriendsTree ? 'человек' : 'родных',
+            )} в поиске',
+          ),
+          if (_drafts.isNotEmpty)
+            _buildChatStatChip(
+              theme,
+              icon: Icons.edit_note_outlined,
+              label: _countLabel(
+                _drafts.length,
+                one: 'черновик',
+                few: 'черновика',
+                many: 'черновиков',
+              ),
+            ),
+          if (archivedCount > 0)
+            _buildChatStatChip(
+              theme,
+              icon: Icons.archive_outlined,
+              label: _countLabel(
+                archivedCount,
+                one: 'чат в архиве',
+                few: 'чата в архиве',
+                many: 'чатов в архиве',
+              ),
+            ),
+          if (_notificationSettings.values.any(
+            (item) => item.level == ChatNotificationLevel.muted,
+          ))
+            _buildChatStatChip(
+              theme,
+              icon: Icons.notifications_off_outlined,
+              label: _countLabel(
+                _notificationSettings.values
+                    .where(
+                      (item) => item.level == ChatNotificationLevel.muted,
+                    )
+                    .length,
+                one: 'чат без уведомлений',
+                few: 'чата без уведомлений',
+                many: 'чатов без уведомлений',
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildChatStatChip(
+    ThemeData theme, {
+    required IconData icon,
+    required String label,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      decoration: BoxDecoration(
+        color:
+            theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16, color: theme.colorScheme.primary),
+          const SizedBox(width: 8),
+          Text(
+            label,
+            style: theme.textTheme.labelLarge?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final currentUserId = _authService.currentUserId ?? '';
+    final treeProvider = context.watch<TreeProvider>();
+    final isFriendsTree = treeProvider.selectedTreeKind == TreeKind.friends;
+    final selectedTreeName = treeProvider.selectedTreeName;
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Чаты'),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Чаты'),
+            Text(
+              selectedTreeName == null
+                  ? (isFriendsTree ? 'Круг друзей' : 'Семейное дерево')
+                  : (isFriendsTree
+                      ? 'Контекст круга: $selectedTreeName'
+                      : 'Контекст дерева: $selectedTreeName'),
+              style: theme.textTheme.bodySmall,
+            ),
+          ],
+        ),
         centerTitle: false,
         titleTextStyle: theme.textTheme.headlineSmall?.copyWith(
           fontWeight: FontWeight.w700,
@@ -430,6 +832,8 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
                       child: _buildDesktopShell(
                         theme: theme,
                         currentUserId: currentUserId,
+                        isFriendsTree: isFriendsTree,
+                        selectedTreeName: selectedTreeName,
                       ),
                     ),
                   ),
@@ -448,7 +852,10 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
           });
         },
         decoration: InputDecoration(
-          hintText: 'Поиск чатов и людей',
+          hintText:
+              context.read<TreeProvider>().selectedTreeKind == TreeKind.friends
+                  ? 'Поиск чатов и людей круга'
+                  : 'Поиск чатов и людей',
           prefixIcon: const Icon(Icons.search, size: 22),
           suffixIcon: _searchQuery.isNotEmpty
               ? IconButton(
@@ -480,6 +887,48 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
                 color: theme.colorScheme.primary.withValues(alpha: 0.5)),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildFilterBar(ThemeData theme) {
+    final archivedCount = _archivedPreviewCount();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          ChoiceChip(
+            label: const Text('Все'),
+            selected: _activeFilter == _ChatsVisibilityFilter.all,
+            onSelected: (_) {
+              setState(() {
+                _activeFilter = _ChatsVisibilityFilter.all;
+              });
+            },
+          ),
+          ChoiceChip(
+            label: const Text('Непрочитанные'),
+            selected: _activeFilter == _ChatsVisibilityFilter.unread,
+            onSelected: (_) {
+              setState(() {
+                _activeFilter = _ChatsVisibilityFilter.unread;
+              });
+            },
+          ),
+          ChoiceChip(
+            label: Text(
+              archivedCount > 0 ? 'Архив ($archivedCount)' : 'Архив',
+            ),
+            selected: _activeFilter == _ChatsVisibilityFilter.archived,
+            onSelected: (_) {
+              setState(() {
+                _activeFilter = _ChatsVisibilityFilter.archived;
+              });
+            },
+          ),
+        ],
       ),
     );
   }
@@ -517,62 +966,68 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
   }
 
   Widget _buildEmptyState(ThemeData theme) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(40),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 88,
-              height: 88,
-              decoration: BoxDecoration(
-                color:
-                    theme.colorScheme.primaryContainer.withValues(alpha: 0.3),
-                shape: BoxShape.circle,
+    final isFriendsTree =
+        context.read<TreeProvider>().selectedTreeKind == TreeKind.friends;
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(40),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 520),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 88,
+                height: 88,
+                decoration: BoxDecoration(
+                  color:
+                      theme.colorScheme.primaryContainer.withValues(alpha: 0.3),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  Icons.chat_bubble_outline_rounded,
+                  size: 40,
+                  color: theme.colorScheme.primary,
+                ),
               ),
-              child: Icon(
-                Icons.chat_bubble_outline_rounded,
-                size: 40,
-                color: theme.colorScheme.primary,
+              const SizedBox(height: 24),
+              Text(
+                'Пока нет чатов',
+                style: theme.textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
               ),
-            ),
-            const SizedBox(height: 24),
-            Text(
-              'Пока нет чатов',
-              style: theme.textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.w600,
+              const SizedBox(height: 8),
+              Text(
+                isFriendsTree
+                    ? 'Начните личный диалог или соберите групповой чат для текущего круга друзей.'
+                    : 'Начните личный диалог или соберите семейный групповой чат для текущего дерева.',
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: Colors.grey[600],
+                  height: 1.4,
+                ),
               ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Начните личный диалог или соберите семейный групповой чат '
-              'для текущего дерева.',
-              textAlign: TextAlign.center,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: Colors.grey[600],
-                height: 1.4,
+              const SizedBox(height: 24),
+              FilledButton.icon(
+                onPressed: _openChatComposer,
+                icon: const Icon(Icons.add_comment_outlined),
+                label: const Text('Создать чат'),
               ),
-            ),
-            const SizedBox(height: 24),
-            FilledButton.icon(
-              onPressed: _openChatComposer,
-              icon: const Icon(Icons.add_comment_outlined),
-              label: const Text('Создать чат'),
-            ),
-            const SizedBox(height: 12),
-            FilledButton.icon(
-              onPressed: () => context.go('/relatives'),
-              icon: const Icon(Icons.people_outline),
-              label: const Text('Открыть родных'),
-            ),
-            const SizedBox(height: 12),
-            OutlinedButton.icon(
-              onPressed: () => context.go('/tree'),
-              icon: const Icon(Icons.account_tree_outlined),
-              label: const Text('Открыть дерево'),
-            ),
-          ],
+              const SizedBox(height: 12),
+              FilledButton.icon(
+                onPressed: () => context.go('/relatives'),
+                icon: const Icon(Icons.people_outline),
+                label: Text(isFriendsTree ? 'Открыть связи' : 'Открыть родных'),
+              ),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                onPressed: () => context.go('/tree'),
+                icon: const Icon(Icons.account_tree_outlined),
+                label: const Text('Открыть дерево'),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -580,12 +1035,34 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
 
   Widget _buildChatList(ThemeData theme, String currentUserId) {
     final filteredChats = _chatPreviews.where((chat) {
+      final isArchived = _isArchived(chat);
+      if (_activeFilter == _ChatsVisibilityFilter.archived && !isArchived) {
+        return false;
+      }
+      if (_activeFilter != _ChatsVisibilityFilter.archived && isArchived) {
+        return false;
+      }
+      if (_activeFilter == _ChatsVisibilityFilter.unread &&
+          chat.unreadCount <= 0) {
+        return false;
+      }
+      final draft =
+          _drafts[SharedPreferencesChatDraftStore.chatKey(chat.chatId)];
+      final draftText = draft?.text.toLowerCase() ?? '';
       if (_searchQuery.isEmpty) return true;
       return chat.displayName.toLowerCase().contains(_searchQuery) ||
-          chat.lastMessage.toLowerCase().contains(_searchQuery);
-    }).toList();
+          chat.lastMessage.toLowerCase().contains(_searchQuery) ||
+          draftText.contains(_searchQuery);
+    }).toList()
+      ..sort((left, right) {
+        final leftAt = _effectiveActivityAt(left);
+        final rightAt = _effectiveActivityAt(right);
+        return rightAt.compareTo(leftAt);
+      });
 
-    final filteredRelatives = _searchQuery.isEmpty
+    final filteredRelatives = _searchQuery.isEmpty ||
+            _activeFilter == _ChatsVisibilityFilter.archived ||
+            _activeFilter == _ChatsVisibilityFilter.unread
         ? const <_GroupChatParticipant>[]
         : _relatives.where((p) {
             final hasChat = _chatPreviews
@@ -598,6 +1075,8 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
     if (filteredChats.isEmpty &&
         filteredRelatives.isEmpty &&
         _searchQuery.isNotEmpty) {
+      final isFriendsTree =
+          context.read<TreeProvider>().selectedTreeKind == TreeKind.friends;
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -610,30 +1089,113 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
               'Попробуйте другой запрос или создайте новый чат.',
               style: theme.textTheme.bodyMedium?.copyWith(color: Colors.grey),
             ),
+            const SizedBox(height: 12),
+            Text(
+              context.read<TreeProvider>().selectedTreeKind == TreeKind.friends
+                  ? 'Подсказка: ищите по имени человека или названию чата круга.'
+                  : 'Подсказка: ищите по имени родственника или названию чата.',
+              style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              alignment: WrapAlignment.center,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: () {
+                    _searchController.clear();
+                    setState(() {
+                      _searchQuery = '';
+                    });
+                  },
+                  icon: const Icon(Icons.close),
+                  label: const Text('Сбросить поиск'),
+                ),
+                FilledButton.icon(
+                  onPressed: _openChatComposer,
+                  icon: const Icon(Icons.add_comment_outlined),
+                  label: Text(
+                    isFriendsTree ? 'Новый чат круга' : 'Новый чат',
+                  ),
+                ),
+              ],
+            ),
           ],
         ),
       );
     }
 
+    if (filteredChats.isEmpty &&
+        filteredRelatives.isEmpty &&
+        _searchQuery.isEmpty &&
+        _activeFilter == _ChatsVisibilityFilter.archived) {
+      return _buildFilterEmptyState(
+        theme,
+        icon: Icons.archive_outlined,
+        title: 'Архив пуст',
+        message:
+            'Сюда можно убирать редкие диалоги, чтобы основной список оставался чище.',
+        actionLabel: 'Показать все чаты',
+        onAction: () {
+          setState(() {
+            _activeFilter = _ChatsVisibilityFilter.all;
+          });
+        },
+      );
+    }
+
+    if (filteredChats.isEmpty &&
+        filteredRelatives.isEmpty &&
+        _searchQuery.isEmpty &&
+        _activeFilter == _ChatsVisibilityFilter.unread) {
+      return _buildFilterEmptyState(
+        theme,
+        icon: Icons.mark_chat_read_outlined,
+        title: 'Непрочитанных нет',
+        message: 'Список разобран. Можно вернуться ко всем чатам или архиву.',
+        actionLabel: 'Показать все чаты',
+        onAction: () {
+          setState(() {
+            _activeFilter = _ChatsVisibilityFilter.all;
+          });
+        },
+      );
+    }
+
     final showRelatives = filteredRelatives.isNotEmpty;
+    final showArchiveSummary =
+        _activeFilter != _ChatsVisibilityFilter.archived &&
+            _searchQuery.isEmpty &&
+            _archivedPreviewCount() > 0;
     final totalCount = filteredChats.length +
+        (showArchiveSummary ? 1 : 0) +
         (showRelatives ? filteredRelatives.length + 1 : 0);
 
     return ListView.builder(
       padding: const EdgeInsets.symmetric(vertical: 4),
       itemCount: totalCount,
       itemBuilder: (context, index) {
-        if (index < filteredChats.length) {
-          return _buildChatTile(theme, filteredChats[index], currentUserId);
+        if (showArchiveSummary && index == 0) {
+          return _buildArchiveSummaryCard(theme);
+        }
+
+        final chatIndex = index - (showArchiveSummary ? 1 : 0);
+        if (chatIndex < filteredChats.length) {
+          return _buildChatTile(theme, filteredChats[chatIndex], currentUserId);
         }
 
         if (showRelatives) {
-          final relativeIndex = index - filteredChats.length;
+          final relativeIndex = chatIndex - filteredChats.length;
           if (relativeIndex == 0) {
             return Padding(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
               child: Text(
-                'Люди',
+                context.read<TreeProvider>().selectedTreeKind ==
+                        TreeKind.friends
+                    ? 'Люди круга'
+                    : 'Люди',
                 style: theme.textTheme.titleSmall?.copyWith(
                   color: theme.colorScheme.primary,
                   fontWeight: FontWeight.w700,
@@ -666,6 +1228,112 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
     );
   }
 
+  Widget _buildFilterEmptyState(
+    ThemeData theme, {
+    required IconData icon,
+    required String title,
+    required String message,
+    required String actionLabel,
+    required VoidCallback onAction,
+  }) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 48, color: theme.colorScheme.primary),
+            const SizedBox(height: 16),
+            Text(title, style: theme.textTheme.titleMedium),
+            const SizedBox(height: 8),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+                height: 1.4,
+              ),
+            ),
+            const SizedBox(height: 16),
+            FilledButton(onPressed: onAction, child: Text(actionLabel)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildArchiveSummaryCard(ThemeData theme) {
+    final archivedCount = _archivedPreviewCount();
+    final unreadCount = _archivedUnreadCount();
+    final archiveLabel = _countLabel(
+      archivedCount,
+      one: 'чат в архиве',
+      few: 'чата в архиве',
+      many: 'чатов в архиве',
+    );
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 6, 16, 10),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: () {
+          setState(() {
+            _activeFilter = _ChatsVisibilityFilter.archived;
+          });
+        },
+        child: Ink(
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surfaceContainerHighest
+                .withValues(alpha: 0.45),
+            borderRadius: BorderRadius.circular(18),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            child: Row(
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.primary.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Icon(
+                    Icons.archive_outlined,
+                    color: theme.colorScheme.primary,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        archiveLabel,
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        unreadCount > 0
+                            ? 'Там $unreadCount непрочитанных, но основной список чище.'
+                            : 'Редкие диалоги скрыты из основного списка.',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Icon(Icons.chevron_right),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _openPrivateChat(_GroupChatParticipant participant) async {
     setState(() => _isLoading = true);
     try {
@@ -690,10 +1358,26 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
 
   Widget _buildChatTile(
       ThemeData theme, ChatPreview chat, String currentUserId) {
+    final draft = _drafts[SharedPreferencesChatDraftStore.chatKey(chat.chatId)];
+    final isArchived = _isArchived(chat);
+    final notificationLevel = _notificationSettings[
+                SharedPreferencesChatNotificationSettingsStore.chatKey(
+                    chat.chatId)]
+            ?.level ??
+        ChatNotificationLevel.all;
+    final hasDraft = draft != null && draft.text.trim().isNotEmpty;
     final hasUnread = chat.unreadCount > 0;
     final isLastFromMe = chat.lastMessageSenderId == currentUserId;
-    final messageTime = chat.lastMessageTime;
+    final messageTime = _effectiveActivityAt(chat);
     final timeLabel = _formatTimestamp(messageTime);
+    final previewText = hasDraft ? draft.text.trim() : chat.lastMessage;
+    final previewPrefix = hasDraft ? 'Черновик: ' : '';
+    final previewColor = hasDraft
+        ? theme.colorScheme.error
+        : (hasUnread ? Colors.black87 : Colors.grey[600]);
+    final previewWeight = hasDraft
+        ? FontWeight.w700
+        : (hasUnread ? FontWeight.w500 : FontWeight.normal);
 
     return InkWell(
       onTap: () {
@@ -705,10 +1389,17 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
         final userParam = !chat.isGroup && chat.otherUserId.isNotEmpty
             ? '&userId=${Uri.encodeComponent(chat.otherUserId)}'
             : '';
-        context.push(
+        context
+            .push(
           '/chats/view/${chat.chatId}?type=${Uri.encodeComponent(chat.type)}&title=$titleParam$photoParam$userParam',
-        );
+        )
+            .then((_) {
+          _loadDrafts();
+          _loadNotificationSettings();
+          _loadArchivedChats();
+        });
       },
+      onLongPress: () => _openChatActions(chat),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         child: Row(
@@ -759,6 +1450,14 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
                           ),
                         ),
                       ),
+                      if (isArchived) ...[
+                        const SizedBox(width: 8),
+                        Icon(
+                          Icons.archive_outlined,
+                          size: 16,
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ],
                       Text(
                         timeLabel,
                         style: theme.textTheme.bodySmall?.copyWith(
@@ -774,7 +1473,7 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
                   const SizedBox(height: 4),
                   Row(
                     children: [
-                      if (isLastFromMe) ...[
+                      if (isLastFromMe && !hasDraft) ...[
                         Icon(
                           Icons.done_all,
                           size: 14,
@@ -784,17 +1483,28 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
                       ],
                       Expanded(
                         child: Text(
-                          chat.lastMessage,
+                          '$previewPrefix$previewText',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: theme.textTheme.bodyMedium?.copyWith(
-                            color:
-                                hasUnread ? Colors.black87 : Colors.grey[600],
-                            fontWeight:
-                                hasUnread ? FontWeight.w500 : FontWeight.normal,
+                            color: previewColor,
+                            fontWeight: previewWeight,
                           ),
                         ),
                       ),
+                      if (notificationLevel != ChatNotificationLevel.all) ...[
+                        Icon(
+                          notificationLevel == ChatNotificationLevel.muted
+                              ? Icons.notifications_off_outlined
+                              : Icons.notifications_none_outlined,
+                          size: 16,
+                          color:
+                              notificationLevel == ChatNotificationLevel.muted
+                                  ? theme.colorScheme.error
+                                  : theme.colorScheme.onSurfaceVariant,
+                        ),
+                        const SizedBox(width: 8),
+                      ],
                       if (hasUnread)
                         Container(
                           padding: const EdgeInsets.symmetric(
@@ -822,9 +1532,23 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
       ),
     );
   }
+
+  DateTime _effectiveActivityAt(ChatPreview chat) {
+    final draft = _drafts[SharedPreferencesChatDraftStore.chatKey(chat.chatId)];
+    if (draft == null) {
+      return chat.lastMessageTime;
+    }
+    return draft.updatedAt.isAfter(chat.lastMessageTime)
+        ? draft.updatedAt
+        : chat.lastMessageTime;
+  }
 }
 
 enum _ChatComposerMode { direct, group, branch, branches }
+
+enum _ChatsVisibilityFilter { all, unread, archived }
+
+enum _ChatListAction { archive, unarchive }
 
 class _CreateChatDraft {
   const _CreateChatDraft({
@@ -1259,7 +1983,10 @@ class _CreateChatSheetState extends State<_CreateChatSheet> {
                         prefixIcon: const Icon(Icons.search, size: 20),
                         hintText: _mode == _ChatComposerMode.direct ||
                                 _mode == _ChatComposerMode.group
-                            ? 'Найти родственника'
+                            ? (context.read<TreeProvider>().selectedTreeKind ==
+                                    TreeKind.friends
+                                ? 'Найти человека'
+                                : 'Найти родственника')
                             : 'Найти ветку по имени',
                         filled: true,
                         fillColor: theme.colorScheme.surfaceContainerHighest
@@ -1289,7 +2016,12 @@ class _CreateChatSheetState extends State<_CreateChatSheet> {
                         decoration: InputDecoration(
                           labelText: 'Название чата',
                           hintText: _mode == _ChatComposerMode.group
-                              ? 'Например: Семья Ивановых'
+                              ? (context
+                                          .read<TreeProvider>()
+                                          .selectedTreeKind ==
+                                      TreeKind.friends
+                                  ? 'Например: Близкий круг'
+                                  : 'Например: Семья Ивановых')
                               : 'Необязательно',
                           prefixIcon: const Icon(Icons.title, size: 20),
                         ),
@@ -1417,10 +2149,13 @@ class _CreateChatSheetState extends State<_CreateChatSheet> {
               Icon(Icons.person_search_outlined,
                   size: 48, color: Colors.grey[400]),
               const SizedBox(height: 12),
-              const Text(
-                'Родственники не найдены.\nУбедитесь, что они добавлены в дерево и имеют аккаунт.',
+              Text(
+                context.read<TreeProvider>().selectedTreeKind ==
+                        TreeKind.friends
+                    ? 'Люди круга не найдены.\nУбедитесь, что они добавлены в граф и имеют аккаунт.'
+                    : 'Родственники не найдены.\nУбедитесь, что они добавлены в дерево и имеют аккаунт.',
                 textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.grey),
+                style: const TextStyle(color: Colors.grey),
               ),
             ],
           ),

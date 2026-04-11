@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../providers/tree_provider.dart';
 import '../services/event_service.dart';
 import '../models/app_event.dart';
+import '../models/family_tree.dart';
 
 import '../widgets/event_card.dart';
 import 'package:get_it/get_it.dart';
@@ -49,13 +50,6 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _eventService = EventService();
-
-    final notificationService = _customNotificationService;
-    if (notificationService != null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        notificationService.refreshUnreadNotificationsCount();
-      });
-    }
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _treeProviderInstance = Provider.of<TreeProvider>(context, listen: false);
@@ -150,9 +144,11 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final selectedTreeName = Provider.of<TreeProvider>(
-      context,
-    ).selectedTreeName;
+    final treeProvider = Provider.of<TreeProvider>(context);
+    final selectedTreeName = treeProvider.selectedTreeName;
+    final selectedTreeKind = treeProvider.selectedTreeKind;
+    final isFriendsTree = selectedTreeKind == TreeKind.friends;
+    final activeGraphLabel = isFriendsTree ? 'Круг друзей' : 'Семейное дерево';
 
     return Scaffold(
       appBar: AppBar(
@@ -226,10 +222,23 @@ class _HomeScreenState extends State<HomeScreen> {
                                   ),
                                   const SizedBox(height: 4),
                                   Text(
-                                    'Добро пожаловать в Родню',
+                                    selectedTreeName == null
+                                        ? 'Добро пожаловать в Родню'
+                                        : isFriendsTree
+                                            ? 'Активен круг друзей: $selectedTreeName'
+                                            : 'Активно семейное дерево: $selectedTreeName',
                                     style:
                                         Theme.of(context).textTheme.bodyMedium,
                                   ),
+                                  if (selectedTreeName != null) ...[
+                                    const SizedBox(height: 10),
+                                    _buildContextChip(
+                                      icon: isFriendsTree
+                                          ? Icons.diversity_3_outlined
+                                          : Icons.account_tree_outlined,
+                                      label: activeGraphLabel,
+                                    ),
+                                  ],
                                 ],
                               ),
                             ),
@@ -371,7 +380,9 @@ class _HomeScreenState extends State<HomeScreen> {
             : 'Здесь пока пусто',
         message: _postsUnavailable
             ? 'Backend ленты пока не отвечает для этого дерева. Основные разделы работают, а публикации нужно восстановить отдельно.'
-            : 'Будьте первым, кто поделится историей или новостью в этом семейном дереве!',
+            : _treeProviderInstance?.selectedTreeKind == TreeKind.friends
+                ? 'Будьте первым, кто поделится новостью, фото или поводом для встречи в круге друзей.'
+                : 'Будьте первым, кто поделится историей или новостью в этом семейном дереве!',
         actionLabel: _postsUnavailable ? 'Обновить' : 'Создать публикацию',
         onAction: () async {
           if (_postsUnavailable) {
@@ -420,14 +431,24 @@ class _HomeScreenState extends State<HomeScreen> {
           _buildQuickActionTile(
             icon: Icons.post_add_outlined,
             title: 'Новая публикация',
-            subtitle: 'Добавить новость, историю или фотографии семьи.',
+            subtitle:
+                _treeProviderInstance?.selectedTreeKind == TreeKind.friends
+                    ? 'Добавить новость, фото или планы для своего круга.'
+                    : 'Добавить новость, историю или фотографии семьи.',
             onTap: () => context.push('/post/create'),
           ),
           const SizedBox(height: 10),
           _buildQuickActionTile(
-            icon: Icons.people_outline,
-            title: 'Раздел родных',
-            subtitle: 'Перейти к родственникам и пригласить новых людей.',
+            icon: _treeProviderInstance?.selectedTreeKind == TreeKind.friends
+                ? Icons.hub_outlined
+                : Icons.people_outline,
+            title: _treeProviderInstance?.selectedTreeKind == TreeKind.friends
+                ? 'Связи и круг'
+                : 'Раздел родных',
+            subtitle:
+                _treeProviderInstance?.selectedTreeKind == TreeKind.friends
+                    ? 'Перейти к людям из круга и расширить сеть связей.'
+                    : 'Перейти к родственникам и пригласить новых людей.',
             onTap: () => context.go('/relatives'),
           ),
           const SizedBox(height: 10),
@@ -436,6 +457,34 @@ class _HomeScreenState extends State<HomeScreen> {
             title: 'Сменить дерево',
             subtitle: 'Быстро переключиться на другое активное дерево.',
             onTap: () => context.go('/tree?selector=1'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildContextChip({
+    required IconData icon,
+    required String label,
+  }) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.primary.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16, color: theme.colorScheme.primary),
+          const SizedBox(width: 8),
+          Text(
+            label,
+            style: theme.textTheme.labelLarge?.copyWith(
+              color: theme.colorScheme.primary,
+              fontWeight: FontWeight.w700,
+            ),
           ),
         ],
       ),
@@ -552,7 +601,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             const SizedBox(height: 10),
             Text(
-              'После выбора откроются события семьи, родственники, личные связи и контент дерева. Если дерева ещё нет, создайте новое прямо сейчас.',
+              'После выбора откроются события, связи и контент выбранного графа. Можно работать и с семейным деревом, и с кругом друзей. Если графа ещё нет, создайте его прямо сейчас.',
               style: theme.textTheme.bodyLarge?.copyWith(
                 color: Colors.white.withValues(alpha: 0.92),
                 height: 1.45,
@@ -579,7 +628,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 OutlinedButton.icon(
                   onPressed: () => context.push('/trees/create'),
                   icon: const Icon(Icons.add_circle_outline),
-                  label: const Text('Создать дерево'),
+                  label: const Text('Создать граф'),
                   style: OutlinedButton.styleFrom(
                     foregroundColor: Colors.white,
                     side: const BorderSide(color: Colors.white38),
@@ -693,13 +742,14 @@ class _HomeScreenState extends State<HomeScreen> {
             _buildNextStepRow(
               icon: Icons.event_outlined,
               title: 'Главная наполнится событиями',
-              subtitle: 'Ближайшие дни рождения и важные семейные даты.',
+              subtitle: 'Ближайшие дни рождения, встречи и важные поводы.',
             ),
             const SizedBox(height: 10),
             _buildNextStepRow(
               icon: Icons.people_outline,
-              title: 'Раздел родных станет активным',
-              subtitle: 'Можно будет открывать карточки и расширять дерево.',
+              title: 'Станут доступны связи и карточки людей',
+              subtitle:
+                  'Можно будет открывать профили и расширять семейный или дружеский граф.',
             ),
             const SizedBox(height: 10),
             _buildNextStepRow(
@@ -763,10 +813,12 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Padding(
+          Padding(
             padding: EdgeInsets.symmetric(horizontal: 16),
             child: Text(
-              'Ближайшие события',
+              _treeProviderInstance?.selectedTreeKind == TreeKind.friends
+                  ? 'Ближайшие встречи и поводы'
+                  : 'Ближайшие события',
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
           ),
@@ -779,7 +831,7 @@ class _HomeScreenState extends State<HomeScreen> {
           else if (_upcomingEvents.isEmpty)
             const Padding(
               padding: EdgeInsets.all(16.0),
-              child: Text('Нет ближайших событий'),
+              child: Text('Пока нет ближайших событий'),
             )
           else
             SizedBox(

@@ -35,12 +35,22 @@ class CustomApiFamilyTreeService implements FamilyTreeServiceInterface {
   final LocalStorageService? _localStorageService;
   final ProfileServiceInterface? _profileService;
   final Map<String, String> _personTreeIds = <String, String>{};
+  late final StreamController<List<TreeInvitation>>
+      _pendingInvitationsController =
+      StreamController<List<TreeInvitation>>.broadcast(
+    onListen: _handlePendingInvitationsListen,
+    onCancel: _handlePendingInvitationsCancel,
+  );
+  Timer? _pendingInvitationsPollingTimer;
+  bool _pendingInvitationsPollingStarted = false;
+  int _pendingInvitationsListenerCount = 0;
 
   @override
   Future<String> createTree({
     required String name,
     required String description,
     required bool isPrivate,
+    TreeKind kind = TreeKind.family,
   }) async {
     final response = await _requestJson(
       method: 'POST',
@@ -49,6 +59,7 @@ class CustomApiFamilyTreeService implements FamilyTreeServiceInterface {
         'name': name,
         'description': description,
         'isPrivate': isPrivate,
+        'kind': kind.name,
       },
     );
 
@@ -385,17 +396,7 @@ class CustomApiFamilyTreeService implements FamilyTreeServiceInterface {
 
   @override
   Stream<List<TreeInvitation>> getPendingTreeInvitations() {
-    return Stream<List<TreeInvitation>>.multi((controller) async {
-      while (!controller.isClosed) {
-        try {
-          controller.add(await _loadPendingTreeInvitations());
-        } catch (error, stackTrace) {
-          controller.addError(error, stackTrace);
-        }
-
-        await Future<void>.delayed(const Duration(seconds: 5));
-      }
-    });
+    return _pendingInvitationsController.stream;
   }
 
   @override
@@ -878,6 +879,9 @@ class CustomApiFamilyTreeService implements FamilyTreeServiceInterface {
       publicSlug: json['publicSlug']?.toString(),
       isCertified: json['isCertified'] == true,
       certificationNote: json['certificationNote']?.toString(),
+      kind: json['kind']?.toString().trim().toLowerCase() == 'friends'
+          ? TreeKind.friends
+          : TreeKind.family,
     );
   }
 
@@ -1017,6 +1021,52 @@ class CustomApiFamilyTreeService implements FamilyTreeServiceInterface {
         .map(_treeInvitationFromJson)
         .where((invitation) => invitation.invitationId.isNotEmpty)
         .toList();
+  }
+
+  void _startPendingInvitationsPolling() {
+    if (_pendingInvitationsPollingStarted ||
+        _pendingInvitationsController.isClosed) {
+      return;
+    }
+
+    _pendingInvitationsPollingStarted = true;
+    _pendingInvitationsPollingTimer?.cancel();
+    unawaited(_refreshPendingInvitations());
+    _pendingInvitationsPollingTimer = Timer.periodic(
+      const Duration(seconds: 20),
+      (_) => unawaited(_refreshPendingInvitations()),
+    );
+  }
+
+  void _handlePendingInvitationsListen() {
+    _pendingInvitationsListenerCount++;
+    if (_pendingInvitationsListenerCount == 1) {
+      _startPendingInvitationsPolling();
+    }
+  }
+
+  Future<void> _handlePendingInvitationsCancel() async {
+    _pendingInvitationsListenerCount--;
+    if (_pendingInvitationsListenerCount > 0) {
+      return;
+    }
+
+    _pendingInvitationsListenerCount = 0;
+    _pendingInvitationsPollingStarted = false;
+    _pendingInvitationsPollingTimer?.cancel();
+    _pendingInvitationsPollingTimer = null;
+  }
+
+  Future<void> _refreshPendingInvitations() async {
+    if (_pendingInvitationsController.isClosed) {
+      return;
+    }
+
+    try {
+      _pendingInvitationsController.add(await _loadPendingTreeInvitations());
+    } catch (error, stackTrace) {
+      _pendingInvitationsController.addError(error, stackTrace);
+    }
   }
 
   TreeInvitation _treeInvitationFromJson(Map<String, dynamic> json) {

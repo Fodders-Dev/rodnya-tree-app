@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:lineage/backend/interfaces/auth_service_interface.dart';
 import 'package:lineage/backend/interfaces/chat_service_interface.dart';
 import 'package:lineage/backend/interfaces/family_tree_service_interface.dart';
+import 'package:lineage/models/chat_attachment.dart';
 import 'package:lineage/models/chat_details.dart';
 import 'package:lineage/models/chat_message.dart';
 import 'package:lineage/models/chat_preview.dart';
@@ -14,6 +16,9 @@ import 'package:lineage/models/family_relation.dart';
 import 'package:lineage/models/family_tree.dart';
 import 'package:lineage/providers/tree_provider.dart';
 import 'package:lineage/screens/chats_list_screen.dart';
+import 'package:lineage/services/chat_archive_store.dart';
+import 'package:lineage/services/chat_draft_store.dart';
+import 'package:lineage/services/chat_notification_settings_store.dart';
 import 'package:lineage/services/local_storage_service.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
@@ -48,6 +53,7 @@ class _FakeChatService implements ChatServiceInterface {
   List<String>? createdParticipantIds;
   List<String>? createdBranchRootPersonIds;
   String? createdTitle;
+  List<ChatPreview> chatPreviews = const <ChatPreview>[];
 
   @override
   String? get currentUserId => 'user-1';
@@ -57,7 +63,7 @@ class _FakeChatService implements ChatServiceInterface {
 
   @override
   Stream<List<ChatPreview>> getUserChatsStream(String userId) {
-    return Stream.value(const <ChatPreview>[]);
+    return Stream.value(chatPreviews);
   }
 
   @override
@@ -82,6 +88,10 @@ class _FakeChatService implements ChatServiceInterface {
     required String chatId,
     String text = '',
     List<XFile> attachments = const <XFile>[],
+    List<ChatAttachment> forwardedAttachments = const <ChatAttachment>[],
+    ChatReplyReference? replyTo,
+    String? clientMessageId,
+    int? expiresInSeconds,
     void Function(ChatSendProgress progress)? onProgress,
   }) async {}
 
@@ -153,6 +163,19 @@ class _FakeChatService implements ChatServiceInterface {
     required String participantId,
   }) async =>
       getChatDetails(chatId);
+
+  @override
+  Future<void> editChatMessage({
+    required String chatId,
+    required String messageId,
+    required String text,
+  }) async {}
+
+  @override
+  Future<void> deleteChatMessage({
+    required String chatId,
+    required String messageId,
+  }) async {}
 }
 
 class _FakeFamilyTreeService extends Fake
@@ -233,10 +256,116 @@ class _FakeFamilyTreeService extends Fake
   Future<List<FamilyTree>> getUserTrees() async => const <FamilyTree>[];
 }
 
-class _FakeLocalStorageService extends Fake implements LocalStorageService {}
+class _FakeLocalStorageService extends Fake implements LocalStorageService {
+  @override
+  Future<FamilyTree?> getTree(String treeId) async {
+    return FamilyTree(
+      id: treeId,
+      name: 'Семья Кузнецовых',
+      description: '',
+      creatorId: 'user-1',
+      createdAt: DateTime(2026),
+      updatedAt: DateTime(2026),
+      memberIds: const ['user-1', 'user-root-1', 'user-root-2'],
+      isPrivate: true,
+      members: const ['user-1', 'user-root-1', 'user-root-2'],
+      kind: TreeKind.family,
+    );
+  }
+}
+
+class _MemoryChatDraftStore implements ChatDraftStore {
+  final Map<String, ChatDraftSnapshot> _drafts = <String, ChatDraftSnapshot>{};
+
+  @override
+  Future<void> clearDraft(String key) async {
+    _drafts.remove(key);
+  }
+
+  @override
+  Future<Map<String, ChatDraftSnapshot>> getAllDrafts() async {
+    return Map<String, ChatDraftSnapshot>.from(_drafts);
+  }
+
+  @override
+  Future<ChatDraftSnapshot?> getDraft(String key) async {
+    return _drafts[key];
+  }
+
+  @override
+  Future<void> saveDraft(String key, String text) async {
+    _drafts[key] = ChatDraftSnapshot(
+      text: text,
+      updatedAt: DateTime(2026, 4, 11, 12, _drafts.length),
+    );
+  }
+}
+
+class _MemoryChatArchiveStore implements ChatArchiveStore {
+  final Map<String, ChatArchiveSnapshot> _archived =
+      <String, ChatArchiveSnapshot>{};
+
+  @override
+  Future<void> clearArchivedChat(String key) async {
+    _archived.remove(key);
+  }
+
+  @override
+  Future<Map<String, ChatArchiveSnapshot>> getAllArchivedChats() async {
+    return Map<String, ChatArchiveSnapshot>.from(_archived);
+  }
+
+  @override
+  Future<ChatArchiveSnapshot?> getArchivedChat(String key) async {
+    return _archived[key];
+  }
+
+  @override
+  Future<void> saveArchivedChat(
+      String key, ChatArchiveSnapshot snapshot) async {
+    _archived[key] = snapshot;
+  }
+}
+
+class _MemoryChatNotificationSettingsStore
+    implements ChatNotificationSettingsStore {
+  final Map<String, ChatNotificationSettingsSnapshot> _settings =
+      <String, ChatNotificationSettingsSnapshot>{};
+
+  @override
+  Future<void> clearSettings(String key) async {
+    _settings.remove(key);
+  }
+
+  @override
+  Future<Map<String, ChatNotificationSettingsSnapshot>> getAllSettings() async {
+    return Map<String, ChatNotificationSettingsSnapshot>.from(_settings);
+  }
+
+  @override
+  Future<ChatNotificationSettingsSnapshot?> getSettings(String key) async {
+    return _settings[key];
+  }
+
+  @override
+  Future<void> saveSettings(
+    String key,
+    ChatNotificationSettingsSnapshot snapshot,
+  ) async {
+    if (snapshot.level == ChatNotificationLevel.all) {
+      _settings.remove(key);
+      return;
+    }
+    _settings[key] = snapshot;
+  }
+}
 
 void main() {
   final getIt = GetIt.instance;
+
+  setUpAll(() async {
+    await initializeDateFormatting('ru');
+  });
 
   setUp(() async {
     await getIt.reset();
@@ -251,16 +380,28 @@ void main() {
     await getIt.reset();
   });
 
-  Widget buildApp() {
+  Widget buildApp({
+    ChatDraftStore? draftStore,
+    ChatArchiveStore? archiveStore,
+    ChatNotificationSettingsStore? notificationSettingsStore,
+  }) {
     final treeProvider = TreeProvider();
-    treeProvider.selectTree('tree-1', 'Семья Кузнецовых');
+    treeProvider.selectTree(
+      'tree-1',
+      'Семья Кузнецовых',
+      treeKind: TreeKind.family,
+    );
 
     final router = GoRouter(
       initialLocation: '/chats',
       routes: [
         GoRoute(
           path: '/chats',
-          builder: (context, state) => const ChatsListScreen(),
+          builder: (context, state) => ChatsListScreen(
+            draftStore: draftStore,
+            archiveStore: archiveStore,
+            notificationSettingsStore: notificationSettingsStore,
+          ),
         ),
         GoRoute(
           path: '/chats/view/:chatId',
@@ -300,6 +441,7 @@ void main() {
 
     await tester.pumpAndSettle();
 
+    await tester.ensureVisible(find.text('Открыть родных'));
     await tester.tap(find.text('Открыть родных'));
     await tester.pumpAndSettle();
     expect(find.text('relatives-screen'), findsOneWidget);
@@ -307,6 +449,7 @@ void main() {
     await tester.pumpWidget(buildApp());
     await tester.pumpAndSettle();
 
+    await tester.ensureVisible(find.text('Открыть дерево'));
     await tester.tap(find.text('Открыть дерево'));
     await tester.pumpAndSettle();
     expect(find.text('tree-screen'), findsOneWidget);
@@ -322,7 +465,7 @@ void main() {
     await tester.tap(find.byTooltip('Новый чат'));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Ветка семьи'));
+    await tester.tap(find.text('Ветки'));
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('Иван Кузнецов'));
@@ -344,5 +487,187 @@ void main() {
       ),
       findsOneWidget,
     );
+  });
+
+  testWidgets('Desktop shell показывает контекст и быстрые действия',
+      (tester) async {
+    tester.view.physicalSize = const Size(1600, 1200);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(buildApp());
+    await tester.pumpAndSettle();
+
+    expect(find.text('Навигация по чатам'), findsOneWidget);
+    expect(find.text('Контекст дерева: Семья Кузнецовых'), findsOneWidget);
+    expect(find.text('Создать чат'), findsWidgets);
+    expect(find.text('Открыть родных'), findsWidgets);
+    expect(find.text('Открыть дерево'), findsWidgets);
+  });
+
+  testWidgets('ChatsListScreen склоняет overview counts корректно',
+      (tester) async {
+    await tester.pumpWidget(buildApp());
+    await tester.pumpAndSettle();
+
+    expect(find.text('0 чатов'), findsOneWidget);
+    expect(find.text('4 родных в поиске'), findsOneWidget);
+    expect(find.text('Все прочитано'), findsOneWidget);
+  });
+
+  testWidgets('ChatsListScreen shows draft preview and draft count',
+      (tester) async {
+    final chatService = getIt<ChatServiceInterface>() as _FakeChatService;
+    chatService.chatPreviews = [
+      ChatPreview(
+        id: 'preview-1',
+        chatId: 'chat-1',
+        userId: 'user-1',
+        otherUserId: 'user-root-1',
+        otherUserName: 'Иван Кузнецов',
+        lastMessage: 'Старое сообщение',
+        lastMessageTime: DateTime(2026, 4, 10, 18, 0),
+        unreadCount: 0,
+        lastMessageSenderId: 'user-root-1',
+      ),
+    ];
+    final draftStore = _MemoryChatDraftStore();
+    await draftStore.saveDraft(
+      SharedPreferencesChatDraftStore.chatKey('chat-1'),
+      'Нужно обсудить встречу в воскресенье',
+    );
+
+    await tester.pumpWidget(buildApp(draftStore: draftStore));
+    await tester.pumpAndSettle();
+
+    expect(find.text('1 черновик'), findsOneWidget);
+    expect(
+      find.text('Черновик: Нужно обсудить встречу в воскресенье'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('ChatsListScreen shows muted chat indicator and overview',
+      (tester) async {
+    final chatService = getIt<ChatServiceInterface>() as _FakeChatService;
+    chatService.chatPreviews = [
+      ChatPreview(
+        id: 'preview-muted-1',
+        chatId: 'chat-muted-1',
+        userId: 'user-1',
+        otherUserId: 'user-root-1',
+        otherUserName: 'Иван Кузнецов',
+        lastMessage: 'Напиши, когда доедешь',
+        lastMessageTime: DateTime(2026, 4, 10, 19, 0),
+        unreadCount: 2,
+        lastMessageSenderId: 'user-root-1',
+      ),
+    ];
+    final notificationSettingsStore = _MemoryChatNotificationSettingsStore();
+    await notificationSettingsStore.saveSettings(
+      SharedPreferencesChatNotificationSettingsStore.chatKey('chat-muted-1'),
+      ChatNotificationSettingsSnapshot(
+        level: ChatNotificationLevel.muted,
+        updatedAt: DateTime(2026, 4, 11, 12, 0),
+      ),
+    );
+
+    await tester.pumpWidget(
+      buildApp(notificationSettingsStore: notificationSettingsStore),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('1 чат без уведомлений'), findsOneWidget);
+    expect(find.byIcon(Icons.notifications_off_outlined), findsWidgets);
+  });
+
+  testWidgets('ChatsListScreen archives chat and moves it out of main flow',
+      (tester) async {
+    final chatService = getIt<ChatServiceInterface>() as _FakeChatService;
+    chatService.chatPreviews = [
+      ChatPreview(
+        id: 'preview-1',
+        chatId: 'chat-1',
+        userId: 'user-1',
+        otherUserId: 'user-root-1',
+        otherUserName: 'Иван Кузнецов',
+        lastMessage: 'Старое сообщение',
+        lastMessageTime: DateTime(2026, 4, 10, 18, 0),
+        unreadCount: 0,
+        lastMessageSenderId: 'user-root-1',
+      ),
+      ChatPreview(
+        id: 'preview-2',
+        chatId: 'chat-2',
+        userId: 'user-1',
+        otherUserId: 'user-root-2',
+        otherUserName: 'Мария Понькина',
+        lastMessage: 'Новый чат',
+        lastMessageTime: DateTime(2026, 4, 10, 19, 0),
+        unreadCount: 2,
+        lastMessageSenderId: 'user-root-2',
+      ),
+    ];
+    final archiveStore = _MemoryChatArchiveStore();
+
+    await tester.pumpWidget(buildApp(archiveStore: archiveStore));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Иван Кузнецов'), findsOneWidget);
+    expect(find.text('Мария Понькина'), findsOneWidget);
+
+    await tester.longPress(find.text('Иван Кузнецов'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Архивировать чат'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Иван Кузнецов'), findsNothing);
+    expect(find.text('Мария Понькина'), findsOneWidget);
+    expect(find.text('1 чат в архиве'), findsWidgets);
+
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Архив (1)'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Иван Кузнецов'), findsOneWidget);
+    expect(find.text('Мария Понькина'), findsNothing);
+  });
+
+  testWidgets('ChatsListScreen unarchives chat from archive filter',
+      (tester) async {
+    final chatService = getIt<ChatServiceInterface>() as _FakeChatService;
+    chatService.chatPreviews = [
+      ChatPreview(
+        id: 'preview-1',
+        chatId: 'chat-1',
+        userId: 'user-1',
+        otherUserId: 'user-root-1',
+        otherUserName: 'Иван Кузнецов',
+        lastMessage: 'Старое сообщение',
+        lastMessageTime: DateTime(2026, 4, 10, 18, 0),
+        unreadCount: 0,
+        lastMessageSenderId: 'user-root-1',
+      ),
+    ];
+    final archiveStore = _MemoryChatArchiveStore();
+    await archiveStore.saveArchivedChat(
+      SharedPreferencesChatArchiveStore.chatKey('chat-1'),
+      ChatArchiveSnapshot(archivedAt: DateTime(2026, 4, 11, 12, 0)),
+    );
+
+    await tester.pumpWidget(buildApp(archiveStore: archiveStore));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Архив (1)'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Иван Кузнецов'), findsOneWidget);
+
+    await tester.longPress(find.text('Иван Кузнецов'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Вернуть в основной список'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Иван Кузнецов'), findsOneWidget);
+    expect(find.text('Архив (1)'), findsNothing);
   });
 }

@@ -1,6 +1,7 @@
 import '../../models/chat_message.dart';
 import '../../models/chat_details.dart';
 import '../../models/chat_preview.dart';
+import '../../models/chat_attachment.dart';
 import '../../models/chat_send_progress.dart';
 import 'package:image_picker/image_picker.dart';
 
@@ -14,6 +15,10 @@ abstract class ChatServiceInterface {
     required String chatId,
     String text = '',
     List<XFile> attachments = const <XFile>[],
+    List<ChatAttachment> forwardedAttachments = const <ChatAttachment>[],
+    ChatReplyReference? replyTo,
+    String? clientMessageId,
+    int? expiresInSeconds,
     void Function(ChatSendProgress progress)? onProgress,
   }) {
     throw UnsupportedError('sendMessageToChat is not supported');
@@ -72,5 +77,20 @@ abstract class ChatServiceInterface {
     required String participantId,
   }) {
     throw UnsupportedError('removeGroupParticipant is not supported');
+  }
+
+  Future<void> editChatMessage({
+    required String chatId,
+    required String messageId,
+    required String text,
+  }) {
+    throw UnsupportedError('editChatMessage is not supported');
+  }
+
+  Future<void> deleteChatMessage({
+    required String chatId,
+    required String messageId,
+  }) {
+    throw UnsupportedError('deleteChatMessage is not supported');
   }
 }

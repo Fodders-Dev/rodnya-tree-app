@@ -34,13 +34,35 @@ class CustomApiRealtimeEvent {
     return value is Map<String, dynamic> ? value : null;
   }
 
+  String? get userId => payload['userId']?.toString();
+
+  bool? get isTyping =>
+      payload['isTyping'] is bool ? payload['isTyping'] as bool : null;
+
+  bool? get isOnline =>
+      payload['isOnline'] is bool ? payload['isOnline'] as bool : null;
+
+  List<String> get onlineUserIds {
+    final value = payload['onlineUserIds'];
+    if (value is! List) {
+      return const <String>[];
+    }
+    return value.map((item) => item.toString()).toList();
+  }
+
   bool get isChatEvent =>
       type == 'chat.created' ||
       type == 'chat.updated' ||
       type == 'chat.message.created' ||
-      type == 'chat.read.updated';
+      type == 'chat.message.updated' ||
+      type == 'chat.message.deleted' ||
+      type == 'chat.read.updated' ||
+      type == 'chat.typing.updated';
 
   bool get isNotificationEvent => type == 'notification.created';
+
+  bool get isPresenceEvent =>
+      type == 'connection.ready' || type == 'presence.updated';
 
   factory CustomApiRealtimeEvent.fromJson(Map<String, dynamic> json) {
     return CustomApiRealtimeEvent(
@@ -110,6 +132,29 @@ class CustomApiRealtimeService {
     await _channel?.sink.close();
     _channel = null;
     await _eventsController.close();
+  }
+
+  Future<void> sendTypingState({
+    required String chatId,
+    required bool isTyping,
+  }) async {
+    if (_disposed) {
+      return;
+    }
+
+    await connect();
+    final channel = _channel;
+    if (channel == null) {
+      return;
+    }
+
+    channel.sink.add(
+      jsonEncode({
+        'action': 'chat.typing.set',
+        'chatId': chatId,
+        'isTyping': isTyping,
+      }),
+    );
   }
 
   Uri _buildUri(String accessToken) {

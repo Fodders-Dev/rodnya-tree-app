@@ -41,22 +41,30 @@ class RealtimeHub {
         await this.store.touchSession(token);
         userId = user.id;
         this._registerSocket(userId, socket);
+        const onlineUserIds = await this._collectOnlineParticipants(userId);
 
         socket.send(
           JSON.stringify({
             type: "connection.ready",
             userId,
             connectedAt: new Date().toISOString(),
+            onlineUserIds,
           }),
         );
 
+        await this._broadcastPresenceUpdate(userId, true);
+
         socket.on("close", () => {
-          this._unregisterSocket(userId, socket);
+          void this._handleSocketClose(userId, socket);
         });
 
         socket.on("error", (error) => {
           this.logger.warn?.("[lineage-backend] realtime socket error", error);
-          this._unregisterSocket(userId, socket);
+          void this._handleSocketClose(userId, socket);
+        });
+
+        socket.on("message", (rawMessage) => {
+          void this._handleSocketMessage(userId, rawMessage);
         });
       } catch (error) {
         this.logger.warn?.("[lineage-backend] realtime connection failed", error);
@@ -76,6 +84,90 @@ class RealtimeHub {
       if (socket.readyState === socket.OPEN) {
         socket.send(serializedPayload);
       }
+    }
+  }
+
+  isUserOnline(userId) {
+    const sockets = this.userSockets.get(userId);
+    return Boolean(sockets && sockets.size > 0);
+  }
+
+  async _collectOnlineParticipants(userId) {
+    const participantIds = await this.store.listRelatedChatParticipantIds(userId);
+    return participantIds.filter((participantId) => this.isUserOnline(participantId));
+  }
+
+  async _broadcastPresenceUpdate(userId, isOnline) {
+    const participantIds = await this.store.listRelatedChatParticipantIds(userId);
+    const payload = {
+      type: "presence.updated",
+      userId,
+      isOnline,
+      updatedAt: new Date().toISOString(),
+    };
+
+    for (const participantId of participantIds) {
+      this.publishToUser(participantId, payload);
+    }
+  }
+
+  async _handleSocketClose(userId, socket) {
+    const wasOnline = this.isUserOnline(userId);
+    this._unregisterSocket(userId, socket);
+    if (wasOnline && !this.isUserOnline(userId)) {
+      await this._broadcastPresenceUpdate(userId, false);
+    }
+  }
+
+  async _handleSocketMessage(userId, rawMessage) {
+    const serializedMessage = Buffer.isBuffer(rawMessage)
+      ? rawMessage.toString("utf8")
+      : String(rawMessage || "").trim();
+    if (!serializedMessage) {
+      return;
+    }
+
+    let payload;
+    try {
+      payload = JSON.parse(serializedMessage);
+    } catch (_) {
+      return;
+    }
+
+    if (!payload || typeof payload !== "object") {
+      return;
+    }
+
+    if (payload.action === "chat.typing.set") {
+      await this._handleTypingEvent(userId, payload);
+    }
+  }
+
+  async _handleTypingEvent(userId, payload) {
+    const chatId = String(payload.chatId || "").trim();
+    if (!chatId) {
+      return;
+    }
+
+    const chat = await this.store.findChat(chatId);
+    if (!chat || !Array.isArray(chat.participantIds) || !chat.participantIds.includes(userId)) {
+      return;
+    }
+
+    const isTyping = payload.isTyping === true;
+    const realtimePayload = {
+      type: "chat.typing.updated",
+      chatId,
+      userId,
+      isTyping,
+      updatedAt: new Date().toISOString(),
+    };
+
+    for (const participantId of chat.participantIds) {
+      if (participantId === userId) {
+        continue;
+      }
+      this.publishToUser(participantId, realtimePayload);
     }
   }
 

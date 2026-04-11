@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:get_it/get_it.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
@@ -25,12 +24,15 @@ class CustomApiChatService implements ChatServiceInterface {
     CustomApiRealtimeService? realtimeService,
     StorageServiceInterface? storageService,
     Duration? pollInterval,
+    Duration? overviewPollInterval,
   })  : _authService = authService,
         _runtimeConfig = runtimeConfig,
         _httpClient = httpClient ?? http.Client(),
         _realtimeService = realtimeService,
         _storageService = storageService,
-        _pollInterval = pollInterval ?? const Duration(seconds: 3);
+        _pollInterval = pollInterval ?? const Duration(seconds: 3),
+        _overviewPollInterval =
+            overviewPollInterval ?? const Duration(seconds: 12);
 
   final CustomApiAuthService _authService;
   final BackendRuntimeConfig _runtimeConfig;
@@ -38,6 +40,18 @@ class CustomApiChatService implements ChatServiceInterface {
   final CustomApiRealtimeService? _realtimeService;
   final StorageServiceInterface? _storageService;
   final Duration _pollInterval;
+  final Duration _overviewPollInterval;
+  StreamController<List<ChatPreview>>? _chatPreviewsController;
+  Timer? _chatPreviewsTimer;
+  StreamSubscription<CustomApiRealtimeEvent>? _chatPreviewsRealtimeSubscription;
+  int _chatPreviewsListenerCount = 0;
+  bool _chatPreviewsPollingEnabled = false;
+
+  StreamController<int>? _totalUnreadController;
+  Timer? _totalUnreadTimer;
+  StreamSubscription<CustomApiRealtimeEvent>? _totalUnreadRealtimeSubscription;
+  int _totalUnreadListenerCount = 0;
+  bool _totalUnreadPollingEnabled = false;
 
   @override
   String? get currentUserId => _authService.currentUserId;
@@ -55,126 +69,14 @@ class CustomApiChatService implements ChatServiceInterface {
 
   @override
   Stream<List<ChatPreview>> getUserChatsStream(String userId) {
-    return Stream<List<ChatPreview>>.multi((controller) {
-      Timer? timer;
-      StreamSubscription<CustomApiRealtimeEvent>? realtimeSubscription;
-      var pollingEnabled = true;
-
-      Future<void> emitChats() async {
-        if (!pollingEnabled) {
-          return;
-        }
-        if (!_hasActiveSession) {
-          pollingEnabled = false;
-          timer?.cancel();
-          await realtimeSubscription?.cancel();
-          controller.add(const <ChatPreview>[]);
-          return;
-        }
-        try {
-          controller.add(await _fetchChatPreviews());
-        } on CustomApiException catch (error, stackTrace) {
-          if (await _handleSessionError(error)) {
-            pollingEnabled = false;
-            timer?.cancel();
-            await realtimeSubscription?.cancel();
-            controller.add(const <ChatPreview>[]);
-            return;
-          }
-          controller.addError(error, stackTrace);
-        } catch (error, stackTrace) {
-          if (await _handleSessionError(error)) {
-            pollingEnabled = false;
-            timer?.cancel();
-            await realtimeSubscription?.cancel();
-            controller.add(const <ChatPreview>[]);
-            return;
-          }
-          controller.addError(error, stackTrace);
-        }
-      }
-
-      unawaited(emitChats());
-      timer = Timer.periodic(_pollInterval, (_) {
-        unawaited(emitChats());
-      });
-
-      if (_realtimeService != null) {
-        unawaited(_realtimeService!.connect());
-        realtimeSubscription = _realtimeService!.events
-            .where((event) => event.isChatEvent || event.isNotificationEvent)
-            .listen((_) {
-          unawaited(emitChats());
-        });
-      }
-
-      controller.onCancel = () async {
-        timer?.cancel();
-        await realtimeSubscription?.cancel();
-      };
-    });
+    _ensureChatPreviewsStream();
+    return _chatPreviewsController!.stream;
   }
 
   @override
   Stream<int> getTotalUnreadCountStream(String userId) {
-    return Stream<int>.multi((controller) {
-      Timer? timer;
-      StreamSubscription<CustomApiRealtimeEvent>? realtimeSubscription;
-      var pollingEnabled = true;
-
-      Future<void> emitUnread() async {
-        if (!pollingEnabled) {
-          return;
-        }
-        if (!_hasActiveSession) {
-          pollingEnabled = false;
-          timer?.cancel();
-          await realtimeSubscription?.cancel();
-          controller.add(0);
-          return;
-        }
-        try {
-          controller.add(await _fetchTotalUnreadCount());
-        } on CustomApiException catch (error, stackTrace) {
-          if (await _handleSessionError(error)) {
-            pollingEnabled = false;
-            timer?.cancel();
-            await realtimeSubscription?.cancel();
-            controller.add(0);
-            return;
-          }
-          controller.addError(error, stackTrace);
-        } catch (error, stackTrace) {
-          if (await _handleSessionError(error)) {
-            pollingEnabled = false;
-            timer?.cancel();
-            await realtimeSubscription?.cancel();
-            controller.add(0);
-            return;
-          }
-          controller.addError(error, stackTrace);
-        }
-      }
-
-      unawaited(emitUnread());
-      timer = Timer.periodic(_pollInterval, (_) {
-        unawaited(emitUnread());
-      });
-
-      if (_realtimeService != null) {
-        unawaited(_realtimeService!.connect());
-        realtimeSubscription = _realtimeService!.events
-            .where((event) => event.isChatEvent || event.isNotificationEvent)
-            .listen((_) {
-          unawaited(emitUnread());
-        });
-      }
-
-      controller.onCancel = () async {
-        timer?.cancel();
-        await realtimeSubscription?.cancel();
-      };
-    });
+    _ensureTotalUnreadStream();
+    return _totalUnreadController!.stream;
   }
 
   @override
@@ -229,7 +131,9 @@ class CustomApiChatService implements ChatServiceInterface {
           if (event.type == 'chat.read.updated') {
             return event.chatId == chatId;
           }
-          if (event.type == 'chat.message.created') {
+          if (event.type == 'chat.message.created' ||
+              event.type == 'chat.message.updated' ||
+              event.type == 'chat.message.deleted') {
             return event.chatId == chatId;
           }
           return false;
@@ -276,10 +180,16 @@ class CustomApiChatService implements ChatServiceInterface {
     required String chatId,
     String text = '',
     List<XFile> attachments = const <XFile>[],
+    List<ChatAttachment> forwardedAttachments = const <ChatAttachment>[],
+    ChatReplyReference? replyTo,
+    String? clientMessageId,
+    int? expiresInSeconds,
     void Function(ChatSendProgress progress)? onProgress,
   }) async {
     final trimmedText = text.trim();
-    if (trimmedText.isEmpty && attachments.isEmpty) {
+    if (trimmedText.isEmpty &&
+        attachments.isEmpty &&
+        forwardedAttachments.isEmpty) {
       throw const CustomApiException('Сообщение не должно быть пустым');
     }
 
@@ -287,6 +197,11 @@ class CustomApiChatService implements ChatServiceInterface {
       attachments,
       onProgress: onProgress,
     );
+    final allAttachments = <ChatAttachment>[
+      ...forwardedAttachments
+          .where((attachment) => attachment.url.trim().isNotEmpty),
+      ...uploadedAttachments,
+    ];
 
     onProgress?.call(
       const ChatSendProgress(
@@ -301,15 +216,19 @@ class CustomApiChatService implements ChatServiceInterface {
       path: '/v1/chats/$chatId/messages',
       body: {
         'text': trimmedText,
-        if (uploadedAttachments.isNotEmpty)
-          'attachments': uploadedAttachments
-              .map((attachment) => attachment.toMap())
-              .toList(),
-        if (uploadedAttachments.isNotEmpty)
+        if (allAttachments.isNotEmpty)
+          'attachments':
+              allAttachments.map((attachment) => attachment.toMap()).toList(),
+        if (allAttachments.isNotEmpty)
           'mediaUrls':
-              uploadedAttachments.map((attachment) => attachment.url).toList(),
-        if (uploadedAttachments.isNotEmpty)
-          'imageUrl': uploadedAttachments.first.url,
+              allAttachments.map((attachment) => attachment.url).toList(),
+        if (allAttachments.isNotEmpty) 'imageUrl': allAttachments.first.url,
+        if (replyTo != null && replyTo.messageId.isNotEmpty)
+          'replyTo': replyTo.toMap(),
+        if (clientMessageId != null && clientMessageId.trim().isNotEmpty)
+          'clientMessageId': clientMessageId.trim(),
+        if (expiresInSeconds != null && expiresInSeconds > 0)
+          'expiresInSeconds': expiresInSeconds,
       },
     );
   }
@@ -320,6 +239,32 @@ class CustomApiChatService implements ChatServiceInterface {
       method: 'POST',
       path: '/v1/chats/$chatId/read',
       body: const <String, dynamic>{},
+    );
+  }
+
+  @override
+  Future<void> editChatMessage({
+    required String chatId,
+    required String messageId,
+    required String text,
+  }) async {
+    await _requestJson(
+      method: 'PATCH',
+      path: '/v1/chats/$chatId/messages/$messageId',
+      body: {
+        'text': text.trim(),
+      },
+    );
+  }
+
+  @override
+  Future<void> deleteChatMessage({
+    required String chatId,
+    required String messageId,
+  }) async {
+    await _requestJson(
+      method: 'DELETE',
+      path: '/v1/chats/$chatId/messages/$messageId',
     );
   }
 
@@ -510,7 +455,7 @@ class CustomApiChatService implements ChatServiceInterface {
         'otherUserName': chat['otherUserName'],
         'otherUserPhotoUrl': chat['otherUserPhotoUrl'],
         'lastMessage': chat['lastMessage'],
-        'lastMessageTime': Timestamp.fromDate(timestamp),
+        'lastMessageTime': timestamp,
         'unreadCount': chat['unreadCount'],
         'lastMessageSenderId': chat['lastMessageSenderId'],
       });
@@ -524,6 +469,188 @@ class CustomApiChatService implements ChatServiceInterface {
     );
 
     return (response['totalUnread'] as num?)?.toInt() ?? 0;
+  }
+
+  void _ensureChatPreviewsStream() {
+    if (_chatPreviewsController != null) {
+      return;
+    }
+
+    _chatPreviewsController = StreamController<List<ChatPreview>>.broadcast(
+      onListen: () {
+        _chatPreviewsListenerCount++;
+        if (_chatPreviewsListenerCount == 1) {
+          _startChatPreviewsPolling();
+        }
+      },
+      onCancel: () async {
+        _chatPreviewsListenerCount--;
+        if (_chatPreviewsListenerCount <= 0) {
+          _chatPreviewsListenerCount = 0;
+          await _stopChatPreviewsPolling();
+        }
+      },
+    );
+  }
+
+  void _startChatPreviewsPolling() {
+    if (_chatPreviewsPollingEnabled || _chatPreviewsController == null) {
+      return;
+    }
+
+    _chatPreviewsPollingEnabled = true;
+    unawaited(_emitChatPreviews());
+    _chatPreviewsTimer = Timer.periodic(
+      _overviewPollInterval,
+      (_) => unawaited(_emitChatPreviews()),
+    );
+
+    if (_realtimeService != null) {
+      unawaited(_realtimeService!.connect());
+      _chatPreviewsRealtimeSubscription = _realtimeService!.events
+          .where((event) => event.isChatEvent || event.isNotificationEvent)
+          .listen((_) {
+        unawaited(_emitChatPreviews());
+      });
+    }
+  }
+
+  Future<void> _stopChatPreviewsPolling() async {
+    _chatPreviewsPollingEnabled = false;
+    _chatPreviewsTimer?.cancel();
+    _chatPreviewsTimer = null;
+    await _chatPreviewsRealtimeSubscription?.cancel();
+    _chatPreviewsRealtimeSubscription = null;
+  }
+
+  Future<void> _emitChatPreviews() async {
+    final controller = _chatPreviewsController;
+    if (!_chatPreviewsPollingEnabled ||
+        controller == null ||
+        controller.isClosed) {
+      return;
+    }
+
+    if (!_hasActiveSession) {
+      await _stopChatPreviewsPolling();
+      if (!controller.isClosed) {
+        controller.add(const <ChatPreview>[]);
+      }
+      return;
+    }
+
+    try {
+      controller.add(await _fetchChatPreviews());
+    } on CustomApiException catch (error, stackTrace) {
+      if (await _handleSessionError(error)) {
+        await _stopChatPreviewsPolling();
+        if (!controller.isClosed) {
+          controller.add(const <ChatPreview>[]);
+        }
+        return;
+      }
+      controller.addError(error, stackTrace);
+    } catch (error, stackTrace) {
+      if (await _handleSessionError(error)) {
+        await _stopChatPreviewsPolling();
+        if (!controller.isClosed) {
+          controller.add(const <ChatPreview>[]);
+        }
+        return;
+      }
+      controller.addError(error, stackTrace);
+    }
+  }
+
+  void _ensureTotalUnreadStream() {
+    if (_totalUnreadController != null) {
+      return;
+    }
+
+    _totalUnreadController = StreamController<int>.broadcast(
+      onListen: () {
+        _totalUnreadListenerCount++;
+        if (_totalUnreadListenerCount == 1) {
+          _startTotalUnreadPolling();
+        }
+      },
+      onCancel: () async {
+        _totalUnreadListenerCount--;
+        if (_totalUnreadListenerCount <= 0) {
+          _totalUnreadListenerCount = 0;
+          await _stopTotalUnreadPolling();
+        }
+      },
+    );
+  }
+
+  void _startTotalUnreadPolling() {
+    if (_totalUnreadPollingEnabled || _totalUnreadController == null) {
+      return;
+    }
+
+    _totalUnreadPollingEnabled = true;
+    unawaited(_emitTotalUnread());
+    _totalUnreadTimer = Timer.periodic(
+      _overviewPollInterval,
+      (_) => unawaited(_emitTotalUnread()),
+    );
+
+    if (_realtimeService != null) {
+      unawaited(_realtimeService!.connect());
+      _totalUnreadRealtimeSubscription = _realtimeService!.events
+          .where((event) => event.isChatEvent || event.isNotificationEvent)
+          .listen((_) {
+        unawaited(_emitTotalUnread());
+      });
+    }
+  }
+
+  Future<void> _stopTotalUnreadPolling() async {
+    _totalUnreadPollingEnabled = false;
+    _totalUnreadTimer?.cancel();
+    _totalUnreadTimer = null;
+    await _totalUnreadRealtimeSubscription?.cancel();
+    _totalUnreadRealtimeSubscription = null;
+  }
+
+  Future<void> _emitTotalUnread() async {
+    final controller = _totalUnreadController;
+    if (!_totalUnreadPollingEnabled ||
+        controller == null ||
+        controller.isClosed) {
+      return;
+    }
+
+    if (!_hasActiveSession) {
+      await _stopTotalUnreadPolling();
+      if (!controller.isClosed) {
+        controller.add(0);
+      }
+      return;
+    }
+
+    try {
+      controller.add(await _fetchTotalUnreadCount());
+    } on CustomApiException catch (error, stackTrace) {
+      if (await _handleSessionError(error)) {
+        await _stopTotalUnreadPolling();
+        if (!controller.isClosed) {
+          controller.add(0);
+        }
+        return;
+      }
+      controller.addError(error, stackTrace);
+    } catch (error, stackTrace) {
+      if (await _handleSessionError(error)) {
+        await _stopTotalUnreadPolling();
+        if (!controller.isClosed) {
+          controller.add(0);
+        }
+        return;
+      }
+      controller.addError(error, stackTrace);
+    }
   }
 
   Future<List<ChatMessage>> _fetchMessages(String chatId) async {
@@ -544,12 +671,16 @@ class CustomApiChatService implements ChatServiceInterface {
         'senderId': message['senderId'],
         'text': message['text'],
         'timestamp': message['timestamp'],
+        'updatedAt': message['updatedAt'],
         'isRead': message['isRead'],
         'attachments': message['attachments'],
         'imageUrl': message['imageUrl'],
         'mediaUrls': message['mediaUrls'],
         'participants': message['participants'],
         'senderName': message['senderName'],
+        'clientMessageId': message['clientMessageId'],
+        'expiresAt': message['expiresAt'],
+        'replyTo': message['replyTo'],
       });
     }).toList();
   }
@@ -622,43 +753,28 @@ class CustomApiChatService implements ChatServiceInterface {
     final mimeType = (attachment.mimeType ?? '').toLowerCase().trim();
     final name = attachment.name.toLowerCase().trim();
     final url = uploadedUrl.toLowerCase().trim();
-    if (mimeType.startsWith('video/') ||
-        name.endsWith('.mp4') ||
-        name.endsWith('.mov') ||
-        name.endsWith('.webm') ||
-        url.endsWith('.mp4') ||
-        url.endsWith('.mov') ||
-        url.endsWith('.webm')) {
-      return ChatAttachmentType.video;
-    }
-    if (mimeType.startsWith('audio/') ||
-        name.endsWith('.m4a') ||
-        name.endsWith('.aac') ||
-        name.endsWith('.mp3') ||
-        name.endsWith('.wav') ||
-        name.endsWith('.ogg') ||
-        url.endsWith('.m4a') ||
-        url.endsWith('.aac') ||
-        url.endsWith('.mp3') ||
-        url.endsWith('.wav') ||
-        url.endsWith('.ogg')) {
-      return ChatAttachmentType.audio;
-    }
+
     if (mimeType.startsWith('image/') ||
-        name.endsWith('.jpg') ||
-        name.endsWith('.jpeg') ||
-        name.endsWith('.png') ||
-        name.endsWith('.webp') ||
-        name.endsWith('.heic') ||
-        name.endsWith('.gif') ||
-        url.endsWith('.jpg') ||
-        url.endsWith('.jpeg') ||
-        url.endsWith('.png') ||
-        url.endsWith('.webp') ||
-        url.endsWith('.heic') ||
-        url.endsWith('.gif')) {
+        ['.jpg', '.jpeg', '.png', '.webp', '.heic', '.gif'].any(
+          (ext) => name.endsWith(ext) || url.endsWith(ext),
+        )) {
       return ChatAttachmentType.image;
     }
+
+    if (mimeType.startsWith('video/') ||
+        ['.mp4', '.mov', '.webm', '.avi', '.mkv'].any(
+          (ext) => name.endsWith(ext) || url.endsWith(ext),
+        )) {
+      return ChatAttachmentType.video;
+    }
+
+    if (mimeType.startsWith('audio/') ||
+        ['.m4a', '.aac', '.mp3', '.wav', '.ogg', '.flac'].any(
+          (ext) => name.endsWith(ext) || url.endsWith(ext),
+        )) {
+      return ChatAttachmentType.audio;
+    }
+
     return ChatAttachmentType.file;
   }
 

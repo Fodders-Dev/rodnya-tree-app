@@ -7,6 +7,38 @@ import '../utils/url_utils.dart';
 
 part 'chat_message.g.dart';
 
+class ChatReplyReference {
+  const ChatReplyReference({
+    required this.messageId,
+    required this.senderId,
+    required this.senderName,
+    required this.text,
+  });
+
+  final String messageId;
+  final String senderId;
+  final String senderName;
+  final String text;
+
+  factory ChatReplyReference.fromMap(Map<String, dynamic> map) {
+    return ChatReplyReference(
+      messageId: map['messageId']?.toString() ?? map['id']?.toString() ?? '',
+      senderId: map['senderId']?.toString() ?? '',
+      senderName: map['senderName']?.toString() ?? 'Участник',
+      text: map['text']?.toString() ?? '',
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return <String, dynamic>{
+      'messageId': messageId,
+      'senderId': senderId,
+      'senderName': senderName,
+      'text': text,
+    };
+  }
+}
+
 @HiveType(typeId: 4)
 class ChatMessage extends HiveObject {
   @HiveField(0)
@@ -27,6 +59,10 @@ class ChatMessage extends HiveObject {
   final String? senderName;
   @HiveField(10)
   final List<ChatAttachment> attachments;
+  final ChatReplyReference? replyTo;
+  final String? clientMessageId;
+  final DateTime? expiresAt;
+  final DateTime? updatedAt;
 
   ChatMessage({
     required this.id,
@@ -38,6 +74,10 @@ class ChatMessage extends HiveObject {
     required this.participants,
     this.senderName,
     this.attachments = const <ChatAttachment>[],
+    this.replyTo,
+    this.clientMessageId,
+    this.expiresAt,
+    this.updatedAt,
   });
 
   String? get imageUrl {
@@ -81,6 +121,10 @@ class ChatMessage extends HiveObject {
       participants: List<String>.from(map['participants'] ?? []),
       senderName: map['senderName'],
       attachments: _attachmentsFromMap(map),
+      replyTo: _replyReferenceFromMap(map),
+      clientMessageId: map['clientMessageId']?.toString(),
+      expiresAt: parseDateTime(map['expiresAt']),
+      updatedAt: parseDateTime(map['updatedAt']),
     );
   }
 
@@ -97,6 +141,10 @@ class ChatMessage extends HiveObject {
       'mediaUrls': mediaUrls,
       'participants': participants,
       'senderName': senderName,
+      'clientMessageId': clientMessageId,
+      'expiresAt': expiresAt?.toIso8601String(),
+      'updatedAt': updatedAt?.toIso8601String(),
+      if (replyTo != null) 'replyTo': replyTo!.toMap(),
     };
   }
 
@@ -115,6 +163,10 @@ class ChatMessage extends HiveObject {
           .toList(),
       senderName: data['senderName'] as String?,
       attachments: _attachmentsFromMap(data),
+      replyTo: _replyReferenceFromMap(data),
+      clientMessageId: data['clientMessageId']?.toString(),
+      expiresAt: parseDateTime(data['expiresAt']),
+      updatedAt: parseDateTime(data['updatedAt']),
     );
   }
 
@@ -127,6 +179,9 @@ class ChatMessage extends HiveObject {
     List<String>? mediaUrls,
     required List<String> participants,
     String? senderName,
+    ChatReplyReference? replyTo,
+    String? clientMessageId,
+    DateTime? expiresAt,
   }) {
     return ChatMessage(
       id: const Uuid().v4(),
@@ -138,7 +193,24 @@ class ChatMessage extends HiveObject {
       participants: participants,
       senderName: senderName,
       attachments: attachments ?? _legacyAttachments(imageUrl, mediaUrls),
+      replyTo: replyTo,
+      clientMessageId: clientMessageId,
+      expiresAt: expiresAt,
     );
+  }
+
+  static ChatReplyReference? _replyReferenceFromMap(Map<String, dynamic> map) {
+    final rawReply = map['replyTo'];
+    if (rawReply is Map<String, dynamic>) {
+      final reply = ChatReplyReference.fromMap(rawReply);
+      return reply.messageId.isEmpty ? null : reply;
+    }
+    if (rawReply is Map) {
+      final reply =
+          ChatReplyReference.fromMap(Map<String, dynamic>.from(rawReply));
+      return reply.messageId.isEmpty ? null : reply;
+    }
+    return null;
   }
 
   static List<ChatAttachment> _attachmentsFromMap(Map<String, dynamic> map) {

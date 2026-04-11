@@ -6,6 +6,7 @@ import 'package:http/testing.dart';
 import 'package:flutter_local_notifications_platform_interface/flutter_local_notifications_platform_interface.dart';
 import 'package:lineage/backend/backend_runtime_config.dart';
 import 'package:lineage/services/custom_api_auth_service.dart';
+import 'package:lineage/services/chat_notification_settings_store.dart';
 import 'package:lineage/services/custom_api_notification_service.dart';
 import 'package:lineage/services/invitation_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -104,6 +105,7 @@ void main() {
           required String senderName,
           required String messageText,
           required int notificationId,
+          bool playSound = true,
         }) async {
           shownChatNotifications.add({
             'chatId': chatId,
@@ -111,6 +113,7 @@ void main() {
             'senderName': senderName,
             'messageText': messageText,
             'notificationId': notificationId,
+            'playSound': playSound,
           });
         },
         onGenericNotification: ({
@@ -163,6 +166,7 @@ void main() {
           required String senderName,
           required String messageText,
           required int notificationId,
+          bool playSound = true,
         }) async {
           shownChatNotifications.add({'chatId': chatId});
         },
@@ -184,6 +188,217 @@ void main() {
 
       await service.dispose();
       await restartedService.dispose();
+    },
+  );
+
+  test(
+    'CustomApiNotificationService suppresses muted chat notifications',
+    () async {
+      final unreadNotifications = [
+        {
+          'id': 'notification-muted-1',
+          'type': 'chat_message',
+          'title': 'Собеседник',
+          'body': 'Тихий чат не должен всплыть',
+          'createdAt': '2026-03-27T12:00:00.000Z',
+          'data': {
+            'chatId': 'chat-muted-1',
+            'senderId': 'user-2',
+            'senderName': 'Собеседник',
+          },
+        },
+        {
+          'id': 'notification-generic-1',
+          'type': 'tree_invitation',
+          'title': 'Приглашение в дерево',
+          'body': 'Это уведомление должно прийти',
+          'createdAt': '2026-03-27T12:01:00.000Z',
+          'data': {'treeId': 'tree-1'},
+        },
+      ];
+
+      final client = MockClient((request) async {
+        if (request.url.path == '/v1/notifications' &&
+            request.method == 'GET') {
+          return http.Response(
+            jsonEncode({'notifications': unreadNotifications}),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+        return http.Response('{"message":"not found"}', 404);
+      });
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        'custom_api_session_v1',
+        jsonEncode({
+          'accessToken': 'access-token',
+          'refreshToken': 'refresh-token',
+          'userId': 'user-1',
+          'email': 'dev@lineage.app',
+          'displayName': 'Dev User',
+          'providerIds': ['password'],
+          'isProfileComplete': true,
+          'missingFields': const [],
+        }),
+      );
+      await const SharedPreferencesChatNotificationSettingsStore().saveSettings(
+        SharedPreferencesChatNotificationSettingsStore.chatKey('chat-muted-1'),
+        ChatNotificationSettingsSnapshot(
+          level: ChatNotificationLevel.muted,
+          updatedAt: DateTime(2026, 4, 11, 12, 0),
+        ),
+      );
+
+      final authService = await CustomApiAuthService.create(
+        httpClient: client,
+        preferences: prefs,
+        runtimeConfig: const BackendRuntimeConfig(
+          apiBaseUrl: 'https://api.example.ru',
+        ),
+        invitationService: InvitationService(),
+      );
+
+      final shownChatNotifications = <Map<String, dynamic>>[];
+      final shownGenericNotifications = <Map<String, dynamic>>[];
+
+      final service = await CustomApiNotificationService.create(
+        preferences: prefs,
+        authService: authService,
+        runtimeConfig: const BackendRuntimeConfig(
+          apiBaseUrl: 'https://api.example.ru',
+        ),
+        httpClient: client,
+        onChatNotification: ({
+          required String chatId,
+          required String senderId,
+          required String senderName,
+          required String messageText,
+          required int notificationId,
+          bool playSound = true,
+        }) async {
+          shownChatNotifications.add({'chatId': chatId});
+        },
+        onGenericNotification: ({
+          required String title,
+          required String body,
+          required int notificationId,
+          String? payload,
+        }) async {
+          shownGenericNotifications.add({'title': title, 'body': body});
+        },
+      );
+
+      await service.initialize();
+      await service.syncPendingNotifications();
+
+      expect(shownChatNotifications, isEmpty);
+      expect(shownGenericNotifications, hasLength(1));
+      expect(
+        prefs.getStringList('custom_api_delivered_notification_ids_v1'),
+        containsAll(
+          <String>['notification-muted-1', 'notification-generic-1'],
+        ),
+      );
+
+      await service.dispose();
+    },
+  );
+
+  test(
+    'CustomApiNotificationService forwards silent mode to chat notifications',
+    () async {
+      final unreadNotifications = [
+        {
+          'id': 'notification-silent-1',
+          'type': 'chat_message',
+          'title': 'Собеседник',
+          'body': 'Тихий режим',
+          'createdAt': '2026-03-27T12:00:00.000Z',
+          'data': {
+            'chatId': 'chat-silent-1',
+            'senderId': 'user-2',
+            'senderName': 'Собеседник',
+          },
+        },
+      ];
+
+      final client = MockClient((request) async {
+        if (request.url.path == '/v1/notifications' &&
+            request.method == 'GET') {
+          return http.Response(
+            jsonEncode({'notifications': unreadNotifications}),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+        return http.Response('{"message":"not found"}', 404);
+      });
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        'custom_api_session_v1',
+        jsonEncode({
+          'accessToken': 'access-token',
+          'refreshToken': 'refresh-token',
+          'userId': 'user-1',
+          'email': 'dev@lineage.app',
+          'displayName': 'Dev User',
+          'providerIds': ['password'],
+          'isProfileComplete': true,
+          'missingFields': const [],
+        }),
+      );
+      await const SharedPreferencesChatNotificationSettingsStore().saveSettings(
+        SharedPreferencesChatNotificationSettingsStore.chatKey('chat-silent-1'),
+        ChatNotificationSettingsSnapshot(
+          level: ChatNotificationLevel.silent,
+          updatedAt: DateTime(2026, 4, 11, 12, 5),
+        ),
+      );
+
+      final authService = await CustomApiAuthService.create(
+        httpClient: client,
+        preferences: prefs,
+        runtimeConfig: const BackendRuntimeConfig(
+          apiBaseUrl: 'https://api.example.ru',
+        ),
+        invitationService: InvitationService(),
+      );
+
+      final shownChatNotifications = <Map<String, dynamic>>[];
+
+      final service = await CustomApiNotificationService.create(
+        preferences: prefs,
+        authService: authService,
+        runtimeConfig: const BackendRuntimeConfig(
+          apiBaseUrl: 'https://api.example.ru',
+        ),
+        httpClient: client,
+        onChatNotification: ({
+          required String chatId,
+          required String senderId,
+          required String senderName,
+          required String messageText,
+          required int notificationId,
+          bool playSound = true,
+        }) async {
+          shownChatNotifications.add({
+            'chatId': chatId,
+            'playSound': playSound,
+          });
+        },
+      );
+
+      await service.initialize();
+      await service.syncPendingNotifications();
+
+      expect(shownChatNotifications, hasLength(1));
+      expect(shownChatNotifications.first['chatId'], 'chat-silent-1');
+      expect(shownChatNotifications.first['playSound'], isFalse);
+
+      await service.dispose();
     },
   );
 

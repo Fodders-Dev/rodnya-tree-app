@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:lineage/backend/backend_runtime_config.dart';
+import 'package:lineage/models/chat_attachment.dart';
 import 'package:lineage/models/chat_details.dart';
 import 'package:lineage/models/chat_message.dart';
 import 'package:lineage/models/chat_send_progress.dart';
@@ -153,7 +154,7 @@ void main() {
 
     final authService = await CustomApiAuthService.create(
       httpClient: client,
-      preferences: prefs,
+      preferences: await SharedPreferences.getInstance(),
       runtimeConfig: const BackendRuntimeConfig(
         apiBaseUrl: 'https://api.example.ru',
       ),
@@ -199,6 +200,274 @@ void main() {
     final unreadAfterRead =
         await chatService.getTotalUnreadCountStream('user-1').first;
     expect(unreadAfterRead, 0);
+  });
+
+  test('CustomApiChatService sends reply metadata with message body', () async {
+    Map<String, dynamic>? sentBody;
+
+    final client = MockClient((request) async {
+      if (request.url.path == '/v1/chats/chat-1/messages' &&
+          request.method == 'POST') {
+        sentBody = jsonDecode(request.body) as Map<String, dynamic>;
+        return http.Response(
+          jsonEncode({'ok': true}),
+          201,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+
+      return http.Response(
+        jsonEncode({'messages': const [], 'chats': const [], 'totalUnread': 0}),
+        200,
+        headers: {'content-type': 'application/json'},
+      );
+    });
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'custom_api_session_v1',
+      jsonEncode({
+        'accessToken': 'access-token',
+        'refreshToken': 'refresh-token',
+        'userId': 'user-1',
+        'email': 'dev@lineage.app',
+        'displayName': 'Dev User',
+        'providerIds': ['password'],
+        'isProfileComplete': true,
+        'missingFields': const [],
+      }),
+    );
+
+    final authService = await CustomApiAuthService.create(
+      httpClient: client,
+      preferences: await SharedPreferences.getInstance(),
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      invitationService: InvitationService(),
+    );
+
+    final chatService = CustomApiChatService(
+      authService: authService,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      httpClient: client,
+    );
+
+    await chatService.sendMessageToChat(
+      chatId: 'chat-1',
+      text: 'Подтверждаю',
+      replyTo: const ChatReplyReference(
+        messageId: 'm-1',
+        senderId: 'other-user',
+        senderName: 'Собеседник',
+        text: 'Сбор у дома в 19:00',
+      ),
+      clientMessageId: 'local-42',
+      expiresInSeconds: 3600,
+    );
+
+    expect(sentBody?['text'], 'Подтверждаю');
+    expect(sentBody?['replyTo']['messageId'], 'm-1');
+    expect(sentBody?['replyTo']['senderName'], 'Собеседник');
+    expect(sentBody?['clientMessageId'], 'local-42');
+    expect(sentBody?['expiresInSeconds'], 3600);
+  });
+
+  test('CustomApiChatService sends forwarded attachments without reupload',
+      () async {
+    Map<String, dynamic>? sentBody;
+
+    final client = MockClient((request) async {
+      if (request.url.path == '/v1/chats/chat-1/messages' &&
+          request.method == 'POST') {
+        sentBody = jsonDecode(request.body) as Map<String, dynamic>;
+        return http.Response(
+          jsonEncode({
+            'message': {
+              'id': 'msg-forwarded',
+              'chatId': 'chat-1',
+              'senderId': 'user-1',
+              'text': 'Пересланное сообщение',
+              'timestamp': '2026-04-11T12:00:00.000Z',
+              'isRead': false,
+              'participants': ['user-1', 'other-user'],
+              'attachments': sentBody?['attachments'] ?? const [],
+            },
+          }),
+          201,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+
+      return http.Response('{}', 404);
+    });
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'custom_api_session_v1',
+      jsonEncode({
+        'accessToken': 'access-token',
+        'refreshToken': 'refresh-token',
+        'userId': 'user-1',
+        'email': 'dev@lineage.app',
+        'displayName': 'Dev User',
+        'providerIds': ['password'],
+        'isProfileComplete': true,
+        'missingFields': const [],
+      }),
+    );
+
+    final authService = await CustomApiAuthService.create(
+      httpClient: client,
+      preferences: prefs,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      invitationService: InvitationService(),
+    );
+
+    final chatService = CustomApiChatService(
+      authService: authService,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      httpClient: client,
+    );
+
+    await chatService.sendMessageToChat(
+      chatId: 'chat-1',
+      text: 'Пересланное сообщение',
+      forwardedAttachments: const [
+        ChatAttachment(
+          type: ChatAttachmentType.image,
+          url: 'https://cdn.example.ru/chat/photo.jpg',
+          fileName: 'photo.jpg',
+        ),
+      ],
+    );
+
+    expect(sentBody?['attachments'], hasLength(1));
+    expect(sentBody?['attachments'][0]['url'],
+        'https://cdn.example.ru/chat/photo.jpg');
+    expect(sentBody?['mediaUrls'], ['https://cdn.example.ru/chat/photo.jpg']);
+  });
+
+  test('CustomApiChatService edits message with PATCH request', () async {
+    String? editedPath;
+    String? editedMethod;
+    Map<String, dynamic>? sentBody;
+
+    final client = MockClient((request) async {
+      editedPath = request.url.path;
+      editedMethod = request.method;
+      sentBody = jsonDecode(request.body) as Map<String, dynamic>;
+      return http.Response(
+        jsonEncode({
+          'message': {'id': 'm-1'}
+        }),
+        200,
+        headers: {'content-type': 'application/json'},
+      );
+    });
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'custom_api_session_v1',
+      jsonEncode({
+        'accessToken': 'access-token',
+        'refreshToken': 'refresh-token',
+        'userId': 'user-1',
+        'email': 'dev@lineage.app',
+        'displayName': 'Dev User',
+        'providerIds': ['password'],
+        'isProfileComplete': true,
+        'missingFields': const [],
+      }),
+    );
+
+    final authService = await CustomApiAuthService.create(
+      httpClient: client,
+      preferences: prefs,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      invitationService: InvitationService(),
+    );
+
+    final chatService = CustomApiChatService(
+      authService: authService,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      httpClient: client,
+    );
+
+    await chatService.editChatMessage(
+      chatId: 'chat-1',
+      messageId: 'm-1',
+      text: '  Исправленный текст  ',
+    );
+
+    expect(editedMethod, 'PATCH');
+    expect(editedPath, '/v1/chats/chat-1/messages/m-1');
+    expect(sentBody, {'text': 'Исправленный текст'});
+  });
+
+  test('CustomApiChatService deletes message with DELETE request', () async {
+    String? deletedPath;
+    String? deletedMethod;
+
+    final client = MockClient((request) async {
+      deletedPath = request.url.path;
+      deletedMethod = request.method;
+      return http.Response(
+        jsonEncode({'ok': true}),
+        200,
+        headers: {'content-type': 'application/json'},
+      );
+    });
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'custom_api_session_v1',
+      jsonEncode({
+        'accessToken': 'access-token',
+        'refreshToken': 'refresh-token',
+        'userId': 'user-1',
+        'email': 'dev@lineage.app',
+        'displayName': 'Dev User',
+        'providerIds': ['password'],
+        'isProfileComplete': true,
+        'missingFields': const [],
+      }),
+    );
+
+    final authService = await CustomApiAuthService.create(
+      httpClient: client,
+      preferences: prefs,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      invitationService: InvitationService(),
+    );
+
+    final chatService = CustomApiChatService(
+      authService: authService,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      httpClient: client,
+    );
+
+    await chatService.deleteChatMessage(
+      chatId: 'chat-1',
+      messageId: 'm-2',
+    );
+
+    expect(deletedMethod, 'DELETE');
+    expect(deletedPath, '/v1/chats/chat-1/messages/m-2');
   });
 
   test('CustomApiChatService refreshes message stream on websocket events',
@@ -322,6 +591,106 @@ void main() {
 
     await realtimeController.close();
     await realtimeService.dispose();
+  });
+
+  test(
+      'CustomApiChatService shares previews and unread polling across listeners',
+      () async {
+    var chatsRequestCount = 0;
+    var unreadRequestCount = 0;
+
+    final client = MockClient((request) async {
+      if (request.url.path == '/v1/chats' && request.method == 'GET') {
+        chatsRequestCount++;
+        return http.Response(
+          jsonEncode({
+            'chats': [
+              {
+                'id': 'other-user_user-1_user-1',
+                'chatId': 'other-user_user-1',
+                'userId': 'user-1',
+                'otherUserId': 'other-user',
+                'otherUserName': 'Собеседник',
+                'otherUserPhotoUrl': null,
+                'lastMessage': 'Привет',
+                'lastMessageTime': '2026-03-27T12:00:00.000Z',
+                'unreadCount': 1,
+                'lastMessageSenderId': 'other-user',
+              },
+            ],
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+
+      if (request.url.path == '/v1/chats/unread-count' &&
+          request.method == 'GET') {
+        unreadRequestCount++;
+        return http.Response(
+          jsonEncode({'totalUnread': 1}),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+
+      return http.Response(
+        jsonEncode({'messages': const []}),
+        200,
+        headers: {'content-type': 'application/json'},
+      );
+    });
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'custom_api_session_v1',
+      jsonEncode({
+        'accessToken': 'access-token',
+        'refreshToken': 'refresh-token',
+        'userId': 'user-1',
+        'email': 'dev@lineage.app',
+        'displayName': 'Dev User',
+        'providerIds': ['password'],
+        'isProfileComplete': true,
+        'missingFields': const [],
+      }),
+    );
+
+    final authService = await CustomApiAuthService.create(
+      httpClient: client,
+      preferences: prefs,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      invitationService: InvitationService(),
+    );
+
+    final chatService = CustomApiChatService(
+      authService: authService,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      httpClient: client,
+      pollInterval: const Duration(hours: 1),
+    );
+
+    final previewsStream = chatService.getUserChatsStream('user-1');
+    final unreadStream = chatService.getTotalUnreadCountStream('user-1');
+
+    final previewResults = await Future.wait([
+      previewsStream.first,
+      previewsStream.first,
+    ]);
+    final unreadResults = await Future.wait([
+      unreadStream.first,
+      unreadStream.first,
+    ]);
+
+    expect(previewResults.first, hasLength(1));
+    expect(previewResults.last, hasLength(1));
+    expect(unreadResults, [1, 1]);
+    expect(chatsRequestCount, 1);
+    expect(unreadRequestCount, 1);
   });
 
   test(

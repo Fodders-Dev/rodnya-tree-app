@@ -16,6 +16,7 @@ import '../models/app_notification_item.dart';
 import '../models/family_person.dart' as lineage_models;
 import '../navigation/app_router.dart';
 import '../providers/tree_provider.dart';
+import 'chat_notification_settings_store.dart';
 import 'browser_notification_bridge.dart';
 import 'custom_api_auth_service.dart';
 import 'custom_api_realtime_service.dart';
@@ -36,6 +37,7 @@ typedef ChatNotificationCallback = Future<void> Function({
   required String senderName,
   required String messageText,
   required int notificationId,
+  bool playSound,
 });
 
 typedef GenericNotificationCallback = Future<void> Function({
@@ -68,7 +70,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
         _realtimeService = realtimeService,
         _rustoreService = rustoreService,
         _httpClient = httpClient ?? http.Client(),
-        _pollInterval = pollInterval ?? const Duration(seconds: 5),
+        _pollInterval = pollInterval ?? const Duration(seconds: 20),
         _remotePushTokenProvider = remotePushTokenProvider,
         _onChatNotification = onChatNotification,
         _onGenericNotification = onGenericNotification,
@@ -128,6 +130,8 @@ class CustomApiNotificationService implements NotificationServiceInterface {
   final ChatNotificationCallback? _onChatNotification;
   final GenericNotificationCallback? _onGenericNotification;
   final BrowserNotificationBridge _browserNotificationBridge;
+  final ChatNotificationSettingsStore _chatNotificationSettingsStore =
+      const SharedPreferencesChatNotificationSettingsStore();
 
   bool _isInitialized = false;
   bool _notificationsEnabled = true;
@@ -534,6 +538,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     required String senderName,
     required String messageText,
     required int notificationId,
+    bool playSound = true,
   }) async {
     if (!_notificationsEnabled) {
       return;
@@ -568,6 +573,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
         senderName: senderName,
         messageText: messageText,
         notificationId: notificationId,
+        playSound: playSound,
       );
       return;
     }
@@ -580,19 +586,21 @@ class CustomApiNotificationService implements NotificationServiceInterface {
       notificationId,
       senderName,
       shortText,
-      const NotificationDetails(
+      NotificationDetails(
         android: AndroidNotificationDetails(
           _channelIdGeneral,
           _channelNameGeneral,
           channelDescription: _channelDescGeneral,
-          importance: Importance.high,
-          priority: Priority.high,
+          importance:
+              playSound ? Importance.high : Importance.defaultImportance,
+          priority: playSound ? Priority.high : Priority.defaultPriority,
+          playSound: playSound,
           icon: '@drawable/ic_stat_notification',
         ),
         iOS: DarwinNotificationDetails(
           presentAlert: true,
           presentBadge: true,
-          presentSound: true,
+          presentSound: playSound,
         ),
       ),
       payload: payload,
@@ -650,12 +658,18 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     if (type == 'chat_message') {
       final chatData =
           data is Map<String, dynamic> ? data : const <String, dynamic>{};
+      final chatId = chatData['chatId']?.toString() ?? '';
+      final deliveryLevel = await _resolveChatNotificationLevel(chatId);
+      if (deliveryLevel == ChatNotificationLevel.muted) {
+        return;
+      }
       await showChatMessageNotification(
-        chatId: chatData['chatId']?.toString() ?? '',
+        chatId: chatId,
         senderId: chatData['senderId']?.toString() ?? '',
         senderName: chatData['senderName']?.toString() ?? title,
         messageText: body,
         notificationId: id.hashCode,
+        playSound: deliveryLevel != ChatNotificationLevel.silent,
       );
       return;
     }
@@ -950,6 +964,19 @@ class CustomApiNotificationService implements NotificationServiceInterface {
           ? null
           : () => _schedulePayloadNavigation(payload),
     );
+  }
+
+  Future<ChatNotificationLevel> _resolveChatNotificationLevel(
+    String chatId,
+  ) async {
+    final normalizedChatId = chatId.trim();
+    if (normalizedChatId.isEmpty) {
+      return ChatNotificationLevel.all;
+    }
+    final snapshot = await _chatNotificationSettingsStore.getSettings(
+      SharedPreferencesChatNotificationSettingsStore.chatKey(normalizedChatId),
+    );
+    return snapshot?.level ?? ChatNotificationLevel.all;
   }
 
   Future<void> _restoreLaunchNotificationPayload() async {

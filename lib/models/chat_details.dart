@@ -65,6 +65,7 @@ class ChatDetails {
 
   bool get isGroup => type == 'group' || type == 'branch';
   bool get isBranch => type == 'branch';
+  bool get isDirect => type == 'direct';
   bool get isEditableGroup => type == 'group';
   int get memberCount => participants.length;
 
