@@ -43,6 +43,14 @@
 - [x] Attachment viewer и download/open flow для remote вложений
 - [x] Галерея media и richer video/image navigation как отдельный polish-pass
 
+## Wave 6
+- Статус: backlog
+- [ ] Уплотнить chat list desktop: убрать "пустыню" при малом числе чатов, добавить meaningful empty-space content или adaptive width/layout
+- [ ] Упростить mobile chat header: меньше вертикальной высоты, компактнее subtitle/context block
+- [ ] Усилить message semantics/accessibility: labels для media/file bubbles, selection state, reaction actions, gallery navigation
+- [ ] Добить media surface entry points: явный "Медиа" вход из chat details и быстрый jump в gallery/documents
+- [ ] Typography/fonts pass для web: убрать warning про missing Noto glyphs и проверить кириллицу/emoji fallback
+
 ## Family-first differentiators
 - [ ] Быстрый переход из дерева в релевантный чат ветки
 - [ ] Smart entry points: обсудить человека, ветку, событие
@@ -89,6 +97,7 @@
 - [x] Multi-select: выделение нескольких сообщений, app bar batch actions и transcript-copy в Telegram-like формате `[dd.MM.yyyy H:mm] Имя: текст`
 - [x] Attachment viewer/download pass: tap по remote вложению открывает fullscreen viewer с `open externally` и `download/open` actions вместо тупика "отправили, но не посмотреть"
 - [x] Media gallery polish: viewer теперь листает вложения по чату, показывает sender/date/caption metadata, thumbnails strip, keyboard navigation и корректнее открывает local video sources
+- [x] MCP follow-up audit: desktop и mobile web smoke показали, что core chat flow жив, но следующим practical pass стоит взять density/layout/accessibility вместо новых фич ради новых фич
 
 ## Notes
 - Telegram reference:
