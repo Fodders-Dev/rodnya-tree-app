@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get_it/get_it.dart';
@@ -1222,5 +1223,61 @@ void main() {
     await pumpChat();
 
     expect(find.text('👍 1'), findsOneWidget);
+  });
+
+  testWidgets(
+      'ChatScreen opens desktop context popover on right click instead of bottom sheet',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1280, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final chatService = _FakeChatService();
+    getIt.registerSingleton<ChatServiceInterface>(chatService);
+
+    await tester.pumpWidget(
+      buildChatApp(
+        Theme(
+          data: ThemeData(platform: TargetPlatform.windows),
+          child: ChatScreen(
+            chatId: 'chat-1',
+            title: 'Тестовый чат',
+            draftStore: _MemoryChatDraftStore(),
+          ),
+        ),
+      ),
+    );
+
+    chatService.emitMessages([
+      ChatMessage(
+        id: 'm-desktop-1',
+        chatId: 'chat-1',
+        senderId: 'other-user',
+        text: 'Контекст на ПК',
+        timestamp: DateTime(2026, 4, 11, 12, 30),
+        isRead: false,
+        participants: const ['user-1', 'other-user'],
+        senderName: 'Собеседник',
+      ),
+    ]);
+    await tester.pumpAndSettle();
+
+    final target = find.text('Контекст на ПК');
+    final position = tester.getCenter(target);
+    final gesture = await tester.createGesture(
+      kind: PointerDeviceKind.mouse,
+      buttons: kSecondaryMouseButton,
+    );
+    addTearDown(gesture.removePointer);
+    await gesture.addPointer(location: position);
+    await tester.pump();
+    await gesture.down(position);
+    await tester.pump();
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    expect(find.byType(BottomSheet), findsNothing);
+    expect(find.text('Ответить'), findsOneWidget);
+    expect(find.text('Переслать'), findsOneWidget);
+    expect(find.text('Копировать текст'), findsOneWidget);
+    expect(find.text('👍'), findsOneWidget);
   });
 }

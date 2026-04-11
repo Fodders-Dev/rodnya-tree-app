@@ -77,6 +77,7 @@
 - [x] Presence, typing, seen-state: realtime presence bootstrap, typing indicator в header и read fanout обратно отправителю с более явным "Доставлено/Просмотрено"
 - [x] Offline/retry/dedup layer: `clientMessageId` в transport, backend idempotency по `chatId + senderId + clientMessageId` и более точное схлопывание optimistic bubbles
 - [x] Polling pass: chat overview вынесен на более редкий shared interval, notifications и pending invitations больше не стучатся так часто, как до realtime/TTL/dedup wave
+- [x] Desktop context menu для сообщений: right click и anchored mini-popover поверх bubble с быстрыми реакциями и action list вместо bottom sheet на desktop/web
 
 ## Notes
 - Telegram reference:

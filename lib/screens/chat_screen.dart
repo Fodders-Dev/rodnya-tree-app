@@ -1,6 +1,7 @@
 // ignore_for_file: unused_field
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get_it/get_it.dart';
@@ -3121,7 +3122,14 @@ class _ChatScreenState extends State<ChatScreen> {
     );
     return GestureDetector(
       key: messageKey,
-      onLongPress: () => _openRemoteMessageActions(message),
+      onLongPressStart: (details) => _openRemoteMessageActions(
+        message,
+        anchorPosition: details.globalPosition,
+      ),
+      onSecondaryTapDown: (details) => _openRemoteMessageActions(
+        message,
+        anchorPosition: details.globalPosition,
+      ),
       child: _ChatBubble(
         isMe: isMe,
         senderLabel: widget.isGroup && !isMe
@@ -3149,6 +3157,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final progressValue = message.progress?.value;
     final showProgressBar = message.status == _OutgoingMessageStatus.pending &&
         message.attachments.isNotEmpty;
+    final bubbleKey = ValueKey<String>('outgoing-bubble-${message.localId}');
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 8),
@@ -3158,7 +3167,15 @@ class _ChatScreenState extends State<ChatScreen> {
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             GestureDetector(
-              onLongPress: () => _openOutgoingMessageActions(message),
+              key: bubbleKey,
+              onLongPressStart: (details) => _openOutgoingMessageActions(
+                message,
+                anchorPosition: details.globalPosition,
+              ),
+              onSecondaryTapDown: (details) => _openOutgoingMessageActions(
+                message,
+                anchorPosition: details.globalPosition,
+              ),
               child: _ChatBubble(
                 isMe: true,
                 text: message.text,
@@ -3387,104 +3404,169 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  Future<void> _openRemoteMessageActions(ChatMessage message) async {
+  Future<void> _openRemoteMessageActions(
+    ChatMessage message, {
+    Offset? anchorPosition,
+  }) async {
     final canCopy = message.text.trim().isNotEmpty;
     final isOwnMessage = message.senderId == _currentUserId;
     final isPinned = _pinnedMessage?.messageId == message.id;
     final currentReaction = _currentReactionEmoji(message.id);
-    final selection = await showModalBottomSheet<_MessageSheetSelection>(
-      context: context,
-      showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    'Быстрые реакции',
-                    style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
+    final useDesktopMenu =
+        _useDesktopMessageContextMenu() && anchorPosition != null;
+    _MessageSheetSelection? selection;
+    if (useDesktopMenu) {
+      selection = await _showDesktopMessagePopover<_MessageSheetSelection>(
+        anchorPosition: anchorPosition,
+        reactions: _quickReactionEmoji,
+        reactionValueBuilder: (emoji) => _MessageSheetSelection(
+          action: _MessageAction.react,
+          emoji: emoji,
+        ),
+        actions: <_ContextMenuActionItem<_MessageSheetSelection>>[
+          const _ContextMenuActionItem<_MessageSheetSelection>(
+            label: 'Ответить',
+            icon: Icons.reply_rounded,
+            value: _MessageSheetSelection(action: _MessageAction.reply),
+          ),
+          const _ContextMenuActionItem<_MessageSheetSelection>(
+            label: 'Переслать',
+            icon: Icons.forward_rounded,
+            value: _MessageSheetSelection(action: _MessageAction.forward),
+          ),
+          _ContextMenuActionItem<_MessageSheetSelection>(
+            label: isPinned ? 'Открепить' : 'Закрепить',
+            icon: isPinned ? Icons.push_pin : Icons.push_pin_outlined,
+            value: const _MessageSheetSelection(
+              action: _MessageAction.pin,
+            ),
+          ),
+          if (isOwnMessage)
+            const _ContextMenuActionItem<_MessageSheetSelection>(
+              label: 'Редактировать',
+              icon: Icons.edit_outlined,
+              value: _MessageSheetSelection(action: _MessageAction.edit),
+            ),
+          if (canCopy)
+            const _ContextMenuActionItem<_MessageSheetSelection>(
+              label: 'Копировать текст',
+              icon: Icons.copy_rounded,
+              value: _MessageSheetSelection(action: _MessageAction.copy),
+            ),
+          if (isOwnMessage)
+            const _ContextMenuActionItem<_MessageSheetSelection>(
+              label: 'Удалить сообщение',
+              icon: Icons.delete_outline_rounded,
+              value: _MessageSheetSelection(action: _MessageAction.delete),
+              isDestructive: true,
+            ),
+        ],
+      );
+    } else {
+      selection = await showModalBottomSheet<_MessageSheetSelection>(
+        context: context,
+        showDragHandle: true,
+        builder: (context) => SafeArea(
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'Быстрые реакции',
+                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
+                    ),
                   ),
                 ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-                child: Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: _quickReactionEmoji
-                      .map(
-                        (emoji) => ChoiceChip(
-                          label: Text(emoji),
-                          selected: currentReaction == emoji,
-                          onSelected: (_) => Navigator.of(context).pop(
-                            _MessageSheetSelection(
-                              action: _MessageAction.react,
-                              emoji: emoji,
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: _quickReactionEmoji
+                        .map(
+                          (emoji) => ChoiceChip(
+                            label: Text(emoji),
+                            selected: currentReaction == emoji,
+                            onSelected: (_) => Navigator.of(context).pop(
+                              _MessageSheetSelection(
+                                action: _MessageAction.react,
+                                emoji: emoji,
+                              ),
                             ),
                           ),
-                        ),
-                      )
-                      .toList(),
-                ),
-              ),
-              ListTile(
-                leading: const Icon(Icons.reply_rounded),
-                title: const Text('Ответить'),
-                onTap: () => Navigator.of(context).pop(
-                  const _MessageSheetSelection(action: _MessageAction.reply),
-                ),
-              ),
-              ListTile(
-                leading: const Icon(Icons.forward_rounded),
-                title: const Text('Переслать'),
-                onTap: () => Navigator.of(context).pop(
-                  const _MessageSheetSelection(action: _MessageAction.forward),
-                ),
-              ),
-              ListTile(
-                leading: Icon(
-                  isPinned ? Icons.push_pin : Icons.push_pin_outlined,
-                ),
-                title: Text(isPinned ? 'Открепить' : 'Закрепить'),
-                onTap: () => Navigator.of(context).pop(
-                  const _MessageSheetSelection(action: _MessageAction.pin),
-                ),
-              ),
-              if (isOwnMessage)
-                ListTile(
-                  leading: const Icon(Icons.edit_outlined),
-                  title: const Text('Редактировать'),
-                  onTap: () => Navigator.of(context).pop(
-                    const _MessageSheetSelection(action: _MessageAction.edit),
+                        )
+                        .toList(),
                   ),
                 ),
-              if (canCopy)
                 ListTile(
-                  leading: const Icon(Icons.copy_rounded),
-                  title: const Text('Копировать текст'),
+                  leading: const Icon(Icons.reply_rounded),
+                  title: const Text('Ответить'),
                   onTap: () => Navigator.of(context).pop(
-                    const _MessageSheetSelection(action: _MessageAction.copy),
+                    const _MessageSheetSelection(
+                      action: _MessageAction.reply,
+                    ),
                   ),
                 ),
-              if (isOwnMessage)
                 ListTile(
-                  leading: const Icon(Icons.delete_outline_rounded),
-                  title: const Text('Удалить сообщение'),
+                  leading: const Icon(Icons.forward_rounded),
+                  title: const Text('Переслать'),
                   onTap: () => Navigator.of(context).pop(
-                    const _MessageSheetSelection(action: _MessageAction.delete),
+                    const _MessageSheetSelection(
+                      action: _MessageAction.forward,
+                    ),
                   ),
                 ),
-            ],
+                ListTile(
+                  leading: Icon(
+                    isPinned ? Icons.push_pin : Icons.push_pin_outlined,
+                  ),
+                  title: Text(isPinned ? 'Открепить' : 'Закрепить'),
+                  onTap: () => Navigator.of(context).pop(
+                    const _MessageSheetSelection(action: _MessageAction.pin),
+                  ),
+                ),
+                if (isOwnMessage)
+                  ListTile(
+                    leading: const Icon(Icons.edit_outlined),
+                    title: const Text('Редактировать'),
+                    onTap: () => Navigator.of(context).pop(
+                      const _MessageSheetSelection(
+                        action: _MessageAction.edit,
+                      ),
+                    ),
+                  ),
+                if (canCopy)
+                  ListTile(
+                    leading: const Icon(Icons.copy_rounded),
+                    title: const Text('Копировать текст'),
+                    onTap: () => Navigator.of(context).pop(
+                      const _MessageSheetSelection(
+                        action: _MessageAction.copy,
+                      ),
+                    ),
+                  ),
+                if (isOwnMessage)
+                  ListTile(
+                    leading: const Icon(Icons.delete_outline_rounded),
+                    title: const Text('Удалить сообщение'),
+                    onTap: () => Navigator.of(context).pop(
+                      const _MessageSheetSelection(
+                        action: _MessageAction.delete,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ),
         ),
-      ),
-    );
+      );
+    }
     if (!mounted || selection == null) {
       return;
     }
@@ -3521,47 +3603,90 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  Future<void> _openOutgoingMessageActions(_OutgoingMessage message) async {
+  Future<void> _openOutgoingMessageActions(
+    _OutgoingMessage message, {
+    Offset? anchorPosition,
+  }) async {
     final canCopy = message.text.trim().isNotEmpty;
-    final action = await showModalBottomSheet<_MessageAction>(
-      context: context,
-      showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.reply_rounded),
-              title: const Text('Ответить'),
-              onTap: () => Navigator.of(context).pop(_MessageAction.reply),
+    final useDesktopMenu =
+        _useDesktopMessageContextMenu() && anchorPosition != null;
+    _MessageAction? action;
+    if (useDesktopMenu) {
+      action = await _showDesktopMessagePopover<_MessageAction>(
+        anchorPosition: anchorPosition,
+        actions: <_ContextMenuActionItem<_MessageAction>>[
+          const _ContextMenuActionItem<_MessageAction>(
+            label: 'Ответить',
+            icon: Icons.reply_rounded,
+            value: _MessageAction.reply,
+          ),
+          const _ContextMenuActionItem<_MessageAction>(
+            label: 'Переслать',
+            icon: Icons.forward_rounded,
+            value: _MessageAction.forward,
+          ),
+          if (canCopy)
+            const _ContextMenuActionItem<_MessageAction>(
+              label: 'Копировать текст',
+              icon: Icons.copy_rounded,
+              value: _MessageAction.copy,
             ),
-            ListTile(
-              leading: const Icon(Icons.forward_rounded),
-              title: const Text('Переслать'),
-              onTap: () => Navigator.of(context).pop(_MessageAction.forward),
+          if (message.status == _OutgoingMessageStatus.failed)
+            const _ContextMenuActionItem<_MessageAction>(
+              label: 'Повторить отправку',
+              icon: Icons.refresh_rounded,
+              value: _MessageAction.retry,
             ),
-            if (canCopy)
+          if (message.status != _OutgoingMessageStatus.sent)
+            const _ContextMenuActionItem<_MessageAction>(
+              label: 'Убрать из очереди',
+              icon: Icons.delete_outline_rounded,
+              value: _MessageAction.delete,
+              isDestructive: true,
+            ),
+        ],
+      );
+    } else {
+      action = await showModalBottomSheet<_MessageAction>(
+        context: context,
+        showDragHandle: true,
+        builder: (context) => SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
               ListTile(
-                leading: const Icon(Icons.copy_rounded),
-                title: const Text('Копировать текст'),
-                onTap: () => Navigator.of(context).pop(_MessageAction.copy),
+                leading: const Icon(Icons.reply_rounded),
+                title: const Text('Ответить'),
+                onTap: () => Navigator.of(context).pop(_MessageAction.reply),
               ),
-            if (message.status == _OutgoingMessageStatus.failed)
               ListTile(
-                leading: const Icon(Icons.refresh_rounded),
-                title: const Text('Повторить отправку'),
-                onTap: () => Navigator.of(context).pop(_MessageAction.retry),
+                leading: const Icon(Icons.forward_rounded),
+                title: const Text('Переслать'),
+                onTap: () => Navigator.of(context).pop(_MessageAction.forward),
               ),
-            if (message.status != _OutgoingMessageStatus.sent)
-              ListTile(
-                leading: const Icon(Icons.delete_outline_rounded),
-                title: const Text('Убрать из очереди'),
-                onTap: () => Navigator.of(context).pop(_MessageAction.delete),
-              ),
-          ],
+              if (canCopy)
+                ListTile(
+                  leading: const Icon(Icons.copy_rounded),
+                  title: const Text('Копировать текст'),
+                  onTap: () => Navigator.of(context).pop(_MessageAction.copy),
+                ),
+              if (message.status == _OutgoingMessageStatus.failed)
+                ListTile(
+                  leading: const Icon(Icons.refresh_rounded),
+                  title: const Text('Повторить отправку'),
+                  onTap: () => Navigator.of(context).pop(_MessageAction.retry),
+                ),
+              if (message.status != _OutgoingMessageStatus.sent)
+                ListTile(
+                  leading: const Icon(Icons.delete_outline_rounded),
+                  title: const Text('Убрать из очереди'),
+                  onTap: () => Navigator.of(context).pop(_MessageAction.delete),
+                ),
+            ],
+          ),
         ),
-      ),
-    );
+      );
+    }
     if (!mounted || action == null) {
       return;
     }
@@ -3684,6 +3809,88 @@ class _ChatScreenState extends State<ChatScreen> {
         hasAttachments: message.attachments.isNotEmpty,
       );
     });
+  }
+
+  bool _useDesktopMessageContextMenu() {
+    final platform = Theme.of(context).platform;
+    final isDesktopPlatform = kIsWeb ||
+        platform == TargetPlatform.macOS ||
+        platform == TargetPlatform.windows ||
+        platform == TargetPlatform.linux;
+    return isDesktopPlatform && MediaQuery.of(context).size.width >= 720;
+  }
+
+  Future<T?> _showDesktopMessagePopover<T>({
+    required Offset anchorPosition,
+    required List<_ContextMenuActionItem<T>> actions,
+    List<String> reactions = const <String>[],
+    T Function(String emoji)? reactionValueBuilder,
+  }) {
+    return showGeneralDialog<T>(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: 'message-context-menu',
+      barrierColor: Colors.transparent,
+      transitionDuration: const Duration(milliseconds: 150),
+      pageBuilder: (dialogContext, _, __) {
+        final screenSize = MediaQuery.of(dialogContext).size;
+        const popupWidth = 320.0;
+        final reactionBarHeight = reactions.isEmpty ? 0.0 : 58.0;
+        final menuHeight = 16.0 + actions.length * 46.0;
+        final totalHeight =
+            reactionBarHeight + (reactionBarHeight == 0 ? 0 : 8) + menuHeight;
+        final openBelow =
+            anchorPosition.dy + totalHeight + 12 <= screenSize.height;
+        final resolvedLeft = (anchorPosition.dx - popupWidth / 2)
+            .clamp(12.0, screenSize.width - popupWidth - 12.0);
+        final resolvedTop = (openBelow
+                ? anchorPosition.dy + 10
+                : anchorPosition.dy - totalHeight - 10)
+            .clamp(12.0, screenSize.height - totalHeight - 12.0);
+
+        return Stack(
+          children: [
+            Positioned.fill(
+              child: GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onTap: () => Navigator.of(dialogContext).maybePop(),
+              ),
+            ),
+            Positioned(
+              left: resolvedLeft,
+              top: resolvedTop,
+              child: _DesktopMessageContextMenu<T>(
+                reactions: reactions,
+                actions: actions,
+                onReactionSelected: reactionValueBuilder == null
+                    ? null
+                    : (emoji) => Navigator.of(dialogContext)
+                        .pop(reactionValueBuilder(emoji)),
+                onActionSelected: (value) {
+                  Navigator.of(dialogContext).pop(value);
+                },
+              ),
+            ),
+          ],
+        );
+      },
+      transitionBuilder: (context, animation, _, child) {
+        final curvedAnimation = CurvedAnimation(
+          parent: animation,
+          curve: Curves.easeOutCubic,
+        );
+        return FadeTransition(
+          opacity: curvedAnimation,
+          child: ScaleTransition(
+            scale: Tween<double>(
+              begin: 0.96,
+              end: 1,
+            ).animate(curvedAnimation),
+            child: child,
+          ),
+        );
+      },
+    );
   }
 
   Future<void> _deleteRemoteMessage(ChatMessage message) async {
@@ -5702,6 +5909,20 @@ class _ReactionPill extends StatelessWidget {
 
 enum _MessageAction { react, reply, forward, pin, edit, copy, retry, delete }
 
+class _ContextMenuActionItem<T> {
+  const _ContextMenuActionItem({
+    required this.label,
+    required this.icon,
+    required this.value,
+    this.isDestructive = false,
+  });
+
+  final String label;
+  final IconData icon;
+  final T value;
+  final bool isDestructive;
+}
+
 class _MessageSheetSelection {
   const _MessageSheetSelection({
     required this.action,
@@ -5710,6 +5931,168 @@ class _MessageSheetSelection {
 
   final _MessageAction action;
   final String? emoji;
+}
+
+class _DesktopMessageContextMenu<T> extends StatelessWidget {
+  const _DesktopMessageContextMenu({
+    required this.actions,
+    required this.onActionSelected,
+    this.reactions = const <String>[],
+    this.onReactionSelected,
+  });
+
+  final List<_ContextMenuActionItem<T>> actions;
+  final List<String> reactions;
+  final ValueChanged<T> onActionSelected;
+  final ValueChanged<String>? onReactionSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final backgroundColor = isDark ? const Color(0xFF1F1F22) : Colors.white;
+    final reactionBarColor =
+        isDark ? const Color(0xFF2A2A2F) : const Color(0xFFF4F5F8);
+    final shadowColor = Colors.black.withValues(alpha: isDark ? 0.34 : 0.16);
+
+    return Material(
+      color: Colors.transparent,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 320),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (reactions.isNotEmpty && onReactionSelected != null)
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: reactionBarColor,
+                  borderRadius: BorderRadius.circular(22),
+                  boxShadow: [
+                    BoxShadow(
+                      color: shadowColor,
+                      blurRadius: 24,
+                      offset: const Offset(0, 10),
+                    ),
+                  ],
+                ),
+                child: Wrap(
+                  spacing: 4,
+                  runSpacing: 4,
+                  children: reactions
+                      .map(
+                        (emoji) => InkWell(
+                          borderRadius: BorderRadius.circular(18),
+                          onTap: () => onReactionSelected?.call(emoji),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 6,
+                            ),
+                            child: Text(
+                              emoji,
+                              style: const TextStyle(fontSize: 26, height: 1),
+                            ),
+                          ),
+                        ),
+                      )
+                      .toList(),
+                ),
+              ),
+            if (reactions.isNotEmpty && onReactionSelected != null)
+              const SizedBox(height: 8),
+            Container(
+              decoration: BoxDecoration(
+                color: backgroundColor,
+                borderRadius: BorderRadius.circular(20),
+                boxShadow: [
+                  BoxShadow(
+                    color: shadowColor,
+                    blurRadius: 30,
+                    offset: const Offset(0, 14),
+                  ),
+                ],
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    for (var index = 0; index < actions.length; index++) ...[
+                      _DesktopMessageContextMenuTile<T>(
+                        item: actions[index],
+                        onTap: () => onActionSelected(actions[index].value),
+                      ),
+                      if (index != actions.length - 1)
+                        Divider(
+                          height: 1,
+                          indent: 54,
+                          endIndent: 16,
+                          color: theme.colorScheme.outlineVariant
+                              .withValues(alpha: 0.32),
+                        ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DesktopMessageContextMenuTile<T> extends StatelessWidget {
+  const _DesktopMessageContextMenuTile({
+    required this.item,
+    required this.onTap,
+  });
+
+  final _ContextMenuActionItem<T> item;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final foregroundColor = item.isDestructive
+        ? theme.colorScheme.error
+        : theme.colorScheme.onSurface;
+
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 28,
+              child: Icon(
+                item.icon,
+                size: 21,
+                color: foregroundColor,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Flexible(
+              child: Text(
+                item.label,
+                style: theme.textTheme.titleSmall?.copyWith(
+                  color: foregroundColor,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _ForwardDraft {
