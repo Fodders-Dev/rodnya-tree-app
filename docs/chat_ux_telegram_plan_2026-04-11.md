@@ -37,11 +37,11 @@
 - [x] Более сильный offline/retry/dedup layer
 
 ## Wave 5
-- Статус: in progress
+- Статус: closed
 - [x] Desktop/web context menu без пересечения с системным browser menu
 - [x] Multi-select сообщений с batch copy/forward/delete
 - [x] Attachment viewer и download/open flow для remote вложений
-- [ ] Галерея media и richer video/image navigation как отдельный polish-pass
+- [x] Галерея media и richer video/image navigation как отдельный polish-pass
 
 ## Family-first differentiators
 - [ ] Быстрый переход из дерева в релевантный чат ветки
@@ -88,6 +88,7 @@
 - [x] Browser context menu suppression на chat screen: системное web-меню отключается, чтобы не перекрывать custom popover
 - [x] Multi-select: выделение нескольких сообщений, app bar batch actions и transcript-copy в Telegram-like формате `[dd.MM.yyyy H:mm] Имя: текст`
 - [x] Attachment viewer/download pass: tap по remote вложению открывает fullscreen viewer с `open externally` и `download/open` actions вместо тупика "отправили, но не посмотреть"
+- [x] Media gallery polish: viewer теперь листает вложения по чату, показывает sender/date/caption metadata, thumbnails strip, keyboard navigation и корректнее открывает local video sources
 
 ## Notes
 - Telegram reference:

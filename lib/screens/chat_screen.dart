@@ -3613,7 +3613,7 @@ class _ChatScreenState extends State<ChatScreen> {
         showSelectionMarker: _isSelectionMode,
         isSelected: _selectedRemoteMessageIds.contains(message.id),
         onOpenRemoteAttachment: (attachments, attachment) =>
-            _openRemoteAttachmentPreview(attachments, attachment),
+            _openRemoteAttachmentPreview(message, attachments, attachment),
       ),
     );
   }
@@ -4418,20 +4418,21 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _openRemoteAttachmentPreview(
+    ChatMessage message,
     List<ChatAttachment> attachments,
     ChatAttachment initialAttachment,
   ) async {
-    final previewItems = attachments
-        .where((attachment) => attachment.type != ChatAttachmentType.audio)
-        .map(_attachmentPreviewItemFromRemote)
-        .toList();
+    final currentAttachmentIndex = attachments.indexWhere(
+      (attachment) => _attachmentsMatch(attachment, initialAttachment),
+    );
+    final initialItemId =
+        'remote:${message.id}:${currentAttachmentIndex < 0 ? 0 : currentAttachmentIndex}';
+    final previewItems = _remoteAttachmentGalleryItems();
     if (previewItems.isEmpty) {
       return;
     }
     final initialIndex = previewItems.indexWhere(
-      (item) =>
-          item.source == initialAttachment.url &&
-          item.kind == _chatAttachmentKindFromType(initialAttachment.type),
+      (item) => item.id == initialItemId,
     );
     await showDialog<void>(
       context: context,
@@ -4457,7 +4458,15 @@ class _ChatScreenState extends State<ChatScreen> {
     final previewItems = files
         .where((file) =>
             _attachmentKindFromXFile(file) != _ChatAttachmentKind.audio)
-        .map(_attachmentPreviewItemFromLocal)
+        .toList()
+        .asMap()
+        .entries
+        .map(
+          (entry) => _attachmentPreviewItemFromLocal(
+            entry.value,
+            id: 'local:${entry.key}:${entry.value.name}',
+          ),
+        )
         .toList();
     if (previewItems.isEmpty) {
       return;
@@ -4476,23 +4485,74 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  List<_AttachmentPreviewItem> _remoteAttachmentGalleryItems() {
+    final messages = List<ChatMessage>.from(_latestRemoteMessages)
+      ..sort((left, right) => left.timestamp.compareTo(right.timestamp));
+    final previewItems = <_AttachmentPreviewItem>[];
+    for (final message in messages) {
+      final senderLabel = _senderDisplayNameForMessage(
+        senderId: message.senderId,
+        senderName: message.senderName,
+      );
+      for (var index = 0; index < message.attachments.length; index++) {
+        final attachment = message.attachments[index];
+        final kind = _attachmentKindFromAttachment(attachment);
+        if (kind == _ChatAttachmentKind.audio) {
+          continue;
+        }
+        previewItems.add(
+          _attachmentPreviewItemFromRemote(
+            attachment,
+            id: 'remote:${message.id}:$index',
+            senderLabel: senderLabel,
+            timestamp: message.timestamp,
+            caption: message.text.trim(),
+          ),
+        );
+      }
+    }
+    return previewItems;
+  }
+
   _AttachmentPreviewItem _attachmentPreviewItemFromRemote(
-    ChatAttachment attachment,
-  ) {
+    ChatAttachment attachment, {
+    required String id,
+    String? senderLabel,
+    DateTime? timestamp,
+    String? caption,
+  }) {
     return _AttachmentPreviewItem.remote(
-      kind: _chatAttachmentKindFromType(attachment.type),
+      id: id,
+      kind: _attachmentKindFromAttachment(attachment),
       source: attachment.url,
       displayName: _displayName(attachment.fileName ?? attachment.url),
       thumbnailUrl: attachment.thumbnailUrl,
+      senderLabel: senderLabel,
+      timestamp: timestamp,
+      caption: caption,
     );
   }
 
-  _AttachmentPreviewItem _attachmentPreviewItemFromLocal(XFile file) {
+  _AttachmentPreviewItem _attachmentPreviewItemFromLocal(
+    XFile file, {
+    required String id,
+  }) {
     return _AttachmentPreviewItem.local(
+      id: id,
       kind: _attachmentKindFromXFile(file),
       file: file,
       displayName: _displayName(file.name),
+      senderLabel: 'Вы',
+      timestamp: DateTime.now(),
+      caption: '',
     );
+  }
+
+  bool _attachmentsMatch(ChatAttachment left, ChatAttachment right) {
+    return left.type == right.type &&
+        left.url == right.url &&
+        left.fileName == right.fileName &&
+        left.thumbnailUrl == right.thumbnailUrl;
   }
 
   Future<void> _openAttachmentExternally(_AttachmentPreviewItem item) async {
@@ -6900,30 +6960,50 @@ class _SelectedMessageEntry {
 
 class _AttachmentPreviewItem {
   const _AttachmentPreviewItem.remote({
+    required this.id,
     required this.kind,
     required this.source,
     required this.displayName,
     this.thumbnailUrl,
+    this.senderLabel,
+    this.timestamp,
+    this.caption,
   })  : file = null,
         isRemote = true;
 
   const _AttachmentPreviewItem.local({
+    required this.id,
     required this.kind,
     required this.file,
     required this.displayName,
+    this.senderLabel,
+    this.timestamp,
+    this.caption,
   })  : source = null,
         thumbnailUrl = null,
         isRemote = false;
 
+  final String id;
   final _ChatAttachmentKind kind;
   final String? source;
   final String? thumbnailUrl;
   final XFile? file;
   final String displayName;
   final bool isRemote;
+  final String? senderLabel;
+  final DateTime? timestamp;
+  final String? caption;
 
   bool get isVisual =>
       kind == _ChatAttachmentKind.image || kind == _ChatAttachmentKind.video;
+
+  String? get trimmedCaption {
+    final value = caption?.trim();
+    if (value == null || value.isEmpty) {
+      return null;
+    }
+    return value;
+  }
 }
 
 class _DesktopMessageContextMenu<T> extends StatelessWidget {
@@ -7123,129 +7203,194 @@ class _AttachmentViewerDialogState extends State<_AttachmentViewerDialog> {
     super.dispose();
   }
 
+  Future<void> _goToPage(int index) async {
+    if (index < 0 || index >= widget.items.length || index == _currentIndex) {
+      return;
+    }
+    await _pageController.animateToPage(
+      index,
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  void _goToPrevious() {
+    unawaited(_goToPage(_currentIndex - 1));
+  }
+
+  void _goToNext() {
+    unawaited(_goToPage(_currentIndex + 1));
+  }
+
   @override
   Widget build(BuildContext context) {
     final currentItem = widget.items[_currentIndex];
-    return Dialog.fullscreen(
-      backgroundColor: Colors.black.withValues(alpha: 0.92),
-      child: SafeArea(
-        child: Stack(
-          children: [
-            Column(
+    final metadataLabel = <String>[
+      if (currentItem.senderLabel != null &&
+          currentItem.senderLabel!.isNotEmpty)
+        currentItem.senderLabel!,
+      if (currentItem.timestamp != null)
+        DateFormat('dd.MM.yyyy H:mm', 'ru').format(currentItem.timestamp!),
+    ].join(' • ');
+
+    return CallbackShortcuts(
+      bindings: <ShortcutActivator, VoidCallback>{
+        const SingleActivator(LogicalKeyboardKey.escape): () =>
+            Navigator.of(context).maybePop(),
+        const SingleActivator(LogicalKeyboardKey.arrowLeft): _goToPrevious,
+        const SingleActivator(LogicalKeyboardKey.arrowRight): _goToNext,
+      },
+      child: Dialog.fullscreen(
+        backgroundColor: Colors.black.withValues(alpha: 0.92),
+        child: Focus(
+          autofocus: true,
+          child: SafeArea(
+            child: Stack(
               children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-                  child: Row(
-                    children: [
-                      IconButton(
-                        onPressed: () => Navigator.of(context).pop(),
-                        icon: const Icon(Icons.close, color: Colors.white),
-                      ),
-                      Expanded(
-                        child: Text(
-                          currentItem.displayName,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
+                Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+                      child: Row(
+                        children: [
+                          IconButton(
+                            onPressed: () => Navigator.of(context).pop(),
+                            tooltip: 'Закрыть',
+                            icon: const Icon(Icons.close, color: Colors.white),
                           ),
-                        ),
-                      ),
-                      IconButton(
-                        tooltip: currentItem.isRemote
-                            ? 'Открыть оригинал'
-                            : 'Открыть файл',
-                        onPressed: () => widget.onOpenExternally(currentItem),
-                        icon:
-                            const Icon(Icons.open_in_new, color: Colors.white),
-                      ),
-                      IconButton(
-                        tooltip: supportsChatAttachmentDownload
-                            ? 'Скачать'
-                            : 'Открыть',
-                        onPressed: () => widget.onDownload(currentItem),
-                        icon: Icon(
-                          supportsChatAttachmentDownload
-                              ? Icons.download_rounded
-                              : Icons.file_download_outlined,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Expanded(
-                  child: PageView.builder(
-                    controller: _pageController,
-                    itemCount: widget.items.length,
-                    onPageChanged: (index) {
-                      setState(() {
-                        _currentIndex = index;
-                      });
-                    },
-                    itemBuilder: (context, index) {
-                      return _AttachmentViewerPage(item: widget.items[index]);
-                    },
-                  ),
-                ),
-                if (widget.items.length > 1)
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: List<Widget>.generate(
-                        widget.items.length,
-                        (index) => AnimatedContainer(
-                          duration: const Duration(milliseconds: 160),
-                          margin: const EdgeInsets.symmetric(horizontal: 4),
-                          width: index == _currentIndex ? 18 : 8,
-                          height: 8,
-                          decoration: BoxDecoration(
-                            color: index == _currentIndex
-                                ? Colors.white
-                                : Colors.white.withValues(alpha: 0.35),
-                            borderRadius: BorderRadius.circular(999),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  currentItem.displayName,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                if (metadataLabel.isNotEmpty)
+                                  Text(
+                                    metadataLabel,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color:
+                                          Colors.white.withValues(alpha: 0.72),
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                              ],
+                            ),
                           ),
+                          Text(
+                            '${_currentIndex + 1} / ${widget.items.length}',
+                            style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.82),
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          IconButton(
+                            tooltip: currentItem.isRemote
+                                ? 'Открыть оригинал'
+                                : 'Открыть файл',
+                            onPressed: () =>
+                                widget.onOpenExternally(currentItem),
+                            icon: const Icon(
+                              Icons.open_in_new,
+                              color: Colors.white,
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: supportsChatAttachmentDownload
+                                ? 'Скачать'
+                                : 'Открыть',
+                            onPressed: () => widget.onDownload(currentItem),
+                            icon: Icon(
+                              supportsChatAttachmentDownload
+                                  ? Icons.download_rounded
+                                  : Icons.file_download_outlined,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Expanded(
+                      child: PageView.builder(
+                        controller: _pageController,
+                        itemCount: widget.items.length,
+                        onPageChanged: (index) {
+                          setState(() {
+                            _currentIndex = index;
+                          });
+                        },
+                        itemBuilder: (context, index) {
+                          return _AttachmentViewerPage(
+                              item: widget.items[index]);
+                        },
+                      ),
+                    ),
+                    if (currentItem.trimmedCaption != null ||
+                        metadataLabel.isNotEmpty)
+                      _AttachmentViewerDetails(
+                        item: currentItem,
+                        metadataLabel: metadataLabel,
+                      ),
+                    if (widget.items.length > 1)
+                      _AttachmentViewerThumbnailStrip(
+                        items: widget.items,
+                        currentIndex: _currentIndex,
+                        onSelect: _goToPage,
+                      ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                      child: Text(
+                        'Esc закрыть • ← → листать',
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.48),
+                          fontSize: 12,
                         ),
+                      ),
+                    ),
+                  ],
+                ),
+                if (widget.items.length > 1 && _currentIndex > 0)
+                  Positioned(
+                    left: 20,
+                    top: 0,
+                    bottom: 92,
+                    child: Center(
+                      child: IconButton.filledTonal(
+                        tooltip: 'Предыдущее вложение',
+                        onPressed: _goToPrevious,
+                        icon: const Icon(Icons.chevron_left_rounded),
+                      ),
+                    ),
+                  ),
+                if (widget.items.length > 1 &&
+                    _currentIndex < widget.items.length - 1)
+                  Positioned(
+                    right: 20,
+                    top: 0,
+                    bottom: 92,
+                    child: Center(
+                      child: IconButton.filledTonal(
+                        tooltip: 'Следующее вложение',
+                        onPressed: _goToNext,
+                        icon: const Icon(Icons.chevron_right_rounded),
                       ),
                     ),
                   ),
               ],
             ),
-            if (widget.items.length > 1 && _currentIndex > 0)
-              Positioned(
-                left: 20,
-                top: 0,
-                bottom: 0,
-                child: Center(
-                  child: IconButton.filledTonal(
-                    onPressed: () => _pageController.previousPage(
-                      duration: const Duration(milliseconds: 220),
-                      curve: Curves.easeOutCubic,
-                    ),
-                    icon: const Icon(Icons.chevron_left_rounded),
-                  ),
-                ),
-              ),
-            if (widget.items.length > 1 &&
-                _currentIndex < widget.items.length - 1)
-              Positioned(
-                right: 20,
-                top: 0,
-                bottom: 0,
-                child: Center(
-                  child: IconButton.filledTonal(
-                    onPressed: () => _pageController.nextPage(
-                      duration: const Duration(milliseconds: 220),
-                      curve: Curves.easeOutCubic,
-                    ),
-                    icon: const Icon(Icons.chevron_right_rounded),
-                  ),
-                ),
-              ),
-          ],
+          ),
         ),
       ),
     );
@@ -7269,6 +7414,8 @@ class _AttachmentViewerPage extends StatelessWidget {
                 child: Image.network(
                   item.source!,
                   fit: BoxFit.contain,
+                  errorBuilder: (_, __, ___) =>
+                      _AttachmentViewerPlaceholder(item: item),
                 ),
               )
             : FutureBuilder<Uint8List>(
@@ -7293,7 +7440,8 @@ class _AttachmentViewerPage extends StatelessWidget {
         content = source == null || source.trim().isEmpty
             ? _AttachmentViewerPlaceholder(item: item)
             : _AttachmentVideoPlayer(
-                url: source,
+                source: source,
+                isRemoteSource: item.isRemote,
                 posterUrl: item.thumbnailUrl,
               );
         break;
@@ -7306,6 +7454,241 @@ class _AttachmentViewerPage extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
       child: Center(child: content),
+    );
+  }
+}
+
+class _AttachmentViewerDetails extends StatelessWidget {
+  const _AttachmentViewerDetails({
+    required this.item,
+    required this.metadataLabel,
+  });
+
+  final _AttachmentPreviewItem item;
+  final String metadataLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: Colors.white.withValues(alpha: 0.08),
+          ),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (metadataLabel.isNotEmpty)
+                Text(
+                  metadataLabel,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.72),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              if (metadataLabel.isNotEmpty && item.trimmedCaption != null)
+                const SizedBox(height: 6),
+              if (item.trimmedCaption != null)
+                Text(
+                  item.trimmedCaption!,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    height: 1.35,
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AttachmentViewerThumbnailStrip extends StatelessWidget {
+  const _AttachmentViewerThumbnailStrip({
+    required this.items,
+    required this.currentIndex,
+    required this.onSelect,
+  });
+
+  final List<_AttachmentPreviewItem> items;
+  final int currentIndex;
+  final ValueChanged<int> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 78,
+      child: ListView.separated(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+        scrollDirection: Axis.horizontal,
+        itemBuilder: (context, index) => _AttachmentViewerThumbnail(
+          item: items[index],
+          isSelected: index == currentIndex,
+          onTap: () => onSelect(index),
+        ),
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemCount: items.length,
+      ),
+    );
+  }
+}
+
+class _AttachmentViewerThumbnail extends StatelessWidget {
+  const _AttachmentViewerThumbnail({
+    required this.item,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  final _AttachmentPreviewItem item;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final borderColor =
+        isSelected ? Colors.white : Colors.white.withValues(alpha: 0.18);
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(16),
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 160),
+        width: 64,
+        height: 64,
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: borderColor, width: isSelected ? 2 : 1),
+          color: Colors.white.withValues(alpha: 0.08),
+        ),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            _AttachmentViewerThumbnailPreview(item: item),
+            if (item.kind == _ChatAttachmentKind.video)
+              Align(
+                alignment: Alignment.center,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.48),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Padding(
+                    padding: EdgeInsets.all(6),
+                    child: Icon(
+                      Icons.play_arrow_rounded,
+                      color: Colors.white,
+                      size: 18,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AttachmentViewerThumbnailPreview extends StatelessWidget {
+  const _AttachmentViewerThumbnailPreview({required this.item});
+
+  final _AttachmentPreviewItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    if (item.kind == _ChatAttachmentKind.image && item.isRemote) {
+      return Image.network(
+        item.thumbnailUrl ?? item.source ?? '',
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => _AttachmentViewerThumbnailFallback(
+          item: item,
+        ),
+      );
+    }
+
+    if (item.kind == _ChatAttachmentKind.image && item.file != null) {
+      return FutureBuilder<Uint8List>(
+        future: item.file!.readAsBytes(),
+        builder: (context, snapshot) {
+          if (!snapshot.hasData) {
+            return const Center(
+              child: SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            );
+          }
+          return Image.memory(
+            snapshot.data!,
+            fit: BoxFit.cover,
+          );
+        },
+      );
+    }
+
+    if (item.kind == _ChatAttachmentKind.video &&
+        item.thumbnailUrl != null &&
+        item.thumbnailUrl!.isNotEmpty) {
+      return Image.network(
+        item.thumbnailUrl!,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => _AttachmentViewerThumbnailFallback(
+          item: item,
+        ),
+      );
+    }
+
+    return _AttachmentViewerThumbnailFallback(item: item);
+  }
+}
+
+class _AttachmentViewerThumbnailFallback extends StatelessWidget {
+  const _AttachmentViewerThumbnailFallback({required this.item});
+
+  final _AttachmentPreviewItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    late final IconData icon;
+    switch (item.kind) {
+      case _ChatAttachmentKind.image:
+        icon = Icons.image_outlined;
+        break;
+      case _ChatAttachmentKind.video:
+        icon = Icons.videocam_outlined;
+        break;
+      case _ChatAttachmentKind.audio:
+        icon = Icons.mic_none_outlined;
+        break;
+      case _ChatAttachmentKind.other:
+        icon = Icons.insert_drive_file_outlined;
+        break;
+    }
+    return ColoredBox(
+      color: Colors.white.withValues(alpha: 0.06),
+      child: Center(
+        child: Icon(
+          icon,
+          color: Colors.white.withValues(alpha: 0.82),
+        ),
+      ),
     );
   }
 }
@@ -7358,11 +7741,13 @@ class _AttachmentViewerPlaceholder extends StatelessWidget {
 
 class _AttachmentVideoPlayer extends StatefulWidget {
   const _AttachmentVideoPlayer({
-    required this.url,
+    required this.source,
+    required this.isRemoteSource,
     this.posterUrl,
   });
 
-  final String url;
+  final String source;
+  final bool isRemoteSource;
   final String? posterUrl;
 
   @override
@@ -7376,7 +7761,10 @@ class _AttachmentVideoPlayerState extends State<_AttachmentVideoPlayer> {
   @override
   void initState() {
     super.initState();
-    _controller = VideoPlayerController.networkUrl(Uri.parse(widget.url));
+    final uri = _videoSourceUri(widget.source);
+    _controller = widget.isRemoteSource
+        ? VideoPlayerController.networkUrl(uri)
+        : VideoPlayerController.contentUri(uri);
     _initializeFuture = _controller!.initialize();
     _controller!.setLooping(true);
   }
@@ -7416,7 +7804,11 @@ class _AttachmentVideoPlayerState extends State<_AttachmentVideoPlayer> {
             alignment: Alignment.center,
             children: [
               if (widget.posterUrl != null && widget.posterUrl!.isNotEmpty)
-                Image.network(widget.posterUrl!, fit: BoxFit.contain),
+                Image.network(
+                  widget.posterUrl!,
+                  fit: BoxFit.contain,
+                  errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                ),
               const CircularProgressIndicator(),
             ],
           );
@@ -7481,6 +7873,14 @@ class _AttachmentVideoPlayerState extends State<_AttachmentVideoPlayer> {
       },
     );
   }
+
+  Uri _videoSourceUri(String value) {
+    final parsed = Uri.tryParse(value);
+    if (parsed != null && parsed.hasScheme) {
+      return parsed;
+    }
+    return Uri.file(value);
+  }
 }
 
 class _ForwardDraft {
@@ -7520,6 +7920,13 @@ _ChatAttachmentKind _chatAttachmentKindFromType(ChatAttachmentType type) {
     case ChatAttachmentType.file:
       return _ChatAttachmentKind.other;
   }
+}
+
+_ChatAttachmentKind _attachmentKindFromAttachment(ChatAttachment attachment) {
+  if (attachment.type == ChatAttachmentType.file) {
+    return _attachmentKindFromName(attachment.fileName, attachment.url);
+  }
+  return _chatAttachmentKindFromType(attachment.type);
 }
 
 _ChatAttachmentKind _attachmentKindFromXFile(XFile file) {

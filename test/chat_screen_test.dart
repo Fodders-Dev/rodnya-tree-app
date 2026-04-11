@@ -1339,7 +1339,7 @@ void main() {
     );
   });
 
-  testWidgets('ChatScreen opens attachment viewer for remote file',
+  testWidgets('ChatScreen opens attachment gallery for remote files',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(900, 1000));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -1361,7 +1361,7 @@ void main() {
         id: 'm-file-1',
         chatId: 'chat-1',
         senderId: 'other-user',
-        text: '',
+        text: 'Первый документ',
         timestamp: DateTime(2026, 4, 8, 9, 19),
         isRead: false,
         participants: const ['user-1', 'other-user'],
@@ -1374,6 +1374,23 @@ void main() {
           ),
         ],
       ),
+      ChatMessage(
+        id: 'm-file-2',
+        chatId: 'chat-1',
+        senderId: 'other-user',
+        text: 'Второй документ',
+        timestamp: DateTime(2026, 4, 8, 9, 21),
+        isRead: false,
+        participants: const ['user-1', 'other-user'],
+        senderName: 'Анастасия<3',
+        attachments: const [
+          ChatAttachment(
+            type: ChatAttachmentType.file,
+            url: 'https://example.com/notes.pdf',
+            fileName: 'notes.pdf',
+          ),
+        ],
+      ),
     ]);
     await tester.pumpAndSettle();
 
@@ -1381,8 +1398,18 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('contract.pdf'), findsAtLeastNWidgets(1));
+    expect(find.text('1 / 2'), findsOneWidget);
+    expect(find.text('Анастасия<3 • 08.04.2026 9:19'), findsAtLeastNWidgets(1));
+    expect(find.text('Первый документ'), findsAtLeastNWidgets(1));
     expect(find.byIcon(Icons.open_in_new), findsOneWidget);
     expect(find.byIcon(Icons.file_download_outlined), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Следующее вложение'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('notes.pdf'), findsAtLeastNWidgets(1));
+    expect(find.text('2 / 2'), findsOneWidget);
+    expect(find.text('Второй документ'), findsAtLeastNWidgets(1));
   });
 
   testWidgets('ChatScreen forwards selected messages as a batch',
