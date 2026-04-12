@@ -911,14 +911,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                     debugPrint(
                                       'Attempting to request RuStore review...',
                                     );
-                                    final requestAccepted =
-                                        await _rustoreService.requestReview();
+                                    final reviewStatus = await _rustoreService
+                                        .requestReviewStatus();
 
                                     if (!currentContext.mounted) {
                                       return;
                                     }
 
-                                    if (requestAccepted) {
+                                    if (reviewStatus ==
+                                            RustoreReviewRequestStatus.shown ||
+                                        reviewStatus ==
+                                            RustoreReviewRequestStatus
+                                                .alreadyExists) {
                                       debugPrint(
                                         'Review request initiated successfully.',
                                       );
@@ -927,7 +931,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                       ).showSnackBar(
                                         SnackBar(
                                           content: Text(
-                                            'Запрос на оценку отправлен. Спасибо!',
+                                            reviewStatus ==
+                                                    RustoreReviewRequestStatus
+                                                        .alreadyExists
+                                                ? 'Отзыв в RuStore уже существует. Спасибо!'
+                                                : 'Запрос на оценку отправлен. Спасибо!',
                                           ),
                                           duration: Duration(seconds: 3),
                                         ),

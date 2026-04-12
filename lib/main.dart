@@ -47,7 +47,7 @@ Future<void> _bootstrapAndRunApp() async {
         storefrontConfig.isRustore;
 
     // На web не тянем .env как asset, чтобы не получать лишний 404 в консоли.
-    if (!kIsWeb) {
+    if (!kIsWeb && kDebugMode) {
       try {
         await dotenv.load(fileName: ".env");
         debugPrint('.env file loaded successfully.');

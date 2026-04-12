@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lineage/services/rustore_service.dart';
 
@@ -36,5 +37,24 @@ void main() {
 
     final result = await service.requestReview();
     expect(result, isTrue);
+  });
+
+  test('requestReviewStatus treats existing RuStore review as completed',
+      () async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+
+    final service = RustoreService(
+      reviewInitialize: () async {},
+      reviewRequest: () async {
+        throw PlatformException(
+          code: 'RuStoreReviewExists',
+          message: 'Review already exists.',
+        );
+      },
+      reviewShow: () async {},
+    );
+
+    final result = await service.requestReviewStatus();
+    expect(result, RustoreReviewRequestStatus.alreadyExists);
   });
 }

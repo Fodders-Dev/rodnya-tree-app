@@ -728,6 +728,16 @@ class CustomApiNotificationService implements NotificationServiceInterface {
       _registeredPushTokenStorageKey,
       nextFingerprint,
     );
+    final maskedToken = token.length <= 8
+        ? token
+        : '${token.substring(0, 4)}...${token.substring(token.length - 4)}';
+    debugPrint(
+      'Custom API push registration completed: '
+      'provider=rustore, '
+      'platform=${defaultTargetPlatform.name}, '
+      'userId=${authService.currentUserId ?? ''}, '
+      'token=$maskedToken',
+    );
   }
 
   Future<bool> _registerPushDevicesSafely({

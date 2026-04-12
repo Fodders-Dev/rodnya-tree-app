@@ -1,5 +1,6 @@
 import 'dart:async'; // Добавляем для StreamSubscription
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 // Используем новые импорты для API v8.0.0
 import 'package:flutter_rustore_update/flutter_rustore_update.dart';
 // Добавляем импорт для типов из update SDK
@@ -36,6 +37,12 @@ const int installStatusPending = 5;
 // Ключ для сохранения статуса запроса отзыва
 const String _reviewRequestedKey = 'lineage_review_requested';
 
+enum RustoreReviewRequestStatus {
+  shown,
+  alreadyExists,
+  unavailable,
+}
+
 class RustoreService {
   RustoreService({
     Future<void> Function()? reviewInitialize,
@@ -63,7 +70,11 @@ class RustoreService {
         // Используем RustoreUpdateClient
         final update.UpdateInfo info = await RustoreUpdateClient.info();
         debugPrint(
-          'RuStore update check completed (v8 API). Info: ${info.toString()}',
+          'RuStore update check completed (v8 API). '
+          'package=${info.packageName}, '
+          'availableVersionCode=${info.availableVersionCode}, '
+          'installStatus=${info.installStatus}, '
+          'updateAvailability=${info.updateAvailability}',
         );
         return info;
       } catch (e) {
@@ -170,14 +181,14 @@ class RustoreService {
     }
   }
 
-  Future<bool> requestReview() async {
+  Future<RustoreReviewRequestStatus> requestReviewStatus() async {
     debugPrint('[RustoreService] Attempting to initialize review...');
     await initializeReview();
     if (!_isReviewInitialized ||
         kIsWeb ||
         defaultTargetPlatform != TargetPlatform.android) {
       debugPrint('Cannot request review: SDK not initialized or not Android.');
-      return false;
+      return RustoreReviewRequestStatus.unavailable;
     }
 
     try {
@@ -190,12 +201,36 @@ class RustoreService {
       debugPrint(
           '[RustoreService] Review dialog shown (or skipped by RuStore).');
       await markReviewAsRequested();
-      return true;
+      return RustoreReviewRequestStatus.shown;
+    } on PlatformException catch (error) {
+      if (_isAlreadyExistingReviewError(error)) {
+        debugPrint(
+          'RuStore review already exists. Treating it as completed user feedback.',
+        );
+        await markReviewAsRequested();
+        return RustoreReviewRequestStatus.alreadyExists;
+      }
+      debugPrint('Error requesting/showing RuStore review (v8 API): $error');
+      debugPrint('Review request failed. Error: $error');
+      return RustoreReviewRequestStatus.unavailable;
     } catch (e) {
       debugPrint('Error requesting/showing RuStore review (v8 API): $e');
       debugPrint('Review request failed. Error: $e');
-      return false;
+      return RustoreReviewRequestStatus.unavailable;
     }
+  }
+
+  Future<bool> requestReview() async {
+    final status = await requestReviewStatus();
+    return status != RustoreReviewRequestStatus.unavailable;
+  }
+
+  bool _isAlreadyExistingReviewError(PlatformException error) {
+    final code = error.code.trim();
+    final message = error.message?.trim() ?? '';
+    return code == 'RuStoreReviewExists' ||
+        message.contains('RuStoreReviewExists') ||
+        message.contains('Review already exists');
   }
 
   // --- Методы для отслеживания статуса оценки ---

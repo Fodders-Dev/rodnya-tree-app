@@ -69,6 +69,13 @@ export LINEAGE_BUILD_NUMBER=10
   - update check в release APK отрабатывает без краша и корректно логирует `RuStore not installed`
   - review CTA больше не считает вызов успешным при ошибке `RuStore not installed`
   - crash buffer пустой после startup и review smoke
+- `2026-04-12` подтверждено на физическом Android `SM-G780F` с установленным `RuStore 1.98.0.1`:
+  - release APK ставится поверх production-like install и не имеет `DEBUGGABLE`
+  - cold start и session restore открывают рабочий экран без startup failure
+  - `RuStore update` на устройстве отвечает без краша и логирует `availableVersionCode=7`, `updateAvailability=1`
+  - review CTA на живом устройстве корректно обрабатывает `RuStoreReviewExists` и переводит UI в `Спасибо за отзыв!`
+  - `RuStore Push` возвращает токен на устройстве, а backend регистрирует physical device как `provider=rustore`
+  - end-to-end push подтверждён на production API и в системной шторке устройства: delivery для `rustore` device имеет `status=sent` и `responseCode=200`
 - Emulator note: RuStore `push/update/review` в эмуляторе без установленного host RuStore app закономерно возвращают `RuStore not installed` / `Need to install host push app`; этот сценарий должен закрываться только на физическом Android-устройстве с RuStore.
 
 ## Trust Gate
@@ -83,6 +90,7 @@ export LINEAGE_BUILD_NUMBER=10
 
 ## Ops Gate
 - `/health` отвечает `200` и показывает состояние push/admin config.
+- `/ready` на production backend отвечает `200`.
 - Проверен backup/restore rehearsal backend data и media.
 - После restart backend не теряются auth/session/media/chat path.
 - Публичные media URL канонические и отдаются по HTTPS.
