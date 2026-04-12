@@ -159,6 +159,14 @@ powershell -ExecutionPolicy Bypass -File .\tool\upload_rustore_screenshots.ps1 `
 - Локальный raw PNG набор для `1.0.2` хранится в `.tmp/rustore_screenshots_1.0.2/final/`.
 - Файлы собраны по shot list из [docs/rustore_screenshot_shotlist_1.0.2.md](./rustore_screenshot_shotlist_1.0.2.md).
 - Порядок загрузки идёт по имени файла и превращается в `ordinal 0..N` внутри RuStore API.
+- `2026-04-12`: raw PNG успешно загружены в draft `versionId=2064564541` через новый full-access API key.
+
+### Current Release Blocker
+- `2026-04-12`: RuStore API больше не режет draft creation, auth и screenshot upload.
+- `AAB` upload сейчас упирается только в store policy:
+  - `APK/AAB contains new sensitive permissions`
+  - список: `RECORD_AUDIO`, `READ_EXTERNAL_STORAGE`, `READ_MEDIA_IMAGES`, `READ_MEDIA_VIDEO`, `READ_MEDIA_AUDIO`
+  - RuStore требует загрузить сборку через development console и задекларировать эти permissions вручную
 
 ## Official References
 - RuStore Console: https://www.rustore.ru/developer

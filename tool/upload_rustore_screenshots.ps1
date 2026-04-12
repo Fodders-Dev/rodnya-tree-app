@@ -118,6 +118,7 @@ function Invoke-RuStoreFileUpload(
   }
 
   $httpClient = [System.Net.Http.HttpClient]::new()
+  $httpClient.Timeout = [TimeSpan]::FromMinutes(10)
   try {
     $httpClient.DefaultRequestHeaders.Add("Public-Token", $Token)
     $multipart = [System.Net.Http.MultipartFormDataContent]::new()
