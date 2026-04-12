@@ -37,8 +37,19 @@ const int installStatusPending = 5;
 const String _reviewRequestedKey = 'lineage_review_requested';
 
 class RustoreService {
+  RustoreService({
+    Future<void> Function()? reviewInitialize,
+    Future<void> Function()? reviewRequest,
+    Future<void> Function()? reviewShow,
+  })  : _reviewInitialize = reviewInitialize ?? RustoreReviewClient.initialize,
+        _reviewRequest = reviewRequest ?? RustoreReviewClient.request,
+        _reviewShow = reviewShow ?? RustoreReviewClient.review;
+
   bool _isReviewInitialized = false; // Флаг для инициализации Review SDK
   // StreamSubscription больше не нужен
+  final Future<void> Function() _reviewInitialize;
+  final Future<void> Function() _reviewRequest;
+  final Future<void> Function() _reviewShow;
 
   // --- SharedPreferences Instance ---
   // Делаем Future, чтобы можно было получить его асинхронно
@@ -148,8 +159,7 @@ class RustoreService {
         defaultTargetPlatform == TargetPlatform.android) {
       try {
         debugPrint('Initializing RuStore Review SDK (v8 API)...');
-        // Используем RustoreReviewClient
-        await RustoreReviewClient.initialize();
+        await _reviewInitialize();
         _isReviewInitialized = true;
         debugPrint('RuStore Review SDK initialized.');
       } catch (e) {
@@ -160,32 +170,31 @@ class RustoreService {
     }
   }
 
-  Future<void> requestReview() async {
+  Future<bool> requestReview() async {
     debugPrint('[RustoreService] Attempting to initialize review...');
     await initializeReview();
     if (!_isReviewInitialized ||
         kIsWeb ||
         defaultTargetPlatform != TargetPlatform.android) {
       debugPrint('Cannot request review: SDK not initialized or not Android.');
-      return;
+      return false;
     }
 
     try {
       debugPrint('Requesting RuStore review (v8 API - step 1: request)...');
-      // Используем RustoreReviewClient
-      await RustoreReviewClient.request();
+      await _reviewRequest();
       debugPrint(
         '[RustoreService] Review request successful. Showing dialog (step 2: review)...',
       );
-      // Используем RustoreReviewClient
-      await RustoreReviewClient.review();
+      await _reviewShow();
       debugPrint(
           '[RustoreService] Review dialog shown (or skipped by RuStore).');
-      // <<< Помечаем, что запрос был сделан >>>
       await markReviewAsRequested();
+      return true;
     } catch (e) {
       debugPrint('Error requesting/showing RuStore review (v8 API): $e');
       debugPrint('Review request failed. Error: $e');
+      return false;
     }
   }
 

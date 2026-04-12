@@ -25,6 +25,8 @@ $env:LINEAGE_RELEASE_SIGNING_PROPERTIES="C:\path\to\release-signing.properties"
 $env:LINEAGE_BUILD_NAME="1.0.2"
 $env:LINEAGE_BUILD_NUMBER="10"
 powershell -ExecutionPolicy Bypass -File .\tool\build_rustore_release.ps1
+# Для smoke APK:
+powershell -ExecutionPolicy Bypass -File .\tool\build_rustore_release.ps1 -ArtifactKind apk
 ```
 
 ### Linux
@@ -33,10 +35,13 @@ export LINEAGE_RELEASE_SIGNING_PROPERTIES=/absolute/path/to/release-signing.prop
 export LINEAGE_BUILD_NAME=1.0.2
 export LINEAGE_BUILD_NUMBER=10
 ./tool/build_rustore_release.sh
+# Для smoke APK:
+./tool/build_rustore_release.sh apk
 ```
 
 ## Expected Artifact
 - `build/app/outputs/bundle/rustoreRelease/app-rustore-release.aab`
+- `build/app/outputs/flutter-apk/app-rustore-release.apk` для device/emulator smoke
 
 ## Code Gate
 - `flutter analyze` зелёный.
@@ -58,10 +63,12 @@ export LINEAGE_BUILD_NUMBER=10
 
 ### Текущий статус smoke
 - `2026-04-12` подтверждено на `rustoreRelease` APK в Android Emulator API 36:
-  - cold start открывает login screen без startup failure
-  - login реальным аккаунтом проходит
-  - home screen открывается после входа
-  - chats list screen открывается после входа
+  - APK собирается и подписывается release keystore; `apksigner verify --print-certs` проходит
+  - итоговый `APK` содержит `package=com.ahjkuio.lineage_family_app`, `targetSdkVersion=36`, `ru.rustore.sdk.ApplicationId`, `ru.rustore.sdk.pushclient.project_id` и `lineage.notification.icon`
+  - cold start не падает; приложение открывает рабочий home screen
+  - update check в release APK отрабатывает без краша и корректно логирует `RuStore not installed`
+  - review CTA больше не считает вызов успешным при ошибке `RuStore not installed`
+  - crash buffer пустой после startup и review smoke
 - Emulator note: RuStore `push/update/review` в эмуляторе без установленного host RuStore app закономерно возвращают `RuStore not installed` / `Need to install host push app`; этот сценарий должен закрываться только на физическом Android-устройстве с RuStore.
 
 ## Trust Gate

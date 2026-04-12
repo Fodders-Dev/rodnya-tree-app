@@ -21,9 +21,9 @@
   - структурные error/access logs
 - `pending` production storage migration plan
   - `done` backend startup отвязан от прямого `new FileStore(...)` через storage factory
-  - заменить file-backed store на `PostgreSQL`
-  - заменить local media root на object storage / S3-compatible storage
-  - подготовить migration/rehearsal path без big-bang rewrite
+  - `done` заменить file-backed store на реальный `PostgreSQL` adapter через state snapshot table
+  - `done` заменить local media root на `S3-compatible object storage` adapter
+  - `pending` подготовить env provisioning и migration/rehearsal path без big-bang rewrite
 - `pending` backup/restore rehearsal и runbook
 - `pending` production media policy
   - canonical HTTPS media URL
@@ -39,7 +39,10 @@
   - `done` убрать неиспользуемый `google_sign_in`, который затягивал `com.google.android.gms.version` и `SignInHubActivity`
   - `done` убрать Google Play photo picker compatibility service из `rustore` flavor
 - `pending` Rustore push/review/update smoke на physical Android build
-- `pending` проверить release keystore/signing и финальные IDs для RuStore Console
+- `done` проверить release keystore/signing и финальные IDs для RuStore Console
+  - release APK подписывается реальным keystore
+  - `package`, `targetSdkVersion`, `RuStore ApplicationId`, `RuStore push project id` и notification icon подтверждены из собранного APK
+- `pending` physical Android smoke остаётся hardware-blocker, пока в `adb devices` нет подключённого реального устройства с установленным RuStore
 - `pending` release notes/demo account/moderator note довести до публикационного состояния
 
 ### Track C. UX / Product Quality
@@ -72,11 +75,11 @@
 - `pending` moderator instructions для review team
 
 ## Порядок добивания
-1. Закрыть `Track A / ops hardening` в текущем backend.
-2. Закрыть physical-device RuStore smoke и manifest merge audit.
+1. Поднять staging/prod env для `PostgreSQL + object storage` и прогнать migration rehearsal.
+2. Закрыть physical-device RuStore smoke на реальном Android-устройстве с установленным RuStore.
 3. Затем добить `Track C` только по реальным UX-блокерам.
 4. После этого собирать release assets и выкатывать first moderation build.
 
 ## Текущий рабочий фокус
-- Сейчас в работе: manifest merge audit и physical-device RuStore smoke.
-- Следующий после него: production storage migration plan для `PostgreSQL + object storage`.
+- Сейчас в работе: staging/prod rollout path для `PostgreSQL + object storage`.
+- Следующий после него: physical-device RuStore smoke и release assets.

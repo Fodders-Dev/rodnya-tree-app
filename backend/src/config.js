@@ -49,6 +49,16 @@ function createConfig() {
   )
     .trim()
     .toLowerCase();
+  const mediaBackend = String(
+    process.env.LINEAGE_MEDIA_BACKEND || "local",
+  )
+    .trim()
+    .toLowerCase();
+  const s3ForcePathStyle = String(
+    process.env.LINEAGE_S3_FORCE_PATH_STYLE || "true",
+  )
+    .trim()
+    .toLowerCase() !== "false";
 
   return {
     port: Number(process.env.PORT || 8080),
@@ -59,10 +69,29 @@ function createConfig() {
     mediaRootPath:
       process.env.LINEAGE_BACKEND_MEDIA_ROOT ||
       path.join(__dirname, "..", "data", "uploads"),
+    mediaBackend,
+    mediaPublicBaseUrl:
+      process.env.LINEAGE_MEDIA_PUBLIC_BASE_URL ||
+      process.env.LINEAGE_S3_PUBLIC_BASE_URL ||
+      "",
     publicApiUrl:
       process.env.LINEAGE_PUBLIC_API_URL || "",
     publicAppUrl:
       process.env.LINEAGE_PUBLIC_APP_URL || "https://rodnya-tree.ru",
+    postgresUrl:
+      process.env.LINEAGE_POSTGRES_URL || process.env.DATABASE_URL || "",
+    postgresSchema: process.env.LINEAGE_POSTGRES_SCHEMA || "public",
+    postgresStateTable:
+      process.env.LINEAGE_POSTGRES_STATE_TABLE || "lineage_state",
+    postgresStateRowId:
+      process.env.LINEAGE_POSTGRES_STATE_ROW_ID || "default",
+    s3Endpoint: process.env.LINEAGE_S3_ENDPOINT || "",
+    s3Region: process.env.LINEAGE_S3_REGION || "ru-msk",
+    s3Bucket: process.env.LINEAGE_S3_BUCKET || "",
+    s3AccessKeyId: process.env.LINEAGE_S3_ACCESS_KEY_ID || "",
+    s3SecretAccessKey: process.env.LINEAGE_S3_SECRET_ACCESS_KEY || "",
+    s3ForcePathStyle,
+    s3Prefix: process.env.LINEAGE_S3_PREFIX || "lineage",
     webPushPublicKey,
     webPushPrivateKey,
     webPushSubject,

@@ -37,6 +37,7 @@ async function startTestServer() {
     baseUrl: `http://127.0.0.1:${server.address().port}`,
     wsBaseUrl: `ws://127.0.0.1:${server.address().port}`,
     server,
+    store,
     tempDir,
   };
 }
@@ -84,6 +85,7 @@ async function startConfiguredTestServer({
     baseUrl: `http://127.0.0.1:${server.address().port}`,
     wsBaseUrl: `ws://127.0.0.1:${server.address().port}`,
     server,
+    store,
     tempDir,
   };
 }
@@ -92,6 +94,9 @@ async function stopTestServer(ctx) {
   await new Promise((resolve, reject) => {
     ctx.server.close((error) => (error ? reject(error) : resolve()));
   });
+  if (typeof ctx.store?.close === "function") {
+    await ctx.store.close();
+  }
   await fs.rm(ctx.tempDir, {recursive: true, force: true});
 }
 
@@ -2883,6 +2888,7 @@ test("ready endpoint and auth rate limiting expose operational state", async () 
     const readyPayload = await readyResponse.json();
     assert.equal(readyPayload.status, "ready");
     assert.equal(readyPayload.storage, "file-store");
+    assert.equal(readyPayload.media, "local-filesystem");
     assert.ok(Array.isArray(readyPayload.warnings));
     assert.ok(readyPayload.requestId);
 

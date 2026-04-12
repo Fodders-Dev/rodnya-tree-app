@@ -1,4 +1,5 @@
 const {FileStore} = require("./store");
+const {PostgresStore} = require("./postgres-store");
 
 async function createStore(config) {
   const storageBackend = String(config?.storageBackend || "file")
@@ -15,10 +16,17 @@ async function createStore(config) {
       return store;
     }
     case "postgres":
-    case "postgresql":
-      throw new Error(
-        "LINEAGE_BACKEND_STORAGE=postgres is not implemented yet. Add a PostgresStore adapter before enabling it.",
-      );
+    case "postgresql": {
+      const store = new PostgresStore({
+        connectionString: config.postgresUrl,
+        schema: config.postgresSchema,
+        table: config.postgresStateTable,
+        rowId: config.postgresStateRowId,
+        pool: config.postgresPool || config._pool || null,
+      });
+      await store.initialize();
+      return store;
+    }
     default:
       throw new Error(
         `Unsupported LINEAGE_BACKEND_STORAGE value: ${storageBackend}`,

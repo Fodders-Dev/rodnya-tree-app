@@ -10,11 +10,19 @@ const {
   sanitizeProfile,
 } = require("./profile-utils");
 const {PushGateway} = require("./push-gateway");
+const {createMediaStorage} = require("./media-storage");
 
-function createApp({store, config, realtimeHub = null, pushGateway = null}) {
+function createApp({
+  store,
+  config,
+  realtimeHub = null,
+  pushGateway = null,
+  mediaStorage = null,
+}) {
   const app = express();
   const resolvedPushGateway =
     pushGateway ?? new PushGateway({store, config});
+  const resolvedMediaStorage = mediaStorage ?? createMediaStorage(config);
   const rateLimitState = new Map();
   const configuredStorageBackend = String(config?.storageBackend || "")
     .trim()
@@ -23,6 +31,11 @@ function createApp({store, config, realtimeHub = null, pushGateway = null}) {
     store?.storageMode ||
       (configuredStorageBackend === "file" ? "file-store" : "") ||
       configuredStorageBackend ||
+      "unknown",
+  ).trim() || "unknown";
+  const mediaMode = String(
+    resolvedMediaStorage?.mediaMode ||
+      config?.mediaBackend ||
       "unknown",
   ).trim() || "unknown";
 
@@ -69,7 +82,22 @@ function createApp({store, config, realtimeHub = null, pushGateway = null}) {
     next();
   });
   app.use(express.json({limit: "50mb"}));
-  app.use("/media", express.static(config.mediaRootPath));
+  app.get(/^\/media\/(.+)$/, async (req, res) => {
+    try {
+      await resolvedMediaStorage.handleGetRequest(req, res);
+    } catch (error) {
+      if (
+        error?.message === "INVALID_MEDIA_PATH" ||
+        error?.message === "UNSUPPORTED_MEDIA_URL"
+      ) {
+        res.status(400).json({message: "Недопустимый media path"});
+        return;
+      }
+      if (!res.headersSent) {
+        res.status(404).json({message: "Media файл не найден"});
+      }
+    }
+  });
   app.use((req, res, next) => {
     const policy = (() => {
       const pathName = req.path || "/";
@@ -156,6 +184,7 @@ function createApp({store, config, realtimeHub = null, pushGateway = null}) {
         status: "ok",
         service: "lineage-minimal-backend",
         storage: storageMode,
+        media: mediaMode,
         publicApiUrl: config.publicApiUrl || null,
         publicAppUrl: config.publicAppUrl || null,
         rustorePushEnabled: config.rustorePushEnabled === true,
@@ -171,18 +200,26 @@ function createApp({store, config, realtimeHub = null, pushGateway = null}) {
     try {
       const dataDir = path.dirname(config.dataPath);
       await fs.mkdir(dataDir, {recursive: true});
-      await fs.mkdir(config.mediaRootPath, {recursive: true});
       await fs.access(dataDir);
-      await fs.access(config.mediaRootPath);
+      await resolvedMediaStorage.ensureReady();
+
+      const warnings = [];
+      if (storageMode === "file-store") {
+        warnings.push(
+          "file-store backend is acceptable for dev and smoke, but not the final production target",
+        );
+      }
+      if (mediaMode === "local-filesystem") {
+        warnings.push(
+          "local filesystem media storage is acceptable for dev and smoke, but not the final production target",
+        );
+      }
 
       res.json({
         status: "ready",
         storage: storageMode,
-        warnings: storageMode === "file-store"
-          ? [
-              "file-store backend is acceptable for dev and smoke, but not the final production target",
-            ]
-          : [],
+        media: mediaMode,
+        warnings,
         requestId: req.requestId,
       });
     } catch (error) {
@@ -235,58 +272,6 @@ function createApp({store, config, realtimeHub = null, pushGateway = null}) {
       return false;
     }
     return true;
-  }
-
-  function sanitizeRelativePath(inputValue) {
-    const rawValue = String(inputValue || "").trim().replace(/\\/g, "/");
-    const normalized = path.posix.normalize(`/${rawValue}`).replace(/^\/+/, "");
-
-    if (!normalized || normalized === "." || normalized.startsWith("..")) {
-      throw new Error("INVALID_MEDIA_PATH");
-    }
-
-    return normalized;
-  }
-
-  function resolveMediaFilePath(bucket, relativePath) {
-    const safeBucket = sanitizeRelativePath(bucket);
-    const safeRelativePath = sanitizeRelativePath(relativePath);
-    const rootPath = path.resolve(config.mediaRootPath);
-    const resolvedPath = path.resolve(rootPath, safeBucket, safeRelativePath);
-
-    if (
-      resolvedPath !== rootPath &&
-      !resolvedPath.startsWith(`${rootPath}${path.sep}`)
-    ) {
-      throw new Error("INVALID_MEDIA_PATH");
-    }
-
-    return {
-      safeBucket,
-      safeRelativePath,
-      resolvedPath,
-    };
-  }
-
-  function buildMediaUrl(req, bucket, relativePath) {
-    const configuredOrigin = String(config.publicApiUrl || "")
-      .trim()
-      .replace(/\/+$/, "");
-    const forwardedProto = String(req.get("x-forwarded-proto") || "")
-      .split(",")[0]
-      .trim();
-    const forwardedHost = String(req.get("x-forwarded-host") || "")
-      .split(",")[0]
-      .trim();
-    const origin = configuredOrigin ||
-      `${forwardedProto || req.protocol || "https"}://${
-        forwardedHost || req.get("host")
-      }`;
-    const encodedPath = [bucket, ...relativePath.split("/").filter(Boolean)]
-      .map((segment) => encodeURIComponent(segment))
-      .join("/");
-
-    return `${origin}/media/${encodedPath}`;
   }
 
   function mapProfileNote(note) {
@@ -1009,27 +994,21 @@ function createApp({store, config, realtimeHub = null, pushGateway = null}) {
     }
 
     try {
-      const {safeBucket, safeRelativePath, resolvedPath} = resolveMediaFilePath(
-        bucket,
-        mediaPath,
-      );
-
       const fileBuffer = Buffer.from(String(fileBase64), "base64");
       if (fileBuffer.length === 0) {
         res.status(400).json({message: "Пустой fileBase64 payload"});
         return;
       }
 
-      await fs.mkdir(path.dirname(resolvedPath), {recursive: true});
-      await fs.writeFile(resolvedPath, fileBuffer);
-
-      res.status(201).json({
-        bucket: safeBucket,
-        path: safeRelativePath,
-        contentType: contentType ? String(contentType) : null,
-        size: fileBuffer.length,
-        url: buildMediaUrl(req, safeBucket, safeRelativePath),
+      const uploadResult = await resolvedMediaStorage.saveObject({
+        req,
+        bucket,
+        relativePath: mediaPath,
+        contentType,
+        fileBuffer,
       });
+
+      res.status(201).json(uploadResult);
     } catch (error) {
       if (error.message === "INVALID_MEDIA_PATH") {
         res.status(400).json({message: "Недопустимый media path"});
@@ -1047,24 +1026,14 @@ function createApp({store, config, realtimeHub = null, pushGateway = null}) {
     }
 
     try {
-      const url = new URL(urlValue);
-      const mediaPrefix = "/media/";
-      if (!url.pathname.startsWith(mediaPrefix)) {
-        res.status(400).json({message: "URL не относится к media backend"});
-        return;
-      }
-
-      const relativePath = decodeURIComponent(
-        url.pathname.slice(mediaPrefix.length),
-      );
-      const [bucket, ...restParts] = relativePath.split("/").filter(Boolean);
-      const mediaPath = restParts.join("/");
-      const {resolvedPath} = resolveMediaFilePath(bucket, mediaPath);
-
-      await fs.rm(resolvedPath, {force: true});
+      await resolvedMediaStorage.deleteObjectByUrl(urlValue);
       res.status(204).send();
     } catch (error) {
-      if (error.message === "INVALID_MEDIA_PATH" || error instanceof TypeError) {
+      if (
+        error.message === "INVALID_MEDIA_PATH" ||
+        error.message === "UNSUPPORTED_MEDIA_URL" ||
+        error instanceof TypeError
+      ) {
         res.status(400).json({message: "Недопустимый media URL"});
         return;
       }

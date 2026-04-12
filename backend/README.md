@@ -92,11 +92,24 @@ npm start
 
 - `PORT` - порт сервера, по умолчанию `8080`
 - `LINEAGE_BACKEND_DATA_PATH` - путь к JSON-файлу dev-хранилища, по умолчанию `backend/data/dev-db.json`
-- `LINEAGE_BACKEND_STORAGE` - backend storage adapter, по умолчанию `file`; значение `postgres` сейчас зарезервировано и намеренно падает до внедрения `PostgresStore`
+- `LINEAGE_BACKEND_STORAGE` - backend storage adapter, по умолчанию `file`; поддерживаются `file` и `postgres`
 - `LINEAGE_BACKEND_CORS_ORIGIN` - CORS origin, по умолчанию `*`
 - `LINEAGE_BACKEND_MEDIA_ROOT` - папка для сохранения media-файлов, по умолчанию `backend/data/uploads`
+- `LINEAGE_MEDIA_BACKEND` - media storage adapter, по умолчанию `local`; поддерживаются `local` и `s3`
+- `LINEAGE_MEDIA_PUBLIC_BASE_URL` - публичная HTTPS-база для object storage media URL, например `https://cdn.rodnya-tree.ru/media`
 - `LINEAGE_PUBLIC_API_URL` - публичная база backend API для генерации media URL, например `https://api.rodnya-tree.ru`
 - `LINEAGE_PUBLIC_APP_URL` - публичный URL web-приложения, по умолчанию `https://rodnya-tree.ru`
+- `LINEAGE_POSTGRES_URL` / `DATABASE_URL` - строка подключения к PostgreSQL, обязательна для `LINEAGE_BACKEND_STORAGE=postgres`
+- `LINEAGE_POSTGRES_SCHEMA` - PostgreSQL schema для state snapshot, по умолчанию `public`
+- `LINEAGE_POSTGRES_STATE_TABLE` - таблица для state snapshot, по умолчанию `lineage_state`
+- `LINEAGE_POSTGRES_STATE_ROW_ID` - ключ строки со state snapshot, по умолчанию `default`
+- `LINEAGE_S3_ENDPOINT` - endpoint S3-compatible object storage
+- `LINEAGE_S3_REGION` - region object storage, по умолчанию `ru-msk`
+- `LINEAGE_S3_BUCKET` - bucket для media объектов
+- `LINEAGE_S3_ACCESS_KEY_ID` - access key для object storage
+- `LINEAGE_S3_SECRET_ACCESS_KEY` - secret key для object storage
+- `LINEAGE_S3_FORCE_PATH_STYLE` - path-style addressing для S3 client, по умолчанию `true`
+- `LINEAGE_S3_PREFIX` - префикс объектов в bucket, по умолчанию `lineage`
 - `LINEAGE_WEB_PUSH_PUBLIC_KEY` - публичный VAPID key для browser push
 - `LINEAGE_WEB_PUSH_PRIVATE_KEY` - приватный VAPID key для browser push
 - `LINEAGE_WEB_PUSH_SUBJECT` - VAPID subject, по умолчанию `https://rodnya-tree.ru`
@@ -129,9 +142,9 @@ flutter run `
 ## Ограничения
 
 - Это dev bootstrap backend, а не финальный production backend.
-- Хранилище file-backed и подходит для локальной разработки, smoke-интеграции и первых ручных проверок.
+- Backend теперь умеет подниматься и на `PostgreSQL`, и на file-backed JSON snapshot. JSON snapshot остаётся dev-path по умолчанию.
 - `Google sign-in`, remote push и realtime/websocket здесь ещё не реализованы полноценно.
-- Media upload, profile notes и posts/feed реализованы в минимальном file-backed виде, без production-grade object storage и без realtime синхронизации.
+- Media upload теперь умеет работать и через S3-compatible object storage, и через локальный filesystem adapter.
 - Tree API сейчас покрывает базовый MVP-срез: создание дерева, список деревьев, людей и прямые родственные связи.
 - Tree invitations тоже покрыты в минимальном виде: backend умеет создать pending invite, показать его на вкладке приглашений и принять или отклонить.
 - Relation requests и invite-link processing теперь тоже покрыты в минимальном виде для `customApi` dev-path.
@@ -142,4 +155,4 @@ flutter run `
 - Browser push теперь поддерживается отдельно через Web Push API и VAPID, если backend запущен с `LINEAGE_WEB_PUSH_*` ключами.
 - Moderation layer теперь минимально покрыт: есть жалобы, блокировки и ручной admin resolve path, а direct chat не даст создать или отправить сообщение между заблокированными пользователями.
 - Operational hardening тоже теперь есть в минимальном виде: `x-request-id`, `GET /ready`, базовый in-memory rate limiting и структурированный request/error log.
-- Startup больше не прибит напрямую к `FileStore`: backend поднимает storage через factory, так что migration на `PostgreSQL + object storage` можно внедрять адаптером, а не big-bang replace.
+- Startup больше не прибит напрямую к `FileStore`: backend поднимает и state storage, и media storage через factory, так что `PostgreSQL + object storage` можно включать конфигом без big-bang rewrite.

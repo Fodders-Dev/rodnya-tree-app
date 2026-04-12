@@ -908,47 +908,46 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 ? null
                                 : () async {
                                     final currentContext = context;
-                                    try {
-                                      debugPrint(
-                                        'Attempting to request RuStore review...',
-                                      );
-                                      await _rustoreService.requestReview();
+                                    debugPrint(
+                                      'Attempting to request RuStore review...',
+                                    );
+                                    final requestAccepted =
+                                        await _rustoreService.requestReview();
 
+                                    if (!currentContext.mounted) {
+                                      return;
+                                    }
+
+                                    if (requestAccepted) {
                                       debugPrint(
                                         'Review request initiated successfully.',
                                       );
-                                      if (currentContext.mounted) {
-                                        ScaffoldMessenger.of(
-                                          currentContext,
-                                        ).showSnackBar(
-                                          SnackBar(
-                                            content: Text(
-                                              'Запрос на оценку отправлен. Спасибо!',
-                                            ),
-                                            duration: Duration(seconds: 3),
+                                      ScaffoldMessenger.of(
+                                        currentContext,
+                                      ).showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                            'Запрос на оценку отправлен. Спасибо!',
                                           ),
-                                        );
-                                        setState(() {
-                                          _hasRatedApp = true;
-                                        });
-                                      }
-                                    } catch (e) {
-                                      debugPrint(
-                                        'Error during requestReview call: $e',
+                                          duration: Duration(seconds: 3),
+                                        ),
                                       );
-                                      if (currentContext.mounted) {
-                                        ScaffoldMessenger.of(
-                                          currentContext,
-                                        ).showSnackBar(
-                                          SnackBar(
-                                            content: Text(
-                                              'Не удалось открыть окно оценки. Возможно, вы уже оценивали приложение или произошла ошибка.',
-                                            ),
-                                            duration: Duration(seconds: 5),
-                                          ),
-                                        );
-                                      }
+                                      setState(() {
+                                        _hasRatedApp = true;
+                                      });
+                                      return;
                                     }
+
+                                    ScaffoldMessenger.of(
+                                      currentContext,
+                                    ).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          'Не удалось открыть окно оценки RuStore на этом устройстве.',
+                                        ),
+                                        duration: Duration(seconds: 5),
+                                      ),
+                                    );
                                   },
                             enabled: !_hasRatedApp,
                           ),

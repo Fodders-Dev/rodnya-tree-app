@@ -21,6 +21,35 @@ const EMPTY_DB = {
   pushDeliveries: [],
 };
 
+function normalizeDbState(parsed) {
+  return {
+    users: Array.isArray(parsed?.users) ? parsed.users : [],
+    sessions: Array.isArray(parsed?.sessions) ? parsed.sessions : [],
+    trees: Array.isArray(parsed?.trees) ? parsed.trees : [],
+    persons: Array.isArray(parsed?.persons) ? parsed.persons : [],
+    relations: Array.isArray(parsed?.relations) ? parsed.relations : [],
+    chats: Array.isArray(parsed?.chats) ? parsed.chats : [],
+    messages: Array.isArray(parsed?.messages) ? parsed.messages : [],
+    relationRequests: Array.isArray(parsed?.relationRequests)
+      ? parsed.relationRequests
+      : [],
+    treeInvitations: Array.isArray(parsed?.treeInvitations)
+      ? parsed.treeInvitations
+      : [],
+    notifications: Array.isArray(parsed?.notifications)
+      ? parsed.notifications
+      : [],
+    posts: Array.isArray(parsed?.posts) ? parsed.posts : [],
+    comments: Array.isArray(parsed?.comments) ? parsed.comments : [],
+    reports: Array.isArray(parsed?.reports) ? parsed.reports : [],
+    blocks: Array.isArray(parsed?.blocks) ? parsed.blocks : [],
+    pushDevices: Array.isArray(parsed?.pushDevices) ? parsed.pushDevices : [],
+    pushDeliveries: Array.isArray(parsed?.pushDeliveries)
+      ? parsed.pushDeliveries
+      : [],
+  };
+}
+
 function nowIso() {
   return new Date().toISOString();
 }
@@ -651,30 +680,7 @@ class FileStore {
     await this._writeQueue;
     const raw = await fs.readFile(this.dataPath, "utf8");
     const parsed = JSON.parse(raw);
-    return {
-      users: Array.isArray(parsed.users) ? parsed.users : [],
-      sessions: Array.isArray(parsed.sessions) ? parsed.sessions : [],
-      trees: Array.isArray(parsed.trees) ? parsed.trees : [],
-      persons: Array.isArray(parsed.persons) ? parsed.persons : [],
-      relations: Array.isArray(parsed.relations) ? parsed.relations : [],
-      chats: Array.isArray(parsed.chats) ? parsed.chats : [],
-      messages: Array.isArray(parsed.messages) ? parsed.messages : [],
-      relationRequests: Array.isArray(parsed.relationRequests)
-        ? parsed.relationRequests
-        : [],
-      treeInvitations: Array.isArray(parsed.treeInvitations)
-        ? parsed.treeInvitations
-        : [],
-      notifications: Array.isArray(parsed.notifications) ? parsed.notifications : [],
-      posts: Array.isArray(parsed.posts) ? parsed.posts : [],
-      comments: Array.isArray(parsed.comments) ? parsed.comments : [],
-      reports: Array.isArray(parsed.reports) ? parsed.reports : [],
-      blocks: Array.isArray(parsed.blocks) ? parsed.blocks : [],
-      pushDevices: Array.isArray(parsed.pushDevices) ? parsed.pushDevices : [],
-      pushDeliveries: Array.isArray(parsed.pushDeliveries)
-        ? parsed.pushDeliveries
-        : [],
-    };
+    return normalizeDbState(parsed);
   }
 
   async _write(data) {
@@ -3099,5 +3105,7 @@ class FileStore {
 }
 
 module.exports = {
+  EMPTY_DB,
   FileStore,
+  normalizeDbState,
 };
