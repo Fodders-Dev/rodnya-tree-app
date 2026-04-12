@@ -1,5 +1,5 @@
 param(
-    [string]$Host = "212.69.84.167",
+    [string]$ServerHost = "212.69.84.167",
     [string]$User = "rodnya-deploy",
     [string]$TargetDir = "/var/www/rodnya-site",
     [string]$RemoteScriptPath = "/usr/local/bin/rodnya-activate-web-release",
@@ -65,11 +65,11 @@ try {
         $sshArgs += @("-i", $IdentityFile)
     }
 
-    Invoke-Checked "scp" ($sshArgs + @($archivePath, "${User}@${Host}:$remoteArchive"))
+    Invoke-Checked "scp" ($sshArgs + @($archivePath, "${User}@${ServerHost}:$remoteArchive"))
 
     $escapedLabel = $buildLabel.Replace("'", "'`"'`"'")
     $remoteCommand = "BUILD_LABEL='$escapedLabel' sudo '$RemoteScriptPath' '$remoteArchive' '$TargetDir' && rm -f '$remoteArchive'"
-    Invoke-Checked "ssh" ($sshArgs + @("${User}@${Host}", $remoteCommand))
+    Invoke-Checked "ssh" ($sshArgs + @("${User}@${ServerHost}", $remoteCommand))
 } finally {
     Pop-Location
 }

@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 // Цветовая схема в стиле WhatsApp, но теплее
 // final Color primaryColor = Color(0xFF0C6E4E);  // Теплый темно-зеленый
@@ -32,6 +31,52 @@ class AppTheme {
     0xFF202C33,
   ); // Темно-серый для карточек
 
+  static final TextTheme _lightTextTheme = ThemeData.light()
+      .textTheme
+      .apply(
+        bodyColor: Colors.black,
+        displayColor: Colors.black,
+      )
+      .copyWith(
+        titleLarge: const TextStyle(
+          fontWeight: FontWeight.bold,
+          fontSize: 18,
+          color: Colors.black,
+        ),
+        titleMedium: const TextStyle(
+          fontWeight: FontWeight.bold,
+          fontSize: 16,
+          color: Colors.black,
+        ),
+        bodySmall: const TextStyle(
+          fontSize: 12,
+          color: Colors.black87,
+        ),
+      );
+
+  static final TextTheme _darkTextTheme = ThemeData.dark()
+      .textTheme
+      .apply(
+        bodyColor: Colors.white,
+        displayColor: Colors.white,
+      )
+      .copyWith(
+        titleLarge: const TextStyle(
+          fontWeight: FontWeight.bold,
+          fontSize: 18,
+          color: Colors.white,
+        ),
+        titleMedium: const TextStyle(
+          fontWeight: FontWeight.bold,
+          fontSize: 16,
+          color: Colors.white,
+        ),
+        bodySmall: const TextStyle(
+          fontSize: 12,
+          color: Colors.white60,
+        ),
+      );
+
   static final ThemeData lightTheme = ThemeData(
     brightness: Brightness.light,
     primaryColor: waGreen,
@@ -57,32 +102,12 @@ class AppTheme {
       backgroundColor: waGreen,
       foregroundColor: Colors.white, // Цвет текста и иконок в AppBar
       elevation: 1.0, // Небольшая тень как в WA
-      titleTextStyle: GoogleFonts.roboto(
+      titleTextStyle: const TextStyle(
         fontSize: 20,
         fontWeight: FontWeight.w500,
       ),
     ),
-    textTheme: GoogleFonts.robotoTextTheme()
-        .apply(
-          bodyColor: Colors.black, // Более глубокий черный для контента
-          displayColor: Colors.black, // Более глубокий черный для заголовков
-        )
-        .copyWith(
-          titleLarge: GoogleFonts.roboto(
-            fontWeight: FontWeight.bold,
-            fontSize: 18,
-            color: Colors.black,
-          ),
-          titleMedium: GoogleFonts.roboto(
-            fontWeight: FontWeight.bold,
-            fontSize: 16,
-            color: Colors.black,
-          ),
-          bodySmall: GoogleFonts.roboto(
-            fontSize: 12,
-            color: Colors.black87, // Значительно темнее для дат/статусов
-          ),
-        ),
+    textTheme: _lightTextTheme,
     cardTheme: CardThemeData(
       color: waLightSurface,
       elevation: 1,
@@ -163,33 +188,13 @@ class AppTheme {
       foregroundColor:
           Colors.white, // Цвет текста и иконок в AppBar - сделали ярче
       elevation: 1.0,
-      titleTextStyle: GoogleFonts.roboto(
+      titleTextStyle: const TextStyle(
         fontSize: 20,
         fontWeight: FontWeight.w500,
         color: Colors.white,
       ),
     ),
-    textTheme: GoogleFonts.robotoTextTheme()
-        .apply(
-          bodyColor: Colors.white, // Цвет основного текста - сделали ярче
-          displayColor: Colors.white, // Цвет заголовков
-        )
-        .copyWith(
-          titleLarge: GoogleFonts.roboto(
-            fontWeight: FontWeight.bold,
-            fontSize: 18,
-            color: Colors.white,
-          ),
-          titleMedium: GoogleFonts.roboto(
-            fontWeight: FontWeight.bold,
-            fontSize: 16,
-            color: Colors.white,
-          ),
-          bodySmall: GoogleFonts.roboto(
-            fontSize: 12,
-            color: Colors.white60, // Более контрастный серый для темной темы
-          ), // Для дат, статусов
-        ),
+    textTheme: _darkTextTheme,
     cardTheme: CardThemeData(
       color: waDarkSurface,
       elevation: 1,

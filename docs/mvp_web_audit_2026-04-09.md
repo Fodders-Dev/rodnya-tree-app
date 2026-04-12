@@ -77,6 +77,7 @@ Scope:
 - Deployment hardening moved forward on 2026-04-11: the repo now contains a shared web release activator, a Windows manual deploy helper, and a tar-based GitHub workflow path instead of raw in-place rsync.
 - Production web deploys can now expose a plain `last_build_id.txt` marker for external verification without SSH.
 - Public legal routes were re-verified on 2026-04-12 after a fresh deploy: `/#/privacy` and `/#/support` now render the current release-ready text on `rodnya-tree.ru`.
+- Web startup hardening was re-verified on 2026-04-12 after the shell sync fix and fresh deploy: `assets/AssetManifest.bin.json` and `assets/FontManifest.json` now return `200` on production, and their cache policy was tightened so older browser sessions do not keep a stale `404` for up to a day.
 
 ## Residual notes
 - Browser sessions can temporarily keep an older Flutter web bundle in memory; in testing, adding a cache-busting query or reloading the app was enough to see the latest production UI.
@@ -84,7 +85,7 @@ Scope:
   a stale persisted `custom_api_session_v1` no longer blocks web startup. The app now clears the local session path safely enough to reach `/#/login` instead of dying in bootstrap, and unauthorized cleanup no longer adds an extra `POST /v1/auth/logout` on top of the expected `401` session/refresh pair.
 - Web console is clean from runtime errors in the verified flows, but Flutter still emits a `Noto fonts` warning for some missing glyphs. This is not blocking MVP behavior, but it should be cleaned up in a later typography pass.
 - Validation note from 2026-04-12:
-  the web shell deploy path now force-syncs `icons`, `manifest.json`, `favicon.png`, and `push/` into `build/web`, which removed the missing `Icon-192.png` production error. A smaller residual warning still remains for missing `AssetManifest.bin.json` / `FontManifest.json` in release web startup, and that should be treated as a separate Flutter web hardening task.
+  the web shell deploy path now force-syncs `icons`, `manifest.json`, `favicon.png`, `favicon.ico`, generated Flutter startup manifests, and `push/` into `build/web`. The old production warnings for missing `AssetManifest.bin.json` / `FontManifest.json` are closed.
 - Validation note from 2026-04-11:
   local browser smoke should use `flutter build web`, not only `flutter build web --no-wasm-dry-run`. In this repo the `--no-wasm-dry-run` output can be sufficient for compile validation while still leaving a locally served `build/web` without final `AssetManifest`, `FontManifest`, and web icon files, which creates false 404s and `google_fonts` runtime noise on `/login`.
 

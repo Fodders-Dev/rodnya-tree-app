@@ -145,6 +145,19 @@ powershell -ExecutionPolicy Bypass -File .\tool\publish_rustore_release.ps1 `
 - Предпочитать `-WhatsNewFile`, а не inline `-WhatsNew`, чтобы не ловить проблемы с кириллицей.
 - Перед первой `AAB` публикацией в RuStore должен быть загружен app signing key в разделе `Подпись приложения`.
 
+### Screenshot Upload
+```powershell
+$env:RUSTORE_KEY_ID="your-key-id"
+$env:RUSTORE_PRIVATE_KEY_BASE64="base64-private-key-from-rustore-console"
+powershell -ExecutionPolicy Bypass -File .\tool\upload_rustore_screenshots.ps1 `
+  -VersionId "<draft-version-id>" `
+  -ScreenshotDir ".\.tmp\rustore_screenshots_1.0.2\final"
+```
+
+- Локальный raw PNG набор для `1.0.2` хранится в `.tmp/rustore_screenshots_1.0.2/final/`.
+- Файлы собраны по shot list из [docs/rustore_screenshot_shotlist_1.0.2.md](./rustore_screenshot_shotlist_1.0.2.md).
+- Порядок загрузки идёт по имени файла и превращается в `ordinal 1..N` внутри RuStore API.
+
 ## Official References
 - RuStore Console: https://www.rustore.ru/developer
 - Publication modes: https://www.rustore.ru/help/en/developers/publishing-and-verifying-apps/app-publication/setting-up-publication/instant-app-publishing

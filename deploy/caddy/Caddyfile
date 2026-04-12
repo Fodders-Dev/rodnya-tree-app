@@ -22,6 +22,11 @@ rodnya-tree.ru, www.rodnya-tree.ru {
   }
   header @appEntry Cache-Control "no-store, no-cache, must-revalidate"
 
+  @startupAssets {
+    path /assets/AssetManifest.bin.json /assets/AssetManifest.json /assets/FontManifest.json /favicon.ico
+  }
+  header @startupAssets Cache-Control "no-store, no-cache, must-revalidate"
+
   @appRuntime {
     path /flutter.js /main.dart.js
   }
@@ -33,7 +38,8 @@ rodnya-tree.ru, www.rodnya-tree.ru {
   header @pushWorker Cache-Control "no-cache, must-revalidate"
 
   @staticAssets {
-    path /assets/* /icons/* /canvaskit/* /splash/* /favicon.png /favicon.ico /apple-touch-icon.png
+    path /assets/* /icons/* /canvaskit/* /splash/* /favicon.png /apple-touch-icon.png
+    not path /assets/AssetManifest.bin.json /assets/AssetManifest.json /assets/FontManifest.json
   }
   header @staticAssets Cache-Control "public, max-age=86400"
 
