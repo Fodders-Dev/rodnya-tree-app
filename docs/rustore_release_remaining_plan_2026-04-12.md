@@ -35,7 +35,8 @@
   - home и chats screen открываются после входа
   - корневая причина Android startup blocker закрыта: notification icon теперь не вырезается из release resources
 - `pending` permission audit финализировать на реальном Android manifest merge report
-  - отдельно проверить, зачем в финальный APK всё ещё попадает `com.google.android.gms.version`
+  - `done` убрать неиспользуемый `google_sign_in`, который затягивал `com.google.android.gms.version` и `SignInHubActivity`
+  - `done` убрать Google Play photo picker compatibility service из `rustore` flavor
 - `pending` Rustore push/review/update smoke на physical Android build
 - `pending` проверить release keystore/signing и финальные IDs для RuStore Console
 - `pending` release notes/demo account/moderator note довести до публикационного состояния

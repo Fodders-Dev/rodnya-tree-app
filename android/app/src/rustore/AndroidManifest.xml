@@ -1,4 +1,5 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <application>
         <meta-data
             android:name="ru.rustore.sdk.ApplicationId"
@@ -15,5 +16,10 @@
                 <action android:name="ru.rustore.sdk.pushservice.ACTION_PROCESS_MESSAGE" />
             </intent-filter>
         </service>
+
+        <!-- The Google Play photo picker backport service is irrelevant in RuStore builds. -->
+        <service
+            android:name="com.google.android.gms.metadata.ModuleDependencies"
+            tools:node="remove" />
     </application>
 </manifest>
