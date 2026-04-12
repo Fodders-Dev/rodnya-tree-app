@@ -6,10 +6,11 @@ param(
   [string]$ScreenshotDir = ".tmp/rustore_screenshots_1.0.2/final",
   [ValidateSet("PORTRAIT", "LANDSCAPE")]
   [string]$Orientation = "PORTRAIT",
-  [int]$StartOrdinal = 1
+  [int]$StartOrdinal = 0
 )
 
 $ErrorActionPreference = "Stop"
+Add-Type -AssemblyName System.Net.Http
 
 function Get-RequiredEnv([string]$name) {
   $value = [Environment]::GetEnvironmentVariable($name)
@@ -27,17 +28,17 @@ function New-RuStoreSignaturePayload(
   $message = "$KeyId$timestamp"
   $privateKeyBytes = [Convert]::FromBase64String($PrivateKeyBase64)
   $signatureBytes = $null
-  $importMethod = [System.Security.Cryptography.RSA]::GetMethod(
-    "ImportPkcs8PrivateKey",
-    [type[]]@(
-      [byte[]],
-      [ref].MakeByRefType()
+  $rsa = [System.Security.Cryptography.RSA]::Create()
+  try {
+    $importMethod = $rsa.GetType().GetMethod(
+      "ImportPkcs8PrivateKey",
+      [type[]]@(
+        [byte[]],
+        [int].MakeByRefType()
+      )
     )
-  )
 
-  if ($null -ne $importMethod) {
-    $rsa = [System.Security.Cryptography.RSA]::Create()
-    try {
+    if ($null -ne $importMethod) {
       $bytesRead = 0
       $rsa.ImportPkcs8PrivateKey($privateKeyBytes, [ref]$bytesRead)
       $signatureBytes = $rsa.SignData(
@@ -45,10 +46,12 @@ function New-RuStoreSignaturePayload(
         [System.Security.Cryptography.HashAlgorithmName]::SHA512,
         [System.Security.Cryptography.RSASignaturePadding]::Pkcs1
       )
-    } finally {
-      $rsa.Dispose()
     }
-  } else {
+  } finally {
+    $rsa.Dispose()
+  }
+
+  if ($null -eq $signatureBytes) {
     $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("rustore-sign-" + [System.Guid]::NewGuid().ToString("N"))
     New-Item -ItemType Directory -Path $tempDir | Out-Null
     try {
@@ -143,8 +146,8 @@ function Invoke-RuStoreFileUpload(
   }
 }
 
-if ($StartOrdinal -lt 1 -or $StartOrdinal -gt 10) {
-  throw "StartOrdinal must be between 1 and 10."
+if ($StartOrdinal -lt 0 -or $StartOrdinal -gt 9) {
+  throw "StartOrdinal must be between 0 and 9."
 }
 
 if (-not $Screenshots -or $Screenshots.Count -eq 0) {
@@ -161,8 +164,8 @@ if (-not $Screenshots -or $Screenshots.Count -eq 0) {
   throw "No screenshots found."
 }
 
-if (($StartOrdinal + $Screenshots.Count - 1) -gt 10) {
-  throw "RuStore allows up to 10 screenshots per orientation. Reduce the input set or change StartOrdinal."
+if (($StartOrdinal + $Screenshots.Count - 1) -gt 9) {
+  throw "RuStore allows up to 10 screenshots per orientation with ordinals 0..9. Reduce the input set or change StartOrdinal."
 }
 
 $resolvedScreenshots = @()
@@ -203,7 +206,7 @@ for ($index = 0; $index -lt $resolvedScreenshots.Count; $index++) {
     -FilePath $screenshotPath
 
   if ($uploadResponse.code -ne "OK") {
-    throw "Failed to upload screenshot $screenshotPath: $($uploadResponse | ConvertTo-Json -Depth 10)"
+    throw "Failed to upload screenshot ${screenshotPath}: $($uploadResponse | ConvertTo-Json -Depth 10)"
   }
 
   $results += [PSCustomObject]@{

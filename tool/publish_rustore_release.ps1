@@ -6,6 +6,9 @@ param(
   [string]$PublishType,
   [Parameter(Mandatory = $true)]
   [int]$MinAndroidVersion,
+  [string]$DeveloperEmail = "ahjkuio@gmail.com",
+  [string]$DeveloperWebsite = "https://rodnya-tree.ru/#/support",
+  [string]$DeveloperVkCommunity,
   [string]$WhatsNew,
   [string]$WhatsNewFile,
   [string]$ModeratorComment,
@@ -14,6 +17,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+Add-Type -AssemblyName System.Net.Http
 
 function Get-RequiredEnv([string]$name) {
   $value = [Environment]::GetEnvironmentVariable($name)
@@ -44,17 +48,17 @@ function New-RuStoreSignaturePayload(
   $message = "$KeyId$timestamp"
   $privateKeyBytes = [Convert]::FromBase64String($PrivateKeyBase64)
   $signatureBytes = $null
-  $importMethod = [System.Security.Cryptography.RSA].GetMethod(
-    "ImportPkcs8PrivateKey",
-    [type[]]@(
-      [byte[]],
-      [ref].MakeByRefType()
+  $rsa = [System.Security.Cryptography.RSA]::Create()
+  try {
+    $importMethod = $rsa.GetType().GetMethod(
+      "ImportPkcs8PrivateKey",
+      [type[]]@(
+        [byte[]],
+        [int].MakeByRefType()
+      )
     )
-  )
 
-  if ($null -ne $importMethod) {
-    $rsa = [System.Security.Cryptography.RSA]::Create()
-    try {
+    if ($null -ne $importMethod) {
       $bytesRead = 0
       $rsa.ImportPkcs8PrivateKey($privateKeyBytes, [ref]$bytesRead)
       $signatureBytes = $rsa.SignData(
@@ -62,10 +66,12 @@ function New-RuStoreSignaturePayload(
         [System.Security.Cryptography.HashAlgorithmName]::SHA512,
         [System.Security.Cryptography.RSASignaturePadding]::Pkcs1
       )
-    } finally {
-      $rsa.Dispose()
     }
-  } else {
+  } finally {
+    $rsa.Dispose()
+  }
+
+  if ($null -eq $signatureBytes) {
     $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("rustore-sign-" + [System.Guid]::NewGuid().ToString("N"))
     New-Item -ItemType Directory -Path $tempDir | Out-Null
     try {
@@ -190,6 +196,14 @@ $headers = @{
 $draftBody = @{
   minAndroidVersion = $MinAndroidVersion
   whatsNew = $whatsNewText
+  developerContacts = @{
+    email = $DeveloperEmail
+    website = $DeveloperWebsite
+  }
+}
+
+if ([string]::IsNullOrWhiteSpace($DeveloperEmail)) {
+  throw "DeveloperEmail is required by RuStore draft-create API."
 }
 
 if (-not [string]::IsNullOrWhiteSpace($AppName)) {
@@ -212,6 +226,10 @@ if (-not [string]::IsNullOrWhiteSpace($PublishType)) {
 
 if (-not [string]::IsNullOrWhiteSpace($ModeratorComment)) {
   $draftBody.moderInfo = $ModeratorComment
+}
+
+if (-not [string]::IsNullOrWhiteSpace($DeveloperVkCommunity)) {
+  $draftBody.developerContacts.vkCommunity = $DeveloperVkCommunity
 }
 
 $draftResponse = Invoke-RuStoreJsonRequest `
