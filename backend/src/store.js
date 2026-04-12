@@ -627,6 +627,8 @@ function verifyPassword(password, user) {
 class FileStore {
   constructor(dataPath) {
     this.dataPath = dataPath;
+    this.storageMode = "file-store";
+    this.storageTarget = dataPath;
     this._writeQueue = Promise.resolve();
   }
 

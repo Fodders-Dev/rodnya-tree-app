@@ -20,6 +20,7 @@
   - basic rate limiting
   - структурные error/access logs
 - `pending` production storage migration plan
+  - `done` backend startup отвязан от прямого `new FileStore(...)` через storage factory
   - заменить file-backed store на `PostgreSQL`
   - заменить local media root на object storage / S3-compatible storage
   - подготовить migration/rehearsal path без big-bang rewrite

@@ -92,6 +92,7 @@ npm start
 
 - `PORT` - порт сервера, по умолчанию `8080`
 - `LINEAGE_BACKEND_DATA_PATH` - путь к JSON-файлу dev-хранилища, по умолчанию `backend/data/dev-db.json`
+- `LINEAGE_BACKEND_STORAGE` - backend storage adapter, по умолчанию `file`; значение `postgres` сейчас зарезервировано и намеренно падает до внедрения `PostgresStore`
 - `LINEAGE_BACKEND_CORS_ORIGIN` - CORS origin, по умолчанию `*`
 - `LINEAGE_BACKEND_MEDIA_ROOT` - папка для сохранения media-файлов, по умолчанию `backend/data/uploads`
 - `LINEAGE_PUBLIC_API_URL` - публичная база backend API для генерации media URL, например `https://api.rodnya-tree.ru`
@@ -141,3 +142,4 @@ flutter run `
 - Browser push теперь поддерживается отдельно через Web Push API и VAPID, если backend запущен с `LINEAGE_WEB_PUSH_*` ключами.
 - Moderation layer теперь минимально покрыт: есть жалобы, блокировки и ручной admin resolve path, а direct chat не даст создать или отправить сообщение между заблокированными пользователями.
 - Operational hardening тоже теперь есть в минимальном виде: `x-request-id`, `GET /ready`, базовый in-memory rate limiting и структурированный request/error log.
+- Startup больше не прибит напрямую к `FileStore`: backend поднимает storage через factory, так что migration на `PostgreSQL + object storage` можно внедрять адаптером, а не big-bang replace.

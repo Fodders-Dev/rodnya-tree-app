@@ -1,13 +1,12 @@
 const {createConfig} = require("./config");
-const {FileStore} = require("./store");
+const {createStore} = require("./store-factory");
 const {createApp} = require("./app");
 const {RealtimeHub} = require("./realtime-hub");
 const {PushGateway} = require("./push-gateway");
 
 async function startServer() {
   const config = createConfig();
-  const store = new FileStore(config.dataPath);
-  await store.initialize();
+  const store = await createStore(config);
 
   const realtimeHub = new RealtimeHub({store});
   const pushGateway = new PushGateway({store, config});
@@ -18,7 +17,9 @@ async function startServer() {
     );
     console.log(`[lineage-backend] data path: ${config.dataPath}`);
     console.log(`[lineage-backend] media root: ${config.mediaRootPath}`);
-    console.log("[lineage-backend] storage mode: file-store");
+    console.log(
+      `[lineage-backend] storage mode: ${store.storageMode || config.storageBackend || "unknown"}`,
+    );
   });
   realtimeHub.attach(server);
 

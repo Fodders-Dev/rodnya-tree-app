@@ -44,6 +44,11 @@ function createConfig() {
   const safetyRateLimitMax = Number(
     process.env.LINEAGE_RATE_LIMIT_SAFETY_MAX || 20,
   );
+  const storageBackend = String(
+    process.env.LINEAGE_BACKEND_STORAGE || "file",
+  )
+    .trim()
+    .toLowerCase();
 
   return {
     port: Number(process.env.PORT || 8080),
@@ -75,6 +80,7 @@ function createConfig() {
     mutationRateLimitMax,
     uploadRateLimitMax,
     safetyRateLimitMax,
+    storageBackend,
   };
 }
 

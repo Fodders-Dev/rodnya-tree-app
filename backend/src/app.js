@@ -16,6 +16,15 @@ function createApp({store, config, realtimeHub = null, pushGateway = null}) {
   const resolvedPushGateway =
     pushGateway ?? new PushGateway({store, config});
   const rateLimitState = new Map();
+  const configuredStorageBackend = String(config?.storageBackend || "")
+    .trim()
+    .toLowerCase();
+  const storageMode = String(
+    store?.storageMode ||
+      (configuredStorageBackend === "file" ? "file-store" : "") ||
+      configuredStorageBackend ||
+      "unknown",
+  ).trim() || "unknown";
 
   app.set("trust proxy", true);
   app.use(cors({origin: config.corsOrigin}));
@@ -143,13 +152,13 @@ function createApp({store, config, realtimeHub = null, pushGateway = null}) {
   });
 
   app.get("/health", async (req, res) => {
-    res.json({
-      status: "ok",
-      service: "lineage-minimal-backend",
-      storage: "file-store",
-      publicApiUrl: config.publicApiUrl || null,
-      publicAppUrl: config.publicAppUrl || null,
-      rustorePushEnabled: config.rustorePushEnabled === true,
+      res.json({
+        status: "ok",
+        service: "lineage-minimal-backend",
+        storage: storageMode,
+        publicApiUrl: config.publicApiUrl || null,
+        publicAppUrl: config.publicAppUrl || null,
+        rustorePushEnabled: config.rustorePushEnabled === true,
       webPushEnabled: config.webPushEnabled === true,
       adminEmailsConfigured: Array.isArray(config.adminEmails)
         ? config.adminEmails.length
@@ -168,10 +177,12 @@ function createApp({store, config, realtimeHub = null, pushGateway = null}) {
 
       res.json({
         status: "ready",
-        storage: "file-store",
-        warnings: [
-          "file-store backend is acceptable for dev and smoke, but not the final production target",
-        ],
+        storage: storageMode,
+        warnings: storageMode === "file-store"
+          ? [
+              "file-store backend is acceptable for dev and smoke, but not the final production target",
+            ]
+          : [],
         requestId: req.requestId,
       });
     } catch (error) {
