@@ -198,9 +198,17 @@ function createApp({
 
   app.get("/ready", async (req, res) => {
     try {
-      const dataDir = path.dirname(config.dataPath);
-      await fs.mkdir(dataDir, {recursive: true});
-      await fs.access(dataDir);
+      if (storageMode === "file-store") {
+        const dataDir = path.dirname(config.dataPath);
+        await fs.mkdir(dataDir, {recursive: true});
+        await fs.access(dataDir);
+      }
+      if (typeof store?.initialize === "function") {
+        await store.initialize();
+      }
+      if (typeof store?._read === "function") {
+        await store._read();
+      }
       await resolvedMediaStorage.ensureReady();
 
       const warnings = [];

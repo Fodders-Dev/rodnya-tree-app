@@ -23,12 +23,15 @@ Scope:
 - Backend note: the production API still appears inconsistent for some `GET /v1/chats/:chatId` requests.
 - MVP impact: direct chat is more stable on web, but backend contract still needs cleanup for full parity.
 
-### 4. Chat media now emits canonical HTTPS upload URLs
+### 4. Chat media now emits and serves canonical HTTPS media URLs
 - Route: chat view
-- Root cause: upload responses can return `http://api.rodnya-tree.ru/media/...`, and browsers fail on the redirect chain before reaching the working HTTPS media response.
-- Current production state after the 2026-04-10 deployment: `/v1/media/upload` now responds with `https://api.rodnya-tree.ru/media/...` directly.
-- Remaining note: old stored `http://...` URLs can still exist in historical data, but the web client already normalizes them on read.
-- MVP impact: new media messages are no longer blocked by the old redirect/CORS chain.
+- Root cause: older media storage relied on local filesystem URLs and historical `http://...` records, which made the browser path brittle.
+- Current production state after the 2026-04-12 storage cutover:
+  - backend storage runs on `PostgreSQL + S3-compatible object storage`
+  - `/v1/media/upload` returns canonical HTTPS storage URLs
+  - legacy `/media/...` links still resolve through redirect to `/storage/rodnya-media/...`
+- Remaining note: historical `http://...` values can still exist in old records, but the client normalization path remains in place and the backend now serves canonical HTTPS media directly.
+- MVP impact: both migrated historical media and new uploads have a stable HTTPS delivery path on production.
 
 ## High-priority UX issues
 
@@ -70,6 +73,7 @@ Scope:
 - Desktop layouts for home, chats, profile, relatives, notifications, and chat view are all denser than the initial audit baseline.
 - Production deployment was updated on 2026-04-10 for both `api.rodnya-tree.ru` and `rodnya-tree.ru`.
 - Additional live production smoke passed on 2026-04-10: home feed renders a new post, profile shows authored posts, notifications grouping is visible after a fresh bundle load, tree view uses the new split desktop layout, and direct chat renders photo messages correctly.
+- Storage migration production smoke passed on 2026-04-12: `https://api.rodnya-tree.ru/ready` now reports `storage=postgres` and `media=s3`, migrated media open over HTTPS, and a fresh upload/delete cycle succeeds on the live API.
 - Deployment hardening moved forward on 2026-04-11: the repo now contains a shared web release activator, a Windows manual deploy helper, and a tar-based GitHub workflow path instead of raw in-place rsync.
 - Production web deploys can now expose a plain `last_build_id.txt` marker for external verification without SSH.
 
@@ -90,6 +94,6 @@ Scope:
 
 ## Next repair order
 1. Run a fresh end-to-end browser smoke on the live site for login, feed, profile, create-post, chats, notifications, and tree view.
-2. Verify photo send/receive in real browser UI after the media URL deployment.
+2. Run one more real-browser chat media pass on the live site after the storage cutover.
 3. Polish tree view visuals beyond MVP baseline if a more premium desktop feel is required.
 4. Add more operational safeguards: deploy notes, rollback recipe, and basic health/error monitoring around the custom backend.

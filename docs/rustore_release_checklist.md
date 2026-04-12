@@ -95,6 +95,16 @@ export LINEAGE_BUILD_NUMBER=10
 - После restart backend не теряются auth/session/media/chat path.
 - Публичные media URL канонические и отдаются по HTTPS.
 
+### Текущий ops status
+- `2026-04-12` production backend реально переведён на `postgres + s3`.
+- `2026-04-12` production host поднял локальные `PostgreSQL` и `MinIO`, а Caddy теперь публикует media через `/storage/*`.
+- `2026-04-12` migration подтверждена:
+  - snapshot hash source/target совпал при переносе `dev-db.json -> PostgreSQL`
+  - migrated media читаются по `https://api.rodnya-tree.ru/storage/rodnya-media/...`
+  - legacy `https://api.rodnya-tree.ru/media/...` отдают redirect на новый storage path
+  - свежий upload/delete smoke на production API прошёл end-to-end
+  - backup script теперь сохраняет `rodnya-postgres.dump` и `minio-data.tar.gz`
+
 ## Publication Gate
 - Первый релиз идёт через `manual release`, не `instant publish`.
 - Store card готова:

@@ -110,6 +110,22 @@ npm start
 - `LINEAGE_S3_SECRET_ACCESS_KEY` - secret key для object storage
 - `LINEAGE_S3_FORCE_PATH_STYLE` - path-style addressing для S3 client, по умолчанию `true`
 - `LINEAGE_S3_PREFIX` - префикс объектов в bucket, по умолчанию `lineage`
+
+### Migration toolkit
+
+- `npm run migrate:state:postgres` - переносит snapshot из file store в `PostgreSQL` и сверяет SHA-256 source/target snapshot.
+- `npm run migrate:media:s3` - переносит local media tree в `S3-compatible object storage`.
+- Полезные флаги:
+  - `--dry-run` - прогоняет source/summary без записи.
+  - `--source=/path/to/dev-db.json` для state migration.
+  - `--source-root=/path/to/uploads` для media migration.
+  - `--create-bucket` для media migration, если bucket ещё не создан.
+  - `--public-read` вместе с `--create-bucket`, если object storage должен отдавать media URL напрямую по HTTPS.
+- Рекомендуемый production cutover path:
+  1. сделать backup текущего `dev-db.json` и `uploads/`;
+  2. прогнать `migrate:state:postgres` и `migrate:media:s3` на тех же production данных;
+  3. переключить backend env на `LINEAGE_BACKEND_STORAGE=postgres` и `LINEAGE_MEDIA_BACKEND=s3`;
+  4. проверить `/ready`, chat/media open, media delete и auth/account delete.
 - `LINEAGE_WEB_PUSH_PUBLIC_KEY` - публичный VAPID key для browser push
 - `LINEAGE_WEB_PUSH_PRIVATE_KEY` - приватный VAPID key для browser push
 - `LINEAGE_WEB_PUSH_SUBJECT` - VAPID subject, по умолчанию `https://rodnya-tree.ru`

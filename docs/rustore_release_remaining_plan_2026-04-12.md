@@ -19,15 +19,16 @@
   - `health` и `ready`
   - basic rate limiting
   - структурные error/access logs
-- `pending` production storage migration plan
+- `done` production storage migration plan
   - `done` backend startup отвязан от прямого `new FileStore(...)` через storage factory
   - `done` заменить file-backed store на реальный `PostgreSQL` adapter через state snapshot table
   - `done` заменить local media root на `S3-compatible object storage` adapter
-  - `pending` подготовить env provisioning и migration/rehearsal path без big-bang rewrite
-- `pending` backup/restore rehearsal и runbook
-- `pending` production media policy
-  - canonical HTTPS media URL
-  - retention/delete-account cascade validation
+  - `done` подготовить env provisioning и migration/rehearsal path без big-bang rewrite
+- `done` backup/restore rehearsal и runbook
+- `done` production media policy
+  - `done` canonical HTTPS media URL
+  - `done` media upload/delete smoke на production `s3` path
+  - `pending` retention/delete-account cascade validation на отдельном полном QA-проходе
 
 ### Track B. Android Release Quality
 - `done` базовый `rustoreRelease` emulator smoke
@@ -56,7 +57,10 @@
   - `done` live service `rodnya-backend.service` перезапущен на новом `/opt/rodnya/backend`
   - `done` live API теперь содержит `DELETE /v1/auth/account` и `DELETE /v1/chats/:chatId/messages/:messageId`
   - `done` `/ready` на production backend отвечает `200`
-- `pending` production backend storage всё ещё остаётся `file-store + local-filesystem`
+- `done` production backend storage переведён на `postgres + s3`
+  - `done` `PostgreSQL` поднят на production host и snapshot мигрирован из `dev-db.json`
+  - `done` `MinIO` поднят на production host, media bucket создан и сделан public-read
+  - `done` старые `/media/...` URL продолжают работать через redirect на `/storage/...`
 
 ### Track C. UX / Product Quality
 - `pending` закрыть chat `Wave 6`
@@ -88,11 +92,11 @@
 - `pending` moderator instructions для review team
 
 ## Порядок добивания
-1. Поднять staging/prod env для `PostgreSQL + object storage` и прогнать migration rehearsal.
+1. Собрать release assets и moderator pack.
 2. Добить `Track C` только по реальным UX-блокерам.
-3. После этого собрать release assets и moderator pack.
+3. Прогнать финальный RuStore release candidate smoke.
 4. Затем выкатывать first moderation build.
 
 ## Текущий рабочий фокус
-- Сейчас в работе: staging/prod rollout path для `PostgreSQL + object storage`.
-- Следующий после него: release assets, demo account и moderator notes.
+- Сейчас в работе: release assets, demo account и moderator notes.
+- Следующий после него: финальный RuStore release candidate pass.
