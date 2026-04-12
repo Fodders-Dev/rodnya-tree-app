@@ -47,6 +47,10 @@
   - accessibility/semantics
   - font fallback cleanup
 - `pending` tree / relatives polish
+  - `done` declutter pass для tree view
+    - убраны тяжёлые summary-блоки и длинные текстовые карточки
+    - быстрые действия перенесены в app bar/menu
+    - controls внутри полотна стали компактным floating chrome вместо массивной панели
   - empty/loading/error states
   - предсказуемая навигация
   - центрирование и визуальная плотность дерева

@@ -87,7 +87,7 @@ class InteractiveFamilyTree extends StatefulWidget {
 }
 
 class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
-  static const double _viewportReservedTop = 112;
+  static const double _viewportReservedTop = 64;
   static const double _viewportReservedBottom = 28;
 
   // Данные для CustomPainter
@@ -98,7 +98,6 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
       TransformationController();
   Size? _viewportSize;
   bool _hasAppliedViewportFit = false;
-  bool _showFamilyClusters = true;
   String? _selectedEditPersonId;
   String? _hoveredBranchPersonId;
   double _currentScale = 1.0;
@@ -793,8 +792,7 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
                               ..._buildGenerationGuideWidgets(
                                 stackWidth: stackWidth,
                               ),
-                            if (widget.enableClusterHighlights &&
-                                _showFamilyClusters)
+                            if (widget.enableClusterHighlights)
                               IgnorePointer(
                                 child: Stack(
                                   children: _buildFamilyClusterWidgets(
@@ -822,8 +820,12 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
               Positioned(
                 top: 12,
                 left: 12,
+                child: _buildViewportStatusBar(),
+              ),
+              Positioned(
                 right: 12,
-                child: _buildViewportControls(),
+                bottom: 12,
+                child: _buildViewportControlDock(),
               ),
             ],
           );
@@ -1995,232 +1997,182 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
     return '${birthYear ?? '?'} - ${deathYear ?? '?'}';
   }
 
-  Widget _buildViewportControls() {
-    final currentUserNodeId = _findCurrentUserNodeId();
-    final branchRootPersonId = widget.branchRootPersonId;
-    final selectedPersonId = _selectedEditPersonId;
-    final familyClusters = widget.enableClusterHighlights
-        ? _buildFamilyClusters()
-        : const <_FamilyClusterOverlay>[];
-    final generationCount =
-        widget.showGenerationGuides ? _estimateGenerationCount() : 0;
+  Widget _buildViewportStatusBar() {
     final zoomPercent = (_currentScale * 100).round();
-    final helperText = widget.isEditMode
-        ? 'Нажмите на карточку, чтобы открыть быстрые действия. Долгое нажатие открывает полное меню, а drag позволяет вручную собрать композицию ${widget.graphLabel}.'
-        : branchRootPersonId != null && branchRootPersonId.isNotEmpty
-            ? widget.showGenerationGuides
-                ? 'Показана выбранная ветка. Используйте плашки на карточках, чтобы сменить фокус.'
-                : 'Показан выбранный круг. Используйте плашки на карточках, чтобы сменить фокус.'
-            : widget.showGenerationGuides
-                ? 'Тяните схему в любую сторону, масштабируйте колесом или кнопками и открывайте карточки людей. Плашка «Ветка» или долгое нажатие на карточку фокусирует схему на выбранной семье. Горячие клавиши: +, -, 0.'
-                : 'Тяните граф в любую сторону, масштабируйте колесом или кнопками и открывайте карточки людей. Плашка на карточке помогает сфокусироваться на выбранном круге. Горячие клавиши: +, -, 0.';
+    final branchRootPersonId = widget.branchRootPersonId;
+    final chips = <Widget>[
+      _buildOverlayChip(
+        icon: widget.showGenerationGuides
+            ? Icons.account_tree_outlined
+            : Icons.diversity_3_outlined,
+        label: widget.showGenerationGuides ? 'Семья' : 'Друзья',
+        highlighted: true,
+      ),
+      _buildOverlayChip(
+        icon: Icons.people_alt_outlined,
+        label: '${widget.peopleData.length}',
+      ),
+      _buildOverlayChip(
+        icon: Icons.hub_outlined,
+        label: '${widget.relations.length}',
+      ),
+      _buildOverlayChip(
+        icon: Icons.zoom_in_map_outlined,
+        label: '$zoomPercent%',
+      ),
+      if (widget.hasManualLayout)
+        _buildOverlayChip(
+          icon: Icons.open_with,
+          label: 'Ручной',
+          highlighted: true,
+        ),
+      if (branchRootPersonId != null && branchRootPersonId.isNotEmpty)
+        _buildOverlayChip(
+          icon: Icons.center_focus_strong_outlined,
+          label: widget.showGenerationGuides ? 'Фокус на ветке' : 'Фокус',
+          highlighted: true,
+        ),
+      if (_selectedEditPersonId != null && _selectedEditPersonId!.isNotEmpty)
+        _buildOverlayChip(
+          icon: Icons.ads_click_outlined,
+          label: 'Выбран узел',
+          highlighted: true,
+        ),
+    ];
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final isCompact = constraints.maxWidth < 860;
-        final statusChips = Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            _buildOverlayChip(
-              icon: widget.showGenerationGuides
-                  ? Icons.account_tree_outlined
-                  : Icons.diversity_3_outlined,
-              label:
-                  widget.showGenerationGuides ? 'Режим семьи' : 'Режим друзей',
-            ),
-            _buildOverlayChip(
-              icon: Icons.zoom_in_map_outlined,
-              label: 'Масштаб $zoomPercent%',
-            ),
-            if (widget.hasManualLayout)
-              _buildOverlayChip(
-                icon: Icons.open_with,
-                label: 'Ручной layout',
-                highlighted: true,
-              ),
-            if (selectedPersonId != null && selectedPersonId.isNotEmpty)
-              _buildOverlayChip(
-                icon: Icons.ads_click_outlined,
-                label: 'Выбран узел',
-                highlighted: true,
-              ),
-          ],
-        );
-        final infoCard = Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+    return ConstrainedBox(
+      constraints: BoxConstraints(
+        maxWidth: min((_viewportSize?.width ?? 640) - 24, 640),
+      ),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Container(
+          padding: const EdgeInsets.all(8),
           decoration: BoxDecoration(
-            color: Theme.of(context)
-                .colorScheme
-                .surfaceContainerHighest
-                .withValues(alpha: 0.92),
-            borderRadius: BorderRadius.circular(16),
+            color:
+                Theme.of(context).colorScheme.surface.withValues(alpha: 0.84),
+            borderRadius: BorderRadius.circular(20),
             border: Border.all(
-              color: Theme.of(context).colorScheme.outlineVariant,
+              color: Theme.of(context)
+                  .colorScheme
+                  .outlineVariant
+                  .withValues(alpha: 0.88),
             ),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              statusChips,
-              const SizedBox(height: 10),
-              Text(
-                !widget.showGenerationGuides
-                    ? '$helperText Это свободный сетевой режим без поколенческой сетки: связи читаются по линиям, а карточки можно раскладывать вручную.'
-                    : familyClusters.isEmpty
-                        ? '$helperText Поколений на экране: $generationCount. Синие карточки обозначают мужчин, розовые — женщин.'
-                        : '$helperText Поколений на экране: $generationCount. Цветные рамки помогают увидеть отдельные семейные ветки, а подписи слева — уровни поколения.',
-                style: Theme.of(context).textTheme.bodySmall,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.08),
+                blurRadius: 18,
+                offset: const Offset(0, 6),
               ),
             ],
           ),
-        );
-        final controls = Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            _buildQuickControlStat(
-              icon: Icons.open_with,
-              label: widget.hasManualLayout ? 'Ручной layout' : 'Auto layout',
-              highlighted: widget.hasManualLayout,
-            ),
-            _buildQuickControlStat(
-              icon: Icons.layers_outlined,
-              label: widget.showGenerationGuides
-                  ? '$generationCount поколений'
-                  : '${familyClusters.length} кластеров',
-            ),
-            IconButton.filledTonal(
-              onPressed: () => _zoomBy(1.2),
-              tooltip: 'Увеличить',
-              icon: const Icon(Icons.add),
-            ),
-            IconButton.filledTonal(
-              onPressed: () => _zoomBy(1 / 1.2),
-              tooltip: 'Уменьшить',
-              icon: const Icon(Icons.remove),
-            ),
-            if (widget.enableClusterHighlights)
-              IconButton.filledTonal(
-                onPressed: () {
-                  setState(() {
-                    _showFamilyClusters = !_showFamilyClusters;
-                  });
-                },
-                tooltip: _showFamilyClusters
-                    ? 'Скрыть семейные рамки'
-                    : 'Показать семейные рамки',
-                icon: Icon(
-                  _showFamilyClusters
-                      ? Icons.layers_clear_outlined
-                      : Icons.layers_outlined,
-                ),
-              ),
-            FilledButton.tonalIcon(
-              onPressed: _fitTreeToViewport,
-              icon: const Icon(Icons.fit_screen_outlined),
-              label: const Text('Вписать'),
-            ),
-            if (branchRootPersonId != null && branchRootPersonId.isNotEmpty)
-              FilledButton.tonalIcon(
-                onPressed: () => _focusOnPerson(branchRootPersonId),
-                icon: const Icon(Icons.alt_route),
-                label:
-                    Text(widget.showGenerationGuides ? 'К ветке' : 'К кругу'),
-              ),
-            if (branchRootPersonId != null &&
-                branchRootPersonId.isNotEmpty &&
-                widget.onBranchFocusCleared != null)
-              FilledButton.tonalIcon(
-                onPressed: widget.onBranchFocusCleared,
-                icon: const Icon(Icons.clear_all),
-                label: Text(
-                  widget.showGenerationGuides
-                      ? 'Сбросить ветку'
-                      : 'Сбросить круг',
-                ),
-              ),
-            if (currentUserNodeId != null)
-              FilledButton.tonalIcon(
-                onPressed: () => _focusOnPerson(currentUserNodeId),
-                icon: const Icon(Icons.my_location_outlined),
-                label: const Text('Ко мне'),
-              ),
-            if (selectedPersonId != null && selectedPersonId.isNotEmpty)
-              FilledButton.tonalIcon(
-                onPressed: () => _focusOnPerson(selectedPersonId),
-                icon: const Icon(Icons.center_focus_strong_outlined),
-                label: const Text('К выбранному'),
-              ),
-            if (widget.hasManualLayout && widget.onResetLayout != null)
-              FilledButton.tonalIcon(
-                onPressed: widget.onResetLayout,
-                icon: const Icon(Icons.restart_alt),
-                label: const Text('Сбросить layout'),
-              ),
-          ],
-        );
-
-        if (isCompact) {
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              infoCard,
-              const SizedBox(height: 8),
-              controls,
+              for (int i = 0; i < chips.length; i++) ...[
+                if (i > 0) const SizedBox(width: 8),
+                chips[i],
+              ],
             ],
-          );
-        }
-
-        return Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(child: infoCard),
-            const SizedBox(width: 10),
-            SizedBox(
-              width: 260,
-              child: Align(
-                alignment: Alignment.topRight,
-                child: controls,
-              ),
-            ),
-          ],
-        );
-      },
+          ),
+        ),
+      ),
     );
   }
 
-  Widget _buildQuickControlStat({
-    required IconData icon,
-    required String label,
-    bool highlighted = false,
-  }) {
-    final theme = Theme.of(context);
+  Widget _buildViewportControlDock() {
+    final currentUserNodeId = _findCurrentUserNodeId();
+    final branchRootPersonId = widget.branchRootPersonId;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+      padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
-        color: highlighted
-            ? theme.colorScheme.primaryContainer
-            : theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.55),
-        borderRadius: BorderRadius.circular(999),
+        color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.9),
+        borderRadius: BorderRadius.circular(22),
         border: Border.all(
-          color: highlighted
-              ? theme.colorScheme.primary
-              : theme.colorScheme.outlineVariant,
+          color: Theme.of(context)
+              .colorScheme
+              .outlineVariant
+              .withValues(alpha: 0.88),
         ),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 16, color: theme.colorScheme.primary),
-          const SizedBox(width: 6),
-          Text(
-            label,
-            style: theme.textTheme.labelMedium?.copyWith(
-              fontWeight: FontWeight.w700,
-            ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.1),
+            blurRadius: 18,
+            offset: const Offset(0, 6),
           ),
         ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _buildDockButton(
+            icon: Icons.add,
+            tooltip: 'Увеличить',
+            onPressed: () => _zoomBy(1.2),
+          ),
+          const SizedBox(height: 6),
+          _buildDockButton(
+            icon: Icons.remove,
+            tooltip: 'Уменьшить',
+            onPressed: () => _zoomBy(1 / 1.2),
+          ),
+          const SizedBox(height: 6),
+          _buildDockButton(
+            icon: Icons.fit_screen_outlined,
+            tooltip: 'Вписать дерево',
+            onPressed: _fitTreeToViewport,
+          ),
+          if (currentUserNodeId != null) ...[
+            const SizedBox(height: 6),
+            _buildDockButton(
+              icon: Icons.my_location_outlined,
+              tooltip: 'Ко мне',
+              onPressed: () => _focusOnPerson(currentUserNodeId),
+            ),
+          ],
+          if (branchRootPersonId != null && branchRootPersonId.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            _buildDockButton(
+              icon: Icons.alt_route_outlined,
+              tooltip: widget.showGenerationGuides ? 'К ветке' : 'К кругу',
+              onPressed: () => _focusOnPerson(branchRootPersonId),
+            ),
+            if (widget.onBranchFocusCleared != null) ...[
+              const SizedBox(height: 6),
+              _buildDockButton(
+                icon: Icons.clear_all,
+                tooltip: widget.showGenerationGuides
+                    ? 'Сбросить ветку'
+                    : 'Сбросить круг',
+                onPressed: widget.onBranchFocusCleared!,
+              ),
+            ],
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDockButton({
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback onPressed,
+  }) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.96),
+        shape: const CircleBorder(),
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: onPressed,
+          child: SizedBox(
+            width: 44,
+            height: 44,
+            child: Icon(icon, color: colorScheme.primary),
+          ),
+        ),
       ),
     );
   }
@@ -2272,14 +2224,6 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
     return null;
   }
 
-  int _estimateGenerationCount() {
-    final levels = nodePositions.values
-        .map((offset) => offset.dy.toStringAsFixed(1))
-        .toSet()
-        .length;
-    return max(levels, 1);
-  }
-
   void _scheduleViewportFit() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || _hasAppliedViewportFit) {
@@ -2305,13 +2249,13 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
 
     final contentWidth = treeSize.width;
     final contentHeight = treeSize.height;
-    final horizontalScale = (viewport.width - 48) / contentWidth;
+    final horizontalScale = (viewport.width - 28) / contentWidth;
     final verticalScale =
         (viewport.height - _viewportReservedTop - _viewportReservedBottom) /
             contentHeight;
     final targetScale =
         horizontalScale < verticalScale ? horizontalScale : verticalScale;
-    final safeScale = targetScale.clamp(0.2, 1.0);
+    final safeScale = targetScale.clamp(0.2, 1.12);
 
     final translateX = (viewport.width - contentWidth * safeScale) / 2;
     final availableHeight =

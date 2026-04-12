@@ -45,8 +45,8 @@ void main() {
     expect(find.byType(Scaffold), findsOneWidget);
     expect(find.byType(InteractiveViewer), findsOneWidget);
     expect(find.text('Иван Петров'), findsOneWidget);
-    expect(find.text('Вписать'), findsOneWidget);
-    expect(find.text('Ко мне'), findsOneWidget);
+    expect(find.byTooltip('Вписать дерево'), findsOneWidget);
+    expect(find.byTooltip('Ко мне'), findsOneWidget);
     expect(find.byTooltip('Увеличить'), findsOneWidget);
     expect(find.byTooltip('Уменьшить'), findsOneWidget);
     expect(find.text('Это вы'), findsOneWidget);
@@ -540,10 +540,10 @@ void main() {
 
     expect(find.text('Старшее поколение'), findsOneWidget);
     expect(find.text('Младшее поколение'), findsOneWidget);
-    expect(find.textContaining('Масштаб'), findsOneWidget);
-    expect(find.text('Сбросить ветку'), findsOneWidget);
+    expect(find.text('100%'), findsOneWidget);
+    expect(find.byTooltip('Сбросить ветку'), findsOneWidget);
 
-    await tester.tap(find.text('Сбросить ветку'));
+    await tester.tap(find.byTooltip('Сбросить ветку'));
     await tester.pumpAndSettle();
     expect(clearCalls, 1);
   });

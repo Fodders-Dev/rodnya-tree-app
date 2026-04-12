@@ -19,6 +19,18 @@ import '../services/public_tree_link_service.dart';
 import '../services/local_storage_service.dart';
 import '../utils/user_facing_error.dart';
 
+enum _TreeToolbarAction {
+  refresh,
+  openRelatives,
+  openChats,
+  createPost,
+  openBranchChat,
+  openBranchDetails,
+  copyPublicLink,
+  resetBranchFocus,
+  resetLayout,
+}
+
 class SectionTitle extends StatelessWidget {
   final String title;
 
@@ -69,21 +81,13 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
   TreeProvider? _treeProviderInstance; // Храним экземпляр
   String? _currentTreeId;
   String? _branchRootPersonId;
-  String? _branchRootName;
   String? _selectedEditPersonId;
-  String? _selectedEditPersonName;
   FamilyTree? _currentTreeMeta;
   Map<String, Offset> _manualNodePositions = <String, Offset>{};
   // <<< НОВОЕ СОСТОЯНИЕ: Флаг, добавлен ли текущий пользователь в дерево >>>
   bool _currentUserIsInTree = true; // Изначально true, пока не проверили
 
   bool get _isFriendsTree => _currentTreeMeta?.isFriendsTree == true;
-  String get _treeLabel => _isFriendsTree ? 'Дерево друзей' : 'Семейное дерево';
-  String get _peopleLabel => _isFriendsTree ? 'людей' : 'человек';
-  String get _branchLabel => _isFriendsTree ? 'кругов' : 'веток семьи';
-  int get _graphClusterCount => _isFriendsTree
-      ? _estimateGraphCircleCount()
-      : _estimateFamilyBranchCount();
 
   String _describeTreeActionError(
     Object error, {
@@ -260,11 +264,9 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
           _isLoading = false;
           if (!branchRootStillExists) {
             _branchRootPersonId = null;
-            _branchRootName = null;
           }
           if (!selectedEditPersonStillExists) {
             _selectedEditPersonId = null;
-            _selectedEditPersonName = null;
           }
         });
       }
@@ -341,6 +343,11 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
             onPressed: () => context.go('/tree?selector=1'),
           ),
           IconButton(
+            icon: const Icon(Icons.person_add_alt_1_outlined),
+            tooltip: _isFriendsTree ? 'Добавить в круг' : 'Добавить человека',
+            onPressed: () => _navigateToAddRelative(selectedTreeId),
+          ),
+          IconButton(
             icon: Icon(
               _isEditMode ? Icons.edit_off_outlined : Icons.edit_outlined,
             ),
@@ -353,10 +360,15 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
                 _isEditMode = !_isEditMode;
                 if (!_isEditMode) {
                   _selectedEditPersonId = null;
-                  _selectedEditPersonName = null;
                 }
               });
             },
+          ),
+          PopupMenuButton<_TreeToolbarAction>(
+            tooltip: 'Действия дерева',
+            onSelected: (action) =>
+                _handleTreeToolbarAction(selectedTreeId, action),
+            itemBuilder: (context) => _buildTreeToolbarMenuItems(),
           ),
         ],
       ),
@@ -413,79 +425,32 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
           );
         }
 
-        final overviewCard = isCompact
-            ? _buildOverviewCard(
-                selectedTreeId,
-                selectedTreeName,
-                compact: true,
-              )
-            : _buildOverviewCard(
-                selectedTreeId,
-                selectedTreeName,
-                compact: false,
-              );
-
         final treeCanvas = _buildTreeCanvas();
+        final horizontalPadding = isCompact ? 10.0 : 16.0;
+        final topPadding = isCompact ? 8.0 : 12.0;
+        final bottomPadding = isCompact ? 12.0 : 16.0;
+
+        Widget content = Padding(
+          padding: EdgeInsets.fromLTRB(
+            horizontalPadding,
+            topPadding,
+            horizontalPadding,
+            bottomPadding,
+          ),
+          child: treeCanvas,
+        );
 
         if (isWideDesktop) {
-          return Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 1520),
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
-                child: Column(
-                  children: [
-                    _buildTreeHeroBanner(selectedTreeName),
-                    const SizedBox(height: 16),
-                    Expanded(
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          SizedBox(
-                            width: 372,
-                            child: SingleChildScrollView(child: overviewCard),
-                          ),
-                          const SizedBox(width: 16),
-                          Expanded(child: treeCanvas),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+          content = Center(
+            child: SizedBox(
+              width: constraints.maxWidth > 1560 ? 1560 : constraints.maxWidth,
+              height: constraints.maxHeight,
+              child: content,
             ),
           );
         }
 
-        return Column(
-          children: [
-            Flexible(
-              fit: FlexFit.loose,
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: Column(
-                  children: [
-                    Padding(
-                      padding:
-                          EdgeInsets.fromLTRB(16, isCompact ? 10 : 16, 16, 12),
-                      child: _buildTreeHeroBanner(selectedTreeName),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
-                      child: overviewCard,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                child: treeCanvas,
-              ),
-            ),
-          ],
-        );
+        return content;
       },
     );
   }
@@ -534,7 +499,6 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
           onEditPersonSelected: (person) {
             setState(() {
               _selectedEditPersonId = person.id;
-              _selectedEditPersonName = person.name;
             });
           },
           manualNodePositions: _manualNodePositions,
@@ -553,523 +517,6 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
           currentUserIsInTree: _currentUserIsInTree,
           onAddSelfTapWithType: _handleAddSelfFromTree,
         ),
-      ),
-    );
-  }
-
-  Widget _buildTreeHeroBanner(String selectedTreeName) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    final accent =
-        _isFriendsTree ? const Color(0xFF0F9D8A) : colorScheme.primary;
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            accent.withValues(alpha: 0.18),
-            colorScheme.surfaceContainerHighest.withValues(alpha: 0.75),
-          ],
-        ),
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: accent.withValues(alpha: 0.25)),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              color: accent.withValues(alpha: 0.14),
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Icon(
-              _isFriendsTree
-                  ? Icons.diversity_3_outlined
-                  : Icons.account_tree_outlined,
-              color: accent,
-            ),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  _isFriendsTree
-                      ? 'Активен дружеский граф'
-                      : 'Активно семейное дерево',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  _isFriendsTree
-                      ? '"$selectedTreeName" сейчас открыт для ручной композиции, быстрых переходов по людям и чатов внутри круга.'
-                      : '"$selectedTreeName" сейчас открыт для ручной композиции, быстрых переходов по веткам и семейных чатов.',
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: colorScheme.onSurfaceVariant,
-                    height: 1.4,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildOverviewCard(
-    String selectedTreeId,
-    String selectedTreeName, {
-    required bool compact,
-  }) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    final branchRootPerson = _findBranchRootPerson();
-    final branchCount = _graphClusterCount;
-
-    if (compact) {
-      final compactPrimaryAction =
-          _currentUserIsInTree ? 'Добавить' : 'Добавить себя';
-      final canOpenBranchChat = branchRootPerson != null;
-      final branchChatLabel =
-          _isFriendsTree ? 'Написать кругу' : 'Написать ветке';
-
-      return Container(
-        width: double.infinity,
-        padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
-        decoration: BoxDecoration(
-          color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.55),
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: colorScheme.outlineVariant),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              _isEditMode
-                  ? 'Режим редактирования включён'
-                  : 'Граф готов к просмотру',
-              style: theme.textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              '${_relativesData.length} $_peopleLabel, ${_relationsData.length} связей, $branchCount $_branchLabel.',
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: colorScheme.onSurfaceVariant,
-              ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              _isFriendsTree
-                  ? 'Это свободный граф друзей: карточки лучше раскладывать вручную, а связи сохраняются и перестраиваются прямо на полотне.'
-                  : 'В edit mode карточки можно двигать вручную: связи сохраняются и перестраиваются прямо на полотне.',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: colorScheme.onSurfaceVariant,
-              ),
-            ),
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                FilledButton.icon(
-                  onPressed: () => _navigateToAddRelative(selectedTreeId),
-                  icon: const Icon(Icons.person_add_alt_1),
-                  label: Text(compactPrimaryAction),
-                ),
-                if (canOpenBranchChat)
-                  OutlinedButton.icon(
-                    onPressed: () =>
-                        _openBranchChat(selectedTreeId, branchRootPerson),
-                    icon: const Icon(Icons.forum_outlined),
-                    label: Text(branchChatLabel),
-                  ),
-                OutlinedButton.icon(
-                  onPressed: () => context.go('/tree?selector=1'),
-                  icon: const Icon(Icons.swap_horiz),
-                  label: const Text('Сменить'),
-                ),
-                if (_branchRootPersonId != null)
-                  OutlinedButton.icon(
-                    onPressed: _resetBranchFocus,
-                    icon: const Icon(Icons.clear_all),
-                    label: Text(
-                      _isFriendsTree ? 'Сбросить круг' : 'Сбросить ветку',
-                    ),
-                  ),
-                if (_manualNodePositions.isNotEmpty)
-                  OutlinedButton.icon(
-                    onPressed: () => _resetManualTreeLayout(selectedTreeId),
-                    icon: const Icon(Icons.restart_alt),
-                    label: const Text('Сбросить layout'),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                _buildInfoChip(
-                  icon: _isEditMode ? Icons.edit : Icons.visibility_outlined,
-                  label: _isEditMode ? 'Редактирование' : 'Просмотр',
-                ),
-                if (_currentTreeMeta != null)
-                  _buildInfoChip(
-                    icon: _currentTreeMeta!.isPrivate
-                        ? Icons.lock_outline
-                        : Icons.public,
-                    label:
-                        _currentTreeMeta!.isPrivate ? 'Приватное' : 'Публичное',
-                  ),
-                _buildInfoChip(
-                  icon: _currentUserIsInTree
-                      ? Icons.verified_user_outlined
-                      : Icons.person_add_alt_1,
-                  label: _currentUserIsInTree
-                      ? 'Вы в дереве'
-                      : 'Вы ещё не добавлены',
-                  highlighted: !_currentUserIsInTree,
-                ),
-                if (_branchRootName != null)
-                  _buildInfoChip(
-                    icon: Icons.alt_route,
-                    label:
-                        '${_isFriendsTree ? 'Круг' : 'Ветка'}: $_branchRootName',
-                    highlighted: true,
-                  ),
-                if (_selectedEditPersonName != null && _isEditMode)
-                  _buildInfoChip(
-                    icon: Icons.ads_click_outlined,
-                    label: 'Выбрано: $_selectedEditPersonName',
-                    highlighted: true,
-                  ),
-                if (_manualNodePositions.isNotEmpty)
-                  _buildInfoChip(
-                    icon: Icons.open_with,
-                    label: 'Ручной layout активен',
-                    highlighted: true,
-                  ),
-                _buildInfoChip(
-                  icon: Icons.diversity_3_outlined,
-                  label: _isFriendsTree
-                      ? 'Режим друзей включён'
-                      : 'Дерево друзей: доступно',
-                ),
-              ],
-            ),
-          ],
-        ),
-      );
-    }
-
-    final branchChatLabel =
-        _isFriendsTree ? 'Написать кругу' : 'Написать ветке';
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.55),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: colorScheme.outlineVariant),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            selectedTreeName,
-            style: theme.textTheme.titleLarge?.copyWith(
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            _treeLabel,
-            style: theme.textTheme.labelLarge?.copyWith(
-              color: colorScheme.primary,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            _isEditMode
-                ? _isFriendsTree
-                    ? 'Режим редактирования включён. Это свободный граф друзей: тяните карточки по полотну, чтобы собрать свой круг вручную.'
-                    : 'Режим редактирования включён. Нажмите на карточку человека, чтобы открыть быстрые действия, или тяните её по полотну для ручной композиции дерева.'
-                : _isFriendsTree
-                    ? 'Открывайте карточки, чтобы смотреть детали. В режиме друзей поколенческая сетка скрыта, а акцент сделан на свободную сеть связей.'
-                    : 'Открывайте карточки людей, чтобы смотреть детали. Для правок включите режим редактирования. Долгое нажатие или плашка «Ветка» фокусируют схему на нужной семье.',
-            style: theme.textTheme.bodyMedium?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              _buildInfoChip(
-                icon: Icons.people_alt_outlined,
-                label: '${_relativesData.length} $_peopleLabel',
-              ),
-              _buildInfoChip(
-                icon: Icons.hub_outlined,
-                label: '${_relationsData.length} связей',
-              ),
-              _buildInfoChip(
-                icon: Icons.group_work_outlined,
-                label: '$branchCount $_branchLabel',
-              ),
-              _buildInfoChip(
-                icon: Icons.unfold_more_outlined,
-                label: 'Drag, zoom, + / - / 0',
-              ),
-              if (_manualNodePositions.isNotEmpty)
-                _buildInfoChip(
-                  icon: Icons.open_with,
-                  label: 'Ручной layout сохранён',
-                  highlighted: true,
-                ),
-              _buildInfoChip(
-                icon: _isEditMode ? Icons.edit : Icons.visibility_outlined,
-                label: _isEditMode ? 'Редактирование' : 'Просмотр',
-              ),
-              if (_selectedEditPersonName != null && _isEditMode)
-                _buildInfoChip(
-                  icon: Icons.ads_click_outlined,
-                  label: 'Выбрано: $_selectedEditPersonName',
-                  highlighted: true,
-                ),
-              if (_currentTreeMeta != null)
-                _buildInfoChip(
-                  icon: _currentTreeMeta!.isPrivate
-                      ? Icons.lock_outline
-                      : Icons.public,
-                  label:
-                      _currentTreeMeta!.isPrivate ? 'Приватное' : 'Публичное',
-                ),
-              if (_currentTreeMeta?.isCertified == true)
-                _buildInfoChip(
-                  icon: Icons.verified_outlined,
-                  label: 'Сертифицировано',
-                  highlighted: true,
-                ),
-              if (_branchRootName != null)
-                _buildInfoChip(
-                  icon: Icons.alt_route,
-                  label:
-                      '${_isFriendsTree ? 'Круг' : 'Ветка'}: $_branchRootName',
-                  highlighted: true,
-                ),
-              _buildInfoChip(
-                icon: _currentUserIsInTree
-                    ? Icons.verified_user_outlined
-                    : Icons.person_add_alt_1,
-                label: _currentUserIsInTree
-                    ? 'Вы уже в дереве'
-                    : 'Вы ещё не добавлены',
-                highlighted: !_currentUserIsInTree,
-              ),
-              _buildInfoChip(
-                icon: Icons.diversity_3_outlined,
-                label: _isFriendsTree
-                    ? 'Дружеский граф'
-                    : 'Можно создать дерево друзей',
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              _buildLegendChip(
-                color: Colors.blue.shade300,
-                label: 'Мужчины',
-              ),
-              _buildLegendChip(
-                color: Colors.pink.shade300,
-                label: 'Женщины',
-              ),
-              _buildLegendChip(
-                color: colorScheme.primary,
-                label: 'Вы в дереве',
-              ),
-              if (_isFriendsTree)
-                _buildLegendChip(
-                  color: Colors.teal.shade400,
-                  label: 'Свободная сеть',
-                ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          if (_currentTreeMeta?.certificationNote != null &&
-              _currentTreeMeta!.certificationNote!.trim().isNotEmpty) ...[
-            Text(
-              _currentTreeMeta!.certificationNote!,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: colorScheme.primary,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 14),
-          ],
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: [
-              FilledButton.icon(
-                onPressed: () => context.go('/tree?selector=1'),
-                icon: const Icon(Icons.swap_horiz),
-                label: const Text('Сменить дерево'),
-              ),
-              FilledButton.icon(
-                onPressed: () => context.go('/relatives'),
-                icon: const Icon(Icons.people_outline),
-                label:
-                    Text(_isFriendsTree ? 'Открыть связи' : 'Открыть родных'),
-              ),
-              FilledButton.icon(
-                onPressed: () => context.go('/chats'),
-                icon: const Icon(Icons.forum_outlined),
-                label: const Text('Открыть чаты'),
-              ),
-              FilledButton.icon(
-                onPressed: () => context.push('/post/create'),
-                icon: const Icon(Icons.post_add_outlined),
-                label: Text(_isFriendsTree ? 'Пост в круг' : 'Новый пост'),
-              ),
-              if (_branchRootPersonId != null)
-                OutlinedButton.icon(
-                  onPressed: _resetBranchFocus,
-                  icon: const Icon(Icons.account_tree_outlined),
-                  label: Text(_isFriendsTree
-                      ? 'Показать весь граф'
-                      : 'Показать всё дерево'),
-                ),
-              if (branchRootPerson != null)
-                OutlinedButton.icon(
-                  onPressed: () =>
-                      _openBranchChat(selectedTreeId, branchRootPerson),
-                  icon: const Icon(Icons.forum_outlined),
-                  label: Text(branchChatLabel),
-                ),
-              if (branchRootPerson != null)
-                OutlinedButton.icon(
-                  onPressed: () =>
-                      context.push('/relative/details/${branchRootPerson.id}'),
-                  icon: const Icon(Icons.open_in_new),
-                  label: Text(
-                    _isFriendsTree
-                        ? 'Открыть карточку круга'
-                        : 'Открыть карточку ветки',
-                  ),
-                ),
-              if (_currentTreeMeta?.isPublic == true)
-                OutlinedButton.icon(
-                  onPressed: _copyPublicTreeLink,
-                  icon: const Icon(Icons.link_outlined),
-                  label: const Text('Скопировать публичную ссылку'),
-                ),
-              OutlinedButton.icon(
-                onPressed: () => _navigateToAddRelative(selectedTreeId),
-                icon: const Icon(Icons.person_add_alt_1),
-                label: Text(
-                    _isFriendsTree ? 'Добавить в круг' : 'Добавить человека'),
-              ),
-              OutlinedButton.icon(
-                onPressed: () => _loadData(selectedTreeId),
-                icon: const Icon(Icons.refresh),
-                label: const Text('Обновить'),
-              ),
-              if (_manualNodePositions.isNotEmpty)
-                OutlinedButton.icon(
-                  onPressed: () => _resetManualTreeLayout(selectedTreeId),
-                  icon: const Icon(Icons.restart_alt),
-                  label: const Text('Сбросить layout'),
-                ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildInfoChip({
-    required IconData icon,
-    required String label,
-    bool highlighted = false,
-  }) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-
-    return Container(
-      constraints: const BoxConstraints(maxWidth: 260),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: highlighted ? colorScheme.primaryContainer : colorScheme.surface,
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(
-          color: highlighted ? colorScheme.primary : colorScheme.outlineVariant,
-        ),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 16),
-          const SizedBox(width: 6),
-          Flexible(
-            child: Text(
-              label,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildLegendChip({
-    required Color color,
-    required String label,
-  }) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: color.withValues(alpha: 0.45)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 10,
-            height: 10,
-            decoration: BoxDecoration(
-              color: color,
-              shape: BoxShape.circle,
-            ),
-          ),
-          const SizedBox(width: 8),
-          Text(
-            label,
-            style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
-          ),
-        ],
       ),
     );
   }
@@ -1138,6 +585,139 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
         ),
       ),
     );
+  }
+
+  List<PopupMenuEntry<_TreeToolbarAction>> _buildTreeToolbarMenuItems() {
+    final branchRootPerson = _findBranchRootPerson();
+    final items = <PopupMenuEntry<_TreeToolbarAction>>[
+      _buildTreeToolbarMenuItem(
+        value: _TreeToolbarAction.refresh,
+        icon: Icons.refresh,
+        label: 'Обновить дерево',
+      ),
+      _buildTreeToolbarMenuItem(
+        value: _TreeToolbarAction.openRelatives,
+        icon: Icons.people_outline,
+        label: _isFriendsTree ? 'Открыть связи' : 'Открыть родных',
+      ),
+      _buildTreeToolbarMenuItem(
+        value: _TreeToolbarAction.openChats,
+        icon: Icons.forum_outlined,
+        label: 'Открыть чаты',
+      ),
+      _buildTreeToolbarMenuItem(
+        value: _TreeToolbarAction.createPost,
+        icon: Icons.post_add_outlined,
+        label: _isFriendsTree ? 'Пост в круг' : 'Новый пост',
+      ),
+    ];
+
+    if (branchRootPerson != null) {
+      items.add(
+        _buildTreeToolbarMenuItem(
+          value: _TreeToolbarAction.openBranchChat,
+          icon: Icons.alt_route_outlined,
+          label: _isFriendsTree ? 'Написать кругу' : 'Написать ветке',
+        ),
+      );
+      items.add(
+        _buildTreeToolbarMenuItem(
+          value: _TreeToolbarAction.openBranchDetails,
+          icon: Icons.open_in_new,
+          label: _isFriendsTree
+              ? 'Открыть карточку круга'
+              : 'Открыть карточку ветки',
+        ),
+      );
+    }
+
+    if (_branchRootPersonId != null) {
+      items.add(
+        _buildTreeToolbarMenuItem(
+          value: _TreeToolbarAction.resetBranchFocus,
+          icon: Icons.clear_all,
+          label: _isFriendsTree ? 'Показать весь граф' : 'Показать всё дерево',
+        ),
+      );
+    }
+
+    if (_currentTreeMeta?.isPublic == true) {
+      items.add(
+        _buildTreeToolbarMenuItem(
+          value: _TreeToolbarAction.copyPublicLink,
+          icon: Icons.link_outlined,
+          label: 'Скопировать публичную ссылку',
+        ),
+      );
+    }
+
+    if (_manualNodePositions.isNotEmpty) {
+      items.add(
+        _buildTreeToolbarMenuItem(
+          value: _TreeToolbarAction.resetLayout,
+          icon: Icons.restart_alt,
+          label: 'Сбросить layout',
+        ),
+      );
+    }
+
+    return items;
+  }
+
+  PopupMenuItem<_TreeToolbarAction> _buildTreeToolbarMenuItem({
+    required _TreeToolbarAction value,
+    required IconData icon,
+    required String label,
+  }) {
+    return PopupMenuItem<_TreeToolbarAction>(
+      value: value,
+      child: Row(
+        children: [
+          Icon(icon, size: 18),
+          const SizedBox(width: 10),
+          Expanded(child: Text(label)),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _handleTreeToolbarAction(
+    String selectedTreeId,
+    _TreeToolbarAction action,
+  ) async {
+    final branchRootPerson = _findBranchRootPerson();
+
+    switch (action) {
+      case _TreeToolbarAction.refresh:
+        await _loadData(selectedTreeId);
+        return;
+      case _TreeToolbarAction.openRelatives:
+        context.go('/relatives');
+        return;
+      case _TreeToolbarAction.openChats:
+        context.go('/chats');
+        return;
+      case _TreeToolbarAction.createPost:
+        context.push('/post/create');
+        return;
+      case _TreeToolbarAction.openBranchChat:
+        await _openBranchChat(selectedTreeId, branchRootPerson);
+        return;
+      case _TreeToolbarAction.openBranchDetails:
+        if (branchRootPerson != null) {
+          context.push('/relative/details/${branchRootPerson.id}');
+        }
+        return;
+      case _TreeToolbarAction.copyPublicLink:
+        await _copyPublicTreeLink();
+        return;
+      case _TreeToolbarAction.resetBranchFocus:
+        _resetBranchFocus();
+        return;
+      case _TreeToolbarAction.resetLayout:
+        await _resetManualTreeLayout(selectedTreeId);
+        return;
+    }
   }
 
   // === НОВЫЙ МЕТОД-КОЛЛБЭК для InteractiveFamilyTree ===
@@ -1214,7 +794,6 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
           if (focusedPerson != FamilyPerson.empty) {
             setState(() {
               _selectedEditPersonId = focusedPerson.id;
-              _selectedEditPersonName = focusedPerson.name;
             });
           }
         });
@@ -1327,108 +906,6 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
         mounted) {
       await _loadData(treeId);
     }
-  }
-
-  int _estimateFamilyBranchCount() {
-    final parentToChildren = <String, Set<String>>{};
-    final spousesByPerson = <String, Set<String>>{};
-
-    for (final relation in _relationsData) {
-      final parentId = _parentIdFromRelation(relation);
-      final childId = _childIdFromRelation(relation);
-      if (parentId != null && childId != null) {
-        parentToChildren.putIfAbsent(parentId, () => <String>{}).add(childId);
-      }
-      if (_isSpouseRelation(relation)) {
-        spousesByPerson
-            .putIfAbsent(relation.person1Id, () => <String>{})
-            .add(relation.person2Id);
-        spousesByPerson
-            .putIfAbsent(relation.person2Id, () => <String>{})
-            .add(relation.person1Id);
-      }
-    }
-
-    final processed = <String>{};
-    var count = 0;
-    for (final entry in _relativesData) {
-      final person = entry['person'];
-      if (person is! FamilyPerson) {
-        continue;
-      }
-      final familyGroup = <String>{person.id};
-      final queue = <String>[person.id];
-      while (queue.isNotEmpty) {
-        final currentId = queue.removeAt(0);
-        for (final spouseId in spousesByPerson[currentId] ?? const <String>{}) {
-          if (familyGroup.add(spouseId)) {
-            queue.add(spouseId);
-          }
-        }
-      }
-      final groupKey = familyGroup.toList();
-      groupKey.sort();
-      final groupKeyString = groupKey.join('::');
-      if (!processed.add(groupKeyString)) {
-        continue;
-      }
-      final hasChildren = familyGroup.any(
-        (memberId) =>
-            (parentToChildren[memberId] ?? const <String>{}).isNotEmpty,
-      );
-      if (familyGroup.length > 1 || hasChildren) {
-        count++;
-      }
-    }
-
-    return count == 0 && _relativesData.isNotEmpty ? 1 : count;
-  }
-
-  int _estimateGraphCircleCount() {
-    final personIds = _relativesData
-        .map((entry) => entry['person'])
-        .whereType<FamilyPerson>()
-        .map((person) => person.id)
-        .toSet();
-    if (personIds.isEmpty) {
-      return 0;
-    }
-
-    final adjacency = <String, Set<String>>{
-      for (final id in personIds) id: <String>{},
-    };
-    for (final relation in _relationsData) {
-      if (!personIds.contains(relation.person1Id) ||
-          !personIds.contains(relation.person2Id)) {
-        continue;
-      }
-      adjacency
-          .putIfAbsent(relation.person1Id, () => <String>{})
-          .add(relation.person2Id);
-      adjacency
-          .putIfAbsent(relation.person2Id, () => <String>{})
-          .add(relation.person1Id);
-    }
-
-    final visited = <String>{};
-    var count = 0;
-    for (final personId in personIds) {
-      if (!visited.add(personId)) {
-        continue;
-      }
-      count++;
-      final queue = <String>[personId];
-      while (queue.isNotEmpty) {
-        final currentId = queue.removeLast();
-        for (final neighbour in adjacency[currentId] ?? const <String>{}) {
-          if (visited.add(neighbour)) {
-            queue.add(neighbour);
-          }
-        }
-      }
-    }
-
-    return count;
   }
 
   bool _isSpouseRelation(FamilyRelation relation) {
@@ -1551,7 +1028,6 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
     }
     setState(() {
       _branchRootPersonId = person.id;
-      _branchRootName = person.name;
     });
   }
 
@@ -1561,7 +1037,6 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
     }
     setState(() {
       _branchRootPersonId = null;
-      _branchRootName = null;
     });
   }
 

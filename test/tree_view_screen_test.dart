@@ -466,8 +466,9 @@ void main() {
       find.textContaining('Открывайте карточки людей, чтобы смотреть детали'),
       findsNothing,
     );
-    expect(find.text('Добавить'), findsOneWidget);
-    expect(find.text('Сменить'), findsOneWidget);
+    expect(find.text('Граф готов к просмотру'), findsNothing);
+    expect(find.byTooltip('Добавить человека'), findsOneWidget);
+    expect(find.byTooltip('Действия дерева'), findsOneWidget);
   });
 
   testWidgets('после фокуса на ветке можно открыть общий чат ветки',
@@ -519,9 +520,9 @@ void main() {
     treeWidget.onBranchFocusRequested?.call(branchRootPerson);
     await tester.pumpAndSettle();
 
+    await tester.tap(find.byTooltip('Действия дерева'));
+    await tester.pumpAndSettle();
     expect(find.text('Написать ветке'), findsOneWidget);
-
-    await tester.ensureVisible(find.text('Написать ветке'));
     await tester.tap(find.text('Написать ветке'));
     await tester.pumpAndSettle();
 
@@ -571,7 +572,8 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    await tester.ensureVisible(find.text('Открыть родных'));
+    await tester.tap(find.byTooltip('Действия дерева'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Открыть родных'));
     await tester.pumpAndSettle();
     expect(find.text('relatives-screen'), findsOneWidget);
@@ -584,7 +586,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.ensureVisible(find.text('Открыть чаты'));
+    await tester.tap(find.byTooltip('Действия дерева'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Открыть чаты'));
     await tester.pumpAndSettle();
     expect(find.text('chats-screen'), findsOneWidget);
