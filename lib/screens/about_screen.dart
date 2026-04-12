@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 class AboutScreen extends StatelessWidget {
@@ -52,13 +53,31 @@ class AboutScreen extends StatelessWidget {
               subtitle: Text('Artem Kuznetsov'),
               leading: Icon(Icons.code),
             ),
-            const ListTile(
+            ListTile(
               title: Text('Политика конфиденциальности'),
               leading: Icon(Icons.privacy_tip),
+              trailing: const Icon(Icons.open_in_new_rounded),
+              onTap: () => context.push('/privacy'),
             ),
-            const ListTile(
+            ListTile(
               title: Text('Условия использования'),
               leading: Icon(Icons.description),
+              trailing: const Icon(Icons.open_in_new_rounded),
+              onTap: () => context.push('/terms'),
+            ),
+            ListTile(
+              title: const Text('Поддержка'),
+              subtitle: const Text('ahjkuio@gmail.com'),
+              leading: const Icon(Icons.support_agent_outlined),
+              trailing: const Icon(Icons.open_in_new_rounded),
+              onTap: () => context.push('/support'),
+            ),
+            ListTile(
+              title: const Text('Удаление аккаунта'),
+              subtitle: const Text('Публичная инструкция для RuStore'),
+              leading: const Icon(Icons.delete_outline_rounded),
+              trailing: const Icon(Icons.open_in_new_rounded),
+              onTap: () => context.push('/account-deletion'),
             ),
             const SizedBox(height: 16),
             Text(

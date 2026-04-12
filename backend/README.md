@@ -59,6 +59,12 @@
 - `PATCH /v1/chats/:chatId/messages/:messageId`
 - `DELETE /v1/chats/:chatId/messages/:messageId`
 - `POST /v1/chats/:chatId/read`
+- `GET /v1/blocks`
+- `POST /v1/blocks`
+- `DELETE /v1/blocks/:blockId`
+- `POST /v1/reports`
+- `GET /v1/admin/reports`
+- `POST /v1/admin/reports/:reportId/resolve`
 - `GET /v1/notifications`
 - `GET /v1/notifications/unread-count`
 - `POST /v1/notifications/:notificationId/read`
@@ -95,6 +101,7 @@ npm start
 - `LINEAGE_RUSTORE_PUSH_PROJECT_ID` - ID проекта RuStore Push из RuStore Console
 - `LINEAGE_RUSTORE_PUSH_SERVICE_TOKEN` - сервисный токен RuStore Push из RuStore Console
 - `LINEAGE_RUSTORE_PUSH_API_BASE_URL` - базовый URL RuStore Push API, по умолчанию `https://vkpns.rustore.ru`
+- `LINEAGE_BACKEND_ADMIN_EMAILS` - список email модераторов через запятую для admin endpoints `/v1/admin/reports`
 
 ## Подключение Flutter dev-сборки
 
@@ -125,3 +132,4 @@ flutter run `
 - Realtime-путь теперь тоже есть: backend поднимает `WS /v1/realtime`, а Flutter `customApi` chat/notification path может получать server-driven события для новых сообщений и уведомлений.
 - Remote push теперь умеет реально доставлять browser push через Web Push API и RuStore push через `vkpns.rustore.ru`, если backend запущен с нужными ключами. Без `LINEAGE_RUSTORE_PUSH_*` или `LINEAGE_WEB_PUSH_*` переменных соответствующий канал остаётся в состоянии `*_not_configured`.
 - Browser push теперь поддерживается отдельно через Web Push API и VAPID, если backend запущен с `LINEAGE_WEB_PUSH_*` ключами.
+- Moderation layer теперь минимально покрыт: есть жалобы, блокировки и ручной admin resolve path, а direct chat не даст создать или отправить сообщение между заблокированными пользователями.

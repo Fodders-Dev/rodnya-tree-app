@@ -18,6 +18,7 @@ import 'backend/interfaces/app_startup_service_interface.dart';
 import 'services/app_startup_service.dart';
 import 'startup/startup_failure_policy.dart';
 import 'widgets/startup_failure_view.dart';
+import 'config/storefront_config.dart';
 
 // --- Переменная для хранения SnackBarContext ---
 // Используем GlobalKey, чтобы получить доступ к ScaffoldMessenger
@@ -40,8 +41,10 @@ Future<void> _bootstrapAndRunApp() async {
 
     final localStorageService = GetIt.I<LocalStorageService>();
     final rustoreService = GetIt.I<RustoreService>();
-    final isRuStoreRuntime =
-        !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+    final storefrontConfig = StorefrontConfig.current;
+    final isRuStoreRuntime = !kIsWeb &&
+        defaultTargetPlatform == TargetPlatform.android &&
+        storefrontConfig.isRustore;
 
     // На web не тянем .env как asset, чтобы не получать лишний 404 в консоли.
     if (!kIsWeb) {
@@ -57,7 +60,9 @@ Future<void> _bootstrapAndRunApp() async {
 
     // --- Проверка обновлений RuStore ---
     if (isRuStoreRuntime) {
-      _checkRuStoreUpdate(rustoreService);
+      if (storefrontConfig.enableRustoreUpdates) {
+        _checkRuStoreUpdate(rustoreService);
+      }
       rustoreService.initializePushListeners();
       rustoreService.getRustorePushToken().then((token) {
         if (token != null) {

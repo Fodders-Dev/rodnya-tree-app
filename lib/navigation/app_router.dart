@@ -32,6 +32,7 @@ import '../screens/public_tree_viewer_screen.dart';
 import '../screens/relative_details_screen.dart';
 import '../screens/user_profile_entry_screen.dart';
 import '../screens/notifications_screen.dart';
+import '../screens/blocked_users_screen.dart';
 import '../models/family_person.dart';
 import '../models/family_tree.dart';
 import '../screens/privacy_policy_screen.dart';
@@ -168,7 +169,14 @@ class AppRouter {
     // Обработчик редиректа для аутентификации
     redirect: (context, state) async {
       final isLoggedIn = _authService.currentUserId != null;
-      final loggingInPages = ['/login', '/password_reset', '/privacy'];
+      final loggingInPages = [
+        '/login',
+        '/password_reset',
+        '/privacy',
+        '/terms',
+        '/support',
+        '/account-deletion',
+      ];
       final isLoggingIn = loggingInPages.contains(state.matchedLocation);
       final completingProfile = state.matchedLocation == '/complete_profile';
       final invitePage = state.matchedLocation == '/invite';
@@ -638,6 +646,17 @@ class AppRouter {
                       transitionsBuilder: slideTransition,
                     ),
                   ),
+                  GoRoute(
+                    path: 'blocks',
+                    parentNavigatorKey: rootNavigatorKey,
+                    pageBuilder: (context, state) =>
+                        LineageCustomTransitionPage(
+                      key: state.pageKey,
+                      constrainWidth: true,
+                      child: const BlockedUsersScreen(),
+                      transitionsBuilder: slideTransition,
+                    ),
+                  ),
                 ],
               ),
             ],
@@ -856,6 +875,36 @@ class AppRouter {
           key: state.pageKey,
           constrainWidth: true,
           child: const PrivacyPolicyScreen(),
+          transitionsBuilder: slideTransition,
+        ),
+      ),
+      GoRoute(
+        path: '/terms',
+        parentNavigatorKey: rootNavigatorKey,
+        pageBuilder: (context, state) => LineageCustomTransitionPage(
+          key: state.pageKey,
+          constrainWidth: true,
+          child: const TermsOfUseScreen(),
+          transitionsBuilder: slideTransition,
+        ),
+      ),
+      GoRoute(
+        path: '/support',
+        parentNavigatorKey: rootNavigatorKey,
+        pageBuilder: (context, state) => LineageCustomTransitionPage(
+          key: state.pageKey,
+          constrainWidth: true,
+          child: const SupportScreen(),
+          transitionsBuilder: slideTransition,
+        ),
+      ),
+      GoRoute(
+        path: '/account-deletion',
+        parentNavigatorKey: rootNavigatorKey,
+        pageBuilder: (context, state) => LineageCustomTransitionPage(
+          key: state.pageKey,
+          constrainWidth: true,
+          child: const AccountDeletionInfoScreen(),
           transitionsBuilder: slideTransition,
         ),
       ),

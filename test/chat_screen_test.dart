@@ -8,12 +8,14 @@ import 'package:get_it/get_it.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:lineage/backend/interfaces/chat_service_interface.dart';
+import 'package:lineage/backend/interfaces/safety_service_interface.dart';
 import 'package:lineage/models/chat_attachment.dart';
 import 'package:lineage/models/chat_details.dart';
 import 'package:lineage/models/chat_message.dart';
 import 'package:lineage/models/chat_preview.dart';
 import 'package:lineage/models/chat_send_progress.dart';
 import 'package:lineage/models/family_tree.dart';
+import 'package:lineage/models/user_block_record.dart';
 import 'package:lineage/providers/tree_provider.dart';
 import 'package:lineage/screens/chat_screen.dart';
 import 'package:lineage/services/chat_auto_delete_store.dart';
@@ -390,6 +392,56 @@ class _SentChatRequest {
   final ChatReplyReference? replyTo;
   final String? clientMessageId;
   final int? expiresInSeconds;
+}
+
+class _FakeSafetyService implements SafetyServiceInterface {
+  String? lastReportedTargetType;
+  String? lastReportedTargetId;
+  String? lastReportedReason;
+  String? lastBlockedUserId;
+  String? lastBlockReason;
+  final List<UserBlockRecord> blockedUsers = <UserBlockRecord>[];
+
+  @override
+  Future<UserBlockRecord> blockUser({
+    required String userId,
+    String? reason,
+    Map<String, dynamic> metadata = const <String, dynamic>{},
+  }) async {
+    lastBlockedUserId = userId;
+    lastBlockReason = reason;
+    final record = UserBlockRecord(
+      id: 'block-$userId',
+      blockedUserId: userId,
+      blockedUserDisplayName: 'Собеседник',
+      createdAt: DateTime(2026, 4, 12, 10),
+      reason: reason,
+    );
+    blockedUsers.add(record);
+    return record;
+  }
+
+  @override
+  Future<List<UserBlockRecord>> listBlockedUsers() async =>
+      List<UserBlockRecord>.from(blockedUsers);
+
+  @override
+  Future<void> reportTarget({
+    required String targetType,
+    required String targetId,
+    required String reason,
+    String? details,
+    Map<String, dynamic> metadata = const <String, dynamic>{},
+  }) async {
+    lastReportedTargetType = targetType;
+    lastReportedTargetId = targetId;
+    lastReportedReason = reason;
+  }
+
+  @override
+  Future<void> unblockUser(String blockId) async {
+    blockedUsers.removeWhere((entry) => entry.id == blockId);
+  }
 }
 
 void main() {
@@ -1586,5 +1638,72 @@ void main() {
     expect(find.text('Переслать'), findsOneWidget);
     expect(find.text('Копировать текст'), findsOneWidget);
     expect(find.text('👍'), findsOneWidget);
+  });
+
+  testWidgets('ChatScreen blocks direct peer from message actions',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(900, 1200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final chatService = _FakeChatService()
+      ..details = const ChatDetails(
+        chatId: 'chat-direct-1',
+        type: 'direct',
+        title: null,
+        participantIds: ['user-1', 'other-user'],
+        participants: [
+          ChatParticipantSummary(
+              userId: 'other-user', displayName: 'Собеседник'),
+        ],
+        branchRoots: [],
+      );
+    final safetyService = _FakeSafetyService();
+    getIt.registerSingleton<ChatServiceInterface>(chatService);
+    getIt.registerSingleton<SafetyServiceInterface>(safetyService);
+
+    await tester.pumpWidget(
+      buildChatApp(
+        ChatScreen(
+          chatId: 'chat-direct-1',
+          otherUserId: 'other-user',
+          title: 'Собеседник',
+          chatType: 'direct',
+          draftStore: _MemoryChatDraftStore(),
+        ),
+      ),
+    );
+
+    chatService.emitMessages([
+      ChatMessage(
+        id: 'msg-remote-1',
+        chatId: 'chat-direct-1',
+        senderId: 'other-user',
+        text: 'Напиши позже',
+        timestamp: DateTime(2026, 4, 12, 10, 15),
+        isRead: false,
+        participants: const ['user-1', 'other-user'],
+        senderName: 'Собеседник',
+      ),
+    ]);
+    await tester.pumpAndSettle();
+
+    await tester.longPress(find.text('Напиши позже'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Пожаловаться'), findsOneWidget);
+    expect(find.text('Заблокировать'), findsOneWidget);
+
+    await tester.ensureVisible(find.text('Заблокировать'));
+    await tester.tap(find.text('Заблокировать'));
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Спам'));
+    await tester.tap(find.text('Спам'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Продолжить'));
+    await tester.pumpAndSettle();
+
+    expect(safetyService.lastBlockedUserId, 'other-user');
+    expect(find.text('Список блокировок'), findsOneWidget);
+    expect(find.text('Сообщение...'), findsNothing);
   });
 }

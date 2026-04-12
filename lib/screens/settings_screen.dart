@@ -12,6 +12,7 @@ import 'package:go_router/go_router.dart';
 import '../backend/interfaces/auth_service_interface.dart';
 import '../providers/tree_provider.dart';
 import '../services/custom_api_notification_service.dart';
+import '../config/storefront_config.dart';
 
 // --- ID нашего тестового продукта ---
 const String PREMIUM_PRODUCT_ID = 'lineage_premium';
@@ -29,6 +30,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final AuthServiceInterface _authService = GetIt.I<AuthServiceInterface>();
   // Получаем RustoreService из GetIt
   final RustoreService _rustoreService = GetIt.I<RustoreService>();
+  final StorefrontConfig _storefrontConfig = StorefrontConfig.current;
   bool _isLoading = false;
   bool _isDarkMode = false;
   bool _notificationsEnabled = true;
@@ -51,14 +53,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.initState();
     _loadAppVersion();
     _loadNotificationSettings();
-    _checkPremiumStatus(); // Проверяем статус при инициализации
-    _checkAppRatingStatus(); // Проверяем статус оценки
+    if (_showPremiumSection) {
+      _checkPremiumStatus();
+    } else {
+      _billingLoading = false;
+    }
+    if (_showReviewSection) {
+      _checkAppRatingStatus();
+    } else {
+      _checkingRatingStatus = false;
+    }
   }
 
   CustomApiNotificationService? get _customNotificationService =>
       GetIt.I.isRegistered<CustomApiNotificationService>()
           ? GetIt.I<CustomApiNotificationService>()
           : null;
+
+  bool get _showPremiumSection =>
+      _storefrontConfig.isRustore && _storefrontConfig.enableRustoreBilling;
+
+  bool get _showReviewSection =>
+      _storefrontConfig.isRustore && _storefrontConfig.enableRustoreReview;
 
   Future<void> _loadAppVersion() async {
     final packageInfo = await PackageInfo.fromPlatform();
@@ -720,6 +736,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       GoRouter.of(context).push('/privacy');
                     },
                   ),
+                  ListTile(
+                    leading: const Icon(Icons.description_outlined),
+                    title: const Text('Условия использования'),
+                    onTap: () => GoRouter.of(context).push('/terms'),
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.support_agent_outlined),
+                    title: const Text('Поддержка'),
+                    subtitle:
+                        const Text('Публичная страница и email поддержки'),
+                    onTap: () => GoRouter.of(context).push('/support'),
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.block_outlined),
+                    title: const Text('Заблокированные пользователи'),
+                    subtitle: const Text('Управление личными блокировками'),
+                    onTap: () => GoRouter.of(context).push('/profile/blocks'),
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.delete_outline_rounded),
+                    title: const Text('Как удалить аккаунт'),
+                    subtitle: const Text('Публичная release-ready инструкция'),
+                    onTap: () => GoRouter.of(context).push('/account-deletion'),
+                  ),
 
                   // Информация о приложении
                   ListTile(
@@ -730,109 +770,108 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     },
                   ),
 
-                  // --- Раздел Премиум ---
-                  Padding(
-                    padding: const EdgeInsets.only(top: 32.0, bottom: 8.0),
-                    child: Text(
-                      'Премиум-статус',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
+                  if (_showPremiumSection) ...[
+                    Padding(
+                      padding: const EdgeInsets.only(top: 32.0, bottom: 8.0),
+                      child: Text(
+                        'Премиум-статус',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                     ),
-                  ),
-                  _billingLoading
-                      ? Center(
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 16.0),
-                            child: CircularProgressIndicator(),
-                          ),
-                        )
-                      : Column(
-                          children: [
-                            ListTile(
-                              leading: Icon(
-                                _isPremium ? Icons.star : Icons.star_border,
-                                color: _isPremium ? Colors.amber : null,
-                              ),
-                              title: Text(
-                                _isPremium
-                                    ? 'Премиум активен'
-                                    : 'Получить Премиум',
-                              ),
-                              subtitle: Text(
-                                _isPremium
-                                    ? 'Спасибо за поддержку!'
-                                    : 'Разблокировать дополнительные функции.',
-                              ),
-                              trailing: _isPremium
-                                  ? null // Не показываем кнопку, если уже премиум
-                                  : ElevatedButton(
-                                      onPressed: _purchasePremium,
-                                      child: Text('Купить'),
-                                    ),
+                    _billingLoading
+                        ? Center(
+                            child: Padding(
+                              padding:
+                                  const EdgeInsets.symmetric(vertical: 16.0),
+                              child: CircularProgressIndicator(),
                             ),
-                            // Кнопка для удаления тестовой покупки (только если премиум активен)
-                            if (_isPremium && _lastPurchaseId != null)
-                              Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 16.0,
-                                  vertical: 8.0,
+                          )
+                        : Column(
+                            children: [
+                              ListTile(
+                                leading: Icon(
+                                  _isPremium ? Icons.star : Icons.star_border,
+                                  color: _isPremium ? Colors.amber : null,
                                 ),
-                                child: TextButton(
-                                  onPressed: _deleteTestPurchase,
-                                  child: Text(
-                                    'Сбросить тестовую покупку',
-                                    style: TextStyle(color: Colors.grey),
+                                title: Text(
+                                  _isPremium
+                                      ? 'Премиум активен'
+                                      : 'Получить Премиум',
+                                ),
+                                subtitle: Text(
+                                  _isPremium
+                                      ? 'Спасибо за поддержку!'
+                                      : 'Разблокировать дополнительные функции.',
+                                ),
+                                trailing: _isPremium
+                                    ? null // Не показываем кнопку, если уже премиум
+                                    : ElevatedButton(
+                                        onPressed: _purchasePremium,
+                                        child: Text('Купить'),
+                                      ),
+                              ),
+                              // Кнопка для удаления тестовой покупки (только если премиум активен)
+                              if (_isPremium && _lastPurchaseId != null)
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 16.0,
+                                    vertical: 8.0,
+                                  ),
+                                  child: TextButton(
+                                    onPressed: _deleteTestPurchase,
+                                    child: Text(
+                                      'Сбросить тестовую покупку',
+                                      style: TextStyle(color: Colors.grey),
+                                    ),
                                   ),
                                 ),
-                              ),
-                          ],
+                            ],
+                          ),
+                    Divider(),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 16.0, bottom: 8.0),
+                      child: Text(
+                        'Разовая покупка (Тест)',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.orange,
                         ),
-                  Divider(),
-                  // ----------------------
-
-                  // --- Раздел Разовая покупка (Тест) ---
-                  Padding(
-                    padding: const EdgeInsets.only(top: 16.0, bottom: 8.0),
-                    child: Text(
-                      'Разовая покупка (Тест)',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.orange, // Выделим цветом для теста
                       ),
                     ),
-                  ),
-                  ListTile(
-                    leading: Icon(Icons.shopping_cart, color: Colors.orange),
-                    title: Text('Купить тестовый товар'),
-                    subtitle: Text('Проверка покупки разового товара'),
-                    trailing: ElevatedButton(
-                      onPressed: _oneTimePurchaseLoading
-                          ? null
-                          : _purchaseOneTimeProduct,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.orange[700],
+                    ListTile(
+                      leading: Icon(Icons.shopping_cart, color: Colors.orange),
+                      title: Text('Купить тестовый товар'),
+                      subtitle: Text('Проверка покупки разового товара'),
+                      trailing: ElevatedButton(
+                        onPressed: _oneTimePurchaseLoading
+                            ? null
+                            : _purchaseOneTimeProduct,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.orange[700],
+                        ),
+                        child: _oneTimePurchaseLoading
+                            ? SizedBox(
+                                height: 18,
+                                width: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : Text('Купить ($ONE_TIME_PRODUCT_ID)'),
                       ),
-                      child: _oneTimePurchaseLoading
-                          ? SizedBox(
-                              height: 18,
-                              width: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : Text('Купить ($ONE_TIME_PRODUCT_ID)'),
                     ),
-                  ),
-                  Divider(),
-                  // ------------------------------------
+                    Divider(),
+                  ],
 
-                  // Раздел Обратная связь
                   Padding(
                     padding: const EdgeInsets.only(
                       top: 16.0,
                       bottom: 8.0,
-                    ), // Немного уменьшил отступ
+                    ),
                     child: Text(
                       'Обратная связь',
                       style: TextStyle(
@@ -843,82 +882,82 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
 
                   // Кнопка Оценить приложение (с обновленной логикой)
-                  _checkingRatingStatus
-                      ? Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 16.0),
-                          child: Center(
-                            child: CircularProgressIndicator(),
-                          ), // Показываем загрузку
-                        )
-                      : ListTile(
-                          leading: Icon(
-                            _hasRatedApp
-                                ? Icons.thumb_up_alt
-                                : Icons.star_rate_outlined,
-                          ),
-                          title: Text(
-                            _hasRatedApp
-                                ? 'Спасибо за отзыв!'
-                                : 'Оценить приложение',
-                          ),
-                          subtitle: _hasRatedApp
-                              ? Text('Мы ценим ваше мнение')
-                              : Text('Оставить отзыв в RuStore'),
-                          onTap: _hasRatedApp
-                              ? null
-                              : () async {
-                                  // Делаем неактивной, если уже оценен
-                                  final currentContext = context;
-                                  try {
-                                    debugPrint(
-                                      'Attempting to request RuStore review...',
-                                    );
-                                    // Вызываем метод, он может выбросить исключение
-                                    await _rustoreService.requestReview();
+                  if (_showReviewSection)
+                    _checkingRatingStatus
+                        ? Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 16.0),
+                            child: Center(
+                              child: CircularProgressIndicator(),
+                            ),
+                          )
+                        : ListTile(
+                            leading: Icon(
+                              _hasRatedApp
+                                  ? Icons.thumb_up_alt
+                                  : Icons.star_rate_outlined,
+                            ),
+                            title: Text(
+                              _hasRatedApp
+                                  ? 'Спасибо за отзыв!'
+                                  : 'Оценить приложение',
+                            ),
+                            subtitle: _hasRatedApp
+                                ? Text('Мы ценим ваше мнение')
+                                : Text('Оставить отзыв в RuStore'),
+                            onTap: _hasRatedApp
+                                ? null
+                                : () async {
+                                    final currentContext = context;
+                                    try {
+                                      debugPrint(
+                                        'Attempting to request RuStore review...',
+                                      );
+                                      await _rustoreService.requestReview();
 
-                                    // Если исключения не было, считаем запрос успешным
-                                    debugPrint(
-                                      'Review request initiated successfully.',
-                                    );
-                                    // Показываем сообщение и обновляем состояние
-                                    if (currentContext.mounted) {
-                                      ScaffoldMessenger.of(
-                                        currentContext,
-                                      ).showSnackBar(
-                                        SnackBar(
-                                          content: Text(
-                                            'Запрос на оценку отправлен. Спасибо!',
-                                          ),
-                                          duration: Duration(seconds: 3),
-                                        ),
+                                      debugPrint(
+                                        'Review request initiated successfully.',
                                       );
-                                      setState(() {
-                                        _hasRatedApp = true;
-                                      });
-                                      // await _rustoreService.markReviewAsRequested(); // Вызов уже внутри requestReview
-                                    }
-                                  } catch (e) {
-                                    debugPrint(
-                                      'Error during requestReview call: $e',
-                                    );
-                                    // Показываем ошибку пользователю
-                                    if (currentContext.mounted) {
-                                      ScaffoldMessenger.of(
-                                        currentContext,
-                                      ).showSnackBar(
-                                        SnackBar(
-                                          content: Text(
-                                            'Не удалось открыть окно оценки. Возможно, вы уже оценивали приложение или произошла ошибка.',
+                                      if (currentContext.mounted) {
+                                        ScaffoldMessenger.of(
+                                          currentContext,
+                                        ).showSnackBar(
+                                          SnackBar(
+                                            content: Text(
+                                              'Запрос на оценку отправлен. Спасибо!',
+                                            ),
+                                            duration: Duration(seconds: 3),
                                           ),
-                                          duration: Duration(seconds: 5),
-                                        ),
+                                        );
+                                        setState(() {
+                                          _hasRatedApp = true;
+                                        });
+                                      }
+                                    } catch (e) {
+                                      debugPrint(
+                                        'Error during requestReview call: $e',
                                       );
+                                      if (currentContext.mounted) {
+                                        ScaffoldMessenger.of(
+                                          currentContext,
+                                        ).showSnackBar(
+                                          SnackBar(
+                                            content: Text(
+                                              'Не удалось открыть окно оценки. Возможно, вы уже оценивали приложение или произошла ошибка.',
+                                            ),
+                                            duration: Duration(seconds: 5),
+                                          ),
+                                        );
+                                      }
                                     }
-                                  }
-                                },
-                          enabled:
-                              !_hasRatedApp, // Дополнительно отключаем плитку
-                        ),
+                                  },
+                            enabled: !_hasRatedApp,
+                          ),
+                  ListTile(
+                    leading: const Icon(Icons.support_agent_outlined),
+                    title: const Text('Связаться с поддержкой'),
+                    subtitle: const Text('ahjkuio@gmail.com'),
+                    onTap: () => GoRouter.of(context).push('/support'),
+                  ),
 
                   Divider(),
                 ],

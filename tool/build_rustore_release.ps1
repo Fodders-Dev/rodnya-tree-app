@@ -13,10 +13,14 @@ if (-not $env:LINEAGE_RELEASE_SIGNING_PROPERTIES -and -not $env:LINEAGE_KEYSTORE
 
 $defines = @(
   "--dart-define=LINEAGE_RUNTIME_PRESET=prod_custom_api",
-  "--dart-define=LINEAGE_ENABLE_LEGACY_DYNAMIC_LINKS=false"
+  "--dart-define=LINEAGE_ENABLE_LEGACY_DYNAMIC_LINKS=false",
+  "--dart-define=LINEAGE_APP_STORE=rustore",
+  "--dart-define=LINEAGE_ENABLE_RUSTORE_BILLING=false",
+  "--dart-define=LINEAGE_ENABLE_RUSTORE_REVIEW=true",
+  "--dart-define=LINEAGE_ENABLE_RUSTORE_UPDATES=true"
 )
 
-$buildArgs = @("build", "appbundle", "--release") + $defines
+$buildArgs = @("build", "appbundle", "--flavor", "rustore", "--release") + $defines
 
 if ($env:LINEAGE_BUILD_NAME) {
   $buildArgs += "--build-name=$($env:LINEAGE_BUILD_NAME)"

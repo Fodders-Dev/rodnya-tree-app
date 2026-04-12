@@ -11,9 +11,13 @@ fi
 cd "$REPO_ROOT"
 
 build_args=(
-  build appbundle --release
+  build appbundle --flavor rustore --release
   --dart-define=LINEAGE_RUNTIME_PRESET=prod_custom_api
   --dart-define=LINEAGE_ENABLE_LEGACY_DYNAMIC_LINKS=false
+  --dart-define=LINEAGE_APP_STORE=rustore
+  --dart-define=LINEAGE_ENABLE_RUSTORE_BILLING=false
+  --dart-define=LINEAGE_ENABLE_RUSTORE_REVIEW=true
+  --dart-define=LINEAGE_ENABLE_RUSTORE_UPDATES=true
 )
 
 if [[ -n "${LINEAGE_BUILD_NAME:-}" ]]; then

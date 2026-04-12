@@ -1,19 +1,29 @@
-# RuStore Release Checklist
+# RuStore Release Gate
 
-## Build Setup
-- Configure signing with `android/release-signing.properties` or `LINEAGE_KEYSTORE_*` env vars.
-- Configure RuStore IDs with `LINEAGE_RUSTORE_APPLICATION_ID` and `LINEAGE_RUSTORE_PUSH_PROJECT_ID` if the defaults must be overridden for a different app/project.
-- Use `customApi` production preset only.
-- Verify backend URLs and websocket URL before build.
-- Set `LINEAGE_BUILD_NAME` and `LINEAGE_BUILD_NUMBER` when preparing a real store release instead of reusing debug metadata.
-- Do not hardcode `org.gradle.java.home` in the repo. Use local `JAVA_HOME` or Android Studio JBR on the build machine.
+## Release Scope v1
+- В релиз входят только `auth + onboarding + tree CRUD/view + relatives + direct/branch chat + media + notifications + settings/legal/support`.
+- Новые крупные фичи не добавляем, пока не пройдены все release gates ниже.
+- RuStore billing не является blocker'ом v1 и по умолчанию скрыт через `LINEAGE_ENABLE_RUSTORE_BILLING=false`.
+
+## Build Inputs
+- Signing настроен через `LINEAGE_RELEASE_SIGNING_PROPERTIES` или `LINEAGE_KEYSTORE_*`.
+- Для релизной сборки используется flavor `rustore`.
+- Build-time defines:
+  - `LINEAGE_RUNTIME_PRESET=prod_custom_api`
+  - `LINEAGE_ENABLE_LEGACY_DYNAMIC_LINKS=false`
+  - `LINEAGE_APP_STORE=rustore`
+  - `LINEAGE_ENABLE_RUSTORE_BILLING=false`
+  - `LINEAGE_ENABLE_RUSTORE_REVIEW=true`
+  - `LINEAGE_ENABLE_RUSTORE_UPDATES=true`
+- Перед реальным релизом заданы `LINEAGE_BUILD_NAME` и `LINEAGE_BUILD_NUMBER`.
+- Если нужны нестандартные RuStore IDs, заданы `LINEAGE_RUSTORE_APPLICATION_ID` и `LINEAGE_RUSTORE_PUSH_PROJECT_ID`.
 
 ## Build Commands
 ### Windows
 ```powershell
 $env:LINEAGE_RELEASE_SIGNING_PROPERTIES="C:\path\to\release-signing.properties"
 $env:LINEAGE_BUILD_NAME="1.0.2"
-$env:LINEAGE_BUILD_NUMBER="9"
+$env:LINEAGE_BUILD_NUMBER="10"
 powershell -ExecutionPolicy Bypass -File .\tool\build_rustore_release.ps1
 ```
 
@@ -21,19 +31,61 @@ powershell -ExecutionPolicy Bypass -File .\tool\build_rustore_release.ps1
 ```bash
 export LINEAGE_RELEASE_SIGNING_PROPERTIES=/absolute/path/to/release-signing.properties
 export LINEAGE_BUILD_NAME=1.0.2
-export LINEAGE_BUILD_NUMBER=9
+export LINEAGE_BUILD_NUMBER=10
 ./tool/build_rustore_release.sh
 ```
 
-## Build Artifact
-- Release bundle path: `build/app/outputs/bundle/release/app-release.aab`
-- The safe wrapper builds through a junction path, so the artifact still lands in the real repo `build/` directory.
+## Expected Artifact
+- `build/app/outputs/bundle/rustoreRelease/app-rustore-release.aab`
 
-## Terminal Upload To RuStore
-- RuStore supports terminal publication through the official Public API after you generate an app-scoped API key in RuStore Console.
-- In the current console state for this app, `API RuStore` is not connected yet, so terminal upload is blocked until a private key is created and saved once.
-- For `AAB` publication RuStore also requires an uploaded app signing key in the `Подпись приложения` section before the file upload starts.
+## Code Gate
+- `flutter analyze` зелёный.
+- Flutter тесты проходят через `tool/flutter_safe.ps1 test` на Windows.
+- `backend/npm test` зелёный.
+- `rustoreRelease` AAB собирается из clean checkout.
+- GitHub Actions workflow `.github/workflows/rustore-verify.yml` зелёный.
 
+## Android Smoke Gate
+- Fresh install, cold start, register/login/logout.
+- Session restore после restart и после протухшей сессии не ломает приложение.
+- Создание дерева, открытие дерева, добавление и редактирование родственников.
+- Открытие direct chat и branch chat.
+- Отправка `text / image / video / voice`.
+- Открытие media viewer, external open/download path.
+- Получение push и открытие нужного экрана по нажатию.
+- Блокировка пользователя, список блокировок, жалоба на сообщение.
+- Удаление аккаунта.
+
+## Trust Gate
+- Публичные маршруты без логина живы:
+  - `/privacy`
+  - `/terms`
+  - `/support`
+  - `/account-deletion`
+- In-app ссылки в `Auth / Settings / About` ведут именно на эти страницы.
+- Жалобы и блокировки работают end-to-end через `/v1/reports` и `/v1/blocks`.
+- Есть moderator note и demo account для проверки RuStore moderation.
+
+## Ops Gate
+- `/health` отвечает `200` и показывает состояние push/admin config.
+- Проверен backup/restore rehearsal backend data и media.
+- После restart backend не теряются auth/session/media/chat path.
+- Публичные media URL канонические и отдаются по HTTPS.
+
+## Publication Gate
+- Первый релиз идёт через `manual release`, не `instant publish`.
+- Store card готова:
+  - short description
+  - full description
+  - screenshots
+  - icon
+  - release notes
+  - privacy URL
+  - support URL
+  - account deletion URL
+- Moderator notes готовы и содержат demo credentials.
+
+## RuStore API Upload
 ### Windows PowerShell
 ```powershell
 $env:RUSTORE_KEY_ID="your-key-id"
@@ -41,28 +93,17 @@ $env:RUSTORE_PRIVATE_KEY_BASE64="base64-private-key-from-rustore-console"
 powershell -ExecutionPolicy Bypass -File .\tool\publish_rustore_release.ps1 `
   -MinAndroidVersion 7 `
   -WhatsNewFile ".\docs\rustore_whatsnew_1.0.2.txt" `
-  -ModeratorComment "Демо-аккаунт: alexey.petrov.family@example.com / RodnyaDemo2026!" `
+  -ModeratorComment "Демо-аккаунт: moderation@rodnya-tree.ru / ChangeMeBeforeRelease2026!" `
+  -PublishType MANUAL `
   -SubmitForModeration
 ```
 
-- Prefer `-WhatsNewFile` with a UTF-8 text file over inline `-WhatsNew`, otherwise RuStore release notes may end up with broken Cyrillic encoding.
+- Предпочитать `-WhatsNewFile`, а не inline `-WhatsNew`, чтобы не ловить проблемы с кириллицей.
+- Перед первой `AAB` публикацией в RuStore должен быть загружен app signing key в разделе `Подпись приложения`.
 
-### Official API References
-- Auth token: `POST https://public-api.rustore.ru/public/auth`
-- Create draft: `POST https://public-api.rustore.ru/public/v1/application/{packageName}/version`
-- Upload AAB: `POST https://public-api.rustore.ru/public/v1/application/{packageName}/version/{versionId}/aab`
-- Submit draft: `POST https://public-api.rustore.ru/public/v1/application/{packageName}/version/{versionId}/commit?priorityUpdate=0`
-
-## Mandatory Smoke On Android 13+
-- Fresh install, cold start, login, logout, session restore.
-- Create/open tree, add 8-12 relatives, edit at least 2 cards.
-- Open chat from relatives list and person card, send text and image, reopen chat.
-- Receive local notification, tap it, verify route opens the correct screen.
-- Background/resume app, retry under flaky network, verify no broken half-loaded state.
-- Check RuStore update/review entry points from app settings.
-
-## Release Gate
-- `flutter test` passes fully.
-- `flutter analyze` has no new compile errors; existing backlog is tracked separately.
-- Backend API tests for auth/tree/chat/notifications/push devices pass.
-- Release `appbundle` is built from a clean repo without manual local file edits.
+## Official References
+- RuStore Console: https://www.rustore.ru/developer
+- Publication modes: https://www.rustore.ru/help/en/developers/publishing-and-verifying-apps/app-publication/setting-up-publication/instant-app-publishing
+- RuStore API overview: https://www.rustore.ru/help/work-with-rustore-api
+- Upload via API: https://www.rustore.ru/help/en/work-with-rustore-api/api-upload-publication-app/
+- API authorization: https://www.rustore.ru/help/en/work-with-rustore-api/api-authorization-process

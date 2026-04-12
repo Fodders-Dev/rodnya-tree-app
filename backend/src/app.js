@@ -24,6 +24,14 @@ function createApp({store, config, realtimeHub = null, pushGateway = null}) {
     res.json({
       status: "ok",
       service: "lineage-minimal-backend",
+      storage: "file-store",
+      publicApiUrl: config.publicApiUrl || null,
+      publicAppUrl: config.publicAppUrl || null,
+      rustorePushEnabled: config.rustorePushEnabled === true,
+      webPushEnabled: config.webPushEnabled === true,
+      adminEmailsConfigured: Array.isArray(config.adminEmails)
+        ? config.adminEmails.length
+        : 0,
     });
   });
 
@@ -232,6 +240,50 @@ function createApp({store, config, realtimeHub = null, pushGateway = null}) {
       createdAt: notification.createdAt,
       readAt: notification.readAt || null,
       isRead: Boolean(notification.readAt),
+    };
+  }
+
+  function resolveUserDisplayName(user) {
+    if (!user) {
+      return "Пользователь";
+    }
+
+    return composeDisplayName(user.profile) ||
+      sanitizeProfile(user.profile).displayName ||
+      user.email ||
+      "Пользователь";
+  }
+
+  function mapBlock(block, blockedUser = null) {
+    return {
+      id: block.id,
+      blockerId: block.blockerId,
+      blockedUserId: block.blockedUserId,
+      blockedUserDisplayName: resolveUserDisplayName(blockedUser),
+      blockedUserPhotoUrl: sanitizeProfile(blockedUser?.profile).photoUrl || null,
+      reason: block.reason || null,
+      metadata: block.metadata || {},
+      createdAt: block.createdAt,
+      updatedAt: block.updatedAt,
+    };
+  }
+
+  function mapReport(report, reporter = null) {
+    return {
+      id: report.id,
+      reporterId: report.reporterId,
+      reporterDisplayName: resolveUserDisplayName(reporter),
+      targetType: report.targetType,
+      targetId: report.targetId,
+      reason: report.reason,
+      details: report.details || null,
+      metadata: report.metadata || {},
+      status: report.status || "pending",
+      resolutionNote: report.resolutionNote || null,
+      resolvedAt: report.resolvedAt || null,
+      resolvedBy: report.resolvedBy || null,
+      createdAt: report.createdAt,
+      updatedAt: report.updatedAt,
     };
   }
 
@@ -455,6 +507,19 @@ function createApp({store, config, realtimeHub = null, pushGateway = null}) {
     }
 
     return chat;
+  }
+
+  function requireAdmin(req, res) {
+    const adminEmails = Array.isArray(config.adminEmails) ? config.adminEmails : [];
+    const currentEmail = String(req.auth?.user?.email || "").trim().toLowerCase();
+    const isAdmin = Boolean(currentEmail) && adminEmails.includes(currentEmail);
+
+    if (!isAdmin) {
+      res.status(403).json({message: "Нужны права модератора"});
+      return false;
+    }
+
+    return true;
   }
 
   function authResponse(user, sessionTokens) {
@@ -1706,6 +1771,131 @@ function createApp({store, config, realtimeHub = null, pushGateway = null}) {
     });
   });
 
+  app.get("/v1/blocks", requireAuth, async (req, res) => {
+    const blocks = await store.listUserBlocks(req.auth.user.id);
+    const mappedBlocks = [];
+    for (const block of blocks) {
+      const blockedUser = await store.findUserById(block.blockedUserId);
+      mappedBlocks.push(mapBlock(block, blockedUser));
+    }
+
+    res.json({
+      blocks: mappedBlocks,
+    });
+  });
+
+  app.post("/v1/blocks", requireAuth, async (req, res) => {
+    const blockedUserId = String(req.body?.userId || "").trim();
+    if (!blockedUserId) {
+      res.status(400).json({message: "Нужен userId"}); 
+      return;
+    }
+
+    const block = await store.createUserBlock({
+      blockerId: req.auth.user.id,
+      blockedUserId,
+      reason: req.body?.reason,
+      metadata: req.body?.metadata,
+    });
+    if (block === false) {
+      res.status(400).json({message: "Нельзя заблокировать этого пользователя"});
+      return;
+    }
+    if (block === null) {
+      res.status(404).json({message: "Пользователь для блокировки не найден"});
+      return;
+    }
+
+    const blockedUser = await store.findUserById(block.blockedUserId);
+    res.status(201).json({
+      block: mapBlock(block, blockedUser),
+    });
+  });
+
+  app.delete("/v1/blocks/:blockId", requireAuth, async (req, res) => {
+    const removed = await store.deleteUserBlock({
+      blockId: req.params.blockId,
+      blockerId: req.auth.user.id,
+    });
+    if (!removed) {
+      res.status(404).json({message: "Блокировка не найдена"});
+      return;
+    }
+
+    res.status(204).end();
+  });
+
+  app.post("/v1/reports", requireAuth, async (req, res) => {
+    const targetType = String(req.body?.targetType || "").trim();
+    const targetId = String(req.body?.targetId || "").trim();
+    if (!targetType || !targetId) {
+      res.status(400).json({message: "Нужны targetType и targetId"});
+      return;
+    }
+
+    const report = await store.createReport({
+      reporterId: req.auth.user.id,
+      targetType,
+      targetId,
+      reason: req.body?.reason,
+      details: req.body?.details,
+      metadata: req.body?.metadata,
+    });
+    if (report === false) {
+      res.status(400).json({message: "Некорректные параметры жалобы"});
+      return;
+    }
+    if (report === null) {
+      res.status(404).json({message: "Отправитель жалобы не найден"});
+      return;
+    }
+
+    res.status(201).json({
+      report: mapReport(report, req.auth.user),
+    });
+  });
+
+  app.get("/v1/admin/reports", requireAuth, async (req, res) => {
+    if (!requireAdmin(req, res)) {
+      return;
+    }
+
+    const status = String(req.query?.status || "").trim() || null;
+    const reports = await store.listReports({status});
+    const mappedReports = [];
+    for (const report of reports) {
+      const reporter = await store.findUserById(report.reporterId);
+      mappedReports.push(mapReport(report, reporter));
+    }
+
+    res.json({
+      reports: mappedReports,
+    });
+  });
+
+  app.post("/v1/admin/reports/:reportId/resolve", requireAuth, async (req, res) => {
+    if (!requireAdmin(req, res)) {
+      return;
+    }
+
+    const status = String(req.body?.status || "resolved").trim() || "resolved";
+    const report = await store.resolveReport({
+      reportId: req.params.reportId,
+      resolvedBy: req.auth.user.id,
+      status,
+      resolutionNote: req.body?.resolutionNote,
+    });
+    if (!report) {
+      res.status(404).json({message: "Жалоба не найдена"});
+      return;
+    }
+
+    const reporter = await store.findUserById(report.reporterId);
+    res.json({
+      report: mapReport(report, reporter),
+    });
+  });
+
   app.post("/v1/chats/direct", requireAuth, async (req, res) => {
     const otherUserId = String(req.body?.otherUserId || "").trim();
     if (!otherUserId) {
@@ -1716,6 +1906,17 @@ function createApp({store, config, realtimeHub = null, pushGateway = null}) {
     const otherUser = await store.findUserById(otherUserId);
     if (!otherUser) {
       res.status(404).json({message: "Собеседник не найден"});
+      return;
+    }
+
+    const isBlocked = await store.isUserBlockedBetween(
+      req.auth.user.id,
+      otherUserId,
+    );
+    if (isBlocked) {
+      res.status(403).json({
+        message: "Личный чат недоступен: один из пользователей заблокирован",
+      });
       return;
     }
 
@@ -2006,6 +2207,26 @@ function createApp({store, config, realtimeHub = null, pushGateway = null}) {
     const chat = await requireChatAccess(req, res, req.params.chatId);
     if (!chat) {
       return;
+    }
+
+    if (chat.type === "direct") {
+      const otherParticipantId = (Array.isArray(chat.participantIds)
+        ? chat.participantIds
+        : []
+      ).find((participantId) => participantId !== req.auth.user.id);
+      if (otherParticipantId) {
+        const isBlocked = await store.isUserBlockedBetween(
+          req.auth.user.id,
+          otherParticipantId,
+        );
+        if (isBlocked) {
+          res.status(403).json({
+            message:
+              "Отправка сообщений недоступна: один из пользователей заблокирован",
+          });
+          return;
+        }
+      }
     }
 
     const text = String(req.body?.text || "").trim();

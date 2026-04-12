@@ -50,7 +50,7 @@ def rustorePushProjectId = (System.getenv("LINEAGE_RUSTORE_PUSH_PROJECT_ID")
 
 android {
     namespace = "com.ahjkuio.lineage_family_app"
-    compileSdk = flutter.compileSdkVersion
+    compileSdk = Math.max(flutter.compileSdkVersion, 35)
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -77,18 +77,28 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "com.ahjkuio.lineage_family_app"
-        // You can update the following values to match your application needs.
-        // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdkVersion = flutter.minSdkVersion
-        targetSdk = flutter.targetSdkVersion
+        targetSdk = Math.max(flutter.targetSdkVersion, 35)
         versionCode = flutter.versionCode
         versionName = flutter.versionName
-        manifestPlaceholders += [
-                rustoreApplicationId : rustoreApplicationId,
-                rustorePushProjectId : rustorePushProjectId,
-        ]
+    }
+
+    flavorDimensions += "store"
+
+    productFlavors {
+        dev {
+            dimension "store"
+            applicationIdSuffix ".dev"
+            versionNameSuffix "-dev"
+        }
+        rustore {
+            dimension "store"
+            manifestPlaceholders += [
+                    rustoreApplicationId : rustoreApplicationId,
+                    rustorePushProjectId : rustorePushProjectId,
+            ]
+        }
     }
 
     buildTypes {

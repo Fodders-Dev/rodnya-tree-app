@@ -15,6 +15,8 @@ const EMPTY_DB = {
   notifications: [],
   posts: [],
   comments: [],
+  reports: [],
+  blocks: [],
   pushDevices: [],
   pushDeliveries: [],
 };
@@ -165,6 +167,50 @@ function createPushDeliveryRecord({
     deliveredAt: null,
     lastError: null,
     responseCode: null,
+  };
+}
+
+function createReportRecord({
+  reporterId,
+  targetType,
+  targetId,
+  reason,
+  details = null,
+  metadata = {},
+}) {
+  const timestamp = nowIso();
+  return {
+    id: crypto.randomUUID(),
+    reporterId,
+    targetType: String(targetType || "").trim(),
+    targetId: String(targetId || "").trim(),
+    reason: String(reason || "other").trim() || "other",
+    details: normalizeNullableString(details),
+    metadata: metadata && typeof metadata === "object" ? structuredClone(metadata) : {},
+    status: "pending",
+    resolutionNote: null,
+    resolvedAt: null,
+    resolvedBy: null,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+}
+
+function createBlockRecord({
+  blockerId,
+  blockedUserId,
+  reason = null,
+  metadata = {},
+}) {
+  const timestamp = nowIso();
+  return {
+    id: crypto.randomUUID(),
+    blockerId,
+    blockedUserId,
+    reason: normalizeNullableString(reason),
+    metadata: metadata && typeof metadata === "object" ? structuredClone(metadata) : {},
+    createdAt: timestamp,
+    updatedAt: timestamp,
   };
 }
 
@@ -620,6 +666,8 @@ class FileStore {
       notifications: Array.isArray(parsed.notifications) ? parsed.notifications : [],
       posts: Array.isArray(parsed.posts) ? parsed.posts : [],
       comments: Array.isArray(parsed.comments) ? parsed.comments : [],
+      reports: Array.isArray(parsed.reports) ? parsed.reports : [],
+      blocks: Array.isArray(parsed.blocks) ? parsed.blocks : [],
       pushDevices: Array.isArray(parsed.pushDevices) ? parsed.pushDevices : [],
       pushDeliveries: Array.isArray(parsed.pushDeliveries)
         ? parsed.pushDeliveries
@@ -838,6 +886,16 @@ class FileStore {
     );
     db.treeInvitations = db.treeInvitations.filter((entry) => entry.userId !== userId);
     db.notifications = db.notifications.filter((entry) => entry.userId !== userId);
+    db.reports = db.reports.filter((entry) => {
+      return (
+        entry.reporterId !== userId &&
+        entry.targetId !== userId &&
+        entry.resolvedBy !== userId
+      );
+    });
+    db.blocks = db.blocks.filter((entry) => {
+      return entry.blockerId !== userId && entry.blockedUserId !== userId;
+    });
     db.pushDevices = db.pushDevices.filter((entry) => entry.userId !== userId);
     db.pushDeliveries = db.pushDeliveries.filter((entry) => entry.userId !== userId);
     await this._write(db);
@@ -1853,6 +1911,161 @@ class FileStore {
       await this._write(db);
     }
     return structuredClone(notification);
+  }
+
+  async listUserBlocks(userId) {
+    const db = await this._read();
+    return db.blocks
+      .filter((entry) => entry.blockerId === userId)
+      .sort((left, right) =>
+        String(right.createdAt || "").localeCompare(String(left.createdAt || "")),
+      )
+      .map((entry) => structuredClone(entry));
+  }
+
+  async createUserBlock({
+    blockerId,
+    blockedUserId,
+    reason = null,
+    metadata = {},
+  }) {
+    const db = await this._read();
+    const normalizedBlockerId = String(blockerId || "").trim();
+    const normalizedBlockedUserId = String(blockedUserId || "").trim();
+    if (!normalizedBlockerId || !normalizedBlockedUserId) {
+      return false;
+    }
+    if (normalizedBlockerId === normalizedBlockedUserId) {
+      return false;
+    }
+
+    const blocker = db.users.find((entry) => entry.id === normalizedBlockerId);
+    const blockedUser = db.users.find((entry) => entry.id === normalizedBlockedUserId);
+    if (!blocker || !blockedUser) {
+      return null;
+    }
+
+    const existingBlock = db.blocks.find((entry) => {
+      return (
+        entry.blockerId === normalizedBlockerId &&
+        entry.blockedUserId === normalizedBlockedUserId
+      );
+    });
+    if (existingBlock) {
+      if (reason != null || (metadata && Object.keys(metadata).length > 0)) {
+        existingBlock.reason = normalizeNullableString(reason) || existingBlock.reason;
+        existingBlock.metadata = metadata && typeof metadata === "object"
+          ? structuredClone(metadata)
+          : existingBlock.metadata || {};
+        existingBlock.updatedAt = nowIso();
+        await this._write(db);
+      }
+      return structuredClone(existingBlock);
+    }
+
+    const block = createBlockRecord({
+      blockerId: normalizedBlockerId,
+      blockedUserId: normalizedBlockedUserId,
+      reason,
+      metadata,
+    });
+    db.blocks.push(block);
+    await this._write(db);
+    return structuredClone(block);
+  }
+
+  async deleteUserBlock({blockId, blockerId}) {
+    const db = await this._read();
+    const index = db.blocks.findIndex((entry) => {
+      return entry.id === blockId && entry.blockerId === blockerId;
+    });
+    if (index < 0) {
+      return null;
+    }
+
+    const [removed] = db.blocks.splice(index, 1);
+    await this._write(db);
+    return structuredClone(removed);
+  }
+
+  async isUserBlockedBetween(userIdA, userIdB) {
+    const db = await this._read();
+    return db.blocks.some((entry) => {
+      return (
+        (entry.blockerId === userIdA && entry.blockedUserId === userIdB) ||
+        (entry.blockerId === userIdB && entry.blockedUserId === userIdA)
+      );
+    });
+  }
+
+  async createReport({
+    reporterId,
+    targetType,
+    targetId,
+    reason,
+    details = null,
+    metadata = {},
+  }) {
+    const db = await this._read();
+    const normalizedReporterId = String(reporterId || "").trim();
+    const normalizedTargetType = String(targetType || "").trim();
+    const normalizedTargetId = String(targetId || "").trim();
+    if (!normalizedReporterId || !normalizedTargetType || !normalizedTargetId) {
+      return false;
+    }
+
+    if (!db.users.some((entry) => entry.id === normalizedReporterId)) {
+      return null;
+    }
+
+    const report = createReportRecord({
+      reporterId: normalizedReporterId,
+      targetType: normalizedTargetType,
+      targetId: normalizedTargetId,
+      reason,
+      details,
+      metadata,
+    });
+    db.reports.push(report);
+    await this._write(db);
+    return structuredClone(report);
+  }
+
+  async listReports({status = null} = {}) {
+    const db = await this._read();
+    const normalizedStatus = normalizeNullableString(status);
+    return db.reports
+      .filter((entry) => {
+        if (!normalizedStatus) {
+          return true;
+        }
+        return entry.status === normalizedStatus;
+      })
+      .sort((left, right) =>
+        String(right.createdAt || "").localeCompare(String(left.createdAt || "")),
+      )
+      .map((entry) => structuredClone(entry));
+  }
+
+  async resolveReport({
+    reportId,
+    resolvedBy,
+    status,
+    resolutionNote = null,
+  }) {
+    const db = await this._read();
+    const report = db.reports.find((entry) => entry.id === reportId);
+    if (!report) {
+      return null;
+    }
+
+    report.status = String(status || "resolved").trim() || "resolved";
+    report.resolvedBy = String(resolvedBy || "").trim() || null;
+    report.resolutionNote = normalizeNullableString(resolutionNote);
+    report.resolvedAt = nowIso();
+    report.updatedAt = report.resolvedAt;
+    await this._write(db);
+    return structuredClone(report);
   }
 
   async listPosts({treeId = null, authorId = null, scope = null} = {}) {

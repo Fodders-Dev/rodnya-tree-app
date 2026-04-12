@@ -1,0 +1,19 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <meta-data
+            android:name="ru.rustore.sdk.ApplicationId"
+            android:value="${rustoreApplicationId}" />
+
+        <meta-data
+            android:name="ru.rustore.sdk.pushclient.project_id"
+            android:value="${rustorePushProjectId}" />
+
+        <service
+            android:name="ru.rustore.flutter_rustore_push.service.RuStoreMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="ru.rustore.sdk.pushservice.ACTION_PROCESS_MESSAGE" />
+            </intent-filter>
+        </service>
+    </application>
+</manifest>

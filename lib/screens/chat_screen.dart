@@ -21,6 +21,7 @@ import 'package:record/record.dart';
 
 import '../backend/interfaces/chat_service_interface.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
+import '../backend/interfaces/safety_service_interface.dart';
 import '../models/chat_attachment.dart';
 import '../models/chat_details.dart';
 import '../models/chat_message.dart';
@@ -32,6 +33,7 @@ import '../services/chat_draft_store.dart';
 import '../services/chat_notification_settings_store.dart';
 import '../services/chat_pin_store.dart';
 import '../services/chat_reaction_store.dart';
+import '../services/custom_api_auth_service.dart';
 import '../services/custom_api_realtime_service.dart';
 import '../utils/chat_attachment_download.dart';
 
@@ -152,6 +154,10 @@ class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _messageController = TextEditingController();
   final TextEditingController _searchController = TextEditingController();
   final ChatServiceInterface _chatService = GetIt.I<ChatServiceInterface>();
+  final SafetyServiceInterface? _safetyService =
+      GetIt.I.isRegistered<SafetyServiceInterface>()
+          ? GetIt.I<SafetyServiceInterface>()
+          : null;
   final ImagePicker _imagePicker = ImagePicker();
   final CustomApiRealtimeService? _realtimeService =
       GetIt.I.isRegistered<CustomApiRealtimeService>()
@@ -185,6 +191,8 @@ class _ChatScreenState extends State<ChatScreen> {
   final Set<String> _selectedRemoteMessageIds = <String>{};
   final Set<String> _selectedOutgoingMessageIds = <String>{};
   bool _browserContextMenuWasEnabled = false;
+  bool _isDirectChatBlocked = false;
+  String? _directChatBlockedLabel;
 
   // Voice recording state
   bool _isRecording = false;
@@ -2340,17 +2348,27 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!mounted) {
         return;
       }
+      final failureMessage = _messageActionErrorText(
+        error,
+        'Не удалось отправить сообщение.',
+      );
       setState(() {
         _replaceOptimisticMessage(
           message.localId,
           message.copyWith(
             status: _OutgoingMessageStatus.failed,
-            errorText: 'Не удалось отправить',
+            errorText: failureMessage,
           ),
         );
+        if (failureMessage.toLowerCase().contains('заблокирован') &&
+            _isCurrentDirectChat) {
+          _isDirectChatBlocked = true;
+          _directChatBlockedLabel ??=
+              _participantLabelForUserId(_currentDirectPeerUserId ?? '');
+        }
       });
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Не удалось отправить сообщение.')),
+        SnackBar(content: Text(failureMessage)),
       );
     }
   }
@@ -2718,7 +2736,7 @@ class _ChatScreenState extends State<ChatScreen> {
             children: [
               if (_pinnedMessage != null) _buildPinnedMessageBanner(),
               Expanded(child: _buildMessagesBody()),
-              if (_isRecording)
+              if (_isRecording && !_isDirectChatBlocked)
                 _buildRecordingArea()
               else
                 _buildMessageInputArea(),
@@ -3245,6 +3263,10 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Widget _buildMessageInputArea() {
+    if (_isDirectChatBlocked) {
+      return _buildBlockedComposerNotice();
+    }
+
     final canSend = _messageController.text.trim().isNotEmpty ||
         _selectedAttachments.isNotEmpty ||
         _selectedForward != null ||
@@ -3892,6 +3914,339 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  bool get _isCurrentDirectChat =>
+      _chatDetails?.isDirect ?? widget.chatType == 'direct';
+
+  String? get _currentDirectPeerUserId {
+    if (!_isCurrentDirectChat) {
+      return null;
+    }
+    final participantIds = _otherParticipantIds(_chatDetails);
+    if (participantIds.isEmpty) {
+      final otherUserId = widget.otherUserId?.trim();
+      return otherUserId == null || otherUserId.isEmpty ? null : otherUserId;
+    }
+    return participantIds.first;
+  }
+
+  String _messageActionErrorText(Object error, String fallback) {
+    if (error is CustomApiException && error.message.trim().isNotEmpty) {
+      return error.message.trim();
+    }
+    if (error is UnsupportedError && error.message?.trim().isNotEmpty == true) {
+      return error.message!.trim();
+    }
+    return fallback;
+  }
+
+  Future<_SafetyActionDraft?> _pickSafetyActionDraft({
+    required String title,
+    required String subtitle,
+    required List<_SafetyReasonChoice> choices,
+  }) {
+    return showModalBottomSheet<_SafetyActionDraft>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (context) {
+        final detailsController = TextEditingController();
+        _SafetyReasonChoice? selectedChoice = choices.first;
+
+        return StatefulBuilder(
+          builder: (context, setModalState) => SafeArea(
+            child: Padding(
+              padding: EdgeInsets.only(
+                left: 20,
+                right: 20,
+                top: 8,
+                bottom: MediaQuery.of(context).viewInsets.bottom + 20,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.w800,
+                        ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    subtitle,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                  ),
+                  const SizedBox(height: 16),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: choices
+                        .map(
+                          (choice) => ChoiceChip(
+                            label: Text(choice.label),
+                            selected: selectedChoice == choice,
+                            onSelected: (_) {
+                              setModalState(() {
+                                selectedChoice = choice;
+                              });
+                            },
+                          ),
+                        )
+                        .toList(),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: detailsController,
+                    minLines: 2,
+                    maxLines: 4,
+                    decoration: const InputDecoration(
+                      labelText: 'Комментарий для модерации',
+                      hintText:
+                          'Необязательно, но помогает быстрее разобраться',
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      TextButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        child: const Text('Отмена'),
+                      ),
+                      const Spacer(),
+                      FilledButton(
+                        onPressed: selectedChoice == null
+                            ? null
+                            : () => Navigator.of(context).pop(
+                                  _SafetyActionDraft(
+                                    reason: selectedChoice!.reason,
+                                    details: detailsController.text.trim(),
+                                  ),
+                                ),
+                        child: const Text('Продолжить'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _reportRemoteMessage(ChatMessage message) async {
+    final safetyService = _safetyService;
+    if (safetyService == null) {
+      return;
+    }
+
+    final senderLabel = _participantLabelForUserId(message.senderId);
+    final draft = await _pickSafetyActionDraft(
+      title: 'Пожаловаться на сообщение',
+      subtitle:
+          'Жалоба уйдёт в модерацию. Мы передадим текст сообщения, автора и контекст чата.',
+      choices: const <_SafetyReasonChoice>[
+        _SafetyReasonChoice(reason: 'spam', label: 'Спам'),
+        _SafetyReasonChoice(reason: 'abuse', label: 'Оскорбление'),
+        _SafetyReasonChoice(reason: 'adult', label: 'Нежелательный контент'),
+        _SafetyReasonChoice(reason: 'fraud', label: 'Мошенничество'),
+        _SafetyReasonChoice(reason: 'other', label: 'Другое'),
+      ],
+    );
+    if (draft == null) {
+      return;
+    }
+
+    try {
+      await safetyService.reportTarget(
+        targetType: 'message',
+        targetId: message.id,
+        reason: draft.reason,
+        details: draft.details.isEmpty ? null : draft.details,
+        metadata: <String, dynamic>{
+          'chatId': message.chatId,
+          'senderId': message.senderId,
+          'senderName': senderLabel,
+          'messagePreview': message.text.trim(),
+        },
+      );
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Жалоба на сообщение $senderLabel отправлена.'),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _messageActionErrorText(error, 'Не удалось отправить жалобу.'),
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _blockUserFromMessage(ChatMessage message) async {
+    final safetyService = _safetyService;
+    final currentUserId = _currentUserId;
+    if (safetyService == null ||
+        currentUserId == null ||
+        currentUserId.isEmpty ||
+        message.senderId.trim().isEmpty ||
+        message.senderId == currentUserId) {
+      return;
+    }
+
+    final senderLabel = _participantLabelForUserId(message.senderId);
+    final draft = await _pickSafetyActionDraft(
+      title: 'Заблокировать пользователя',
+      subtitle:
+          'После блокировки личный чат станет только для чтения. Управлять списком блокировок можно в настройках.',
+      choices: const <_SafetyReasonChoice>[
+        _SafetyReasonChoice(reason: 'harassment', label: 'Навязчивость'),
+        _SafetyReasonChoice(reason: 'spam', label: 'Спам'),
+        _SafetyReasonChoice(reason: 'privacy', label: 'Нарушение границ'),
+        _SafetyReasonChoice(reason: 'other', label: 'Другое'),
+      ],
+    );
+    if (draft == null) {
+      return;
+    }
+
+    try {
+      await safetyService.blockUser(
+        userId: message.senderId,
+        reason: draft.reason,
+        metadata: <String, dynamic>{
+          'chatId': message.chatId,
+          'source': 'chat_message',
+        },
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _selectedAttachments.clear();
+        _selectedEdit = null;
+        _selectedReply = null;
+        _selectedForward = null;
+        _selectedForwardBatch = null;
+        _isDirectChatBlocked = _isCurrentDirectChat;
+        _directChatBlockedLabel = senderLabel;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '$senderLabel заблокирован. Отправка в этом личном чате отключена.',
+          ),
+          action: SnackBarAction(
+            label: 'Блокировки',
+            onPressed: () => context.push('/profile/blocks'),
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _messageActionErrorText(
+                error, 'Не удалось заблокировать пользователя.'),
+          ),
+        ),
+      );
+    }
+  }
+
+  Widget _buildBlockedComposerNotice() {
+    final theme = Theme.of(context);
+    final label = _directChatBlockedLabel?.trim();
+    final title = label != null && label.isNotEmpty
+        ? '$label в списке блокировок'
+        : 'Собеседник в списке блокировок';
+
+    return Material(
+      elevation: 5,
+      color: theme.cardColor,
+      child: Container(
+        width: double.infinity,
+        padding: EdgeInsets.fromLTRB(
+          16,
+          14,
+          16,
+          MediaQuery.of(context).padding.bottom + 14,
+        ),
+        decoration: BoxDecoration(
+          color: theme.cardColor,
+          border: Border(
+            top: BorderSide(
+              color: theme.dividerColor,
+              width: 0.5,
+            ),
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.block_rounded,
+                  color: theme.colorScheme.error,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'История чата остаётся доступной, но новые сообщения и медиа сейчас отправлять нельзя.',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: () => context.push('/profile/blocks'),
+                  icon: const Icon(Icons.shield_outlined),
+                  label: const Text('Список блокировок'),
+                ),
+                TextButton.icon(
+                  onPressed: () => context.push('/support'),
+                  icon: const Icon(Icons.support_agent_outlined),
+                  label: const Text('Поддержка'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _openRemoteMessageActions(
     ChatMessage message, {
     Offset? anchorPosition,
@@ -3899,6 +4254,12 @@ class _ChatScreenState extends State<ChatScreen> {
     final canCopy = message.text.trim().isNotEmpty;
     final isOwnMessage = message.senderId == _currentUserId;
     final isPinned = _pinnedMessage?.messageId == message.id;
+    final supportsSafetyActions = _safetyService != null;
+    final canReport = supportsSafetyActions && !isOwnMessage;
+    final canBlock = canReport &&
+        _isCurrentDirectChat &&
+        (_currentDirectPeerUserId == null ||
+            _currentDirectPeerUserId == message.senderId);
     final currentReaction = _currentReactionEmoji(message.id);
     final useDesktopMenu =
         _useDesktopMessageContextMenu() && anchorPosition != null;
@@ -3945,6 +4306,20 @@ class _ChatScreenState extends State<ChatScreen> {
               label: 'Копировать текст',
               icon: Icons.copy_rounded,
               value: _MessageSheetSelection(action: _MessageAction.copy),
+            ),
+          if (canReport)
+            const _ContextMenuActionItem<_MessageSheetSelection>(
+              label: 'Пожаловаться',
+              icon: Icons.flag_outlined,
+              value: _MessageSheetSelection(action: _MessageAction.report),
+              isDestructive: true,
+            ),
+          if (canBlock)
+            const _ContextMenuActionItem<_MessageSheetSelection>(
+              label: 'Заблокировать',
+              icon: Icons.block_outlined,
+              value: _MessageSheetSelection(action: _MessageAction.block),
+              isDestructive: true,
             ),
           if (isOwnMessage)
             const _ContextMenuActionItem<_MessageSheetSelection>(
@@ -4053,6 +4428,26 @@ class _ChatScreenState extends State<ChatScreen> {
                       ),
                     ),
                   ),
+                if (canReport)
+                  ListTile(
+                    leading: const Icon(Icons.flag_outlined),
+                    title: const Text('Пожаловаться'),
+                    onTap: () => Navigator.of(context).pop(
+                      const _MessageSheetSelection(
+                        action: _MessageAction.report,
+                      ),
+                    ),
+                  ),
+                if (canBlock)
+                  ListTile(
+                    leading: const Icon(Icons.block_outlined),
+                    title: const Text('Заблокировать'),
+                    onTap: () => Navigator.of(context).pop(
+                      const _MessageSheetSelection(
+                        action: _MessageAction.block,
+                      ),
+                    ),
+                  ),
                 if (isOwnMessage)
                   ListTile(
                     leading: const Icon(Icons.delete_outline_rounded),
@@ -4102,6 +4497,14 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     if (selection.action == _MessageAction.copy) {
       await _copyMessageText(message.text);
+      return;
+    }
+    if (selection.action == _MessageAction.report) {
+      await _reportRemoteMessage(message);
+      return;
+    }
+    if (selection.action == _MessageAction.block) {
+      await _blockUserFromMessage(message);
       return;
     }
     if (selection.action == _MessageAction.delete) {
@@ -4225,6 +4628,10 @@ class _ChatScreenState extends State<ChatScreen> {
         return;
       case _MessageAction.copy:
         await _copyMessageText(message.text);
+        return;
+      case _MessageAction.report:
+        return;
+      case _MessageAction.block:
         return;
       case _MessageAction.retry:
         await _sendOptimisticMessage(
@@ -6884,6 +7291,8 @@ enum _MessageAction {
   pin,
   edit,
   copy,
+  report,
+  block,
   retry,
   delete
 }
@@ -6910,6 +7319,26 @@ class _MessageSheetSelection {
 
   final _MessageAction action;
   final String? emoji;
+}
+
+class _SafetyReasonChoice {
+  const _SafetyReasonChoice({
+    required this.reason,
+    required this.label,
+  });
+
+  final String reason;
+  final String label;
+}
+
+class _SafetyActionDraft {
+  const _SafetyActionDraft({
+    required this.reason,
+    required this.details,
+  });
+
+  final String reason;
+  final String details;
 }
 
 class _ForwardBatchDraft {

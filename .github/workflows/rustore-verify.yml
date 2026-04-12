@@ -1,0 +1,81 @@
+name: Verify RuStore Release
+
+on:
+  pull_request:
+    branches: ["main"]
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+jobs:
+  verify-rustore:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Flutter pub get
+        shell: powershell
+        run: flutter pub get
+
+      - name: Install backend dependencies
+        shell: powershell
+        run: npm ci
+        working-directory: backend
+
+      - name: Flutter analyze
+        shell: powershell
+        run: powershell -ExecutionPolicy Bypass -File .\tool\flutter_safe.ps1 analyze
+
+      - name: Flutter test
+        shell: powershell
+        run: powershell -ExecutionPolicy Bypass -File .\tool\flutter_safe.ps1 test
+
+      - name: Backend tests
+        shell: powershell
+        run: npm test
+        working-directory: backend
+
+      - name: Create CI signing keystore
+        shell: powershell
+        run: |
+          $keystorePath = Join-Path $PWD "ci-release.keystore"
+          keytool -genkeypair `
+            -keystore $keystorePath `
+            -storepass android `
+            -keypass android `
+            -alias lineageci `
+            -keyalg RSA `
+            -keysize 2048 `
+            -validity 3650 `
+            -dname "CN=Lineage CI, OU=CI, O=Lineage, L=Moscow, ST=Moscow, C=RU"
+          "LINEAGE_KEYSTORE_FILE=$keystorePath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "LINEAGE_KEYSTORE_PASSWORD=android" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "LINEAGE_KEY_ALIAS=lineageci" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "LINEAGE_KEY_PASSWORD=android" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Build rustore release bundle
+        shell: powershell
+        env:
+          LINEAGE_BUILD_NAME: 1.0.2-ci
+          LINEAGE_BUILD_NUMBER: 9999
+        run: powershell -ExecutionPolicy Bypass -File .\tool\build_rustore_release.ps1
+
+      - name: Upload rustore bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: rustore-release-bundle
+          path: build/app/outputs/bundle/rustoreRelease/app-rustore-release.aab

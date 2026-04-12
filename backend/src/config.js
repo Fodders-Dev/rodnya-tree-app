@@ -20,6 +20,12 @@ function createConfig() {
     process.env.LINEAGE_RUSTORE_PUSH_API_BASE_URL ||
       "https://vkpns.rustore.ru",
   ).trim();
+  const adminEmails = String(
+    process.env.LINEAGE_BACKEND_ADMIN_EMAILS || "",
+  )
+    .split(",")
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
 
   return {
     port: Number(process.env.PORT || 8080),
@@ -44,6 +50,7 @@ function createConfig() {
     rustorePushEnabled: Boolean(
       rustorePushProjectId && rustorePushServiceToken,
     ),
+    adminEmails,
   };
 }
 

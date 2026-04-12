@@ -2712,3 +2712,159 @@ test("rustore push delivery sends notification through RuStore API", async () =>
     await stopTestServer(ctx);
   }
 });
+
+test("reports, blocks and admin moderation endpoints work end-to-end", async () => {
+  const ctx = await startConfiguredTestServer({
+    configOverrides: {
+      adminEmails: ["moderation@lineage.app"],
+    },
+  });
+
+  async function registerUser(email, displayName) {
+    const response = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email,
+        password: "secret123",
+        displayName,
+      }),
+    });
+    assert.equal(response.status, 201);
+    return response.json();
+  }
+
+  try {
+    const reporter = await registerUser("reporter@lineage.app", "Reporter");
+    const target = await registerUser("target@lineage.app", "Target");
+    const admin = await registerUser("moderation@lineage.app", "Moderator");
+
+    const createChatResponse = await fetch(`${ctx.baseUrl}/v1/chats/direct`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${reporter.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        otherUserId: target.user.id,
+      }),
+    });
+    assert.equal(createChatResponse.status, 200);
+    const chat = await createChatResponse.json();
+
+    const blockResponse = await fetch(`${ctx.baseUrl}/v1/blocks`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${reporter.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        userId: target.user.id,
+        reason: "spam",
+      }),
+    });
+    assert.equal(blockResponse.status, 201);
+    const blockPayload = await blockResponse.json();
+    assert.equal(blockPayload.block.blockedUserId, target.user.id);
+    assert.equal(blockPayload.block.blockedUserDisplayName, "Target");
+
+    const listBlocksResponse = await fetch(`${ctx.baseUrl}/v1/blocks`, {
+      headers: {authorization: `Bearer ${reporter.accessToken}`},
+    });
+    assert.equal(listBlocksResponse.status, 200);
+    const blocksPayload = await listBlocksResponse.json();
+    assert.equal(blocksPayload.blocks.length, 1);
+
+    const blockedChatCreateResponse = await fetch(
+      `${ctx.baseUrl}/v1/chats/direct`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${reporter.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          otherUserId: target.user.id,
+        }),
+      },
+    );
+    assert.equal(blockedChatCreateResponse.status, 403);
+
+    const blockedSendResponse = await fetch(
+      `${ctx.baseUrl}/v1/chats/${chat.chatId}/messages`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${reporter.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({text: "Это сообщение не должно уйти"}),
+      },
+    );
+    assert.equal(blockedSendResponse.status, 403);
+
+    const reportResponse = await fetch(`${ctx.baseUrl}/v1/reports`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${reporter.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        targetType: "message",
+        targetId: "msg-1",
+        reason: "abuse",
+        details: "Нежелательное сообщение",
+      }),
+    });
+    assert.equal(reportResponse.status, 201);
+    const reportPayload = await reportResponse.json();
+    assert.equal(reportPayload.report.targetType, "message");
+    assert.equal(reportPayload.report.status, "pending");
+
+    const nonAdminReportsResponse = await fetch(
+      `${ctx.baseUrl}/v1/admin/reports`,
+      {
+        headers: {authorization: `Bearer ${reporter.accessToken}`},
+      },
+    );
+    assert.equal(nonAdminReportsResponse.status, 403);
+
+    const adminReportsResponse = await fetch(`${ctx.baseUrl}/v1/admin/reports`, {
+      headers: {authorization: `Bearer ${admin.accessToken}`},
+    });
+    assert.equal(adminReportsResponse.status, 200);
+    const adminReportsPayload = await adminReportsResponse.json();
+    assert.equal(adminReportsPayload.reports.length, 1);
+    assert.equal(adminReportsPayload.reports[0].reporterDisplayName, "Reporter");
+
+    const resolveResponse = await fetch(
+      `${ctx.baseUrl}/v1/admin/reports/${adminReportsPayload.reports[0].id}/resolve`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${admin.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          status: "resolved",
+          resolutionNote: "Проверено модератором",
+        }),
+      },
+    );
+    assert.equal(resolveResponse.status, 200);
+    const resolvedPayload = await resolveResponse.json();
+    assert.equal(resolvedPayload.report.status, "resolved");
+    assert.ok(resolvedPayload.report.resolvedAt);
+
+    const unblockResponse = await fetch(
+      `${ctx.baseUrl}/v1/blocks/${blockPayload.block.id}`,
+      {
+        method: "DELETE",
+        headers: {authorization: `Bearer ${reporter.accessToken}`},
+      },
+    );
+    assert.equal(unblockResponse.status, 204);
+  } finally {
+    await stopTestServer(ctx);
+  }
+});

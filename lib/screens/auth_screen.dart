@@ -654,17 +654,53 @@ class _AuthScreenState extends State<AuthScreen> {
               ),
             ],
             const SizedBox(height: 8),
-            GestureDetector(
-              onTap: () => GoRouter.of(context).push('/privacy'),
-              child: Text(
-                'Продолжая, вы соглашаетесь с Политикой конфиденциальности.',
-                textAlign: TextAlign.center,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: Colors.grey[700],
-                  decoration: TextDecoration.underline,
-                  height: 1.45,
+            Wrap(
+              alignment: WrapAlignment.center,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Text(
+                  'Продолжая, вы соглашаетесь с ',
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: Colors.grey[700],
+                    height: 1.45,
+                  ),
                 ),
-              ),
+                TextButton(
+                  onPressed: () => GoRouter.of(context).push('/privacy'),
+                  style: TextButton.styleFrom(
+                    minimumSize: Size.zero,
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  child: const Text('Политикой конфиденциальности'),
+                ),
+                Text(
+                  ' и ',
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: Colors.grey[700],
+                    height: 1.45,
+                  ),
+                ),
+                TextButton(
+                  onPressed: () => GoRouter.of(context).push('/terms'),
+                  style: TextButton.styleFrom(
+                    minimumSize: Size.zero,
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  child: const Text('Условиями использования'),
+                ),
+                Text(
+                  '.',
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: Colors.grey[700],
+                    height: 1.45,
+                  ),
+                ),
+              ],
             ),
           ],
         ),

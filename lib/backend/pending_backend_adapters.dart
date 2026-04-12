@@ -15,6 +15,7 @@ import '../models/relation_request.dart';
 import '../models/user_profile.dart';
 import '../models/post.dart';
 import '../models/comment.dart';
+import '../models/user_block_record.dart';
 
 import 'interfaces/auth_service_interface.dart';
 import 'interfaces/chat_service_interface.dart';
@@ -23,6 +24,7 @@ import 'interfaces/profile_service_interface.dart';
 import 'interfaces/storage_service_interface.dart';
 import 'interfaces/notification_service_interface.dart';
 import 'interfaces/post_service_interface.dart';
+import 'interfaces/safety_service_interface.dart';
 import 'models/profile_form_data.dart';
 import 'models/selectable_tree.dart';
 import 'models/tree_invitation.dart';
@@ -623,4 +625,38 @@ class NoopNotificationService implements NotificationServiceInterface {
     required int notificationId,
     bool playSound = true,
   }) async {}
+}
+
+class PendingBackendSafetyService implements SafetyServiceInterface {
+  const PendingBackendSafetyService();
+
+  @override
+  Future<UserBlockRecord> blockUser({
+    required String userId,
+    String? reason,
+    Map<String, dynamic> metadata = const <String, dynamic>{},
+  }) {
+    throw UnsupportedError(_pendingProviderMessage('safety'));
+  }
+
+  @override
+  Future<List<UserBlockRecord>> listBlockedUsers() async {
+    return const <UserBlockRecord>[];
+  }
+
+  @override
+  Future<void> reportTarget({
+    required String targetType,
+    required String targetId,
+    required String reason,
+    String? details,
+    Map<String, dynamic> metadata = const <String, dynamic>{},
+  }) {
+    throw UnsupportedError(_pendingProviderMessage('safety'));
+  }
+
+  @override
+  Future<void> unblockUser(String blockId) {
+    throw UnsupportedError(_pendingProviderMessage('safety'));
+  }
 }
