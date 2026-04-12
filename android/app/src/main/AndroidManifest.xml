@@ -17,6 +17,9 @@
         android:label="Родня"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+        <meta-data
+            android:name="lineage.notification.icon"
+            android:resource="@drawable/ic_stat_notification" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

@@ -56,6 +56,14 @@ export LINEAGE_BUILD_NUMBER=10
 - Блокировка пользователя, список блокировок, жалоба на сообщение.
 - Удаление аккаунта.
 
+### Текущий статус smoke
+- `2026-04-12` подтверждено на `rustoreRelease` APK в Android Emulator API 36:
+  - cold start открывает login screen без startup failure
+  - login реальным аккаунтом проходит
+  - home screen открывается после входа
+  - chats list screen открывается после входа
+- Emulator note: RuStore `push/update/review` в эмуляторе без установленного host RuStore app закономерно возвращают `RuStore not installed` / `Need to install host push app`; этот сценарий должен закрываться только на физическом Android-устройстве с RuStore.
+
 ## Trust Gate
 - Публичные маршруты без логина живы:
   - `/privacy`

@@ -50,6 +50,8 @@ typedef GenericNotificationCallback = Future<void> Function({
 typedef RemotePushTokenProvider = Future<String?> Function();
 
 class CustomApiNotificationService implements NotificationServiceInterface {
+  static const String _androidNotificationIcon = 'ic_stat_notification';
+
   CustomApiNotificationService._({
     required FlutterLocalNotificationsPlugin plugin,
     required SharedPreferences preferences,
@@ -172,7 +174,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     }
 
     const initializationSettingsAndroid = AndroidInitializationSettings(
-      '@drawable/ic_stat_notification',
+      _androidNotificationIcon,
     );
     const initializationSettingsIOS = DarwinInitializationSettings();
     const initializationSettings = InitializationSettings(
@@ -520,7 +522,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
           channelDescription: _channelDescEvents,
           importance: Importance.high,
           priority: Priority.high,
-          icon: '@drawable/ic_stat_notification',
+          icon: _androidNotificationIcon,
         ),
         iOS: DarwinNotificationDetails(
           presentAlert: true,
@@ -595,7 +597,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
               playSound ? Importance.high : Importance.defaultImportance,
           priority: playSound ? Priority.high : Priority.defaultPriority,
           playSound: playSound,
-          icon: '@drawable/ic_stat_notification',
+          icon: _androidNotificationIcon,
         ),
         iOS: DarwinNotificationDetails(
           presentAlert: true,
@@ -932,7 +934,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
           channelDescription: _channelDescGeneral,
           importance: Importance.high,
           priority: Priority.high,
-          icon: '@drawable/ic_stat_notification',
+          icon: _androidNotificationIcon,
         ),
         iOS: DarwinNotificationDetails(
           presentAlert: true,
