@@ -177,6 +177,218 @@ test("auth + profile bootstrap flow works end-to-end", async () => {
   }
 });
 
+test("delete account cascades owned state and local media cleanup", async () => {
+  const ctx = await startConfiguredTestServer();
+
+  try {
+    const registerOwnerResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "owner-delete@lineage.app",
+        password: "secret123",
+        displayName: "Delete Owner",
+      }),
+    });
+    assert.equal(registerOwnerResponse.status, 201);
+    const owner = await registerOwnerResponse.json();
+    const ownerHeaders = {authorization: `Bearer ${owner.accessToken}`};
+
+    const registerPeerResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "peer-delete@lineage.app",
+        password: "secret123",
+        displayName: "Delete Peer",
+      }),
+    });
+    assert.equal(registerPeerResponse.status, 201);
+    const peer = await registerPeerResponse.json();
+    const peerHeaders = {authorization: `Bearer ${peer.accessToken}`};
+
+    async function uploadMedia(bucket, relativePath) {
+      const uploadResponse = await fetch(`${ctx.baseUrl}/v1/media/upload`, {
+        method: "POST",
+        headers: {
+          ...ownerHeaders,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          bucket,
+          path: relativePath,
+          fileBase64:
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7Z0uoAAAAASUVORK5CYII=",
+          contentType: "image/png",
+        }),
+      });
+      assert.equal(uploadResponse.status, 201);
+      return uploadResponse.json();
+    }
+
+    const profilePhoto = await uploadMedia("avatars", `${owner.user.id}/profile.png`);
+    const postImage = await uploadMedia("posts", `${owner.user.id}/post.png`);
+    const chatImage = await uploadMedia("chat", `${owner.user.id}/chat.png`);
+
+    const bootstrapResponse = await fetch(`${ctx.baseUrl}/v1/profile/me/bootstrap`, {
+      method: "PUT",
+      headers: {
+        ...ownerHeaders,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        firstName: "Удаляемый",
+        lastName: "Пользователь",
+        photoUrl: profilePhoto.url,
+      }),
+    });
+    assert.equal(bootstrapResponse.status, 200);
+
+    const createTreeResponse = await fetch(`${ctx.baseUrl}/v1/trees`, {
+      method: "POST",
+      headers: {
+        ...ownerHeaders,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "Временное дерево",
+        description: "Для cascade smoke",
+        isPrivate: true,
+      }),
+    });
+    assert.equal(createTreeResponse.status, 201);
+    const createdTree = await createTreeResponse.json();
+
+    const createPostResponse = await fetch(`${ctx.baseUrl}/v1/posts`, {
+      method: "POST",
+      headers: {
+        ...ownerHeaders,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        treeId: createdTree.tree.id,
+        content: "Пост для удаления",
+        imageUrls: [postImage.url],
+      }),
+    });
+    assert.equal(createPostResponse.status, 201);
+
+    const directChatResponse = await fetch(`${ctx.baseUrl}/v1/chats/direct`, {
+      method: "POST",
+      headers: {
+        ...ownerHeaders,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({otherUserId: peer.user.id}),
+    });
+    assert.equal(directChatResponse.status, 200);
+    const directChat = await directChatResponse.json();
+
+    const sendMessageResponse = await fetch(
+      `${ctx.baseUrl}/v1/chats/${directChat.chat.id}/messages`,
+      {
+        method: "POST",
+        headers: {
+          ...ownerHeaders,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          text: "Сообщение с картинкой",
+          attachments: [
+            {
+              type: "image",
+              url: chatImage.url,
+              mimeType: "image/png",
+              fileName: "chat.png",
+            },
+          ],
+        }),
+      },
+    );
+    assert.equal(sendMessageResponse.status, 201);
+
+    const profileFilePath = path.join(
+      ctx.tempDir,
+      "uploads",
+      "avatars",
+      owner.user.id,
+      "profile.png",
+    );
+    const postFilePath = path.join(
+      ctx.tempDir,
+      "uploads",
+      "posts",
+      owner.user.id,
+      "post.png",
+    );
+    const chatFilePath = path.join(
+      ctx.tempDir,
+      "uploads",
+      "chat",
+      owner.user.id,
+      "chat.png",
+    );
+    await assert.doesNotReject(fs.access(profileFilePath));
+    await assert.doesNotReject(fs.access(postFilePath));
+    await assert.doesNotReject(fs.access(chatFilePath));
+
+    const deleteAccountResponse = await fetch(`${ctx.baseUrl}/v1/auth/account`, {
+      method: "DELETE",
+      headers: ownerHeaders,
+    });
+    assert.equal(deleteAccountResponse.status, 204);
+
+    const deletedSessionResponse = await fetch(`${ctx.baseUrl}/v1/auth/session`, {
+      headers: ownerHeaders,
+    });
+    assert.equal(deletedSessionResponse.status, 401);
+
+    const peerChatsResponse = await fetch(`${ctx.baseUrl}/v1/chats`, {
+      headers: peerHeaders,
+    });
+    assert.equal(peerChatsResponse.status, 200);
+    const peerChatsPayload = await peerChatsResponse.json();
+    assert.equal(peerChatsPayload.chats.length, 0);
+
+    const snapshot = await ctx.store._read();
+    assert.equal(
+      snapshot.users.some((entry) => entry.id === owner.user.id),
+      false,
+    );
+    assert.equal(
+      snapshot.trees.some((entry) => entry.id === createdTree.tree.id),
+      false,
+    );
+    assert.equal(
+      snapshot.posts.some((entry) => entry.authorId === owner.user.id),
+      false,
+    );
+    assert.equal(
+      snapshot.messages.some((entry) => entry.senderId === owner.user.id),
+      false,
+    );
+    assert.equal(
+      snapshot.persons.some((entry) => entry.userId === owner.user.id),
+      false,
+    );
+    const remainingPersonIds = new Set(snapshot.persons.map((entry) => entry.id));
+    assert.equal(
+      snapshot.relations.every(
+        (entry) =>
+          remainingPersonIds.has(entry.person1Id) &&
+          remainingPersonIds.has(entry.person2Id),
+      ),
+      true,
+    );
+
+    await assert.rejects(fs.access(profileFilePath));
+    await assert.rejects(fs.access(postFilePath));
+    await assert.rejects(fs.access(chatFilePath));
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
 test("file store stays readable during queued writes", async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "lineage-store-"));
   const dataPath = path.join(tempDir, "dev-db.json");

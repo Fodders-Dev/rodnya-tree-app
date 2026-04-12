@@ -253,6 +253,67 @@ function normalizeParticipantIds(participantIds) {
   ).sort((left, right) => left.localeCompare(right));
 }
 
+function collectMediaUrl(urlSet, value) {
+  const normalizedValue = String(value || "").trim();
+  if (normalizedValue) {
+    urlSet.add(normalizedValue);
+  }
+}
+
+function collectMessageMediaUrls(urlSet, message) {
+  const attachments = normalizeMessageAttachments(message);
+  for (const attachment of attachments) {
+    collectMediaUrl(urlSet, attachment?.url);
+    collectMediaUrl(urlSet, attachment?.thumbnailUrl);
+  }
+
+  if (Array.isArray(message?.mediaUrls)) {
+    for (const mediaUrl of message.mediaUrls) {
+      collectMediaUrl(urlSet, mediaUrl);
+    }
+  }
+
+  collectMediaUrl(urlSet, message?.imageUrl);
+}
+
+function collectOwnedMediaUrlsForUser(db, userId) {
+  const ownedMediaUrls = new Set();
+  const user = db.users.find((entry) => entry.id === userId);
+  collectMediaUrl(ownedMediaUrls, user?.profile?.photoUrl);
+
+  for (const person of db.persons) {
+    if (person.userId === userId) {
+      collectMediaUrl(ownedMediaUrls, person.photoUrl);
+    }
+  }
+
+  for (const post of db.posts) {
+    if (post.authorId !== userId) {
+      continue;
+    }
+    collectMediaUrl(ownedMediaUrls, post.authorPhotoUrl);
+    if (Array.isArray(post.imageUrls)) {
+      for (const imageUrl of post.imageUrls) {
+        collectMediaUrl(ownedMediaUrls, imageUrl);
+      }
+    }
+  }
+
+  for (const comment of db.comments) {
+    if (comment.authorId === userId) {
+      collectMediaUrl(ownedMediaUrls, comment.authorPhotoUrl);
+    }
+  }
+
+  for (const message of db.messages) {
+    if (message.senderId === userId) {
+      collectMessageMediaUrls(ownedMediaUrls, message);
+    }
+  }
+
+  return Array.from(ownedMediaUrls);
+}
+
 function createChatRecord({
   id = null,
   type = "direct",
@@ -859,27 +920,144 @@ class FileStore {
 
   async deleteUser(userId) {
     const db = await this._read();
+    const existingUser = db.users.find((entry) => entry.id === userId);
+    if (!existingUser) {
+      return null;
+    }
+
+    const timestamp = nowIso();
+    const removedTreeIds = new Set();
+    db.trees = db.trees.reduce((trees, tree) => {
+      const nextMemberIds = normalizeParticipantIds(
+        (tree.memberIds || tree.members || []).filter(
+          (memberId) => memberId !== userId,
+        ),
+      );
+
+      if (tree.creatorId === userId && nextMemberIds.length === 0) {
+        removedTreeIds.add(tree.id);
+        return trees;
+      }
+
+      const creatorId =
+        tree.creatorId === userId ? nextMemberIds[0] || null : tree.creatorId;
+      const membersChanged =
+        nextMemberIds.length !== (tree.memberIds || tree.members || []).length ||
+        creatorId !== tree.creatorId;
+
+      trees.push({
+        ...tree,
+        creatorId,
+        memberIds: nextMemberIds,
+        members: nextMemberIds,
+        updatedAt: membersChanged ? timestamp : tree.updatedAt,
+      });
+      return trees;
+    }, []);
+
+    const removedPersonIds = new Set(
+      db.persons
+        .filter(
+          (entry) => entry.userId === userId || removedTreeIds.has(entry.treeId),
+        )
+        .map((entry) => entry.id),
+    );
+
     db.users = db.users.filter((entry) => entry.id !== userId);
     db.sessions = db.sessions.filter((entry) => entry.userId !== userId);
-    db.trees = db.trees.map((tree) => ({
-      ...tree,
-      memberIds: (tree.memberIds || []).filter((memberId) => memberId !== userId),
-      members: (tree.members || []).filter((memberId) => memberId !== userId),
-    }));
-    db.chats = db.chats
-      .map((chat) => ({
-        ...chat,
-        participantIds: normalizeParticipantIds(
-          (chat.participantIds || []).filter((entry) => entry !== userId),
+    db.persons = db.persons.filter((entry) => !removedPersonIds.has(entry.id));
+    db.relations = db.relations.filter((entry) => {
+      return (
+        !removedTreeIds.has(entry.treeId) &&
+        !removedPersonIds.has(entry.person1Id) &&
+        !removedPersonIds.has(entry.person2Id)
+      );
+    });
+
+    const nextPosts = [];
+    const removedPostIds = new Set();
+    for (const post of db.posts) {
+      if (post.authorId === userId || removedTreeIds.has(post.treeId)) {
+        removedPostIds.add(post.id);
+        continue;
+      }
+
+      nextPosts.push({
+        ...post,
+        anchorPersonIds: normalizeParticipantIds(
+          (post.anchorPersonIds || []).filter(
+            (personId) => !removedPersonIds.has(personId),
+          ),
         ),
-      }))
-      .filter((chat) => {
-        if (chat.type === "direct") {
-          return chat.participantIds.length === 2;
-        }
-        return chat.participantIds.length >= 2;
       });
-    const activeChatIds = new Set(db.chats.map((chat) => chat.id));
+    }
+    db.posts = nextPosts;
+
+    const removedCommentIds = new Set();
+    db.comments = db.comments.filter((entry) => {
+      const shouldRemove =
+        entry.authorId === userId || removedPostIds.has(entry.postId);
+      if (shouldRemove) {
+        removedCommentIds.add(entry.id);
+      }
+      return !shouldRemove;
+    });
+
+    const removedRelationRequestIds = new Set();
+    db.relationRequests = db.relationRequests.filter((entry) => {
+      const shouldRemove =
+        entry.senderId === userId ||
+        entry.recipientId === userId ||
+        removedTreeIds.has(entry.treeId);
+      if (shouldRemove) {
+        removedRelationRequestIds.add(entry.id);
+      }
+      return !shouldRemove;
+    });
+
+    const removedInvitationIds = new Set();
+    db.treeInvitations = db.treeInvitations.filter((entry) => {
+      const shouldRemove =
+        entry.userId === userId || removedTreeIds.has(entry.treeId);
+      if (shouldRemove) {
+        removedInvitationIds.add(entry.id);
+      }
+      return !shouldRemove;
+    });
+
+    const nextChats = [];
+    const removedChatIds = new Set();
+    for (const chat of db.chats) {
+      if (chat.treeId && removedTreeIds.has(chat.treeId)) {
+        removedChatIds.add(chat.id);
+        continue;
+      }
+
+      const nextParticipantIds = normalizeParticipantIds(
+        (chat.participantIds || []).filter((entry) => entry !== userId),
+      );
+      const nextBranchRootPersonIds = normalizeParticipantIds(
+        (chat.branchRootPersonIds || []).filter(
+          (entry) => !removedPersonIds.has(entry),
+        ),
+      );
+      const shouldKeep = chat.type === "direct"
+        ? nextParticipantIds.length === 2
+        : nextParticipantIds.length >= 2;
+
+      if (!shouldKeep) {
+        removedChatIds.add(chat.id);
+        continue;
+      }
+
+      nextChats.push({
+        ...chat,
+        participantIds: nextParticipantIds,
+        branchRootPersonIds: nextBranchRootPersonIds,
+      });
+    }
+    db.chats = nextChats;
+    const activeChatIds = new Set(nextChats.map((chat) => chat.id));
     db.messages = db.messages.filter((entry) => {
       return (
         entry.senderId !== userId &&
@@ -888,25 +1066,89 @@ class FileStore {
         activeChatIds.has(entry.chatId)
       );
     });
-    db.persons = db.persons.filter((entry) => entry.userId !== userId);
-    db.relationRequests = db.relationRequests.filter(
-      (entry) => entry.senderId !== userId && entry.recipientId !== userId,
-    );
-    db.treeInvitations = db.treeInvitations.filter((entry) => entry.userId !== userId);
-    db.notifications = db.notifications.filter((entry) => entry.userId !== userId);
+
+    db.notifications = db.notifications.filter((entry) => {
+      if (entry.userId === userId) {
+        return false;
+      }
+
+      const data = entry.data && typeof entry.data === "object" ? entry.data : {};
+      if (
+        data.userId === userId ||
+        data.senderId === userId ||
+        data.recipientId === userId ||
+        data.actorId === userId ||
+        data.targetUserId === userId ||
+        data.authorId === userId ||
+        data.ownerId === userId
+      ) {
+        return false;
+      }
+
+      if (
+        (data.chatId && removedChatIds.has(data.chatId)) ||
+        (data.treeId && removedTreeIds.has(data.treeId)) ||
+        (data.postId && removedPostIds.has(data.postId)) ||
+        (data.commentId && removedCommentIds.has(data.commentId)) ||
+        (data.requestId && removedRelationRequestIds.has(data.requestId)) ||
+        (data.invitationId && removedInvitationIds.has(data.invitationId))
+      ) {
+        return false;
+      }
+
+      return true;
+    });
+
     db.reports = db.reports.filter((entry) => {
       return (
         entry.reporterId !== userId &&
-        entry.targetId !== userId &&
-        entry.resolvedBy !== userId
+        entry.resolvedBy !== userId &&
+        !(
+          entry.targetType === "user" &&
+          entry.targetId === userId
+        ) &&
+        !(
+          entry.targetType === "post" &&
+          removedPostIds.has(entry.targetId)
+        ) &&
+        !(
+          entry.targetType === "comment" &&
+          removedCommentIds.has(entry.targetId)
+        ) &&
+        !(
+          entry.targetType === "tree" &&
+          removedTreeIds.has(entry.targetId)
+        ) &&
+        !(
+          entry.targetType === "chat" &&
+          removedChatIds.has(entry.targetId)
+        )
       );
     });
     db.blocks = db.blocks.filter((entry) => {
       return entry.blockerId !== userId && entry.blockedUserId !== userId;
     });
     db.pushDevices = db.pushDevices.filter((entry) => entry.userId !== userId);
-    db.pushDeliveries = db.pushDeliveries.filter((entry) => entry.userId !== userId);
+    const activeNotificationIds = new Set(db.notifications.map((entry) => entry.id));
+    db.pushDeliveries = db.pushDeliveries.filter((entry) => {
+      return (
+        entry.userId !== userId &&
+        (!entry.notificationId || activeNotificationIds.has(entry.notificationId))
+      );
+    });
     await this._write(db);
+    return {
+      userId,
+      removedTreeIds: Array.from(removedTreeIds),
+      removedPersonIds: Array.from(removedPersonIds),
+      removedChatIds: Array.from(removedChatIds),
+      removedPostIds: Array.from(removedPostIds),
+    };
+  }
+
+  async listOwnedMediaUrls(userId) {
+    const db = await this._read();
+    return collectOwnedMediaUrlsForUser(db, userId);
   }
 
   async createTree({creatorId, name, description, isPrivate, kind}) {

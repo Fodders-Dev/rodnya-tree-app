@@ -28,7 +28,7 @@
 - `done` production media policy
   - `done` canonical HTTPS media URL
   - `done` media upload/delete smoke на production `s3` path
-  - `pending` retention/delete-account cascade validation на отдельном полном QA-проходе
+  - `done` retention/delete-account cascade validation на отдельном полном QA-проходе
 
 ### Track B. Android Release Quality
 - `done` базовый `rustoreRelease` emulator smoke
@@ -50,7 +50,10 @@
 - `done` проверить release keystore/signing и финальные IDs для RuStore Console
   - release APK подписывается реальным keystore
   - `package`, `targetSdkVersion`, `RuStore ApplicationId`, `RuStore push project id` и notification icon подтверждены из собранного APK
-- `pending` release notes/demo account/moderator note довести до публикационного состояния
+- `done` release notes/demo account/moderator note доведены до публикационного состояния
+  - `done` demo dataset поднят на production API
+  - `done` store card, shot list и moderator notes зафиксированы в `docs/`
+  - `done` secure local moderation credentials и moderator comment собраны в `.tmp/`
 
 ### Production Sync
 - `done` production backend на `api.rodnya-tree.ru` синхронизирован с текущим backend-кодом
@@ -82,21 +85,22 @@
   - мягкое восстановление после 401/network loss
 
 ### Track D. Store Readiness
-- `pending` карточка приложения для RuStore
-  - short description
-  - full description
-  - screenshots
-  - icon / feature visuals
-  - privacy/support/delete-account URLs
-- `pending` demo account для модерации
-- `pending` moderator instructions для review team
+- `done` карточка приложения для RuStore
+  - `done` short description
+  - `done` full description
+  - `done` icon / feature visuals source path
+  - `done` privacy/support/delete-account URLs
+  - `done` screenshots shot list
+- `done` demo account для модерации
+- `done` moderator instructions для review team
+- `pending` raw PNG export и загрузка финальных screenshots в RuStore Console
 
 ## Порядок добивания
-1. Собрать release assets и moderator pack.
+1. Выгрузить финальные raw screenshots и загрузить store assets в RuStore Console.
 2. Добить `Track C` только по реальным UX-блокерам.
 3. Прогнать финальный RuStore release candidate smoke.
 4. Затем выкатывать first moderation build.
 
 ## Текущий рабочий фокус
-- Сейчас в работе: release assets, demo account и moderator notes.
+- Сейчас в работе: финальный store console pass и screenshot export.
 - Следующий после него: финальный RuStore release candidate pass.

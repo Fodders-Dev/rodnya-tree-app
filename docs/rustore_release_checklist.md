@@ -104,6 +104,11 @@ export LINEAGE_BUILD_NUMBER=10
   - legacy `https://api.rodnya-tree.ru/media/...` отдают redirect на новый storage path
   - свежий upload/delete smoke на production API прошёл end-to-end
   - backup script теперь сохраняет `rodnya-postgres.dump` и `minio-data.tar.gz`
+- `2026-04-12` delete-account cascade отдельно подтверждён на production `postgres + s3`:
+  - временный владелец загрузил profile photo, post image и chat attachment
+  - `DELETE /v1/auth/account` удалил state из `PostgreSQL`
+  - все три media URL после удаления вернулись как `404`
+  - peer account больше не видел direct chat после удаления владельца
 
 ## Publication Gate
 - Первый релиз идёт через `manual release`, не `instant publish`.
@@ -117,6 +122,12 @@ export LINEAGE_BUILD_NUMBER=10
   - support URL
   - account deletion URL
 - Moderator notes готовы и содержат demo credentials.
+- Основные публикационные файлы:
+  - [docs/rustore_store_card_1.0.2.md](./rustore_store_card_1.0.2.md)
+  - [docs/rustore_screenshot_shotlist_1.0.2.md](./rustore_screenshot_shotlist_1.0.2.md)
+  - [docs/rustore_moderator_notes_1.0.2.md](./rustore_moderator_notes_1.0.2.md)
+  - [docs/rustore_whatsnew_1.0.2.txt](./rustore_whatsnew_1.0.2.txt)
+- Secure local files с реальными moderation credentials и готовым moderator comment лежат в `.tmp/` и не коммитятся в git.
 
 ## RuStore API Upload
 ### Windows PowerShell
@@ -126,7 +137,7 @@ $env:RUSTORE_PRIVATE_KEY_BASE64="base64-private-key-from-rustore-console"
 powershell -ExecutionPolicy Bypass -File .\tool\publish_rustore_release.ps1 `
   -MinAndroidVersion 7 `
   -WhatsNewFile ".\docs\rustore_whatsnew_1.0.2.txt" `
-  -ModeratorComment "Демо-аккаунт: moderation@rodnya-tree.ru / ChangeMeBeforeRelease2026!" `
+  -ModeratorComment (Get-Content ".\.tmp\rustore_moderator_comment_1.0.2.txt" -Raw) `
   -PublishType MANUAL `
   -SubmitForModeration
 ```

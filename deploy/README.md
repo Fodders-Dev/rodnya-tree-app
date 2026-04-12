@@ -5,8 +5,10 @@ Lineage web production is served by Caddy from `/var/www/rodnya-site`, while the
 ## Current production flow
 
 1. Build a full Flutter web bundle with `flutter build web --release`.
-2. Upload a tarball to the server.
-3. Activate it through `deploy/web/activate_web_release.sh`.
+2. Sync shell assets that Flutter does not reliably copy into `build/web`:
+   - `node tool/sync_web_shell_assets.js`
+3. Upload a tarball to the server.
+4. Activate it through `deploy/web/activate_web_release.sh`.
 
 The activation step is intentionally shared between manual deploys and GitHub Actions so the server always follows the same path.
 

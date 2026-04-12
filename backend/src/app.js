@@ -821,7 +821,42 @@ function createApp({
   });
 
   app.delete("/v1/auth/account", requireAuth, async (req, res) => {
+    const ownedMediaUrls = typeof store.listOwnedMediaUrls === "function"
+      ? await store.listOwnedMediaUrls(req.auth.user.id)
+      : [];
     await store.deleteUser(req.auth.user.id);
+
+    const mediaCleanupFailures = [];
+    for (const mediaUrl of ownedMediaUrls) {
+      try {
+        await resolvedMediaStorage.deleteObjectByUrl(mediaUrl);
+      } catch (error) {
+        if (
+          error?.message === "INVALID_MEDIA_PATH" ||
+          error?.message === "UNSUPPORTED_MEDIA_URL" ||
+          error instanceof TypeError
+        ) {
+          continue;
+        }
+
+        mediaCleanupFailures.push({
+          url: mediaUrl,
+          message: error?.message || "unknown_error",
+        });
+      }
+    }
+
+    if (mediaCleanupFailures.length > 0) {
+      console.error(
+        "[backend] account media cleanup warnings",
+        JSON.stringify({
+          requestId: req.requestId,
+          userId: req.auth.user.id,
+          failures: mediaCleanupFailures,
+        }),
+      );
+    }
+
     res.status(204).send();
   });
 

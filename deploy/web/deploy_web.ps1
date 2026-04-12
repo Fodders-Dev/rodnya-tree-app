@@ -37,6 +37,7 @@ try {
             "--dart-define=LINEAGE_RUNTIME_PRESET=prod_custom_api",
             "--dart-define=LINEAGE_ENABLE_LEGACY_DYNAMIC_LINKS=false"
         )
+        Invoke-Checked "node" @("tool/sync_web_shell_assets.js")
     }
 
     if (Test-Path $archivePath) {
