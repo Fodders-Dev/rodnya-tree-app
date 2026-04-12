@@ -1214,6 +1214,7 @@ void main() {
   test(
     'CustomApiChatService clears stale session and returns safe defaults on 401 polling',
     () async {
+      var logoutCalls = 0;
       final client = MockClient((request) async {
         if (request.url.path == '/v1/chats' && request.method == 'GET') {
           return http.Response(
@@ -1233,6 +1234,7 @@ void main() {
         }
 
         if (request.url.path == '/v1/auth/logout' && request.method == 'POST') {
+          logoutCalls += 1;
           return http.Response(
             jsonEncode({'ok': true}),
             200,
@@ -1283,6 +1285,7 @@ void main() {
           await chatService.getTotalUnreadCountStream('user-1').first;
       expect(unreadCount, 0);
       expect(authService.currentUserId, isNull);
+      expect(logoutCalls, 0);
     },
   );
 

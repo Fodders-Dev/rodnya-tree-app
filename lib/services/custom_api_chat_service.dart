@@ -902,7 +902,7 @@ class CustomApiChatService implements ChatServiceInterface {
       return true;
     }
 
-    await _authService.signOut();
+    await _authService.clearSessionLocally();
     return true;
   }
 }

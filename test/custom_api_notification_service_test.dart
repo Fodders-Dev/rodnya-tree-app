@@ -674,6 +674,7 @@ void main() {
   test(
     'CustomApiNotificationService signs out cleanly when push registration gets unauthorized',
     () async {
+      var logoutCalls = 0;
       final client = MockClient((request) async {
         if (request.url.path == '/v1/push/devices' &&
             request.method == 'POST') {
@@ -685,6 +686,7 @@ void main() {
         }
 
         if (request.url.path == '/v1/auth/logout' && request.method == 'POST') {
+          logoutCalls += 1;
           return http.Response('', 204);
         }
 
@@ -734,6 +736,7 @@ void main() {
         prefs.containsKey('custom_api_session_v1'),
         isFalse,
       );
+      expect(logoutCalls, 0);
 
       await service.dispose();
     },

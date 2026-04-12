@@ -196,6 +196,10 @@ class CustomApiAuthService implements AuthServiceInterface {
     await _clearSession();
   }
 
+  Future<void> clearSessionLocally() async {
+    await _clearSession();
+  }
+
   @override
   Future<void> resetPassword(String email) async {
     await _requestJson(

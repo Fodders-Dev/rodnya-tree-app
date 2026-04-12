@@ -75,6 +75,8 @@ Scope:
 
 ## Residual notes
 - Browser sessions can temporarily keep an older Flutter web bundle in memory; in testing, adding a cache-busting query or reloading the app was enough to see the latest production UI.
+- Validation note from 2026-04-12:
+  a stale persisted `custom_api_session_v1` no longer blocks web startup. The app now clears the local session path safely enough to reach `/#/login` instead of dying in bootstrap, and unauthorized cleanup no longer adds an extra `POST /v1/auth/logout` on top of the expected `401` session/refresh pair.
 - Web console is clean from runtime errors in the verified flows, but Flutter still emits a `Noto fonts` warning for some missing glyphs. This is not blocking MVP behavior, but it should be cleaned up in a later typography pass.
 - Validation note from 2026-04-11:
   local browser smoke should use `flutter build web`, not only `flutter build web --no-wasm-dry-run`. In this repo the `--no-wasm-dry-run` output can be sufficient for compile validation while still leaving a locally served `build/web` without final `AssetManifest`, `FontManifest`, and web icon files, which creates false 404s and `google_fonts` runtime noise on `/login`.

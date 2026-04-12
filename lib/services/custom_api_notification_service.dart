@@ -1257,7 +1257,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
 
     final authService = _authService;
     if (authService != null) {
-      await authService.signOut();
+      await authService.clearSessionLocally();
     }
     return true;
   }
