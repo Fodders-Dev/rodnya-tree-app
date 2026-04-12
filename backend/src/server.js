@@ -17,6 +17,8 @@ async function startServer() {
       `[lineage-backend] listening on http://127.0.0.1:${config.port}`,
     );
     console.log(`[lineage-backend] data path: ${config.dataPath}`);
+    console.log(`[lineage-backend] media root: ${config.mediaRootPath}`);
+    console.log("[lineage-backend] storage mode: file-store");
   });
   realtimeHub.attach(server);
 

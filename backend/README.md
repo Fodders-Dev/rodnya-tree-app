@@ -75,6 +75,7 @@
 - `GET /v1/push/deliveries`
 - `GET /media/*`
 - `GET /health`
+- `GET /ready`
 - `WS /v1/realtime?accessToken=...`
 
 ## Запуск
@@ -102,6 +103,12 @@ npm start
 - `LINEAGE_RUSTORE_PUSH_SERVICE_TOKEN` - сервисный токен RuStore Push из RuStore Console
 - `LINEAGE_RUSTORE_PUSH_API_BASE_URL` - базовый URL RuStore Push API, по умолчанию `https://vkpns.rustore.ru`
 - `LINEAGE_BACKEND_ADMIN_EMAILS` - список email модераторов через запятую для admin endpoints `/v1/admin/reports`
+- `LINEAGE_RATE_LIMIT_WINDOW_MS` - окно rate limiting в миллисекундах, по умолчанию `60000`
+- `LINEAGE_RATE_LIMIT_DEFAULT_MAX` - лимит для read-heavy трафика в окне, по умолчанию `600`
+- `LINEAGE_RATE_LIMIT_AUTH_MAX` - лимит для login/register/password-reset, по умолчанию `30`
+- `LINEAGE_RATE_LIMIT_MUTATION_MAX` - лимит для mutating API в окне, по умолчанию `180`
+- `LINEAGE_RATE_LIMIT_UPLOAD_MAX` - лимит для media upload, по умолчанию `40`
+- `LINEAGE_RATE_LIMIT_SAFETY_MAX` - лимит для reports/blocks, по умолчанию `20`
 
 ## Подключение Flutter dev-сборки
 
@@ -133,3 +140,4 @@ flutter run `
 - Remote push теперь умеет реально доставлять browser push через Web Push API и RuStore push через `vkpns.rustore.ru`, если backend запущен с нужными ключами. Без `LINEAGE_RUSTORE_PUSH_*` или `LINEAGE_WEB_PUSH_*` переменных соответствующий канал остаётся в состоянии `*_not_configured`.
 - Browser push теперь поддерживается отдельно через Web Push API и VAPID, если backend запущен с `LINEAGE_WEB_PUSH_*` ключами.
 - Moderation layer теперь минимально покрыт: есть жалобы, блокировки и ручной admin resolve path, а direct chat не даст создать или отправить сообщение между заблокированными пользователями.
+- Operational hardening тоже теперь есть в минимальном виде: `x-request-id`, `GET /ready`, базовый in-memory rate limiting и структурированный request/error log.

@@ -26,6 +26,24 @@ function createConfig() {
     .split(",")
     .map((value) => value.trim().toLowerCase())
     .filter(Boolean);
+  const rateLimitWindowMs = Number(
+    process.env.LINEAGE_RATE_LIMIT_WINDOW_MS || 60_000,
+  );
+  const defaultRateLimitMax = Number(
+    process.env.LINEAGE_RATE_LIMIT_DEFAULT_MAX || 600,
+  );
+  const authRateLimitMax = Number(
+    process.env.LINEAGE_RATE_LIMIT_AUTH_MAX || 30,
+  );
+  const mutationRateLimitMax = Number(
+    process.env.LINEAGE_RATE_LIMIT_MUTATION_MAX || 180,
+  );
+  const uploadRateLimitMax = Number(
+    process.env.LINEAGE_RATE_LIMIT_UPLOAD_MAX || 40,
+  );
+  const safetyRateLimitMax = Number(
+    process.env.LINEAGE_RATE_LIMIT_SAFETY_MAX || 20,
+  );
 
   return {
     port: Number(process.env.PORT || 8080),
@@ -51,6 +69,12 @@ function createConfig() {
       rustorePushProjectId && rustorePushServiceToken,
     ),
     adminEmails,
+    rateLimitWindowMs,
+    defaultRateLimitMax,
+    authRateLimitMax,
+    mutationRateLimitMax,
+    uploadRateLimitMax,
+    safetyRateLimitMax,
   };
 }
 

@@ -2868,3 +2868,50 @@ test("reports, blocks and admin moderation endpoints work end-to-end", async () 
     await stopTestServer(ctx);
   }
 });
+
+test("ready endpoint and auth rate limiting expose operational state", async () => {
+  const ctx = await startConfiguredTestServer({
+    configOverrides: {
+      authRateLimitMax: 2,
+      rateLimitWindowMs: 60_000,
+    },
+  });
+
+  try {
+    const readyResponse = await fetch(`${ctx.baseUrl}/ready`);
+    assert.equal(readyResponse.status, 200);
+    const readyPayload = await readyResponse.json();
+    assert.equal(readyPayload.status, "ready");
+    assert.equal(readyPayload.storage, "file-store");
+    assert.ok(Array.isArray(readyPayload.warnings));
+    assert.ok(readyPayload.requestId);
+
+    for (let index = 0; index < 2; index += 1) {
+      const loginResponse = await fetch(`${ctx.baseUrl}/v1/auth/login`, {
+        method: "POST",
+        headers: {"content-type": "application/json"},
+        body: JSON.stringify({
+          email: "missing@lineage.app",
+          password: "nope",
+        }),
+      });
+      assert.equal(loginResponse.status, 401);
+    }
+
+    const throttledResponse = await fetch(`${ctx.baseUrl}/v1/auth/login`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "missing@lineage.app",
+        password: "nope",
+      }),
+    });
+    assert.equal(throttledResponse.status, 429);
+    assert.equal(throttledResponse.headers.get("x-ratelimit-limit"), "2");
+    assert.ok(throttledResponse.headers.get("retry-after"));
+    const throttledPayload = await throttledResponse.json();
+    assert.ok(throttledPayload.requestId);
+  } finally {
+    await stopTestServer(ctx);
+  }
+});

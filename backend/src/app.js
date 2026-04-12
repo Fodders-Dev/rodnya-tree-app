@@ -1,5 +1,6 @@
 const express = require("express");
 const cors = require("cors");
+const crypto = require("node:crypto");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 
@@ -14,11 +15,132 @@ function createApp({store, config, realtimeHub = null, pushGateway = null}) {
   const app = express();
   const resolvedPushGateway =
     pushGateway ?? new PushGateway({store, config});
+  const rateLimitState = new Map();
 
   app.set("trust proxy", true);
   app.use(cors({origin: config.corsOrigin}));
+  app.use((req, res, next) => {
+    const forwardedRequestId = String(req.get("x-request-id") || "").trim();
+    req.requestId = forwardedRequestId || crypto.randomUUID();
+    req.startedAt = Date.now();
+    res.setHeader("x-request-id", req.requestId);
+    next();
+  });
+  app.use((req, res, next) => {
+    const pathName = req.path || req.originalUrl || "/";
+    if (pathName === "/health" || pathName === "/ready") {
+      next();
+      return;
+    }
+
+    const startedAt = Date.now();
+    res.on("finish", () => {
+      const durationMs = Date.now() - startedAt;
+      const shouldLog =
+        res.statusCode >= 400 ||
+        req.method !== "GET" ||
+        durationMs >= 1000 ||
+        pathName.startsWith("/v1/admin/");
+      if (!shouldLog) {
+        return;
+      }
+
+      console.log(
+        "[backend] request",
+        JSON.stringify({
+          requestId: req.requestId,
+          method: req.method,
+          path: pathName,
+          statusCode: res.statusCode,
+          durationMs,
+          ip: req.ip,
+        }),
+      );
+    });
+    next();
+  });
   app.use(express.json({limit: "50mb"}));
   app.use("/media", express.static(config.mediaRootPath));
+  app.use((req, res, next) => {
+    const policy = (() => {
+      const pathName = req.path || "/";
+      if (pathName === "/health" || pathName === "/ready") {
+        return null;
+      }
+      if (pathName.startsWith("/media/")) {
+        return null;
+      }
+      if (
+        pathName === "/v1/auth/login" ||
+        pathName === "/v1/auth/register" ||
+        pathName === "/v1/auth/password-reset"
+      ) {
+        return {bucket: "auth", limit: config.authRateLimitMax};
+      }
+      if (pathName === "/v1/media/upload") {
+        return {bucket: "upload", limit: config.uploadRateLimitMax};
+      }
+      if (pathName === "/v1/reports" || pathName.startsWith("/v1/blocks")) {
+        return {bucket: "safety", limit: config.safetyRateLimitMax};
+      }
+      if (!["GET", "HEAD", "OPTIONS"].includes(req.method)) {
+        return {bucket: "mutation", limit: config.mutationRateLimitMax};
+      }
+      return {bucket: "default", limit: config.defaultRateLimitMax};
+    })();
+
+    if (!policy || !Number.isFinite(policy.limit) || policy.limit <= 0) {
+      next();
+      return;
+    }
+
+    const now = Date.now();
+    const windowMs = Number.isFinite(config.rateLimitWindowMs) &&
+        config.rateLimitWindowMs > 0
+      ? config.rateLimitWindowMs
+      : 60_000;
+    const actorId = String(req.ip || "unknown").trim() || "unknown";
+    const key = `${policy.bucket}:${actorId}`;
+    const current = rateLimitState.get(key);
+    const activeBucket = current && current.resetAt > now
+      ? current
+      : {count: 0, resetAt: now + windowMs};
+    activeBucket.count += 1;
+    rateLimitState.set(key, activeBucket);
+
+    if (Math.random() < 0.01 && rateLimitState.size > 2000) {
+      for (const [bucketKey, bucket] of rateLimitState.entries()) {
+        if (!bucket || bucket.resetAt <= now) {
+          rateLimitState.delete(bucketKey);
+        }
+      }
+    }
+
+    res.setHeader("x-ratelimit-limit", String(policy.limit));
+    res.setHeader(
+      "x-ratelimit-remaining",
+      String(Math.max(0, policy.limit - activeBucket.count)),
+    );
+    res.setHeader(
+      "x-ratelimit-reset",
+      String(Math.ceil(activeBucket.resetAt / 1000)),
+    );
+
+    if (activeBucket.count > policy.limit) {
+      const retryAfterSeconds = Math.max(
+        1,
+        Math.ceil((activeBucket.resetAt - now) / 1000),
+      );
+      res.setHeader("retry-after", String(retryAfterSeconds));
+      res.status(429).json({
+        message: "Слишком много запросов. Повторите попытку позже.",
+        requestId: req.requestId,
+      });
+      return;
+    }
+
+    next();
+  });
 
   app.get("/health", async (req, res) => {
     res.json({
@@ -32,7 +154,33 @@ function createApp({store, config, realtimeHub = null, pushGateway = null}) {
       adminEmailsConfigured: Array.isArray(config.adminEmails)
         ? config.adminEmails.length
         : 0,
+      requestId: req.requestId,
     });
+  });
+
+  app.get("/ready", async (req, res) => {
+    try {
+      const dataDir = path.dirname(config.dataPath);
+      await fs.mkdir(dataDir, {recursive: true});
+      await fs.mkdir(config.mediaRootPath, {recursive: true});
+      await fs.access(dataDir);
+      await fs.access(config.mediaRootPath);
+
+      res.json({
+        status: "ready",
+        storage: "file-store",
+        warnings: [
+          "file-store backend is acceptable for dev and smoke, but not the final production target",
+        ],
+        requestId: req.requestId,
+      });
+    } catch (error) {
+      res.status(503).json({
+        status: "not_ready",
+        message: "Backend storage paths are not accessible",
+        requestId: req.requestId,
+      });
+    }
   });
 
   async function requirePublicTree(req, res, publicTreeId) {
@@ -2630,11 +2778,24 @@ function createApp({store, config, realtimeHub = null, pushGateway = null}) {
   });
 
   app.use((req, res) => {
-    res.status(404).json({message: "Route not found"});
+    res.status(404).json({
+      message: "Route not found",
+      requestId: req.requestId,
+    });
   });
 
   app.use((error, req, res, next) => {
-    console.error("[backend] Unhandled error:", error);
+    console.error(
+      "[backend] unhandled-error",
+      JSON.stringify({
+        requestId: req.requestId,
+        method: req.method,
+        path: req.originalUrl || req.path || "/",
+        name: error?.name || "Error",
+        message: error?.message || String(error),
+        stack: error?.stack || null,
+      }),
+    );
 
     if (res.headersSent) {
       next(error);
@@ -2643,6 +2804,7 @@ function createApp({store, config, realtimeHub = null, pushGateway = null}) {
 
     res.status(500).json({
       message: "Внутренняя ошибка backend",
+      requestId: req.requestId,
     });
   });
 
