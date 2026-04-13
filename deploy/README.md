@@ -42,7 +42,9 @@ pwsh -File deploy/web/deploy_web.ps1 `
 Notes:
 
 - `ssh`, `scp`, and `tar.exe` must be available locally.
-- The server user must be able to run `sudo /usr/local/bin/rodnya-activate-web-release`.
+- The server user must be able to run `sudo -n /usr/local/bin/rodnya-activate-web-release`.
+- Recommended sudoers entry:
+  `rodnya-deploy ALL=(root) NOPASSWD: /usr/local/bin/rodnya-activate-web-release`
 - If the current working tree is dirty, the deploy marker will explicitly say so.
 
 ## GitHub Actions

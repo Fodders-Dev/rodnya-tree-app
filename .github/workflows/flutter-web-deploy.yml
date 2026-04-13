@@ -54,6 +54,10 @@ jobs:
           archive="$1"
           target="$2"
           label="$3"
-          BUILD_LABEL="$label" sudo /usr/local/bin/rodnya-activate-web-release "$archive" "$target"
+          if [ "$(id -u)" -eq 0 ]; then
+            BUILD_LABEL="$label" /usr/local/bin/rodnya-activate-web-release "$archive" "$target"
+          else
+            BUILD_LABEL="$label" sudo -n /usr/local/bin/rodnya-activate-web-release "$archive" "$target"
+          fi
           rm -f "$archive"
           EOF

@@ -68,7 +68,7 @@ try {
     Invoke-Checked "scp" ($sshArgs + @($archivePath, "${User}@${ServerHost}:$remoteArchive"))
 
     $escapedLabel = $buildLabel.Replace("'", "'`"'`"'")
-    $remoteCommand = "BUILD_LABEL='$escapedLabel' sudo '$RemoteScriptPath' '$remoteArchive' '$TargetDir' && rm -f '$remoteArchive'"
+    $remoteCommand = "if [ `$(id -u) -eq 0 ]; then BUILD_LABEL='$escapedLabel' '$RemoteScriptPath' '$remoteArchive' '$TargetDir'; else BUILD_LABEL='$escapedLabel' sudo -n '$RemoteScriptPath' '$remoteArchive' '$TargetDir'; fi && rm -f '$remoteArchive'"
     Invoke-Checked "ssh" ($sshArgs + @("${User}@${ServerHost}", $remoteCommand))
 } finally {
     Pop-Location
