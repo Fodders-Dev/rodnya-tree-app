@@ -11,7 +11,6 @@ import '../widgets/event_card.dart';
 import 'package:get_it/get_it.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
 import '../backend/models/tree_invitation.dart';
-import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/post_service_interface.dart';
 import '../models/post.dart';
 import '../widgets/post_card.dart';
@@ -27,7 +26,6 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  final AuthServiceInterface _authService = GetIt.I<AuthServiceInterface>();
   final FamilyTreeServiceInterface _familyTreeService =
       GetIt.I<FamilyTreeServiceInterface>();
   final PostServiceInterface _postService = GetIt.I<PostServiceInterface>();
@@ -43,8 +41,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   CustomApiNotificationService? get _customNotificationService =>
       GetIt.I.isRegistered<CustomApiNotificationService>()
-          ? GetIt.I<CustomApiNotificationService>()
-          : null;
+      ? GetIt.I<CustomApiNotificationService>()
+      : null;
 
   @override
   void initState() {
@@ -148,7 +146,6 @@ class _HomeScreenState extends State<HomeScreen> {
     final selectedTreeName = treeProvider.selectedTreeName;
     final selectedTreeKind = treeProvider.selectedTreeKind;
     final isFriendsTree = selectedTreeKind == TreeKind.friends;
-    final activeGraphLabel = isFriendsTree ? 'Круг друзей' : 'Семейное дерево';
 
     return Scaffold(
       appBar: AppBar(
@@ -182,74 +179,18 @@ class _HomeScreenState extends State<HomeScreen> {
                     snapshot.data ?? const <TreeInvitation>[];
                 return CustomScrollView(
                   slivers: [
-                    SliverToBoxAdapter(
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 24,
-                        ),
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.primary.withValues(alpha: 0.05),
-                        child: Row(
-                          children: [
-                            CircleAvatar(
-                              radius: 30,
-                              backgroundImage:
-                                  _authService.currentUserPhotoUrl != null
-                                      ? NetworkImage(
-                                          _authService.currentUserPhotoUrl!,
-                                        )
-                                      : null,
-                              backgroundColor: Theme.of(context).primaryColor,
-                              child: _authService.currentUserPhotoUrl == null
-                                  ? const Icon(
-                                      Icons.person,
-                                      size: 30,
-                                      color: Colors.white,
-                                    )
-                                  : null,
-                            ),
-                            const SizedBox(width: 16),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    'Привет, ${_authService.currentUserDisplayName ?? 'пользователь'}!',
-                                    style:
-                                        Theme.of(context).textTheme.titleLarge,
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    selectedTreeName == null
-                                        ? 'Добро пожаловать в Родню'
-                                        : isFriendsTree
-                                            ? 'Активен круг друзей: $selectedTreeName'
-                                            : 'Активно семейное дерево: $selectedTreeName',
-                                    style:
-                                        Theme.of(context).textTheme.bodyMedium,
-                                  ),
-                                  if (selectedTreeName != null) ...[
-                                    const SizedBox(height: 10),
-                                    _buildContextChip(
-                                      icon: isFriendsTree
-                                          ? Icons.diversity_3_outlined
-                                          : Icons.account_tree_outlined,
-                                      label: activeGraphLabel,
-                                    ),
-                                  ],
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
                     if (pendingInvitations.isNotEmpty)
                       SliverToBoxAdapter(
-                        child:
-                            _buildPendingInvitationsBanner(pendingInvitations),
+                        child: _buildPendingInvitationsBanner(
+                          pendingInvitations,
+                        ),
+                      ),
+                    if (_currentTreeId != null && selectedTreeName != null)
+                      SliverToBoxAdapter(
+                        child: _buildActiveTreeContextBanner(
+                          treeName: selectedTreeName,
+                          isFriendsTree: isFriendsTree,
+                        ),
                       ),
                     if (_currentTreeId == null) ...[
                       SliverToBoxAdapter(child: _buildNoTreeSelectedHero()),
@@ -335,8 +276,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
         return IconButton(
           icon: icon,
-          tooltip:
-              unreadCount > 0 ? 'Активность, $unreadCount новых' : 'Активность',
+          tooltip: unreadCount > 0
+              ? 'Активность, $unreadCount новых'
+              : 'Активность',
           onPressed: () => context.push('/notifications'),
         );
       },
@@ -367,9 +309,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildFeedContent() {
     if (_isLoadingPosts && _posts.isEmpty) {
-      return Column(
-        children: List.generate(3, (_) => const PostCardShimmer()),
-      );
+      return Column(children: List.generate(3, (_) => const PostCardShimmer()));
     }
 
     if (_posts.isEmpty) {
@@ -381,8 +321,8 @@ class _HomeScreenState extends State<HomeScreen> {
         message: _postsUnavailable
             ? 'Backend ленты пока не отвечает для этого дерева. Основные разделы работают, а публикации нужно восстановить отдельно.'
             : _treeProviderInstance?.selectedTreeKind == TreeKind.friends
-                ? 'Будьте первым, кто поделится новостью, фото или поводом для встречи в круге друзей.'
-                : 'Будьте первым, кто поделится историей или новостью в этом семейном дереве!',
+            ? 'Будьте первым, кто поделится новостью, фото или поводом для встречи в круге друзей.'
+            : 'Будьте первым, кто поделится историей или новостью в этом семейном дереве!',
         actionLabel: _postsUnavailable ? 'Обновить' : 'Создать публикацию',
         onAction: () async {
           if (_postsUnavailable) {
@@ -433,8 +373,8 @@ class _HomeScreenState extends State<HomeScreen> {
             title: 'Новая публикация',
             subtitle:
                 _treeProviderInstance?.selectedTreeKind == TreeKind.friends
-                    ? 'Добавить новость, фото или планы для своего круга.'
-                    : 'Добавить новость, историю или фотографии семьи.',
+                ? 'Добавить новость, фото или планы для своего круга.'
+                : 'Добавить новость, историю или фотографии семьи.',
             onTap: () => context.push('/post/create'),
           ),
           const SizedBox(height: 10),
@@ -447,8 +387,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 : 'Раздел родных',
             subtitle:
                 _treeProviderInstance?.selectedTreeKind == TreeKind.friends
-                    ? 'Перейти к людям из круга и расширить сеть связей.'
-                    : 'Перейти к родственникам и пригласить новых людей.',
+                ? 'Перейти к людям из круга и расширить сеть связей.'
+                : 'Перейти к родственникам и пригласить новых людей.',
             onTap: () => context.go('/relatives'),
           ),
           const SizedBox(height: 10),
@@ -463,10 +403,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildContextChip({
-    required IconData icon,
-    required String label,
-  }) {
+  Widget _buildContextChip({required IconData icon, required String label}) {
     final theme = Theme.of(context);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -601,7 +538,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             const SizedBox(height: 10),
             Text(
-              'После выбора откроются события, связи и контент выбранного графа. Можно работать и с семейным деревом, и с кругом друзей. Если графа ещё нет, создайте его прямо сейчас.',
+              'Выберите семейное дерево или круг друзей, чтобы открыть события и ленту. Если дерева пока нет, создайте его за минуту.',
               style: theme.textTheme.bodyLarge?.copyWith(
                 color: Colors.white.withValues(alpha: 0.92),
                 height: 1.45,
@@ -641,6 +578,26 @@ class _HomeScreenState extends State<HomeScreen> {
               ],
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildActiveTreeContextBanner({
+    required String treeName,
+    required bool isFriendsTree,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: _buildContextChip(
+          icon: isFriendsTree
+              ? Icons.diversity_3_outlined
+              : Icons.account_tree_outlined,
+          label: isFriendsTree
+              ? 'Активен круг друзей: $treeName'
+              : 'Активно семейное дерево: $treeName',
         ),
       ),
     );
@@ -709,7 +666,8 @@ class _HomeScreenState extends State<HomeScreen> {
               onPressed: () => context.go('/trees?tab=invitations'),
               icon: const Icon(Icons.arrow_forward),
               label: Text(
-                  count == 1 ? 'Открыть приглашение' : 'Открыть приглашения'),
+                count == 1 ? 'Открыть приглашение' : 'Открыть приглашения',
+              ),
             ),
           ],
         ),
