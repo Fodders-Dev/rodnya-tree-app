@@ -7,6 +7,7 @@ const EMPTY_DB = {
   sessions: [],
   trees: [],
   persons: [],
+  personIdentities: [],
   relations: [],
   chats: [],
   messages: [],
@@ -29,6 +30,9 @@ function normalizeDbState(parsed) {
     sessions: Array.isArray(parsed?.sessions) ? parsed.sessions : [],
     trees: Array.isArray(parsed?.trees) ? parsed.trees : [],
     persons: Array.isArray(parsed?.persons) ? parsed.persons : [],
+    personIdentities: Array.isArray(parsed?.personIdentities)
+      ? parsed.personIdentities
+      : [],
     relations: Array.isArray(parsed?.relations) ? parsed.relations : [],
     chats: Array.isArray(parsed?.chats) ? parsed.chats : [],
     messages: Array.isArray(parsed?.messages) ? parsed.messages : [],
@@ -876,6 +880,7 @@ function buildPersonRecord({
   treeId,
   creatorId,
   userId = null,
+  identityId = null,
   personData = {},
 }) {
   const createdAt = nowIso();
@@ -890,6 +895,7 @@ function buildPersonRecord({
     id: crypto.randomUUID(),
     treeId,
     userId,
+    identityId: normalizeNullableString(identityId),
     name: fullNameFromPersonInput(personData),
     maidenName: normalizeNullableString(personData.maidenName),
     photoUrl: photoState.photoUrl,
@@ -907,6 +913,46 @@ function buildPersonRecord({
     updatedAt: createdAt,
     notes: normalizeNullableString(personData.notes),
   };
+}
+
+function createPersonIdentityRecord({
+  id = crypto.randomUUID(),
+  userId = null,
+  personIds = [],
+} = {}) {
+  const createdAt = nowIso();
+  return {
+    id,
+    userId: normalizeNullableString(userId),
+    personIds: normalizeParticipantIds(personIds),
+    createdAt,
+    updatedAt: createdAt,
+  };
+}
+
+function pickPersonValue(currentValue, fallbackValue) {
+  if (currentValue === null || currentValue === undefined) {
+    return fallbackValue ?? currentValue;
+  }
+
+  if (typeof currentValue === "string" && currentValue.trim().length === 0) {
+    return fallbackValue ?? currentValue;
+  }
+
+  return currentValue;
+}
+
+function relationDedupKey(relation) {
+  const leftId = String(relation.person1Id || "");
+  const rightId = String(relation.person2Id || "");
+  const leftToRight = String(relation.relation1to2 || "other");
+  const rightToLeft = String(relation.relation2to1 || "other");
+
+  if (leftId <= rightId) {
+    return `${relation.treeId}:${leftId}:${rightId}:${leftToRight}:${rightToLeft}`;
+  }
+
+  return `${relation.treeId}:${rightId}:${leftId}:${rightToLeft}:${leftToRight}`;
 }
 
 function hashPassword(password, salt = crypto.randomBytes(16).toString("hex")) {
@@ -996,6 +1042,321 @@ class FileStore {
     return record;
   }
 
+  _ensurePersonIdentityCollection(db) {
+    db.personIdentities = Array.isArray(db.personIdentities)
+      ? db.personIdentities
+      : [];
+    return db.personIdentities;
+  }
+
+  _reconcilePersonIdentities(db) {
+    const identities = this._ensurePersonIdentityCollection(db);
+    const validUserIds = new Set(
+      db.users
+        .map((entry) => normalizeNullableString(entry.id))
+        .filter(Boolean),
+    );
+    const personIdsByIdentity = new Map();
+
+    for (const person of db.persons) {
+      const identityId = normalizeNullableString(person.identityId);
+      if (!identityId) {
+        person.identityId = null;
+        continue;
+      }
+
+      person.identityId = identityId;
+      if (!personIdsByIdentity.has(identityId)) {
+        personIdsByIdentity.set(identityId, []);
+      }
+      personIdsByIdentity.get(identityId).push(person.id);
+    }
+
+    const seenIdentityIds = new Set();
+    db.personIdentities = identities.reduce((result, entry) => {
+      const identityId = normalizeNullableString(entry?.id);
+      if (!identityId || seenIdentityIds.has(identityId)) {
+        return result;
+      }
+
+      seenIdentityIds.add(identityId);
+      const linkedUserId = normalizeNullableString(entry?.userId);
+      const normalizedUserId = linkedUserId && validUserIds.has(linkedUserId)
+        ? linkedUserId
+        : null;
+      const personIds = normalizeParticipantIds(
+        personIdsByIdentity.get(identityId) || [],
+      );
+
+      if (!normalizedUserId && personIds.length === 0) {
+        return result;
+      }
+
+      result.push({
+        id: identityId,
+        userId: normalizedUserId,
+        personIds,
+        createdAt: entry?.createdAt || nowIso(),
+        updatedAt: entry?.updatedAt || nowIso(),
+      });
+      return result;
+    }, []);
+
+    const identitiesByUserId = new Map(
+      db.personIdentities
+        .filter((entry) => entry.userId)
+        .map((entry) => [entry.userId, entry.id]),
+    );
+    for (const user of db.users) {
+      const normalizedIdentityId = normalizeNullableString(user.identityId);
+      const ownedIdentityId = identitiesByUserId.get(user.id) || null;
+      if (
+        normalizedIdentityId &&
+        db.personIdentities.some(
+          (entry) =>
+            entry.id === normalizedIdentityId && entry.userId === user.id,
+        )
+      ) {
+        user.identityId = normalizedIdentityId;
+        continue;
+      }
+
+      user.identityId = ownedIdentityId;
+    }
+  }
+
+  _ensureUserIdentity(db, userId) {
+    const user = db.users.find((entry) => entry.id === userId);
+    if (!user) {
+      return null;
+    }
+
+    const identities = this._ensurePersonIdentityCollection(db);
+    const normalizedIdentityId = normalizeNullableString(user.identityId);
+    let identity = normalizedIdentityId
+      ? identities.find((entry) => entry.id === normalizedIdentityId)
+      : null;
+
+    if (!identity) {
+      identity = identities.find((entry) => entry.userId === userId);
+    }
+
+    if (!identity) {
+      identity = createPersonIdentityRecord({
+        id: normalizedIdentityId || crypto.randomUUID(),
+        userId,
+      });
+      identities.push(identity);
+    }
+
+    identity.userId = userId;
+    identity.updatedAt = nowIso();
+    user.identityId = identity.id;
+    user.updatedAt = nowIso();
+    return identity;
+  }
+
+  _attachPersonToIdentity(db, person, identity, userId = null) {
+    if (!person || !identity) {
+      return false;
+    }
+
+    const normalizedUserId = normalizeNullableString(userId || person.userId);
+    if (normalizedUserId) {
+      if (person.userId && person.userId !== normalizedUserId) {
+        return false;
+      }
+      if (identity.userId && identity.userId !== normalizedUserId) {
+        return false;
+      }
+      person.userId = normalizedUserId;
+      identity.userId = normalizedUserId;
+      const user = db.users.find((entry) => entry.id === normalizedUserId);
+      if (user) {
+        user.identityId = identity.id;
+        user.updatedAt = nowIso();
+      }
+    }
+
+    person.identityId = identity.id;
+    person.updatedAt = nowIso();
+    identity.updatedAt = nowIso();
+    this._reconcilePersonIdentities(db);
+    return true;
+  }
+
+  _mergePersonIntoClaimTarget(db, {
+    treeId,
+    preferredPerson,
+    duplicatePerson,
+    userId,
+    actorId = userId,
+  }) {
+    if (
+      !preferredPerson ||
+      !duplicatePerson ||
+      preferredPerson.id === duplicatePerson.id
+    ) {
+      return preferredPerson;
+    }
+
+    const beforePreferred = structuredClone(preferredPerson);
+    const removedDuplicate = structuredClone(duplicatePerson);
+    const mergedPhotoState = normalizePersonPhotoGallery(
+      [
+        ...(Array.isArray(preferredPerson.photoGallery)
+          ? preferredPerson.photoGallery
+          : []),
+        ...(Array.isArray(duplicatePerson.photoGallery)
+          ? duplicatePerson.photoGallery
+          : []),
+      ],
+      {
+        photoUrl: preferredPerson.photoUrl || duplicatePerson.photoUrl,
+        primaryPhotoUrl:
+          preferredPerson.primaryPhotoUrl ||
+          duplicatePerson.primaryPhotoUrl ||
+          preferredPerson.photoUrl ||
+          duplicatePerson.photoUrl,
+      },
+    );
+
+    preferredPerson.name = pickPersonValue(
+      preferredPerson.name,
+      duplicatePerson.name,
+    );
+    preferredPerson.maidenName = pickPersonValue(
+      preferredPerson.maidenName,
+      duplicatePerson.maidenName,
+    );
+    preferredPerson.birthDate = pickPersonValue(
+      preferredPerson.birthDate,
+      duplicatePerson.birthDate,
+    );
+    preferredPerson.birthPlace = pickPersonValue(
+      preferredPerson.birthPlace,
+      duplicatePerson.birthPlace,
+    );
+    preferredPerson.deathDate = pickPersonValue(
+      preferredPerson.deathDate,
+      duplicatePerson.deathDate,
+    );
+    preferredPerson.deathPlace = pickPersonValue(
+      preferredPerson.deathPlace,
+      duplicatePerson.deathPlace,
+    );
+    preferredPerson.bio = pickPersonValue(preferredPerson.bio, duplicatePerson.bio);
+    preferredPerson.notes = pickPersonValue(
+      preferredPerson.notes,
+      duplicatePerson.notes,
+    );
+    preferredPerson.creatorId = pickPersonValue(
+      preferredPerson.creatorId,
+      duplicatePerson.creatorId,
+    );
+    preferredPerson.photoUrl = mergedPhotoState.photoUrl;
+    preferredPerson.primaryPhotoUrl = mergedPhotoState.primaryPhotoUrl;
+    preferredPerson.photoGallery = mergedPhotoState.photoGallery;
+    preferredPerson.userId = userId;
+    preferredPerson.identityId = normalizeNullableString(
+      preferredPerson.identityId || duplicatePerson.identityId,
+    );
+    preferredPerson.isAlive = preferredPerson.deathDate == null;
+    preferredPerson.updatedAt = nowIso();
+
+    for (const relation of db.relations) {
+      if (relation.treeId !== treeId) {
+        continue;
+      }
+      if (relation.person1Id === duplicatePerson.id) {
+        relation.person1Id = preferredPerson.id;
+      }
+      if (relation.person2Id === duplicatePerson.id) {
+        relation.person2Id = preferredPerson.id;
+      }
+    }
+    db.relations = db.relations.reduce((result, relation) => {
+      if (
+        relation.treeId === treeId &&
+        relation.person1Id === relation.person2Id
+      ) {
+        return result;
+      }
+
+      const dedupKey = relationDedupKey(relation);
+      if (result.some((entry) => relationDedupKey(entry) === dedupKey)) {
+        return result;
+      }
+
+      result.push(relation);
+      return result;
+    }, []);
+
+    for (const post of db.posts) {
+      if (post.treeId !== treeId) {
+        continue;
+      }
+      post.anchorPersonIds = normalizeParticipantIds(
+        (post.anchorPersonIds || []).map((personId) =>
+          personId === duplicatePerson.id ? preferredPerson.id : personId,
+        ),
+      );
+    }
+
+    for (const chat of db.chats) {
+      if (chat.treeId !== treeId) {
+        continue;
+      }
+      chat.branchRootPersonIds = normalizeParticipantIds(
+        (chat.branchRootPersonIds || []).map((personId) =>
+          personId === duplicatePerson.id ? preferredPerson.id : personId,
+        ),
+      );
+    }
+
+    for (const request of db.relationRequests) {
+      if (request.treeId !== treeId) {
+        continue;
+      }
+      if (request.targetPersonId === duplicatePerson.id) {
+        request.targetPersonId = preferredPerson.id;
+      }
+      if (request.offlineRelativeId === duplicatePerson.id) {
+        request.offlineRelativeId = preferredPerson.id;
+      }
+    }
+
+    for (const record of db.treeChangeRecords) {
+      if (record.treeId !== treeId) {
+        continue;
+      }
+      if (record.personId === duplicatePerson.id) {
+        record.personId = preferredPerson.id;
+      }
+      record.personIds = normalizeParticipantIds(
+        (record.personIds || []).map((personId) =>
+          personId === duplicatePerson.id ? preferredPerson.id : personId,
+        ),
+      );
+    }
+
+    db.persons = db.persons.filter((entry) => entry.id !== duplicatePerson.id);
+    this._appendTreeChangeRecord(db, {
+      treeId,
+      actorId,
+      type: "person.merged",
+      personId: preferredPerson.id,
+      personIds: [preferredPerson.id, duplicatePerson.id],
+      details: {
+        before: beforePreferred,
+        mergedFrom: removedDuplicate,
+        after: structuredClone(preferredPerson),
+      },
+    });
+    this._reconcilePersonIdentities(db);
+    return preferredPerson;
+  }
+
   async createUser({email, password, displayName}) {
     const db = await this._read();
     const normalizedEmail = String(email || "").trim().toLowerCase();
@@ -1015,6 +1376,7 @@ class FileStore {
 
     const user = {
       id: userId,
+      identityId: null,
       email: normalizedEmail,
       passwordHash,
       passwordSalt: salt,
@@ -1380,6 +1742,7 @@ class FileStore {
         (!entry.notificationId || activeNotificationIds.has(entry.notificationId))
       );
     });
+    this._reconcilePersonIdentities(db);
     await this._write(db);
     return {
       userId,
@@ -1636,8 +1999,28 @@ class FileStore {
       return null;
     }
 
+    const canonicalIdentity = this._ensureUserIdentity(db, userId);
+    if (!canonicalIdentity) {
+      return null;
+    }
+
+    const existingLinkedPerson = db.persons.find(
+      (entry) =>
+        entry.treeId === treeId &&
+        entry.userId === userId &&
+        entry.id !== person.id,
+    );
+    if (existingLinkedPerson) {
+      this._mergePersonIntoClaimTarget(db, {
+        treeId,
+        preferredPerson: person,
+        duplicatePerson: existingLinkedPerson,
+        userId,
+        actorId: userId,
+      });
+    }
+
     person.userId = userId;
-    person.updatedAt = nowIso();
     if (!person.photoUrl && user.profile?.photoUrl) {
       const photoState = normalizePersonPhotoGallery(person.photoGallery, {
         photoUrl: user.profile.photoUrl,
@@ -1650,6 +2033,9 @@ class FileStore {
     if (!person.name) {
       person.name = composeDisplayNameFromProfile(user.profile);
     }
+    if (!this._attachPersonToIdentity(db, person, canonicalIdentity, userId)) {
+      return false;
+    }
 
     tree.memberIds = Array.isArray(tree.memberIds) ? tree.memberIds : [];
     tree.members = Array.isArray(tree.members) ? tree.members : [];
@@ -1660,6 +2046,7 @@ class FileStore {
       tree.members.push(userId);
     }
     tree.updatedAt = nowIso();
+    this._reconcilePersonIdentities(db);
 
     await this._write(db);
     return structuredClone(person);
@@ -1672,10 +2059,16 @@ class FileStore {
       return null;
     }
 
+    const canonicalIdentity = this._ensureUserIdentity(db, userId);
+    if (!canonicalIdentity) {
+      return null;
+    }
+
     const existingPerson = db.persons.find(
       (entry) => entry.treeId === treeId && entry.userId === userId,
     );
     if (existingPerson) {
+      this._attachPersonToIdentity(db, existingPerson, canonicalIdentity, userId);
       tree.memberIds = Array.isArray(tree.memberIds) ? tree.memberIds : [];
       tree.members = Array.isArray(tree.members) ? tree.members : [];
       if (!tree.memberIds.includes(userId)) {
@@ -1685,8 +2078,37 @@ class FileStore {
         tree.members.push(userId);
       }
       tree.updatedAt = nowIso();
+      this._reconcilePersonIdentities(db);
       await this._write(db);
       return structuredClone(existingPerson);
+    }
+
+    const existingIdentityPerson = db.persons.find(
+      (entry) =>
+        entry.treeId === treeId &&
+        entry.identityId === canonicalIdentity.id &&
+        (!entry.userId || entry.userId === userId),
+    );
+    if (existingIdentityPerson) {
+      existingIdentityPerson.userId = userId;
+      this._attachPersonToIdentity(
+        db,
+        existingIdentityPerson,
+        canonicalIdentity,
+        userId,
+      );
+      tree.memberIds = Array.isArray(tree.memberIds) ? tree.memberIds : [];
+      tree.members = Array.isArray(tree.members) ? tree.members : [];
+      if (!tree.memberIds.includes(userId)) {
+        tree.memberIds.push(userId);
+      }
+      if (!tree.members.includes(userId)) {
+        tree.members.push(userId);
+      }
+      tree.updatedAt = nowIso();
+      this._reconcilePersonIdentities(db);
+      await this._write(db);
+      return structuredClone(existingIdentityPerson);
     }
 
     const user = db.users.find((entry) => entry.id === userId);
@@ -1699,6 +2121,7 @@ class FileStore {
       treeId,
       creatorId,
       userId,
+      identityId: canonicalIdentity.id,
       personData: {
         firstName: profile.firstName,
         lastName: profile.lastName,
@@ -1723,6 +2146,8 @@ class FileStore {
       tree.members.push(userId);
     }
     tree.updatedAt = nowIso();
+    this._attachPersonToIdentity(db, person, canonicalIdentity, userId);
+    this._reconcilePersonIdentities(db);
 
     await this._write(db);
     return structuredClone(person);
@@ -1769,15 +2194,27 @@ class FileStore {
         (entry) => entry.treeId === treeId && entry.userId === userId,
       );
       if (existingLinkedPerson) {
+        const canonicalIdentity = this._ensureUserIdentity(db, userId);
+        if (canonicalIdentity) {
+          this._attachPersonToIdentity(
+            db,
+            existingLinkedPerson,
+            canonicalIdentity,
+            userId,
+          );
+          await this._write(db);
+        }
         return structuredClone(existingLinkedPerson);
       }
     }
 
+    const canonicalIdentity = userId ? this._ensureUserIdentity(db, userId) : null;
     const person = buildPersonRecord({
       treeId,
       creatorId,
       personData,
       userId,
+      identityId: canonicalIdentity?.id || null,
     });
     db.persons.push(person);
 
@@ -1792,6 +2229,9 @@ class FileStore {
       }
     }
     tree.updatedAt = nowIso();
+    if (canonicalIdentity) {
+      this._attachPersonToIdentity(db, person, canonicalIdentity, userId);
+    }
     this._appendTreeChangeRecord(db, {
       treeId,
       actorId: creatorId,
@@ -1801,6 +2241,7 @@ class FileStore {
         after: structuredClone(person),
       },
     });
+    this._reconcilePersonIdentities(db);
 
     await this._write(db);
     return structuredClone(person);
@@ -1820,6 +2261,10 @@ class FileStore {
       ...person,
       ...personData,
     };
+    nextPerson.userId = person.userId;
+    nextPerson.identityId = person.identityId;
+    nextPerson.treeId = person.treeId;
+    nextPerson.creatorId = person.creatorId;
     nextPerson.name = fullNameFromPersonInput(nextPerson);
     nextPerson.maidenName = normalizeNullableString(nextPerson.maidenName);
     nextPerson.birthPlace = normalizeNullableString(nextPerson.birthPlace);
@@ -1921,6 +2366,7 @@ class FileStore {
         before: deletedPerson,
       },
     });
+    this._reconcilePersonIdentities(db);
 
     await this._write(db);
     return true;

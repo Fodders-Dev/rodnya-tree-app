@@ -2389,6 +2389,9 @@ test("relation requests and invite processing work on custom backend", async () 
     const acceptedPayload = await acceptResponse.json();
     assert.equal(acceptedPayload.request.status, "accepted");
     assert.equal(acceptedPayload.relation.relation1to2, "sibling");
+    assert.ok(acceptedPayload.person.identityId);
+    const recipientIdentityId = acceptedPayload.person.identityId;
+    const autoCreatedRecipientPersonId = acceptedPayload.person.id;
 
     const personsAfterAcceptResponse = await fetch(
       `${ctx.baseUrl}/v1/trees/${treeId}/persons`,
@@ -2431,6 +2434,106 @@ test("relation requests and invite processing work on custom backend", async () 
     assert.equal(inviteProcessResponse.status, 200);
     const inviteProcessPayload = await inviteProcessResponse.json();
     assert.equal(inviteProcessPayload.person.userId, recipient.user.id);
+    assert.equal(inviteProcessPayload.person.id, offlinePersonId);
+    assert.equal(inviteProcessPayload.person.identityId, recipientIdentityId);
+
+    const personsAfterClaimResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeId}/persons`,
+      {
+        headers: {authorization: `Bearer ${owner.accessToken}`},
+      },
+    );
+    assert.equal(personsAfterClaimResponse.status, 200);
+    const personsAfterClaim = await personsAfterClaimResponse.json();
+    assert.equal(personsAfterClaim.persons.length, 2);
+    assert.ok(
+      personsAfterClaim.persons.some(
+        (person) =>
+          person.id === offlinePersonId &&
+          person.userId === recipient.user.id &&
+          person.identityId === recipientIdentityId,
+      ),
+    );
+    assert.ok(
+      personsAfterClaim.persons.every(
+        (person) => person.id !== autoCreatedRecipientPersonId,
+      ),
+    );
+
+    const relationsAfterClaimResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeId}/relations`,
+      {
+        headers: {authorization: `Bearer ${owner.accessToken}`},
+      },
+    );
+    assert.equal(relationsAfterClaimResponse.status, 200);
+    const relationsAfterClaim = await relationsAfterClaimResponse.json();
+    assert.equal(relationsAfterClaim.relations.length, 1);
+    assert.equal(relationsAfterClaim.relations[0].person2Id, offlinePersonId);
+
+    const createSecondTreeResponse = await fetch(`${ctx.baseUrl}/v1/trees`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${owner.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "Дерево запросов 2",
+        description: "Тест identity layer",
+        isPrivate: true,
+      }),
+    });
+    assert.equal(createSecondTreeResponse.status, 201);
+    const secondTreePayload = await createSecondTreeResponse.json();
+    const secondTreeId = secondTreePayload.tree.id;
+
+    const createSecondOfflinePersonResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${secondTreeId}/persons`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${owner.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          firstName: "Offline",
+          lastName: "Relative Clone",
+          gender: "female",
+        }),
+      },
+    );
+    assert.equal(createSecondOfflinePersonResponse.status, 201);
+    const secondOfflinePersonPayload = await createSecondOfflinePersonResponse.json();
+    const secondOfflinePersonId = secondOfflinePersonPayload.person.id;
+
+    const secondInviteProcessResponse = await fetch(
+      `${ctx.baseUrl}/v1/invitations/pending/process`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${recipient.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          treeId: secondTreeId,
+          personId: secondOfflinePersonId,
+        }),
+      },
+    );
+    assert.equal(secondInviteProcessResponse.status, 200);
+    const secondInviteProcessPayload = await secondInviteProcessResponse.json();
+    assert.equal(secondInviteProcessPayload.person.id, secondOfflinePersonId);
+    assert.equal(secondInviteProcessPayload.person.userId, recipient.user.id);
+    assert.equal(secondInviteProcessPayload.person.identityId, recipientIdentityId);
+
+    const snapshot = await ctx.store._read();
+    const recipientIdentity = snapshot.personIdentities.find(
+      (entry) => entry.userId === recipient.user.id,
+    );
+    assert.ok(recipientIdentity);
+    assert.equal(recipientIdentity.id, recipientIdentityId);
+    assert.ok(recipientIdentity.personIds.includes(offlinePersonId));
+    assert.ok(recipientIdentity.personIds.includes(secondOfflinePersonId));
   } finally {
     await stopTestServer(ctx);
   }

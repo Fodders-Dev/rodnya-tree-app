@@ -23,6 +23,7 @@ class Person {
   final String id;
   final String treeId;
   final String? userId;
+  final String? identityId;
   final String firstName;
   final String lastName;
   final String? middleName;
@@ -39,6 +40,7 @@ class Person {
     required this.id,
     required this.treeId,
     this.userId,
+    this.identityId,
     required this.firstName,
     required this.lastName,
     this.middleName,
@@ -93,6 +95,7 @@ class Person {
       id: person.id,
       treeId: person.treeId,
       userId: person.userId,
+      identityId: person.identityId,
       firstName: firstName,
       lastName: lastName,
       middleName: middleName,
@@ -113,6 +116,7 @@ class Person {
       id: id,
       treeId: treeId,
       userId: userId,
+      identityId: identityId,
       name: name,
       maidenName: maidenName,
       photoUrl: photoUrl,
@@ -158,6 +162,9 @@ class FamilyPerson extends HiveObject {
   final String treeId;
   @HiveField(2)
   final String? userId; // Если это реальный пользователь, тут будет его ID
+  @HiveField(25)
+  final String?
+      identityId; // Общая identity-связь между карточками в разных деревьях
   @HiveField(3)
   final String name;
   @HiveField(4)
@@ -224,6 +231,7 @@ class FamilyPerson extends HiveObject {
     required this.id,
     required this.treeId,
     this.userId,
+    this.identityId,
     required this.name,
     this.maidenName,
     String? photoUrl,
@@ -399,6 +407,7 @@ class FamilyPerson extends HiveObject {
       id: doc.id,
       treeId: data['treeId'] ?? '',
       userId: data['userId'],
+      identityId: data['identityId'],
       name: data['name'] ?? '',
       maidenName: data['maidenName'],
       photoUrl: data['primaryPhotoUrl'] ?? data['photoUrl'],
@@ -426,6 +435,7 @@ class FamilyPerson extends HiveObject {
     return {
       'treeId': treeId,
       'userId': userId,
+      'identityId': identityId,
       'name': name,
       'maidenName': maidenName,
       'photoUrl': photoUrl,

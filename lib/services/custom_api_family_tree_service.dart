@@ -1033,6 +1033,7 @@ class CustomApiFamilyTreeService implements FamilyTreeServiceInterface {
       id: json['id']?.toString() ?? '',
       treeId: treeId,
       userId: json['userId']?.toString(),
+      identityId: json['identityId']?.toString(),
       name: json['name']?.toString() ?? '',
       maidenName: json['maidenName']?.toString(),
       photoUrl:

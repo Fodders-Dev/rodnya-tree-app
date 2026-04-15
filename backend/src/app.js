@@ -344,6 +344,7 @@ function createApp({
       id: person.id,
       treeId: person.treeId,
       userId: person.userId,
+      identityId: person.identityId || null,
       name: person.name,
       maidenName: person.maidenName,
       photoUrl: person.photoUrl,
@@ -763,6 +764,7 @@ function createApp({
       refreshToken: sessionTokens.refreshToken,
       user: {
         id: user.id,
+        identityId: user.identityId || null,
         email: user.email,
         displayName: profile.displayName,
         photoUrl: profile.photoUrl,
@@ -878,6 +880,7 @@ function createApp({
       },
       user: {
         id: user.id,
+        identityId: user.identityId || null,
         email: user.email,
         displayName: profile.displayName,
         photoUrl: profile.photoUrl,
@@ -985,6 +988,7 @@ function createApp({
     res.json({
       user: {
         id: updatedUser.id,
+        identityId: updatedUser.identityId || null,
         email: updatedUser.email,
         displayName: sanitizedProfile.displayName,
         photoUrl: sanitizedProfile.photoUrl,

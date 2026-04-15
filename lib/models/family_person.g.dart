@@ -20,6 +20,7 @@ class FamilyPersonAdapter extends TypeAdapter<FamilyPerson> {
       id: fields[0] as String,
       treeId: fields[1] as String,
       userId: fields[2] as String?,
+      identityId: fields[25] as String?,
       name: fields[3] as String,
       maidenName: fields[4] as String?,
       photoUrl: fields[5] as String?,
@@ -50,13 +51,15 @@ class FamilyPersonAdapter extends TypeAdapter<FamilyPerson> {
   @override
   void write(BinaryWriter writer, FamilyPerson obj) {
     writer
-      ..writeByte(24)
+      ..writeByte(25)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
       ..write(obj.treeId)
       ..writeByte(2)
       ..write(obj.userId)
+      ..writeByte(25)
+      ..write(obj.identityId)
       ..writeByte(3)
       ..write(obj.name)
       ..writeByte(4)

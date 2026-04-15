@@ -139,6 +139,7 @@ class PublicTreeService implements PublicTreeServiceInterface {
       id: json['id']?.toString() ?? '',
       treeId: json['treeId']?.toString() ?? fallbackTreeId,
       userId: json['userId']?.toString(),
+      identityId: json['identityId']?.toString(),
       name: json['name']?.toString() ?? '',
       maidenName: json['maidenName']?.toString(),
       photoUrl: json['photoUrl']?.toString(),

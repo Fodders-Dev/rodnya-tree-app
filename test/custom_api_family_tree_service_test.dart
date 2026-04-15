@@ -622,6 +622,7 @@ void main() {
               {
                 'id': 'person-gallery',
                 'treeId': 'tree-3',
+                'identityId': 'identity-anna',
                 'name': 'Галерея Анна',
                 'gender': 'female',
                 'isAlive': true,
@@ -733,6 +734,7 @@ void main() {
 
     final relatives = await treeService.getRelatives('tree-3');
     expect(relatives, hasLength(1));
+    expect(relatives.first.identityId, 'identity-anna');
     expect(relatives.first.photoUrl, 'https://cdn.example.ru/anna-primary.jpg');
     expect(relatives.first.primaryPhotoUrl,
         'https://cdn.example.ru/anna-primary.jpg');
