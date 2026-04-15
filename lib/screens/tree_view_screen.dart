@@ -443,18 +443,12 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
         ],
       ),
       body: SafeArea(
-        child: _buildTreeBody(
-          selectedTreeId: selectedTreeId,
-          selectedTreeName: selectedTreeName,
-        ),
+        child: _buildTreeBody(selectedTreeId: selectedTreeId),
       ),
     );
   }
 
-  Widget _buildTreeBody({
-    required String selectedTreeId,
-    required String selectedTreeName,
-  }) {
+  Widget _buildTreeBody({required String selectedTreeId}) {
     return LayoutBuilder(
       builder: (context, constraints) {
         final isCompact = constraints.maxWidth < 600;
@@ -504,16 +498,7 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
             horizontalPadding,
             bottomPadding,
           ),
-          child: Column(
-            children: [
-              _buildTreeEscapeStrip(
-                selectedTreeName: selectedTreeName,
-                isWideDesktop: isWideDesktop,
-              ),
-              const SizedBox(height: 12),
-              Expanded(child: treeCanvas),
-            ],
-          ),
+          child: treeCanvas,
         );
 
         if (isWideDesktop) {
@@ -636,101 +621,6 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
         ),
       ),
     );
-  }
-
-  Widget _buildTreeEscapeStrip({
-    required String selectedTreeName,
-    required bool isWideDesktop,
-  }) {
-    final theme = Theme.of(context);
-    final treeKindLabel = _isFriendsTree ? 'Круг' : 'Семья';
-
-    return GlassPanel(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      borderRadius: BorderRadius.circular(24),
-      color: theme.colorScheme.surface.withValues(alpha: 0.76),
-      child: Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-            decoration: BoxDecoration(
-              color: theme.colorScheme.primary.withValues(alpha: 0.10),
-              borderRadius: BorderRadius.circular(999),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  _isFriendsTree
-                      ? Icons.diversity_3_outlined
-                      : Icons.account_tree_outlined,
-                  size: 16,
-                  color: theme.colorScheme.primary,
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  isWideDesktop ? selectedTreeName : treeKindLabel,
-                  style: theme.textTheme.labelLarge?.copyWith(
-                    color: theme.colorScheme.primary,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          _buildTreeEscapeAction(
-            icon: Icons.home_outlined,
-            label: 'Главная',
-            onTap: () => context.go('/'),
-            primary: true,
-          ),
-          _buildTreeEscapeAction(
-            icon: _isFriendsTree ? Icons.hub_outlined : Icons.people_outline,
-            label: _isFriendsTree ? 'Люди' : 'Родные',
-            onTap: () => context.go('/relatives'),
-          ),
-          _buildTreeEscapeAction(
-            icon: Icons.forum_outlined,
-            label: 'Чаты',
-            onTap: () => context.go('/chats'),
-          ),
-          _buildTreeEscapeAction(
-            icon: Icons.swap_horiz_outlined,
-            label: 'Деревья',
-            onTap: () => context.go('/tree?selector=1'),
-          ),
-          _buildTreeEscapeAction(
-            icon: Icons.history_outlined,
-            label: 'История',
-            onTap: () => unawaited(_showTreeHistorySheet()),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTreeEscapeAction({
-    required IconData icon,
-    required String label,
-    required VoidCallback? onTap,
-    bool primary = false,
-  }) {
-    final button = primary
-        ? FilledButton.tonalIcon(
-            onPressed: onTap,
-            icon: Icon(icon, size: 18),
-            label: Text(label),
-          )
-        : OutlinedButton.icon(
-            onPressed: onTap,
-            icon: Icon(icon, size: 18),
-            label: Text(label),
-          );
-
-    return button;
   }
 
   Widget _buildTreeState({
