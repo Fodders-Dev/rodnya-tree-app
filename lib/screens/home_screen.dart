@@ -158,7 +158,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _upcomingEvents = [];
     });
     try {
-      final events = await _eventService.getUpcomingEvents(treeId, limit: 5);
+      final events = await _eventService.getUpcomingEvents(treeId, limit: 10);
       if (mounted) {
         final categories = _collectEventCategories(events);
         setState(() {

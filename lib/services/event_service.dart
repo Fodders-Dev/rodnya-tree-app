@@ -112,7 +112,12 @@ class EventService {
       allEvents.addAll(_buildRussianHolidayEvents(today));
       allEvents.addAll(_buildOrthodoxHolidayEvents(today));
 
-      allEvents.sort((a, b) {
+      debugPrint('[EventService] Всего вычислено ${allEvents.length} событий.');
+
+      final upcomingEvents =
+          allEvents.where((event) => _isUpcoming(event.date, today)).toList();
+
+      upcomingEvents.sort((a, b) {
         final dateComparison = a.date.compareTo(b.date);
         if (dateComparison != 0) {
           return dateComparison;
@@ -120,16 +125,28 @@ class EventService {
         return _typePriority(a.type).compareTo(_typePriority(b.type));
       });
 
-      debugPrint('[EventService] Всего вычислено ${allEvents.length} событий.');
-
-      final upcomingEvents =
-          allEvents.where((event) => _isUpcoming(event.date, today)).toList();
-
       debugPrint(
         '[EventService] Найдено ${upcomingEvents.length} предстоящих событий.',
       );
 
-      return upcomingEvents.take(limit).toList();
+      final familyUpcoming = upcomingEvents
+          .where((event) => _isFamilyEventType(event.type))
+          .toList();
+      final calendarUpcoming = upcomingEvents
+          .where((event) => !_isFamilyEventType(event.type))
+          .toList();
+
+      final prioritizedEvents = <AppEvent>[
+        ...familyUpcoming.take(limit),
+      ];
+
+      if (prioritizedEvents.length < limit) {
+        prioritizedEvents.addAll(
+          calendarUpcoming.take(limit - prioritizedEvents.length),
+        );
+      }
+
+      return prioritizedEvents;
     } catch (e, s) {
       debugPrint('[EventService] Ошибка при получении событий: $e\n$s');
       return [];
@@ -391,6 +408,22 @@ class EventService {
         return 6;
       case AppEventType.other:
         return 7;
+    }
+  }
+
+  bool _isFamilyEventType(AppEventType type) {
+    switch (type) {
+      case AppEventType.birthday:
+      case AppEventType.weddingAnniversary:
+      case AppEventType.deathAnniversary:
+      case AppEventType.memorial9days:
+      case AppEventType.memorial40days:
+      case AppEventType.customFamilyEvent:
+        return true;
+      case AppEventType.russianHoliday:
+      case AppEventType.orthodoxHoliday:
+      case AppEventType.other:
+        return false;
     }
   }
 

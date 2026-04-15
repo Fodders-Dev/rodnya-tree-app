@@ -102,6 +102,77 @@ void main() {
       'Иван Петров и Мария Петрова',
     );
   });
+
+  test('EventService prioritizes family events on home feed limit', () async {
+    final service = EventService(
+      familyTreeService: _FakeFamilyTreeService(
+        relatives: [
+          FamilyPerson(
+            id: 'person-birthday',
+            treeId: 'tree-1',
+            name: 'Иван Петров',
+            gender: Gender.male,
+            birthDate: DateTime(1990, 4, 3),
+            isAlive: true,
+            createdAt: DateTime(2024, 1, 1),
+            updatedAt: DateTime(2024, 1, 1),
+            details: FamilyPersonDetails(
+              importantEvents: [
+                Event(
+                  title: 'Сбор семьи',
+                  date: DateTime(2026, 4, 6),
+                ),
+              ],
+            ),
+          ),
+          FamilyPerson(
+            id: 'person-memory',
+            treeId: 'tree-1',
+            name: 'Мария Петрова',
+            gender: Gender.female,
+            deathDate: DateTime(2020, 4, 10),
+            isAlive: false,
+            createdAt: DateTime(2024, 1, 1),
+            updatedAt: DateTime(2024, 1, 1),
+          ),
+        ],
+        relations: [
+          FamilyRelation(
+            id: 'relation-wedding',
+            treeId: 'tree-1',
+            person1Id: 'person-birthday',
+            person2Id: 'person-memory',
+            relation1to2: RelationType.spouse,
+            relation2to1: RelationType.spouse,
+            isConfirmed: true,
+            createdAt: DateTime(2012, 4, 5),
+            marriageDate: DateTime(2012, 4, 5),
+          ),
+        ],
+      ),
+      nowProvider: () => DateTime(2026, 4, 1, 10),
+    );
+
+    final events = await service.getUpcomingEvents('tree-1', limit: 4);
+
+    expect(events, hasLength(4));
+    expect(
+      events.every(
+        (event) => event.type != AppEventType.russianHoliday,
+      ),
+      isTrue,
+    );
+    expect(
+      events.every(
+        (event) => event.type != AppEventType.orthodoxHoliday,
+      ),
+      isTrue,
+    );
+    expect(
+      events.map((event) => event.categoryLabel).toSet(),
+      containsAll(<String>['Родня', 'Семья', 'Память', 'Повод']),
+    );
+  });
 }
 
 class _FakeFamilyTreeService implements FamilyTreeServiceInterface {

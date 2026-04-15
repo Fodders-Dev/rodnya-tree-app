@@ -5,11 +5,13 @@ import 'package:go_router/go_router.dart';
 import 'package:lineage/backend/interfaces/auth_service_interface.dart';
 import 'package:lineage/backend/interfaces/family_tree_service_interface.dart';
 import 'package:lineage/backend/interfaces/profile_service_interface.dart';
+import 'package:lineage/backend/interfaces/storage_service_interface.dart';
 import 'package:lineage/models/family_person.dart';
 import 'package:lineage/models/family_relation.dart';
 import 'package:lineage/models/tree_change_record.dart';
 import 'package:lineage/models/user_profile.dart';
 import 'package:lineage/screens/add_relative_screen.dart';
+import 'package:image_picker/image_picker.dart';
 
 class _FakeAuthService implements AuthServiceInterface {
   String? lastErrorDescription;
@@ -101,6 +103,28 @@ class _FakeProfileService implements ProfileServiceInterface {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
+class _FakeStorageService implements StorageServiceInterface {
+  @override
+  Future<bool> deleteImage(String imageUrl) async => true;
+
+  @override
+  Future<String?> uploadImage(XFile imageFile, String folder) async =>
+      'https://example.com/$folder/${imageFile.name}';
+
+  @override
+  Future<String?> uploadProfileImage(XFile imageFile) async =>
+      'https://example.com/avatar/${imageFile.name}';
+
+  @override
+  Future<String?> uploadBytes({
+    required String bucket,
+    required String path,
+    required dynamic fileBytes,
+    dynamic fileOptions,
+  }) async =>
+      'https://example.com/$bucket/$path';
+}
+
 void main() {
   final getIt = GetIt.instance;
 
@@ -110,6 +134,7 @@ void main() {
     getIt.registerSingleton<FamilyTreeServiceInterface>(
         _FakeFamilyTreeService());
     getIt.registerSingleton<ProfileServiceInterface>(_FakeProfileService());
+    getIt.registerSingleton<StorageServiceInterface>(_FakeStorageService());
   });
 
   tearDown(() async {
@@ -215,6 +240,7 @@ void main() {
     getIt.registerSingleton<AuthServiceInterface>(authService);
     getIt.registerSingleton<FamilyTreeServiceInterface>(familyService);
     getIt.registerSingleton<ProfileServiceInterface>(_FakeProfileService());
+    getIt.registerSingleton<StorageServiceInterface>(_FakeStorageService());
 
     final router = GoRouter(
       routes: [
@@ -263,7 +289,7 @@ void main() {
   });
 
   testWidgets(
-      'при добавлении супруга показывает поле даты свадьбы в дополнительных сведениях',
+      'при добавлении супруга показывает поле даты свадьбы в расширенном режиме',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(900, 1400));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -301,12 +327,12 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.ensureVisible(find.text('Дополнительные сведения'));
-    await tester.tap(find.text('Дополнительные сведения'));
+    await tester.ensureVisible(find.widgetWithText(ChoiceChip, 'Расширенно'));
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Расширенно'));
     await tester.pumpAndSettle();
 
     expect(find.text('Дата свадьбы'), findsOneWidget);
-    expect(find.text('Появится в семейном календаре'), findsOneWidget);
+    expect(find.text('Попадёт в семейный календарь'), findsOneWidget);
   });
 
   testWidgets(
@@ -330,6 +356,7 @@ void main() {
     getIt.registerSingleton<AuthServiceInterface>(_FakeAuthService());
     getIt.registerSingleton<FamilyTreeServiceInterface>(familyService);
     getIt.registerSingleton<ProfileServiceInterface>(_FakeProfileService());
+    getIt.registerSingleton<StorageServiceInterface>(_FakeStorageService());
 
     final router = GoRouter(
       routes: [
@@ -357,8 +384,8 @@ void main() {
     expect(
         find.textContaining('Связь с Петров Иван уже выбрана'), findsOneWidget);
 
-    await tester.ensureVisible(find.text('Дополнительные сведения'));
-    await tester.tap(find.text('Дополнительные сведения'));
+    await tester.ensureVisible(find.widgetWithText(ChoiceChip, 'Расширенно'));
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Расширенно'));
     await tester.pumpAndSettle();
 
     expect(find.text('Дата свадьбы'), findsOneWidget);
@@ -382,6 +409,7 @@ void main() {
     getIt.registerSingleton<AuthServiceInterface>(_FakeAuthService());
     getIt.registerSingleton<FamilyTreeServiceInterface>(familyService);
     getIt.registerSingleton<ProfileServiceInterface>(_FakeProfileService());
+    getIt.registerSingleton<StorageServiceInterface>(_FakeStorageService());
 
     final person = FamilyPerson(
       id: 'person-1',
@@ -433,13 +461,20 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    expect(find.text('Режим редактирования'), findsOneWidget);
+    expect(find.widgetWithText(ChoiceChip, 'Основное'), findsOneWidget);
+    expect(find.widgetWithText(ChoiceChip, 'Расширенно'), findsOneWidget);
+    expect(find.text('Фото и видео'), findsOneWidget);
+    expect(find.text('2 в карточке'), findsAtLeastNWidgets(1));
+    expect(find.text('Основное медиа выбрано'), findsOneWidget);
+    expect(find.text('Фото'), findsOneWidget);
+    expect(find.text('Видео'), findsOneWidget);
     expect(find.text('Медиа и история'), findsOneWidget);
-    expect(find.text('2 фото'), findsOneWidget);
-    expect(find.text('Основное фото есть'), findsOneWidget);
-    expect(find.text('Открыть карточку'), findsOneWidget);
-    expect(find.text('Фото (2)'), findsOneWidget);
+    expect(find.text('Открыть карточку'), findsAtLeastNWidgets(1));
+    expect(find.text('Медиа (2)'), findsOneWidget);
     expect(find.text('История'), findsOneWidget);
 
+    await tester.ensureVisible(find.text('История'));
     await tester.tap(find.text('История'));
     await tester.pumpAndSettle();
 

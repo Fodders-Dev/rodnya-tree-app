@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:image_picker/image_picker.dart';
 import '../models/family_person.dart';
 import '../models/family_relation.dart';
 import 'package:go_router/go_router.dart';
@@ -7,10 +8,59 @@ import 'package:get_it/get_it.dart';
 import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
 import '../backend/interfaces/profile_service_interface.dart';
+import '../backend/interfaces/storage_service_interface.dart';
 import '../utils/user_facing_error.dart';
 import '../widgets/tree_history_sheet.dart';
 
 enum _PostSaveAction { close, stayInQuickAdd, openInTree }
+
+enum _RelativeEditorMode { basic, advanced }
+
+class _RelativeImportantEventDraft {
+  _RelativeImportantEventDraft({
+    String title = '',
+    this.date,
+  }) : titleController = TextEditingController(text: title);
+
+  final TextEditingController titleController;
+  DateTime? date;
+
+  bool get isMeaningful =>
+      titleController.text.trim().isNotEmpty || date != null;
+
+  Event? toEvent() {
+    final title = titleController.text.trim();
+    if (title.isEmpty || date == null) {
+      return null;
+    }
+    return Event(title: title, date: date!);
+  }
+
+  void dispose() {
+    titleController.dispose();
+  }
+}
+
+class _RelativeDraftMedia {
+  const _RelativeDraftMedia({
+    required this.id,
+    required this.file,
+    required this.type,
+    required this.contentType,
+    required this.isPrimary,
+  });
+
+  final String id;
+  final XFile file;
+  final String type;
+  final String? contentType;
+  final bool isPrimary;
+
+  IconData get icon =>
+      type == 'video' ? Icons.videocam_outlined : Icons.photo_outlined;
+
+  String get label => type == 'video' ? 'Видео' : 'Фото';
+}
 
 class AddRelativeScreen extends StatefulWidget {
   final String treeId;
@@ -45,6 +95,9 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
   final AuthServiceInterface _authService = GetIt.I<AuthServiceInterface>();
   final ProfileServiceInterface _profileService =
       GetIt.I<ProfileServiceInterface>();
+  final StorageServiceInterface _storageService =
+      GetIt.I<StorageServiceInterface>();
+  final ImagePicker _imagePicker = ImagePicker();
 
   // Контроллеры для полей формы
   final _lastNameController = TextEditingController();
@@ -52,6 +105,8 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
   final _middleNameController = TextEditingController();
   final _maidenNameController = TextEditingController();
   final _birthPlaceController = TextEditingController();
+  final _educationController = TextEditingController();
+  final _bioController = TextEditingController();
   final _notesController = TextEditingController();
 
   // Состояние формы
@@ -65,6 +120,11 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
   bool _isLoading = false;
   bool _isCheckingTreeState = true;
   bool _isFirstPersonInTree = false;
+  bool _isUpdatingMedia = false;
+  _RelativeEditorMode _editorMode = _RelativeEditorMode.basic;
+  final List<_RelativeImportantEventDraft> _importantEventDrafts =
+      <_RelativeImportantEventDraft>[];
+  final List<_RelativeDraftMedia> _draftMedia = <_RelativeDraftMedia>[];
 
   // Переменные для контекста из дерева
   FamilyPerson? _contextPerson;
@@ -76,6 +136,7 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
   void initState() {
     super.initState();
     _isQuickAddMode = widget.quickAddMode;
+    _editorMode = _RelativeEditorMode.basic;
     _loadUserGender();
     _loadTreeState();
 
@@ -94,10 +155,13 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
       _middleNameController.text = middleName ?? '';
       _maidenNameController.text = widget.person!.maidenName ?? '';
       _birthPlaceController.text = widget.person!.birthPlace ?? '';
+      _educationController.text = widget.person!.details?.education ?? '';
+      _bioController.text = widget.person!.bio ?? '';
       _notesController.text = widget.person!.notes ?? '';
       _selectedGender = widget.person!.gender;
       _birthDate = widget.person!.birthDate;
       _deathDate = widget.person!.deathDate;
+      _seedImportantEventDrafts(widget.person!.details?.importantEvents);
 
       // Загружаем текущий тип отношения (правильно)
       _loadCurrentRelationType();
@@ -186,6 +250,24 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
     });
   }
 
+  void _seedImportantEventDrafts(List<Event>? events) {
+    for (final draft in _importantEventDrafts) {
+      draft.dispose();
+    }
+    _importantEventDrafts
+      ..clear()
+      ..addAll(
+        (events ?? const <Event>[])
+            .map(
+              (event) => _RelativeImportantEventDraft(
+                title: event.title,
+                date: event.date,
+              ),
+            )
+            .toList(),
+      );
+  }
+
   bool get _isCreatingFirstPerson =>
       !widget.isEditing &&
       widget.relatedTo == null &&
@@ -205,6 +287,11 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
       _selectedRelationType;
 
   bool get _canUseQuickAddLoop => _isQuickAddMode && _isContextualAdd;
+
+  bool get _isAdvancedMode => _editorMode == _RelativeEditorMode.advanced;
+
+  List<Map<String, dynamic>> get _existingMediaEntries =>
+      widget.person?.photoGallery ?? const <Map<String, dynamic>>[];
 
   String _describeActionError(
     Object error, {
@@ -277,6 +364,112 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
     }
   }
 
+  Future<void> _pickImportantEventDate(
+      _RelativeImportantEventDraft draft) async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: draft.date ?? _birthDate ?? DateTime.now(),
+      firstDate: DateTime(1900),
+      lastDate: DateTime(2100),
+      locale: const Locale('ru', 'RU'),
+    );
+    if (picked == null) {
+      return;
+    }
+    setState(() {
+      draft.date = picked;
+    });
+  }
+
+  void _addImportantEventDraft() {
+    setState(() {
+      _importantEventDrafts.add(_RelativeImportantEventDraft());
+      _editorMode = _RelativeEditorMode.advanced;
+    });
+  }
+
+  void _removeImportantEventDraft(_RelativeImportantEventDraft draft) {
+    setState(() {
+      _importantEventDrafts.remove(draft);
+      draft.dispose();
+    });
+  }
+
+  Future<void> _pickRelativeMedia({required bool video}) async {
+    if (_isUpdatingMedia) {
+      return;
+    }
+
+    final XFile? picked = video
+        ? await _imagePicker.pickVideo(source: ImageSource.gallery)
+        : await _imagePicker.pickImage(
+            source: ImageSource.gallery,
+            imageQuality: 88,
+          );
+    if (picked == null) {
+      return;
+    }
+
+    final isFirstMedia = _existingMediaEntries.isEmpty && _draftMedia.isEmpty;
+    setState(() {
+      _draftMedia.add(
+        _RelativeDraftMedia(
+          id: 'draft-${DateTime.now().microsecondsSinceEpoch}',
+          file: picked,
+          type: video ? 'video' : 'image',
+          contentType: picked.mimeType,
+          isPrimary: isFirstMedia,
+        ),
+      );
+    });
+  }
+
+  void _removeDraftMedia(String draftId) {
+    setState(() {
+      _draftMedia.removeWhere((entry) => entry.id == draftId);
+    });
+  }
+
+  Future<void> _uploadQueuedMedia(String personId) async {
+    if (_draftMedia.isEmpty) {
+      return;
+    }
+
+    setState(() {
+      _isUpdatingMedia = true;
+    });
+
+    try {
+      for (final media in List<_RelativeDraftMedia>.from(_draftMedia)) {
+        final uploadedUrl =
+            await _storageService.uploadImage(media.file, 'relatives');
+        if (uploadedUrl == null || uploadedUrl.isEmpty) {
+          throw Exception(
+              'backend не вернул URL после загрузки ${media.label.toLowerCase()}');
+        }
+
+        await _familyService.addRelativeMedia(
+          treeId: widget.treeId,
+          personId: personId,
+          mediaData: {
+            'url': uploadedUrl,
+            'type': media.type,
+            'contentType': media.contentType,
+            'isPrimary': media.isPrimary,
+          },
+        );
+      }
+
+      _draftMedia.clear();
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isUpdatingMedia = false;
+        });
+      }
+    }
+  }
+
   Future<void> _savePerson({
     _PostSaveAction action = _PostSaveAction.close,
   }) async {
@@ -287,6 +480,17 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
 
       try {
         String? createdPersonId;
+        final importantEvents = _importantEventDrafts
+            .map((draft) => draft.toEvent())
+            .whereType<Event>()
+            .toList();
+        final details = <String, dynamic>{
+          if (_educationController.text.trim().isNotEmpty)
+            'education': _educationController.text.trim(),
+          if (importantEvents.isNotEmpty)
+            'importantEvents':
+                importantEvents.map((event) => event.toMap()).toList(),
+        };
 
         // Создаем объект с данными из формы
         final Map<String, dynamic> personData = {
@@ -297,7 +501,9 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
               ? _genderToString(_selectedGender!)
               : 'unknown',
           'birthPlace': _birthPlaceController.text.trim(),
+          'bio': _bioController.text.trim(),
           'notes': _notesController.text.trim(),
+          if (details.isNotEmpty) 'details': details,
         };
 
         // Добавляем даты, если они указаны
@@ -325,6 +531,7 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
             );
             debugPrint('Данные для сохранения (personData): $personData');
             await _familyService.updateRelative(widget.person!.id, personData);
+            await _uploadQueuedMedia(widget.person!.id);
 
             // 2. Обновляем связь, если она изменилась
             final userId = _authService.currentUserId;
@@ -388,6 +595,7 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
             personData,
           );
           createdPersonId = newPersonId;
+          await _uploadQueuedMedia(newPersonId);
 
           // Получаем ID текущего пользователя
           final userId = _authService.currentUserId;
@@ -645,11 +853,18 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
     _middleNameController.clear();
     _maidenNameController.clear();
     _birthPlaceController.clear();
+    _educationController.clear();
+    _bioController.clear();
     _notesController.clear();
     _birthDate = null;
     _deathDate = null;
     _marriageDate = null;
     _selectedGender = null;
+    for (final draft in _importantEventDrafts) {
+      draft.dispose();
+    }
+    _importantEventDrafts.clear();
+    _draftMedia.clear();
     if (_lastNameController.text.trim().isEmpty) {
       _prefillLastNameFromAnchor(_anchorPerson, _resolvedRelationType);
     }
@@ -777,20 +992,8 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
                       SizedBox(height: 24),
                     ],
 
-                    if (widget.isEditing && widget.person != null) ...[
-                      _buildEditMediaAndHistoryCard(),
-                      SizedBox(height: 24),
-                    ],
-
-                    // Основная информация
-                    Text(
-                      'Основная информация',
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 18,
-                      ),
-                    ),
-                    SizedBox(height: 16),
+                    _buildEditorModeCard(),
+                    SizedBox(height: 24),
 
                     // Фамилия
                     TextFormField(
@@ -881,7 +1084,21 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
                     _buildRelationshipSelector(),
                     SizedBox(height: 24),
 
-                    _buildOptionalDetailsSection(),
+                    _buildBirthDateField(),
+                    SizedBox(height: 24),
+
+                    _buildMediaSection(),
+                    SizedBox(height: 24),
+
+                    if (widget.isEditing && widget.person != null) ...[
+                      _buildEditMediaAndHistoryCard(),
+                      SizedBox(height: 24),
+                    ],
+
+                    if (_isAdvancedMode)
+                      _buildOptionalDetailsSection()
+                    else
+                      _buildAdvancedHintCard(),
                     SizedBox(height: 24),
 
                     _buildSubmitSection(),
@@ -896,10 +1113,9 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
   Widget _buildEditMediaAndHistoryCard() {
     final theme = Theme.of(context);
     final person = widget.person!;
-    final photoCount = person.photoGallery.length;
+    final mediaCount = person.photoGallery.length;
     final hasPrimaryPhoto = person.primaryPhotoUrl != null;
-    final photoActionLabel =
-        photoCount == 0 ? 'Добавить фото' : 'Фото ($photoCount)';
+    final photoActionLabel = mediaCount == 0 ? 'Медиа' : 'Медиа ($mediaCount)';
 
     return Container(
       width: double.infinity,
@@ -933,7 +1149,7 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
             children: [
               _QuickInfoChip(
                 icon: Icons.photo_library_outlined,
-                label: photoCount == 0 ? 'Без фото' : '$photoCount фото',
+                label: mediaCount == 0 ? 'Без медиа' : '$mediaCount в карточке',
               ),
               _QuickInfoChip(
                 icon: hasPrimaryPhoto
@@ -947,7 +1163,9 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
           ),
           const SizedBox(height: 12),
           Text(
-            'Ниже редактируются поля карточки, а галерея и журнал изменений открываются отдельными действиями.',
+            _draftMedia.isEmpty
+                ? 'Основные факты редактируются здесь, а карточка и журнал открываются отдельными действиями.'
+                : 'После сохранения в карточку уйдут и новые поля, и добавленные фото/видео.',
             style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
           ),
           const SizedBox(height: 12),
@@ -1127,21 +1345,327 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
     );
   }
 
-  Widget _buildOptionalDetailsSection() {
-    return ExpansionTile(
-      tilePadding: EdgeInsets.zero,
-      initiallyExpanded: widget.isEditing && !_canUseQuickAddLoop,
-      title: const Text(
-        'Дополнительные сведения',
-        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+  Widget _buildEditorModeCard() {
+    final theme = Theme.of(context);
+    final isEditing = widget.isEditing;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color:
+            theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.38),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: theme.colorScheme.outlineVariant),
       ),
-      subtitle: Text(
-        _isCreatingFirstPerson
-            ? 'Можно заполнить позже: даты, место рождения, заметки'
-            : 'Даты жизни, место рождения и заметки',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            isEditing ? 'Режим редактирования' : 'Режим заполнения',
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              ChoiceChip(
+                label: const Text('Основное'),
+                avatar: const Icon(Icons.bolt_outlined, size: 18),
+                selected: _editorMode == _RelativeEditorMode.basic,
+                onSelected: (_) {
+                  setState(() {
+                    _editorMode = _RelativeEditorMode.basic;
+                  });
+                },
+              ),
+              ChoiceChip(
+                label: const Text('Расширенно'),
+                avatar: const Icon(Icons.library_books_outlined, size: 18),
+                selected: _editorMode == _RelativeEditorMode.advanced,
+                onSelected: (_) {
+                  setState(() {
+                    _editorMode = _RelativeEditorMode.advanced;
+                  });
+                },
+              ),
+            ],
+          ),
+        ],
       ),
+    );
+  }
+
+  Widget _buildBirthDateField() {
+    return InkWell(
+      onTap: () => _pickDate(true),
+      child: InputDecorator(
+        decoration: const InputDecoration(
+          labelText: 'Дата рождения',
+          border: OutlineInputBorder(),
+          prefixIcon: Icon(Icons.cake_outlined),
+          helperText: 'Нужна для дней рождения на главной',
+        ),
+        child: Text(
+          _birthDate != null
+              ? DateFormat('dd.MM.yyyy').format(_birthDate!)
+              : 'Выберите дату',
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMediaSection() {
+    final theme = Theme.of(context);
+    final existingCount = _existingMediaEntries.length;
+    final queuedCount = _draftMedia.length;
+    final hasExistingPrimary = _existingMediaEntries.any(
+      (entry) => entry['isPrimary'] == true,
+    );
+    final summary = <String>[
+      if (existingCount > 0) '$existingCount в карточке',
+      if (queuedCount > 0) '$queuedCount в очереди',
+      if (existingCount == 0 && queuedCount == 0) 'пока пусто',
+    ].join(' · ');
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color:
+            theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.36),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: theme.colorScheme.outlineVariant),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.perm_media_outlined, color: theme.colorScheme.primary),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Фото и видео',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              if (_isUpdatingMedia)
+                const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _QuickInfoChip(
+                icon: Icons.photo_library_outlined,
+                label: summary,
+              ),
+              _QuickInfoChip(
+                icon: hasExistingPrimary ||
+                        _draftMedia.any((entry) => entry.isPrimary)
+                    ? Icons.star_outline
+                    : Icons.image_not_supported_outlined,
+                label: hasExistingPrimary ||
+                        _draftMedia.any((entry) => entry.isPrimary)
+                    ? 'Основное медиа выбрано'
+                    : 'Основное медиа ещё не выбрано',
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              FilledButton.tonalIcon(
+                onPressed: _isUpdatingMedia
+                    ? null
+                    : () => _pickRelativeMedia(video: false),
+                icon: const Icon(Icons.add_photo_alternate_outlined),
+                label: const Text('Фото'),
+              ),
+              FilledButton.tonalIcon(
+                onPressed: _isUpdatingMedia
+                    ? null
+                    : () => _pickRelativeMedia(video: true),
+                icon: const Icon(Icons.video_library_outlined),
+                label: const Text('Видео'),
+              ),
+              if (widget.isEditing && widget.person != null)
+                ActionChip(
+                  avatar: const Icon(Icons.open_in_new, size: 18),
+                  label: const Text('Открыть карточку'),
+                  onPressed: _openEditingPersonCard,
+                ),
+            ],
+          ),
+          if (_draftMedia.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: _draftMedia
+                  .map(
+                    (entry) => InputChip(
+                      avatar: Icon(entry.icon, size: 18),
+                      label: Text(
+                        '${entry.label}: ${entry.file.name}',
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      onDeleted: () => _removeDraftMedia(entry.id),
+                    ),
+                  )
+                  .toList(),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAdvancedHintCard() {
+    final theme = Theme.of(context);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color:
+            theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.28),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: theme.colorScheme.outlineVariant),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.library_add_check_outlined,
+              color: theme.colorScheme.primary),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'В расширенном режиме можно заполнить биографию, события, дополнительные даты и заметки.',
+              style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
+            ),
+          ),
+          const SizedBox(width: 10),
+          TextButton(
+            onPressed: () {
+              setState(() {
+                _editorMode = _RelativeEditorMode.advanced;
+              });
+            },
+            child: const Text('Показать'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildImportantEventsSection() {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                'Важные события',
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            TextButton.icon(
+              onPressed: _addImportantEventDraft,
+              icon: const Icon(Icons.add, size: 18),
+              label: const Text('Событие'),
+            ),
+          ],
+        ),
+        if (_importantEventDrafts.isEmpty)
+          Text(
+            'Сюда можно добавить семейные даты, которые должны появляться на главной.',
+            style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
+          )
+        else
+          Column(
+            children: _importantEventDrafts.map((draft) {
+              return Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.surfaceContainerLowest,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: theme.colorScheme.outlineVariant),
+                  ),
+                  child: Column(
+                    children: [
+                      TextFormField(
+                        controller: draft.titleController,
+                        decoration: InputDecoration(
+                          labelText: 'Название события',
+                          border: const OutlineInputBorder(),
+                          prefixIcon: const Icon(Icons.event_note_outlined),
+                          suffixIcon: IconButton(
+                            tooltip: 'Удалить событие',
+                            onPressed: () => _removeImportantEventDraft(draft),
+                            icon: const Icon(Icons.close),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      InkWell(
+                        onTap: () => _pickImportantEventDate(draft),
+                        child: InputDecorator(
+                          decoration: const InputDecoration(
+                            labelText: 'Дата события',
+                            border: OutlineInputBorder(),
+                            prefixIcon: Icon(Icons.calendar_today_outlined),
+                          ),
+                          child: Text(
+                            draft.date != null
+                                ? DateFormat('dd.MM.yyyy').format(draft.date!)
+                                : 'Выберите дату',
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildOptionalDetailsSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Расширенные сведения',
+          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+        ),
         const SizedBox(height: 8),
+        Text(
+          'Дополнительные даты, биография и семейные события.',
+          style:
+              TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
+        ),
+        const SizedBox(height: 16),
         if (_selectedGender == Gender.female) ...[
           TextFormField(
             controller: _maidenNameController,
@@ -1149,34 +1673,17 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
               labelText: 'Девичья фамилия',
               border: OutlineInputBorder(),
               prefixIcon: Icon(Icons.person_outline),
-              helperText: 'Фамилия до замужества',
             ),
           ),
           const SizedBox(height: 16),
         ],
-        InkWell(
-          onTap: () => _pickDate(true),
-          child: InputDecorator(
-            decoration: const InputDecoration(
-              labelText: 'Дата рождения',
-              border: OutlineInputBorder(),
-              prefixIcon: Icon(Icons.cake),
-            ),
-            child: Text(
-              _birthDate != null
-                  ? DateFormat('dd.MM.yyyy').format(_birthDate!)
-                  : 'Выберите дату',
-            ),
-          ),
-        ),
-        const SizedBox(height: 16),
         InkWell(
           onTap: () => _pickDate(false),
           child: InputDecorator(
             decoration: const InputDecoration(
               labelText: 'Дата смерти',
               border: OutlineInputBorder(),
-              prefixIcon: Icon(Icons.event),
+              prefixIcon: Icon(Icons.event_outlined),
               helperText: 'Оставьте пустым, если человек жив',
             ),
             child: Text(
@@ -1186,8 +1693,7 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
             ),
           ),
         ),
-        if (!widget.isEditing &&
-            _resolvedRelationType == RelationType.spouse) ...[
+        if (_resolvedRelationType == RelationType.spouse) ...[
           const SizedBox(height: 16),
           InkWell(
             onTap: _pickMarriageDate,
@@ -1196,7 +1702,7 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
                 labelText: 'Дата свадьбы',
                 border: OutlineInputBorder(),
                 prefixIcon: Icon(Icons.favorite_outline),
-                helperText: 'Появится в семейном календаре',
+                helperText: 'Попадёт в семейный календарь',
               ),
               child: Text(
                 _marriageDate != null
@@ -1212,8 +1718,27 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
           decoration: const InputDecoration(
             labelText: 'Место рождения',
             border: OutlineInputBorder(),
-            prefixIcon: Icon(Icons.location_on),
+            prefixIcon: Icon(Icons.location_on_outlined),
           ),
+        ),
+        const SizedBox(height: 16),
+        TextFormField(
+          controller: _educationController,
+          decoration: const InputDecoration(
+            labelText: 'Образование',
+            border: OutlineInputBorder(),
+            prefixIcon: Icon(Icons.school_outlined),
+          ),
+        ),
+        const SizedBox(height: 16),
+        TextFormField(
+          controller: _bioController,
+          decoration: const InputDecoration(
+            labelText: 'Короткая биография',
+            border: OutlineInputBorder(),
+            prefixIcon: Icon(Icons.auto_stories_outlined),
+          ),
+          maxLines: 3,
         ),
         const SizedBox(height: 16),
         TextFormField(
@@ -1221,11 +1746,12 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
           decoration: const InputDecoration(
             labelText: 'Заметки',
             border: OutlineInputBorder(),
-            prefixIcon: Icon(Icons.note),
-            helperText: 'Дополнительная информация о человеке',
+            prefixIcon: Icon(Icons.note_alt_outlined),
           ),
           maxLines: 3,
         ),
+        const SizedBox(height: 20),
+        _buildImportantEventsSection(),
       ],
     );
   }
@@ -1239,7 +1765,12 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
     _middleNameController.dispose();
     _maidenNameController.dispose();
     _birthPlaceController.dispose();
+    _educationController.dispose();
+    _bioController.dispose();
     _notesController.dispose();
+    for (final draft in _importantEventDrafts) {
+      draft.dispose();
+    }
     super.dispose();
   }
 
