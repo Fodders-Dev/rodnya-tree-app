@@ -1,6 +1,7 @@
 // ignore_for_file: library_private_types_in_public_api
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
 import '../providers/tree_provider.dart';
@@ -24,6 +25,7 @@ import '../widgets/story_rail.dart';
 import '../widgets/glass_panel.dart';
 import '../services/custom_api_notification_service.dart';
 import '../utils/e2e_state_bridge.dart';
+import '../utils/web_wheel_listener.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -52,6 +54,10 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _currentTreeId;
   TreeProvider? _treeProviderInstance;
   final ScrollController _eventRailController = ScrollController();
+  final GlobalKey _eventRailRegionKey = GlobalKey();
+  CancelWebWheelListener? _cancelWebWheelSubscription;
+  int _webWheelEventCount = 0;
+  bool _isEventRailHovered = false;
 
   CustomApiNotificationService? get _customNotificationService =>
       GetIt.I.isRegistered<CustomApiNotificationService>()
@@ -62,6 +68,11 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _eventService = EventService();
+    _eventRailController.addListener(_handleEventRailScrollChanged);
+    if (kIsWeb) {
+      _cancelWebWheelSubscription =
+          registerWebWheelListener(_handleWebEventRailWheel);
+    }
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _treeProviderInstance = Provider.of<TreeProvider>(context, listen: false);
@@ -85,6 +96,8 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     _treeProviderInstance?.removeListener(_handleTreeChange);
+    _eventRailController.removeListener(_handleEventRailScrollChanged);
+    _cancelWebWheelSubscription?.call();
     _eventRailController.dispose();
     super.dispose();
   }
@@ -226,6 +239,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (!mounted) {
         return;
       }
+      final eventRailBounds = _currentEventRailBounds();
       E2EStateBridge.publish(
         screen: 'home',
         state: <String, dynamic>{
@@ -235,6 +249,20 @@ class _HomeScreenState extends State<HomeScreen> {
           'isLoadingEvents': _isLoadingEvents,
           'selectedEventFilter': _selectedEventCategoryFilter,
           'availableEventFilters': <String>['Все', ..._eventCategories],
+          'eventRailOffset':
+              _eventRailController.hasClients ? _eventRailController.offset : 0,
+          'eventRailMaxOffset': _eventRailController.hasClients
+              ? _eventRailController.position.maxScrollExtent
+              : 0,
+          'webWheelEventCount': _webWheelEventCount,
+          'eventRailBounds': eventRailBounds == null
+              ? null
+              : <String, double>{
+                  'left': eventRailBounds.left,
+                  'top': eventRailBounds.top,
+                  'width': eventRailBounds.width,
+                  'height': eventRailBounds.height,
+                },
           'visibleEvents': visibleEvents
               .map(
                 (event) => <String, dynamic>{
@@ -249,6 +277,18 @@ class _HomeScreenState extends State<HomeScreen> {
         },
       );
     });
+  }
+
+  void _handleEventRailScrollChanged() {
+    final treeProvider = _treeProviderInstance;
+    if (!mounted || treeProvider == null) {
+      return;
+    }
+    _publishHomeE2EState(
+      selectedTreeName: treeProvider.selectedTreeName,
+      hasSelectedTree:
+          _currentTreeId != null && treeProvider.selectedTreeName != null,
+    );
   }
 
   Future<void> _loadPosts(String treeId) async {
@@ -291,6 +331,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
 
     return Scaffold(
+      backgroundColor: Colors.transparent,
       appBar: AppBar(
         title: Text(selectedTreeName ?? 'Главная'),
         actions: [
@@ -793,6 +834,8 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildUpcomingEventsSection({required bool isWideLayout}) {
     final theme = Theme.of(context);
     final visibleEvents = _visibleUpcomingEvents;
+    final showRailControls = MediaQuery.of(context).size.width >= 760;
+    final canScrollRail = showRailControls && visibleEvents.length > 1;
     return _buildDesktopSideCard(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
       child: Column(
@@ -810,6 +853,22 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
               ),
+              if (canScrollRail) ...[
+                _buildEventRailArrowButton(
+                  icon: Icons.chevron_left_rounded,
+                  tooltip: 'Прокрутить события влево',
+                  semanticLabel: 'home-event-scroll-left',
+                  onTap: () => _nudgeEventRail(-220),
+                ),
+                const SizedBox(width: 6),
+                _buildEventRailArrowButton(
+                  icon: Icons.chevron_right_rounded,
+                  tooltip: 'Прокрутить события вправо',
+                  semanticLabel: 'home-event-scroll-right',
+                  onTap: () => _nudgeEventRail(220),
+                ),
+                const SizedBox(width: 8),
+              ],
               if (!_isLoadingEvents)
                 _buildHeaderChip(
                   icon: Icons.schedule_outlined,
@@ -903,18 +962,26 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             )
           else
-            Listener(
-              onPointerSignal:
-                  isWideLayout ? _handleEventRailPointerSignal : null,
-              child: SizedBox(
-                height: 126,
-                child: ListView.builder(
-                  controller: _eventRailController,
-                  scrollDirection: Axis.horizontal,
-                  itemCount: visibleEvents.length,
-                  itemBuilder: (context, index) {
-                    return EventCard(event: visibleEvents[index]);
-                  },
+            Container(
+              key: _eventRailRegionKey,
+              child: MouseRegion(
+                onEnter: (_) => _setEventRailHovered(true),
+                onExit: (_) => _setEventRailHovered(false),
+                child: Listener(
+                  behavior: HitTestBehavior.translucent,
+                  onPointerSignal:
+                      showRailControls ? _handleEventRailPointerSignal : null,
+                  child: SizedBox(
+                    height: 126,
+                    child: ListView.builder(
+                      controller: _eventRailController,
+                      scrollDirection: Axis.horizontal,
+                      itemCount: visibleEvents.length,
+                      itemBuilder: (context, index) {
+                        return EventCard(event: visibleEvents[index]);
+                      },
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -948,12 +1015,113 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
+    GestureBinding.instance.pointerSignalResolver.register(event, (resolved) {
+      if (resolved is PointerScrollEvent) {
+        _scrollEventRailBy(resolved.scrollDelta.dx, resolved.scrollDelta.dy);
+      }
+    });
+  }
+
+  bool _handleWebEventRailWheel(
+    double deltaX,
+    double deltaY,
+    double clientX,
+    double clientY,
+  ) {
+    _webWheelEventCount += 1;
+    if (!_eventRailController.hasClients ||
+        !(_isEventRailHovered || _isPointInsideEventRail(clientX, clientY))) {
+      _handleEventRailScrollChanged();
+      return false;
+    }
+
+    final scrolled = _scrollEventRailBy(deltaX, deltaY);
+    if (!scrolled) {
+      _handleEventRailScrollChanged();
+    }
+    return scrolled;
+  }
+
+  bool _isPointInsideEventRail(double clientX, double clientY) {
+    final rect = _currentEventRailBounds();
+    if (rect == null) {
+      return false;
+    }
+    return rect.contains(Offset(clientX, clientY));
+  }
+
+  Rect? _currentEventRailBounds() {
+    final context = _eventRailRegionKey.currentContext;
+    if (context == null) {
+      return null;
+    }
+
+    final renderObject = context.findRenderObject();
+    if (renderObject is! RenderBox || !renderObject.hasSize) {
+      return null;
+    }
+
+    final topLeft = renderObject.localToGlobal(Offset.zero);
+    return topLeft & renderObject.size;
+  }
+
+  void _setEventRailHovered(bool hovered) {
+    if (_isEventRailHovered == hovered) {
+      return;
+    }
+    _isEventRailHovered = hovered;
+    _handleEventRailScrollChanged();
+  }
+
+  void _nudgeEventRail(double delta) {
+    _scrollEventRailBy(delta, 0);
+  }
+
+  Widget _buildEventRailArrowButton({
+    required IconData icon,
+    required String tooltip,
+    required String semanticLabel,
+    required VoidCallback onTap,
+  }) {
+    final theme = Theme.of(context);
+    return Semantics(
+      button: true,
+      label: semanticLabel,
+      child: IconButton(
+        visualDensity: VisualDensity.compact,
+        style: IconButton.styleFrom(
+          backgroundColor: theme.colorScheme.surface.withValues(alpha: 0.82),
+          foregroundColor: theme.colorScheme.onSurfaceVariant,
+          side: BorderSide(
+            color: theme.colorScheme.outlineVariant.withValues(alpha: 0.9),
+          ),
+        ),
+        tooltip: tooltip,
+        onPressed: onTap,
+        icon: Icon(icon, size: 18),
+      ),
+    );
+  }
+
+  bool _scrollEventRailBy(double deltaX, double deltaY) {
     final maxScrollExtent = _eventRailController.position.maxScrollExtent;
-    final nextOffset = (_eventRailController.offset +
-            event.scrollDelta.dy +
-            event.scrollDelta.dx)
-        .clamp(0.0, maxScrollExtent);
+    if (maxScrollExtent <= 0) {
+      return false;
+    }
+
+    final delta = deltaY.abs() >= deltaX.abs() ? deltaY : deltaX;
+    final normalizedDelta =
+        delta == 0 ? 0.0 : delta.sign * (delta.abs() < 72 ? 72 : delta.abs());
+    final nextOffset = (_eventRailController.offset + normalizedDelta).clamp(
+      0.0,
+      maxScrollExtent,
+    );
+    if ((nextOffset - _eventRailController.offset).abs() < 0.1) {
+      return false;
+    }
     _eventRailController.jumpTo(nextOffset);
+    _handleEventRailScrollChanged();
+    return true;
   }
 
   Widget _buildStoriesSection() {

@@ -176,6 +176,7 @@ flutter:
 
   assets:
     - assets/
+    - assets/backgrounds/
     # - assets/images/  # этот путь может быть удален, если не содержит файлов
 
 # Конфигурация для flutter_launcher_icons

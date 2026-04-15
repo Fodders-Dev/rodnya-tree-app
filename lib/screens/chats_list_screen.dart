@@ -73,7 +73,9 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
   Map<String, ChatNotificationSettingsSnapshot> _notificationSettings =
       <String, ChatNotificationSettingsSnapshot>{};
   bool _isLoading = true;
+  bool _hasLoadedInitialBatch = false;
   String? _errorMessage;
+  String? _openingPrivateChatUserId;
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
   _ChatsVisibilityFilter _activeFilter = _ChatsVisibilityFilter.all;
@@ -100,6 +102,7 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
     if (currentUserId == null || currentUserId.isEmpty) {
       setState(() {
         _isLoading = false;
+        _hasLoadedInitialBatch = true;
         _errorMessage = 'Пользователь не авторизован.';
       });
       return;
@@ -114,6 +117,7 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
         setState(() {
           _chatPreviews = chatPreviews;
           _isLoading = false;
+          _hasLoadedInitialBatch = true;
           _errorMessage = null;
         });
         unawaited(_loadArchivedChats());
@@ -126,6 +130,7 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
         }
         setState(() {
           _isLoading = false;
+          _hasLoadedInitialBatch = true;
           _errorMessage = 'Не удалось загрузить чаты.';
         });
       },
@@ -461,6 +466,7 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
     required String currentUserId,
     required bool isFriendsTree,
     required String? selectedTreeName,
+    required bool showInitialLoading,
   }) {
     final listPanel = GlassPanel(
       padding: EdgeInsets.zero,
@@ -472,13 +478,16 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
             theme,
             isFriendsTree: isFriendsTree,
             selectedTreeName: selectedTreeName,
+            showLoadingPulse: showInitialLoading,
           ),
           _buildSearchBar(theme),
           _buildFilterBar(theme),
           Expanded(
-            child: _chatPreviews.isEmpty && _searchQuery.isEmpty
-                ? _buildEmptyState(theme)
-                : _buildChatList(theme, currentUserId),
+            child: showInitialLoading
+                ? _buildInitialLoadingState(theme)
+                : _chatPreviews.isEmpty && _searchQuery.isEmpty
+                    ? _buildEmptyState(theme)
+                    : _buildChatList(theme, currentUserId),
           ),
         ],
       ),
@@ -619,6 +628,7 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
     ThemeData theme, {
     required bool isFriendsTree,
     required String? selectedTreeName,
+    required bool showLoadingPulse,
   }) {
     final unreadCount = _chatPreviews.fold<int>(
       0,
@@ -646,6 +656,7 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
               few: 'чата',
               many: 'чатов',
             ),
+            highlighted: showLoadingPulse,
           ),
           _buildChatStatChip(
             theme,
@@ -759,12 +770,14 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
     ThemeData theme, {
     required IconData icon,
     required String label,
+    bool highlighted = false,
   }) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
       decoration: BoxDecoration(
-        color:
-            theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
+        color: highlighted
+            ? theme.colorScheme.primary.withValues(alpha: 0.10)
+            : theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
         borderRadius: BorderRadius.circular(999),
       ),
       child: Row(
@@ -775,6 +788,7 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
           Text(
             label,
             style: theme.textTheme.labelLarge?.copyWith(
+              color: highlighted ? theme.colorScheme.primary : null,
               fontWeight: FontWeight.w700,
             ),
           ),
@@ -792,6 +806,7 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
     final selectedTreeName = treeProvider.selectedTreeName;
 
     return Scaffold(
+      backgroundColor: Colors.transparent,
       appBar: AppBar(
         title: const Text('Чаты'),
         actions: [
@@ -802,24 +817,25 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
           ),
         ],
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : _errorMessage != null
-              ? _buildErrorState()
-              : Center(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 1400),
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-                      child: _buildDesktopShell(
-                        theme: theme,
-                        currentUserId: currentUserId,
-                        isFriendsTree: isFriendsTree,
-                        selectedTreeName: selectedTreeName,
-                      ),
-                    ),
+      body: _errorMessage != null && _chatPreviews.isEmpty
+          ? _buildErrorState()
+          : Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 1400),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                  child: _buildDesktopShell(
+                    theme: theme,
+                    currentUserId: currentUserId,
+                    isFriendsTree: isFriendsTree,
+                    selectedTreeName: selectedTreeName,
+                    showInitialLoading: _isLoading &&
+                        _chatPreviews.isEmpty &&
+                        _errorMessage == null,
                   ),
                 ),
+              ),
+            ),
     );
   }
 
@@ -945,6 +961,7 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
                   onPressed: () {
                     setState(() {
                       _isLoading = true;
+                      _hasLoadedInitialBatch = false;
                       _errorMessage = null;
                     });
                     _loadChats();
@@ -1032,6 +1049,68 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInitialLoadingState(ThemeData theme) {
+    return ListView.separated(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
+      itemCount: 6,
+      separatorBuilder: (_, __) => const SizedBox(height: 10),
+      itemBuilder: (context, index) => GlassPanel(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+        blur: 10,
+        borderRadius: BorderRadius.circular(24),
+        color: theme.colorScheme.surface.withValues(alpha: 0.72),
+        child: Row(
+          children: [
+            Container(
+              width: 46,
+              height: 46,
+              decoration: BoxDecoration(
+                color: theme.colorScheme.primary.withValues(alpha: 0.10),
+                shape: BoxShape.circle,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    height: 12,
+                    width: 120 + (index % 3) * 28,
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.surfaceContainerHighest
+                          .withValues(alpha: 0.9),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Container(
+                    height: 10,
+                    width: 210 + (index % 2) * 36,
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.outlineVariant
+                          .withValues(alpha: 0.72),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(
+                strokeWidth: 2.2,
+                color: theme.colorScheme.primary,
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -1316,11 +1395,12 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
     ThemeData theme,
     _GroupChatParticipant participant,
   ) {
+    final isOpening = _openingPrivateChatUserId == participant.userId;
     return Padding(
       padding: const EdgeInsets.fromLTRB(4, 4, 4, 4),
       child: InkWell(
         borderRadius: BorderRadius.circular(22),
-        onTap: () => _openPrivateChat(participant),
+        onTap: isOpening ? null : () => _openPrivateChat(participant),
         child: GlassPanel(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
           blur: 10,
@@ -1362,7 +1442,17 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
                   ],
                 ),
               ),
-              const Icon(Icons.chevron_right, size: 18),
+              if (isOpening)
+                SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.1,
+                    color: theme.colorScheme.primary,
+                  ),
+                )
+              else
+                const Icon(Icons.chevron_right, size: 18),
             ],
           ),
         ),
@@ -1371,7 +1461,7 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
   }
 
   Future<void> _openPrivateChat(_GroupChatParticipant participant) async {
-    setState(() => _isLoading = true);
+    setState(() => _openingPrivateChatUserId = participant.userId);
     try {
       final chatId = await _chatService.getOrCreateChat(participant.userId);
       if (chatId != null && mounted) {
@@ -1388,7 +1478,9 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
         );
       }
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() => _openingPrivateChatUserId = null);
+      }
     }
   }
 

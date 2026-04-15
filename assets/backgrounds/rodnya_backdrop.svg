@@ -1,0 +1,38 @@
+<svg width="1600" height="1400" viewBox="0 0 1600 1400" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="blobA" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(220 180) rotate(22) scale(360 280)">
+      <stop stop-color="#8FE7DA" stop-opacity="0.32"/>
+      <stop offset="1" stop-color="#8FE7DA" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="blobB" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(1310 250) rotate(-18) scale(340 260)">
+      <stop stop-color="#F5C8A1" stop-opacity="0.28"/>
+      <stop offset="1" stop-color="#F5C8A1" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="blobC" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(1230 1120) rotate(14) scale(380 310)">
+      <stop stop-color="#B3D7FF" stop-opacity="0.26"/>
+      <stop offset="1" stop-color="#B3D7FF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="blobD" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(520 1210) rotate(-12) scale(420 250)">
+      <stop stop-color="#BCE8D6" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#BCE8D6" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="lineA" x1="120" y1="210" x2="700" y2="560" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF" stop-opacity="0.58"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0.04"/>
+    </linearGradient>
+    <linearGradient id="lineB" x1="980" y1="830" x2="1480" y2="1080" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF" stop-opacity="0.34"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0.02"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1600" height="1400" fill="#F6F7F2"/>
+  <circle cx="220" cy="180" r="360" fill="url(#blobA)"/>
+  <circle cx="1310" cy="250" r="340" fill="url(#blobB)"/>
+  <circle cx="1230" cy="1120" r="380" fill="url(#blobC)"/>
+  <circle cx="520" cy="1210" r="420" fill="url(#blobD)"/>
+
+  <path d="M88 268C258 116 498 118 644 238C716 298 770 384 870 410C970 438 1066 378 1166 384C1326 394 1464 560 1436 720" stroke="url(#lineA)" stroke-width="2"/>
+  <path d="M952 778C1038 742 1132 744 1208 788C1284 832 1342 916 1438 924" stroke="url(#lineB)" stroke-width="2"/>
+  <path d="M292 1034C430 926 612 906 770 980" stroke="#FFFFFF" stroke-opacity="0.18" stroke-width="2"/>
+</svg>

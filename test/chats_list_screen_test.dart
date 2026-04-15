@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get_it/get_it.dart';
@@ -54,6 +56,7 @@ class _FakeChatService implements ChatServiceInterface {
   List<String>? createdBranchRootPersonIds;
   String? createdTitle;
   List<ChatPreview> chatPreviews = const <ChatPreview>[];
+  Stream<List<ChatPreview>>? chatPreviewsStreamOverride;
 
   @override
   String? get currentUserId => 'user-1';
@@ -63,7 +66,7 @@ class _FakeChatService implements ChatServiceInterface {
 
   @override
   Stream<List<ChatPreview>> getUserChatsStream(String userId) {
-    return Stream.value(chatPreviews);
+    return chatPreviewsStreamOverride ?? Stream.value(chatPreviews);
   }
 
   @override
@@ -434,6 +437,28 @@ void main() {
     expect(find.text('Создать чат'), findsOneWidget);
     expect(find.text('Открыть родных'), findsOneWidget);
     expect(find.text('Открыть дерево'), findsOneWidget);
+  });
+
+  testWidgets(
+      'ChatsListScreen показывает оболочку сразу, пока чаты догружаются',
+      (tester) async {
+    final chatService = getIt<ChatServiceInterface>() as _FakeChatService;
+    final controller = StreamController<List<ChatPreview>>();
+    chatService.chatPreviewsStreamOverride = controller.stream;
+    addTearDown(controller.close);
+
+    await tester.pumpWidget(buildApp());
+    await tester.pump();
+
+    expect(find.text('Чаты'), findsOneWidget);
+    expect(find.byType(TextField), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsWidgets);
+    expect(find.text('Пока нет чатов'), findsNothing);
+
+    controller.add(const <ChatPreview>[]);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Пока нет чатов'), findsOneWidget);
   });
 
   testWidgets('Пустое состояние чатов ведет в родных и дерево', (tester) async {

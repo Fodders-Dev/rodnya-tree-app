@@ -30,6 +30,7 @@ import '../screens/family_tree/create_tree_screen.dart';
 import '../screens/chat_screen.dart';
 import '../widgets/offline_indicator.dart';
 import '../widgets/main_navigation_bar.dart';
+import '../widgets/app_backdrop.dart';
 import '../screens/offline_profiles_screen.dart';
 import '../screens/public_tree_entry_screen.dart';
 import '../screens/public_tree_viewer_screen.dart';
@@ -305,27 +306,42 @@ class AppRouter {
 
               if (isDesktop) {
                 return Scaffold(
-                  body: Row(
+                  backgroundColor: Colors.transparent,
+                  body: Stack(
+                    fit: StackFit.expand,
                     children: [
-                      _AdaptiveNavigationRail(
-                        navigationShell: navigationShell,
-                        unreadNotificationsStream: unreadNotificationsStream,
-                        unreadChatsStream: unreadChatsStream,
-                        pendingInvitationsCountStream:
-                            pendingInvitationsCountStream,
-                      ),
-                      Expanded(
-                        child: Padding(
-                          padding: const EdgeInsets.fromLTRB(0, 16, 16, 16),
-                          child: bodyContent,
-                        ),
+                      const AppBackdrop(),
+                      Row(
+                        children: [
+                          _AdaptiveNavigationRail(
+                            navigationShell: navigationShell,
+                            unreadNotificationsStream:
+                                unreadNotificationsStream,
+                            unreadChatsStream: unreadChatsStream,
+                            pendingInvitationsCountStream:
+                                pendingInvitationsCountStream,
+                          ),
+                          Expanded(
+                            child: Padding(
+                              padding: const EdgeInsets.fromLTRB(0, 16, 16, 16),
+                              child: bodyContent,
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
                 );
               } else {
                 return Scaffold(
-                  body: bodyContent,
+                  backgroundColor: Colors.transparent,
+                  body: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      const AppBackdrop(),
+                      bodyContent,
+                    ],
+                  ),
                   bottomNavigationBar: MainNavigationBar(
                     currentIndex: navigationShell.currentIndex,
                     onTap: (index) {
