@@ -241,7 +241,7 @@ void main() {
 
       expect(find.text('Тестовое дерево'), findsWidgets);
       expect(find.text('События'), findsOneWidget);
-      expect(find.text('Дерево активно'), findsOneWidget);
+      expect(find.text('Дерево активно'), findsNothing);
       expect(find.bySemanticsLabel('story-rail-add'), findsOneWidget);
       expect(find.text('Обновите позже.'), findsOneWidget);
       expect(find.text('Лента недоступна'), findsWidgets);
@@ -268,7 +268,6 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Главная'), findsOneWidget);
-      expect(find.text('Выберите дерево'), findsOneWidget);
       expect(find.text('Нет активного дерева'), findsOneWidget);
       expect(find.text('Выбрать дерево'), findsOneWidget);
       expect(find.text('Создать граф'), findsOneWidget);
