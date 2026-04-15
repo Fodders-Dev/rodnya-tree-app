@@ -8,6 +8,8 @@ import '../models/family_person.dart';
 import '../models/family_relation.dart';
 import '../models/family_tree.dart';
 import '../widgets/interactive_family_tree.dart';
+import '../widgets/tree_history_sheet.dart';
+import '../widgets/glass_panel.dart';
 import '../providers/tree_provider.dart'; // Импортируем TreeProvider
 import 'package:go_router/go_router.dart'; // Для навигации
 import '../models/user_profile.dart';
@@ -18,9 +20,11 @@ import '../backend/interfaces/family_tree_service_interface.dart';
 import '../services/public_tree_link_service.dart';
 import '../services/local_storage_service.dart';
 import '../utils/user_facing_error.dart';
+import '../utils/e2e_state_bridge.dart';
 
 enum _TreeToolbarAction {
   refresh,
+  openHistory,
   openRelatives,
   openChats,
   createPost,
@@ -98,6 +102,68 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
       error: error,
       fallbackMessage: fallbackMessage,
     );
+  }
+
+  List<FamilyPerson> get _treePeople => _relativesData
+      .map((entry) => entry['person'])
+      .whereType<FamilyPerson>()
+      .toList();
+
+  FamilyPerson? get _selectedEditPerson {
+    final selectedId = _selectedEditPersonId;
+    if (selectedId == null) {
+      return null;
+    }
+    for (final person in _treePeople) {
+      if (person.id == selectedId) {
+        return person;
+      }
+    }
+    return null;
+  }
+
+  void _publishTreeE2EState(String? selectedTreeId) {
+    if (!E2EStateBridge.isEnabled) {
+      return;
+    }
+
+    final people = _treePeople;
+    final selectedPerson = _selectedEditPerson;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      E2EStateBridge.publish(
+        screen: 'tree',
+        state: <String, dynamic>{
+          'selectedTreeId': selectedTreeId,
+          'currentTreeId': _currentTreeId,
+          'treeName': _currentTreeMeta?.name ?? widget.routeTreeName,
+          'isLoading': _isLoading,
+          'isEditMode': _isEditMode,
+          'branchRootPersonId': _branchRootPersonId,
+          'selectedEditPersonId': _selectedEditPersonId,
+          'selectedEditPerson': selectedPerson == null
+              ? null
+              : <String, dynamic>{
+                  'id': selectedPerson.id,
+                  'name': selectedPerson.name,
+                  'photoCount': selectedPerson.photoGallery.length,
+                  'hasPrimaryPhoto': selectedPerson.primaryPhotoUrl != null,
+                },
+          'people': people
+              .map(
+                (person) => <String, dynamic>{
+                  'id': person.id,
+                  'name': person.name,
+                  'photoCount': person.photoGallery.length,
+                  'hasPrimaryPhoto': person.primaryPhotoUrl != null,
+                },
+              )
+              .toList(),
+        },
+      );
+    });
   }
 
   @override
@@ -289,6 +355,7 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
   Widget build(BuildContext context) {
     final treeProvider = Provider.of<TreeProvider>(context);
     final selectedTreeId = treeProvider.selectedTreeId ?? widget.routeTreeId;
+    _publishTreeE2EState(selectedTreeId);
     final selectedTreeName = treeProvider.selectedTreeName ??
         widget.routeTreeName ??
         'Семейное дерево';
@@ -313,14 +380,13 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
         ),
         body: _buildTreeState(
           icon: Icons.account_tree_outlined,
-          title: 'Дерево не выбрано',
-          message:
-              'Откройте список деревьев и выберите нужное. После этого здесь появится интерактивная схема семьи.',
+          title: 'Выберите дерево',
+          message: 'Здесь появится схема семьи.',
           actions: [
             FilledButton.icon(
               onPressed: () => context.go('/tree?selector=1'),
               icon: const Icon(Icons.list_alt),
-              label: const Text('Открыть список деревьев'),
+              label: const Text('Открыть'),
             ),
           ],
         ),
@@ -394,7 +460,7 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
           return _buildTreeState(
             icon: Icons.sync,
             title: 'Загружаем дерево',
-            message: 'Подтягиваем людей, связи и текущее состояние дерева.',
+            message: 'Подтягиваем людей и связи.',
             showProgress: true,
           );
         }
@@ -403,18 +469,14 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
           final isEmptyTree = _relativesData.isEmpty && _relationsData.isEmpty;
           return _buildTreeState(
             icon: isEmptyTree ? Icons.account_tree : Icons.error_outline,
-            title: isEmptyTree
-                ? 'Дерево пока пустое'
-                : 'Не удалось загрузить дерево',
-            message: isEmptyTree
-                ? 'Добавьте первого человека, чтобы начать собирать структуру семьи.'
-                : _errorMessage,
+            title: isEmptyTree ? 'Дерево пустое' : 'Не удалось загрузить',
+            message: isEmptyTree ? 'Добавьте первого человека.' : _errorMessage,
             actions: [
               if (isEmptyTree)
                 FilledButton.icon(
                   onPressed: () => _navigateToAddRelative(selectedTreeId),
                   icon: const Icon(Icons.person_add_alt_1),
-                  label: const Text('Добавить первого человека'),
+                  label: const Text('Добавить'),
                 ),
               OutlinedButton.icon(
                 onPressed: () => _loadData(selectedTreeId),
@@ -426,9 +488,10 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
         }
 
         final treeCanvas = _buildTreeCanvas();
-        final horizontalPadding = isCompact ? 10.0 : 16.0;
-        final topPadding = isCompact ? 8.0 : 12.0;
-        final bottomPadding = isCompact ? 12.0 : 16.0;
+        final horizontalPadding =
+            isWideDesktop ? 10.0 : (isCompact ? 10.0 : 16.0);
+        final topPadding = isWideDesktop ? 10.0 : (isCompact ? 8.0 : 12.0);
+        final bottomPadding = isWideDesktop ? 14.0 : (isCompact ? 12.0 : 16.0);
 
         Widget content = Padding(
           padding: EdgeInsets.fromLTRB(
@@ -459,63 +522,104 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
     final theme = Theme.of(context);
     final canvasAccent =
         _isFriendsTree ? const Color(0xFF0F9D8A) : theme.colorScheme.primary;
-    return Container(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            theme.colorScheme.surface,
-            canvasAccent.withValues(alpha: _isFriendsTree ? 0.04 : 0.02),
-          ],
+    return GlassPanel(
+      padding: EdgeInsets.zero,
+      borderRadius: BorderRadius.circular(30),
+      blur: 14,
+      color: theme.colorScheme.surface.withValues(alpha: 0.72),
+      borderColor: canvasAccent.withValues(alpha: 0.18),
+      boxShadow: [
+        BoxShadow(
+          color: theme.colorScheme.shadow.withValues(alpha: 0.08),
+          blurRadius: 28,
+          offset: const Offset(0, 18),
         ),
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(
-          color: canvasAccent.withValues(alpha: 0.18),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: theme.colorScheme.shadow.withValues(alpha: 0.06),
-            blurRadius: 24,
-            offset: const Offset(0, 10),
+      ],
+      child: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              theme.colorScheme.surface.withValues(alpha: 0.88),
+              canvasAccent.withValues(alpha: _isFriendsTree ? 0.05 : 0.03),
+            ],
           ),
-        ],
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(24),
-        child: InteractiveFamilyTree(
-          peopleData: _relativesData,
-          relations: _relationsData,
-          currentUserId: _authService.currentUserId,
-          branchRootPersonId: _branchRootPersonId,
-          onBranchFocusCleared: _resetBranchFocus,
-          onPersonTap: (person) {
-            debugPrint('Нажатие на узел: ${person.name} (${person.id})');
-            context.push('/relative/details/${person.id}');
-          },
-          onBranchFocusRequested: _focusBranch,
-          isEditMode: _isEditMode,
-          selectedEditPersonId: _selectedEditPersonId,
-          onEditPersonSelected: (person) {
-            setState(() {
-              _selectedEditPersonId = person.id;
-            });
-          },
-          manualNodePositions: _manualNodePositions,
-          onNodePositionsChanged: (positions) {
-            _handleNodePositionsChanged(positions);
-          },
-          showGenerationGuides: !_isFriendsTree,
-          enableClusterHighlights: !_isFriendsTree,
-          graphLabel: _isFriendsTree ? 'дружеского графа' : 'дерева',
-          hasManualLayout: _manualNodePositions.isNotEmpty,
-          onResetLayout:
-              _manualNodePositions.isNotEmpty && _currentTreeId != null
-                  ? () => _resetManualTreeLayout(_currentTreeId!)
-                  : null,
-          onAddRelativeTapWithType: _handleAddRelativeFromTree,
-          currentUserIsInTree: _currentUserIsInTree,
-          onAddSelfTapWithType: _handleAddSelfFromTree,
+          borderRadius: BorderRadius.circular(30),
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(30),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              IgnorePointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: RadialGradient(
+                      center: const Alignment(0, 0.04),
+                      radius: 0.72,
+                      colors: [
+                        canvasAccent.withValues(
+                          alpha: _isFriendsTree ? 0.14 : 0.10,
+                        ),
+                        theme.colorScheme.surface.withValues(alpha: 0),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              IgnorePointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        theme.colorScheme.surface.withValues(alpha: 0.16),
+                        theme.colorScheme.surface.withValues(alpha: 0),
+                        canvasAccent.withValues(alpha: 0.04),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              InteractiveFamilyTree(
+                peopleData: _relativesData,
+                relations: _relationsData,
+                currentUserId: _authService.currentUserId,
+                branchRootPersonId: _branchRootPersonId,
+                onBranchFocusCleared: _resetBranchFocus,
+                onPersonTap: (person) {
+                  debugPrint('Нажатие на узел: ${person.name} (${person.id})');
+                  context.push('/relative/details/${person.id}');
+                },
+                onBranchFocusRequested: _focusBranch,
+                isEditMode: _isEditMode,
+                selectedEditPersonId: _selectedEditPersonId,
+                onEditPersonSelected: (person) {
+                  setState(() {
+                    _selectedEditPersonId = person.id;
+                  });
+                },
+                onOpenPersonHistory: _showPersonHistorySheet,
+                manualNodePositions: _manualNodePositions,
+                onNodePositionsChanged: (positions) {
+                  _handleNodePositionsChanged(positions);
+                },
+                showGenerationGuides: !_isFriendsTree,
+                enableClusterHighlights: !_isFriendsTree,
+                graphLabel: _isFriendsTree ? 'дружеского графа' : 'дерева',
+                hasManualLayout: _manualNodePositions.isNotEmpty,
+                onResetLayout:
+                    _manualNodePositions.isNotEmpty && _currentTreeId != null
+                        ? () => _resetManualTreeLayout(_currentTreeId!)
+                        : null,
+                onAddRelativeTapWithType: _handleAddRelativeFromTree,
+                currentUserIsInTree: _currentUserIsInTree,
+                onAddSelfTapWithType: _handleAddSelfFromTree,
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -535,16 +639,9 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
         padding: const EdgeInsets.all(24),
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 420),
-          child: Container(
-            width: double.infinity,
+          child: GlassPanel(
             padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(
-              color: theme.colorScheme.surfaceContainerHighest.withValues(
-                alpha: 0.45,
-              ),
-              borderRadius: BorderRadius.circular(24),
-              border: Border.all(color: theme.colorScheme.outlineVariant),
-            ),
+            borderRadius: BorderRadius.circular(30),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -594,6 +691,11 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
         value: _TreeToolbarAction.refresh,
         icon: Icons.refresh,
         label: 'Обновить дерево',
+      ),
+      _buildTreeToolbarMenuItem(
+        value: _TreeToolbarAction.openHistory,
+        icon: Icons.history_outlined,
+        label: 'История изменений',
       ),
       _buildTreeToolbarMenuItem(
         value: _TreeToolbarAction.openRelatives,
@@ -690,6 +792,9 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
     switch (action) {
       case _TreeToolbarAction.refresh:
         await _loadData(selectedTreeId);
+        return;
+      case _TreeToolbarAction.openHistory:
+        await _showTreeHistorySheet();
         return;
       case _TreeToolbarAction.openRelatives:
         context.go('/relatives');
@@ -898,6 +1003,55 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
   }
 
   // =============================================================
+
+  Future<void> _showTreeHistorySheet({FamilyPerson? person}) async {
+    final treeId = _currentTreeId;
+    if (treeId == null) {
+      return;
+    }
+
+    final historyFuture = _familyService.getTreeHistory(
+      treeId: treeId,
+      personId: person?.id,
+    );
+    final sheetTitle = person == null ? 'История дерева' : 'История изменений';
+    final sheetSubtitle = person?.name ??
+        _currentTreeMeta?.name ??
+        widget.routeTreeName ??
+        'Текущее дерево';
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        return TreeHistorySheet(
+          historyFuture: historyFuture,
+          title: sheetTitle,
+          subtitle: sheetSubtitle,
+          currentUserId: _authService.currentUserId,
+          emptyMessage: person == null
+              ? 'В журнале дерева пока нет записей.'
+              : 'Для этой карточки пока нет записей в журнале.',
+          errorBuilder: (error) => _describeTreeActionError(
+            error,
+            fallbackMessage: 'Не удалось загрузить историю.',
+          ),
+          onOpenPerson: (personId) {
+            Navigator.of(sheetContext).pop();
+            if (!mounted) {
+              return;
+            }
+            context.push('/relative/details/$personId');
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _showPersonHistorySheet(FamilyPerson person) {
+    return _showTreeHistorySheet(person: person);
+  }
 
   Future<void> _navigateToAddRelative(String treeId) async {
     final result = await context.push('/relatives/add/$treeId');

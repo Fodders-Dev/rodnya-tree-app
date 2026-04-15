@@ -27,13 +27,15 @@ class FamilyRelationAdapter extends TypeAdapter<FamilyRelation> {
       createdAt: fields[7] as DateTime,
       updatedAt: fields[8] as DateTime?,
       createdBy: fields[9] as String?,
+      marriageDate: fields[10] as DateTime?,
+      divorceDate: fields[11] as DateTime?,
     );
   }
 
   @override
   void write(BinaryWriter writer, FamilyRelation obj) {
     writer
-      ..writeByte(10)
+      ..writeByte(12)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -53,7 +55,11 @@ class FamilyRelationAdapter extends TypeAdapter<FamilyRelation> {
       ..writeByte(8)
       ..write(obj.updatedAt)
       ..writeByte(9)
-      ..write(obj.createdBy);
+      ..write(obj.createdBy)
+      ..writeByte(10)
+      ..write(obj.marriageDate)
+      ..writeByte(11)
+      ..write(obj.divorceDate);
   }
 
   @override

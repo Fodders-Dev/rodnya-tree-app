@@ -53,6 +53,7 @@ class Person {
   }) : _photoUrl = UrlUtils.normalizeImageUrl(photoUrl);
 
   String? get photoUrl => _photoUrl;
+  String? get primaryPhotoUrl => _photoUrl;
 
   // Геттер для получения полного имени
   String get name {
@@ -198,8 +199,16 @@ class FamilyPerson extends HiveObject {
   @HiveField(23)
   final FamilyPersonDetails?
       details; // Подробная информация (образование, карьера и т.д.)
+  @HiveField(24)
+  final List<Map<String, dynamic>> _photoGallery;
 
   String? get photoUrl => _photoUrl;
+  String? get primaryPhotoUrl => _photoUrl;
+  List<Map<String, dynamic>> get photoGallery => List.unmodifiable(
+        _photoGallery.map(
+          (entry) => Map<String, dynamic>.from(entry),
+        ),
+      );
 
   // Добавляем необходимые геттеры для работы с древовидной структурой
   List<String> get spouseIds =>
@@ -235,7 +244,123 @@ class FamilyPerson extends HiveObject {
     this.spouseId,
     this.siblingIds,
     this.details,
-  }) : _photoUrl = UrlUtils.normalizeImageUrl(photoUrl);
+    List<Map<String, dynamic>>? photoGallery,
+  })  : _photoGallery = _normalizePhotoGallery(
+          photoGallery,
+          fallbackPrimaryPhotoUrl: photoUrl,
+        ),
+        _photoUrl = _resolvePrimaryPhotoUrl(
+          _normalizePhotoGallery(
+            photoGallery,
+            fallbackPrimaryPhotoUrl: photoUrl,
+          ),
+          fallbackPrimaryPhotoUrl: photoUrl,
+        );
+
+  static List<Map<String, dynamic>> _normalizePhotoGallery(
+    List<Map<String, dynamic>>? rawGallery, {
+    String? fallbackPrimaryPhotoUrl,
+  }) {
+    final normalizedPrimaryPhotoUrl =
+        UrlUtils.normalizeImageUrl(fallbackPrimaryPhotoUrl);
+    final normalizedEntries = <Map<String, dynamic>>[];
+    final seenIds = <String>{};
+    final seenUrls = <String>{};
+
+    void addEntry(Map<String, dynamic> rawEntry) {
+      final normalizedUrl = UrlUtils.normalizeImageUrl(rawEntry['url']);
+      if (normalizedUrl == null || seenUrls.contains(normalizedUrl)) {
+        return;
+      }
+
+      final rawId = rawEntry['id']?.toString().trim();
+      final mediaId =
+          (rawId != null && rawId.isNotEmpty && !seenIds.contains(rawId))
+              ? rawId
+              : 'photo-${normalizedEntries.length + 1}';
+      seenIds.add(mediaId);
+      seenUrls.add(normalizedUrl);
+
+      normalizedEntries.add({
+        'id': mediaId,
+        'url': normalizedUrl,
+        'thumbnailUrl': UrlUtils.normalizeImageUrl(rawEntry['thumbnailUrl']),
+        'type': rawEntry['type']?.toString() == 'video' ? 'video' : 'image',
+        'contentType': rawEntry['contentType']?.toString(),
+        'caption': rawEntry['caption']?.toString(),
+        'createdAt': rawEntry['createdAt']?.toString(),
+        'updatedAt': rawEntry['updatedAt']?.toString(),
+        'isPrimary': rawEntry['isPrimary'] == true,
+      });
+    }
+
+    if (rawGallery != null) {
+      for (final entry in rawGallery) {
+        addEntry(Map<String, dynamic>.from(entry));
+      }
+    }
+
+    if (normalizedPrimaryPhotoUrl != null &&
+        normalizedEntries
+            .every((entry) => entry['url'] != normalizedPrimaryPhotoUrl)) {
+      addEntry({
+        'url': normalizedPrimaryPhotoUrl,
+        'type': 'image',
+        'isPrimary': true,
+      });
+    }
+
+    final resolvedPrimaryPhotoUrl = normalizedPrimaryPhotoUrl ??
+        normalizedEntries
+            .cast<Map<String, dynamic>?>()
+            .firstWhere(
+              (entry) => entry?['isPrimary'] == true,
+              orElse: () => null,
+            )?['url']
+            ?.toString() ??
+        (normalizedEntries.isNotEmpty
+            ? normalizedEntries.first['url']?.toString()
+            : null);
+
+    if (resolvedPrimaryPhotoUrl == null) {
+      return const <Map<String, dynamic>>[];
+    }
+
+    final primaryIndex = normalizedEntries.indexWhere(
+      (entry) => entry['url'] == resolvedPrimaryPhotoUrl,
+    );
+    if (primaryIndex > 0) {
+      final primaryEntry = normalizedEntries.removeAt(primaryIndex);
+      normalizedEntries.insert(0, primaryEntry);
+    }
+
+    for (final entry in normalizedEntries) {
+      entry['isPrimary'] = entry['url'] == resolvedPrimaryPhotoUrl;
+    }
+
+    return normalizedEntries;
+  }
+
+  static String? _resolvePrimaryPhotoUrl(
+    List<Map<String, dynamic>> photoGallery, {
+    String? fallbackPrimaryPhotoUrl,
+  }) {
+    return UrlUtils.normalizeImageUrl(fallbackPrimaryPhotoUrl) ??
+        (photoGallery.isNotEmpty
+            ? photoGallery.first['url']?.toString()
+            : null);
+  }
+
+  static List<Map<String, dynamic>> _photoGalleryFromDynamic(dynamic rawValue) {
+    if (rawValue is! List) {
+      return const <Map<String, dynamic>>[];
+    }
+
+    return rawValue
+        .whereType<Map>()
+        .map((entry) => Map<String, dynamic>.from(entry))
+        .toList();
+  }
 
   /// Возвращает отображаемое имя (синоним для поля `name`).
   String get displayName => name;
@@ -276,7 +401,7 @@ class FamilyPerson extends HiveObject {
       userId: data['userId'],
       name: data['name'] ?? '',
       maidenName: data['maidenName'],
-      photoUrl: data['photoUrl'],
+      photoUrl: data['primaryPhotoUrl'] ?? data['photoUrl'],
       gender: personGender,
       birthDate: parseDateTime(data['birthDate']),
       birthPlace: data['birthPlace'],
@@ -293,6 +418,7 @@ class FamilyPerson extends HiveObject {
       childrenIds: List<String>.from(data['childrenIds'] ?? []),
       spouseId: data['spouseId'],
       siblingIds: List<String>.from(data['siblingIds'] ?? []),
+      photoGallery: _photoGalleryFromDynamic(data['photoGallery']),
     );
   }
 
@@ -303,6 +429,8 @@ class FamilyPerson extends HiveObject {
       'name': name,
       'maidenName': maidenName,
       'photoUrl': photoUrl,
+      'primaryPhotoUrl': primaryPhotoUrl,
+      'photoGallery': photoGallery,
       'gender': gender.toString().split('.').last,
       'birthDate': birthDate?.toIso8601String(),
       'birthPlace': birthPlace,

@@ -81,7 +81,9 @@ function createApp({
     });
     next();
   });
-  app.use(express.json({limit: "50mb"}));
+  // Some legacy/mobile clients still send JSON literal `null` on bodyless POSTs
+  // such as like/view/read actions. Accept it and let handlers validate fields.
+  app.use(express.json({limit: "50mb", strict: false}));
   app.get(/^\/media\/(.+)$/, async (req, res) => {
     try {
       await resolvedMediaStorage.handleGetRequest(req, res);
@@ -93,8 +95,32 @@ function createApp({
         res.status(400).json({message: "Недопустимый media path"});
         return;
       }
-      if (!res.headersSent) {
+      if (error?.message === "MEDIA_FILE_NOT_FOUND") {
         res.status(404).json({message: "Media файл не найден"});
+        return;
+      }
+      if (!res.headersSent) {
+        res.status(502).json({message: "Не удалось открыть media файл"});
+      }
+    }
+  });
+  app.get(/^\/storage\/(.+)$/, async (req, res) => {
+    try {
+      await resolvedMediaStorage.handlePublicGetRequest(req, res);
+    } catch (error) {
+      if (
+        error?.message === "INVALID_MEDIA_PATH" ||
+        error?.message === "UNSUPPORTED_MEDIA_URL"
+      ) {
+        res.status(400).json({message: "Недопустимый media path"});
+        return;
+      }
+      if (error?.message === "MEDIA_FILE_NOT_FOUND") {
+        res.status(404).json({message: "Media файл не найден"});
+        return;
+      }
+      if (!res.headersSent) {
+        res.status(502).json({message: "Не удалось открыть media файл"});
       }
     }
   });
@@ -105,6 +131,9 @@ function createApp({
         return null;
       }
       if (pathName.startsWith("/media/")) {
+        return null;
+      }
+      if (pathName.startsWith("/storage/")) {
         return null;
       }
       if (
@@ -318,6 +347,20 @@ function createApp({
       name: person.name,
       maidenName: person.maidenName,
       photoUrl: person.photoUrl,
+      primaryPhotoUrl: person.primaryPhotoUrl || person.photoUrl || null,
+      photoGallery: Array.isArray(person.photoGallery)
+        ? person.photoGallery.map((entry) => ({
+            id: entry.id,
+            url: entry.url,
+            thumbnailUrl: entry.thumbnailUrl || null,
+            type: entry.type || "image",
+            contentType: entry.contentType || null,
+            caption: entry.caption || null,
+            createdAt: entry.createdAt || null,
+            updatedAt: entry.updatedAt || null,
+            isPrimary: entry.isPrimary === true,
+          }))
+        : [],
       gender: person.gender,
       birthDate: person.birthDate,
       birthPlace: person.birthPlace,
@@ -344,6 +387,26 @@ function createApp({
       createdAt: relation.createdAt,
       updatedAt: relation.updatedAt,
       createdBy: relation.createdBy,
+      marriageDate: relation.marriageDate || null,
+      divorceDate: relation.divorceDate || null,
+    };
+  }
+
+  function mapTreeChangeRecord(record) {
+    return {
+      id: record.id,
+      treeId: record.treeId,
+      actorId: record.actorId || null,
+      type: record.type,
+      personId: record.personId || null,
+      personIds: Array.isArray(record.personIds) ? record.personIds : [],
+      relationId: record.relationId || null,
+      mediaId: record.mediaId || null,
+      createdAt: record.createdAt,
+      details:
+        record.details && typeof record.details === "object"
+          ? record.details
+          : {},
     };
   }
 
@@ -484,6 +547,24 @@ function createApp({
       anchorPersonIds: Array.isArray(post.anchorPersonIds)
         ? post.anchorPersonIds
         : [],
+    };
+  }
+
+  function mapStory(story) {
+    return {
+      id: story.id,
+      treeId: story.treeId,
+      authorId: story.authorId,
+      authorName: story.authorName || "Аноним",
+      authorPhotoUrl: story.authorPhotoUrl || null,
+      type: story.type || "text",
+      text: story.text || null,
+      mediaUrl: story.mediaUrl || null,
+      thumbnailUrl: story.thumbnailUrl || null,
+      createdAt: story.createdAt,
+      updatedAt: story.updatedAt || story.createdAt,
+      expiresAt: story.expiresAt,
+      viewedBy: Array.isArray(story.viewedBy) ? story.viewedBy : [],
     };
   }
 
@@ -1084,6 +1165,122 @@ function createApp({
     }
   });
 
+  app.get("/v1/stories", requireAuth, async (req, res) => {
+    const treeId = String(req.query.treeId || "").trim() || null;
+    const authorId = String(req.query.authorId || "").trim() || null;
+
+    if (treeId) {
+      const tree = await requireTreeAccess(req, res, treeId);
+      if (!tree) {
+        return;
+      }
+    }
+
+    const accessibleTrees = await store.listUserTrees(req.auth.user.id);
+    const accessibleTreeIds = new Set(accessibleTrees.map((tree) => tree.id));
+    const stories = await store.listStories({treeId, authorId});
+    const visibleStories = stories.filter((story) => accessibleTreeIds.has(story.treeId));
+
+    res.json(visibleStories.map(mapStory));
+  });
+
+  app.post("/v1/stories", requireAuth, async (req, res) => {
+    const treeId = String(req.body?.treeId || "").trim();
+    const type = String(req.body?.type || "text").trim();
+    const text = req.body?.text;
+    const mediaUrl = req.body?.mediaUrl;
+    const thumbnailUrl = req.body?.thumbnailUrl;
+    const expiresAt = req.body?.expiresAt;
+
+    if (!treeId) {
+      res.status(400).json({message: "Нужен treeId"});
+      return;
+    }
+
+    const tree = await requireTreeAccess(req, res, treeId);
+    if (!tree) {
+      return;
+    }
+
+    const story = await store.createStory({
+      treeId: tree.id,
+      authorId: req.auth.user.id,
+      authorName:
+        req.auth.user.profile?.displayName ||
+        composeDisplayName(req.auth.user.profile) ||
+        req.auth.user.email ||
+        "Аноним",
+      authorPhotoUrl: req.auth.user.profile?.photoUrl || null,
+      type,
+      text,
+      mediaUrl,
+      thumbnailUrl,
+      expiresAt,
+    });
+
+    if (story === false) {
+      res.status(400).json({
+        message: "Story должна содержать текст или media в зависимости от типа",
+      });
+      return;
+    }
+    if (!story) {
+      res.status(404).json({message: "Дерево не найдено"});
+      return;
+    }
+
+    res.status(201).json(mapStory(story));
+  });
+
+  app.post("/v1/stories/:storyId/view", requireAuth, async (req, res) => {
+    const story = await store.findStory(req.params.storyId);
+    if (!story) {
+      res.status(404).json({message: "Story не найдена"});
+      return;
+    }
+
+    const tree = await requireTreeAccess(req, res, story.treeId);
+    if (!tree) {
+      return;
+    }
+
+    const updatedStory = await store.markStoryViewed(
+      req.params.storyId,
+      req.auth.user.id,
+    );
+    if (!updatedStory) {
+      res.status(404).json({message: "Story не найдена"});
+      return;
+    }
+
+    res.json(mapStory(updatedStory));
+  });
+
+  app.delete("/v1/stories/:storyId", requireAuth, async (req, res) => {
+    const story = await store.findStory(req.params.storyId);
+    if (!story) {
+      res.status(404).json({message: "Story не найдена"});
+      return;
+    }
+
+    const tree = await requireTreeAccess(req, res, story.treeId);
+    if (!tree) {
+      return;
+    }
+
+    const deletedStory = await store.deleteStory(req.params.storyId, req.auth.user.id);
+    if (deletedStory === false) {
+      res.status(403).json({message: "Можно удалять только свои stories"});
+      return;
+    }
+    if (!deletedStory) {
+      res.status(404).json({message: "Story не найдена"});
+      return;
+    }
+
+    res.status(204).send();
+  });
+
   app.get("/v1/posts", requireAuth, async (req, res) => {
     const treeId = String(req.query.treeId || "").trim() || null;
     const authorId = String(req.query.authorId || "").trim() || null;
@@ -1475,6 +1672,7 @@ function createApp({
         tree.id,
         req.params.personId,
         req.body || {},
+        req.auth.user.id,
       );
       if (!person) {
         res.status(404).json({message: "Человек не найден"});
@@ -1494,7 +1692,11 @@ function createApp({
         return;
       }
 
-      const deleted = await store.deletePerson(tree.id, req.params.personId);
+      const deleted = await store.deletePerson(
+        tree.id,
+        req.params.personId,
+        req.auth.user.id,
+      );
       if (!deleted) {
         res.status(404).json({message: "Человек не найден"});
         return;
@@ -1503,6 +1705,123 @@ function createApp({
       res.status(204).send();
     },
   );
+
+  app.post(
+    "/v1/trees/:treeId/persons/:personId/media",
+    requireAuth,
+    async (req, res) => {
+      const tree = await requireTreeAccess(req, res, req.params.treeId);
+      if (!tree) {
+        return;
+      }
+
+      const url =
+        req.body?.url || req.body?.mediaUrl || req.body?.photoUrl || null;
+      if (!url) {
+        res.status(400).json({message: "Нужен url media-файла"});
+        return;
+      }
+
+      const result = await store.addPersonMedia({
+        treeId: tree.id,
+        personId: req.params.personId,
+        actorId: req.auth.user.id,
+        media: req.body || {},
+      });
+      if (!result) {
+        res.status(404).json({message: "Человек не найден"});
+        return;
+      }
+
+      res.status(201).json({
+        person: mapPerson(result.person),
+        media: result.media,
+      });
+    },
+  );
+
+  app.patch(
+    "/v1/trees/:treeId/persons/:personId/media/:mediaId",
+    requireAuth,
+    async (req, res) => {
+      const tree = await requireTreeAccess(req, res, req.params.treeId);
+      if (!tree) {
+        return;
+      }
+
+      const result = await store.updatePersonMedia({
+        treeId: tree.id,
+        personId: req.params.personId,
+        mediaId: req.params.mediaId,
+        actorId: req.auth.user.id,
+        updates: req.body || {},
+      });
+      if (result === null) {
+        res.status(404).json({message: "Человек не найден"});
+        return;
+      }
+      if (result === false) {
+        res.status(404).json({message: "Media элемент не найден"});
+        return;
+      }
+
+      res.json({
+        person: mapPerson(result.person),
+        media: result.media,
+      });
+    },
+  );
+
+  app.delete(
+    "/v1/trees/:treeId/persons/:personId/media/:mediaId",
+    requireAuth,
+    async (req, res) => {
+      const tree = await requireTreeAccess(req, res, req.params.treeId);
+      if (!tree) {
+        return;
+      }
+
+      const result = await store.deletePersonMedia({
+        treeId: tree.id,
+        personId: req.params.personId,
+        mediaId: req.params.mediaId,
+        actorId: req.auth.user.id,
+      });
+      if (result === null) {
+        res.status(404).json({message: "Человек не найден"});
+        return;
+      }
+      if (result === false) {
+        res.status(404).json({message: "Media элемент не найден"});
+        return;
+      }
+
+      res.json({
+        person: mapPerson(result.person),
+        deletedMediaId: result.deletedMedia?.id || req.params.mediaId,
+      });
+    },
+  );
+
+  app.get("/v1/trees/:treeId/history", requireAuth, async (req, res) => {
+    const tree = await requireTreeAccess(req, res, req.params.treeId);
+    if (!tree) {
+      return;
+    }
+
+    const personId = String(req.query.personId || "").trim() || null;
+    const type = String(req.query.type || "").trim() || null;
+    const actorId = String(req.query.actorId || "").trim() || null;
+    const records = await store.listTreeChangeRecords(tree.id, {
+      personId,
+      type,
+      actorId,
+    });
+
+    res.json({
+      records: records.map(mapTreeChangeRecord),
+    });
+  });
 
   app.get("/v1/trees/:treeId/relations", requireAuth, async (req, res) => {
     const tree = await requireTreeAccess(req, res, req.params.treeId);
@@ -1522,7 +1841,15 @@ function createApp({
       return;
     }
 
-    const {person1Id, person2Id, relation1to2, relation2to1, isConfirmed} =
+    const {
+      person1Id,
+      person2Id,
+      relation1to2,
+      relation2to1,
+      isConfirmed,
+      marriageDate,
+      divorceDate,
+    } =
       req.body || {};
     if (!person1Id || !person2Id || !relation1to2) {
       res.status(400).json({
@@ -1538,6 +1865,14 @@ function createApp({
       relation1to2: String(relation1to2),
       relation2to1: relation2to1 ? String(relation2to1) : undefined,
       isConfirmed: isConfirmed !== false,
+      marriageDate:
+        marriageDate === undefined || marriageDate === null
+          ? marriageDate
+          : String(marriageDate),
+      divorceDate:
+        divorceDate === undefined || divorceDate === null
+          ? divorceDate
+          : String(divorceDate),
       createdBy: req.auth.user.id,
     });
 
@@ -1550,6 +1885,29 @@ function createApp({
 
     res.status(201).json({relation: mapRelation(relation)});
   });
+
+  app.delete(
+    "/v1/trees/:treeId/relations/:relationId",
+    requireAuth,
+    async (req, res) => {
+      const tree = await requireTreeAccess(req, res, req.params.treeId);
+      if (!tree) {
+        return;
+      }
+
+      const deletedRelation = await store.deleteRelation(
+        tree.id,
+        req.params.relationId,
+        req.auth.user.id,
+      );
+      if (!deletedRelation) {
+        res.status(404).json({message: "Связь не найдена"});
+        return;
+      }
+
+      res.status(204).send();
+    },
+  );
 
   app.get("/v1/tree-invitations/pending", requireAuth, async (req, res) => {
     const invitations = await store.listPendingTreeInvitations(req.auth.user.id);

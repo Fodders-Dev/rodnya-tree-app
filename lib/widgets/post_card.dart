@@ -10,6 +10,7 @@ import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/post_service_interface.dart';
 import '../models/post.dart';
 import 'comment_sheet.dart';
+import 'glass_panel.dart';
 
 class PostCard extends StatefulWidget {
   const PostCard({super.key, required this.post, this.onDeleted});
@@ -74,9 +75,10 @@ class _PostCardState extends State<PostCard>
     if (_currentUserId == null) return;
 
     final wasLiked = _isLikedByCurrentUser;
+    final previousLikeCount = _likeCount;
     setState(() {
       _isLikedByCurrentUser = !wasLiked;
-      _likeCount += wasLiked ? -1 : 1;
+      _likeCount = (previousLikeCount + (wasLiked ? -1 : 1)).clamp(0, 1 << 30);
     });
 
     if (!wasLiked) {
@@ -84,16 +86,24 @@ class _PostCardState extends State<PostCard>
     }
 
     try {
-      await _postService.toggleLike(widget.post.id);
+      final updatedPost = await _postService.toggleLike(widget.post.id);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isLikedByCurrentUser = updatedPost.likedBy.contains(_currentUserId!);
+        _likeCount = updatedPost.likeCount;
+        _commentCount = updatedPost.commentCount;
+      });
     } catch (e) {
-      // Revert on error
+      // Revert to the last confirmed state if the backend rejected the like.
       setState(() {
         _isLikedByCurrentUser = wasLiked;
-        _likeCount = wasLiked ? _likeCount + 1 : _likeCount - 1;
+        _likeCount = previousLikeCount;
       });
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Ошибка при лайке: $e')),
+          SnackBar(content: Text('Не удалось обновить реакцию: $e')),
         );
       }
     }
@@ -189,23 +199,27 @@ class _PostCardState extends State<PostCard>
 
   @override
   Widget build(BuildContext context) {
-    return Card(
+    return GlassPanel(
+      padding: EdgeInsets.zero,
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-      elevation: 1,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      borderRadius: BorderRadius.circular(26),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _buildPostHeader(),
           if (widget.post.content.isNotEmpty)
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              child: Text(widget.post.content),
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              child: Text(
+                widget.post.content,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      height: 1.45,
+                    ),
+              ),
             ),
           if (widget.post.imageUrls != null &&
               widget.post.imageUrls!.isNotEmpty)
             _buildPostImages(),
-          const Divider(height: 1, thickness: 0.5, indent: 16, endIndent: 16),
           _buildPostActions(),
         ],
       ),
@@ -213,8 +227,9 @@ class _PostCardState extends State<PostCard>
   }
 
   Widget _buildPostHeader() {
+    final theme = Theme.of(context);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
       child: Row(
         children: [
           InkWell(
@@ -247,10 +262,12 @@ class _PostCardState extends State<PostCard>
                   const SizedBox(height: 2),
                   Text(
                     DateFormat(
-                      'd MMMM yyyy в HH:mm',
+                      'd MMM • HH:mm',
                       'ru',
                     ).format(widget.post.createdAt),
-                    style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
                   ),
                   const SizedBox(height: 6),
                   Wrap(
@@ -302,22 +319,26 @@ class _PostCardState extends State<PostCard>
   }
 
   Widget _buildPostImages() {
+    final borderRadius = BorderRadius.circular(20);
     final images = widget.post.imageUrls!;
     if (images.length == 1) {
       return Padding(
-        padding: const EdgeInsets.only(top: 4, bottom: 8),
+        padding: const EdgeInsets.fromLTRB(14, 0, 14, 8),
         child: AspectRatio(
           aspectRatio: 16 / 9,
-          child: CachedNetworkImage(
-            imageUrl: images.first,
-            fit: BoxFit.contain,
-            placeholder: (_, __) => Container(
-              color: Colors.grey.shade300,
-              child: const Center(child: CircularProgressIndicator()),
-            ),
-            errorWidget: (_, __, ___) => Container(
-              color: Colors.grey.shade300,
-              child: const Center(child: Icon(Icons.error)),
+          child: ClipRRect(
+            borderRadius: borderRadius,
+            child: CachedNetworkImage(
+              imageUrl: images.first,
+              fit: BoxFit.cover,
+              placeholder: (_, __) => Container(
+                color: Colors.grey.shade300,
+                child: const Center(child: CircularProgressIndicator()),
+              ),
+              errorWidget: (_, __, ___) => Container(
+                color: Colors.grey.shade300,
+                child: const Center(child: Icon(Icons.error)),
+              ),
             ),
           ),
         ),
@@ -325,24 +346,27 @@ class _PostCardState extends State<PostCard>
     }
 
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
+      padding: const EdgeInsets.fromLTRB(14, 0, 14, 8),
       child: CarouselSlider.builder(
         itemCount: images.length,
         itemBuilder: (context, index, _) {
-          return CachedNetworkImage(
-            imageUrl: images[index],
-            imageBuilder: (_, imageProvider) =>
-                Image(image: imageProvider, fit: BoxFit.cover),
-            fit: BoxFit.contain,
-            placeholder: (_, __) => Container(
-              color: Colors.grey.shade300,
-              child: const Center(child: CircularProgressIndicator()),
+          return ClipRRect(
+            borderRadius: borderRadius,
+            child: CachedNetworkImage(
+              imageUrl: images[index],
+              imageBuilder: (_, imageProvider) =>
+                  Image(image: imageProvider, fit: BoxFit.cover),
+              fit: BoxFit.cover,
+              placeholder: (_, __) => Container(
+                color: Colors.grey.shade300,
+                child: const Center(child: CircularProgressIndicator()),
+              ),
+              errorWidget: (_, __, ___) => Container(
+                color: Colors.grey.shade300,
+                child: const Center(child: Icon(Icons.error)),
+              ),
+              width: MediaQuery.of(context).size.width,
             ),
-            errorWidget: (_, __, ___) => Container(
-              color: Colors.grey.shade300,
-              child: const Center(child: Icon(Icons.error)),
-            ),
-            width: MediaQuery.of(context).size.width,
           );
         },
         options: CarouselOptions(
@@ -357,65 +381,81 @@ class _PostCardState extends State<PostCard>
   }
 
   Widget _buildPostActions() {
+    final theme = Theme.of(context);
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.start,
+      padding: const EdgeInsets.fromLTRB(14, 2, 14, 14),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
         children: [
-          TextButton.icon(
+          _PostActionChip(
             onPressed: _toggleLike,
-            style: TextButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-              minimumSize: const Size(0, 30),
-            ),
             icon: ScaleTransition(
               scale: _likeScaleAnimation,
               child: Icon(
                 _isLikedByCurrentUser ? Icons.favorite : Icons.favorite_border,
                 color: _isLikedByCurrentUser
                     ? Colors.redAccent
-                    : Colors.grey.shade600,
-                size: 20,
+                    : theme.colorScheme.onSurfaceVariant,
+                size: 18,
               ),
             ),
             label: Text(
               _likeCount.toString(),
-              style: TextStyle(color: Colors.grey.shade600),
+              style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
             ),
           ),
-          const SizedBox(width: 12),
-          TextButton.icon(
+          _PostActionChip(
             onPressed: _showCommentsSheet,
-            style: TextButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-              minimumSize: const Size(0, 30),
-            ),
             icon: Icon(
               Icons.chat_bubble_outline,
-              color: Colors.grey.shade600,
-              size: 20,
+              color: theme.colorScheme.onSurfaceVariant,
+              size: 18,
             ),
             label: Text(
               _commentCount.toString(),
-              style: TextStyle(color: Colors.grey.shade600),
+              style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
             ),
           ),
-          const SizedBox(width: 12),
-          TextButton.icon(
+          _PostActionChip(
             onPressed: _sharePost,
-            style: TextButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-              minimumSize: const Size(0, 30),
-            ),
             icon: Icon(Icons.share_outlined,
-                color: Colors.grey.shade600, size: 20),
+                color: theme.colorScheme.onSurfaceVariant, size: 18),
             label: Text(
-              'Поделиться',
-              style: TextStyle(color: Colors.grey.shade600),
+              'Отправить',
+              style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
             ),
           ),
         ],
       ),
+    );
+  }
+}
+
+class _PostActionChip extends StatelessWidget {
+  const _PostActionChip({
+    required this.onPressed,
+    required this.icon,
+    required this.label,
+  });
+
+  final VoidCallback onPressed;
+  final Widget icon;
+  final Widget label;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return TextButton.icon(
+      onPressed: onPressed,
+      style: TextButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        backgroundColor:
+            theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
+      ),
+      icon: icon,
+      label: label,
     );
   }
 }

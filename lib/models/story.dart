@@ -1,102 +1,165 @@
 import '../utils/date_parser.dart';
+import '../utils/url_utils.dart';
 import 'post.dart';
 
 enum StoryType { text, image, video }
 
 class Story {
+  Story({
+    required this.id,
+    required this.treeId,
+    required this.authorId,
+    this.authorName = 'Аноним',
+    String? authorPhotoUrl,
+    required this.type,
+    this.text,
+    String? mediaUrl,
+    String? thumbnailUrl,
+    required this.createdAt,
+    DateTime? updatedAt,
+    required this.expiresAt,
+    List<String>? viewedBy,
+    this.isPublic = false,
+    this.scopeType = TreeContentScopeType.wholeTree,
+    List<String>? anchorPersonIds,
+  })  : _authorPhotoUrl = UrlUtils.normalizeImageUrl(authorPhotoUrl),
+        _mediaUrl = UrlUtils.normalizeImageUrl(mediaUrl),
+        _thumbnailUrl = UrlUtils.normalizeImageUrl(thumbnailUrl),
+        updatedAt = updatedAt ?? createdAt,
+        viewedBy = viewedBy ?? const <String>[],
+        anchorPersonIds = anchorPersonIds ?? const <String>[];
+
   final String id;
+  final String treeId;
   final String authorId;
-  final String? authorName;
-  final String? authorPhotoUrl;
+  final String authorName;
+  final String? _authorPhotoUrl;
   final StoryType type;
   final String? text;
-  final String? mediaUrl;
-  final String? thumbnailUrl;
+  final String? _mediaUrl;
+  final String? _thumbnailUrl;
   final DateTime createdAt;
-  final DateTime expiresAt; // История истекает через 24 часа
-  final List<String> viewedBy; // ID пользователей, просмотревших историю
-  final String?
-      familyTreeId; // ID семейного дерева, для которого создана история
-  final bool isPublic; // Доступна всем или только членам дерева
+  final DateTime updatedAt;
+  final DateTime expiresAt;
+  final List<String> viewedBy;
+  final bool isPublic;
   final TreeContentScopeType scopeType;
   final List<String> anchorPersonIds;
 
-  Story({
-    required this.id,
-    required this.authorId,
-    this.authorName,
-    this.authorPhotoUrl,
-    required this.type,
-    this.text,
-    this.mediaUrl,
-    this.thumbnailUrl,
-    required this.createdAt,
-    required this.expiresAt,
-    this.viewedBy = const [],
-    this.familyTreeId,
-    this.isPublic = false,
-    this.scopeType = TreeContentScopeType.wholeTree,
-    this.anchorPersonIds = const <String>[],
-  });
+  String? get authorPhotoUrl => _authorPhotoUrl;
+  String? get mediaUrl => _mediaUrl;
+  String? get thumbnailUrl => _thumbnailUrl;
+  String? get familyTreeId => treeId;
+  bool get hasMedia => mediaUrl != null && mediaUrl!.isNotEmpty;
+  bool get hasText => (text ?? '').trim().isNotEmpty;
+  bool get isVisual => type == StoryType.image || type == StoryType.video;
 
-  factory Story.fromFirestore(dynamic doc) {
-    final data = doc.data() as Map<String, dynamic>;
+  factory Story.fromJson(Map<String, dynamic> json) {
     return Story(
-      id: doc.id,
-      authorId: data['authorId'] ?? '',
-      authorName: data['authorName'],
-      authorPhotoUrl: data['authorPhotoUrl'],
-      type: _stringToStoryType(data['type'] ?? 'text'),
-      text: data['text'],
-      mediaUrl: data['mediaUrl'],
-      thumbnailUrl: data['thumbnailUrl'],
-      createdAt: parseDateTimeRequired(data['createdAt']),
-      expiresAt: parseDateTimeRequired(data['expiresAt']),
-      viewedBy:
-          data['viewedBy'] != null ? List<String>.from(data['viewedBy']) : [],
-      familyTreeId: data['familyTreeId'],
-      isPublic: data['isPublic'] ?? false,
-      scopeType: data['scopeType'] == 'branches'
-          ? TreeContentScopeType.branches
-          : TreeContentScopeType.wholeTree,
-      anchorPersonIds: data['anchorPersonIds'] != null
-          ? List<String>.from(data['anchorPersonIds'])
-          : const <String>[],
+      id: json['id']?.toString() ?? '',
+      treeId:
+          json['treeId']?.toString() ?? json['familyTreeId']?.toString() ?? '',
+      authorId: json['authorId']?.toString() ?? '',
+      authorName: json['authorName']?.toString().trim().isNotEmpty == true
+          ? json['authorName'].toString().trim()
+          : 'Аноним',
+      authorPhotoUrl: json['authorPhotoUrl']?.toString() ??
+          json['authorPhotoURL']?.toString(),
+      type: storyTypeFromString(json['type']?.toString()),
+      text: json['text']?.toString(),
+      mediaUrl: json['mediaUrl']?.toString(),
+      thumbnailUrl: json['thumbnailUrl']?.toString(),
+      createdAt: parseDateTimeRequired(json['createdAt']),
+      updatedAt:
+          parseDateTime(json['updatedAt']) ?? parseDateTime(json['createdAt']),
+      expiresAt: parseDateTimeRequired(json['expiresAt']),
+      viewedBy: (json['viewedBy'] as List<dynamic>? ?? const <dynamic>[])
+          .map((entry) => entry.toString())
+          .toList(),
+      isPublic: json['isPublic'] == true,
+      scopeType: _scopeTypeFromString(json['scopeType']?.toString()),
+      anchorPersonIds:
+          (json['anchorPersonIds'] as List<dynamic>? ?? const <dynamic>[])
+              .map((entry) => entry.toString())
+              .toList(),
     );
   }
 
-  Map<String, dynamic> toMap() {
+  factory Story.fromFirestore(dynamic doc) {
+    final data = (doc.data() as Map<String, dynamic>? ?? <String, dynamic>{});
+    return Story.fromJson(<String, dynamic>{
+      'id': doc.id,
+      ...data,
+    });
+  }
+
+  Map<String, dynamic> toJson() {
     return {
+      'id': id,
+      'treeId': treeId,
+      'familyTreeId': treeId,
       'authorId': authorId,
       'authorName': authorName,
       'authorPhotoUrl': authorPhotoUrl,
-      'type': _storyTypeToString(type),
+      'type': storyTypeToString(type),
       'text': text,
       'mediaUrl': mediaUrl,
       'thumbnailUrl': thumbnailUrl,
       'createdAt': createdAt.toIso8601String(),
+      'updatedAt': updatedAt.toIso8601String(),
       'expiresAt': expiresAt.toIso8601String(),
       'viewedBy': viewedBy,
-      'familyTreeId': familyTreeId,
       'isPublic': isPublic,
-      'scopeType':
-          scopeType == TreeContentScopeType.branches ? 'branches' : 'wholeTree',
+      'scopeType': _scopeTypeToString(scopeType),
       'anchorPersonIds': anchorPersonIds,
     };
   }
 
-  // Проверка, просмотрел ли пользователь историю
-  bool isViewedBy(String userId) {
-    return viewedBy.contains(userId);
+  Map<String, dynamic> toMap() => toJson();
+
+  Story copyWith({
+    String? id,
+    String? treeId,
+    String? authorId,
+    String? authorName,
+    String? authorPhotoUrl,
+    StoryType? type,
+    String? text,
+    String? mediaUrl,
+    String? thumbnailUrl,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+    DateTime? expiresAt,
+    List<String>? viewedBy,
+    bool? isPublic,
+    TreeContentScopeType? scopeType,
+    List<String>? anchorPersonIds,
+  }) {
+    return Story(
+      id: id ?? this.id,
+      treeId: treeId ?? this.treeId,
+      authorId: authorId ?? this.authorId,
+      authorName: authorName ?? this.authorName,
+      authorPhotoUrl: authorPhotoUrl ?? this.authorPhotoUrl,
+      type: type ?? this.type,
+      text: text ?? this.text,
+      mediaUrl: mediaUrl ?? this.mediaUrl,
+      thumbnailUrl: thumbnailUrl ?? this.thumbnailUrl,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      expiresAt: expiresAt ?? this.expiresAt,
+      viewedBy: viewedBy ?? this.viewedBy,
+      isPublic: isPublic ?? this.isPublic,
+      scopeType: scopeType ?? this.scopeType,
+      anchorPersonIds: anchorPersonIds ?? this.anchorPersonIds,
+    );
   }
 
-  // Проверка, истекла ли история
-  bool isExpired() {
-    return DateTime.now().isAfter(expiresAt);
-  }
+  bool isViewedBy(String userId) => viewedBy.contains(userId);
 
-  // Преобразование строки в тип истории
-  static StoryType _stringToStoryType(String value) {
+  bool isExpired({DateTime? now}) => (now ?? DateTime.now()).isAfter(expiresAt);
+
+  static StoryType storyTypeFromString(String? value) {
     switch (value) {
       case 'image':
         return StoryType.image;
@@ -107,8 +170,7 @@ class Story {
     }
   }
 
-  // Преобразование типа истории в строку
-  static String _storyTypeToString(StoryType type) {
+  static String storyTypeToString(StoryType type) {
     switch (type) {
       case StoryType.image:
         return 'image';
@@ -116,6 +178,24 @@ class Story {
         return 'video';
       case StoryType.text:
         return 'text';
+    }
+  }
+
+  static TreeContentScopeType _scopeTypeFromString(String? value) {
+    switch (value) {
+      case 'branches':
+        return TreeContentScopeType.branches;
+      default:
+        return TreeContentScopeType.wholeTree;
+    }
+  }
+
+  static String _scopeTypeToString(TreeContentScopeType value) {
+    switch (value) {
+      case TreeContentScopeType.branches:
+        return 'branches';
+      case TreeContentScopeType.wholeTree:
+        return 'wholeTree';
     }
   }
 }

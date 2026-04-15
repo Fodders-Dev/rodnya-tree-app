@@ -45,7 +45,7 @@ void main() {
 
     expect(find.text('Главная'), findsOneWidget);
     expect(find.text('Чаты'), findsOneWidget);
-    expect(find.text('Моё дерево'), findsOneWidget);
+    expect(find.text('Дерево'), findsOneWidget);
     expect(find.text('3'), findsOneWidget);
     expect(find.text('4'), findsOneWidget);
     expect(find.text('2'), findsOneWidget);

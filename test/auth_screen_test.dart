@@ -64,11 +64,11 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    expect(find.text('Семейное дерево и связи для близких'), findsOneWidget);
-    expect(find.text('Войти сейчас'), findsOneWidget);
-    expect(find.text('Зарегистрироваться'), findsOneWidget);
-    expect(find.text('Публичный вход с web'), findsOneWidget);
-    expect(find.text('Вход в Родню'), findsOneWidget);
+    expect(find.text('Семья. Чат. Дерево.'), findsOneWidget);
+    expect(find.text('Войти'), findsWidgets);
+    expect(find.text('Создать аккаунт'), findsWidgets);
+    expect(find.text('Stories'), findsWidgets);
+    expect(find.text('Вход'), findsWidgets);
     expect(find.text('Email'), findsOneWidget);
   });
 
@@ -84,12 +84,12 @@ void main() {
     );
 
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Зарегистрироваться'));
+    await tester.tap(find.text('Создать аккаунт').first);
     await tester.pumpAndSettle();
 
-    expect(find.text('Создать аккаунт'), findsOneWidget);
-    expect(find.text('Как вас зовут'), findsOneWidget);
-    expect(find.text('Зарегистрироваться'), findsWidgets);
+    expect(find.text('Новый аккаунт'), findsOneWidget);
+    expect(find.text('Имя'), findsOneWidget);
+    expect(find.text('Создать аккаунт'), findsWidgets);
   });
 
   testWidgets('AuthScreen keeps login form first on mobile layouts',
@@ -105,16 +105,16 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    expect(find.text('Вход в Родню'), findsOneWidget);
-    expect(find.text('Вход'), findsOneWidget);
+    expect(find.text('Семья. Чат. Дерево.'), findsOneWidget);
+    expect(find.text('Вход'), findsWidgets);
     expect(find.text('Регистрация'), findsOneWidget);
     expect(find.text('Email'), findsOneWidget);
-    expect(find.text('Дерево, родные и чат в одном аккаунте.'), findsOneWidget);
-    expect(find.text('После входа'), findsNothing);
-    expect(find.text('Дерево'), findsOneWidget);
+    expect(find.text('Один вход для своих.'), findsOneWidget);
+    expect(find.text('Дерево, родные и чат в одном аккаунте.'), findsNothing);
+    expect(find.text('Дерево'), findsWidgets);
     expect(find.text('Родные'), findsOneWidget);
     expect(find.text('Чат'), findsOneWidget);
-    expect(find.text('Семейное дерево и связи для близких'), findsNothing);
+    expect(find.text('Stories'), findsWidgets);
   });
 
   testWidgets('AuthScreen respects deferred route after successful login',
@@ -126,7 +126,9 @@ void main() {
       routes: [
         GoRoute(
           path: '/login',
-          builder: (context, state) => const AuthScreen(),
+          builder: (context, state) => AuthScreen(
+            redirectAfterLogin: state.uri.queryParameters['from'],
+          ),
         ),
         GoRoute(
           path: '/chats',
@@ -147,7 +149,12 @@ void main() {
 
     await tester.enterText(find.byType(TextFormField).at(0), 'user@test.dev');
     await tester.enterText(find.byType(TextFormField).at(1), 'password123');
-    await tester.tap(find.widgetWithText(FilledButton, 'Войти'));
+    final submitButton = find.descendant(
+      of: find.byType(Form),
+      matching: find.widgetWithText(FilledButton, 'Войти'),
+    );
+    await tester.ensureVisible(submitButton);
+    await tester.tap(submitButton);
     await tester.pumpAndSettle();
 
     expect(authService.currentUserId, 'user-1');

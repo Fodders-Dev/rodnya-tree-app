@@ -5,11 +5,14 @@ import 'package:lineage/backend/interfaces/auth_service_interface.dart';
 import 'package:lineage/backend/interfaces/family_tree_service_interface.dart';
 import 'package:lineage/backend/interfaces/post_service_interface.dart';
 import 'package:lineage/backend/interfaces/profile_service_interface.dart';
+import 'package:lineage/backend/interfaces/story_service_interface.dart';
 import 'package:lineage/models/post.dart';
 import 'package:lineage/models/family_person.dart';
 import 'package:lineage/models/family_relation.dart';
 import 'package:lineage/models/family_tree.dart';
 import 'package:lineage/models/profile_note.dart';
+import 'package:lineage/models/story.dart';
+import 'package:lineage/models/tree_change_record.dart';
 import 'package:lineage/models/user_profile.dart';
 import 'package:lineage/providers/tree_provider.dart';
 import 'package:lineage/screens/profile_screen.dart';
@@ -44,6 +47,18 @@ class _FakeAuthService implements AuthServiceInterface {
 }
 
 class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
+  final List<TreeChangeRecord> historyRecords = [
+    TreeChangeRecord(
+      id: 'change-1',
+      treeId: 'tree-1',
+      actorId: 'user-1',
+      type: 'person.updated',
+      personId: 'self-person',
+      personIds: ['self-person'],
+      createdAt: DateTime(2024, 1, 2, 12, 0),
+    ),
+  ];
+
   @override
   Future<List<FamilyTree>> getUserTrees() async {
     final now = DateTime(2024, 1, 1);
@@ -126,6 +141,26 @@ class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
   Future<List<FamilyRelation>> getRelations(String treeId) async => const [];
 
   @override
+  Future<List<TreeChangeRecord>> getTreeHistory({
+    required String treeId,
+    String? personId,
+    String? type,
+    String? actorId,
+  }) async {
+    return historyRecords.where((record) {
+      if (record.treeId != treeId) {
+        return false;
+      }
+      if (personId != null &&
+          personId.isNotEmpty &&
+          record.personId != personId) {
+        return false;
+      }
+      return true;
+    }).toList();
+  }
+
+  @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
@@ -167,6 +202,15 @@ class _FakePostService implements PostServiceInterface {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
+class _FakeStoryService implements StoryServiceInterface {
+  @override
+  Future<List<Story>> getStories({String? treeId, String? authorId}) async =>
+      const <Story>[];
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
 void main() {
   final getIt = GetIt.instance;
 
@@ -180,6 +224,7 @@ void main() {
     getIt.registerSingleton<ProfileServiceInterface>(_FakeProfileService());
     getIt.registerSingleton<LocalStorageService>(_FakeLocalStorageService());
     getIt.registerSingleton<PostServiceInterface>(_FakePostService());
+    getIt.registerSingleton<StoryServiceInterface>(_FakeStoryService());
   });
 
   tearDown(() async {
@@ -203,5 +248,51 @@ void main() {
     expect(find.text('3'), findsOneWidget);
     expect(find.text('Деревья'), findsOneWidget);
     expect(find.text('2'), findsOneWidget);
+  });
+
+  testWidgets(
+      'ProfileScreen показывает карточку пользователя в активном дереве',
+      (tester) async {
+    final treeProvider = TreeProvider();
+    await treeProvider.selectTree('tree-1', 'Первое дерево');
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<TreeProvider>.value(
+        value: treeProvider,
+        child: const MaterialApp(home: ProfileScreen()),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(find.text('Карточка в дереве'), findsOneWidget);
+    expect(find.text('Алексей Петров'), findsWidgets);
+    expect(find.text('Без фото'), findsOneWidget);
+    expect(find.text('Открыть'), findsOneWidget);
+    expect(find.text('Фото'), findsOneWidget);
+    expect(find.text('История'), findsOneWidget);
+  });
+
+  testWidgets(
+      'ProfileScreen открывает историю из карточки пользователя в активном дереве',
+      (tester) async {
+    final treeProvider = TreeProvider();
+    await treeProvider.selectTree('tree-1', 'Первое дерево');
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<TreeProvider>.value(
+        value: treeProvider,
+        child: const MaterialApp(home: ProfileScreen()),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('История'));
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    expect(find.text('История изменений'), findsOneWidget);
+    expect(find.text('Обновлён профиль'), findsOneWidget);
   });
 }

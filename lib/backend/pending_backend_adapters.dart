@@ -15,6 +15,8 @@ import '../models/relation_request.dart';
 import '../models/user_profile.dart';
 import '../models/post.dart';
 import '../models/comment.dart';
+import '../models/story.dart';
+import '../models/tree_change_record.dart';
 import '../models/user_block_record.dart';
 
 import 'interfaces/auth_service_interface.dart';
@@ -25,6 +27,7 @@ import 'interfaces/storage_service_interface.dart';
 import 'interfaces/notification_service_interface.dart';
 import 'interfaces/post_service_interface.dart';
 import 'interfaces/safety_service_interface.dart';
+import 'interfaces/story_service_interface.dart';
 import 'models/profile_form_data.dart';
 import 'models/selectable_tree.dart';
 import 'models/tree_invitation.dart';
@@ -227,6 +230,34 @@ class PendingBackendFamilyTreeService implements FamilyTreeServiceInterface {
   }
 
   @override
+  Future<FamilyPerson> addRelativeMedia({
+    required String treeId,
+    required String personId,
+    required Map<String, dynamic> mediaData,
+  }) {
+    throw UnsupportedError(_pendingProviderMessage('tree'));
+  }
+
+  @override
+  Future<FamilyPerson> updateRelativeMedia({
+    required String treeId,
+    required String personId,
+    required String mediaId,
+    required Map<String, dynamic> mediaData,
+  }) {
+    throw UnsupportedError(_pendingProviderMessage('tree'));
+  }
+
+  @override
+  Future<FamilyPerson> deleteRelativeMedia({
+    required String treeId,
+    required String personId,
+    required String mediaId,
+  }) {
+    throw UnsupportedError(_pendingProviderMessage('tree'));
+  }
+
+  @override
   Future<void> checkAndCreateSpouseRelationIfNeeded(
     String treeId,
     String childId,
@@ -251,6 +282,8 @@ class PendingBackendFamilyTreeService implements FamilyTreeServiceInterface {
     required String person2Id,
     required RelationType relation1to2,
     bool isConfirmed = true,
+    DateTime? marriageDate,
+    DateTime? divorceDate,
   }) {
     throw UnsupportedError(_pendingProviderMessage('tree'));
   }
@@ -315,6 +348,16 @@ class PendingBackendFamilyTreeService implements FamilyTreeServiceInterface {
 
   @override
   Future<List<SelectableTree>> getSelectableTreesForCurrentUser() async {
+    return const [];
+  }
+
+  @override
+  Future<List<TreeChangeRecord>> getTreeHistory({
+    required String treeId,
+    String? personId,
+    String? type,
+    String? actorId,
+  }) async {
     return const [];
   }
 
@@ -570,7 +613,7 @@ class PendingBackendPostService implements PostServiceInterface {
   }
 
   @override
-  Future<void> toggleLike(String postId) {
+  Future<Post> toggleLike(String postId) {
     throw UnsupportedError(_pendingProviderMessage('post'));
   }
 
@@ -587,6 +630,37 @@ class PendingBackendPostService implements PostServiceInterface {
   @override
   Future<void> deleteComment(String postId, String commentId) {
     throw UnsupportedError(_pendingProviderMessage('post'));
+  }
+}
+
+class PendingBackendStoryService implements StoryServiceInterface {
+  const PendingBackendStoryService();
+
+  @override
+  Future<List<Story>> getStories({String? treeId, String? authorId}) async {
+    return const <Story>[];
+  }
+
+  @override
+  Future<Story> createStory({
+    required String treeId,
+    required StoryType type,
+    String? text,
+    XFile? media,
+    String? thumbnailUrl,
+    DateTime? expiresAt,
+  }) {
+    throw UnsupportedError(_pendingProviderMessage('story'));
+  }
+
+  @override
+  Future<Story> markViewed(String storyId) {
+    throw UnsupportedError(_pendingProviderMessage('story'));
+  }
+
+  @override
+  Future<void> deleteStory(String storyId) {
+    throw UnsupportedError(_pendingProviderMessage('story'));
   }
 }
 

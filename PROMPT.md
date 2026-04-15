@@ -1,6 +1,6 @@
 # PROMPT.md
 
-You are working on Lineage, a Flutter family tree and private family social network.
+You are working on Rodnya, a Flutter family tree and private family social network.
 
 Your goal is to move the project to a reliable Android + web MVP as fast as possible without creating migration debt.
 
@@ -11,6 +11,9 @@ Follow these rules:
 - Prefer minimal, reversible changes.
 - Keep screens thin and move logic into services, repositories, providers, or backend interfaces.
 - Preserve strong Russian UX copy.
+- Treat `Родня` as the public product brand.
+- Keep the current Android `applicationId` and store-compatible release identifiers unchanged unless the task explicitly targets release packaging.
+- Do not attempt a big-bang `lineage` -> `rodnya` rename across code/package identifiers; use phased renames and compatibility aliases.
 - Treat Firebase-hosted paths as legacy unless the task explicitly requires them.
 - Prefer custom API, PostgreSQL, object storage, and self-controlled realtime/push-compatible architecture.
 - Never stop at analysis when a safe implementation is possible.
@@ -22,6 +25,7 @@ While working:
 - Watch for web-specific failures first: route `404`, CORS, broken router redirects, missing semantics, oversized whitespace on desktop, and screens that degrade into empty states.
 - When you find a user-visible issue, decide whether it is a backend contract gap, web-only bug, or UI polish problem.
 - Record important findings in `docs/mvp_web_audit_YYYY-MM-DD.md`.
+- Use `docs/rodnya_release_plan_2026-04-13.md` as the current product roadmap unless a newer dated plan supersedes it.
 
 Definition of done:
 - The code change is implemented.

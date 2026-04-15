@@ -498,8 +498,8 @@ void main() {
     await tester.pumpWidget(buildApp());
     await tester.pumpAndSettle();
 
-    expect(find.text('Навигация по чатам'), findsOneWidget);
-    expect(find.text('Контекст дерева: Семья Кузнецовых'), findsOneWidget);
+    expect(find.text('Связь'), findsOneWidget);
+    expect(find.text('Семья Кузнецовых'), findsAtLeastNWidgets(1));
     expect(find.text('Создать чат'), findsWidgets);
     expect(find.text('Открыть родных'), findsWidgets);
     expect(find.text('Открыть дерево'), findsWidgets);

@@ -13,6 +13,7 @@ import '../models/family_tree.dart';
 import '../models/post.dart';
 import '../providers/tree_provider.dart';
 import '../services/local_storage_service.dart';
+import '../widgets/glass_panel.dart';
 
 class CreatePostScreen extends StatefulWidget {
   const CreatePostScreen({super.key});
@@ -188,11 +189,11 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final isWideLayout = MediaQuery.of(context).size.width >= 1080;
+    final isWideLayout = MediaQuery.of(context).size.width >= 1100;
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Новая публикация'),
+        title: const Text('Публикация'),
         actions: [
           TextButton(
             onPressed:
@@ -206,109 +207,158 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
                       color: Colors.white,
                     ),
                   )
-                : const Text(
-                    'ОПУБЛИКОВАТЬ',
-                    style: TextStyle(fontWeight: FontWeight.bold),
-                  ),
+                : const Text('Готово'),
           ),
         ],
       ),
-      body: Stack(
-        children: [
-          if (_currentTreeId == null)
-            _buildMissingTreeState()
-          else
-            Center(
+      body: _currentTreeId == null
+          ? _buildMissingTreeState()
+          : Center(
               child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 1380),
+                constraints: const BoxConstraints(maxWidth: 1260),
                 child: SingleChildScrollView(
                   padding: const EdgeInsets.all(16),
-                  child: isWideLayout
-                      ? Row(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Wrap(
+                        spacing: 10,
+                        runSpacing: 10,
+                        children: [
+                          _buildMetaPill(
+                            icon: Icons.account_tree_outlined,
+                            label: _currentTreeMeta?.name.isNotEmpty == true
+                                ? _currentTreeMeta!.name
+                                : 'Текущее дерево',
+                          ),
+                          _buildMetaPill(
+                            icon: _scopeType == TreeContentScopeType.wholeTree
+                                ? Icons.groups_2_outlined
+                                : Icons.alt_route,
+                            label: _scopeType == TreeContentScopeType.wholeTree
+                                ? (_isFriendsTree ? 'Весь круг' : 'Всё дерево')
+                                : (_isFriendsTree
+                                    ? 'Выборочные круги'
+                                    : 'Выборочные ветки'),
+                          ),
+                          _buildMetaPill(
+                            icon: Icons.photo_library_outlined,
+                            label: _selectedImages.isEmpty
+                                ? 'Без фото'
+                                : '${_selectedImages.length}/5 фото',
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      if (isWideLayout)
+                        Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Expanded(
-                              flex: 3,
-                              child: _buildEditorCard(),
-                            ),
+                            Expanded(flex: 3, child: _buildEditorCard()),
                             const SizedBox(width: 16),
-                            Expanded(
-                              flex: 2,
-                              child: Column(
-                                children: [
-                                  _buildScopeCard(),
-                                  const SizedBox(height: 16),
-                                  _buildPublishingHintsCard(),
-                                ],
-                              ),
-                            ),
+                            Expanded(flex: 2, child: _buildScopeCard()),
                           ],
                         )
-                      : Column(
+                      else
+                        Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            _buildScopeCard(),
-                            const SizedBox(height: 16),
                             _buildEditorCard(),
                             const SizedBox(height: 16),
-                            _buildPublishingHintsCard(),
+                            _buildScopeCard(),
                           ],
                         ),
+                    ],
+                  ),
                 ),
               ),
             ),
-        ],
+    );
+  }
+
+  Widget _buildMetaPill({
+    required IconData icon,
+    required String label,
+  }) {
+    final theme = Theme.of(context);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color:
+            theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.75),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 16, color: theme.colorScheme.primary),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: theme.textTheme.labelMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildEditorCard() {
     final theme = Theme.of(context);
-    return Container(
+    return GlassPanel(
       padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surface,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(
-          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.45),
-        ),
-      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text(
-            'Содержание публикации',
+            'Что нового',
             style: theme.textTheme.titleMedium?.copyWith(
               fontWeight: FontWeight.w700,
             ),
           ),
           const SizedBox(height: 8),
-          Text(
-            _isFriendsTree
-                ? 'Короткий апдейт для круга друзей, объявление или фотоотчёт. Публикация появится в ленте выбранного графа.'
-                : 'Короткий семейный апдейт, объявление или фотоотчет. Публикация появится в ленте выбранного дерева.',
-            style: theme.textTheme.bodyMedium?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-              height: 1.4,
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _buildMetaPill(
+                icon: Icons.feed_outlined,
+                label: _isFriendsTree ? 'Лента круга' : 'Лента семьи',
+              ),
+              _buildMetaPill(
+                icon: Icons.public,
+                label: _isPublic ? 'Видно всем' : 'Внутри контекста',
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          DecoratedBox(
+            decoration: BoxDecoration(
+              color: theme.colorScheme.surfaceContainerLowest
+                  .withValues(alpha: 0.88),
+              borderRadius: BorderRadius.circular(24),
+            ),
+            child: TextField(
+              controller: _contentController,
+              decoration: const InputDecoration(
+                hintText: 'Напишите пост',
+                border: InputBorder.none,
+                contentPadding: EdgeInsets.all(18),
+              ),
+              maxLines: 10,
+              minLines: 6,
             ),
           ),
           const SizedBox(height: 16),
-          TextField(
-            controller: _contentController,
-            decoration: const InputDecoration(
-              hintText: 'Что у вас нового?',
-              border: OutlineInputBorder(),
-            ),
-            maxLines: 10,
-            minLines: 5,
-          ),
-          const SizedBox(height: 16),
-          OutlinedButton.icon(
+          FilledButton.tonalIcon(
             icon: const Icon(Icons.photo_library_outlined),
             label: Text(
               _selectedImages.isEmpty
-                  ? 'Добавить фото'
-                  : 'Добавить ещё фото (${_selectedImages.length}/5)',
+                  ? 'Фото'
+                  : 'Фото ${_selectedImages.length}/5',
             ),
             onPressed: _pickImages,
           ),
@@ -327,12 +377,8 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
         padding: const EdgeInsets.all(24),
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 420),
-          child: Container(
+          child: GlassPanel(
             padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surfaceContainerHighest,
-              borderRadius: BorderRadius.circular(20),
-            ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -351,7 +397,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Публикация привязывается к конкретному дереву или графу друзей. Откройте нужный контекст и вернитесь к созданию поста.',
+                  'Нужен активный контекст.',
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.bodyMedium,
                 ),
@@ -370,21 +416,13 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
   }
 
   Widget _buildScopeCard() {
-    final theme = Theme.of(context);
-    return Container(
+    return GlassPanel(
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(
-          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.4),
-        ),
-      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Кто увидит публикацию',
+            'Видимость',
             style: Theme.of(context).textTheme.titleMedium?.copyWith(
                   fontWeight: FontWeight.w700,
                 ),
@@ -418,12 +456,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
           const SizedBox(height: 12),
           SwitchListTile.adaptive(
             contentPadding: EdgeInsets.zero,
-            title: const Text('Публичная публикация'),
-            subtitle: Text(
-              _isFriendsTree
-                  ? 'Пост будет доступен всем участникам выбранного круга.'
-                  : 'Пост будет доступен для просмотра всем родственникам в дереве.',
-            ),
+            title: const Text('Видно всем'),
             value: _isPublic,
             onChanged: (value) {
               setState(() {
@@ -434,10 +467,12 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
           if (_scopeType == TreeContentScopeType.branches) ...[
             const SizedBox(height: 8),
             Text(
-              _isFriendsTree
-                  ? 'Выберите опорных людей для кругов. Публикация попадёт в выбранные части вашего социального графа.'
-                  : 'Выберите корневых людей для веток. В публикацию попадут эти линии семьи.',
-              style: Theme.of(context).textTheme.bodySmall,
+              _selectedBranchPersonIds.isEmpty
+                  ? (_isFriendsTree ? 'Выберите круги' : 'Выберите ветки')
+                  : '${_selectedBranchPersonIds.length} выбрано',
+              style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
             ),
             const SizedBox(height: 10),
             if (_isLoadingPeople)
@@ -447,9 +482,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
               )
             else if (_availablePeople.isEmpty)
               Text(
-                _isFriendsTree
-                    ? 'В этом графе пока нет людей для публикации по кругам.'
-                    : 'В этом дереве пока нет людей для branch-публикации.',
+                _isFriendsTree ? 'Кругов пока нет.' : 'Веток пока нет.',
                 style: Theme.of(context).textTheme.bodyMedium,
               )
             else
@@ -475,84 +508,6 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
                 }).toList(),
               ),
           ],
-        ],
-      ),
-    );
-  }
-
-  Widget _buildPublishingHintsCard() {
-    final theme = Theme.of(context);
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerLowest,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(
-          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.4),
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Перед публикацией',
-            style: theme.textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 12),
-          _buildHintRow(
-            icon: Icons.photo_library_outlined,
-            text: 'Можно добавить до 5 изображений в одну публикацию.',
-          ),
-          _buildHintRow(
-            icon: Icons.alt_route,
-            text: _isFriendsTree
-                ? 'Режим выборочных кругов ограничивает видимость выбранными частями дружеского графа.'
-                : 'Режим «Отдельные ветки» ограничивает видимость выбранными семейными линиями.',
-          ),
-          _buildHintRow(
-            icon: Icons.public,
-            text: _isPublic
-                ? _isFriendsTree
-                    ? 'Сейчас публикация помечена как публичная внутри круга.'
-                    : 'Сейчас публикация помечена как публичная внутри дерева.'
-                : _isFriendsTree
-                    ? 'Сейчас публикация останется внутренней для выбранного графа.'
-                    : 'Сейчас публикация останется внутренней для выбранного дерева.',
-          ),
-          _buildHintRow(
-            icon: Icons.cloud_done_outlined,
-            text:
-                'Если сеть пропадет во время отправки, публикацию можно сразу повторить без перезапуска экрана.',
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildHintRow({
-    required IconData icon,
-    required String text,
-  }) {
-    final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(icon, size: 18, color: theme.colorScheme.primary),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              text,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-                height: 1.4,
-              ),
-            ),
-          ),
         ],
       ),
     );

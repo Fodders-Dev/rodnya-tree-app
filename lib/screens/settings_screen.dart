@@ -13,6 +13,8 @@ import '../backend/interfaces/auth_service_interface.dart';
 import '../providers/tree_provider.dart';
 import '../services/custom_api_notification_service.dart';
 import '../config/storefront_config.dart';
+import '../widgets/glass_panel.dart';
+import '../widgets/flow_overlays.dart';
 
 // --- ID нашего тестового продукта ---
 const String PREMIUM_PRODUCT_ID = 'lineage_premium';
@@ -477,44 +479,63 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final TextEditingController passwordController = TextEditingController();
     bool isPasswordVisible = false;
 
-    return showDialog(
+    return showGlassDialog<void>(
       context: context,
-      builder: (BuildContext context) {
+      builder: (dialogContext) {
         return StatefulBuilder(
-          builder: (context, setState) {
-            return AlertDialog(
-              title: Text('Удаление аккаунта'),
+          builder: (context, setDialogState) {
+            final theme = Theme.of(context);
+
+            return GlassDialogFrame(
+              icon: Icons.delete_forever,
+              tint: theme.colorScheme.error,
+              title: 'Удалить аккаунт',
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Вы уверены, что хотите удалить свой аккаунт? Это действие нельзя отменить, и все ваши данные будут потеряны навсегда.',
-                    style: TextStyle(height: 1.5),
+                    'Это действие нельзя отменить.',
+                    style: theme.textTheme.bodyLarge?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
-                  SizedBox(height: 16),
+                  const SizedBox(height: 6),
                   Text(
-                    'Введите пароль для подтверждения:',
-                    style: TextStyle(fontWeight: FontWeight.bold),
+                    'Введите пароль для подтверждения.',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
                   ),
-                  SizedBox(height: 8),
-                  TextField(
-                    controller: passwordController,
-                    obscureText: !isPasswordVisible,
-                    decoration: InputDecoration(
-                      hintText: 'Ваш пароль',
-                      border: OutlineInputBorder(),
-                      suffixIcon: IconButton(
-                        icon: Icon(
-                          isPasswordVisible
-                              ? Icons.visibility_off
-                              : Icons.visibility,
+                  const SizedBox(height: 14),
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.surfaceContainerLowest
+                          .withValues(alpha: 0.9),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: TextField(
+                      controller: passwordController,
+                      obscureText: !isPasswordVisible,
+                      decoration: InputDecoration(
+                        hintText: 'Пароль',
+                        border: InputBorder.none,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 18,
+                          vertical: 16,
                         ),
-                        onPressed: () {
-                          setState(() {
-                            isPasswordVisible = !isPasswordVisible;
-                          });
-                        },
+                        suffixIcon: IconButton(
+                          icon: Icon(
+                            isPasswordVisible
+                                ? Icons.visibility_off
+                                : Icons.visibility,
+                          ),
+                          onPressed: () {
+                            setDialogState(() {
+                              isPasswordVisible = !isPasswordVisible;
+                            });
+                          },
+                        ),
                       ),
                     ),
                   ),
@@ -522,15 +543,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               actions: [
                 TextButton(
-                  child: Text('Отмена'),
-                  onPressed: () {
-                    Navigator.of(context).pop();
-                  },
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Отмена'),
                 ),
-                TextButton(
-                  child: Text('Удалить', style: TextStyle(color: Colors.red)),
+                FilledButton.tonal(
+                  style: FilledButton.styleFrom(
+                    foregroundColor: theme.colorScheme.error,
+                  ),
                   onPressed: () {
-                    Navigator.of(context).pop();
+                    Navigator.of(dialogContext).pop();
                     if (passwordController.text.isNotEmpty) {
                       _deleteAccount(passwordController.text);
                     } else {
@@ -542,6 +563,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       );
                     }
                   },
+                  child: const Text('Удалить'),
                 ),
               ],
             );
@@ -593,383 +615,363 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final themeProvider = Provider.of<ThemeProvider>(context);
 
     return Scaffold(
-      appBar: AppBar(title: Text('Настройки')),
+      appBar: AppBar(title: const Text('Настройки')),
       body: _isLoading
-          ? Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
-              padding: EdgeInsets.all(16.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Раздел Аккаунт
-                  Padding(
-                    padding: const EdgeInsets.only(top: 24.0, bottom: 8.0),
-                    child: Text(
-                      'Аккаунт и безопасность',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-
-                  // Кнопка выхода из аккаунта
-                  ListTile(
-                    leading: Icon(Icons.exit_to_app),
-                    title: Text('Выйти из аккаунта'),
-                    onTap: () async {
-                      await _authService.signOut();
-                      if (GetIt.I.isRegistered<TreeProvider>()) {
-                        await GetIt.I<TreeProvider>().clearSelection();
-                      }
-                      if (mounted) {
-                        context.go('/login');
-                      }
-                    },
-                  ),
-
-                  const Divider(height: 32),
-
-                  // Кнопка удаления аккаунта
-                  ListTile(
-                    leading: Icon(Icons.delete_forever, color: Colors.red),
-                    title: Text(
-                      'Удалить аккаунт',
-                      style: TextStyle(color: Colors.red),
-                    ),
-                    subtitle: const Text('Это действие нельзя отменить'),
-                    onTap: _showDeleteAccountConfirmation,
-                  ),
-
-                  const SizedBox(height: 60),
-
-                  // Информация о приложении
-                  Center(
-                    child: Column(
-                      children: [
-                        Text(
-                          'Родня',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
+          ? const Center(child: CircularProgressIndicator())
+          : Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 980),
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _buildSettingsHeader(),
+                      const SizedBox(height: 16),
+                      _buildSectionCard('Внешний вид', [
+                        _buildSwitchRow(
+                          icon: themeProvider.isDarkMode
+                              ? Icons.dark_mode
+                              : Icons.light_mode,
+                          title: 'Тёмная тема',
+                          subtitle: themeProvider.isDarkMode
+                              ? 'Тёмная схема'
+                              : 'Светлая схема',
+                          value: themeProvider.isDarkMode,
+                          onChanged: (_) => themeProvider.toggleTheme(),
                         ),
-                        SizedBox(height: 4),
-                        Text(
-                          _appVersionLabel,
-                          style: TextStyle(fontSize: 14, color: Colors.grey),
+                      ]),
+                      const SizedBox(height: 16),
+                      _buildSectionCard('Уведомления и доступ', [
+                        _buildSwitchRow(
+                          icon: Icons.notifications_outlined,
+                          title: 'Уведомления',
+                          subtitle:
+                              _notificationsEnabled ? 'Включены' : 'Выключены',
+                          value: _notificationsEnabled,
+                          onChanged: _toggleNotifications,
                         ),
+                        _buildSwitchRow(
+                          icon: Icons.lock_outline,
+                          title: 'Приватный профиль',
+                          subtitle: _profilePrivate
+                              ? 'Только по приглашению'
+                              : 'Обычный доступ',
+                          value: _profilePrivate,
+                          onChanged: (value) {
+                            setState(() {
+                              _profilePrivate = value;
+                            });
+                          },
+                        ),
+                        _buildActionRow(
+                          icon: Icons.block_outlined,
+                          title: 'Заблокированные',
+                          subtitle: 'Личные блокировки',
+                          onTap: () =>
+                              GoRouter.of(context).push('/profile/blocks'),
+                        ),
+                      ]),
+                      const SizedBox(height: 16),
+                      _buildSectionCard('Документы и поддержка', [
+                        _buildActionRow(
+                          icon: Icons.privacy_tip_outlined,
+                          title: 'Политика',
+                          subtitle: 'Конфиденциальность',
+                          onTap: () => GoRouter.of(context).push('/privacy'),
+                        ),
+                        _buildActionRow(
+                          icon: Icons.description_outlined,
+                          title: 'Условия',
+                          subtitle: 'Использование',
+                          onTap: () => GoRouter.of(context).push('/terms'),
+                        ),
+                        _buildActionRow(
+                          icon: Icons.support_agent_outlined,
+                          title: 'Поддержка',
+                          subtitle: 'Почта и страница',
+                          onTap: () => GoRouter.of(context).push('/support'),
+                        ),
+                        _buildActionRow(
+                          icon: Icons.delete_outline_rounded,
+                          title: 'Как удалить аккаунт',
+                          subtitle: 'Публичная инструкция',
+                          onTap: () =>
+                              GoRouter.of(context).push('/account-deletion'),
+                        ),
+                        _buildActionRow(
+                          icon: Icons.info_outline,
+                          title: 'О приложении',
+                          subtitle: _appVersionLabel,
+                          onTap: () => context.push('/profile/about'),
+                        ),
+                      ]),
+                      if (_showPremiumSection) ...[
+                        const SizedBox(height: 16),
+                        _buildSectionCard('RuStore', [
+                          _billingLoading
+                              ? const Padding(
+                                  padding: EdgeInsets.all(16),
+                                  child: Center(
+                                    child: CircularProgressIndicator(),
+                                  ),
+                                )
+                              : _buildPremiumRow(),
+                          if (_isPremium && _lastPurchaseId != null)
+                            _buildActionRow(
+                              icon: Icons.restart_alt_rounded,
+                              title: 'Сбросить тестовую покупку',
+                              subtitle: 'Только для dev-проверки',
+                              onTap: _deleteTestPurchase,
+                            ),
+                          _buildOneTimePurchaseRow(),
+                        ]),
                       ],
-                    ),
-                  ),
-
-                  // Добавьте это в метод build в списке настроек:
-                  Padding(
-                    padding: const EdgeInsets.only(top: 16.0, bottom: 8.0),
-                    child: Text(
-                      'Внешний вид',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-
-                  // Переключатель темы
-                  SwitchListTile(
-                    title: Text('Тёмная тема'),
-                    subtitle: Text('Изменить цветовую схему приложения'),
-                    value: themeProvider.isDarkMode,
-                    onChanged: (value) {
-                      themeProvider.toggleTheme();
-                    },
-                    secondary: Icon(
-                      themeProvider.isDarkMode
-                          ? Icons.dark_mode
-                          : Icons.light_mode,
-                    ),
-                  ),
-
-                  // Добавьте это в метод build в списке настроек:
-                  Padding(
-                    padding: const EdgeInsets.only(top: 16.0, bottom: 8.0),
-                    child: Text(
-                      'Уведомления и конфиденциальность',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-
-                  // Настройки уведомлений
-                  SwitchListTile(
-                    title: Text('Уведомления'),
-                    subtitle: Text('Получать уведомления о новых событиях'),
-                    value: _notificationsEnabled,
-                    onChanged: _toggleNotifications,
-                    secondary: Icon(Icons.notifications),
-                  ),
-
-                  // Настройки приватности
-                  SwitchListTile(
-                    title: Text('Приватный профиль'),
-                    subtitle: Text(
-                      'Только приглашенные пользователи могут видеть ваш профиль',
-                    ),
-                    value: _profilePrivate,
-                    onChanged: (value) {
-                      setState(() {
-                        _profilePrivate = value;
-                        // Сохраняем настройки и обновляем в Firestore
-                      });
-                    },
-                    secondary: Icon(Icons.lock),
-                  ),
-
-                  // Добавляем пункт Политика конфиденциальности
-                  ListTile(
-                    leading: Icon(Icons.privacy_tip_outlined),
-                    title: Text('Политика конфиденциальности'),
-                    onTap: () {
-                      // Используем GoRouter для перехода
-                      GoRouter.of(context).push('/privacy');
-                    },
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.description_outlined),
-                    title: const Text('Условия использования'),
-                    onTap: () => GoRouter.of(context).push('/terms'),
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.support_agent_outlined),
-                    title: const Text('Поддержка'),
-                    subtitle:
-                        const Text('Публичная страница и email поддержки'),
-                    onTap: () => GoRouter.of(context).push('/support'),
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.block_outlined),
-                    title: const Text('Заблокированные пользователи'),
-                    subtitle: const Text('Управление личными блокировками'),
-                    onTap: () => GoRouter.of(context).push('/profile/blocks'),
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.delete_outline_rounded),
-                    title: const Text('Как удалить аккаунт'),
-                    subtitle: const Text('Публичная release-ready инструкция'),
-                    onTap: () => GoRouter.of(context).push('/account-deletion'),
-                  ),
-
-                  // Информация о приложении
-                  ListTile(
-                    leading: Icon(Icons.info),
-                    title: Text('О приложении'),
-                    onTap: () {
-                      context.push('/profile/about');
-                    },
-                  ),
-
-                  if (_showPremiumSection) ...[
-                    Padding(
-                      padding: const EdgeInsets.only(top: 32.0, bottom: 8.0),
-                      child: Text(
-                        'Премиум-статус',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                    _billingLoading
-                        ? Center(
-                            child: Padding(
-                              padding:
-                                  const EdgeInsets.symmetric(vertical: 16.0),
-                              child: CircularProgressIndicator(),
-                            ),
-                          )
-                        : Column(
-                            children: [
-                              ListTile(
-                                leading: Icon(
-                                  _isPremium ? Icons.star : Icons.star_border,
-                                  color: _isPremium ? Colors.amber : null,
-                                ),
-                                title: Text(
-                                  _isPremium
-                                      ? 'Премиум активен'
-                                      : 'Получить Премиум',
-                                ),
-                                subtitle: Text(
-                                  _isPremium
-                                      ? 'Спасибо за поддержку!'
-                                      : 'Разблокировать дополнительные функции.',
-                                ),
-                                trailing: _isPremium
-                                    ? null // Не показываем кнопку, если уже премиум
-                                    : ElevatedButton(
-                                        onPressed: _purchasePremium,
-                                        child: Text('Купить'),
-                                      ),
-                              ),
-                              // Кнопка для удаления тестовой покупки (только если премиум активен)
-                              if (_isPremium && _lastPurchaseId != null)
-                                Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 16.0,
-                                    vertical: 8.0,
+                      const SizedBox(height: 16),
+                      _buildSectionCard('Обратная связь', [
+                        if (_showReviewSection)
+                          _checkingRatingStatus
+                              ? const Padding(
+                                  padding: EdgeInsets.all(16),
+                                  child: Center(
+                                    child: CircularProgressIndicator(),
                                   ),
-                                  child: TextButton(
-                                    onPressed: _deleteTestPurchase,
-                                    child: Text(
-                                      'Сбросить тестовую покупку',
-                                      style: TextStyle(color: Colors.grey),
-                                    ),
-                                  ),
-                                ),
-                            ],
-                          ),
-                    Divider(),
-                    Padding(
-                      padding: const EdgeInsets.only(top: 16.0, bottom: 8.0),
-                      child: Text(
-                        'Разовая покупка (Тест)',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.orange,
+                                )
+                              : _buildReviewRow(),
+                        _buildActionRow(
+                          icon: Icons.support_agent_outlined,
+                          title: 'Связаться с поддержкой',
+                          subtitle: 'ahjkuio@gmail.com',
+                          onTap: () => GoRouter.of(context).push('/support'),
+                        ),
+                      ]),
+                      const SizedBox(height: 16),
+                      _buildSectionCard('Аккаунт', [
+                        _buildActionRow(
+                          icon: Icons.logout_rounded,
+                          title: 'Выйти',
+                          subtitle: 'Сменить аккаунт',
+                          onTap: () async {
+                            await _authService.signOut();
+                            if (GetIt.I.isRegistered<TreeProvider>()) {
+                              await GetIt.I<TreeProvider>().clearSelection();
+                            }
+                            if (mounted) {
+                              context.go('/login');
+                            }
+                          },
+                        ),
+                      ]),
+                      const SizedBox(height: 16),
+                      GlassPanel(
+                        color: Theme.of(context)
+                            .colorScheme
+                            .errorContainer
+                            .withValues(alpha: 0.6),
+                        borderColor: Theme.of(context)
+                            .colorScheme
+                            .error
+                            .withValues(alpha: 0.35),
+                        child: _buildActionRow(
+                          icon: Icons.delete_forever,
+                          title: 'Удалить аккаунт',
+                          subtitle: 'Это действие нельзя отменить',
+                          onTap: _showDeleteAccountConfirmation,
+                          destructive: true,
                         ),
                       ),
-                    ),
-                    ListTile(
-                      leading: Icon(Icons.shopping_cart, color: Colors.orange),
-                      title: Text('Купить тестовый товар'),
-                      subtitle: Text('Проверка покупки разового товара'),
-                      trailing: ElevatedButton(
-                        onPressed: _oneTimePurchaseLoading
-                            ? null
-                            : _purchaseOneTimeProduct,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.orange[700],
-                        ),
-                        child: _oneTimePurchaseLoading
-                            ? SizedBox(
-                                height: 18,
-                                width: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : Text('Купить ($ONE_TIME_PRODUCT_ID)'),
-                      ),
-                    ),
-                    Divider(),
-                  ],
-
-                  Padding(
-                    padding: const EdgeInsets.only(
-                      top: 16.0,
-                      bottom: 8.0,
-                    ),
-                    child: Text(
-                      'Обратная связь',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
+                    ],
                   ),
-
-                  // Кнопка Оценить приложение (с обновленной логикой)
-                  if (_showReviewSection)
-                    _checkingRatingStatus
-                        ? Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 16.0),
-                            child: Center(
-                              child: CircularProgressIndicator(),
-                            ),
-                          )
-                        : ListTile(
-                            leading: Icon(
-                              _hasRatedApp
-                                  ? Icons.thumb_up_alt
-                                  : Icons.star_rate_outlined,
-                            ),
-                            title: Text(
-                              _hasRatedApp
-                                  ? 'Спасибо за отзыв!'
-                                  : 'Оценить приложение',
-                            ),
-                            subtitle: _hasRatedApp
-                                ? Text('Мы ценим ваше мнение')
-                                : Text('Оставить отзыв в RuStore'),
-                            onTap: _hasRatedApp
-                                ? null
-                                : () async {
-                                    final currentContext = context;
-                                    debugPrint(
-                                      'Attempting to request RuStore review...',
-                                    );
-                                    final reviewStatus = await _rustoreService
-                                        .requestReviewStatus();
-
-                                    if (!currentContext.mounted) {
-                                      return;
-                                    }
-
-                                    if (reviewStatus ==
-                                            RustoreReviewRequestStatus.shown ||
-                                        reviewStatus ==
-                                            RustoreReviewRequestStatus
-                                                .alreadyExists) {
-                                      debugPrint(
-                                        'Review request initiated successfully.',
-                                      );
-                                      ScaffoldMessenger.of(
-                                        currentContext,
-                                      ).showSnackBar(
-                                        SnackBar(
-                                          content: Text(
-                                            reviewStatus ==
-                                                    RustoreReviewRequestStatus
-                                                        .alreadyExists
-                                                ? 'Отзыв в RuStore уже существует. Спасибо!'
-                                                : 'Запрос на оценку отправлен. Спасибо!',
-                                          ),
-                                          duration: Duration(seconds: 3),
-                                        ),
-                                      );
-                                      setState(() {
-                                        _hasRatedApp = true;
-                                      });
-                                      return;
-                                    }
-
-                                    ScaffoldMessenger.of(
-                                      currentContext,
-                                    ).showSnackBar(
-                                      SnackBar(
-                                        content: Text(
-                                          'Не удалось открыть окно оценки RuStore на этом устройстве.',
-                                        ),
-                                        duration: Duration(seconds: 5),
-                                      ),
-                                    );
-                                  },
-                            enabled: !_hasRatedApp,
-                          ),
-                  ListTile(
-                    leading: const Icon(Icons.support_agent_outlined),
-                    title: const Text('Связаться с поддержкой'),
-                    subtitle: const Text('ahjkuio@gmail.com'),
-                    onTap: () => GoRouter.of(context).push('/support'),
-                  ),
-
-                  Divider(),
-                ],
+                ),
               ),
             ),
+    );
+  }
+
+  Widget _buildSettingsHeader() {
+    final theme = Theme.of(context);
+    return GlassPanel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Родня',
+            style: theme.textTheme.titleLarge?.copyWith(
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            _appVersionLabel,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSectionCard(String title, List<Widget> children) {
+    final spacedChildren = <Widget>[];
+    for (var i = 0; i < children.length; i++) {
+      spacedChildren.add(children[i]);
+      if (i != children.length - 1) {
+        spacedChildren.add(const SizedBox(height: 10));
+      }
+    }
+
+    return GlassPanel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            title,
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+          ),
+          const SizedBox(height: 12),
+          ...spacedChildren,
+        ],
+      ),
+    );
+  }
+
+  Widget _buildActionRow({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required VoidCallback? onTap,
+    bool enabled = true,
+    bool destructive = false,
+  }) {
+    final theme = Theme.of(context);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerLowest.withValues(alpha: 0.88),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: ListTile(
+        enabled: enabled,
+        onTap: onTap,
+        leading: Icon(
+          icon,
+          color:
+              destructive ? theme.colorScheme.error : theme.colorScheme.primary,
+        ),
+        title: Text(
+          title,
+          style: destructive ? TextStyle(color: theme.colorScheme.error) : null,
+        ),
+        subtitle: Text(subtitle),
+        trailing: destructive ? null : const Icon(Icons.chevron_right_rounded),
+      ),
+    );
+  }
+
+  Widget _buildSwitchRow({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required bool value,
+    required ValueChanged<bool> onChanged,
+  }) {
+    final theme = Theme.of(context);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerLowest.withValues(alpha: 0.88),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: SwitchListTile(
+        secondary: Icon(icon, color: theme.colorScheme.primary),
+        title: Text(title),
+        subtitle: Text(subtitle),
+        value: value,
+        onChanged: onChanged,
+      ),
+    );
+  }
+
+  Widget _buildPremiumRow() {
+    return _buildActionRow(
+      icon: _isPremium ? Icons.star : Icons.star_border,
+      title: _isPremium ? 'Премиум активен' : 'Получить премиум',
+      subtitle: _isPremium ? 'Спасибо за поддержку' : 'Разблокировать функции',
+      onTap: _isPremium ? null : _purchasePremium,
+      enabled: !_isPremium,
+    );
+  }
+
+  Widget _buildOneTimePurchaseRow() {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Theme.of(context)
+            .colorScheme
+            .surfaceContainerLowest
+            .withValues(alpha: 0.88),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: ListTile(
+        leading: const Icon(Icons.shopping_cart_outlined),
+        title: const Text('Тестовая покупка'),
+        subtitle: Text(ONE_TIME_PRODUCT_ID),
+        trailing: _oneTimePurchaseLoading
+            ? const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : FilledButton.tonal(
+                onPressed: _purchaseOneTimeProduct,
+                child: const Text('Купить'),
+              ),
+      ),
+    );
+  }
+
+  Widget _buildReviewRow() {
+    return _buildActionRow(
+      icon:
+          _hasRatedApp ? Icons.thumb_up_alt_outlined : Icons.star_rate_outlined,
+      title: _hasRatedApp ? 'Спасибо за отзыв' : 'Оценить приложение',
+      subtitle: _hasRatedApp ? 'Отзыв уже оставлен' : 'Открыть RuStore',
+      enabled: !_hasRatedApp,
+      onTap: _hasRatedApp
+          ? null
+          : () async {
+              final currentContext = context;
+              final reviewStatus = await _rustoreService.requestReviewStatus();
+
+              if (!currentContext.mounted) {
+                return;
+              }
+
+              if (reviewStatus == RustoreReviewRequestStatus.shown ||
+                  reviewStatus == RustoreReviewRequestStatus.alreadyExists) {
+                ScaffoldMessenger.of(currentContext).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      reviewStatus == RustoreReviewRequestStatus.alreadyExists
+                          ? 'Отзыв уже существует. Спасибо!'
+                          : 'Запрос на оценку отправлен.',
+                    ),
+                  ),
+                );
+                setState(() {
+                  _hasRatedApp = true;
+                });
+                return;
+              }
+
+              ScaffoldMessenger.of(currentContext).showSnackBar(
+                const SnackBar(
+                  content: Text(
+                    'Не удалось открыть окно оценки RuStore.',
+                  ),
+                ),
+              );
+            },
     );
   }
 }

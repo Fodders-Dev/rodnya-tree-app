@@ -687,6 +687,320 @@ test("tree endpoints cover create tree, persons and relations", async () => {
   }
 });
 
+test("tree history and relative gallery endpoints keep legacy photo alias", async () => {
+  const ctx = await startTestServer();
+
+  try {
+    const registerResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "tree-history@lineage.app",
+        password: "secret123",
+        displayName: "История Дерева",
+      }),
+    });
+    assert.equal(registerResponse.status, 201);
+    const registered = await registerResponse.json();
+    const token = registered.accessToken;
+
+    const createTreeResponse = await fetch(`${ctx.baseUrl}/v1/trees`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "Дерево с историей",
+        description: "Для relative gallery и history",
+        isPrivate: true,
+      }),
+    });
+    assert.equal(createTreeResponse.status, 201);
+    const createdTree = await createTreeResponse.json();
+    const treeId = createdTree.tree.id;
+
+    const initialPersonsResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeId}/persons`,
+      {headers: {authorization: `Bearer ${token}`}},
+    );
+    assert.equal(initialPersonsResponse.status, 200);
+    const initialPersonsPayload = await initialPersonsResponse.json();
+    const creatorPersonId = initialPersonsPayload.persons[0].id;
+
+    const createPersonResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeId}/persons`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          firstName: "Анна",
+          lastName: "Фотогеничная",
+          gender: "female",
+          photoUrl: "https://cdn.example.com/anna-primary.jpg",
+        }),
+      },
+    );
+    assert.equal(createPersonResponse.status, 201);
+    const createdPersonPayload = await createPersonResponse.json();
+    const personId = createdPersonPayload.person.id;
+    assert.equal(
+      createdPersonPayload.person.photoUrl,
+      "https://cdn.example.com/anna-primary.jpg",
+    );
+    assert.equal(
+      createdPersonPayload.person.primaryPhotoUrl,
+      "https://cdn.example.com/anna-primary.jpg",
+    );
+    assert.equal(createdPersonPayload.person.photoGallery.length, 1);
+    assert.equal(
+      createdPersonPayload.person.photoGallery[0].isPrimary,
+      true,
+    );
+
+    const addMediaResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeId}/persons/${personId}/media`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          url: "https://cdn.example.com/anna-gallery.jpg",
+          caption: "Портрет в галерее",
+          isPrimary: true,
+        }),
+      },
+    );
+    assert.equal(addMediaResponse.status, 201);
+    const addMediaPayload = await addMediaResponse.json();
+    assert.equal(
+      addMediaPayload.person.primaryPhotoUrl,
+      "https://cdn.example.com/anna-gallery.jpg",
+    );
+    assert.equal(addMediaPayload.person.photoGallery.length, 2);
+    assert.equal(addMediaPayload.media.url, "https://cdn.example.com/anna-gallery.jpg");
+    const mediaId = addMediaPayload.media.id;
+
+    const updateMediaResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeId}/persons/${personId}/media/${mediaId}`,
+      {
+        method: "PATCH",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          url: "https://cdn.example.com/anna-gallery-updated.jpg",
+          isPrimary: true,
+          caption: "Обновлённый портрет",
+        }),
+      },
+    );
+    assert.equal(updateMediaResponse.status, 200);
+    const updateMediaPayload = await updateMediaResponse.json();
+    assert.equal(
+      updateMediaPayload.person.photoUrl,
+      "https://cdn.example.com/anna-gallery-updated.jpg",
+    );
+    assert.equal(
+      updateMediaPayload.media.url,
+      "https://cdn.example.com/anna-gallery-updated.jpg",
+    );
+
+    const createRelationResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeId}/relations`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          person1Id: creatorPersonId,
+          person2Id: personId,
+          relation1to2: "sibling",
+          isConfirmed: true,
+        }),
+      },
+    );
+    assert.equal(createRelationResponse.status, 201);
+    const createdRelationPayload = await createRelationResponse.json();
+    const relationId = createdRelationPayload.relation.id;
+
+    const deleteRelationResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeId}/relations/${relationId}`,
+      {
+        method: "DELETE",
+        headers: {authorization: `Bearer ${token}`},
+      },
+    );
+    assert.equal(deleteRelationResponse.status, 204);
+
+    const deleteMediaResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeId}/persons/${personId}/media/${mediaId}`,
+      {
+        method: "DELETE",
+        headers: {authorization: `Bearer ${token}`},
+      },
+    );
+    assert.equal(deleteMediaResponse.status, 200);
+    const deleteMediaPayload = await deleteMediaResponse.json();
+    assert.equal(deleteMediaPayload.deletedMediaId, mediaId);
+    assert.equal(deleteMediaPayload.person.photoGallery.length, 1);
+    assert.equal(
+      deleteMediaPayload.person.primaryPhotoUrl,
+      "https://cdn.example.com/anna-primary.jpg",
+    );
+
+    const historyResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeId}/history?personId=${personId}`,
+      {
+        headers: {authorization: `Bearer ${token}`},
+      },
+    );
+    assert.equal(historyResponse.status, 200);
+    const historyPayload = await historyResponse.json();
+    const historyTypes = historyPayload.records.map((record) => record.type);
+    assert.ok(historyTypes.includes("person.created"));
+    assert.ok(historyTypes.includes("person_media.created"));
+    assert.ok(historyTypes.includes("person_media.updated"));
+    assert.ok(historyTypes.includes("person_media.deleted"));
+    assert.ok(historyTypes.includes("relation.created"));
+    assert.ok(historyTypes.includes("relation.deleted"));
+
+    const filteredHistoryResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeId}/history?type=person_media.deleted`,
+      {
+        headers: {authorization: `Bearer ${token}`},
+      },
+    );
+    assert.equal(filteredHistoryResponse.status, 200);
+    const filteredHistoryPayload = await filteredHistoryResponse.json();
+    assert.equal(filteredHistoryPayload.records.length, 1);
+    assert.equal(filteredHistoryPayload.records[0].mediaId, mediaId);
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("relation endpoints persist marriage and divorce dates", async () => {
+  const ctx = await startTestServer();
+
+  try {
+    const registerResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "relations-dates@lineage.app",
+        password: "secret123",
+        displayName: "Relation Dates",
+      }),
+    });
+    assert.equal(registerResponse.status, 201);
+    const registered = await registerResponse.json();
+    const token = registered.accessToken;
+
+    const createTreeResponse = await fetch(`${ctx.baseUrl}/v1/trees`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "Даты брака",
+        description: "Проверка дат в relation",
+        isPrivate: true,
+      }),
+    });
+    assert.equal(createTreeResponse.status, 201);
+    const createdTreePayload = await createTreeResponse.json();
+    const treeId = createdTreePayload.tree.id;
+
+    const personsResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeId}/persons`,
+      {
+        headers: {authorization: `Bearer ${token}`},
+      },
+    );
+    assert.equal(personsResponse.status, 200);
+    const initialPersonsPayload = await personsResponse.json();
+    const creatorPersonId = initialPersonsPayload.persons[0].id;
+
+    const spouseResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeId}/persons`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          firstName: "Анна",
+          lastName: "Смирнова",
+          gender: "female",
+        }),
+      },
+    );
+    assert.equal(spouseResponse.status, 201);
+    const spousePayload = await spouseResponse.json();
+    const spousePersonId = spousePayload.person.id;
+
+    const createRelationResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeId}/relations`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          person1Id: creatorPersonId,
+          person2Id: spousePersonId,
+          relation1to2: "spouse",
+          marriageDate: "2014-07-12T00:00:00.000Z",
+          divorceDate: "2020-02-10T00:00:00.000Z",
+          isConfirmed: true,
+        }),
+      },
+    );
+    assert.equal(createRelationResponse.status, 201);
+    const createdRelationPayload = await createRelationResponse.json();
+    assert.equal(
+      createdRelationPayload.relation.marriageDate,
+      "2014-07-12T00:00:00.000Z",
+    );
+    assert.equal(
+      createdRelationPayload.relation.divorceDate,
+      "2020-02-10T00:00:00.000Z",
+    );
+
+    const listRelationsResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeId}/relations`,
+      {
+        headers: {authorization: `Bearer ${token}`},
+      },
+    );
+    assert.equal(listRelationsResponse.status, 200);
+    const listedRelationsPayload = await listRelationsResponse.json();
+    assert.equal(listedRelationsPayload.relations.length, 1);
+    assert.equal(
+      listedRelationsPayload.relations[0].marriageDate,
+      "2014-07-12T00:00:00.000Z",
+    );
+    assert.equal(
+      listedRelationsPayload.relations[0].divorceDate,
+      "2020-02-10T00:00:00.000Z",
+    );
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
 test("public tree endpoints expose read-only tree data without auth", async () => {
   const ctx = await startTestServer();
 
@@ -1067,6 +1381,21 @@ test("post endpoints cover feed, likes and comments", async () => {
     const likedPost = await likeResponse.json();
     assert.deepEqual(likedPost.likedBy, [bob.user.id]);
 
+    const likeWithNullBodyResponse = await fetch(
+      `${ctx.baseUrl}/v1/posts/${createdPost.id}/like`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${bob.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: "null",
+      },
+    );
+    assert.equal(likeWithNullBodyResponse.status, 200);
+    const likeWithNullBodyPayload = await likeWithNullBodyResponse.json();
+    assert.deepEqual(likeWithNullBodyPayload.likedBy, []);
+
     const addCommentResponse = await fetch(
       `${ctx.baseUrl}/v1/posts/${createdPost.id}/comments`,
       {
@@ -1132,6 +1461,179 @@ test("post endpoints cover feed, likes and comments", async () => {
     assert.equal(feedAfterDeleteResponse.status, 200);
     const feedAfterDelete = await feedAfterDeleteResponse.json();
     assert.equal(feedAfterDelete.length, 0);
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("story endpoints support create, view, expiry and delete", async () => {
+  const ctx = await startTestServer();
+
+  try {
+    const aliceResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "stories-alice@lineage.app",
+        password: "secret123",
+        displayName: "Alice Stories",
+      }),
+    });
+    assert.equal(aliceResponse.status, 201);
+    const alice = await aliceResponse.json();
+
+    const bobResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "stories-bob@lineage.app",
+        password: "secret123",
+        displayName: "Bob Stories",
+      }),
+    });
+    assert.equal(bobResponse.status, 201);
+    const bob = await bobResponse.json();
+
+    const treeResponse = await fetch(`${ctx.baseUrl}/v1/trees`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${alice.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "Семья Историй",
+        description: "Тестовое дерево для stories",
+      }),
+    });
+    assert.equal(treeResponse.status, 201);
+    const treePayload = await treeResponse.json();
+    const treeId = treePayload.tree.id;
+
+    const inviteResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeId}/invitations`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${alice.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          recipientUserId: bob.user.id,
+          relationToTree: "Родственник",
+        }),
+      },
+    );
+    assert.equal(inviteResponse.status, 201);
+    const invitationPayload = await inviteResponse.json();
+
+    const acceptInviteResponse = await fetch(
+      `${ctx.baseUrl}/v1/tree-invitations/${invitationPayload.invitation.invitationId}/respond`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${bob.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({accept: true}),
+      },
+    );
+    assert.equal(acceptInviteResponse.status, 200);
+
+    const createStoryResponse = await fetch(`${ctx.baseUrl}/v1/stories`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${alice.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        treeId,
+        type: "text",
+        text: "Доброе утро, семья",
+      }),
+    });
+    assert.equal(createStoryResponse.status, 201);
+    const createdStory = await createStoryResponse.json();
+    assert.equal(createdStory.treeId, treeId);
+    assert.equal(createdStory.type, "text");
+    assert.deepEqual(createdStory.viewedBy, []);
+
+    const expiredStoryResponse = await fetch(`${ctx.baseUrl}/v1/stories`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${alice.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        treeId,
+        type: "text",
+        text: "Старая история",
+        expiresAt: "2020-01-01T00:00:00.000Z",
+      }),
+    });
+    assert.equal(expiredStoryResponse.status, 201);
+
+    const treeStoriesResponse = await fetch(
+      `${ctx.baseUrl}/v1/stories?treeId=${treeId}`,
+      {
+        headers: {authorization: `Bearer ${bob.accessToken}`},
+      },
+    );
+    assert.equal(treeStoriesResponse.status, 200);
+    const treeStories = await treeStoriesResponse.json();
+    assert.equal(treeStories.length, 1);
+    assert.equal(treeStories[0].id, createdStory.id);
+
+    const viewStoryResponse = await fetch(
+      `${ctx.baseUrl}/v1/stories/${createdStory.id}/view`,
+      {
+        method: "POST",
+        headers: {authorization: `Bearer ${bob.accessToken}`},
+      },
+    );
+    assert.equal(viewStoryResponse.status, 200);
+    const viewedStory = await viewStoryResponse.json();
+    assert.deepEqual(viewedStory.viewedBy, [bob.user.id]);
+
+    const authorViewStoryResponse = await fetch(
+      `${ctx.baseUrl}/v1/stories/${createdStory.id}/view`,
+      {
+        method: "POST",
+        headers: {authorization: `Bearer ${alice.accessToken}`},
+      },
+    );
+    assert.equal(authorViewStoryResponse.status, 200);
+    const authorViewedStory = await authorViewStoryResponse.json();
+    assert.deepEqual(authorViewedStory.viewedBy, [bob.user.id]);
+
+    const authorStoriesResponse = await fetch(
+      `${ctx.baseUrl}/v1/stories?treeId=${treeId}&authorId=${alice.user.id}`,
+      {
+        headers: {authorization: `Bearer ${bob.accessToken}`},
+      },
+    );
+    assert.equal(authorStoriesResponse.status, 200);
+    const authorStories = await authorStoriesResponse.json();
+    assert.equal(authorStories.length, 1);
+    assert.deepEqual(authorStories[0].viewedBy, [bob.user.id]);
+
+    const deleteStoryResponse = await fetch(
+      `${ctx.baseUrl}/v1/stories/${createdStory.id}`,
+      {
+        method: "DELETE",
+        headers: {authorization: `Bearer ${alice.accessToken}`},
+      },
+    );
+    assert.equal(deleteStoryResponse.status, 204);
+
+    const storiesAfterDeleteResponse = await fetch(
+      `${ctx.baseUrl}/v1/stories?treeId=${treeId}`,
+      {
+        headers: {authorization: `Bearer ${alice.accessToken}`},
+      },
+    );
+    assert.equal(storiesAfterDeleteResponse.status, 200);
+    const storiesAfterDelete = await storiesAfterDeleteResponse.json();
+    assert.equal(storiesAfterDelete.length, 0);
   } finally {
     await stopTestServer(ctx);
   }

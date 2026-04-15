@@ -37,6 +37,7 @@ class InteractiveFamilyTree extends StatefulWidget {
   final VoidCallback? onBranchFocusCleared;
   final String? selectedEditPersonId;
   final ValueChanged<FamilyPerson>? onEditPersonSelected;
+  final ValueChanged<FamilyPerson>? onOpenPersonHistory;
   final Map<String, Offset>? manualNodePositions;
   final ValueChanged<Map<String, Offset>>? onNodePositionsChanged;
   final bool showGenerationGuides;
@@ -73,6 +74,7 @@ class InteractiveFamilyTree extends StatefulWidget {
     this.onBranchFocusCleared,
     this.selectedEditPersonId,
     this.onEditPersonSelected,
+    this.onOpenPersonHistory,
     this.manualNodePositions,
     this.onNodePositionsChanged,
     this.showGenerationGuides = true,
@@ -1289,7 +1291,7 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
     }
 
     const panelWidth = 310.0;
-    const panelHeight = 210.0;
+    const panelHeight = 272.0;
     final preferredRight =
         position.dx + InteractiveFamilyTree.nodeWidth / 2 + 18;
     final preferredLeft =
@@ -1366,17 +1368,31 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
                   ),
                 ],
               ),
-              const SizedBox(height: 4),
-              Text(
-                'Добавляйте родственников прямо из дерева без перехода в отдельный список действий.',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-              ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 8),
               Wrap(
                 spacing: 8,
                 runSpacing: 8,
+                children: [
+                  _buildInspectorStatusChip(
+                    icon: Icons.photo_library_outlined,
+                    label: person.photoGallery.isEmpty
+                        ? 'Без фото'
+                        : '${person.photoGallery.length} фото',
+                  ),
+                  _buildInspectorStatusChip(
+                    icon: person.primaryPhotoUrl != null
+                        ? Icons.star_outline
+                        : Icons.image_not_supported_outlined,
+                    label: person.primaryPhotoUrl != null
+                        ? 'Основное фото есть'
+                        : 'Основное фото не выбрано',
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
                 children: [
                   _buildInlineActionButton(
                     icon: Icons.north_outlined,
@@ -1412,27 +1428,48 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
                   ),
                 ],
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 8),
               Wrap(
-                spacing: 8,
-                runSpacing: 8,
+                spacing: 6,
+                runSpacing: 6,
                 children: [
-                  OutlinedButton.icon(
-                    onPressed: () => widget.onPersonTap(person),
-                    icon: const Icon(Icons.open_in_new),
-                    label: const Text('Карточка'),
+                  _buildInspectorQuickActionChip(
+                    icon: Icons.open_in_new,
+                    label: 'Карточка',
+                    semanticsLabel: 'tree-inspector-open-card',
+                    onTap: () => widget.onPersonTap(person),
                   ),
-                  OutlinedButton.icon(
-                    onPressed: () => _showEditActionsSheet(context, person),
-                    icon: const Icon(Icons.more_horiz),
-                    label: const Text('Ещё действия'),
+                  _buildInspectorQuickActionChip(
+                    icon: Icons.photo_library_outlined,
+                    label: person.photoGallery.isEmpty
+                        ? 'Фото'
+                        : 'Фото (${person.photoGallery.length})',
+                    semanticsLabel: 'tree-inspector-open-gallery',
+                    onTap: person.photoGallery.isEmpty
+                        ? null
+                        : () => _showPersonGalleryDialog(context, person),
+                  ),
+                  _buildInspectorQuickActionChip(
+                    icon: Icons.history_outlined,
+                    label: 'История',
+                    semanticsLabel: 'tree-inspector-open-history',
+                    onTap: widget.onOpenPersonHistory == null
+                        ? null
+                        : () => widget.onOpenPersonHistory!(person),
+                  ),
+                  _buildInspectorQuickActionChip(
+                    icon: Icons.more_horiz,
+                    label: 'Ещё',
+                    semanticsLabel: 'tree-inspector-more-actions',
+                    onTap: () => _showEditActionsSheet(context, person),
                   ),
                   if (!widget.currentUserIsInTree)
-                    OutlinedButton.icon(
-                      onPressed: () =>
+                    _buildInspectorQuickActionChip(
+                      icon: Icons.person_add_alt_1,
+                      label: 'Вписать себя',
+                      semanticsLabel: 'tree-inspector-add-self',
+                      onTap: () =>
                           _showAddSelfRelationTypeDialog(context, person),
-                      icon: const Icon(Icons.person_add_alt_1),
-                      label: const Text('Вписать себя'),
                     ),
                 ],
               ),
@@ -1448,10 +1485,176 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
     required String label,
     required VoidCallback onTap,
   }) {
-    return FilledButton.tonalIcon(
+    final theme = Theme.of(context);
+    return ActionChip(
       onPressed: onTap,
-      icon: Icon(icon, size: 18),
+      visualDensity: VisualDensity.compact,
+      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      avatar: Icon(
+        icon,
+        size: 16,
+        color: theme.colorScheme.primary,
+      ),
       label: Text(label),
+      side: BorderSide(color: theme.colorScheme.outlineVariant),
+      backgroundColor:
+          theme.colorScheme.secondaryContainer.withValues(alpha: 0.55),
+      padding: const EdgeInsets.symmetric(horizontal: 6),
+    );
+  }
+
+  Widget _buildInspectorQuickActionChip({
+    required IconData icon,
+    required String label,
+    String? semanticsLabel,
+    required VoidCallback? onTap,
+  }) {
+    final theme = Theme.of(context);
+    return Semantics(
+      label: semanticsLabel,
+      button: true,
+      enabled: onTap != null,
+      child: ActionChip(
+        onPressed: onTap,
+        visualDensity: VisualDensity.compact,
+        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        avatar: Icon(icon, size: 16),
+        label: Text(label),
+        side: BorderSide(color: theme.colorScheme.outlineVariant),
+        backgroundColor:
+            theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.82),
+        padding: const EdgeInsets.symmetric(horizontal: 6),
+      ),
+    );
+  }
+
+  Widget _buildInspectorStatusChip({
+    required IconData icon,
+    required String label,
+  }) {
+    return Chip(
+      visualDensity: VisualDensity.compact,
+      avatar: Icon(icon, size: 16),
+      label: Text(label),
+    );
+  }
+
+  void _showPersonGalleryDialog(BuildContext context, FamilyPerson person) {
+    final gallery = person.photoGallery;
+    if (gallery.isEmpty) {
+      return;
+    }
+
+    final pageController = PageController();
+    var currentIndex = 0;
+
+    showDialog<void>(
+      context: context,
+      barrierColor: Colors.black87,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final media = gallery[currentIndex];
+            final caption = media['caption']?.toString();
+
+            return Dialog(
+              insetPadding: const EdgeInsets.all(16),
+              backgroundColor: Colors.black,
+              child: SizedBox(
+                width: 520,
+                height: 520,
+                child: Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              media['isPrimary'] == true
+                                  ? 'Основное фото'
+                                  : 'Фото родственника',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: () => Navigator.of(context).pop(),
+                            icon: const Icon(Icons.close, color: Colors.white),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Expanded(
+                      child: PageView.builder(
+                        controller: pageController,
+                        itemCount: gallery.length,
+                        onPageChanged: (index) {
+                          setDialogState(() {
+                            currentIndex = index;
+                          });
+                        },
+                        itemBuilder: (context, index) {
+                          final itemUrl =
+                              gallery[index]['url']?.toString() ?? '';
+                          return InteractiveViewer(
+                            child: itemUrl.isEmpty
+                                ? const Center(
+                                    child: Icon(
+                                      Icons.broken_image_outlined,
+                                      color: Colors.white,
+                                      size: 40,
+                                    ),
+                                  )
+                                : Image.network(
+                                    itemUrl,
+                                    fit: BoxFit.contain,
+                                    errorBuilder:
+                                        (context, error, stackTrace) =>
+                                            const Center(
+                                      child: Icon(
+                                        Icons.broken_image_outlined,
+                                        color: Colors.white,
+                                        size: 40,
+                                      ),
+                                    ),
+                                  ),
+                          );
+                        },
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                      child: Column(
+                        children: [
+                          Text(
+                            '${currentIndex + 1} из ${gallery.length}',
+                            style: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 12,
+                            ),
+                          ),
+                          if (caption != null && caption.isNotEmpty) ...[
+                            const SizedBox(height: 8),
+                            Text(
+                              caption,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(color: Colors.white),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 
@@ -1795,6 +1998,8 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
   }
 
   void _showEditActionsSheet(BuildContext context, FamilyPerson person) {
+    final hasGallery = person.photoGallery.isNotEmpty;
+
     showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
@@ -1823,12 +2028,71 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
                     style: Theme.of(context).textTheme.bodyMedium,
                   ),
                   const SizedBox(height: 16),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      _buildInspectorStatusChip(
+                        icon: Icons.photo_library_outlined,
+                        label: hasGallery
+                            ? '${person.photoGallery.length} фото'
+                            : 'Без фото',
+                      ),
+                      _buildInspectorStatusChip(
+                        icon: person.primaryPhotoUrl != null
+                            ? Icons.star_outline
+                            : Icons.image_not_supported_outlined,
+                        label: person.primaryPhotoUrl != null
+                            ? 'Основное фото есть'
+                            : 'Основное фото не выбрано',
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+                  Text(
+                    'Быстрые переходы',
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                  ),
+                  const SizedBox(height: 8),
                   _buildEditActionTile(
                     sheetContext: sheetContext,
                     icon: Icons.open_in_new,
                     title: 'Открыть профиль',
+                    semanticsLabel: 'tree-sheet-open-card',
+                    subtitle: 'Полная карточка, связи и заметки',
                     onTap: () => widget.onPersonTap(person),
                   ),
+                  _buildEditActionTile(
+                    sheetContext: sheetContext,
+                    icon: Icons.photo_library_outlined,
+                    title: hasGallery ? 'Открыть фото' : 'Перейти к фото',
+                    semanticsLabel: 'tree-sheet-open-gallery',
+                    subtitle: hasGallery
+                        ? 'В галерее ${person.photoGallery.length} фото'
+                        : 'Откройте карточку и добавьте фото',
+                    onTap: hasGallery
+                        ? () => _showPersonGalleryDialog(context, person)
+                        : () => widget.onPersonTap(person),
+                  ),
+                  if (widget.onOpenPersonHistory != null)
+                    _buildEditActionTile(
+                      sheetContext: sheetContext,
+                      icon: Icons.history_outlined,
+                      title: 'История изменений',
+                      semanticsLabel: 'tree-sheet-open-history',
+                      subtitle: 'Журнал правок этой карточки',
+                      onTap: () => widget.onOpenPersonHistory!(person),
+                    ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Добавить связь',
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                  ),
+                  const SizedBox(height: 8),
                   _buildEditActionTile(
                     sheetContext: sheetContext,
                     icon: Icons.arrow_upward,
@@ -1880,16 +2144,27 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
     required BuildContext sheetContext,
     required IconData icon,
     required String title,
-    required VoidCallback onTap,
+    String? semanticsLabel,
+    String? subtitle,
+    VoidCallback? onTap,
   }) {
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      leading: Icon(icon),
-      title: Text(title),
-      onTap: () {
-        Navigator.of(sheetContext).pop();
-        onTap();
-      },
+    return Semantics(
+      label: semanticsLabel,
+      button: true,
+      enabled: onTap != null,
+      child: ListTile(
+        contentPadding: EdgeInsets.zero,
+        enabled: onTap != null,
+        leading: Icon(icon),
+        title: Text(title),
+        subtitle: subtitle == null ? null : Text(subtitle),
+        onTap: onTap == null
+            ? null
+            : () {
+                Navigator.of(sheetContext).pop();
+                onTap();
+              },
+      ),
     );
   }
 
@@ -2249,13 +2524,14 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
 
     final contentWidth = treeSize.width;
     final contentHeight = treeSize.height;
-    final horizontalScale = (viewport.width - 28) / contentWidth;
+    final horizontalInset = viewport.width >= 1180 ? 18.0 : 28.0;
+    final horizontalScale = (viewport.width - horizontalInset) / contentWidth;
     final verticalScale =
         (viewport.height - _viewportReservedTop - _viewportReservedBottom) /
             contentHeight;
     final targetScale =
         horizontalScale < verticalScale ? horizontalScale : verticalScale;
-    final safeScale = targetScale.clamp(0.2, 1.12);
+    final safeScale = targetScale.clamp(0.2, _maxViewportFitScale(viewport));
 
     final translateX = (viewport.width - contentWidth * safeScale) / 2;
     final availableHeight =
@@ -2278,7 +2554,7 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
       return;
     }
 
-    const focusScale = 1.0;
+    final focusScale = _focusScaleForViewport(viewport);
     final translateX = viewport.width / 2 - targetPosition.dx * focusScale;
     final usableCenterY = _viewportReservedTop +
         (viewport.height - _viewportReservedTop - _viewportReservedBottom) / 2;
@@ -2287,6 +2563,42 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
     _transformationController.value = vector_math.Matrix4.identity()
       ..translateByDouble(translateX, translateY, 0, 1)
       ..scaleByDouble(focusScale, focusScale, 1, 1);
+  }
+
+  double _maxViewportFitScale(Size viewport) {
+    final peopleCount = widget.peopleData.length;
+
+    if (viewport.width >= 1500) {
+      if (peopleCount <= 3) {
+        return 2.04;
+      }
+      if (peopleCount <= 6) {
+        return 1.62;
+      }
+      return 1.24;
+    }
+
+    if (viewport.width >= 1180) {
+      if (peopleCount <= 3) {
+        return 1.82;
+      }
+      if (peopleCount <= 6) {
+        return 1.48;
+      }
+      return 1.18;
+    }
+
+    return 1.12;
+  }
+
+  double _focusScaleForViewport(Size viewport) {
+    if (viewport.width >= 1500) {
+      return 1.28;
+    }
+    if (viewport.width >= 1180) {
+      return 1.16;
+    }
+    return 1.0;
   }
 
   void _zoomBy(double multiplier) {

@@ -12,6 +12,7 @@ import '../models/family_person.dart';
 import '../models/family_relation.dart';
 import '../models/family_tree.dart';
 import '../models/relation_request.dart';
+import '../models/tree_change_record.dart';
 import '../models/user_profile.dart';
 import 'custom_api_auth_service.dart';
 import 'local_storage_service.dart';
@@ -200,6 +201,8 @@ class CustomApiFamilyTreeService implements FamilyTreeServiceInterface {
     required String person2Id,
     required RelationType relation1to2,
     bool isConfirmed = true,
+    DateTime? marriageDate,
+    DateTime? divorceDate,
   }) async {
     final resolvedPerson1Id = await _resolvePersonIdForTree(treeId, person1Id);
     final resolvedPerson2Id = await _resolvePersonIdForTree(treeId, person2Id);
@@ -221,6 +224,8 @@ class CustomApiFamilyTreeService implements FamilyTreeServiceInterface {
           FamilyRelation.getMirrorRelation(relation1to2),
         ),
         'isConfirmed': isConfirmed,
+        if (marriageDate != null) 'marriageDate': marriageDate,
+        if (divorceDate != null) 'divorceDate': divorceDate,
       },
     );
 
@@ -597,6 +602,103 @@ class CustomApiFamilyTreeService implements FamilyTreeServiceInterface {
   }
 
   @override
+  Future<FamilyPerson> addRelativeMedia({
+    required String treeId,
+    required String personId,
+    required Map<String, dynamic> mediaData,
+  }) async {
+    final resolvedPersonId = await _resolvePersonIdForTree(treeId, personId);
+    if (resolvedPersonId == null) {
+      throw const CustomApiException(
+        'Не удалось определить родственника для добавления медиа',
+      );
+    }
+
+    final response = await _requestJson(
+      method: 'POST',
+      path: '/v1/trees/$treeId/persons/$resolvedPersonId/media',
+      body: _normalizePersonPayload(mediaData),
+    );
+
+    final updatedPerson = _personFromResponse(response, fallbackTreeId: treeId);
+    _personTreeIds[updatedPerson.id] = treeId;
+    await _cachePerson(updatedPerson);
+    return updatedPerson;
+  }
+
+  @override
+  Future<FamilyPerson> updateRelativeMedia({
+    required String treeId,
+    required String personId,
+    required String mediaId,
+    required Map<String, dynamic> mediaData,
+  }) async {
+    final resolvedPersonId = await _resolvePersonIdForTree(treeId, personId);
+    if (resolvedPersonId == null) {
+      throw const CustomApiException(
+        'Не удалось определить родственника для обновления медиа',
+      );
+    }
+
+    final response = await _requestJson(
+      method: 'PATCH',
+      path: '/v1/trees/$treeId/persons/$resolvedPersonId/media/$mediaId',
+      body: _normalizePersonPayload(mediaData),
+    );
+
+    final updatedPerson = _personFromResponse(response, fallbackTreeId: treeId);
+    _personTreeIds[updatedPerson.id] = treeId;
+    await _cachePerson(updatedPerson);
+    return updatedPerson;
+  }
+
+  @override
+  Future<FamilyPerson> deleteRelativeMedia({
+    required String treeId,
+    required String personId,
+    required String mediaId,
+  }) async {
+    final resolvedPersonId = await _resolvePersonIdForTree(treeId, personId);
+    if (resolvedPersonId == null) {
+      throw const CustomApiException(
+        'Не удалось определить родственника для удаления медиа',
+      );
+    }
+
+    final response = await _requestJson(
+      method: 'DELETE',
+      path: '/v1/trees/$treeId/persons/$resolvedPersonId/media/$mediaId',
+    );
+
+    final updatedPerson = _personFromResponse(response, fallbackTreeId: treeId);
+    _personTreeIds[updatedPerson.id] = treeId;
+    await _cachePerson(updatedPerson);
+    return updatedPerson;
+  }
+
+  @override
+  Future<List<TreeChangeRecord>> getTreeHistory({
+    required String treeId,
+    String? personId,
+    String? type,
+    String? actorId,
+  }) async {
+    final response = await _requestJson(
+      method: 'GET',
+      path: _buildPathWithQuery(
+        '/v1/trees/$treeId/history',
+        <String, String>{
+          if (personId != null && personId.isNotEmpty) 'personId': personId,
+          if (type != null && type.isNotEmpty) 'type': type,
+          if (actorId != null && actorId.isNotEmpty) 'actorId': actorId,
+        },
+      ),
+    );
+
+    return _treeChangeRecordListFromResponse(response);
+  }
+
+  @override
   Future<bool> hasDirectRelation({
     required String treeId,
     required String person1Id,
@@ -730,6 +832,7 @@ class CustomApiFamilyTreeService implements FamilyTreeServiceInterface {
     Map<String, dynamic>? body,
   }) async {
     final uri = _buildUri(path);
+    final normalizedBody = body == null ? null : _normalizePersonPayload(body);
     late http.Response response;
 
     switch (method) {
@@ -740,14 +843,21 @@ class CustomApiFamilyTreeService implements FamilyTreeServiceInterface {
         response = await _httpClient.post(
           uri,
           headers: _headers(),
-          body: jsonEncode(body ?? const <String, dynamic>{}),
+          body: jsonEncode(normalizedBody ?? const <String, dynamic>{}),
         );
         break;
       case 'PATCH':
         response = await _httpClient.patch(
           uri,
           headers: _headers(),
-          body: jsonEncode(body ?? const <String, dynamic>{}),
+          body: jsonEncode(normalizedBody ?? const <String, dynamic>{}),
+        );
+        break;
+      case 'DELETE':
+        response = await _httpClient.delete(
+          uri,
+          headers: _headers(),
+          body: normalizedBody == null ? null : jsonEncode(normalizedBody),
         );
         break;
       default:
@@ -925,7 +1035,9 @@ class CustomApiFamilyTreeService implements FamilyTreeServiceInterface {
       userId: json['userId']?.toString(),
       name: json['name']?.toString() ?? '',
       maidenName: json['maidenName']?.toString(),
-      photoUrl: json['photoUrl']?.toString(),
+      photoUrl:
+          json['primaryPhotoUrl']?.toString() ?? json['photoUrl']?.toString(),
+      photoGallery: _photoGalleryFromJson(json['photoGallery']),
       gender: FamilyPerson.genderFromString(json['gender']?.toString()),
       birthDate: birthDate,
       birthPlace: json['birthPlace']?.toString(),
@@ -987,6 +1099,8 @@ class CustomApiFamilyTreeService implements FamilyTreeServiceInterface {
       createdAt: createdAt ?? DateTime.now(),
       updatedAt: updatedAt,
       createdBy: json['createdBy']?.toString(),
+      marriageDate: DateTime.tryParse(json['marriageDate']?.toString() ?? ''),
+      divorceDate: DateTime.tryParse(json['divorceDate']?.toString() ?? ''),
     );
   }
 
@@ -1002,6 +1116,21 @@ class CustomApiFamilyTreeService implements FamilyTreeServiceInterface {
         .whereType<Map<String, dynamic>>()
         .map(_relationRequestFromJson)
         .where((request) => request.id.isNotEmpty)
+        .toList();
+  }
+
+  List<TreeChangeRecord> _treeChangeRecordListFromResponse(
+    Map<String, dynamic> response,
+  ) {
+    final rawRecords = response['records'];
+    if (rawRecords is! List<dynamic>) {
+      return const <TreeChangeRecord>[];
+    }
+
+    return rawRecords
+        .whereType<Map<String, dynamic>>()
+        .map(TreeChangeRecord.fromJson)
+        .where((record) => record.id.isNotEmpty)
         .toList();
   }
 
@@ -1244,11 +1373,35 @@ class CustomApiFamilyTreeService implements FamilyTreeServiceInterface {
 
   Map<String, dynamic> _normalizePersonPayload(
       Map<String, dynamic> personData) {
-    return personData.map((key, value) {
-      if (value is DateTime) {
-        return MapEntry(key, value.toIso8601String());
-      }
-      return MapEntry(key, value);
-    });
+    return personData.map(
+      (key, value) => MapEntry(key, _normalizeJsonValue(value)),
+    );
+  }
+
+  List<Map<String, dynamic>> _photoGalleryFromJson(dynamic rawValue) {
+    if (rawValue is! List<dynamic>) {
+      return const <Map<String, dynamic>>[];
+    }
+
+    return rawValue
+        .whereType<Map>()
+        .map((entry) => Map<String, dynamic>.from(entry))
+        .toList();
+  }
+
+  dynamic _normalizeJsonValue(dynamic value) {
+    if (value is DateTime) {
+      return value.toIso8601String();
+    }
+    if (value is Map) {
+      return value.map(
+        (key, nestedValue) =>
+            MapEntry(key.toString(), _normalizeJsonValue(nestedValue)),
+      );
+    }
+    if (value is List) {
+      return value.map(_normalizeJsonValue).toList();
+    }
+    return value;
   }
 }

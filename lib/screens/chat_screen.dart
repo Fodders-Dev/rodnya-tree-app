@@ -36,6 +36,7 @@ import '../services/chat_reaction_store.dart';
 import '../services/custom_api_auth_service.dart';
 import '../services/custom_api_realtime_service.dart';
 import '../utils/chat_attachment_download.dart';
+import '../widgets/glass_panel.dart';
 
 enum _OutgoingMessageStatus { pending, sent, failed }
 
@@ -2592,18 +2593,6 @@ class _ChatScreenState extends State<ChatScreen> {
         : (widget.isGroup ? 'Групповой чат' : 'Личные сообщения');
   }
 
-  String _chatContextLabel(BuildContext context) {
-    final provider = context.watch<TreeProvider>();
-    final isFriendsTree = provider.selectedTreeKind == TreeKind.friends;
-    final name = provider.selectedTreeName;
-    if (name == null || name.isEmpty) {
-      return isFriendsTree
-          ? 'Контекст круга друзей'
-          : 'Контекст семейного дерева';
-    }
-    return isFriendsTree ? 'Круг: $name' : 'Дерево: $name';
-  }
-
   @override
   Widget build(BuildContext context) {
     final selectionCount = _selectedMessageCount;
@@ -2675,35 +2664,15 @@ class _ChatScreenState extends State<ChatScreen> {
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
+                            const SizedBox(height: 2),
                             Text(
                               _chatSubtitle(),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                               style: Theme.of(context).textTheme.bodySmall,
-                            ),
-                            Text(
-                              _chatContextLabel(context),
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .bodySmall
-                                  ?.copyWith(
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .onSurfaceVariant,
-                                  ),
                             ),
                           ],
                         ),
-                      ),
-                      IconButton(
-                        onPressed: _openSearch,
-                        tooltip: 'Поиск по чату',
-                        icon: const Icon(Icons.search),
-                      ),
-                      IconButton(
-                        onPressed: _isLoadingChatDetails || _chatDetails == null
-                            ? null
-                            : _openChatInfo,
-                        tooltip: 'О чате',
-                        icon: const Icon(Icons.info_outline),
                       ),
                     ],
                   ),
@@ -2725,7 +2694,22 @@ class _ChatScreenState extends State<ChatScreen> {
                   icon: const Icon(Icons.delete_outline_rounded),
                 ),
               ]
-            : null,
+            : _isSearchMode
+                ? null
+                : [
+                    IconButton(
+                      onPressed: _openSearch,
+                      tooltip: 'Поиск по чату',
+                      icon: const Icon(Icons.search),
+                    ),
+                    IconButton(
+                      onPressed: _isLoadingChatDetails || _chatDetails == null
+                          ? null
+                          : _openChatInfo,
+                      tooltip: 'О чате',
+                      icon: const Icon(Icons.info_outline),
+                    ),
+                  ],
       ),
       body: Center(
         child: ConstrainedBox(
@@ -2755,62 +2739,48 @@ class _ChatScreenState extends State<ChatScreen> {
         (_recordingDurationSeconds ~/ 60).toString().padLeft(2, '0');
     final seconds = (_recordingDurationSeconds % 60).toString().padLeft(2, '0');
 
-    return Material(
-      elevation: 5,
-      color: theme.cardColor,
-      child: Padding(
-        padding: EdgeInsets.only(
-          left: 16,
-          right: 16,
-          top: 12,
-          bottom: MediaQuery.of(context).padding.bottom + 12,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        8,
+        4,
+        8,
+        MediaQuery.of(context).padding.bottom + 8,
+      ),
+      child: GlassPanel(
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+        borderRadius: BorderRadius.circular(28),
+        child: Row(
           children: [
-            Row(
-              children: [
-                const Icon(Icons.mic, color: Colors.red),
-                const SizedBox(width: 12),
-                Text(
-                  '$minutes:$seconds',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
-                    color: Colors.red,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    isFriendsTree
-                        ? 'Запись аудио для круга...'
-                        : 'Запись аудио...',
-                    style: theme.textTheme.bodyMedium
-                        ?.copyWith(color: Colors.grey),
-                  ),
-                ),
-                IconButton(
-                  onPressed: _cancelRecording,
-                  icon: const Icon(Icons.delete_outline, color: Colors.grey),
-                  tooltip: 'Отмена',
-                ),
-                IconButton(
-                  onPressed: _stopAndSendRecording,
-                  icon: Icon(Icons.stop_rounded,
-                      color: theme.colorScheme.primary),
-                  tooltip: 'Остановить и прослушать',
-                ),
-              ],
+            const Icon(Icons.mic, color: Colors.red),
+            const SizedBox(width: 12),
+            Text(
+              '$minutes:$seconds',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+                color: Colors.red,
+              ),
             ),
-            const SizedBox(height: 6),
-            Align(
-              alignment: Alignment.centerLeft,
+            const SizedBox(width: 12),
+            Expanded(
               child: Text(
-                'Остановите запись, чтобы прослушать, удалить или отправить позже.',
-                style: theme.textTheme.bodySmall?.copyWith(
+                isFriendsTree ? 'Запись для круга' : 'Запись аудио',
+                style: theme.textTheme.bodyMedium?.copyWith(
                   color: theme.colorScheme.onSurfaceVariant,
                 ),
               ),
+            ),
+            IconButton(
+              onPressed: _cancelRecording,
+              icon: const Icon(Icons.delete_outline),
+              tooltip: 'Отмена',
+            ),
+            IconButton(
+              onPressed: _stopAndSendRecording,
+              icon: Icon(
+                Icons.stop_rounded,
+                color: theme.colorScheme.primary,
+              ),
+              tooltip: 'Остановить и прослушать',
             ),
           ],
         ),
@@ -2840,7 +2810,7 @@ class _ChatScreenState extends State<ChatScreen> {
             children: [
               Expanded(
                 child: Text(
-                  'Прослушайте голосовое перед отправкой',
+                  'Проверьте голосовое',
                   style: theme.textTheme.labelLarge?.copyWith(
                     fontWeight: FontWeight.w700,
                   ),
@@ -2867,7 +2837,7 @@ class _ChatScreenState extends State<ChatScreen> {
           _VoicePlayerWidget(path: voiceFile.path, isMe: true),
           const SizedBox(height: 4),
           Text(
-            'Можно перезаписать голосовое или отправить его как отдельное сообщение.',
+            'Можно перезаписать или отправить.',
             style: theme.textTheme.bodySmall?.copyWith(
               color: theme.colorScheme.onSurfaceVariant,
             ),
@@ -2910,22 +2880,28 @@ class _ChatScreenState extends State<ChatScreen> {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.chat_bubble_outline, size: 48),
-              const SizedBox(height: 12),
-              Text(
-                _bootstrapError!,
-                textAlign: TextAlign.center,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 340),
+            child: GlassPanel(
+              borderRadius: BorderRadius.circular(28),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.chat_bubble_outline, size: 40),
+                  const SizedBox(height: 12),
+                  Text(
+                    _bootstrapError!,
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 16),
+                  FilledButton.icon(
+                    onPressed: _bootstrapChat,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Повторить'),
+                  ),
+                ],
               ),
-              const SizedBox(height: 16),
-              FilledButton.icon(
-                onPressed: _bootstrapChat,
-                icon: const Icon(Icons.refresh),
-                label: const Text('Повторить'),
-              ),
-            ],
+            ),
           ),
         ),
       );
@@ -2933,7 +2909,12 @@ class _ChatScreenState extends State<ChatScreen> {
 
     final chatId = _chatId;
     if (chatId == null || chatId.isEmpty) {
-      return const Center(child: Text('Чат недоступен.'));
+      return Center(
+        child: GlassPanel(
+          borderRadius: BorderRadius.circular(28),
+          child: const Text('Чат недоступен.'),
+        ),
+      );
     }
 
     return StreamBuilder<List<ChatMessage>>(
@@ -2948,22 +2929,28 @@ class _ChatScreenState extends State<ChatScreen> {
           return Center(
             child: Padding(
               padding: const EdgeInsets.all(24),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(Icons.error_outline, size: 48),
-                  const SizedBox(height: 12),
-                  const Text(
-                    'Не удалось загрузить сообщения. Попробуйте обновить чат.',
-                    textAlign: TextAlign.center,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 340),
+                child: GlassPanel(
+                  borderRadius: BorderRadius.circular(28),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.error_outline, size: 40),
+                      const SizedBox(height: 12),
+                      const Text(
+                        'Не удалось загрузить сообщения.',
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 16),
+                      FilledButton.icon(
+                        onPressed: _bootstrapChat,
+                        icon: const Icon(Icons.refresh),
+                        label: const Text('Обновить'),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 16),
-                  FilledButton.icon(
-                    onPressed: _bootstrapChat,
-                    icon: const Icon(Icons.refresh),
-                    label: const Text('Обновить'),
-                  ),
-                ],
+                ),
               ),
             ),
           );
@@ -3004,19 +2991,26 @@ class _ChatScreenState extends State<ChatScreen> {
             filteredOptimisticMessages.isEmpty) {
           if (hasActiveSearch) {
             return Center(
-              child: Text(
-                'Ничего не найдено по запросу "${_searchController.text.trim()}"',
-                textAlign: TextAlign.center,
+              child: GlassPanel(
+                borderRadius: BorderRadius.circular(24),
+                child: Text(
+                  'Ничего не найдено по запросу "${_searchController.text.trim()}"',
+                  textAlign: TextAlign.center,
+                ),
               ),
             );
           }
           final isFriendsTree =
               context.read<TreeProvider>().selectedTreeKind == TreeKind.friends;
           return Center(
-            child: Text(
-              isFriendsTree
-                  ? 'Сообщений пока нет. Начните разговор с людьми из круга первым.'
-                  : 'Сообщений пока нет. Начните диалог первым.',
+            child: GlassPanel(
+              borderRadius: BorderRadius.circular(24),
+              child: Text(
+                isFriendsTree
+                    ? 'Пока пусто. Начните разговор.'
+                    : 'Пока пусто. Начните диалог.',
+                textAlign: TextAlign.center,
+              ),
             ),
           );
         }
@@ -3153,20 +3147,14 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget _buildPinnedMessageBanner() {
     final pinned = _pinnedMessage!;
     final theme = Theme.of(context);
-    return Material(
-      color: theme.colorScheme.surfaceContainerLow,
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
       child: InkWell(
         onTap: _focusPinnedMessage,
-        child: Container(
-          width: double.infinity,
+        borderRadius: BorderRadius.circular(24),
+        child: GlassPanel(
           padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
-          decoration: BoxDecoration(
-            border: Border(
-              bottom: BorderSide(
-                color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
-              ),
-            ),
-          ),
+          borderRadius: BorderRadius.circular(24),
           child: Row(
             children: [
               Container(
@@ -3272,28 +3260,17 @@ class _ChatScreenState extends State<ChatScreen> {
         _selectedForward != null ||
         _selectedForwardBatch != null ||
         _selectedEdit != null;
-    final isFriendsTree =
-        context.read<TreeProvider>().selectedTreeKind == TreeKind.friends;
 
-    return Material(
-      elevation: 5,
-      color: Theme.of(context).cardColor,
-      child: Container(
-        padding: EdgeInsets.only(
-          left: 8,
-          right: 8,
-          top: 8,
-          bottom: MediaQuery.of(context).padding.bottom + 8,
-        ),
-        decoration: BoxDecoration(
-          color: Theme.of(context).cardColor,
-          border: Border(
-            top: BorderSide(
-              color: Theme.of(context).dividerColor,
-              width: 0.5,
-            ),
-          ),
-        ),
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        8,
+        4,
+        8,
+        MediaQuery.of(context).padding.bottom + 8,
+      ),
+      child: GlassPanel(
+        padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
+        borderRadius: BorderRadius.circular(28),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -3323,21 +3300,6 @@ class _ChatScreenState extends State<ChatScreen> {
                       'Автоудаление: ${_autoDeleteSettings.option.label}',
                     ),
                     visualDensity: VisualDensity.compact,
-                  ),
-                ),
-              ),
-            if (_selectedAttachments.isEmpty)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    isFriendsTree
-                        ? 'Сообщения, фото и голосовые останутся в контексте выбранного круга друзей.'
-                        : 'Сообщения, фото и голосовые останутся в контексте выбранного семейного дерева.',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
                   ),
                 ),
               ),
@@ -3415,14 +3377,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     Align(
                       alignment: Alignment.centerLeft,
                       child: Text(
-                        isFriendsTree &&
-                                _selectedAttachments.every(
-                                  (file) =>
-                                      _attachmentKindFromXFile(file) ==
-                                      _ChatAttachmentKind.video,
-                                )
-                            ? 'Видео отправится как вложение для выбранного круга друзей.'
-                            : _attachmentHintLabel(_selectedAttachments),
+                        _attachmentHintLabel(_selectedAttachments),
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
                     ),
@@ -3481,24 +3436,25 @@ class _ChatScreenState extends State<ChatScreen> {
             Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                IconButton(
+                IconButton.filledTonal(
                   onPressed: _selectedAttachments.length >= _maxAttachments
                       ? null
                       : _openAttachmentPicker,
                   tooltip: 'Добавить вложение',
-                  icon: Icon(
-                    Icons.attach_file_rounded,
-                    color: Theme.of(context).iconTheme.color,
-                  ),
+                  icon: const Icon(Icons.attach_file_rounded),
                 ),
                 Expanded(
                   child: Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 8),
                     padding: const EdgeInsets.symmetric(
                       horizontal: 12,
                       vertical: 8,
                     ),
                     decoration: BoxDecoration(
-                      color: Theme.of(context).scaffoldBackgroundColor,
+                      color: Theme.of(context)
+                          .colorScheme
+                          .surfaceContainerLowest
+                          .withValues(alpha: 0.78),
                       borderRadius: BorderRadius.circular(24),
                     ),
                     child: TextField(
@@ -3514,21 +3470,18 @@ class _ChatScreenState extends State<ChatScreen> {
                     ),
                   ),
                 ),
-                const SizedBox(width: 8),
-                FloatingActionButton(
-                  mini: true,
+                IconButton.filled(
                   onPressed: canSend
                       ? (_selectedEdit != null
                           ? _saveEditedMessage
                           : _sendCurrentMessage)
                       : _startRecording,
-                  elevation: 0,
                   tooltip: canSend
                       ? (_selectedEdit != null
                           ? 'Сохранить изменения'
                           : 'Отправить')
                       : 'Голосовое сообщение',
-                  child: Icon(
+                  icon: Icon(
                     canSend
                         ? (_selectedEdit != null ? Icons.check : Icons.send)
                         : Icons.mic_none_rounded,
@@ -4176,26 +4129,16 @@ class _ChatScreenState extends State<ChatScreen> {
         ? '$label в списке блокировок'
         : 'Собеседник в списке блокировок';
 
-    return Material(
-      elevation: 5,
-      color: theme.cardColor,
-      child: Container(
-        width: double.infinity,
-        padding: EdgeInsets.fromLTRB(
-          16,
-          14,
-          16,
-          MediaQuery.of(context).padding.bottom + 14,
-        ),
-        decoration: BoxDecoration(
-          color: theme.cardColor,
-          border: Border(
-            top: BorderSide(
-              color: theme.dividerColor,
-              width: 0.5,
-            ),
-          ),
-        ),
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        8,
+        4,
+        8,
+        MediaQuery.of(context).padding.bottom + 8,
+      ),
+      child: GlassPanel(
+        padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
+        borderRadius: BorderRadius.circular(28),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
@@ -4219,7 +4162,7 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
             const SizedBox(height: 6),
             Text(
-              'История чата остаётся доступной, но новые сообщения и медиа сейчас отправлять нельзя.',
+              'Новые сообщения и медиа сейчас недоступны.',
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
               ),
@@ -5484,11 +5427,24 @@ class _ChatInfoSheetState extends State<_ChatInfoSheet> {
           height: screenHeight * 0.84,
           child: ListView(
             children: [
-              Text(
-                'О чате',
-                style: theme.textTheme.titleLarge?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
+              Row(
+                children: [
+                  Text(
+                    'О чате',
+                    style: theme.textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close),
+                    style: IconButton.styleFrom(
+                      backgroundColor: theme.colorScheme.surfaceContainerHighest
+                          .withValues(alpha: 0.65),
+                    ),
+                  ),
+                ],
               ),
               const SizedBox(height: 8),
               Text(
@@ -5497,20 +5453,7 @@ class _ChatInfoSheetState extends State<_ChatInfoSheet> {
                   fontWeight: FontWeight.w600,
                 ),
               ),
-              const SizedBox(height: 4),
-              Text(
-                _details.isBranch
-                    ? 'Веточный чат обновляется по составу дерева автоматически.'
-                    : _details.isDirect
-                        ? 'Личный чат. Здесь можно настроить уведомления, автоудаление и быстрые действия.'
-                        : (isFriendsTree
-                            ? 'Группа круга друзей. Можно менять название и участников.'
-                            : 'Обычная семейная группа. Можно менять название и участников.'),
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: Colors.grey[600],
-                ),
-              ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 14),
               Wrap(
                 spacing: 8,
                 runSpacing: 8,
@@ -5542,14 +5485,8 @@ class _ChatInfoSheetState extends State<_ChatInfoSheet> {
                 ],
               ),
               const SizedBox(height: 16),
-              Container(
-                width: double.infinity,
+              GlassPanel(
                 padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.surfaceContainerHighest
-                      .withValues(alpha: 0.45),
-                  borderRadius: BorderRadius.circular(18),
-                ),
                 child: Wrap(
                   spacing: 8,
                   runSpacing: 8,
@@ -5606,28 +5543,28 @@ class _ChatInfoSheetState extends State<_ChatInfoSheet> {
                   _QuickActionCard(
                     icon: Icons.search,
                     title: 'Поиск в чате',
-                    subtitle: 'Найти сообщение по слову или фразе',
+                    subtitle: 'По слову или фразе',
                     onTap: widget.onOpenSearch,
                   ),
                   if (widget.onOpenPinnedMessage != null)
                     _QuickActionCard(
                       icon: Icons.push_pin_outlined,
                       title: 'К закрепленному',
-                      subtitle: 'Открыть и подсветить закрепленное сообщение',
+                      subtitle: 'Открыть закрепленное',
                       onTap: widget.onOpenPinnedMessage!,
                     ),
                   if (hasTreeContext && widget.onOpenTree != null)
                     _QuickActionCard(
                       icon: Icons.account_tree_outlined,
                       title: 'Открыть дерево',
-                      subtitle: 'Перейти к текущему дереву без поиска по меню',
+                      subtitle: 'Перейти к дереву',
                       onTap: widget.onOpenTree!,
                     ),
                   if (hasTreeContext && widget.onOpenRelatives != null)
                     _QuickActionCard(
                       icon: Icons.people_alt_outlined,
                       title: 'Открыть родных',
-                      subtitle: 'Перейти к списку родственников этого дерева',
+                      subtitle: 'Перейти к списку',
                       onTap: widget.onOpenRelatives!,
                     ),
                 ],
@@ -5640,14 +5577,8 @@ class _ChatInfoSheetState extends State<_ChatInfoSheet> {
                 ),
               ),
               const SizedBox(height: 10),
-              Container(
-                width: double.infinity,
+              GlassPanel(
                 padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.surfaceContainerHighest
-                      .withValues(alpha: 0.4),
-                  borderRadius: BorderRadius.circular(18),
-                ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -5690,14 +5621,8 @@ class _ChatInfoSheetState extends State<_ChatInfoSheet> {
                 ),
               ),
               const SizedBox(height: 10),
-              Container(
-                width: double.infinity,
+              GlassPanel(
                 padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.surfaceContainerHighest
-                      .withValues(alpha: 0.4),
-                  borderRadius: BorderRadius.circular(18),
-                ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -5745,7 +5670,14 @@ class _ChatInfoSheetState extends State<_ChatInfoSheet> {
                   spacing: 8,
                   runSpacing: 8,
                   children: _details.branchRoots
-                      .map((root) => Chip(label: Text(root.name)))
+                      .map(
+                        (root) => _InfoChip(
+                          icon: isFriendsTree
+                              ? Icons.diversity_3_outlined
+                              : Icons.account_tree_outlined,
+                          label: root.name,
+                        ),
+                      )
                       .toList(),
                 ),
               ],
@@ -5778,19 +5710,14 @@ class _ChatInfoSheetState extends State<_ChatInfoSheet> {
                   ],
                 )
               else
-                Container(
-                  width: double.infinity,
+                GlassPanel(
                   padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.surfaceContainerLow,
-                    borderRadius: BorderRadius.circular(16),
-                  ),
                   child: Text(
                     _details.isBranch
-                        ? 'Для веточного чата состав меняется через семейное дерево.'
+                        ? 'Состав идет из дерева.'
                         : _details.isDirect
-                            ? 'Для личного чата состав фиксирован, но уведомления и автоудаление можно настраивать.'
-                            : 'Этот чат сейчас не поддерживает изменение состава.',
+                            ? 'Состав личного чата фиксирован.'
+                            : 'Состав сейчас не меняется.',
                     style: theme.textTheme.bodyMedium?.copyWith(
                       color: theme.colorScheme.onSurfaceVariant,
                     ),
@@ -5804,45 +5731,53 @@ class _ChatInfoSheetState extends State<_ChatInfoSheet> {
                 ),
               ),
               const SizedBox(height: 8),
-              ..._details.participants.asMap().entries.map((entry) {
-                final index = entry.key;
-                final participant = entry.value;
-                final isCurrentUser =
-                    participant.userId == widget.currentUserId;
-                return Column(
-                  children: [
-                    if (index > 0) const Divider(height: 1),
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: CircleAvatar(
-                        backgroundImage: participant.photoUrl != null &&
-                                participant.photoUrl!.isNotEmpty
-                            ? NetworkImage(participant.photoUrl!)
-                            : null,
-                        child: participant.photoUrl == null ||
-                                participant.photoUrl!.isEmpty
-                            ? Text(
-                                participant.displayName.isNotEmpty
-                                    ? participant.displayName[0]
-                                    : '?',
-                              )
-                            : null,
-                      ),
-                      title: Text(participant.displayName),
-                      subtitle: Text(isCurrentUser ? 'Вы' : 'Участник'),
-                      trailing: _details.isEditableGroup && !isCurrentUser
-                          ? IconButton(
-                              onPressed: _isSaving
-                                  ? null
-                                  : () => _removeParticipant(participant),
-                              tooltip: 'Убрать из чата',
-                              icon: const Icon(Icons.person_remove_outlined),
-                            )
-                          : null,
-                    ),
-                  ],
-                );
-              }),
+              GlassPanel(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                child: Column(
+                  children: _details.participants.asMap().entries.map((entry) {
+                    final index = entry.key;
+                    final participant = entry.value;
+                    final isCurrentUser =
+                        participant.userId == widget.currentUserId;
+                    return Column(
+                      children: [
+                        if (index > 0) const Divider(height: 1),
+                        ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: CircleAvatar(
+                            backgroundImage: participant.photoUrl != null &&
+                                    participant.photoUrl!.isNotEmpty
+                                ? NetworkImage(participant.photoUrl!)
+                                : null,
+                            child: participant.photoUrl == null ||
+                                    participant.photoUrl!.isEmpty
+                                ? Text(
+                                    participant.displayName.isNotEmpty
+                                        ? participant.displayName[0]
+                                        : '?',
+                                  )
+                                : null,
+                          ),
+                          title: Text(participant.displayName),
+                          subtitle: Text(isCurrentUser ? 'Вы' : 'Участник'),
+                          trailing: _details.isEditableGroup && !isCurrentUser
+                              ? IconButton(
+                                  onPressed: _isSaving
+                                      ? null
+                                      : () => _removeParticipant(participant),
+                                  tooltip: 'Убрать из чата',
+                                  icon: const Icon(
+                                    Icons.person_remove_outlined,
+                                  ),
+                                )
+                              : null,
+                        ),
+                      ],
+                    );
+                  }).toList(),
+                ),
+              ),
             ],
           ),
         ),
@@ -6128,9 +6063,10 @@ class _InfoChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.primaryContainer,
+        color: theme.colorScheme.primaryContainer.withValues(alpha: 0.88),
         borderRadius: BorderRadius.circular(999),
       ),
       child: Padding(
@@ -6138,9 +6074,14 @@ class _InfoChip extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 16),
+            Icon(icon, size: 16, color: theme.colorScheme.primary),
             const SizedBox(width: 6),
-            Text(label),
+            Text(
+              label,
+              style: theme.textTheme.labelMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
           ],
         ),
       ),
@@ -6166,12 +6107,10 @@ class _QuickActionCard extends StatelessWidget {
     final theme = Theme.of(context);
     return SizedBox(
       width: 220,
-      child: Material(
-        color:
-            theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.55),
-        borderRadius: BorderRadius.circular(18),
+      child: GlassPanel(
+        padding: EdgeInsets.zero,
         child: InkWell(
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(22),
           onTap: onTap,
           child: Padding(
             padding: const EdgeInsets.all(14),
@@ -6259,19 +6198,35 @@ class _AddParticipantsSheetState extends State<_AddParticipantsSheet> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                'Добавить участников',
-                style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
+              Row(
+                children: [
+                  Text(
+                    'Добавить участников',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                  ),
+                  const Spacer(),
+                  Text(
+                    _selectedIds.isEmpty ? '0' : '${_selectedIds.length}',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                  ),
+                ],
               ),
               const SizedBox(height: 12),
-              TextField(
-                controller: _searchController,
-                onChanged: (_) => setState(() {}),
-                decoration: const InputDecoration(
-                  prefixIcon: Icon(Icons.search),
-                  hintText: 'Найти по имени',
+              GlassPanel(
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                child: TextField(
+                  controller: _searchController,
+                  onChanged: (_) => setState(() {}),
+                  decoration: const InputDecoration(
+                    prefixIcon: Icon(Icons.search),
+                    hintText: 'Найти по имени',
+                    border: InputBorder.none,
+                    contentPadding: EdgeInsets.symmetric(vertical: 14),
+                  ),
                 ),
               ),
               const SizedBox(height: 12),
@@ -6282,35 +6237,40 @@ class _AddParticipantsSheetState extends State<_AddParticipantsSheet> {
                   itemBuilder: (context, index) {
                     final candidate = filteredCandidates[index];
                     final isSelected = _selectedIds.contains(candidate.userId);
-                    return CheckboxListTile(
-                      value: isSelected,
-                      onChanged: (_) {
-                        setState(() {
-                          if (isSelected) {
-                            _selectedIds.remove(candidate.userId);
-                          } else {
-                            _selectedIds.add(candidate.userId);
-                          }
-                        });
-                      },
-                      secondary: CircleAvatar(
-                        backgroundImage: candidate.photoUrl != null &&
-                                candidate.photoUrl!.isNotEmpty
-                            ? NetworkImage(candidate.photoUrl!)
-                            : null,
-                        child: candidate.photoUrl == null ||
-                                candidate.photoUrl!.isEmpty
-                            ? Text(
-                                candidate.displayName.isNotEmpty
-                                    ? candidate.displayName[0]
-                                    : '?',
-                              )
-                            : null,
+                    return GlassPanel(
+                      padding: EdgeInsets.zero,
+                      child: CheckboxListTile(
+                        value: isSelected,
+                        onChanged: (_) {
+                          setState(() {
+                            if (isSelected) {
+                              _selectedIds.remove(candidate.userId);
+                            } else {
+                              _selectedIds.add(candidate.userId);
+                            }
+                          });
+                        },
+                        secondary: CircleAvatar(
+                          backgroundImage: candidate.photoUrl != null &&
+                                  candidate.photoUrl!.isNotEmpty
+                              ? NetworkImage(candidate.photoUrl!)
+                              : null,
+                          child: candidate.photoUrl == null ||
+                                  candidate.photoUrl!.isEmpty
+                              ? Text(
+                                  candidate.displayName.isNotEmpty
+                                      ? candidate.displayName[0]
+                                      : '?',
+                                )
+                              : null,
+                        ),
+                        title: Text(candidate.displayName),
+                        subtitle: Text(candidate.relationLabel),
+                        controlAffinity: ListTileControlAffinity.trailing,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                        ),
                       ),
-                      title: Text(candidate.displayName),
-                      subtitle: Text(candidate.relationLabel),
-                      controlAffinity: ListTileControlAffinity.trailing,
-                      contentPadding: EdgeInsets.zero,
                     );
                   },
                 ),

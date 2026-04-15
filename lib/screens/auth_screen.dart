@@ -5,9 +5,15 @@ import 'package:go_router/go_router.dart';
 import '../backend/backend_provider_config.dart';
 import '../backend/interfaces/auth_service_interface.dart';
 import '../providers/tree_provider.dart';
+import '../widgets/glass_panel.dart';
 
 class AuthScreen extends StatefulWidget {
-  const AuthScreen({super.key});
+  const AuthScreen({
+    super.key,
+    this.redirectAfterLogin,
+  });
+
+  final String? redirectAfterLogin;
 
   @override
   State<AuthScreen> createState() => _AuthScreenState();
@@ -31,27 +37,23 @@ class _AuthScreenState extends State<AuthScreen> {
   final List<_AuthFeature> _mvpHighlights = const [
     _AuthFeature(
       icon: Icons.account_tree_outlined,
-      title: 'Семейное дерево',
-      description:
-          'Создавайте дерево, открывайте его сразу в интерактивной схеме и делитесь публичной ссылкой.',
+      title: 'Дерево',
+      description: 'Открывайте семью и круги в одном месте.',
     ),
     _AuthFeature(
       icon: Icons.people_alt_outlined,
-      title: 'Родные и профиль',
-      description:
-          'Собирайте родственников, поддерживайте профиль и быстро переходите к карточкам людей.',
+      title: 'Родные',
+      description: 'Карточки людей и профиль без лишних шагов.',
     ),
     _AuthFeature(
       icon: Icons.chat_bubble_outline,
-      title: 'Личные сообщения',
-      description:
-          'Общайтесь с родственниками в 1:1 чате без лишних разделов и переключений.',
+      title: 'Чат',
+      description: 'Личные диалоги прямо внутри семьи.',
     ),
     _AuthFeature(
-      icon: Icons.public_outlined,
-      title: 'Публичный вход с web',
-      description:
-          'Веб уже подходит как основной публичный вход, при этом мобильный сценарий не ломается.',
+      icon: Icons.circle_outlined,
+      title: 'Stories',
+      description: 'Быстрые семейные обновления и медиа.',
     ),
   ];
 
@@ -192,7 +194,7 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 
   String _resolvePostAuthTarget() {
-    final from = GoRouterState.of(context).uri.queryParameters['from'];
+    final from = widget.redirectAfterLogin;
     if (from == null || from.isEmpty || from == '/login') {
       return '/';
     }
@@ -268,7 +270,13 @@ class _AuthScreenState extends State<AuthScreen> {
 
   Widget _buildCompactLayout(ThemeData theme) {
     return SingleChildScrollView(
-      child: _buildAuthCard(theme, compact: true),
+      child: Column(
+        children: [
+          _buildHeroPanel(theme, compact: true),
+          const SizedBox(height: 16),
+          _buildAuthCard(theme, compact: true),
+        ],
+      ),
     );
   }
 
@@ -276,6 +284,7 @@ class _AuthScreenState extends State<AuthScreen> {
     final colorScheme = theme.colorScheme;
 
     return Container(
+      width: double.infinity,
       padding: EdgeInsets.all(compact ? 20 : 28),
       decoration: BoxDecoration(
         gradient: LinearGradient(
@@ -319,35 +328,50 @@ class _AuthScreenState extends State<AuthScreen> {
           ),
           SizedBox(height: compact ? 18 : 24),
           Text(
-            'Семейное дерево и связи для близких',
+            'Семья. Чат. Дерево.',
             style: theme.textTheme.displaySmall?.copyWith(
               color: Colors.white,
               fontWeight: FontWeight.w800,
               height: 1.05,
             ),
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 10),
           Text(
-            'Вход и регистрация открывают дерево семьи, профили родственников, личные сообщения и публичный просмотр дерева.',
+            compact
+                ? 'Один вход для своих.'
+                : 'Один вход для семьи, чатов и stories.',
             style: theme.textTheme.titleMedium?.copyWith(
               color: Colors.white.withValues(alpha: 0.9),
               fontWeight: FontWeight.w400,
-              height: 1.45,
+              height: 1.35,
             ),
           ),
-          const SizedBox(height: 18),
+          const SizedBox(height: 16),
           Wrap(
             spacing: 10,
             runSpacing: 10,
             children: const [
-              _HeroChip(label: 'Семейное дерево'),
-              _HeroChip(label: 'Личные связи'),
-              _HeroChip(label: 'Профиль семьи'),
-              _HeroChip(label: 'Публичный просмотр дерева'),
+              _HeroChip(label: 'Дерево'),
+              _HeroChip(label: 'Чаты'),
+              _HeroChip(label: 'Stories'),
+              _HeroChip(label: 'Профиль'),
             ],
           ),
-          SizedBox(height: compact ? 18 : 26),
-          if (!compact)
+          SizedBox(height: compact ? 18 : 22),
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: _mvpHighlights
+                .map(
+                  (feature) => _FeatureCard(
+                    feature: feature,
+                    compact: true,
+                  ),
+                )
+                .toList(),
+          ),
+          if (!compact) ...[
+            const SizedBox(height: 22),
             Wrap(
               spacing: 12,
               runSpacing: 12,
@@ -360,7 +384,7 @@ class _AuthScreenState extends State<AuthScreen> {
                           _focusPrimaryField();
                         },
                   icon: const Icon(Icons.login),
-                  label: const Text('Войти сейчас'),
+                  label: const Text('Войти'),
                   style: FilledButton.styleFrom(
                     backgroundColor: Colors.white,
                     foregroundColor: colorScheme.primary,
@@ -378,7 +402,7 @@ class _AuthScreenState extends State<AuthScreen> {
                           _focusPrimaryField();
                         },
                   icon: const Icon(Icons.family_restroom_outlined),
-                  label: const Text('Зарегистрироваться'),
+                  label: const Text('Создать аккаунт'),
                   style: OutlinedButton.styleFrom(
                     foregroundColor: Colors.white,
                     side: const BorderSide(color: Colors.white38),
@@ -390,319 +414,268 @@ class _AuthScreenState extends State<AuthScreen> {
                 ),
               ],
             ),
-          SizedBox(height: compact ? 18 : 26),
-          if (compact)
-            ..._mvpHighlights.map(
-              (feature) => Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: _FeatureCard(
-                  feature: feature,
-                  compact: compact,
-                ),
-              ),
-            )
-          else
-            LayoutBuilder(
-              builder: (context, constraints) {
-                final availableWidth = constraints.maxWidth;
-                final cardWidth = (availableWidth - 12) / 2;
-                return Wrap(
-                  spacing: 12,
-                  runSpacing: 12,
-                  children: _mvpHighlights
-                      .map(
-                        (feature) => SizedBox(
-                          width: cardWidth,
-                          child: _FeatureCard(
-                            feature: feature,
-                            compact: true,
-                          ),
-                        ),
-                      )
-                      .toList(),
-                );
-              },
-            ),
+          ],
         ],
       ),
     );
   }
 
   Widget _buildAuthCard(ThemeData theme, {required bool compact}) {
-    return Container(
-      width: double.infinity,
+    return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 500),
-      padding: EdgeInsets.all(compact ? 20 : 28),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.94),
+      child: GlassPanel(
+        padding: EdgeInsets.all(compact ? 20 : 28),
         borderRadius: BorderRadius.circular(28),
-        border: Border.all(color: Colors.black12),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.08),
-            blurRadius: 28,
-            offset: const Offset(0, 14),
-          ),
-        ],
-      ),
-      child: Form(
-        key: _formKey,
-        autovalidateMode: _hasSubmitted
-            ? AutovalidateMode.onUserInteraction
-            : AutovalidateMode.disabled,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            if (compact) ...[
-              _buildModeToggle(theme),
-              const SizedBox(height: 18),
-            ],
-            Text(
-              _isLogin ? 'Вход в Родню' : 'Создать аккаунт',
-              style: theme.textTheme.headlineSmall?.copyWith(
-                fontWeight: FontWeight.w800,
-              ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              _isLogin
-                  ? compact
-                      ? 'Дерево, родные и чат в одном аккаунте.'
-                      : 'Откройте дерево семьи, профиль и личные связи.'
-                  : compact
-                      ? 'Регистрация занимает меньше минуты.'
-                      : 'Начните с аккаунта, затем создайте или выберите своё дерево.',
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: Colors.grey[700],
-                height: 1.45,
-              ),
-              textAlign: TextAlign.center,
-            ),
-            SizedBox(height: compact ? 18 : 22),
-            if (!compact) ...[
-              Wrap(
-                alignment: WrapAlignment.center,
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  _CompactFeatureChip(
-                    label: _isLogin ? 'Web вход' : 'Быстрая регистрация',
-                  ),
-                  _CompactFeatureChip(
-                    label: _isLogin ? 'Чаты и связи' : 'Дерево и круги',
-                  ),
-                  const _CompactFeatureChip(label: 'Desktop MVP'),
-                ],
-              ),
-              const SizedBox(height: 18),
-            ],
-            if (!compact) ...[
-              _buildModeToggle(theme),
-              const SizedBox(height: 22),
-            ],
-            if (!_isLogin) ...[
-              TextFormField(
-                controller: _nameController,
-                focusNode: _nameFocusNode,
-                decoration: const InputDecoration(
-                  labelText: 'Как вас зовут',
-                  prefixIcon: Icon(Icons.person_outline),
+        color: Colors.white.withValues(alpha: 0.86),
+        child: Form(
+          key: _formKey,
+          autovalidateMode: _hasSubmitted
+              ? AutovalidateMode.onUserInteraction
+              : AutovalidateMode.disabled,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (compact) ...[
+                _buildModeToggle(theme),
+                const SizedBox(height: 18),
+              ],
+              Text(
+                _isLogin ? 'Вход' : 'Новый аккаунт',
+                style: theme.textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w800,
                 ),
-                keyboardType: TextInputType.name,
-                textCapitalization: TextCapitalization.words,
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                _isLogin ? 'Откройте семью.' : 'Начните за минуту.',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: Colors.grey[700],
+                ),
+                textAlign: TextAlign.center,
+              ),
+              SizedBox(height: compact ? 18 : 22),
+              if (!compact) ...[
+                _buildModeToggle(theme),
+                const SizedBox(height: 22),
+              ],
+              if (!_isLogin) ...[
+                TextFormField(
+                  controller: _nameController,
+                  focusNode: _nameFocusNode,
+                  decoration: _fieldDecoration(
+                    theme,
+                    label: 'Имя',
+                    icon: Icons.person_outline,
+                  ),
+                  keyboardType: TextInputType.name,
+                  textCapitalization: TextCapitalization.words,
+                  textInputAction: TextInputAction.next,
+                  validator: (value) {
+                    if (!_isLogin &&
+                        (value == null || value.trim().length < 2)) {
+                      return 'Имя должно содержать не менее 2 символов';
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 16),
+              ],
+              TextFormField(
+                controller: _emailController,
+                focusNode: _emailFocusNode,
+                decoration: _fieldDecoration(
+                  theme,
+                  label: 'Email',
+                  icon: Icons.alternate_email,
+                ),
+                keyboardType: TextInputType.emailAddress,
                 textInputAction: TextInputAction.next,
                 validator: (value) {
-                  if (!_isLogin && (value == null || value.trim().length < 2)) {
-                    return 'Имя должно содержать не менее 2 символов';
+                  if (value == null ||
+                      !value.contains('@') ||
+                      !value.contains('.')) {
+                    return 'Введите корректный email адрес';
                   }
                   return null;
                 },
               ),
               const SizedBox(height: 16),
-            ],
-            TextFormField(
-              controller: _emailController,
-              focusNode: _emailFocusNode,
-              decoration: const InputDecoration(
-                labelText: 'Email',
-                prefixIcon: Icon(Icons.alternate_email),
+              TextFormField(
+                controller: _passwordController,
+                decoration: _fieldDecoration(
+                  theme,
+                  label: 'Пароль',
+                  icon: Icons.lock_outline,
+                ),
+                obscureText: true,
+                textInputAction:
+                    _isLogin ? TextInputAction.done : TextInputAction.next,
+                onFieldSubmitted: (_) {
+                  if (_isLogin) {
+                    _submit();
+                  }
+                },
+                validator: (value) {
+                  if (value == null || value.length < 6) {
+                    return 'Пароль должен содержать не менее 6 символов';
+                  }
+                  return null;
+                },
               ),
-              keyboardType: TextInputType.emailAddress,
-              textInputAction: TextInputAction.next,
-              validator: (value) {
-                if (value == null ||
-                    !value.contains('@') ||
-                    !value.contains('.')) {
-                  return 'Введите корректный email адрес';
-                }
-                return null;
-              },
-            ),
-            const SizedBox(height: 16),
-            TextFormField(
-              controller: _passwordController,
-              decoration: const InputDecoration(
-                labelText: 'Пароль',
-                prefixIcon: Icon(Icons.lock_outline),
-              ),
-              obscureText: true,
-              textInputAction:
-                  _isLogin ? TextInputAction.done : TextInputAction.next,
-              onFieldSubmitted: (_) {
-                if (_isLogin) {
-                  _submit();
-                }
-              },
-              validator: (value) {
-                if (value == null || value.length < 6) {
-                  return 'Пароль должен содержать не менее 6 символов';
-                }
-                return null;
-              },
-            ),
-            const SizedBox(height: 20),
-            FilledButton(
-              onPressed: _isLoading || _isGoogleLoading ? null : _submit,
-              style: FilledButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 16),
-              ),
-              child: _isLoading
-                  ? const SizedBox(
-                      height: 20,
-                      width: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
-                  : Text(_isLogin ? 'Войти' : 'Зарегистрироваться'),
-            ),
-            if (_supportsGoogleAuth) ...[
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  const Expanded(child: Divider()),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                    child: Text(
-                      'или',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        fontWeight: FontWeight.w700,
-                        color: Colors.grey[700],
-                      ),
-                    ),
-                  ),
-                  const Expanded(child: Divider()),
-                ],
-              ),
-              const SizedBox(height: 16),
-              OutlinedButton.icon(
-                onPressed:
-                    _isLoading || _isGoogleLoading ? null : _signInWithGoogle,
-                icon: _isGoogleLoading
-                    ? SizedBox(
-                        height: 18,
-                        width: 18,
+              const SizedBox(height: 20),
+              FilledButton(
+                onPressed: _isLoading || _isGoogleLoading ? null : _submit,
+                style: FilledButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                ),
+                child: _isLoading
+                    ? const SizedBox(
+                        height: 20,
+                        width: 20,
                         child: CircularProgressIndicator(
                           strokeWidth: 2,
-                          color: theme.colorScheme.primary,
+                          color: Colors.white,
                         ),
                       )
-                    : const Icon(
-                        Icons.g_mobiledata,
-                        size: 28,
-                        color: Colors.red,
+                    : Text(_isLogin ? 'Войти' : 'Создать аккаунт'),
+              ),
+              if (_supportsGoogleAuth) ...[
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    const Expanded(child: Divider()),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      child: Text(
+                        'или',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                          color: Colors.grey[700],
+                        ),
                       ),
-                label: const Text('Войти через Google'),
-                style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 14),
+                    ),
+                    const Expanded(child: Divider()),
+                  ],
                 ),
-              ),
-            ],
-            const SizedBox(height: 12),
-            TextButton(
-              onPressed: _isLoading || _isGoogleLoading
-                  ? null
-                  : () {
-                      _setMode(!_isLogin);
-                      _focusPrimaryField();
-                    },
-              child: Text(
-                _isLogin
-                    ? 'Нет аккаунта? Зарегистрируйтесь'
-                    : 'Уже есть аккаунт? Войдите',
-              ),
-            ),
-            if (_isLogin)
-              TextButton(
-                onPressed:
-                    _isLoading ? null : () => context.push('/password_reset'),
-                child: const Text('Забыли пароль?'),
-              ),
-            if (compact) ...[
-              const SizedBox(height: 8),
-              Wrap(
-                alignment: WrapAlignment.center,
-                spacing: 8,
-                runSpacing: 8,
-                children: const [
-                  _CompactFeatureChip(label: 'Дерево'),
-                  _CompactFeatureChip(label: 'Родные'),
-                  _CompactFeatureChip(label: 'Чат'),
-                ],
-              ),
-            ],
-            const SizedBox(height: 8),
-            Wrap(
-              alignment: WrapAlignment.center,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                Text(
-                  'Продолжая, вы соглашаетесь с ',
-                  textAlign: TextAlign.center,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: Colors.grey[700],
-                    height: 1.45,
-                  ),
-                ),
-                TextButton(
-                  onPressed: () => GoRouter.of(context).push('/privacy'),
-                  style: TextButton.styleFrom(
-                    minimumSize: Size.zero,
-                    padding: const EdgeInsets.symmetric(horizontal: 4),
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  ),
-                  child: const Text('Политикой конфиденциальности'),
-                ),
-                Text(
-                  ' и ',
-                  textAlign: TextAlign.center,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: Colors.grey[700],
-                    height: 1.45,
-                  ),
-                ),
-                TextButton(
-                  onPressed: () => GoRouter.of(context).push('/terms'),
-                  style: TextButton.styleFrom(
-                    minimumSize: Size.zero,
-                    padding: const EdgeInsets.symmetric(horizontal: 4),
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  ),
-                  child: const Text('Условиями использования'),
-                ),
-                Text(
-                  '.',
-                  textAlign: TextAlign.center,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: Colors.grey[700],
-                    height: 1.45,
+                const SizedBox(height: 16),
+                OutlinedButton.icon(
+                  onPressed:
+                      _isLoading || _isGoogleLoading ? null : _signInWithGoogle,
+                  icon: _isGoogleLoading
+                      ? SizedBox(
+                          height: 18,
+                          width: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: theme.colorScheme.primary,
+                          ),
+                        )
+                      : const Icon(
+                          Icons.g_mobiledata,
+                          size: 28,
+                          color: Colors.red,
+                        ),
+                  label: const Text('Google'),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 14),
                   ),
                 ),
               ],
-            ),
-          ],
+              const SizedBox(height: 12),
+              TextButton(
+                onPressed: _isLoading || _isGoogleLoading
+                    ? null
+                    : () {
+                        _setMode(!_isLogin);
+                        _focusPrimaryField();
+                      },
+                child: Text(
+                  _isLogin ? 'Создать аккаунт' : 'У меня уже есть вход',
+                ),
+              ),
+              if (_isLogin)
+                TextButton(
+                  onPressed:
+                      _isLoading ? null : () => context.push('/password_reset'),
+                  child: const Text('Пароль'),
+                ),
+              const SizedBox(height: 8),
+              Wrap(
+                alignment: WrapAlignment.center,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Text(
+                    'Продолжая, вы соглашаетесь с ',
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: Colors.grey[700],
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () => GoRouter.of(context).push('/privacy'),
+                    style: TextButton.styleFrom(
+                      minimumSize: Size.zero,
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    child: const Text('Политикой'),
+                  ),
+                  Text(
+                    ' и ',
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: Colors.grey[700],
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () => GoRouter.of(context).push('/terms'),
+                    style: TextButton.styleFrom(
+                      minimumSize: Size.zero,
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    child: const Text('Условиями'),
+                  ),
+                  Text(
+                    '.',
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: Colors.grey[700],
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  InputDecoration _fieldDecoration(
+    ThemeData theme, {
+    required String label,
+    required IconData icon,
+  }) {
+    return InputDecoration(
+      labelText: label,
+      prefixIcon: Icon(icon),
+      filled: true,
+      fillColor:
+          theme.colorScheme.surfaceContainerLowest.withValues(alpha: 0.9),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(22),
+        borderSide: BorderSide.none,
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(22),
+        borderSide: BorderSide.none,
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(22),
+        borderSide: BorderSide(
+          color: theme.colorScheme.primary.withValues(alpha: 0.32),
         ),
       ),
     );
@@ -811,75 +784,29 @@ class _FeatureCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: EdgeInsets.all(compact ? 14 : 16),
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 14 : 16,
+        vertical: compact ? 12 : 14,
+      ),
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: compact ? 0.1 : 0.12),
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: BorderRadius.circular(999),
         border: Border.all(color: Colors.white12),
       ),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.14),
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Icon(feature.icon, color: Colors.white),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  feature.title,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  feature.description,
-                  style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.82),
-                    height: 1.45,
-                  ),
-                ),
-              ],
+          Icon(feature.icon, color: Colors.white, size: 18),
+          const SizedBox(width: 8),
+          Text(
+            feature.title,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _CompactFeatureChip extends StatelessWidget {
-  const _CompactFeatureChip({required this.label});
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surface,
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: theme.colorScheme.outlineVariant),
-      ),
-      child: Text(
-        label,
-        style: theme.textTheme.bodySmall?.copyWith(
-          fontWeight: FontWeight.w700,
-        ),
       ),
     );
   }

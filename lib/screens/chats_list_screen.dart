@@ -18,6 +18,7 @@ import '../providers/tree_provider.dart';
 import '../services/chat_archive_store.dart';
 import '../services/chat_draft_store.dart';
 import '../services/chat_notification_settings_store.dart';
+import '../widgets/glass_panel.dart';
 
 String _countLabel(
   int count, {
@@ -461,17 +462,17 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
     required bool isFriendsTree,
     required String? selectedTreeName,
   }) {
-    final listPanel = Container(
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surface,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(
-          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.45),
-        ),
-      ),
+    final listPanel = GlassPanel(
+      padding: EdgeInsets.zero,
+      borderRadius: BorderRadius.circular(30),
+      color: theme.colorScheme.surface.withValues(alpha: 0.78),
       child: Column(
         children: [
-          _buildChatsOverview(theme, isFriendsTree: isFriendsTree),
+          _buildChatsOverview(
+            theme,
+            isFriendsTree: isFriendsTree,
+            selectedTreeName: selectedTreeName,
+          ),
           _buildSearchBar(theme),
           _buildFilterBar(theme),
           Expanded(
@@ -497,119 +498,71 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
         const SizedBox(width: 16),
         SizedBox(
           width: 320,
-          child: Container(
+          child: GlassPanel(
             padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              color: theme.colorScheme.surface,
-              borderRadius: BorderRadius.circular(24),
-              border: Border.all(
-                color: theme.colorScheme.outlineVariant.withValues(alpha: 0.45),
-              ),
-            ),
+            borderRadius: BorderRadius.circular(30),
+            color: theme.colorScheme.surface.withValues(alpha: 0.76),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Навигация по чатам',
+                  'Связь',
                   style: theme.textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.w700,
                   ),
                 ),
                 const SizedBox(height: 12),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.primary.withValues(alpha: 0.10),
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        isFriendsTree
-                            ? Icons.diversity_3_outlined
-                            : Icons.account_tree_outlined,
-                        size: 16,
-                        color: theme.colorScheme.primary,
+                _buildContextPill(
+                  theme,
+                  isFriendsTree: isFriendsTree,
+                  label: selectedTreeName ??
+                      (isFriendsTree ? 'Круг друзей' : 'Семейное дерево'),
+                ),
+                const SizedBox(height: 16),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    FilledButton.icon(
+                      onPressed: _openChatComposer,
+                      icon: const Icon(Icons.add_comment_outlined),
+                      label: const Text('Создать чат'),
+                    ),
+                    FilledButton.tonalIcon(
+                      onPressed: () => context.go('/relatives'),
+                      icon: const Icon(Icons.people_outline),
+                      label: Text(
+                        isFriendsTree ? 'Открыть связи' : 'Открыть родных',
                       ),
-                      const SizedBox(width: 8),
-                      Flexible(
-                        child: Text(
-                          selectedTreeName ??
-                              (isFriendsTree
-                                  ? 'Круг друзей'
-                                  : 'Семейное дерево'),
-                          overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.labelLarge?.copyWith(
-                            color: theme.colorScheme.primary,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  'На большом экране удобнее держать поиск, список диалогов и быстрые переходы в одной зоне.',
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
-                    height: 1.4,
-                  ),
-                ),
-                const SizedBox(height: 18),
-                FilledButton.icon(
-                  onPressed: _openChatComposer,
-                  icon: const Icon(Icons.add_comment_outlined),
-                  label: const Text('Создать чат'),
-                ),
-                const SizedBox(height: 10),
-                OutlinedButton.icon(
-                  onPressed: () => context.go('/relatives'),
-                  icon: const Icon(Icons.people_outline),
-                  label: Text(
-                    isFriendsTree ? 'Открыть связи' : 'Открыть родных',
-                  ),
-                ),
-                const SizedBox(height: 10),
-                OutlinedButton.icon(
-                  onPressed: () => context.go('/tree'),
-                  icon: const Icon(Icons.account_tree_outlined),
-                  label: const Text('Открыть дерево'),
+                    ),
+                    FilledButton.tonalIcon(
+                      onPressed: () => context.go('/tree'),
+                      icon: const Icon(Icons.account_tree_outlined),
+                      label: const Text('Открыть дерево'),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 18),
                 _buildDesktopHint(
                   theme,
                   icon: Icons.search,
                   title: 'Поиск',
-                  subtitle: isFriendsTree
-                      ? 'Ищите и чаты, и людей из круга из одного поля.'
-                      : 'Ищите и чаты, и родственников из одного поля.',
+                  subtitle:
+                      isFriendsTree ? 'Чаты и люди круга' : 'Чаты и родные',
                 ),
                 const SizedBox(height: 12),
                 _buildDesktopHint(
                   theme,
                   icon: Icons.group_add_outlined,
                   title: 'Новый чат',
-                  subtitle: isFriendsTree
-                      ? 'Создавайте личные, групповые и сетевые чаты для круга.'
-                      : 'Создавайте личные, групповые и веточные чаты.',
+                  subtitle: 'Личный, групповой или чат ветки',
                 ),
                 const SizedBox(height: 12),
                 _buildDesktopHint(
                   theme,
                   icon: Icons.mark_chat_read_outlined,
-                  title: 'Непрочитанное',
-                  subtitle: 'Свежие сообщения остаются заметными в списке.',
-                ),
-                const SizedBox(height: 12),
-                _buildDesktopHint(
-                  theme,
-                  icon: Icons.archive_outlined,
-                  title: 'Архив',
-                  subtitle:
-                      'Редкие чаты можно убрать из потока и вернуть в один тап.',
+                  title: 'Поток',
+                  subtitle: 'Новые, архив и быстрые действия',
                 ),
               ],
             ),
@@ -629,8 +582,8 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Container(
-          width: 40,
-          height: 40,
+          width: 38,
+          height: 38,
           decoration: BoxDecoration(
             color: theme.colorScheme.primary.withValues(alpha: 0.12),
             borderRadius: BorderRadius.circular(14),
@@ -653,7 +606,6 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
                 subtitle,
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: theme.colorScheme.onSurfaceVariant,
-                  height: 1.35,
                 ),
               ),
             ],
@@ -666,6 +618,7 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
   Widget _buildChatsOverview(
     ThemeData theme, {
     required bool isFriendsTree,
+    required String? selectedTreeName,
   }) {
     final unreadCount = _chatPreviews.fold<int>(
       0,
@@ -678,6 +631,12 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
         spacing: 10,
         runSpacing: 10,
         children: [
+          _buildContextPill(
+            theme,
+            isFriendsTree: isFriendsTree,
+            label: selectedTreeName ??
+                (isFriendsTree ? 'Круг друзей' : 'Семейное дерево'),
+          ),
           _buildChatStatChip(
             theme,
             icon: Icons.forum_outlined,
@@ -756,6 +715,46 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
     );
   }
 
+  Widget _buildContextPill(
+    ThemeData theme, {
+    required bool isFriendsTree,
+    required String label,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.primary.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: theme.colorScheme.primary.withValues(alpha: 0.16),
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            isFriendsTree
+                ? Icons.diversity_3_outlined
+                : Icons.account_tree_outlined,
+            size: 16,
+            color: theme.colorScheme.primary,
+          ),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              label,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.labelLarge?.copyWith(
+                color: theme.colorScheme.primary,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildChatStatChip(
     ThemeData theme, {
     required IconData icon,
@@ -794,24 +793,7 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Чаты'),
-            Text(
-              selectedTreeName == null
-                  ? (isFriendsTree ? 'Круг друзей' : 'Семейное дерево')
-                  : (isFriendsTree
-                      ? 'Контекст круга: $selectedTreeName'
-                      : 'Контекст дерева: $selectedTreeName'),
-              style: theme.textTheme.bodySmall,
-            ),
-          ],
-        ),
-        centerTitle: false,
-        titleTextStyle: theme.textTheme.headlineSmall?.copyWith(
-          fontWeight: FontWeight.w700,
-        ),
+        title: const Text('Чаты'),
         actions: [
           IconButton(
             onPressed: _openChatComposer,
@@ -844,47 +826,39 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
   Widget _buildSearchBar(ThemeData theme) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-      child: TextField(
-        controller: _searchController,
-        onChanged: (value) {
-          setState(() {
-            _searchQuery = value.trim().toLowerCase();
-          });
-        },
-        decoration: InputDecoration(
-          hintText:
-              context.read<TreeProvider>().selectedTreeKind == TreeKind.friends
-                  ? 'Поиск чатов и людей круга'
-                  : 'Поиск чатов и людей',
-          prefixIcon: const Icon(Icons.search, size: 22),
-          suffixIcon: _searchQuery.isNotEmpty
-              ? IconButton(
-                  icon: const Icon(Icons.close, size: 20),
-                  onPressed: () {
-                    _searchController.clear();
-                    setState(() {
-                      _searchQuery = '';
-                    });
-                  },
-                )
-              : null,
-          filled: true,
-          fillColor:
-              theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
-          contentPadding:
-              const EdgeInsets.symmetric(vertical: 0, horizontal: 16),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide.none,
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide.none,
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide(
-                color: theme.colorScheme.primary.withValues(alpha: 0.5)),
+      child: GlassPanel(
+        padding: EdgeInsets.zero,
+        blur: 12,
+        borderRadius: BorderRadius.circular(22),
+        color: theme.colorScheme.surface.withValues(alpha: 0.72),
+        child: TextField(
+          controller: _searchController,
+          onChanged: (value) {
+            setState(() {
+              _searchQuery = value.trim().toLowerCase();
+            });
+          },
+          decoration: InputDecoration(
+            hintText: context.read<TreeProvider>().selectedTreeKind ==
+                    TreeKind.friends
+                ? 'Поиск чатов и людей круга'
+                : 'Поиск чатов и людей',
+            prefixIcon: const Icon(Icons.search, size: 20),
+            suffixIcon: _searchQuery.isNotEmpty
+                ? IconButton(
+                    icon: const Icon(Icons.close, size: 18),
+                    onPressed: () {
+                      _searchController.clear();
+                      setState(() {
+                        _searchQuery = '';
+                      });
+                    },
+                  )
+                : null,
+            filled: false,
+            contentPadding:
+                const EdgeInsets.symmetric(vertical: 14, horizontal: 14),
+            border: InputBorder.none,
           ),
         ),
       ),
@@ -934,32 +908,53 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
   }
 
   Widget _buildErrorState() {
+    final theme = Theme.of(context);
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.cloud_off, size: 56, color: Colors.grey[400]),
-            const SizedBox(height: 16),
-            Text(
-              _errorMessage!,
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 16, color: Colors.grey[600]),
+        padding: const EdgeInsets.all(24),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 360),
+          child: GlassPanel(
+            borderRadius: BorderRadius.circular(30),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.cloud_off_outlined,
+                  size: 40,
+                  color: theme.colorScheme.primary,
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  'Чаты недоступны',
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  _errorMessage!,
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                FilledButton.icon(
+                  onPressed: () {
+                    setState(() {
+                      _isLoading = true;
+                      _errorMessage = null;
+                    });
+                    _loadChats();
+                  },
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Повторить'),
+                ),
+              ],
             ),
-            const SizedBox(height: 20),
-            FilledButton.icon(
-              onPressed: () {
-                setState(() {
-                  _isLoading = true;
-                  _errorMessage = null;
-                });
-                _loadChats();
-              },
-              icon: const Icon(Icons.refresh),
-              label: const Text('Повторить'),
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -969,64 +964,73 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
     final isFriendsTree =
         context.read<TreeProvider>().selectedTreeKind == TreeKind.friends;
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(40),
+      padding: const EdgeInsets.all(24),
       child: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 520),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 88,
-                height: 88,
-                decoration: BoxDecoration(
-                  color:
-                      theme.colorScheme.primaryContainer.withValues(alpha: 0.3),
-                  shape: BoxShape.circle,
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: GlassPanel(
+            borderRadius: BorderRadius.circular(30),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 78,
+                  height: 78,
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.primaryContainer
+                        .withValues(alpha: 0.34),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    Icons.chat_bubble_outline_rounded,
+                    size: 34,
+                    color: theme.colorScheme.primary,
+                  ),
                 ),
-                child: Icon(
-                  Icons.chat_bubble_outline_rounded,
-                  size: 40,
-                  color: theme.colorScheme.primary,
+                const SizedBox(height: 18),
+                Text(
+                  'Пока нет чатов',
+                  style: theme.textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 24),
-              Text(
-                'Пока нет чатов',
-                style: theme.textTheme.titleLarge?.copyWith(
-                  fontWeight: FontWeight.w600,
+                const SizedBox(height: 8),
+                Text(
+                  isFriendsTree
+                      ? 'Начните разговор в круге.'
+                      : 'Начните семейный разговор.',
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                isFriendsTree
-                    ? 'Начните личный диалог или соберите групповой чат для текущего круга друзей.'
-                    : 'Начните личный диалог или соберите семейный групповой чат для текущего дерева.',
-                textAlign: TextAlign.center,
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: Colors.grey[600],
-                  height: 1.4,
+                const SizedBox(height: 20),
+                Wrap(
+                  alignment: WrapAlignment.center,
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: [
+                    FilledButton.icon(
+                      onPressed: _openChatComposer,
+                      icon: const Icon(Icons.add_comment_outlined),
+                      label: const Text('Создать чат'),
+                    ),
+                    FilledButton.tonalIcon(
+                      onPressed: () => context.go('/relatives'),
+                      icon: const Icon(Icons.people_outline),
+                      label: Text(
+                        isFriendsTree ? 'Открыть связи' : 'Открыть родных',
+                      ),
+                    ),
+                    FilledButton.tonalIcon(
+                      onPressed: () => context.go('/tree'),
+                      icon: const Icon(Icons.account_tree_outlined),
+                      label: const Text('Открыть дерево'),
+                    ),
+                  ],
                 ),
-              ),
-              const SizedBox(height: 24),
-              FilledButton.icon(
-                onPressed: _openChatComposer,
-                icon: const Icon(Icons.add_comment_outlined),
-                label: const Text('Создать чат'),
-              ),
-              const SizedBox(height: 12),
-              FilledButton.icon(
-                onPressed: () => context.go('/relatives'),
-                icon: const Icon(Icons.people_outline),
-                label: Text(isFriendsTree ? 'Открыть связи' : 'Открыть родных'),
-              ),
-              const SizedBox(height: 12),
-              OutlinedButton.icon(
-                onPressed: () => context.go('/tree'),
-                icon: const Icon(Icons.account_tree_outlined),
-                label: const Text('Открыть дерево'),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -1077,53 +1081,20 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
         _searchQuery.isNotEmpty) {
       final isFriendsTree =
           context.read<TreeProvider>().selectedTreeKind == TreeKind.friends;
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.search_off, size: 48, color: Colors.grey[400]),
-            const SizedBox(height: 16),
-            Text('Ничего не найдено', style: theme.textTheme.titleMedium),
-            const SizedBox(height: 8),
-            Text(
-              'Попробуйте другой запрос или создайте новый чат.',
-              style: theme.textTheme.bodyMedium?.copyWith(color: Colors.grey),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              context.read<TreeProvider>().selectedTreeKind == TreeKind.friends
-                  ? 'Подсказка: ищите по имени человека или названию чата круга.'
-                  : 'Подсказка: ищите по имени родственника или названию чата.',
-              style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 16),
-            Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              alignment: WrapAlignment.center,
-              children: [
-                OutlinedButton.icon(
-                  onPressed: () {
-                    _searchController.clear();
-                    setState(() {
-                      _searchQuery = '';
-                    });
-                  },
-                  icon: const Icon(Icons.close),
-                  label: const Text('Сбросить поиск'),
-                ),
-                FilledButton.icon(
-                  onPressed: _openChatComposer,
-                  icon: const Icon(Icons.add_comment_outlined),
-                  label: Text(
-                    isFriendsTree ? 'Новый чат круга' : 'Новый чат',
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
+      return _buildFilterEmptyState(
+        theme,
+        icon: Icons.search_off_outlined,
+        title: 'Ничего не найдено',
+        message: 'Попробуйте другой запрос.',
+        actionLabel: 'Сбросить поиск',
+        onAction: () {
+          _searchController.clear();
+          setState(() {
+            _searchQuery = '';
+          });
+        },
+        secondaryActionLabel: isFriendsTree ? 'Новый чат круга' : 'Новый чат',
+        onSecondaryAction: _openChatComposer,
       );
     }
 
@@ -1135,8 +1106,7 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
         theme,
         icon: Icons.archive_outlined,
         title: 'Архив пуст',
-        message:
-            'Сюда можно убирать редкие диалоги, чтобы основной список оставался чище.',
+        message: 'Здесь пока ничего нет.',
         actionLabel: 'Показать все чаты',
         onAction: () {
           setState(() {
@@ -1153,8 +1123,8 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
       return _buildFilterEmptyState(
         theme,
         icon: Icons.mark_chat_read_outlined,
-        title: 'Непрочитанных нет',
-        message: 'Список разобран. Можно вернуться ко всем чатам или архиву.',
+        title: 'Новых нет',
+        message: 'Список разобран.',
         actionLabel: 'Показать все чаты',
         onAction: () {
           setState(() {
@@ -1174,7 +1144,7 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
         (showRelatives ? filteredRelatives.length + 1 : 0);
 
     return ListView.builder(
-      padding: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.fromLTRB(10, 2, 10, 12),
       itemCount: totalCount,
       itemBuilder: (context, index) {
         if (showArchiveSummary && index == 0) {
@@ -1190,7 +1160,7 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
           final relativeIndex = chatIndex - filteredChats.length;
           if (relativeIndex == 0) {
             return Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+              padding: const EdgeInsets.fromLTRB(8, 14, 8, 8),
               child: Text(
                 context.read<TreeProvider>().selectedTreeKind ==
                         TreeKind.friends
@@ -1204,24 +1174,7 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
             );
           }
           final participant = filteredRelatives[relativeIndex - 1];
-          return ListTile(
-            onTap: () => _openPrivateChat(participant),
-            leading: CircleAvatar(
-              radius: 24,
-              backgroundImage: (participant.photoUrl?.isNotEmpty ?? false)
-                  ? NetworkImage(participant.photoUrl!)
-                  : null,
-              child: (participant.photoUrl?.isEmpty ?? true)
-                  ? Text(participant.name.isNotEmpty
-                      ? participant.name[0].toUpperCase()
-                      : '?')
-                  : null,
-            ),
-            title: Text(participant.name,
-                style: const TextStyle(fontWeight: FontWeight.w600)),
-            subtitle: Text(participant.relationLabel),
-            trailing: const Icon(Icons.chevron_right, size: 20),
-          );
+          return _buildRelativeSuggestionTile(theme, participant);
         }
         return const SizedBox.shrink();
       },
@@ -1235,28 +1188,57 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
     required String message,
     required String actionLabel,
     required VoidCallback onAction,
+    String? secondaryActionLabel,
+    VoidCallback? onSecondaryAction,
   }) {
     return Center(
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 48, color: theme.colorScheme.primary),
-            const SizedBox(height: 16),
-            Text(title, style: theme.textTheme.titleMedium),
-            const SizedBox(height: 8),
-            Text(
-              message,
-              textAlign: TextAlign.center,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-                height: 1.4,
-              ),
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 360),
+          child: GlassPanel(
+            borderRadius: BorderRadius.circular(28),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, size: 34, color: theme.colorScheme.primary),
+                const SizedBox(height: 12),
+                Text(
+                  title,
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  message,
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Wrap(
+                  alignment: WrapAlignment.center,
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: [
+                    FilledButton(
+                      onPressed: onAction,
+                      child: Text(actionLabel),
+                    ),
+                    if (secondaryActionLabel != null &&
+                        onSecondaryAction != null)
+                      FilledButton.tonal(
+                        onPressed: onSecondaryAction,
+                        child: Text(secondaryActionLabel),
+                      ),
+                  ],
+                ),
+              ],
             ),
-            const SizedBox(height: 16),
-            FilledButton(onPressed: onAction, child: Text(actionLabel)),
-          ],
+          ),
         ),
       ),
     );
@@ -1272,62 +1254,116 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
       many: 'чатов в архиве',
     );
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 6, 16, 10),
+      padding: const EdgeInsets.fromLTRB(4, 4, 4, 10),
       child: InkWell(
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(22),
         onTap: () {
           setState(() {
             _activeFilter = _ChatsVisibilityFilter.archived;
           });
         },
-        child: Ink(
-          decoration: BoxDecoration(
-            color: theme.colorScheme.surfaceContainerHighest
-                .withValues(alpha: 0.45),
-            borderRadius: BorderRadius.circular(18),
+        child: GlassPanel(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+          borderRadius: BorderRadius.circular(22),
+          blur: 10,
+          color: theme.colorScheme.surface.withValues(alpha: 0.74),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.primary.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Icon(
+                  Icons.archive_outlined,
+                  color: theme.colorScheme.primary,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      archiveLabel,
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      unreadCount > 0
+                          ? '$unreadCount непрочитанных'
+                          : 'Чистый основной поток',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right, size: 18),
+            ],
           ),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-            child: Row(
-              children: [
-                Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.primary.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: Icon(
-                    Icons.archive_outlined,
-                    color: theme.colorScheme.primary,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        archiveLabel,
-                        style: theme.textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRelativeSuggestionTile(
+    ThemeData theme,
+    _GroupChatParticipant participant,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 4, 4, 4),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(22),
+        onTap: () => _openPrivateChat(participant),
+        child: GlassPanel(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+          blur: 10,
+          borderRadius: BorderRadius.circular(22),
+          color: theme.colorScheme.surface.withValues(alpha: 0.74),
+          child: Row(
+            children: [
+              CircleAvatar(
+                radius: 22,
+                backgroundImage: (participant.photoUrl?.isNotEmpty ?? false)
+                    ? NetworkImage(participant.photoUrl!)
+                    : null,
+                child: (participant.photoUrl?.isEmpty ?? true)
+                    ? Text(
+                        participant.name.isNotEmpty
+                            ? participant.name[0].toUpperCase()
+                            : '?',
+                      )
+                    : null,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      participant.name,
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
                       ),
-                      const SizedBox(height: 2),
-                      Text(
-                        unreadCount > 0
-                            ? 'Там $unreadCount непрочитанных, но основной список чище.'
-                            : 'Редкие диалоги скрыты из основного списка.',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      participant.relationLabel,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
-                const Icon(Icons.chevron_right),
-              ],
-            ),
+              ),
+              const Icon(Icons.chevron_right, size: 18),
+            ],
           ),
         ),
       ),
@@ -1374,161 +1410,223 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
     final previewPrefix = hasDraft ? 'Черновик: ' : '';
     final previewColor = hasDraft
         ? theme.colorScheme.error
-        : (hasUnread ? Colors.black87 : Colors.grey[600]);
+        : (hasUnread
+            ? theme.colorScheme.onSurface
+            : theme.colorScheme.onSurfaceVariant);
     final previewWeight = hasDraft
         ? FontWeight.w700
-        : (hasUnread ? FontWeight.w500 : FontWeight.normal);
+        : (hasUnread ? FontWeight.w600 : FontWeight.w400);
+    final metaPills = <Widget>[
+      if (chat.isBranch)
+        _buildChatMetaPill(
+          theme,
+          icon: Icons.account_tree_outlined,
+          label: 'Ветка',
+        ),
+      if (chat.isGroup && !chat.isBranch)
+        _buildChatMetaPill(
+          theme,
+          icon: Icons.group_outlined,
+          label: 'Группа',
+        ),
+      if (isArchived)
+        _buildChatMetaPill(
+          theme,
+          icon: Icons.archive_outlined,
+          label: 'Архив',
+        ),
+      if (notificationLevel == ChatNotificationLevel.muted)
+        _buildChatMetaPill(
+          theme,
+          icon: Icons.notifications_off_outlined,
+          label: 'Тихо',
+        ),
+      if (hasDraft)
+        _buildChatMetaPill(
+          theme,
+          icon: Icons.edit_note_outlined,
+          label: 'Черновик',
+        ),
+    ];
 
-    return InkWell(
-      onTap: () {
-        final titleParam = Uri.encodeComponent(chat.displayName);
-        final photoParam =
-            chat.displayPhotoUrl != null && chat.displayPhotoUrl!.isNotEmpty
-                ? '&photo=${Uri.encodeComponent(chat.displayPhotoUrl!)}'
-                : '';
-        final userParam = !chat.isGroup && chat.otherUserId.isNotEmpty
-            ? '&userId=${Uri.encodeComponent(chat.otherUserId)}'
-            : '';
-        context
-            .push(
-          '/chats/view/${chat.chatId}?type=${Uri.encodeComponent(chat.type)}&title=$titleParam$photoParam$userParam',
-        )
-            .then((_) {
-          _loadDrafts();
-          _loadNotificationSettings();
-          _loadArchivedChats();
-        });
-      },
-      onLongPress: () => _openChatActions(chat),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        child: Row(
-          children: [
-            CircleAvatar(
-              radius: 26,
-              backgroundImage: chat.displayPhotoUrl != null &&
-                      chat.displayPhotoUrl!.isNotEmpty
-                  ? NetworkImage(chat.displayPhotoUrl!)
-                  : null,
-              backgroundColor: theme.colorScheme.primaryContainer,
-              child:
-                  chat.displayPhotoUrl == null || chat.displayPhotoUrl!.isEmpty
-                      ? chat.isGroup
-                          ? Icon(
-                              chat.isBranch
-                                  ? Icons.account_tree_outlined
-                                  : Icons.group_outlined,
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 4, 4, 4),
+      child: InkWell(
+        onTap: () {
+          final titleParam = Uri.encodeComponent(chat.displayName);
+          final photoParam =
+              chat.displayPhotoUrl != null && chat.displayPhotoUrl!.isNotEmpty
+                  ? '&photo=${Uri.encodeComponent(chat.displayPhotoUrl!)}'
+                  : '';
+          final userParam = !chat.isGroup && chat.otherUserId.isNotEmpty
+              ? '&userId=${Uri.encodeComponent(chat.otherUserId)}'
+              : '';
+          context
+              .push(
+            '/chats/view/${chat.chatId}?type=${Uri.encodeComponent(chat.type)}&title=$titleParam$photoParam$userParam',
+          )
+              .then((_) {
+            _loadDrafts();
+            _loadNotificationSettings();
+            _loadArchivedChats();
+          });
+        },
+        onLongPress: () => _openChatActions(chat),
+        borderRadius: BorderRadius.circular(24),
+        child: GlassPanel(
+          padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
+          blur: 10,
+          borderRadius: BorderRadius.circular(24),
+          color: theme.colorScheme.surface
+              .withValues(alpha: hasUnread ? 0.84 : 0.72),
+          borderColor: hasUnread
+              ? theme.colorScheme.primary.withValues(alpha: 0.24)
+              : theme.colorScheme.outlineVariant.withValues(alpha: 0.55),
+          child: Row(
+            children: [
+              CircleAvatar(
+                radius: 26,
+                backgroundImage: chat.displayPhotoUrl != null &&
+                        chat.displayPhotoUrl!.isNotEmpty
+                    ? NetworkImage(chat.displayPhotoUrl!)
+                    : null,
+                backgroundColor: theme.colorScheme.primaryContainer,
+                child: chat.displayPhotoUrl == null ||
+                        chat.displayPhotoUrl!.isEmpty
+                    ? chat.isGroup
+                        ? Icon(
+                            chat.isBranch
+                                ? Icons.account_tree_outlined
+                                : Icons.group_outlined,
+                            color: theme.colorScheme.onPrimaryContainer,
+                          )
+                        : Text(
+                            chat.displayName.isNotEmpty
+                                ? chat.displayName[0].toUpperCase()
+                                : '?',
+                            style: TextStyle(
                               color: theme.colorScheme.onPrimaryContainer,
-                            )
-                          : Text(
-                              chat.displayName.isNotEmpty
-                                  ? chat.displayName[0].toUpperCase()
-                                  : '?',
-                              style: TextStyle(
-                                color: theme.colorScheme.onPrimaryContainer,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            )
-                      : null,
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Expanded(
-                        child: Text(
-                          chat.displayName,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.titleMedium?.copyWith(
-                            fontWeight:
-                                hasUnread ? FontWeight.w800 : FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                      if (isArchived) ...[
-                        const SizedBox(width: 8),
-                        Icon(
-                          Icons.archive_outlined,
-                          size: 16,
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
-                      ],
-                      Text(
-                        timeLabel,
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: hasUnread
-                              ? theme.colorScheme.primary
-                              : Colors.grey[600],
-                          fontWeight:
-                              hasUnread ? FontWeight.w700 : FontWeight.normal,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      if (isLastFromMe && !hasDraft) ...[
-                        Icon(
-                          Icons.done_all,
-                          size: 14,
-                          color: Colors.grey[500],
-                        ),
-                        const SizedBox(width: 4),
-                      ],
-                      Expanded(
-                        child: Text(
-                          '$previewPrefix$previewText',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            color: previewColor,
-                            fontWeight: previewWeight,
-                          ),
-                        ),
-                      ),
-                      if (notificationLevel != ChatNotificationLevel.all) ...[
-                        Icon(
-                          notificationLevel == ChatNotificationLevel.muted
-                              ? Icons.notifications_off_outlined
-                              : Icons.notifications_none_outlined,
-                          size: 16,
-                          color:
-                              notificationLevel == ChatNotificationLevel.muted
-                                  ? theme.colorScheme.error
-                                  : theme.colorScheme.onSurfaceVariant,
-                        ),
-                        const SizedBox(width: 8),
-                      ],
-                      if (hasUnread)
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: theme.colorScheme.primary,
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: Text(
-                            chat.unreadCount.toString(),
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 11,
                               fontWeight: FontWeight.bold,
+                            ),
+                          )
+                    : null,
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            chat.displayName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              fontWeight:
+                                  hasUnread ? FontWeight.w800 : FontWeight.w700,
                             ),
                           ),
                         ),
+                        const SizedBox(width: 8),
+                        Text(
+                          timeLabel,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: hasUnread
+                                ? theme.colorScheme.primary
+                                : theme.colorScheme.onSurfaceVariant,
+                            fontWeight:
+                                hasUnread ? FontWeight.w700 : FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 5),
+                    Row(
+                      children: [
+                        if (isLastFromMe && !hasDraft) ...[
+                          Icon(
+                            Icons.done_all_rounded,
+                            size: 14,
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                          const SizedBox(width: 4),
+                        ],
+                        Expanded(
+                          child: Text(
+                            '$previewPrefix$previewText',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: previewColor,
+                              fontWeight: previewWeight,
+                            ),
+                          ),
+                        ),
+                        if (hasUnread)
+                          Container(
+                            margin: const EdgeInsets.only(left: 8),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 3,
+                            ),
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.primary,
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Text(
+                              chat.unreadCount.toString(),
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: theme.colorScheme.onPrimary,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                    if (metaPills.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: metaPills,
+                      ),
                     ],
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildChatMetaPill(
+    ThemeData theme, {
+    required IconData icon,
+    required String label,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHigh.withValues(alpha: 0.6),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: theme.colorScheme.onSurfaceVariant),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1885,6 +1983,8 @@ class _CreateChatSheetState extends State<_CreateChatSheet> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final isFriendsTree =
+        context.read<TreeProvider>().selectedTreeKind == TreeKind.friends;
     final search = _searchController.text.trim().toLowerCase();
     final filteredParticipants = _participants.where((participant) {
       if (search.isEmpty) {
@@ -1950,11 +2050,10 @@ class _CreateChatSheetState extends State<_CreateChatSheet> {
                       ],
                     ),
                     const SizedBox(height: 12),
-                    Container(
-                      decoration: BoxDecoration(
-                        color: theme.colorScheme.surfaceContainerHighest
-                            .withValues(alpha: 0.3),
-                        borderRadius: BorderRadius.circular(12),
+                    GlassPanel(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 10,
                       ),
                       child: TabBar(
                         dividerColor: Colors.transparent,
@@ -1976,54 +2075,66 @@ class _CreateChatSheetState extends State<_CreateChatSheet> {
                         ],
                       ),
                     ),
+                    const SizedBox(height: 12),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        _buildComposerPill(
+                          icon: isFriendsTree
+                              ? Icons.diversity_3_outlined
+                              : Icons.account_tree_outlined,
+                          label:
+                              context.read<TreeProvider>().selectedTreeName ??
+                                  (isFriendsTree ? 'Круг' : 'Дерево'),
+                        ),
+                        _buildComposerPill(
+                          icon: Icons.people_outline,
+                          label: _selectionStatusLabel,
+                        ),
+                      ],
+                    ),
                     const SizedBox(height: 16),
-                    TextField(
-                      controller: _searchController,
-                      decoration: InputDecoration(
-                        prefixIcon: const Icon(Icons.search, size: 20),
-                        hintText: _mode == _ChatComposerMode.direct ||
-                                _mode == _ChatComposerMode.group
-                            ? (context.read<TreeProvider>().selectedTreeKind ==
-                                    TreeKind.friends
-                                ? 'Найти человека'
-                                : 'Найти родственника')
-                            : 'Найти ветку по имени',
-                        filled: true,
-                        fillColor: theme.colorScheme.surfaceContainerHighest
-                            .withValues(alpha: 0.3),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: BorderSide.none,
+                    GlassPanel(
+                      padding: const EdgeInsets.symmetric(horizontal: 14),
+                      child: TextField(
+                        controller: _searchController,
+                        decoration: InputDecoration(
+                          prefixIcon: const Icon(Icons.search, size: 20),
+                          hintText: _mode == _ChatComposerMode.direct ||
+                                  _mode == _ChatComposerMode.group
+                              ? (isFriendsTree
+                                  ? 'Найти человека'
+                                  : 'Найти родственника')
+                              : 'Найти ветку',
+                          border: InputBorder.none,
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 14,
+                          ),
                         ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: BorderSide.none,
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: BorderSide(
-                              color: theme.colorScheme.primary, width: 1.5),
-                        ),
-                        contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 12),
                       ),
                     ),
                     const SizedBox(height: 16),
                     if (_mode != _ChatComposerMode.direct) ...[
-                      TextField(
-                        controller: _titleController,
-                        textCapitalization: TextCapitalization.sentences,
-                        decoration: InputDecoration(
-                          labelText: 'Название чата',
-                          hintText: _mode == _ChatComposerMode.group
-                              ? (context
-                                          .read<TreeProvider>()
-                                          .selectedTreeKind ==
-                                      TreeKind.friends
-                                  ? 'Например: Близкий круг'
-                                  : 'Например: Семья Ивановых')
-                              : 'Необязательно',
-                          prefixIcon: const Icon(Icons.title, size: 20),
+                      GlassPanel(
+                        padding: const EdgeInsets.symmetric(horizontal: 14),
+                        child: TextField(
+                          controller: _titleController,
+                          textCapitalization: TextCapitalization.sentences,
+                          decoration: InputDecoration(
+                            hintText: _mode == _ChatComposerMode.group
+                                ? (isFriendsTree
+                                    ? 'Название группы'
+                                    : 'Название семьи')
+                                : 'Название',
+                            prefixIcon: const Icon(Icons.title, size: 20),
+                            border: InputBorder.none,
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 14,
+                            ),
+                          ),
                         ),
                       ),
                       const SizedBox(height: 12),
@@ -2137,25 +2248,99 @@ class _CreateChatSheetState extends State<_CreateChatSheet> {
     }
   }
 
+  String get _selectionStatusLabel {
+    switch (_mode) {
+      case _ChatComposerMode.direct:
+        return _selectedUserIds.isEmpty ? '1 собеседник' : 'Собеседник выбран';
+      case _ChatComposerMode.group:
+        return _selectedUserIds.isEmpty
+            ? 'Выберите участников'
+            : _countLabel(
+                _selectedUserIds.length,
+                one: 'участник',
+                few: 'участника',
+                many: 'участников',
+              );
+      case _ChatComposerMode.branch:
+      case _ChatComposerMode.branches:
+        return _selectedBranchRootIds.isEmpty
+            ? 'Выберите ветки'
+            : _countLabel(
+                _selectedBranchRootIds.length,
+                one: 'ветка',
+                few: 'ветки',
+                many: 'веток',
+              );
+    }
+  }
+
+  Widget _buildComposerPill({
+    required IconData icon,
+    required String label,
+  }) {
+    final theme = Theme.of(context);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest.withValues(
+          alpha: 0.65,
+        ),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              size: 16,
+              color: theme.colorScheme.primary,
+            ),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: theme.textTheme.labelMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildParticipantSelector(List<_GroupChatParticipant> participants,
       {required bool multi}) {
     if (participants.isEmpty) {
       return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
+        child: GlassPanel(
+          padding: const EdgeInsets.all(22),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.person_search_outlined,
-                  size: 48, color: Colors.grey[400]),
-              const SizedBox(height: 12),
+              Icon(
+                Icons.person_search_outlined,
+                size: 36,
+                color: Theme.of(context).colorScheme.primary,
+              ),
+              const SizedBox(height: 10),
               Text(
                 context.read<TreeProvider>().selectedTreeKind ==
                         TreeKind.friends
-                    ? 'Люди круга не найдены.\nУбедитесь, что они добавлены в граф и имеют аккаунт.'
-                    : 'Родственники не найдены.\nУбедитесь, что они добавлены в дерево и имеют аккаунт.',
+                    ? 'Людей пока нет'
+                    : 'Родных пока нет',
                 textAlign: TextAlign.center,
-                style: const TextStyle(color: Colors.grey),
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Нужен аккаунт в дереве.',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
               ),
             ],
           ),
@@ -2168,58 +2353,70 @@ class _CreateChatSheetState extends State<_CreateChatSheet> {
       itemBuilder: (context, index) {
         final participant = participants[index];
         final isSelected = _selectedUserIds.contains(participant.userId);
-        return ListTile(
-          onTap: () {
-            setState(() {
-              if (!multi) {
-                _selectedUserIds
-                  ..clear()
-                  ..add(participant.userId);
-                // In direct mode, we can submit immediately on tap if we want,
-                // but let's keep the explicit button for consistency or single-selection feel.
-                return;
-              }
-              if (isSelected) {
-                _selectedUserIds.remove(participant.userId);
-              } else {
-                _selectedUserIds.add(participant.userId);
-              }
-            });
-          },
-          leading: CircleAvatar(
-            radius: 20,
-            backgroundImage:
-                participant.photoUrl != null && participant.photoUrl!.isNotEmpty
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: GlassPanel(
+            padding: EdgeInsets.zero,
+            child: ListTile(
+              onTap: () {
+                setState(() {
+                  if (!multi) {
+                    _selectedUserIds
+                      ..clear()
+                      ..add(participant.userId);
+                    return;
+                  }
+                  if (isSelected) {
+                    _selectedUserIds.remove(participant.userId);
+                  } else {
+                    _selectedUserIds.add(participant.userId);
+                  }
+                });
+              },
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(22),
+              ),
+              leading: CircleAvatar(
+                radius: 20,
+                backgroundImage: participant.photoUrl != null &&
+                        participant.photoUrl!.isNotEmpty
                     ? NetworkImage(participant.photoUrl!)
                     : null,
-            child: participant.photoUrl == null || participant.photoUrl!.isEmpty
-                ? Text(participant.name.isNotEmpty
-                    ? participant.name[0].toUpperCase()
-                    : '?')
-                : null,
+                child: participant.photoUrl == null ||
+                        participant.photoUrl!.isEmpty
+                    ? Text(
+                        participant.name.isNotEmpty
+                            ? participant.name[0].toUpperCase()
+                            : '?',
+                      )
+                    : null,
+              ),
+              title: Text(
+                participant.name,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+              subtitle: Text(participant.relationLabel),
+              trailing: multi
+                  ? Checkbox(
+                      value: isSelected,
+                      onChanged: (val) {
+                        setState(() {
+                          if (val == true) {
+                            _selectedUserIds.add(participant.userId);
+                          } else {
+                            _selectedUserIds.remove(participant.userId);
+                          }
+                        });
+                      },
+                    )
+                  : (isSelected
+                      ? Icon(
+                          Icons.check_circle,
+                          color: Theme.of(context).colorScheme.primary,
+                        )
+                      : null),
+            ),
           ),
-          title: Text(
-            participant.name,
-            style: const TextStyle(fontWeight: FontWeight.w600),
-          ),
-          subtitle: Text(participant.relationLabel),
-          trailing: multi
-              ? Checkbox(
-                  value: isSelected,
-                  onChanged: (val) {
-                    setState(() {
-                      if (val == true) {
-                        _selectedUserIds.add(participant.userId);
-                      } else {
-                        _selectedUserIds.remove(participant.userId);
-                      }
-                    });
-                  },
-                )
-              : (isSelected
-                  ? Icon(Icons.check_circle,
-                      color: Theme.of(context).colorScheme.primary)
-                  : null),
         );
       },
     );
@@ -2229,18 +2426,23 @@ class _CreateChatSheetState extends State<_CreateChatSheet> {
       {required bool multi}) {
     if (candidates.isEmpty) {
       return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
+        child: GlassPanel(
+          padding: const EdgeInsets.all(22),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.account_tree_outlined,
-                  size: 48, color: Colors.grey[400]),
-              const SizedBox(height: 12),
-              const Text(
-                'Ветки не найдены.',
+              Icon(
+                Icons.account_tree_outlined,
+                size: 36,
+                color: Theme.of(context).colorScheme.primary,
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'Веток пока нет',
                 textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.grey),
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
               ),
             ],
           ),
@@ -2254,60 +2456,73 @@ class _CreateChatSheetState extends State<_CreateChatSheet> {
         final candidate = candidates[index];
         final isSelected = _selectedBranchRootIds.contains(candidate.personId);
         final linkedCount = candidate.linkedParticipantCount;
-        return ListTile(
-          onTap: () {
-            setState(() {
-              if (!multi) {
-                _selectedBranchRootIds
-                  ..clear()
-                  ..add(candidate.personId);
-                return;
-              }
-              if (isSelected) {
-                _selectedBranchRootIds.remove(candidate.personId);
-              } else {
-                _selectedBranchRootIds.add(candidate.personId);
-              }
-            });
-          },
-          leading: CircleAvatar(
-            radius: 20,
-            backgroundImage:
-                candidate.photoUrl != null && candidate.photoUrl!.isNotEmpty
-                    ? NetworkImage(candidate.photoUrl!)
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: GlassPanel(
+            padding: EdgeInsets.zero,
+            child: ListTile(
+              onTap: () {
+                setState(() {
+                  if (!multi) {
+                    _selectedBranchRootIds
+                      ..clear()
+                      ..add(candidate.personId);
+                    return;
+                  }
+                  if (isSelected) {
+                    _selectedBranchRootIds.remove(candidate.personId);
+                  } else {
+                    _selectedBranchRootIds.add(candidate.personId);
+                  }
+                });
+              },
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(22),
+              ),
+              leading: CircleAvatar(
+                radius: 20,
+                backgroundImage:
+                    candidate.photoUrl != null && candidate.photoUrl!.isNotEmpty
+                        ? NetworkImage(candidate.photoUrl!)
+                        : null,
+                child: candidate.photoUrl == null || candidate.photoUrl!.isEmpty
+                    ? Text(
+                        candidate.name.isNotEmpty
+                            ? candidate.name[0].toUpperCase()
+                            : '?',
+                      )
                     : null,
-            child: candidate.photoUrl == null || candidate.photoUrl!.isEmpty
-                ? Text(candidate.name.isNotEmpty
-                    ? candidate.name[0].toUpperCase()
-                    : '?')
-                : null,
+              ),
+              title: Text(
+                candidate.name,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+              subtitle: Text(
+                linkedCount > 0
+                    ? '${candidate.relationLabel} · $linkedCount ${_participantLabel(linkedCount)}'
+                    : '${candidate.relationLabel} · Пока пусто',
+              ),
+              trailing: multi
+                  ? Checkbox(
+                      value: isSelected,
+                      onChanged: (val) {
+                        setState(() {
+                          if (val == true) {
+                            _selectedBranchRootIds.add(candidate.personId);
+                          } else {
+                            _selectedBranchRootIds.remove(candidate.personId);
+                          }
+                        });
+                      },
+                    )
+                  : (isSelected
+                      ? Icon(
+                          Icons.check_circle,
+                          color: Theme.of(context).colorScheme.primary,
+                        )
+                      : null),
+            ),
           ),
-          title: Text(
-            candidate.name,
-            style: const TextStyle(fontWeight: FontWeight.w600),
-          ),
-          subtitle: Text(
-            linkedCount > 0
-                ? '${candidate.relationLabel} · $linkedCount ${_participantLabel(linkedCount)}'
-                : '${candidate.relationLabel} · Нет участников',
-          ),
-          trailing: multi
-              ? Checkbox(
-                  value: isSelected,
-                  onChanged: (val) {
-                    setState(() {
-                      if (val == true) {
-                        _selectedBranchRootIds.add(candidate.personId);
-                      } else {
-                        _selectedBranchRootIds.remove(candidate.personId);
-                      }
-                    });
-                  },
-                )
-              : (isSelected
-                  ? Icon(Icons.check_circle,
-                      color: Theme.of(context).colorScheme.primary)
-                  : null),
         );
       },
     );

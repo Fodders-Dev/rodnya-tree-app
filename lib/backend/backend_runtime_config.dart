@@ -8,6 +8,7 @@ class BackendRuntimeConfig {
     this.supabaseUrl = _defaultSupabaseUrl,
     this.supabaseAnonKey = _defaultSupabaseAnonKey,
     this.enableLegacyDynamicLinks = true,
+    this.enableE2e = false,
   });
 
   static const String _defaultSupabaseUrl =
@@ -44,6 +45,10 @@ class BackendRuntimeConfig {
     'LINEAGE_RUNTIME_PRESET',
     defaultValue: '',
   );
+  static const String _e2eEnv = String.fromEnvironment(
+    'LINEAGE_E2E',
+    defaultValue: '',
+  );
 
   final String publicAppUrl;
   final String apiBaseUrl;
@@ -51,6 +56,7 @@ class BackendRuntimeConfig {
   final String supabaseUrl;
   final String supabaseAnonKey;
   final bool enableLegacyDynamicLinks;
+  final bool enableE2e;
 
   static BackendRuntimeConfig get current {
     final providerConfig = BackendProviderConfig.current;
@@ -63,6 +69,7 @@ class BackendRuntimeConfig {
       supabaseUrlRaw: _supabaseUrlEnv,
       supabaseAnonKeyRaw: _supabaseAnonKeyEnv,
       legacyDynamicLinksRaw: _legacyDynamicLinksEnv,
+      e2eRaw: _e2eEnv,
       providerConfig: providerConfig,
     );
   }
@@ -76,6 +83,7 @@ class BackendRuntimeConfig {
     String supabaseUrlRaw = '',
     String supabaseAnonKeyRaw = '',
     String legacyDynamicLinksRaw = '',
+    String e2eRaw = '',
     BackendProviderConfig? providerConfig,
   }) {
     final runtimePreset = runtimePresetRaw.trim();
@@ -112,6 +120,7 @@ class BackendRuntimeConfig {
           : defaultEnableLegacyDynamicLinks(
               providerConfig: resolvedProviderConfig),
     );
+    final resolvedE2e = _boolFromRaw(e2eRaw, false);
 
     return BackendRuntimeConfig(
       publicAppUrl: resolvedPublicAppUrl,
@@ -120,6 +129,7 @@ class BackendRuntimeConfig {
       supabaseUrl: resolvedSupabaseUrl,
       supabaseAnonKey: resolvedSupabaseAnonKey,
       enableLegacyDynamicLinks: resolvedLegacyDynamicLinks,
+      enableE2e: resolvedE2e,
     );
   }
 

@@ -1,4 +1,5 @@
 // ignore_for_file: library_private_types_in_public_api
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
@@ -9,14 +10,20 @@ import '../models/family_tree.dart';
 
 import '../widgets/event_card.dart';
 import 'package:get_it/get_it.dart';
+import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
 import '../backend/models/tree_invitation.dart';
 import '../backend/interfaces/post_service_interface.dart';
+import '../backend/interfaces/story_service_interface.dart';
 import '../models/post.dart';
+import '../models/story.dart';
 import '../widgets/post_card.dart';
 import '../widgets/post_card_shimmer.dart';
 import '../widgets/empty_state_widget.dart';
+import '../widgets/story_rail.dart';
+import '../widgets/glass_panel.dart';
 import '../services/custom_api_notification_service.dart';
+import '../utils/e2e_state_bridge.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -26,23 +33,30 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  final AuthServiceInterface _authService = GetIt.I<AuthServiceInterface>();
   final FamilyTreeServiceInterface _familyTreeService =
       GetIt.I<FamilyTreeServiceInterface>();
   final PostServiceInterface _postService = GetIt.I<PostServiceInterface>();
+  final StoryServiceInterface _storyService = GetIt.I<StoryServiceInterface>();
   late final EventService _eventService;
 
   List<AppEvent> _upcomingEvents = [];
   List<Post> _posts = [];
+  List<Story> _stories = [];
+  String? _selectedEventCategoryFilter;
   bool _isLoadingEvents = true;
   bool _isLoadingPosts = false;
+  bool _isLoadingStories = false;
   bool _postsUnavailable = false;
+  bool _storiesUnavailable = false;
   String? _currentTreeId;
   TreeProvider? _treeProviderInstance;
+  final ScrollController _eventRailController = ScrollController();
 
   CustomApiNotificationService? get _customNotificationService =>
       GetIt.I.isRegistered<CustomApiNotificationService>()
-      ? GetIt.I<CustomApiNotificationService>()
-      : null;
+          ? GetIt.I<CustomApiNotificationService>()
+          : null;
 
   @override
   void initState() {
@@ -54,12 +68,15 @@ class _HomeScreenState extends State<HomeScreen> {
       _treeProviderInstance!.addListener(_handleTreeChange);
       _currentTreeId = _treeProviderInstance!.selectedTreeId;
       if (_currentTreeId != null) {
+        _loadStories(_currentTreeId!);
         _loadEvents(_currentTreeId!);
         _loadPosts(_currentTreeId!);
       } else {
         setState(() {
+          _isLoadingStories = false;
           _isLoadingEvents = false;
           _isLoadingPosts = false;
+          _selectedEventCategoryFilter = null;
         });
       }
     });
@@ -68,6 +85,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     _treeProviderInstance?.removeListener(_handleTreeChange);
+    _eventRailController.dispose();
     super.dispose();
   }
 
@@ -77,14 +95,44 @@ class _HomeScreenState extends State<HomeScreen> {
     if (_currentTreeId != newTreeId) {
       _currentTreeId = newTreeId;
       if (_currentTreeId != null) {
+        _loadStories(_currentTreeId!);
         _loadEvents(_currentTreeId!);
         _loadPosts(_currentTreeId!);
       } else {
         setState(() {
+          _isLoadingStories = false;
           _isLoadingEvents = false;
           _isLoadingPosts = false;
+          _stories = [];
           _upcomingEvents = [];
           _posts = [];
+          _selectedEventCategoryFilter = null;
+        });
+      }
+    }
+  }
+
+  Future<void> _loadStories(String treeId) async {
+    if (!mounted) return;
+    setState(() {
+      _isLoadingStories = true;
+      _storiesUnavailable = false;
+    });
+    try {
+      final stories = await _storyService.getStories(treeId: treeId);
+      if (mounted) {
+        setState(() {
+          _stories = stories;
+          _isLoadingStories = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Ошибка загрузки stories: $e');
+      if (mounted) {
+        setState(() {
+          _storiesUnavailable = true;
+          _stories = [];
+          _isLoadingStories = false;
         });
       }
     }
@@ -99,8 +147,13 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       final events = await _eventService.getUpcomingEvents(treeId, limit: 5);
       if (mounted) {
+        final categories = _collectEventCategories(events);
         setState(() {
           _upcomingEvents = events;
+          if (_selectedEventCategoryFilter != null &&
+              !categories.contains(_selectedEventCategoryFilter)) {
+            _selectedEventCategoryFilter = null;
+          }
           _isLoadingEvents = false;
         });
       }
@@ -112,6 +165,90 @@ class _HomeScreenState extends State<HomeScreen> {
         });
       }
     }
+  }
+
+  List<String> _collectEventCategories(List<AppEvent> events) {
+    final categories = <String>[];
+    for (final event in events) {
+      if (!categories.contains(event.categoryLabel)) {
+        categories.add(event.categoryLabel);
+      }
+    }
+    return categories;
+  }
+
+  List<String> get _eventCategories => _collectEventCategories(_upcomingEvents);
+
+  List<AppEvent> get _visibleUpcomingEvents {
+    final selectedCategory = _selectedEventCategoryFilter;
+    if (selectedCategory == null || selectedCategory.isEmpty) {
+      return _upcomingEvents;
+    }
+    return _upcomingEvents
+        .where((event) => event.categoryLabel == selectedCategory)
+        .toList();
+  }
+
+  String _eventCategoryKey(String label) {
+    switch (label) {
+      case 'Родня':
+        return 'rodnya';
+      case 'Семья':
+        return 'family';
+      case 'Память':
+        return 'memory';
+      case 'Повод':
+        return 'custom';
+      case 'Россия':
+        return 'russia';
+      case 'Православие':
+        return 'orthodox';
+      case 'Календарь':
+        return 'calendar';
+      default:
+        return label
+            .toLowerCase()
+            .replaceAll(RegExp(r'[^a-z0-9а-я]+'), '-')
+            .replaceAll(RegExp(r'^-+|-+$'), '');
+    }
+  }
+
+  void _publishHomeE2EState({
+    required String? selectedTreeName,
+    required bool hasSelectedTree,
+  }) {
+    if (!E2EStateBridge.isEnabled) {
+      return;
+    }
+
+    final visibleEvents = _visibleUpcomingEvents;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      E2EStateBridge.publish(
+        screen: 'home',
+        state: <String, dynamic>{
+          'selectedTreeId': _currentTreeId,
+          'selectedTreeName': selectedTreeName,
+          'hasSelectedTree': hasSelectedTree,
+          'isLoadingEvents': _isLoadingEvents,
+          'selectedEventFilter': _selectedEventCategoryFilter,
+          'availableEventFilters': <String>['Все', ..._eventCategories],
+          'visibleEvents': visibleEvents
+              .map(
+                (event) => <String, dynamic>{
+                  'id': event.id,
+                  'title': event.title,
+                  'category': event.categoryLabel,
+                  'status': event.status,
+                  'personId': event.personId,
+                },
+              )
+              .toList(),
+        },
+      );
+    });
   }
 
   Future<void> _loadPosts(String treeId) async {
@@ -146,6 +283,12 @@ class _HomeScreenState extends State<HomeScreen> {
     final selectedTreeName = treeProvider.selectedTreeName;
     final selectedTreeKind = treeProvider.selectedTreeKind;
     final isFriendsTree = selectedTreeKind == TreeKind.friends;
+    final hasSelectedTree = _currentTreeId != null && selectedTreeName != null;
+    final isWideLayout = _isWideHomeLayout(context);
+    _publishHomeE2EState(
+      selectedTreeName: selectedTreeName,
+      hasSelectedTree: hasSelectedTree,
+    );
 
     return Scaffold(
       appBar: AppBar(
@@ -164,6 +307,7 @@ class _HomeScreenState extends State<HomeScreen> {
           await _customNotificationService?.refreshUnreadNotificationsCount();
           if (_currentTreeId != null) {
             await Future.wait([
+              _loadStories(_currentTreeId!),
               _loadEvents(_currentTreeId!),
               _loadPosts(_currentTreeId!),
             ]);
@@ -171,7 +315,7 @@ class _HomeScreenState extends State<HomeScreen> {
         },
         child: Center(
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 1400),
+            constraints: BoxConstraints(maxWidth: isWideLayout ? 1500 : 1400),
             child: StreamBuilder<List<TreeInvitation>>(
               stream: _familyTreeService.getPendingTreeInvitations(),
               builder: (context, snapshot) {
@@ -185,50 +329,25 @@ class _HomeScreenState extends State<HomeScreen> {
                           pendingInvitations,
                         ),
                       ),
-                    if (_currentTreeId != null && selectedTreeName != null)
-                      SliverToBoxAdapter(
-                        child: _buildActiveTreeContextBanner(
-                          treeName: selectedTreeName,
-                          isFriendsTree: isFriendsTree,
-                        ),
+                    SliverToBoxAdapter(
+                      child: _buildHomeHeader(
+                        hasSelectedTree: hasSelectedTree,
+                        selectedTreeName: selectedTreeName,
+                        isFriendsTree: isFriendsTree,
                       ),
-                    if (_currentTreeId == null) ...[
-                      SliverToBoxAdapter(child: _buildNoTreeSelectedHero()),
-                      SliverToBoxAdapter(
-                        child: _buildNoTreeSelectedNextSteps(),
-                      ),
-                    ] else ...[
+                    ),
+                    if (hasSelectedTree) ...[
                       SliverToBoxAdapter(
                         child: Padding(
                           padding: const EdgeInsets.fromLTRB(16, 18, 16, 0),
-                          child: _isWideHomeLayout(context)
-                              ? Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    SizedBox(
-                                      width: 360,
-                                      child: Column(
-                                        children: [
-                                          _buildUpcomingEventsSection(),
-                                          const SizedBox(height: 16),
-                                          _buildQuickActionsCard(),
-                                        ],
-                                      ),
-                                    ),
-                                    const SizedBox(width: 16),
-                                    Expanded(child: _buildFeedContent()),
-                                  ],
-                                )
-                              : Column(
-                                  children: [
-                                    _buildUpcomingEventsSection(),
-                                    const SizedBox(height: 16),
-                                    _buildFeedContent(),
-                                  ],
-                                ),
+                          child: _buildHomeContentSections(
+                            isWideLayout: isWideLayout,
+                          ),
                         ),
                       ),
                       const SliverToBoxAdapter(child: SizedBox(height: 80)),
+                    ] else ...[
+                      const SliverToBoxAdapter(child: SizedBox(height: 40)),
                     ],
                   ],
                 );
@@ -276,9 +395,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
         return IconButton(
           icon: icon,
-          tooltip: unreadCount > 0
-              ? 'Активность, $unreadCount новых'
-              : 'Активность',
+          tooltip:
+              unreadCount > 0 ? 'Активность, $unreadCount новых' : 'Активность',
           onPressed: () => context.push('/notifications'),
         );
       },
@@ -288,55 +406,255 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isWideHomeLayout(BuildContext context) =>
       MediaQuery.of(context).size.width >= 1180;
 
+  Widget _buildHomeContentSections({required bool isWideLayout}) {
+    return Column(
+      children: [
+        _buildStoriesSection(),
+        const SizedBox(height: 12),
+        _buildUpcomingEventsSection(isWideLayout: isWideLayout),
+        SizedBox(height: isWideLayout ? 18 : 16),
+        _buildHomeFeedStage(isWideLayout: isWideLayout),
+      ],
+    );
+  }
+
+  String _currentDisplayName() {
+    final displayName = _authService.currentUserDisplayName?.trim() ?? '';
+    if (displayName.isNotEmpty) {
+      return displayName;
+    }
+    final email = _authService.currentUserEmail?.trim() ?? '';
+    if (email.isNotEmpty) {
+      return email;
+    }
+    return 'Профиль';
+  }
+
+  String _displayInitial(String displayName) {
+    final normalized = displayName.trim();
+    if (normalized.isEmpty) {
+      return 'Р';
+    }
+    return normalized.substring(0, 1).toUpperCase();
+  }
+
+  Widget _buildHomeHeader({
+    required bool hasSelectedTree,
+    required String? selectedTreeName,
+    required bool isFriendsTree,
+  }) {
+    final theme = Theme.of(context);
+    final displayName = _currentDisplayName();
+    final photoUrl = _authService.currentUserPhotoUrl?.trim();
+    final chips = <Widget>[
+      _buildHeaderChip(
+        icon: hasSelectedTree
+            ? (isFriendsTree
+                ? Icons.diversity_3_outlined
+                : Icons.account_tree_outlined)
+            : Icons.account_tree_outlined,
+        label: hasSelectedTree
+            ? (selectedTreeName ?? 'Активное дерево')
+            : 'Нет активного дерева',
+        highlighted: true,
+      ),
+    ];
+
+    if (hasSelectedTree && !_isLoadingEvents) {
+      chips.add(
+        _buildHeaderChip(
+          icon: Icons.event_outlined,
+          label: _upcomingEvents.isEmpty
+              ? 'Без событий'
+              : '${_upcomingEvents.length} событий',
+        ),
+      );
+    }
+
+    if (hasSelectedTree && !_isLoadingPosts) {
+      chips.add(
+        _buildHeaderChip(
+          icon: _postsUnavailable
+              ? Icons.cloud_off_outlined
+              : Icons.dynamic_feed_outlined,
+          label: _postsUnavailable
+              ? 'Лента недоступна'
+              : (_posts.isEmpty ? 'Лента пустая' : '${_posts.length} постов'),
+        ),
+      );
+    }
+
+    if (hasSelectedTree && !_isLoadingStories) {
+      chips.add(
+        _buildHeaderChip(
+          icon: _storiesUnavailable
+              ? Icons.cloud_off_outlined
+              : Icons.auto_stories_outlined,
+          label: _storiesUnavailable
+              ? 'Истории недоступны'
+              : (_stories.isEmpty
+                  ? 'Историй нет'
+                  : '${_stories.length} историй'),
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+      child: _buildDesktopSideCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                CircleAvatar(
+                  radius: 28,
+                  backgroundImage: photoUrl != null && photoUrl.isNotEmpty
+                      ? NetworkImage(photoUrl)
+                      : null,
+                  child: photoUrl == null || photoUrl.isEmpty
+                      ? Text(
+                          _displayInitial(displayName),
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
+                        )
+                      : null,
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        displayName,
+                        style: theme.textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            hasSelectedTree
+                                ? Icons.circle
+                                : Icons.radio_button_unchecked_rounded,
+                            size: 10,
+                            color: hasSelectedTree
+                                ? theme.colorScheme.primary
+                                : theme.colorScheme.onSurfaceVariant,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            hasSelectedTree
+                                ? (isFriendsTree
+                                    ? 'Круг активен'
+                                    : 'Дерево активно')
+                                : 'Выберите дерево',
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 12),
+                IconButton.filledTonal(
+                  tooltip: 'Открыть профиль',
+                  onPressed: () => context.go('/profile'),
+                  icon: const Icon(Icons.person_outline_rounded),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: chips,
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: hasSelectedTree
+                  ? [
+                      _buildQuickActionButton(
+                        icon: Icons.post_add_outlined,
+                        label: 'Пост',
+                        onTap: () => context.push('/post/create'),
+                        primary: true,
+                      ),
+                      _buildQuickActionButton(
+                        icon: isFriendsTree
+                            ? Icons.hub_outlined
+                            : Icons.people_outline,
+                        label: isFriendsTree ? 'Люди' : 'Родные',
+                        onTap: () => context.go('/relatives'),
+                      ),
+                      _buildQuickActionButton(
+                        icon: Icons.account_tree_outlined,
+                        label: 'Дерево',
+                        onTap: () => context.go('/tree?selector=1'),
+                      ),
+                    ]
+                  : [
+                      _buildQuickActionButton(
+                        icon: Icons.account_tree_outlined,
+                        label: 'Выбрать дерево',
+                        onTap: () => context.go('/tree?selector=1'),
+                        primary: true,
+                      ),
+                      _buildQuickActionButton(
+                        icon: Icons.add_circle_outline,
+                        label: 'Создать граф',
+                        onTap: () => context.push('/trees/create'),
+                      ),
+                    ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildDesktopSideCard({
     required Widget child,
     EdgeInsetsGeometry padding = const EdgeInsets.all(18),
   }) {
-    final theme = Theme.of(context);
-    return Container(
-      width: double.infinity,
+    return GlassPanel(
       padding: padding,
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surface,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(
-          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.45),
-        ),
-      ),
+      borderRadius: BorderRadius.circular(30),
       child: child,
     );
   }
 
-  Widget _buildFeedContent() {
+  Widget _buildHomeFeedStage({required bool isWideLayout}) {
+    final feed = _buildFeedContent(wideLayout: isWideLayout);
+    if (!isWideLayout) {
+      return feed;
+    }
+
+    return Align(
+      alignment: Alignment.topCenter,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 980),
+        child: feed,
+      ),
+    );
+  }
+
+  Widget _buildFeedContent({bool wideLayout = false}) {
     if (_isLoadingPosts && _posts.isEmpty) {
       return Column(children: List.generate(3, (_) => const PostCardShimmer()));
     }
 
     if (_posts.isEmpty) {
-      return EmptyStateWidget(
-        icon: Icons.post_add_outlined,
-        title: _postsUnavailable
-            ? 'Публикации временно недоступны'
-            : 'Здесь пока пусто',
-        message: _postsUnavailable
-            ? 'Backend ленты пока не отвечает для этого дерева. Основные разделы работают, а публикации нужно восстановить отдельно.'
-            : _treeProviderInstance?.selectedTreeKind == TreeKind.friends
-            ? 'Будьте первым, кто поделится новостью, фото или поводом для встречи в круге друзей.'
-            : 'Будьте первым, кто поделится историей или новостью в этом семейном дереве!',
-        actionLabel: _postsUnavailable ? 'Обновить' : 'Создать публикацию',
-        onAction: () async {
-          if (_postsUnavailable) {
-            if (_currentTreeId != null) {
-              _loadPosts(_currentTreeId!);
-            }
-            return;
-          }
-          final result = await context.push('/post/create');
-          if (result == true && _currentTreeId != null) {
-            _loadPosts(_currentTreeId!);
-          }
-        },
-      );
+      return _buildFeedEmptyState(wideLayout: wideLayout);
     }
 
     return Column(
@@ -355,251 +673,163 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildQuickActionsCard() {
+  Widget _buildFeedEmptyState({required bool wideLayout}) {
+    Future<void> handleAction() async {
+      if (_postsUnavailable) {
+        if (_currentTreeId != null) {
+          _loadPosts(_currentTreeId!);
+        }
+        return;
+      }
+      final result = await context.push('/post/create');
+      if (result == true && _currentTreeId != null) {
+        _loadPosts(_currentTreeId!);
+      }
+    }
+
+    final title = _postsUnavailable ? 'Лента недоступна' : 'Лента пуста';
+    final message = _postsUnavailable
+        ? 'Обновите позже.'
+        : _treeProviderInstance?.selectedTreeKind == TreeKind.friends
+            ? 'Начните с короткого поста.'
+            : 'Начните с первой публикации.';
+    final actionLabel = _postsUnavailable ? 'Обновить' : 'Создать';
+
+    if (!wideLayout) {
+      return EmptyStateWidget(
+        icon: Icons.post_add_outlined,
+        title: title,
+        message: message,
+        actionLabel: actionLabel,
+        onAction: handleAction,
+      );
+    }
+
     final theme = Theme.of(context);
     return _buildDesktopSideCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Быстрые действия',
-            style: theme.textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 14),
-          _buildQuickActionTile(
-            icon: Icons.post_add_outlined,
-            title: 'Новая публикация',
-            subtitle:
-                _treeProviderInstance?.selectedTreeKind == TreeKind.friends
-                ? 'Добавить новость, фото или планы для своего круга.'
-                : 'Добавить новость, историю или фотографии семьи.',
-            onTap: () => context.push('/post/create'),
-          ),
-          const SizedBox(height: 10),
-          _buildQuickActionTile(
-            icon: _treeProviderInstance?.selectedTreeKind == TreeKind.friends
-                ? Icons.hub_outlined
-                : Icons.people_outline,
-            title: _treeProviderInstance?.selectedTreeKind == TreeKind.friends
-                ? 'Связи и круг'
-                : 'Раздел родных',
-            subtitle:
-                _treeProviderInstance?.selectedTreeKind == TreeKind.friends
-                ? 'Перейти к людям из круга и расширить сеть связей.'
-                : 'Перейти к родственникам и пригласить новых людей.',
-            onTap: () => context.go('/relatives'),
-          ),
-          const SizedBox(height: 10),
-          _buildQuickActionTile(
-            icon: Icons.account_tree_outlined,
-            title: 'Сменить дерево',
-            subtitle: 'Быстро переключиться на другое активное дерево.',
-            onTap: () => context.go('/tree?selector=1'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildContextChip({required IconData icon, required String label}) {
-    final theme = Theme.of(context);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.primary.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(999),
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 22),
       child: Row(
-        mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 16, color: theme.colorScheme.primary),
-          const SizedBox(width: 8),
-          Text(
-            label,
-            style: theme.textTheme.labelLarge?.copyWith(
+          Container(
+            width: 58,
+            height: 58,
+            decoration: BoxDecoration(
+              color: theme.colorScheme.primary.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Icon(
+              _postsUnavailable
+                  ? Icons.wifi_tethering_error_rounded
+                  : Icons.auto_awesome_mosaic_outlined,
+              size: 28,
               color: theme.colorScheme.primary,
-              fontWeight: FontWeight.w700,
             ),
           ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildQuickActionTile({
-    required IconData icon,
-    required String title,
-    required String subtitle,
-    required VoidCallback onTap,
-  }) {
-    final theme = Theme.of(context);
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(18),
-      child: Ink(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: theme.colorScheme.surfaceContainerHighest.withValues(
-            alpha: 0.45,
-          ),
-          borderRadius: BorderRadius.circular(18),
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              width: 42,
-              height: 42,
-              decoration: BoxDecoration(
-                color: theme.colorScheme.primary.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: Icon(icon, color: theme.colorScheme.primary),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: theme.textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    subtitle,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                      height: 1.35,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildNoTreeSelectedHero() {
-    final theme = Theme.of(context);
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 18, 16, 12),
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              theme.colorScheme.primary.withValues(alpha: 0.92),
-              theme.colorScheme.primaryContainer,
-            ],
-          ),
-          borderRadius: BorderRadius.circular(28),
-          boxShadow: [
-            BoxShadow(
-              color: theme.colorScheme.primary.withValues(alpha: 0.18),
-              blurRadius: 24,
-              offset: const Offset(0, 12),
-            ),
-          ],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              width: 56,
-              height: 56,
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.16),
-                borderRadius: BorderRadius.circular(18),
-              ),
-              child: const Icon(
-                Icons.account_tree_outlined,
-                color: Colors.white,
-                size: 28,
-              ),
-            ),
-            const SizedBox(height: 18),
-            Text(
-              'Сначала выберите дерево',
-              style: theme.textTheme.headlineSmall?.copyWith(
-                color: Colors.white,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-            const SizedBox(height: 10),
-            Text(
-              'Выберите семейное дерево или круг друзей, чтобы открыть события и ленту. Если дерева пока нет, создайте его за минуту.',
-              style: theme.textTheme.bodyLarge?.copyWith(
-                color: Colors.white.withValues(alpha: 0.92),
-                height: 1.45,
-              ),
-            ),
-            const SizedBox(height: 18),
-            Wrap(
-              spacing: 12,
-              runSpacing: 12,
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                FilledButton.icon(
-                  onPressed: () => context.go('/tree?selector=1'),
-                  icon: const Icon(Icons.account_tree),
-                  label: const Text('Выбрать дерево'),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: Colors.white,
-                    foregroundColor: theme.colorScheme.primary,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 18,
-                      vertical: 16,
-                    ),
+                _buildHeaderChip(
+                  icon: _postsUnavailable
+                      ? Icons.cloud_off_outlined
+                      : Icons.dynamic_feed_outlined,
+                  label: _postsUnavailable ? 'Офлайн' : 'Лента',
+                  highlighted: !_postsUnavailable,
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  title,
+                  style: theme.textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w800,
                   ),
                 ),
-                OutlinedButton.icon(
-                  onPressed: () => context.push('/trees/create'),
-                  icon: const Icon(Icons.add_circle_outline),
-                  label: const Text('Создать граф'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.white,
-                    side: const BorderSide(color: Colors.white38),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 18,
-                      vertical: 16,
-                    ),
+                const SizedBox(height: 6),
+                Text(
+                  message,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
               ],
             ),
-          ],
-        ),
+          ),
+          const SizedBox(width: 16),
+          FilledButton.icon(
+            onPressed: handleAction,
+            icon: Icon(
+              _postsUnavailable
+                  ? Icons.refresh_rounded
+                  : Icons.post_add_outlined,
+            ),
+            label: Text(actionLabel),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _buildActiveTreeContextBanner({
-    required String treeName,
-    required bool isFriendsTree,
+  Widget _buildHeaderChip({
+    required IconData icon,
+    required String label,
+    bool highlighted = false,
   }) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-      child: Align(
-        alignment: Alignment.centerLeft,
-        child: _buildContextChip(
-          icon: isFriendsTree
-              ? Icons.diversity_3_outlined
-              : Icons.account_tree_outlined,
-          label: isFriendsTree
-              ? 'Активен круг друзей: $treeName'
-              : 'Активно семейное дерево: $treeName',
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      decoration: BoxDecoration(
+        color: highlighted
+            ? theme.colorScheme.primary.withValues(alpha: 0.10)
+            : theme.colorScheme.surface.withValues(alpha: 0.72),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: highlighted
+              ? theme.colorScheme.primary.withValues(alpha: 0.12)
+              : theme.colorScheme.outlineVariant.withValues(alpha: 0.9),
         ),
       ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            icon,
+            size: 16,
+            color: highlighted
+                ? theme.colorScheme.primary
+                : theme.colorScheme.onSurfaceVariant,
+          ),
+          const SizedBox(width: 8),
+          Text(
+            label,
+            style: theme.textTheme.labelLarge?.copyWith(
+              color: highlighted
+                  ? theme.colorScheme.primary
+                  : theme.colorScheme.onSurfaceVariant,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQuickActionButton({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+    bool primary = false,
+  }) {
+    if (primary) {
+      return FilledButton.icon(
+        onPressed: onTap,
+        icon: Icon(icon),
+        label: Text(label),
+      );
+    }
+    return FilledButton.tonalIcon(
+      onPressed: onTap,
+      icon: Icon(icon),
+      label: Text(label),
     );
   }
 
@@ -608,21 +838,15 @@ class _HomeScreenState extends State<HomeScreen> {
     final count = invitations.length;
     final firstTreeName = invitations.first.tree.name.trim();
     final title = count == 1
-        ? 'Вас ждёт приглашение в дерево'
-        : 'У вас $count приглашения в деревья';
-    final description = count == 1 && firstTreeName.isNotEmpty
-        ? 'Откройте "$firstTreeName", чтобы оно появилось в вашем списке деревьев.'
-        : 'Перейдите к приглашениям и примите нужное дерево без лишнего поиска.';
+        ? (firstTreeName.isNotEmpty ? firstTreeName : 'Новое приглашение')
+        : '$count приглашения';
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 18, 16, 4),
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(18),
-        decoration: BoxDecoration(
-          color: theme.colorScheme.tertiaryContainer,
-          borderRadius: BorderRadius.circular(24),
-        ),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+      child: GlassPanel(
+        padding: const EdgeInsets.all(14),
+        color: theme.colorScheme.tertiary.withValues(alpha: 0.45),
+        borderRadius: BorderRadius.circular(26),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -639,35 +863,36 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   child: Icon(
                     Icons.mark_email_unread_outlined,
-                    color: theme.colorScheme.onTertiaryContainer,
+                    color: theme.colorScheme.primary,
                   ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: Text(
-                    title,
-                    style: theme.textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w800,
-                      color: theme.colorScheme.onTertiaryContainer,
-                    ),
-                  ),
+                    child: Text(title, style: theme.textTheme.titleMedium)),
+                _buildHeaderChip(
+                  icon: Icons.mark_email_unread_outlined,
+                  label: count == 1 ? '1' : '$count',
                 ),
               ],
             ),
             const SizedBox(height: 10),
-            Text(
-              description,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: theme.colorScheme.onTertiaryContainer,
-              ),
-            ),
-            const SizedBox(height: 14),
-            FilledButton.icon(
-              onPressed: () => context.go('/trees?tab=invitations'),
-              icon: const Icon(Icons.arrow_forward),
-              label: Text(
-                count == 1 ? 'Открыть приглашение' : 'Открыть приглашения',
-              ),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    count == 1 ? 'Откройте и примите.' : 'Проверьте список.',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                FilledButton.tonalIcon(
+                  onPressed: () => context.go('/trees?tab=invitations'),
+                  icon: const Icon(Icons.arrow_forward_rounded),
+                  label: const Text('Открыть'),
+                ),
+              ],
             ),
           ],
         ),
@@ -675,136 +900,208 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildNoTreeSelectedNextSteps() {
+  Widget _buildUpcomingEventsSection({required bool isWideLayout}) {
     final theme = Theme.of(context);
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(18),
-        decoration: BoxDecoration(
-          color: theme.colorScheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(24),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Что будет дальше',
-              style: theme.textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 12),
-            _buildNextStepRow(
-              icon: Icons.event_outlined,
-              title: 'Главная наполнится событиями',
-              subtitle: 'Ближайшие дни рождения, встречи и важные поводы.',
-            ),
-            const SizedBox(height: 10),
-            _buildNextStepRow(
-              icon: Icons.people_outline,
-              title: 'Станут доступны связи и карточки людей',
-              subtitle:
-                  'Можно будет открывать профили и расширять семейный или дружеский граф.',
-            ),
-            const SizedBox(height: 10),
-            _buildNextStepRow(
-              icon: Icons.chat_bubble_outline,
-              title: 'Чаты и личные связи останутся под рукой',
-              subtitle: 'После выбора дерева проще переходить к нужным людям.',
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildNextStepRow({
-    required IconData icon,
-    required String title,
-    required String subtitle,
-  }) {
-    final theme = Theme.of(context);
-
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          width: 40,
-          height: 40,
-          decoration: BoxDecoration(
-            color: theme.colorScheme.primaryContainer,
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Icon(icon, color: theme.colorScheme.primary),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                style: theme.textTheme.titleSmall?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                subtitle,
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildUpcomingEventsSection() {
+    final visibleEvents = _visibleUpcomingEvents;
     return _buildDesktopSideCard(
-      padding: const EdgeInsets.fromLTRB(0, 10, 0, 16),
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Padding(
-            padding: EdgeInsets.symmetric(horizontal: 16),
-            child: Text(
-              _treeProviderInstance?.selectedTreeKind == TreeKind.friends
-                  ? 'Ближайшие встречи и поводы'
-                  : 'Ближайшие события',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  _treeProviderInstance?.selectedTreeKind == TreeKind.friends
+                      ? 'Поводы'
+                      : 'События',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              if (!_isLoadingEvents)
+                _buildHeaderChip(
+                  icon: Icons.schedule_outlined,
+                  label: visibleEvents.isEmpty
+                      ? '0'
+                      : visibleEvents.length.toString(),
+                ),
+            ],
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 10),
+          if (!_isLoadingEvents && _upcomingEvents.isNotEmpty) ...[
+            SizedBox(
+              height: 34,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                children: [
+                  _buildEventFilterChip(
+                    label: 'Все',
+                    semanticLabel: 'home-event-filter-all',
+                    selected: _selectedEventCategoryFilter == null,
+                    onTap: () {
+                      setState(() {
+                        _selectedEventCategoryFilter = null;
+                      });
+                    },
+                  ),
+                  for (final category in _eventCategories) ...[
+                    const SizedBox(width: 8),
+                    _buildEventFilterChip(
+                      label: category,
+                      semanticLabel:
+                          'home-event-filter-${_eventCategoryKey(category)}',
+                      selected: _selectedEventCategoryFilter == category,
+                      onTap: () {
+                        setState(() {
+                          _selectedEventCategoryFilter = category;
+                        });
+                      },
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
+          ],
           if (_isLoadingEvents)
             const Padding(
               padding: EdgeInsets.all(16.0),
               child: Center(child: CircularProgressIndicator()),
             )
           else if (_upcomingEvents.isEmpty)
-            const Padding(
-              padding: EdgeInsets.all(16.0),
-              child: Text('Пока нет ближайших событий'),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.event_busy_outlined,
+                    size: 18,
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                  const SizedBox(width: 10),
+                  Text(
+                    'Событий пока нет',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            )
+          else if (visibleEvents.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.filter_alt_off_outlined,
+                    size: 18,
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Под фильтр пока пусто.',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             )
           else
-            SizedBox(
-              height: 160,
-              child: ListView.builder(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                itemCount: _upcomingEvents.length,
-                itemBuilder: (context, index) {
-                  return EventCard(event: _upcomingEvents[index]);
-                },
+            Listener(
+              onPointerSignal:
+                  isWideLayout ? _handleEventRailPointerSignal : null,
+              child: SizedBox(
+                height: 126,
+                child: ListView.builder(
+                  controller: _eventRailController,
+                  scrollDirection: Axis.horizontal,
+                  itemCount: visibleEvents.length,
+                  itemBuilder: (context, index) {
+                    return EventCard(event: visibleEvents[index]);
+                  },
+                ),
               ),
             ),
         ],
       ),
+    );
+  }
+
+  Widget _buildEventFilterChip({
+    required String label,
+    required String semanticLabel,
+    required bool selected,
+    required VoidCallback onTap,
+  }) {
+    return Semantics(
+      label: semanticLabel,
+      button: true,
+      selected: selected,
+      child: ChoiceChip(
+        label: Text(label),
+        selected: selected,
+        visualDensity: VisualDensity.compact,
+        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        onSelected: (_) => onTap(),
+      ),
+    );
+  }
+
+  void _handleEventRailPointerSignal(PointerSignalEvent event) {
+    if (event is! PointerScrollEvent || !_eventRailController.hasClients) {
+      return;
+    }
+
+    final maxScrollExtent = _eventRailController.position.maxScrollExtent;
+    final nextOffset = (_eventRailController.offset +
+            event.scrollDelta.dy +
+            event.scrollDelta.dx)
+        .clamp(0.0, maxScrollExtent);
+    _eventRailController.jumpTo(nextOffset);
+  }
+
+  Widget _buildStoriesSection() {
+    return StoryRail(
+      title: _treeProviderInstance?.selectedTreeKind == TreeKind.friends
+          ? 'Истории круга'
+          : 'Истории семьи',
+      currentUserId: _authService.currentUserId ?? '',
+      stories: _stories,
+      isLoading: _isLoadingStories,
+      unavailable: _storiesUnavailable,
+      onRetry: () {
+        if (_currentTreeId != null) {
+          _loadStories(_currentTreeId!);
+        }
+      },
+      onCreateStory: () async {
+        final result = await context.push('/stories/create');
+        if (result == true && _currentTreeId != null) {
+          _loadStories(_currentTreeId!);
+        }
+      },
+      onOpenStories: (stories) async {
+        if (stories.isEmpty) {
+          return;
+        }
+        final story = stories.last;
+        final route = '/stories/view/${story.treeId}/${story.authorId}';
+        await context.push(
+          route,
+        );
+        if (_currentTreeId != null) {
+          _loadStories(_currentTreeId!);
+        }
+      },
+      emptyLabel: _treeProviderInstance?.selectedTreeKind == TreeKind.friends
+          ? 'Первая история появится здесь.'
+          : 'Первая история появится здесь.',
     );
   }
 }

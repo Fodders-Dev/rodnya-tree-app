@@ -1,7 +1,9 @@
-import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
+import 'dart:async';
+import 'dart:ui';
+
+import 'package:flutter/foundation.dart' show debugPrint, kDebugMode, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'dart:async';
 import '../utils/url_utils.dart';
 
 import '../screens/home_screen.dart';
@@ -22,6 +24,8 @@ import '../screens/find_relative_screen.dart';
 import '../screens/relation_requests_screen.dart';
 import '../screens/send_relation_request_screen.dart';
 import '../screens/create_post_screen.dart';
+import '../screens/create_story_screen.dart';
+import '../screens/story_viewer_screen.dart';
 import '../screens/family_tree/create_tree_screen.dart';
 import '../screens/chat_screen.dart';
 import '../widgets/offline_indicator.dart';
@@ -42,6 +46,7 @@ import 'package:get_it/get_it.dart';
 import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/chat_service_interface.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
+import '../backend/backend_runtime_config.dart';
 import '../services/invitation_service.dart';
 import '../services/custom_api_notification_service.dart';
 
@@ -181,6 +186,11 @@ class AppRouter {
       final completingProfile = state.matchedLocation == '/complete_profile';
       final invitePage = state.matchedLocation == '/invite';
       final publicTreePage = state.matchedLocation.startsWith('/public/tree/');
+      final e2eIdlePage = state.matchedLocation == '/__e2e__/idle';
+
+      if (e2eIdlePage && BackendRuntimeConfig.current.enableE2e) {
+        return null;
+      }
 
       if (invitePage) {
         final treeId = state.uri.queryParameters['treeId'];
@@ -304,8 +314,12 @@ class AppRouter {
                         pendingInvitationsCountStream:
                             pendingInvitationsCountStream,
                       ),
-                      const VerticalDivider(thickness: 1, width: 1),
-                      Expanded(child: bodyContent),
+                      Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(0, 16, 16, 16),
+                          child: bodyContent,
+                        ),
+                      ),
                     ],
                   ),
                 );
@@ -400,6 +414,9 @@ class AppRouter {
                         child: AddRelativeScreen(
                           treeId: treeId,
                           quickAddMode: quickAddMode,
+                          routeExtra:
+                              extra is Map<String, dynamic> ? extra : null,
+                          routeQueryParameters: state.uri.queryParameters,
                         ),
                         transitionsBuilder: slideTransition,
                       );
@@ -677,6 +694,44 @@ class AppRouter {
         ),
       ),
       GoRoute(
+        path: '/stories/create',
+        parentNavigatorKey: rootNavigatorKey,
+        pageBuilder: (context, state) => LineageCustomTransitionPage(
+          key: state.pageKey,
+          constrainWidth: true,
+          child: const CreateStoryScreen(),
+          transitionsBuilder: slideUpTransition,
+        ),
+      ),
+      GoRoute(
+        path: '/stories/view/:treeId/:authorId',
+        parentNavigatorKey: rootNavigatorKey,
+        pageBuilder: (context, state) {
+          final treeId = state.pathParameters['treeId']?.trim() ?? '';
+          final authorId = state.pathParameters['authorId']?.trim() ?? '';
+          final child = treeId.isEmpty || authorId.isEmpty
+              ? const _StoryViewerRouteFallback()
+              : StoryViewerEntryScreen(
+                  treeId: treeId,
+                  authorId: authorId,
+                  currentUserId: _authService.currentUserId ?? '',
+                );
+
+          if (kIsWeb) {
+            return MaterialPage(
+              key: state.pageKey,
+              child: child,
+            );
+          }
+
+          return LineageCustomTransitionPage(
+            key: state.pageKey,
+            child: child,
+            transitionsBuilder: slideUpTransition,
+          );
+        },
+      ),
+      GoRoute(
         path: '/trees',
         parentNavigatorKey: rootNavigatorKey,
         pageBuilder: (context, state) => LineageCustomTransitionPage(
@@ -707,13 +762,30 @@ class AppRouter {
         ],
       ),
       GoRoute(
-        path: '/login',
+        path: '/__e2e__/idle',
         parentNavigatorKey: rootNavigatorKey,
         pageBuilder: (context, state) => LineageCustomTransitionPage(
           key: state.pageKey,
-          child: const AuthScreen(),
+          child: const _E2EIdleScreen(),
           transitionsBuilder: fadeTransition,
         ),
+      ),
+      GoRoute(
+        path: '/login',
+        parentNavigatorKey: rootNavigatorKey,
+        pageBuilder: (context, state) {
+          final redirectAfterLogin = state.uri.queryParameters['from']?.trim();
+          return LineageCustomTransitionPage(
+            key: state.pageKey,
+            child: AuthScreen(
+              redirectAfterLogin:
+                  redirectAfterLogin != null && redirectAfterLogin.isNotEmpty
+                      ? redirectAfterLogin
+                      : null,
+            ),
+            transitionsBuilder: fadeTransition,
+          );
+        },
       ),
       GoRoute(
         path: '/password_reset',
@@ -1036,6 +1108,38 @@ class AppRouter {
   }
 }
 
+class _E2EIdleScreen extends StatelessWidget {
+  const _E2EIdleScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Scaffold(
+      body: SizedBox.expand(),
+    );
+  }
+}
+
+class _StoryViewerRouteFallback extends StatelessWidget {
+  const _StoryViewerRouteFallback();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Center(
+        child: Text(
+          'История недоступна',
+          style: theme.textTheme.titleMedium?.copyWith(
+            color: Colors.white,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _AdaptiveNavigationRail extends StatelessWidget {
   const _AdaptiveNavigationRail({
     required this.navigationShell,
@@ -1066,64 +1170,111 @@ class _AdaptiveNavigationRail extends StatelessWidget {
               initialData: 0,
               builder: (context, invitationsSnapshot) {
                 final invitationsCount = invitationsSnapshot.data ?? 0;
+                final destinations = <_RailDestinationData>[
+                  _RailDestinationData(
+                    label: 'Главная',
+                    outlinedIcon: Icons.home_outlined,
+                    filledIcon: Icons.home_rounded,
+                    count: notificationsCount,
+                  ),
+                  const _RailDestinationData(
+                    label: 'Родные',
+                    outlinedIcon: Icons.people_outline_rounded,
+                    filledIcon: Icons.people_rounded,
+                  ),
+                  _RailDestinationData(
+                    label: 'Дерево',
+                    outlinedIcon: Icons.account_tree_outlined,
+                    filledIcon: Icons.account_tree_rounded,
+                    count: invitationsCount,
+                  ),
+                  _RailDestinationData(
+                    label: 'Чаты',
+                    outlinedIcon: Icons.chat_bubble_outline_rounded,
+                    filledIcon: Icons.chat_bubble_rounded,
+                    count: chatsCount,
+                  ),
+                  const _RailDestinationData(
+                    label: 'Профиль',
+                    outlinedIcon: Icons.person_outline_rounded,
+                    filledIcon: Icons.person_rounded,
+                  ),
+                ];
+                final theme = Theme.of(context);
+                final scheme = theme.colorScheme;
 
-                return NavigationRail(
-                  selectedIndex: navigationShell.currentIndex,
-                  onDestinationSelected: (index) {
-                    navigationShell.goBranch(
-                      index,
-                      initialLocation: index == navigationShell.currentIndex,
-                    );
-                  },
-                  labelType: NavigationRailLabelType.all,
-                  groupAlignment: -0.8,
-                  leading: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 24),
-                    child: CircleAvatar(
-                      backgroundColor: Theme.of(context).colorScheme.primary,
-                      radius: 20,
-                      child: const Icon(Icons.family_restroom,
-                          color: Colors.white, size: 24),
+                return Padding(
+                  padding: const EdgeInsets.fromLTRB(14, 18, 14, 18),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(32),
+                    child: BackdropFilter(
+                      filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+                      child: Container(
+                        width: 84,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 18,
+                        ),
+                        decoration: BoxDecoration(
+                          color: scheme.surface.withValues(alpha: 0.84),
+                          borderRadius: BorderRadius.circular(32),
+                          border: Border.all(
+                            color: scheme.outlineVariant.withValues(alpha: 0.9),
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: scheme.shadow.withValues(alpha: 0.1),
+                              blurRadius: 34,
+                              offset: const Offset(0, 18),
+                            ),
+                          ],
+                        ),
+                        child: Column(
+                          children: [
+                            Container(
+                              width: 42,
+                              height: 42,
+                              decoration: BoxDecoration(
+                                color: scheme.primary.withValues(alpha: 0.14),
+                                shape: BoxShape.circle,
+                              ),
+                              child: Icon(
+                                Icons.family_restroom,
+                                color: scheme.primary,
+                                size: 22,
+                              ),
+                            ),
+                            const SizedBox(height: 18),
+                            Expanded(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.start,
+                                children: [
+                                  for (var index = 0;
+                                      index < destinations.length;
+                                      index++) ...[
+                                    _RailDestination(
+                                      data: destinations[index],
+                                      selected:
+                                          navigationShell.currentIndex == index,
+                                      onTap: () {
+                                        navigationShell.goBranch(
+                                          index,
+                                          initialLocation: index ==
+                                              navigationShell.currentIndex,
+                                        );
+                                      },
+                                    ),
+                                    if (index != destinations.length - 1)
+                                      const SizedBox(height: 6),
+                                  ],
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
                   ),
-                  destinations: [
-                    NavigationRailDestination(
-                      icon: _RailBadgeIcon(
-                        count: notificationsCount,
-                        icon: Icons.home_outlined,
-                      ),
-                      selectedIcon: _RailBadgeIcon(
-                        count: notificationsCount,
-                        icon: Icons.home,
-                      ),
-                      label: const Text('Главная'),
-                    ),
-                    const NavigationRailDestination(
-                      icon: Icon(Icons.people_outline),
-                      selectedIcon: Icon(Icons.people),
-                      label: Text('Родные'),
-                    ),
-                    NavigationRailDestination(
-                      icon: _buildTreeIcon(context, invitationsCount),
-                      label: const Text('Дерево'),
-                    ),
-                    NavigationRailDestination(
-                      icon: _RailBadgeIcon(
-                        count: chatsCount,
-                        icon: Icons.chat_bubble_outline,
-                      ),
-                      selectedIcon: _RailBadgeIcon(
-                        count: chatsCount,
-                        icon: Icons.chat_bubble,
-                      ),
-                      label: const Text('Чаты'),
-                    ),
-                    const NavigationRailDestination(
-                      icon: Icon(Icons.person_outline),
-                      selectedIcon: Icon(Icons.person),
-                      label: Text('Профиль'),
-                    ),
-                  ],
                 );
               },
             );
@@ -1132,40 +1283,87 @@ class _AdaptiveNavigationRail extends StatelessWidget {
       },
     );
   }
-
-  Widget _buildTreeIcon(BuildContext context, int count) {
-    final icon = Container(
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.primary,
-        shape: BoxShape.circle,
-      ),
-      child: const Icon(
-        Icons.account_tree,
-        color: Colors.white,
-        size: 18,
-      ),
-    );
-
-    if (count <= 0) return icon;
-    return Badge(
-      label: Text(count.toString()),
-      child: icon,
-    );
-  }
 }
 
-class _RailBadgeIcon extends StatelessWidget {
-  const _RailBadgeIcon({required this.count, required this.icon});
+class _RailDestinationData {
+  const _RailDestinationData({
+    required this.label,
+    required this.outlinedIcon,
+    required this.filledIcon,
+    this.count = 0,
+  });
+
+  final String label;
+  final IconData outlinedIcon;
+  final IconData filledIcon;
   final int count;
-  final IconData icon;
+}
+
+class _RailDestination extends StatelessWidget {
+  const _RailDestination({
+    required this.data,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final _RailDestinationData data;
+  final bool selected;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    if (count <= 0) return Icon(icon);
-    return Badge(
-      label: Text(count > 99 ? '99+' : count.toString()),
-      child: Icon(icon),
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final icon = Icon(
+      selected ? data.filledIcon : data.outlinedIcon,
+      size: 22,
+      color: selected ? scheme.primary : scheme.onSurfaceVariant,
+    );
+
+    final iconWithBadge = data.count <= 0
+        ? icon
+        : Badge(
+            label: Text(data.count > 99 ? '99+' : data.count.toString()),
+            child: icon,
+          );
+
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: data.label,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(24),
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOutCubic,
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+          decoration: BoxDecoration(
+            color: selected
+                ? scheme.primary.withValues(alpha: 0.14)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(24),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              iconWithBadge,
+              const SizedBox(height: 6),
+              Text(
+                data.label,
+                maxLines: 2,
+                textAlign: TextAlign.center,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: selected ? scheme.primary : scheme.onSurfaceVariant,
+                  fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

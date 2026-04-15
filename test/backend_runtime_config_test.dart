@@ -12,6 +12,7 @@ void main() {
     expect(config.supabaseUrl, 'https://aldugysbnodrfughcawu.supabase.co');
     expect(config.supabaseAnonKey, isNotEmpty);
     expect(config.enableLegacyDynamicLinks, isTrue);
+    expect(config.enableE2e, isFalse);
   });
 
   test('BackendRuntimeConfig allows explicit runtime overrides', () {
@@ -22,6 +23,7 @@ void main() {
       supabaseUrl: 'https://supabase.internal',
       supabaseAnonKey: 'test-key',
       enableLegacyDynamicLinks: false,
+      enableE2e: true,
     );
 
     expect(config.publicAppUrl, 'https://family.example.ru');
@@ -30,6 +32,7 @@ void main() {
     expect(config.supabaseUrl, 'https://supabase.internal');
     expect(config.supabaseAnonKey, 'test-key');
     expect(config.enableLegacyDynamicLinks, isFalse);
+    expect(config.enableE2e, isTrue);
   });
 
   test(
@@ -96,6 +99,12 @@ void main() {
       expect(config.enableLegacyDynamicLinks, isTrue);
     },
   );
+
+  test('BackendRuntimeConfig resolve enables e2e hooks from runtime flag', () {
+    final config = BackendRuntimeConfig.resolve(e2eRaw: 'true');
+
+    expect(config.enableE2e, isTrue);
+  });
 
   test(
     'BackendRuntimeConfig auto-switches to customApi runtime on rodnya production host',

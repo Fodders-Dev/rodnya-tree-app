@@ -13,6 +13,7 @@ import 'package:lineage/models/chat_send_progress.dart';
 import 'package:lineage/models/family_person.dart';
 import 'package:lineage/models/family_relation.dart';
 import 'package:lineage/models/family_tree.dart';
+import 'package:lineage/models/tree_change_record.dart';
 import 'package:lineage/providers/tree_provider.dart';
 import 'package:lineage/screens/tree_view_screen.dart';
 import 'package:lineage/services/local_storage_service.dart';
@@ -221,6 +222,17 @@ class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
   final List<String> requestedTreeIds = [];
   bool showFirstPerson = false;
   bool showBranchFamily = false;
+  final List<TreeChangeRecord> historyRecords = [
+    TreeChangeRecord(
+      id: 'change-1',
+      treeId: 'tree-1',
+      actorId: 'user-1',
+      type: 'person.updated',
+      personId: 'person-1',
+      personIds: ['person-1'],
+      createdAt: DateTime(2024, 1, 2, 12, 0),
+    ),
+  ];
 
   @override
   Future<List<FamilyTree>> getUserTrees() async {
@@ -319,6 +331,32 @@ class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
   Future<bool> isCurrentUserInTree(String treeId) async => true;
 
   @override
+  Future<List<TreeChangeRecord>> getTreeHistory({
+    required String treeId,
+    String? personId,
+    String? type,
+    String? actorId,
+  }) async {
+    return historyRecords.where((record) {
+      if (record.treeId != treeId) {
+        return false;
+      }
+      if (personId != null &&
+          personId.isNotEmpty &&
+          record.personId != personId) {
+        return false;
+      }
+      if (type != null && type.isNotEmpty && record.type != type) {
+        return false;
+      }
+      if (actorId != null && actorId.isNotEmpty && record.actorId != actorId) {
+        return false;
+      }
+      return true;
+    }).toList();
+  }
+
+  @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
@@ -415,9 +453,9 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    expect(find.text('Добавить первого человека'), findsOneWidget);
+    expect(find.text('Добавить'), findsOneWidget);
 
-    await tester.tap(find.text('Добавить первого человека'));
+    await tester.tap(find.text('Добавить'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Сохранить человека'));
     await tester.pumpAndSettle();
@@ -591,5 +629,96 @@ void main() {
     await tester.tap(find.text('Открыть чаты'));
     await tester.pumpAndSettle();
     expect(find.text('chats-screen'), findsOneWidget);
+  });
+
+  testWidgets('inline inspector в tree view открывает историю выбранного узла',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1440, 1024));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final familyService = _FakeFamilyTreeService()..showFirstPerson = true;
+    getIt.registerSingleton<FamilyTreeServiceInterface>(familyService);
+    final treeProvider = TreeProvider();
+    await treeProvider.selectTree('tree-1', 'Тест');
+
+    final router = GoRouter(
+      initialLocation: '/tree/view/tree-1?name=%D0%A2%D0%B5%D1%81%D1%82',
+      routes: [
+        GoRoute(
+          path: '/tree/view/:treeId',
+          builder: (context, state) => TreeViewScreen(
+            routeTreeId: state.pathParameters['treeId'],
+            routeTreeName: state.uri.queryParameters['name'],
+          ),
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<TreeProvider>.value(
+        value: treeProvider,
+        child: MaterialApp.router(routerConfig: router),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    final treeWidget = tester.widget<InteractiveFamilyTree>(
+      find.byType(InteractiveFamilyTree),
+    );
+    final person = treeWidget.peopleData.first['person']! as FamilyPerson;
+    treeWidget.onOpenPersonHistory?.call(person);
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    expect(find.text('История изменений'), findsOneWidget);
+    expect(find.text('Иван Петров'), findsWidgets);
+    expect(find.text('Обновлён профиль'), findsOneWidget);
+  });
+
+  testWidgets('toolbar tree view открывает общий журнал изменений дерева',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1440, 1024));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final familyService = _FakeFamilyTreeService()..showFirstPerson = true;
+    getIt.registerSingleton<FamilyTreeServiceInterface>(familyService);
+    final treeProvider = TreeProvider();
+    await treeProvider.selectTree('tree-1', 'Тест');
+
+    final router = GoRouter(
+      initialLocation: '/tree/view/tree-1?name=%D0%A2%D0%B5%D1%81%D1%82',
+      routes: [
+        GoRoute(
+          path: '/tree/view/:treeId',
+          builder: (context, state) => TreeViewScreen(
+            routeTreeId: state.pathParameters['treeId'],
+            routeTreeName: state.uri.queryParameters['name'],
+          ),
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<TreeProvider>.value(
+        value: treeProvider,
+        child: MaterialApp.router(routerConfig: router),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Действия дерева'));
+    await tester.pumpAndSettle();
+    expect(find.text('История изменений'), findsOneWidget);
+
+    await tester.tap(find.text('История изменений'));
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    expect(find.text('История дерева'), findsOneWidget);
+    expect(find.text('Все'), findsOneWidget);
+    expect(find.text('Фото'), findsOneWidget);
+    expect(find.text('Обновлён профиль'), findsOneWidget);
   });
 }

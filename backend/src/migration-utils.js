@@ -14,6 +14,7 @@ const SNAPSHOT_COLLECTION_KEYS = [
   "treeInvitations",
   "notifications",
   "posts",
+  "stories",
   "comments",
   "reports",
   "blocks",

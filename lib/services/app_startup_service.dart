@@ -14,6 +14,7 @@ import '../backend/interfaces/notification_service_interface.dart';
 import '../backend/interfaces/post_service_interface.dart';
 import '../backend/interfaces/profile_service_interface.dart';
 import '../backend/interfaces/safety_service_interface.dart';
+import '../backend/interfaces/story_service_interface.dart';
 import '../backend/interfaces/storage_service_interface.dart';
 import '../models/chat_message.dart';
 import '../models/family_person.dart' as lineage_models;
@@ -29,6 +30,7 @@ import 'custom_api_post_service.dart';
 import 'custom_api_profile_service.dart';
 import 'custom_api_realtime_service.dart';
 import 'custom_api_safety_service.dart';
+import 'custom_api_story_service.dart';
 import 'custom_api_storage_service.dart';
 import 'invitation_service.dart';
 import 'invitation_link_service.dart';
@@ -148,6 +150,14 @@ class AppStartupService implements AppStartupServiceInterface {
     );
     _registerOrReplaceSingleton<CustomApiPostService>(customApiPostService);
     _registerOrReplaceSingleton<PostServiceInterface>(customApiPostService);
+
+    final customApiStoryService = CustomApiStoryService(
+      authService: customApiAuthService,
+      storageService: customApiStorageService,
+      runtimeConfig: runtimeConfig,
+    );
+    _registerOrReplaceSingleton<CustomApiStoryService>(customApiStoryService);
+    _registerOrReplaceSingleton<StoryServiceInterface>(customApiStoryService);
 
     final customApiSafetyService = CustomApiSafetyService(
       authService: customApiAuthService,

@@ -91,11 +91,12 @@ class CustomApiPostService implements PostServiceInterface {
   }
 
   @override
-  Future<void> toggleLike(String postId) async {
-    await _requestJson(
+  Future<Post> toggleLike(String postId) async {
+    final response = await _requestJson(
       method: 'POST',
       path: '/v1/posts/$postId/like',
     );
+    return Post.fromJson(response);
   }
 
   @override
@@ -144,8 +145,11 @@ class CustomApiPostService implements PostServiceInterface {
         response = await _httpClient.get(uri, headers: headers);
         break;
       case 'POST':
-        response = await _httpClient.post(uri,
-            headers: headers, body: jsonEncode(body));
+        response = await _httpClient.post(
+          uri,
+          headers: headers,
+          body: body == null ? null : jsonEncode(body),
+        );
         break;
       case 'DELETE':
         response = await _httpClient.delete(uri, headers: headers);

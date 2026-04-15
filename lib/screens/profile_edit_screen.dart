@@ -8,6 +8,8 @@ import 'package:get_it/get_it.dart';
 import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/profile_service_interface.dart';
 import '../backend/models/profile_form_data.dart';
+import '../widgets/glass_panel.dart';
+import '../widgets/flow_overlays.dart';
 
 class ProfileEditScreen extends StatefulWidget {
   const ProfileEditScreen({super.key});
@@ -171,12 +173,11 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
   }
 
   Future<void> _pickDate() async {
-    final DateTime? pickedDate = await showDatePicker(
+    final DateTime? pickedDate = await showRodnyaDatePicker(
       context: context,
       initialDate: _birthDate ?? DateTime(1990),
       firstDate: DateTime(1900),
       lastDate: DateTime.now(),
-      locale: const Locale('ru', 'RU'),
     );
 
     if (pickedDate != null) {
@@ -192,25 +193,30 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
       showPhoneCode: true,
       countryListTheme: CountryListThemeData(
         flagSize: 25,
-        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+        backgroundColor:
+            Theme.of(context).colorScheme.surface.withValues(alpha: 0.98),
         textStyle: TextStyle(
           fontSize: 16,
           color: Theme.of(context).textTheme.bodyLarge?.color,
         ),
-        bottomSheetHeight: 500,
+        bottomSheetHeight: 560,
         borderRadius: BorderRadius.only(
-          topLeft: Radius.circular(20.0),
-          topRight: Radius.circular(20.0),
+          topLeft: Radius.circular(28.0),
+          topRight: Radius.circular(28.0),
         ),
         inputDecoration: InputDecoration(
           labelText: 'Поиск',
-          hintText: 'Начните вводить название страны',
+          hintText: 'Страна или код',
           prefixIcon: const Icon(Icons.search),
           border: OutlineInputBorder(
-            borderSide: BorderSide(
-              color: Theme.of(context).primaryColor.withValues(alpha: 0.2),
-            ),
+            borderRadius: BorderRadius.circular(20),
+            borderSide: BorderSide.none,
           ),
+          filled: true,
+          fillColor: Theme.of(context)
+              .colorScheme
+              .surfaceContainerLowest
+              .withValues(alpha: 0.92),
         ),
       ),
       onSelect: (Country country) {
@@ -351,229 +357,57 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
   @override
   Widget build(BuildContext context) {
     final dateFormat = DateFormat.yMMMMd('ru');
+    final isWide = MediaQuery.of(context).size.width >= 920;
 
     return Scaffold(
-      appBar: AppBar(title: Text('Редактирование профиля')),
+      appBar: AppBar(title: const Text('Профиль')),
       body: _isLoading
-          ? Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
-              padding: EdgeInsets.all(16.0),
-              child: Form(
-                key: _formKey,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Center(
-                      child: GestureDetector(
-                        onTap: _pickImage,
-                        child: Stack(
-                          alignment: Alignment.bottomRight,
-                          children: [
-                            CircleAvatar(
-                              radius: 60,
-                              backgroundImage: _profileImageUrl != null
-                                  ? NetworkImage(_profileImageUrl!)
-                                  : null,
-                              child: _profileImageUrl == null
-                                  ? Icon(Icons.person, size: 60)
-                                  : null,
-                            ),
-                            Container(
-                              decoration: BoxDecoration(
-                                color: Colors.black54,
-                                shape: BoxShape.circle,
-                              ),
-                              child: Padding(
-                                padding: const EdgeInsets.all(4.0),
-                                child: Icon(
-                                  Icons.camera_alt,
-                                  color: Colors.white,
-                                  size: 18,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    SizedBox(height: 24),
-                    Text(
-                      'Личная информация',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    SizedBox(height: 16),
-                    TextFormField(
-                      controller: _firstNameController,
-                      decoration: InputDecoration(
-                        labelText: 'Имя',
-                        border: OutlineInputBorder(),
-                      ),
-                      validator: (value) {
-                        if (value == null || value.trim().isEmpty) {
-                          return 'Введите имя';
-                        }
-                        return null;
-                      },
-                    ),
-                    SizedBox(height: 16),
-                    TextFormField(
-                      controller: _lastNameController,
-                      decoration: InputDecoration(
-                        labelText: 'Фамилия',
-                        border: OutlineInputBorder(),
-                      ),
-                      validator: (value) {
-                        if (value == null || value.trim().isEmpty) {
-                          return 'Введите фамилию';
-                        }
-                        return null;
-                      },
-                    ),
-                    SizedBox(height: 16),
-                    TextFormField(
-                      controller: _middleNameController,
-                      decoration: InputDecoration(
-                        labelText: 'Отчество (если есть)',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                    SizedBox(height: 16),
-                    TextFormField(
-                      controller: _usernameController,
-                      decoration: InputDecoration(
-                        labelText: 'Username',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                    SizedBox(height: 16),
-                    TextFormField(
-                      controller: _emailController,
-                      decoration: InputDecoration(
-                        labelText: 'Email',
-                        border: OutlineInputBorder(),
-                        suffixIcon: Icon(Icons.lock),
-                      ),
-                      readOnly: true,
-                    ),
-                    SizedBox(height: 16),
-                    Padding(
-                      padding: const EdgeInsets.only(
-                        left: 16.0,
-                        top: 16.0,
-                        bottom: 8.0,
-                      ),
-                      child: Text('Пол', style: TextStyle(fontSize: 16)),
-                    ),
-                    Wrap(
-                      spacing: 12,
-                      runSpacing: 12,
+          ? const Center(child: CircularProgressIndicator())
+          : Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 980),
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(16),
+                  child: Form(
+                    key: _formKey,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        ChoiceChip(
-                          label: const Text('Мужской'),
-                          avatar: const Icon(Icons.male, size: 18),
-                          selected: _gender == Gender.male,
-                          selectedColor: Colors.blue.shade100,
-                          onSelected: (_) {
-                            setState(() {
-                              _gender = Gender.male;
-                            });
-                          },
-                        ),
-                        ChoiceChip(
-                          label: const Text('Женский'),
-                          avatar: const Icon(Icons.female, size: 18),
-                          selected: _gender == Gender.female,
-                          selectedColor: Colors.pink.shade100,
-                          onSelected: (_) {
-                            setState(() {
-                              _gender = Gender.female;
-                            });
-                          },
-                        ),
+                        _buildAvatarCard(),
+                        const SizedBox(height: 16),
+                        if (isWide)
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(child: _buildIdentitySection()),
+                              const SizedBox(width: 16),
+                              Expanded(
+                                  child: _buildPersonalSection(dateFormat)),
+                            ],
+                          )
+                        else ...[
+                          _buildIdentitySection(),
+                          const SizedBox(height: 16),
+                          _buildPersonalSection(dateFormat),
+                        ],
+                        const SizedBox(height: 16),
+                        _buildContactsSection(),
+                        const SizedBox(height: 24),
                       ],
                     ),
-                    SizedBox(height: 16),
-                    ListTile(
-                      title: Text('Дата рождения'),
-                      subtitle: Text(
-                        _birthDate != null
-                            ? dateFormat.format(_birthDate!)
-                            : 'Не указана',
-                      ),
-                      trailing: Icon(Icons.calendar_today),
-                      onTap: _pickDate,
-                    ),
-                    SizedBox(height: 16),
-                    ListTile(
-                      title: Text('Страна'),
-                      subtitle: Text(_countryName ?? 'Не указана'),
-                      trailing: Icon(Icons.arrow_forward_ios),
-                      onTap: _selectCountry,
-                    ),
-                    SizedBox(height: 16),
-                    TextFormField(
-                      controller: _cityController,
-                      decoration: InputDecoration(
-                        labelText: 'Город',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                    SizedBox(height: 16),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextFormField(
-                            controller: _phoneController,
-                            decoration: InputDecoration(
-                              labelText: 'Номер телефона',
-                              border: OutlineInputBorder(),
-                              prefixText: _countryCode != null ? '+' : '',
-                              suffixIcon: _isPhoneVerified
-                                  ? Icon(Icons.verified, color: Colors.green)
-                                  : null,
-                            ),
-                            keyboardType: TextInputType.phone,
-                          ),
-                        ),
-                        SizedBox(width: 8),
-                        if (!_isPhoneVerified)
-                          ElevatedButton(
-                            onPressed: _verifyPhoneNumber,
-                            child: Text('Проверить'),
-                          ),
-                      ],
-                    ),
-                    SizedBox(height: 16),
-                    if (_gender == Gender.female)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 16.0),
-                        child: TextFormField(
-                          controller: _maidenNameController,
-                          decoration: InputDecoration(
-                            labelText: 'Девичья фамилия',
-                            hintText:
-                                'Введите девичью фамилию (если применимо)',
-                            border: OutlineInputBorder(),
-                          ),
-                        ),
-                      ),
-                    SizedBox(height: 24),
-                  ],
+                  ),
                 ),
               ),
             ),
       bottomNavigationBar: Padding(
-        padding: EdgeInsets.all(16.0),
-        child: ElevatedButton(
+        padding: const EdgeInsets.all(16),
+        child: FilledButton(
           onPressed: _isLoading ? null : _saveProfile,
-          style: ElevatedButton.styleFrom(
-            minimumSize: Size(double.infinity, 50),
+          style: FilledButton.styleFrom(
+            minimumSize: const Size(double.infinity, 52),
           ),
           child: _isLoading
-              ? SizedBox(
+              ? const SizedBox(
                   height: 20,
                   width: 20,
                   child: CircularProgressIndicator(
@@ -581,7 +415,290 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                     strokeWidth: 2,
                   ),
                 )
-              : Text('Сохранить'),
+              : const Text('Сохранить'),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAvatarCard() {
+    final theme = Theme.of(context);
+    return GlassPanel(
+      child: Row(
+        children: [
+          GestureDetector(
+            onTap: _pickImage,
+            child: Stack(
+              alignment: Alignment.bottomRight,
+              children: [
+                CircleAvatar(
+                  radius: 42,
+                  backgroundImage: _profileImageUrl != null
+                      ? NetworkImage(_profileImageUrl!)
+                      : null,
+                  child: _profileImageUrl == null
+                      ? const Icon(Icons.person, size: 42)
+                      : null,
+                ),
+                Container(
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.primary,
+                    shape: BoxShape.circle,
+                  ),
+                  padding: const EdgeInsets.all(6),
+                  child: Icon(
+                    Icons.camera_alt_outlined,
+                    color: theme.colorScheme.onPrimary,
+                    size: 16,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Фото профиля',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Обновите аватар и основные данные.',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          FilledButton.tonalIcon(
+            onPressed: _pickImage,
+            icon: const Icon(Icons.photo_library_outlined),
+            label: const Text('Фото'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildIdentitySection() {
+    return GlassPanel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _buildSectionTitle('Основное'),
+          const SizedBox(height: 14),
+          TextFormField(
+            controller: _firstNameController,
+            decoration: _inputDecoration('Имя'),
+            validator: (value) {
+              if (value == null || value.trim().isEmpty) {
+                return 'Введите имя';
+              }
+              return null;
+            },
+          ),
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: _lastNameController,
+            decoration: _inputDecoration('Фамилия'),
+            validator: (value) {
+              if (value == null || value.trim().isEmpty) {
+                return 'Введите фамилию';
+              }
+              return null;
+            },
+          ),
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: _middleNameController,
+            decoration: _inputDecoration('Отчество'),
+          ),
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: _usernameController,
+            decoration: _inputDecoration('Username'),
+          ),
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: _emailController,
+            readOnly: true,
+            decoration: _inputDecoration(
+              'Email',
+              suffixIcon: const Icon(Icons.lock_outline),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPersonalSection(DateFormat dateFormat) {
+    return GlassPanel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _buildSectionTitle('Личное'),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              ChoiceChip(
+                label: const Text('Мужской'),
+                avatar: const Icon(Icons.male, size: 18),
+                selected: _gender == Gender.male,
+                onSelected: (_) {
+                  setState(() {
+                    _gender = Gender.male;
+                  });
+                },
+              ),
+              ChoiceChip(
+                label: const Text('Женский'),
+                avatar: const Icon(Icons.female, size: 18),
+                selected: _gender == Gender.female,
+                onSelected: (_) {
+                  setState(() {
+                    _gender = Gender.female;
+                  });
+                },
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          _buildActionTile(
+            icon: Icons.calendar_today_outlined,
+            title: 'Дата рождения',
+            subtitle: _birthDate != null
+                ? dateFormat.format(_birthDate!)
+                : 'Не указана',
+            onTap: _pickDate,
+          ),
+          if (_gender == Gender.female) ...[
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _maidenNameController,
+              decoration: _inputDecoration('Девичья фамилия'),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildContactsSection() {
+    return GlassPanel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _buildSectionTitle('Контакты'),
+          const SizedBox(height: 14),
+          _buildActionTile(
+            icon: Icons.public_outlined,
+            title: 'Страна',
+            subtitle: _countryName ?? 'Не указана',
+            onTap: _selectCountry,
+          ),
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: _cityController,
+            decoration: _inputDecoration('Город'),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: TextFormField(
+                  controller: _phoneController,
+                  keyboardType: TextInputType.phone,
+                  decoration: _inputDecoration(
+                    'Телефон',
+                    suffixIcon: _isPhoneVerified
+                        ? const Icon(Icons.verified, color: Colors.green)
+                        : null,
+                    prefixText: _countryCode != null ? '+' : null,
+                  ),
+                ),
+              ),
+              if (!_isPhoneVerified) ...[
+                const SizedBox(width: 10),
+                FilledButton.tonal(
+                  onPressed: _verifyPhoneNumber,
+                  child: const Text('Проверить'),
+                ),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSectionTitle(String title) {
+    return Text(
+      title,
+      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.w700,
+          ),
+    );
+  }
+
+  Widget _buildActionTile({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+  }) {
+    final theme = Theme.of(context);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerLowest.withValues(alpha: 0.88),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: ListTile(
+        onTap: onTap,
+        leading: Icon(icon, color: theme.colorScheme.primary),
+        title: Text(title),
+        subtitle: Text(subtitle),
+        trailing: const Icon(Icons.chevron_right_rounded),
+      ),
+    );
+  }
+
+  InputDecoration _inputDecoration(
+    String label, {
+    String? hintText,
+    Widget? suffixIcon,
+    String? prefixText,
+  }) {
+    return InputDecoration(
+      labelText: label,
+      hintText: hintText,
+      suffixIcon: suffixIcon,
+      prefixText: prefixText,
+      filled: true,
+      fillColor: Theme.of(context)
+          .colorScheme
+          .surfaceContainerLowest
+          .withValues(alpha: 0.88),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(20),
+        borderSide: BorderSide.none,
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(20),
+        borderSide: BorderSide.none,
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(20),
+        borderSide: BorderSide(
+          color: Theme.of(context).colorScheme.primary,
         ),
       ),
     );

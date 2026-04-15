@@ -112,11 +112,11 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Создайте первое дерево'), findsOneWidget);
-    expect(find.text('Создать первое дерево'), findsOneWidget);
-    expect(find.text('У меня есть приглашение'), findsOneWidget);
+    expect(find.text('Создайте дерево'), findsOneWidget);
+    expect(find.text('Семья'), findsOneWidget);
+    expect(find.text('Приглашения'), findsOneWidget);
 
-    await tester.tap(find.text('Создать первое дерево'));
+    await tester.tap(find.text('Семья'));
     await tester.pumpAndSettle();
 
     expect(find.text('create screen'), findsOneWidget);
@@ -161,9 +161,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Деревья и круги'), findsOneWidget);
-    expect(find.text('Откройте нужное дерево'), findsOneWidget);
-    expect(find.text('Создать семью'), findsOneWidget);
+    expect(find.text('Деревья'), findsOneWidget);
+    expect(find.text('Ваши деревья'), findsOneWidget);
+    expect(find.text('Семья'), findsOneWidget);
     expect(find.text('Семья Ивановых'), findsOneWidget);
     expect(find.text('Семья Петровых'), findsOneWidget);
   });
@@ -218,9 +218,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Активное дерево'), findsOneWidget);
-    expect(find.text('Мои деревья'), findsOneWidget);
-    expect(find.text('Сейчас открыто'), findsOneWidget);
+    expect(find.text('Активное'), findsOneWidget);
+    expect(find.text('Моё дерево'), findsOneWidget);
+    expect(find.text('Сейчас открыто'), findsWidgets);
     expect(find.text('Моё второе дерево'), findsOneWidget);
     await tester.dragUntilVisible(
       find.text('Дерево родственников'),
@@ -228,7 +228,7 @@ void main() {
       const Offset(0, -250),
     );
     await tester.pumpAndSettle();
-    expect(find.text('Другие деревья'), findsOneWidget);
+    expect(find.text('Приглашение'), findsOneWidget);
     expect(find.text('Дерево родственников'), findsOneWidget);
     expect(find.text('Участник'), findsOneWidget);
   });

@@ -5,8 +5,11 @@ const {
   S3Client,
   PutObjectCommand,
   DeleteObjectCommand,
+  GetObjectCommand,
   HeadBucketCommand,
+  HeadObjectCommand,
 } = require("@aws-sdk/client-s3");
+const {Readable} = require("node:stream");
 
 function sanitizeRelativePath(inputValue) {
   const rawValue = String(inputValue || "").trim().replace(/\\/g, "/");
@@ -123,6 +126,10 @@ class LocalMediaStorage {
     const {resolvedPath} = this.resolveMediaFilePath(bucket, mediaPath);
     res.sendFile(resolvedPath);
   }
+
+  async handlePublicGetRequest(req, res) {
+    return this.handleGetRequest(req, res);
+  }
 }
 
 class S3MediaStorage {
@@ -166,15 +173,22 @@ class S3MediaStorage {
   }
 
   buildPublicUrl(bucket, relativePath) {
-    const publicBaseUrl = String(this.config.mediaPublicBaseUrl || "").trim();
-    const {safeBucket, safeRelativePath, objectKey} = this.buildObjectKey(
+    const {objectKey} = this.buildObjectKey(
       bucket,
       relativePath,
     );
+    return this.buildPublicUrlForObjectKey(objectKey);
+  }
+
+  buildPublicUrlForObjectKey(objectKey) {
+    const publicBaseUrl = String(this.config.mediaPublicBaseUrl || "").trim();
+    const normalizedObjectKey = sanitizeRelativePath(objectKey);
 
     if (publicBaseUrl) {
       const normalizedBaseUrl = publicBaseUrl.replace(/\/+$/, "");
-      return `${normalizedBaseUrl}/${encodePathSegments(objectKey.split("/"))}`;
+      return `${normalizedBaseUrl}/${encodePathSegments(
+        normalizedObjectKey.split("/"),
+      )}`;
     }
 
     if (!this.config.s3Endpoint) {
@@ -187,11 +201,9 @@ class S3MediaStorage {
       /\/+$/,
       "",
     );
-    return `${normalizedEndpoint}/${this.bucket}/${encodePathSegments([
-      this.prefix,
-      safeBucket,
-      ...safeRelativePath.split("/"),
-    ])}`;
+    return `${normalizedEndpoint}/${this.bucket}/${encodePathSegments(
+      normalizedObjectKey.split("/"),
+    )}`;
   }
 
   async ensureReady() {
@@ -246,6 +258,142 @@ class S3MediaStorage {
     return normalizedKey;
   }
 
+  resolveLegacyObjectKey(requestedPath) {
+    const normalizedPath = sanitizeRelativePath(requestedPath);
+    if (normalizedPath.startsWith(`${this.prefix}/`)) {
+      return normalizedPath;
+    }
+
+    const [bucket, ...restParts] = normalizedPath.split("/").filter(Boolean);
+    const mediaPath = restParts.join("/");
+    if (!bucket || !mediaPath) {
+      throw new Error("INVALID_MEDIA_PATH");
+    }
+
+    const {objectKey} = this.buildObjectKey(bucket, mediaPath);
+    return objectKey;
+  }
+
+  resolvePublicObjectKey(requestedPath) {
+    const normalizedPath = sanitizeRelativePath(requestedPath);
+    const pathParts = normalizedPath.split("/").filter(Boolean);
+    if (pathParts[0] === this.bucket) {
+      pathParts.shift();
+    }
+
+    const objectKey = pathParts.join("/");
+    if (!objectKey || !objectKey.startsWith(`${this.prefix}/`)) {
+      throw new Error("UNSUPPORTED_MEDIA_URL");
+    }
+
+    return objectKey;
+  }
+
+  setObjectResponseHeaders(res, objectMetadata) {
+    if (objectMetadata.ContentType) {
+      res.setHeader("content-type", objectMetadata.ContentType);
+    }
+    if (
+      Number.isFinite(objectMetadata.ContentLength) &&
+      objectMetadata.ContentLength >= 0
+    ) {
+      res.setHeader("content-length", String(objectMetadata.ContentLength));
+    }
+    if (objectMetadata.ETag) {
+      res.setHeader("etag", objectMetadata.ETag);
+    }
+    if (objectMetadata.CacheControl) {
+      res.setHeader("cache-control", objectMetadata.CacheControl);
+    }
+    if (objectMetadata.ContentDisposition) {
+      res.setHeader("content-disposition", objectMetadata.ContentDisposition);
+    }
+    if (objectMetadata.LastModified instanceof Date) {
+      res.setHeader(
+        "last-modified",
+        objectMetadata.LastModified.toUTCString(),
+      );
+    }
+  }
+
+  isMissingObjectError(error) {
+    const statusCode = Number(error?.$metadata?.httpStatusCode || 0);
+    return (
+      statusCode === 404 ||
+      error?.name === "NoSuchKey" ||
+      error?.name === "NotFound"
+    );
+  }
+
+  async sendReadableBody(body, res) {
+    if (!body) {
+      res.status(200).end();
+      return;
+    }
+
+    if (typeof body.pipe === "function") {
+      await new Promise((resolve, reject) => {
+        body.on("error", reject);
+        res.on("close", resolve);
+        body.pipe(res);
+      });
+      return;
+    }
+
+    if (typeof body.transformToWebStream === "function") {
+      const webStream = body.transformToWebStream();
+      await this.sendReadableBody(Readable.fromWeb(webStream), res);
+      return;
+    }
+
+    if (typeof body.transformToByteArray === "function") {
+      res.end(Buffer.from(await body.transformToByteArray()));
+      return;
+    }
+
+    if (typeof body.arrayBuffer === "function") {
+      res.end(Buffer.from(await body.arrayBuffer()));
+      return;
+    }
+
+    if (Buffer.isBuffer(body) || typeof body === "string") {
+      res.end(body);
+      return;
+    }
+
+    throw new Error("UNSUPPORTED_MEDIA_BODY");
+  }
+
+  async streamObjectResponse({req, res, objectKey}) {
+    const commandInput = {
+      Bucket: this.bucket,
+      Key: objectKey,
+    };
+    const isHeadRequest = String(req.method || "GET").toUpperCase() === "HEAD";
+
+    try {
+      if (isHeadRequest) {
+        const headResponse = await this._client.send(
+          new HeadObjectCommand(commandInput),
+        );
+        this.setObjectResponseHeaders(res, headResponse);
+        res.status(200).end();
+        return;
+      }
+
+      const objectResponse = await this._client.send(
+        new GetObjectCommand(commandInput),
+      );
+      this.setObjectResponseHeaders(res, objectResponse);
+      await this.sendReadableBody(objectResponse.Body, res);
+    } catch (error) {
+      if (this.isMissingObjectError(error)) {
+        throw new Error("MEDIA_FILE_NOT_FOUND");
+      }
+      throw error;
+    }
+  }
+
   async deleteObjectByUrl(urlValue) {
     const objectKey = this.extractObjectKeyFromUrl(urlValue);
     await this._client.send(
@@ -262,10 +410,19 @@ class S3MediaStorage {
       throw new Error("INVALID_MEDIA_PATH");
     }
 
-    const [bucket, ...restParts] = requestedPath.split("/").filter(Boolean);
-    const mediaPath = restParts.join("/");
-    const redirectUrl = this.buildPublicUrl(bucket, mediaPath);
+    const objectKey = this.resolveLegacyObjectKey(requestedPath);
+    const redirectUrl = this.buildPublicUrlForObjectKey(objectKey);
     res.redirect(302, redirectUrl);
+  }
+
+  async handlePublicGetRequest(req, res) {
+    const requestedPath = decodeURIComponent(String(req.params?.[0] || "").trim());
+    if (!requestedPath) {
+      throw new Error("INVALID_MEDIA_PATH");
+    }
+
+    const objectKey = this.resolvePublicObjectKey(requestedPath);
+    await this.streamObjectResponse({req, res, objectKey});
   }
 }
 

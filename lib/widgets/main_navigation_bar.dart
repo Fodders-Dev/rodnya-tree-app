@@ -1,3 +1,5 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 
 class MainNavigationBar extends StatelessWidget {
@@ -34,58 +36,80 @@ class MainNavigationBar extends StatelessWidget {
               builder: (context, invitationsSnapshot) {
                 final pendingInvitationsCount = invitationsSnapshot.data ?? 0;
 
-                return BottomNavigationBar(
-                  type: BottomNavigationBarType.fixed,
-                  currentIndex: currentIndex,
-                  selectedItemColor: Theme.of(context).colorScheme.primary,
-                  unselectedItemColor: Colors.grey,
-                  onTap: onTap,
-                  items: [
-                    BottomNavigationBarItem(
-                      icon: _CountBadgeIcon(
-                        count: unreadNotificationsCount,
-                        outlinedIcon: Icons.home_outlined,
-                        filledIcon: Icons.home,
-                        selected: false,
+                final items = <_NavItemData>[
+                  _NavItemData(
+                    label: 'Главная',
+                    outlinedIcon: Icons.home_outlined,
+                    filledIcon: Icons.home_rounded,
+                    count: unreadNotificationsCount,
+                  ),
+                  const _NavItemData(
+                    label: 'Родные',
+                    outlinedIcon: Icons.people_outline_rounded,
+                    filledIcon: Icons.people_rounded,
+                  ),
+                  _NavItemData(
+                    label: 'Дерево',
+                    outlinedIcon: Icons.account_tree_outlined,
+                    filledIcon: Icons.account_tree_rounded,
+                    count: pendingInvitationsCount,
+                  ),
+                  _NavItemData(
+                    label: 'Чаты',
+                    outlinedIcon: Icons.chat_bubble_outline_rounded,
+                    filledIcon: Icons.chat_bubble_rounded,
+                    count: unreadCount,
+                  ),
+                  const _NavItemData(
+                    label: 'Профиль',
+                    outlinedIcon: Icons.person_outline_rounded,
+                    filledIcon: Icons.person_rounded,
+                  ),
+                ];
+
+                final theme = Theme.of(context);
+                final scheme = theme.colorScheme;
+
+                return SafeArea(
+                  minimum: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(30),
+                    child: BackdropFilter(
+                      filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 8,
+                        ),
+                        decoration: BoxDecoration(
+                          color: scheme.surface.withValues(alpha: 0.84),
+                          borderRadius: BorderRadius.circular(30),
+                          border: Border.all(
+                            color: scheme.outlineVariant.withValues(alpha: 0.9),
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: scheme.shadow.withValues(alpha: 0.1),
+                              blurRadius: 28,
+                              offset: const Offset(0, 14),
+                            ),
+                          ],
+                        ),
+                        child: Row(
+                          children: [
+                            for (var index = 0; index < items.length; index++)
+                              Expanded(
+                                child: _NavItem(
+                                  data: items[index],
+                                  selected: currentIndex == index,
+                                  onTap: () => onTap(index),
+                                ),
+                              ),
+                          ],
+                        ),
                       ),
-                      activeIcon: _CountBadgeIcon(
-                        count: unreadNotificationsCount,
-                        outlinedIcon: Icons.home_outlined,
-                        filledIcon: Icons.home,
-                        selected: true,
-                      ),
-                      label: 'Главная',
                     ),
-                    const BottomNavigationBarItem(
-                      icon: Icon(Icons.people_outline),
-                      activeIcon: Icon(Icons.people),
-                      label: 'Родные',
-                    ),
-                    BottomNavigationBarItem(
-                      icon: _buildTreeIcon(context, pendingInvitationsCount),
-                      label: 'Моё дерево',
-                    ),
-                    BottomNavigationBarItem(
-                      icon: _CountBadgeIcon(
-                        count: unreadCount,
-                        outlinedIcon: Icons.chat_bubble_outline,
-                        filledIcon: Icons.chat_bubble,
-                        selected: false,
-                      ),
-                      activeIcon: _CountBadgeIcon(
-                        count: unreadCount,
-                        outlinedIcon: Icons.chat_bubble_outline,
-                        filledIcon: Icons.chat_bubble,
-                        selected: true,
-                      ),
-                      label: 'Чаты',
-                    ),
-                    const BottomNavigationBarItem(
-                      icon: Icon(Icons.person_outline),
-                      activeIcon: Icon(Icons.person),
-                      label: 'Профиль',
-                    ),
-                  ],
+                  ),
                 );
               },
             );
@@ -94,59 +118,88 @@ class MainNavigationBar extends StatelessWidget {
       },
     );
   }
-
-  Widget _buildTreeIcon(BuildContext context, int pendingInvitationsCount) {
-    final icon = Container(
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.primary,
-        shape: BoxShape.circle,
-      ),
-      child: Icon(
-        Icons.account_tree,
-        color: Theme.of(context).colorScheme.onPrimary,
-        size: 20,
-      ),
-    );
-
-    if (pendingInvitationsCount <= 0) {
-      return icon;
-    }
-
-    return Badge(
-      label: Text(
-        pendingInvitationsCount > 99
-            ? '99+'
-            : pendingInvitationsCount.toString(),
-      ),
-      child: icon,
-    );
-  }
 }
 
-class _CountBadgeIcon extends StatelessWidget {
-  const _CountBadgeIcon({
-    required this.count,
+class _NavItemData {
+  const _NavItemData({
+    required this.label,
     required this.outlinedIcon,
     required this.filledIcon,
-    required this.selected,
+    this.count = 0,
   });
 
-  final int count;
+  final String label;
   final IconData outlinedIcon;
   final IconData filledIcon;
+  final int count;
+}
+
+class _NavItem extends StatelessWidget {
+  const _NavItem({
+    required this.data,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final _NavItemData data;
   final bool selected;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    final child = Icon(selected ? filledIcon : outlinedIcon);
-    if (count <= 0) {
-      return child;
-    }
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final icon = Icon(
+      selected ? data.filledIcon : data.outlinedIcon,
+      size: 22,
+      color: selected ? scheme.primary : scheme.onSurfaceVariant,
+    );
 
-    return Badge(
-      label: Text(count > 99 ? '99+' : count.toString()),
-      child: child,
+    final iconWithBadge = data.count <= 0
+        ? icon
+        : Badge(
+            label: Text(data.count > 99 ? '99+' : data.count.toString()),
+            child: icon,
+          );
+
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: data.label,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(22),
+          onTap: onTap,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOutCubic,
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+            decoration: BoxDecoration(
+              color: selected
+                  ? scheme.primary.withValues(alpha: 0.14)
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(22),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                iconWithBadge,
+                const SizedBox(height: 4),
+                Text(
+                  data.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: selected ? scheme.primary : scheme.onSurfaceVariant,
+                    fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

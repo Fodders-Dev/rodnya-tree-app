@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 
 enum AppEventType {
   birthday,
+  weddingAnniversary,
+  deathAnniversary,
   memorial9days,
   memorial40days,
-  // anniversary, // Пока не используем
+  customFamilyEvent,
+  russianHoliday,
+  orthodoxHoliday,
   other,
 }
 
@@ -44,8 +47,30 @@ class AppEvent {
     } else if (difference < 0) {
       return 'Прошло'; // На всякий случай
     } else {
-      // Показываем дату для событий > недели
-      return DateFormat.MMMd('ru').format(date);
+      return _formatShortDate(date);
+    }
+  }
+
+  bool get isLinkedToPerson => personId.trim().isNotEmpty;
+
+  String get categoryLabel {
+    switch (type) {
+      case AppEventType.birthday:
+        return 'Родня';
+      case AppEventType.weddingAnniversary:
+        return 'Семья';
+      case AppEventType.deathAnniversary:
+      case AppEventType.memorial9days:
+      case AppEventType.memorial40days:
+        return 'Память';
+      case AppEventType.customFamilyEvent:
+        return 'Повод';
+      case AppEventType.russianHoliday:
+        return 'Россия';
+      case AppEventType.orthodoxHoliday:
+        return 'Православие';
+      case AppEventType.other:
+        return 'Календарь';
     }
   }
 
@@ -59,5 +84,24 @@ class AppEvent {
       return 'дня';
     }
     return 'дней';
+  }
+
+  String _formatShortDate(DateTime value) {
+    const months = <int, String>{
+      1: 'янв',
+      2: 'фев',
+      3: 'мар',
+      4: 'апр',
+      5: 'мая',
+      6: 'июн',
+      7: 'июл',
+      8: 'авг',
+      9: 'сен',
+      10: 'окт',
+      11: 'ноя',
+      12: 'дек',
+    };
+
+    return '${value.day} ${months[value.month] ?? ''}'.trim();
   }
 }

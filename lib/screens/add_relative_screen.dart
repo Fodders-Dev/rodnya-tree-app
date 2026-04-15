@@ -8,6 +8,7 @@ import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
 import '../backend/interfaces/profile_service_interface.dart';
 import '../utils/user_facing_error.dart';
+import '../widgets/tree_history_sheet.dart';
 
 enum _PostSaveAction { close, stayInQuickAdd, openInTree }
 
@@ -18,6 +19,8 @@ class AddRelativeScreen extends StatefulWidget {
   final bool isEditing;
   final RelationType? predefinedRelation;
   final bool quickAddMode;
+  final Map<String, dynamic>? routeExtra;
+  final Map<String, String> routeQueryParameters;
 
   const AddRelativeScreen({
     super.key,
@@ -27,6 +30,8 @@ class AddRelativeScreen extends StatefulWidget {
     this.isEditing = false,
     this.predefinedRelation,
     this.quickAddMode = false,
+    this.routeExtra,
+    this.routeQueryParameters = const <String, String>{},
   });
 
   @override
@@ -52,6 +57,7 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
   // Состояние формы
   DateTime? _birthDate;
   DateTime? _deathDate;
+  DateTime? _marriageDate;
   Gender? _selectedGender;
   RelationType? _selectedRelationType;
   RelationType? _initialRelationType;
@@ -118,9 +124,9 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
     _firstNameController.addListener(_updateRelationshipWidget);
     _lastNameController.addListener(_updateRelationshipWidget);
 
-    // Сначала проверяем контекст из GoRouter
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final extra = GoRouterState.of(context).extra;
+      final extra = widget.routeExtra;
+      final query = widget.routeQueryParameters;
       debugPrint('AddRelativeScreen initState: extra = $extra');
       if (extra is Map<String, dynamic> &&
           extra.containsKey('contextPersonId') &&
@@ -130,6 +136,22 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
         final RelationType relationType = extra['relationType'];
         debugPrint(
           "AddRelativeScreen initState: Found context from tree. Person ID: $contextPersonId, Relation: $relationType",
+        );
+        if (quickAddMode != _isQuickAddMode) {
+          setState(() {
+            _isQuickAddMode = quickAddMode;
+          });
+        }
+        _loadContextPerson(contextPersonId, relationType);
+      } else if ((query['contextPersonId']?.isNotEmpty ?? false) &&
+          (query['relationType']?.isNotEmpty ?? false)) {
+        final quickAddMode = query['quickAddMode'] == '1' ||
+            query['quickAddMode']?.toLowerCase() == 'true';
+        final contextPersonId = query['contextPersonId']!;
+        final relationType =
+            FamilyRelation.stringToRelationType(query['relationType']);
+        debugPrint(
+          "AddRelativeScreen initState: Found query context. Person ID: $contextPersonId, Relation: $relationType",
         );
         if (quickAddMode != _isQuickAddMode) {
           setState(() {
@@ -235,6 +257,22 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
         } else {
           _deathDate = picked;
         }
+      });
+    }
+  }
+
+  Future<void> _pickMarriageDate() async {
+    final DateTime? picked = await showDatePicker(
+      context: context,
+      initialDate: _marriageDate ?? DateTime.now(),
+      firstDate: DateTime(1900),
+      lastDate: DateTime.now(),
+      locale: const Locale('ru', 'RU'),
+    );
+
+    if (picked != null) {
+      setState(() {
+        _marriageDate = picked;
       });
     }
   }
@@ -384,6 +422,9 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
                   person2Id: person2Id,
                   relation1to2: relationType,
                   isConfirmed: true,
+                  marriageDate: relationType == RelationType.spouse
+                      ? _marriageDate
+                      : null,
                 );
                 debugPrint(
                   'Основная связь создана: $newPersonId ($relationType) -> $person2Id',
@@ -607,6 +648,7 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
     _notesController.clear();
     _birthDate = null;
     _deathDate = null;
+    _marriageDate = null;
     _selectedGender = null;
     if (_lastNameController.text.trim().isEmpty) {
       _prefillLastNameFromAnchor(_anchorPerson, _resolvedRelationType);
@@ -735,6 +777,11 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
                       SizedBox(height: 24),
                     ],
 
+                    if (widget.isEditing && widget.person != null) ...[
+                      _buildEditMediaAndHistoryCard(),
+                      SizedBox(height: 24),
+                    ],
+
                     // Основная информация
                     Text(
                       'Основная информация',
@@ -843,6 +890,90 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
                 ),
               ),
             ),
+    );
+  }
+
+  Widget _buildEditMediaAndHistoryCard() {
+    final theme = Theme.of(context);
+    final person = widget.person!;
+    final photoCount = person.photoGallery.length;
+    final hasPrimaryPhoto = person.primaryPhotoUrl != null;
+    final photoActionLabel =
+        photoCount == 0 ? 'Добавить фото' : 'Фото ($photoCount)';
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: theme.colorScheme.outlineVariant),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.perm_media_outlined, color: theme.colorScheme.primary),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Медиа и история',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _QuickInfoChip(
+                icon: Icons.photo_library_outlined,
+                label: photoCount == 0 ? 'Без фото' : '$photoCount фото',
+              ),
+              _QuickInfoChip(
+                icon: hasPrimaryPhoto
+                    ? Icons.star_outline
+                    : Icons.image_not_supported_outlined,
+                label: hasPrimaryPhoto
+                    ? 'Основное фото есть'
+                    : 'Основное фото не выбрано',
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'Ниже редактируются поля карточки, а галерея и журнал изменений открываются отдельными действиями.',
+            style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              ActionChip(
+                avatar: const Icon(Icons.open_in_new, size: 18),
+                label: const Text('Открыть карточку'),
+                onPressed: _openEditingPersonCard,
+              ),
+              ActionChip(
+                avatar: const Icon(Icons.photo_library_outlined, size: 18),
+                label: Text(photoActionLabel),
+                onPressed: _openEditingPersonCard,
+              ),
+              ActionChip(
+                avatar: const Icon(Icons.history_outlined, size: 18),
+                label: const Text('История'),
+                onPressed: () => _showEditingPersonHistorySheet(),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
@@ -1055,6 +1186,26 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
             ),
           ),
         ),
+        if (!widget.isEditing &&
+            _resolvedRelationType == RelationType.spouse) ...[
+          const SizedBox(height: 16),
+          InkWell(
+            onTap: _pickMarriageDate,
+            child: InputDecorator(
+              decoration: const InputDecoration(
+                labelText: 'Дата свадьбы',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.favorite_outline),
+                helperText: 'Появится в семейном календаре',
+              ),
+              child: Text(
+                _marriageDate != null
+                    ? DateFormat('dd.MM.yyyy').format(_marriageDate!)
+                    : 'Не указано',
+              ),
+            ),
+          ),
+        ],
         const SizedBox(height: 16),
         TextFormField(
           controller: _birthPlaceController,
@@ -1533,6 +1684,52 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
         return FamilyRelation.getGenericRelationTypeStringRu(type)
             .toLowerCase();
     }
+  }
+
+  void _openEditingPersonCard() {
+    final person = widget.person;
+    if (person == null) {
+      return;
+    }
+    context.push('/relative/details/${person.id}');
+  }
+
+  Future<void> _showEditingPersonHistorySheet() async {
+    final person = widget.person;
+    if (person == null) {
+      return;
+    }
+
+    final historyFuture = _familyService.getTreeHistory(
+      treeId: widget.treeId,
+      personId: person.id,
+    );
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        return TreeHistorySheet(
+          historyFuture: historyFuture,
+          title: 'История изменений',
+          subtitle: person.name,
+          currentUserId: _authService.currentUserId,
+          emptyMessage: 'Для этой карточки пока нет записей в журнале.',
+          errorBuilder: (error) => _describeActionError(
+            error,
+            fallbackMessage: 'Не удалось загрузить историю.',
+          ),
+          onOpenPerson: (personId) {
+            Navigator.of(sheetContext).pop();
+            if (!mounted) {
+              return;
+            }
+            context.push('/relative/details/$personId');
+          },
+        );
+      },
+    );
   }
 
   Future<void> _deletePerson() async {

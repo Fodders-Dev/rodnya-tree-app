@@ -12,8 +12,10 @@ const EMPTY_DB = {
   messages: [],
   relationRequests: [],
   treeInvitations: [],
+  treeChangeRecords: [],
   notifications: [],
   posts: [],
+  stories: [],
   comments: [],
   reports: [],
   blocks: [],
@@ -36,10 +38,14 @@ function normalizeDbState(parsed) {
     treeInvitations: Array.isArray(parsed?.treeInvitations)
       ? parsed.treeInvitations
       : [],
+    treeChangeRecords: Array.isArray(parsed?.treeChangeRecords)
+      ? parsed.treeChangeRecords
+      : [],
     notifications: Array.isArray(parsed?.notifications)
       ? parsed.notifications
       : [],
     posts: Array.isArray(parsed?.posts) ? parsed.posts : [],
+    stories: Array.isArray(parsed?.stories) ? parsed.stories : [],
     comments: Array.isArray(parsed?.comments) ? parsed.comments : [],
     reports: Array.isArray(parsed?.reports) ? parsed.reports : [],
     blocks: Array.isArray(parsed?.blocks) ? parsed.blocks : [],
@@ -133,6 +139,46 @@ function createPostRecord({
     isPublic: isPublic === true,
     scopeType: scopeType === "branches" ? "branches" : "wholeTree",
     anchorPersonIds: normalizeParticipantIds(anchorPersonIds),
+  };
+}
+
+function normalizeStoryType(type) {
+  const normalizedType = String(type || "text").trim().toLowerCase();
+  if (normalizedType === "image" || normalizedType === "video") {
+    return normalizedType;
+  }
+  return "text";
+}
+
+function createStoryRecord({
+  treeId,
+  authorId,
+  authorName,
+  authorPhotoUrl = null,
+  type = "text",
+  text = null,
+  mediaUrl = null,
+  thumbnailUrl = null,
+  expiresAt = null,
+}) {
+  const createdAt = nowIso();
+  const normalizedExpiresAt =
+    normalizeOptionalIsoTimestamp(expiresAt) ||
+    new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+  return {
+    id: crypto.randomUUID(),
+    treeId,
+    authorId,
+    authorName: String(authorName || "Аноним").trim() || "Аноним",
+    authorPhotoUrl: normalizeNullableString(authorPhotoUrl),
+    type: normalizeStoryType(type),
+    text: normalizeNullableString(text),
+    mediaUrl: normalizeNullableString(mediaUrl),
+    thumbnailUrl: normalizeNullableString(thumbnailUrl),
+    createdAt,
+    updatedAt: createdAt,
+    expiresAt: normalizedExpiresAt,
+    viewedBy: [],
   };
 }
 
@@ -284,6 +330,13 @@ function collectOwnedMediaUrlsForUser(db, userId) {
   for (const person of db.persons) {
     if (person.userId === userId) {
       collectMediaUrl(ownedMediaUrls, person.photoUrl);
+      collectMediaUrl(ownedMediaUrls, person.primaryPhotoUrl);
+      if (Array.isArray(person.photoGallery)) {
+        for (const mediaEntry of person.photoGallery) {
+          collectMediaUrl(ownedMediaUrls, mediaEntry?.url);
+          collectMediaUrl(ownedMediaUrls, mediaEntry?.thumbnailUrl);
+        }
+      }
     }
   }
 
@@ -297,6 +350,15 @@ function collectOwnedMediaUrlsForUser(db, userId) {
         collectMediaUrl(ownedMediaUrls, imageUrl);
       }
     }
+  }
+
+  for (const story of db.stories) {
+    if (story.authorId !== userId) {
+      continue;
+    }
+    collectMediaUrl(ownedMediaUrls, story.authorPhotoUrl);
+    collectMediaUrl(ownedMediaUrls, story.mediaUrl);
+    collectMediaUrl(ownedMediaUrls, story.thumbnailUrl);
   }
 
   for (const comment of db.comments) {
@@ -664,6 +726,152 @@ function createTreeInvitationRecord({
   };
 }
 
+function normalizePersonMediaType(type, contentType = null) {
+  const normalizedType = String(type || "").trim().toLowerCase();
+  if (normalizedType === "image" || normalizedType === "video") {
+    return normalizedType;
+  }
+
+  const normalizedContentType = String(contentType || "")
+    .trim()
+    .toLowerCase();
+  if (normalizedContentType.startsWith("video/")) {
+    return "video";
+  }
+
+  return "image";
+}
+
+function normalizePersonPhotoGallery(photoGallery, {
+  photoUrl = null,
+  primaryPhotoUrl = null,
+} = {}) {
+  const entries = [];
+  const seenIds = new Set();
+  const seenUrls = new Set();
+
+  const addEntry = (rawEntry) => {
+    if (typeof rawEntry === "string") {
+      rawEntry = {url: rawEntry};
+    }
+
+    if (!rawEntry || typeof rawEntry !== "object") {
+      return;
+    }
+
+    const normalizedUrl = normalizeNullableString(rawEntry.url);
+    if (!normalizedUrl || seenUrls.has(normalizedUrl)) {
+      return;
+    }
+
+    let mediaId = normalizeNullableString(rawEntry.id);
+    if (mediaId && seenIds.has(mediaId)) {
+      mediaId = null;
+    }
+    if (!mediaId) {
+      mediaId = crypto.randomUUID();
+    }
+
+    seenIds.add(mediaId);
+    seenUrls.add(normalizedUrl);
+
+    const createdAt =
+      normalizeOptionalIsoTimestamp(rawEntry.createdAt) || nowIso();
+    const updatedAt =
+      normalizeOptionalIsoTimestamp(rawEntry.updatedAt) || createdAt;
+
+    entries.push({
+      id: mediaId,
+      url: normalizedUrl,
+      thumbnailUrl: normalizeNullableString(rawEntry.thumbnailUrl),
+      type: normalizePersonMediaType(
+        rawEntry.type || rawEntry.mediaType,
+        rawEntry.contentType,
+      ),
+      contentType: normalizeNullableString(rawEntry.contentType),
+      caption: normalizeNullableString(rawEntry.caption),
+      createdAt,
+      updatedAt,
+      isPrimary: rawEntry.isPrimary === true,
+    });
+  };
+
+  if (Array.isArray(photoGallery)) {
+    for (const entry of photoGallery) {
+      addEntry(entry);
+    }
+  }
+
+  const requestedPrimary =
+    normalizeNullableString(primaryPhotoUrl) ||
+    normalizeNullableString(photoUrl) ||
+    entries.find((entry) => entry.isPrimary === true)?.url ||
+    null;
+
+  if (requestedPrimary && !seenUrls.has(requestedPrimary)) {
+    addEntry({url: requestedPrimary, isPrimary: true});
+  }
+
+  const resolvedPrimary =
+    requestedPrimary && seenUrls.has(requestedPrimary)
+      ? requestedPrimary
+      : entries[0]?.url || null;
+
+  if (resolvedPrimary) {
+    const primaryIndex = entries.findIndex((entry) => entry.url === resolvedPrimary);
+    if (primaryIndex > 0) {
+      const [primaryEntry] = entries.splice(primaryIndex, 1);
+      entries.unshift(primaryEntry);
+    }
+  }
+
+  for (const entry of entries) {
+    entry.isPrimary = resolvedPrimary !== null && entry.url === resolvedPrimary;
+  }
+
+  return {
+    primaryPhotoUrl: resolvedPrimary,
+    photoUrl: resolvedPrimary,
+    photoGallery: entries,
+  };
+}
+
+function createTreeChangeRecord({
+  treeId,
+  actorId = null,
+  type,
+  personId = null,
+  personIds = [],
+  relationId = null,
+  mediaId = null,
+  details = {},
+}) {
+  const normalizedPersonIds = Array.from(
+    new Set(
+      [
+        personId,
+        ...(Array.isArray(personIds) ? personIds : []),
+      ]
+        .map((value) => String(value || "").trim())
+        .filter(Boolean),
+    ),
+  );
+
+  return {
+    id: crypto.randomUUID(),
+    treeId,
+    actorId: normalizeNullableString(actorId),
+    type: String(type || "unknown").trim() || "unknown",
+    personId: normalizeNullableString(personId) || normalizedPersonIds[0] || null,
+    personIds: normalizedPersonIds,
+    relationId: normalizeNullableString(relationId),
+    mediaId: normalizeNullableString(mediaId),
+    createdAt: nowIso(),
+    details:
+      details && typeof details === "object" ? structuredClone(details) : {},
+  };
+}
+
 function buildPersonRecord({
   treeId,
   creatorId,
@@ -673,6 +881,10 @@ function buildPersonRecord({
   const createdAt = nowIso();
   const birthDate = normalizeIsoDate(personData.birthDate);
   const deathDate = normalizeIsoDate(personData.deathDate);
+  const photoState = normalizePersonPhotoGallery(personData.photoGallery, {
+    photoUrl: personData.photoUrl,
+    primaryPhotoUrl: personData.primaryPhotoUrl,
+  });
 
   return {
     id: crypto.randomUUID(),
@@ -680,7 +892,9 @@ function buildPersonRecord({
     userId,
     name: fullNameFromPersonInput(personData),
     maidenName: normalizeNullableString(personData.maidenName),
-    photoUrl: normalizeNullableString(personData.photoUrl),
+    photoUrl: photoState.photoUrl,
+    primaryPhotoUrl: photoState.primaryPhotoUrl,
+    photoGallery: photoState.photoGallery,
     gender: String(personData.gender || "unknown"),
     birthDate,
     birthPlace: normalizeNullableString(personData.birthPlace),
@@ -756,6 +970,30 @@ class FileStore {
       await fs.rename(tempPath, this.dataPath);
     });
     return this._writeQueue;
+  }
+
+  _appendTreeChangeRecord(db, {
+    treeId,
+    actorId = null,
+    type,
+    personId = null,
+    personIds = [],
+    relationId = null,
+    mediaId = null,
+    details = {},
+  }) {
+    const record = createTreeChangeRecord({
+      treeId,
+      actorId,
+      type,
+      personId,
+      personIds,
+      relationId,
+      mediaId,
+      details,
+    });
+    db.treeChangeRecords.push(record);
+    return record;
   }
 
   async createUser({email, password, displayName}) {
@@ -992,6 +1230,12 @@ class FileStore {
       });
     }
     db.posts = nextPosts;
+    db.stories = db.stories.filter((story) => {
+      return !(
+        story.authorId === userId ||
+        removedTreeIds.has(story.treeId)
+      );
+    });
 
     const removedCommentIds = new Set();
     db.comments = db.comments.filter((entry) => {
@@ -1193,6 +1437,15 @@ class FileStore {
 
     db.trees.push(tree);
     db.persons.push(creatorPerson);
+    this._appendTreeChangeRecord(db, {
+      treeId: tree.id,
+      actorId: creatorId,
+      type: "person.created",
+      personId: creatorPerson.id,
+      details: {
+        after: structuredClone(creatorPerson),
+      },
+    });
     await this._write(db);
     return structuredClone(tree);
   }
@@ -1256,6 +1509,7 @@ class FileStore {
         .filter((entry) => entry.treeId === treeId)
         .map((entry) => entry.id);
       db.posts = db.posts.filter((entry) => entry.treeId !== treeId);
+      db.stories = db.stories.filter((entry) => entry.treeId !== treeId);
       db.comments = db.comments.filter(
         (entry) => !removedPostIds.includes(entry.postId),
       );
@@ -1385,7 +1639,13 @@ class FileStore {
     person.userId = userId;
     person.updatedAt = nowIso();
     if (!person.photoUrl && user.profile?.photoUrl) {
-      person.photoUrl = user.profile.photoUrl;
+      const photoState = normalizePersonPhotoGallery(person.photoGallery, {
+        photoUrl: user.profile.photoUrl,
+        primaryPhotoUrl: person.primaryPhotoUrl || user.profile.photoUrl,
+      });
+      person.photoUrl = photoState.photoUrl;
+      person.primaryPhotoUrl = photoState.primaryPhotoUrl;
+      person.photoGallery = photoState.photoGallery;
     }
     if (!person.name) {
       person.name = composeDisplayNameFromProfile(user.profile);
@@ -1532,12 +1792,21 @@ class FileStore {
       }
     }
     tree.updatedAt = nowIso();
+    this._appendTreeChangeRecord(db, {
+      treeId,
+      actorId: creatorId,
+      type: "person.created",
+      personId: person.id,
+      details: {
+        after: structuredClone(person),
+      },
+    });
 
     await this._write(db);
     return structuredClone(person);
   }
 
-  async updatePerson(treeId, personId, personData) {
+  async updatePerson(treeId, personId, personData, actorId = null) {
     const db = await this._read();
     const person = db.persons.find(
       (entry) => entry.id === personId && entry.treeId === treeId,
@@ -1546,6 +1815,7 @@ class FileStore {
       return null;
     }
 
+    const previousPerson = structuredClone(person);
     const nextPerson = {
       ...person,
       ...personData,
@@ -1556,10 +1826,16 @@ class FileStore {
     nextPerson.deathPlace = normalizeNullableString(nextPerson.deathPlace);
     nextPerson.bio = normalizeNullableString(nextPerson.bio);
     nextPerson.notes = normalizeNullableString(nextPerson.notes);
-    nextPerson.photoUrl = normalizeNullableString(nextPerson.photoUrl);
     nextPerson.birthDate = normalizeIsoDate(nextPerson.birthDate);
     nextPerson.deathDate = normalizeIsoDate(nextPerson.deathDate);
     nextPerson.isAlive = nextPerson.deathDate === null;
+    const photoState = normalizePersonPhotoGallery(nextPerson.photoGallery, {
+      photoUrl: nextPerson.photoUrl,
+      primaryPhotoUrl: nextPerson.primaryPhotoUrl,
+    });
+    nextPerson.photoUrl = photoState.photoUrl;
+    nextPerson.primaryPhotoUrl = photoState.primaryPhotoUrl;
+    nextPerson.photoGallery = photoState.photoGallery;
     nextPerson.updatedAt = nowIso();
 
     Object.assign(person, nextPerson);
@@ -1567,11 +1843,21 @@ class FileStore {
     if (tree) {
       tree.updatedAt = nowIso();
     }
+    this._appendTreeChangeRecord(db, {
+      treeId,
+      actorId,
+      type: "person.updated",
+      personId: person.id,
+      details: {
+        before: previousPerson,
+        after: structuredClone(person),
+      },
+    });
     await this._write(db);
     return structuredClone(person);
   }
 
-  async deletePerson(treeId, personId) {
+  async deletePerson(treeId, personId, actorId = null) {
     const db = await this._read();
     const person = db.persons.find(
       (entry) => entry.id === personId && entry.treeId === treeId,
@@ -1580,6 +1866,14 @@ class FileStore {
       return null;
     }
 
+    const deletedPerson = structuredClone(person);
+    const removedRelations = db.relations
+      .filter(
+        (entry) =>
+          entry.treeId === treeId &&
+          (entry.person1Id === personId || entry.person2Id === personId),
+      )
+      .map((entry) => structuredClone(entry));
     db.persons = db.persons.filter((entry) => entry.id !== personId);
     db.relations = db.relations.filter(
       (entry) =>
@@ -1605,8 +1899,229 @@ class FileStore {
       }
     }
 
+    for (const relation of removedRelations) {
+      this._appendTreeChangeRecord(db, {
+        treeId,
+        actorId,
+        type: "relation.deleted",
+        personIds: [relation.person1Id, relation.person2Id],
+        relationId: relation.id,
+        details: {
+          before: relation,
+        },
+      });
+    }
+
+    this._appendTreeChangeRecord(db, {
+      treeId,
+      actorId,
+      type: "person.deleted",
+      personId,
+      details: {
+        before: deletedPerson,
+      },
+    });
+
     await this._write(db);
     return true;
+  }
+
+  async addPersonMedia({
+    treeId,
+    personId,
+    actorId = null,
+    media = {},
+  }) {
+    const db = await this._read();
+    const person = db.persons.find(
+      (entry) => entry.id === personId && entry.treeId === treeId,
+    );
+    if (!person) {
+      return null;
+    }
+
+    const timestamp = nowIso();
+    const requestedUrl = media.url || media.mediaUrl || media.photoUrl;
+    const photoState = normalizePersonPhotoGallery([
+      ...(Array.isArray(person.photoGallery) ? person.photoGallery : []),
+      {
+        id: media.id,
+        url: requestedUrl,
+        thumbnailUrl: media.thumbnailUrl,
+        type: media.type,
+        contentType: media.contentType,
+        caption: media.caption,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        isPrimary: media.isPrimary === true,
+      },
+    ], {
+      photoUrl: media.isPrimary === true
+        ? requestedUrl
+        : person.photoUrl,
+      primaryPhotoUrl: media.isPrimary === true
+        ? requestedUrl
+        : person.primaryPhotoUrl,
+    });
+
+    person.photoUrl = photoState.photoUrl;
+    person.primaryPhotoUrl = photoState.primaryPhotoUrl;
+    person.photoGallery = photoState.photoGallery;
+    person.updatedAt = timestamp;
+
+    const storedMedia = person.photoGallery.find((entry) => entry.url === requestedUrl)
+      || person.photoGallery[0];
+    const tree = db.trees.find((entry) => entry.id === treeId);
+    if (tree) {
+      tree.updatedAt = timestamp;
+    }
+    this._appendTreeChangeRecord(db, {
+      treeId,
+      actorId,
+      type: "person_media.created",
+      personId,
+      mediaId: storedMedia?.id || null,
+      details: {
+        after: storedMedia ? structuredClone(storedMedia) : null,
+      },
+    });
+    await this._write(db);
+    return {
+      person: structuredClone(person),
+      media: storedMedia ? structuredClone(storedMedia) : null,
+    };
+  }
+
+  async updatePersonMedia({
+    treeId,
+    personId,
+    mediaId,
+    actorId = null,
+    updates = {},
+  }) {
+    const db = await this._read();
+    const person = db.persons.find(
+      (entry) => entry.id === personId && entry.treeId === treeId,
+    );
+    if (!person) {
+      return null;
+    }
+
+    const currentGallery = Array.isArray(person.photoGallery)
+      ? person.photoGallery.map((entry) => structuredClone(entry))
+      : [];
+    const targetIndex = currentGallery.findIndex((entry) => entry.id === mediaId);
+    if (targetIndex < 0) {
+      return false;
+    }
+
+    const previousMedia = structuredClone(currentGallery[targetIndex]);
+    const timestamp = nowIso();
+    currentGallery[targetIndex] = {
+      ...currentGallery[targetIndex],
+      ...updates,
+      id: currentGallery[targetIndex].id,
+      updatedAt: timestamp,
+    };
+    const updatedUrl = currentGallery[targetIndex].url;
+
+    const requestedPrimaryUrl = updates.isPrimary === true
+      ? updatedUrl
+      : updates.isPrimary === false && person.primaryPhotoUrl === previousMedia.url
+          ? currentGallery.find((entry) => entry.id !== mediaId)?.url || null
+          : person.primaryPhotoUrl === previousMedia.url
+              ? updatedUrl
+              : person.primaryPhotoUrl;
+    const photoState = normalizePersonPhotoGallery(currentGallery, {
+      photoUrl: requestedPrimaryUrl,
+      primaryPhotoUrl: requestedPrimaryUrl,
+    });
+
+    person.photoUrl = photoState.photoUrl;
+    person.primaryPhotoUrl = photoState.primaryPhotoUrl;
+    person.photoGallery = photoState.photoGallery;
+    person.updatedAt = timestamp;
+
+    const updatedMedia =
+      person.photoGallery.find((entry) => entry.id === mediaId) || null;
+    const tree = db.trees.find((entry) => entry.id === treeId);
+    if (tree) {
+      tree.updatedAt = timestamp;
+    }
+    this._appendTreeChangeRecord(db, {
+      treeId,
+      actorId,
+      type: "person_media.updated",
+      personId,
+      mediaId,
+      details: {
+        before: previousMedia,
+        after: updatedMedia ? structuredClone(updatedMedia) : null,
+      },
+    });
+    await this._write(db);
+    return {
+      person: structuredClone(person),
+      media: updatedMedia ? structuredClone(updatedMedia) : null,
+    };
+  }
+
+  async deletePersonMedia({
+    treeId,
+    personId,
+    mediaId,
+    actorId = null,
+  }) {
+    const db = await this._read();
+    const person = db.persons.find(
+      (entry) => entry.id === personId && entry.treeId === treeId,
+    );
+    if (!person) {
+      return null;
+    }
+
+    const currentGallery = Array.isArray(person.photoGallery)
+      ? person.photoGallery.map((entry) => structuredClone(entry))
+      : [];
+    const removedMedia = currentGallery.find((entry) => entry.id === mediaId);
+    if (!removedMedia) {
+      return false;
+    }
+
+    const nextGallery = currentGallery.filter((entry) => entry.id !== mediaId);
+    const nextPrimaryUrl =
+      person.primaryPhotoUrl === removedMedia.url
+        ? nextGallery[0]?.url || null
+        : person.primaryPhotoUrl;
+    const photoState = normalizePersonPhotoGallery(nextGallery, {
+      photoUrl: nextPrimaryUrl,
+      primaryPhotoUrl: nextPrimaryUrl,
+    });
+    const timestamp = nowIso();
+    person.photoUrl = photoState.photoUrl;
+    person.primaryPhotoUrl = photoState.primaryPhotoUrl;
+    person.photoGallery = photoState.photoGallery;
+    person.updatedAt = timestamp;
+
+    const tree = db.trees.find((entry) => entry.id === treeId);
+    if (tree) {
+      tree.updatedAt = timestamp;
+    }
+    this._appendTreeChangeRecord(db, {
+      treeId,
+      actorId,
+      type: "person_media.deleted",
+      personId,
+      mediaId,
+      details: {
+        before: removedMedia,
+      },
+    });
+    await this._write(db);
+    return {
+      person: structuredClone(person),
+      deletedMedia: structuredClone(removedMedia),
+    };
   }
 
   async listRelations(treeId) {
@@ -1616,6 +2131,39 @@ class FileStore {
       .map((relation) => structuredClone(relation));
   }
 
+  async listTreeChangeRecords(treeId, {
+    personId = null,
+    type = null,
+    actorId = null,
+  } = {}) {
+    const db = await this._read();
+    return db.treeChangeRecords
+      .filter((record) => {
+        if (record.treeId !== treeId) {
+          return false;
+        }
+        if (personId) {
+          const personIds = Array.isArray(record.personIds)
+            ? record.personIds
+            : [];
+          if (record.personId !== personId && !personIds.includes(personId)) {
+            return false;
+          }
+        }
+        if (type && record.type !== type) {
+          return false;
+        }
+        if (actorId && record.actorId !== actorId) {
+          return false;
+        }
+        return true;
+      })
+      .sort((left, right) =>
+        String(right.createdAt || "").localeCompare(String(left.createdAt || "")),
+      )
+      .map((record) => structuredClone(record));
+  }
+
   async upsertRelation({
     treeId,
     person1Id,
@@ -1623,6 +2171,8 @@ class FileStore {
     relation1to2,
     relation2to1,
     isConfirmed = true,
+    marriageDate = undefined,
+    divorceDate = undefined,
     createdBy = null,
   }) {
     const db = await this._read();
@@ -1646,8 +2196,17 @@ class FileStore {
 
     const resolvedRelation2to1 =
       relation2to1 || relationMirror(relation1to2);
+    const resolvedMarriageDate =
+      marriageDate === undefined
+        ? undefined
+        : normalizeOptionalIsoTimestamp(marriageDate);
+    const resolvedDivorceDate =
+      divorceDate === undefined
+        ? undefined
+        : normalizeOptionalIsoTimestamp(divorceDate);
 
     if (existingRelation) {
+      const previousRelation = structuredClone(existingRelation);
       if (
         existingRelation.person1Id === person1Id &&
         existingRelation.person2Id === person2Id
@@ -1659,11 +2218,28 @@ class FileStore {
         existingRelation.relation2to1 = String(relation1to2 || "other");
       }
       existingRelation.isConfirmed = isConfirmed === true;
+      if (resolvedMarriageDate !== undefined) {
+        existingRelation.marriageDate = resolvedMarriageDate;
+      }
+      if (resolvedDivorceDate !== undefined) {
+        existingRelation.divorceDate = resolvedDivorceDate;
+      }
       existingRelation.updatedAt = nowIso();
       const tree = db.trees.find((entry) => entry.id === treeId);
       if (tree) {
         tree.updatedAt = nowIso();
       }
+      this._appendTreeChangeRecord(db, {
+        treeId,
+        actorId: createdBy,
+        type: "relation.updated",
+        personIds: [existingRelation.person1Id, existingRelation.person2Id],
+        relationId: existingRelation.id,
+        details: {
+          before: previousRelation,
+          after: structuredClone(existingRelation),
+        },
+      });
       await this._write(db);
       return structuredClone(existingRelation);
     }
@@ -1680,6 +2256,8 @@ class FileStore {
       createdAt: timestamp,
       updatedAt: timestamp,
       createdBy,
+      marriageDate: resolvedMarriageDate ?? null,
+      divorceDate: resolvedDivorceDate ?? null,
     };
 
     db.relations.push(relation);
@@ -1687,8 +2265,47 @@ class FileStore {
     if (tree) {
       tree.updatedAt = nowIso();
     }
+    this._appendTreeChangeRecord(db, {
+      treeId,
+      actorId: createdBy,
+      type: "relation.created",
+      personIds: [person1Id, person2Id],
+      relationId: relation.id,
+      details: {
+        after: structuredClone(relation),
+      },
+    });
     await this._write(db);
     return structuredClone(relation);
+  }
+
+  async deleteRelation(treeId, relationId, actorId = null) {
+    const db = await this._read();
+    const relation = db.relations.find(
+      (entry) => entry.id === relationId && entry.treeId === treeId,
+    );
+    if (!relation) {
+      return null;
+    }
+
+    const deletedRelation = structuredClone(relation);
+    db.relations = db.relations.filter((entry) => entry.id !== relationId);
+    const tree = db.trees.find((entry) => entry.id === treeId);
+    if (tree) {
+      tree.updatedAt = nowIso();
+    }
+    this._appendTreeChangeRecord(db, {
+      treeId,
+      actorId,
+      type: "relation.deleted",
+      personIds: [relation.person1Id, relation.person2Id],
+      relationId,
+      details: {
+        before: deletedRelation,
+      },
+    });
+    await this._write(db);
+    return deletedRelation;
   }
 
   async getDirectRelationBetween(treeId, person1Id, person2Id) {
@@ -2337,6 +2954,137 @@ class FileStore {
         String(right.createdAt || "").localeCompare(String(left.createdAt || "")),
       )
       .map((entry) => structuredClone(entry));
+  }
+
+  async listStories({treeId = null, authorId = null} = {}) {
+    const db = await this._read();
+    const now = Date.now();
+    const activeStories = [];
+    let removedExpiredStories = false;
+
+    for (const story of db.stories) {
+      if (isExpiredAt(story.expiresAt, now)) {
+        removedExpiredStories = true;
+        continue;
+      }
+      activeStories.push(story);
+    }
+
+    if (removedExpiredStories) {
+      db.stories = activeStories;
+      await this._write(db);
+    }
+
+    return activeStories
+      .filter((entry) => {
+        if (treeId && entry.treeId !== treeId) {
+          return false;
+        }
+        if (authorId && entry.authorId !== authorId) {
+          return false;
+        }
+        return true;
+      })
+      .sort((left, right) =>
+        String(right.createdAt || "").localeCompare(String(left.createdAt || "")),
+      )
+      .map((entry) => structuredClone(entry));
+  }
+
+  async findStory(storyId) {
+    const db = await this._read();
+    const story = db.stories.find((entry) => entry.id === storyId);
+    if (!story) {
+      return null;
+    }
+    if (isExpiredAt(story.expiresAt)) {
+      db.stories = db.stories.filter((entry) => entry.id !== storyId);
+      await this._write(db);
+      return null;
+    }
+    return structuredClone(story);
+  }
+
+  async createStory({
+    treeId,
+    authorId,
+    authorName,
+    authorPhotoUrl = null,
+    type = "text",
+    text = null,
+    mediaUrl = null,
+    thumbnailUrl = null,
+    expiresAt = null,
+  }) {
+    const db = await this._read();
+    db.stories = db.stories.filter((entry) => !isExpiredAt(entry.expiresAt));
+
+    const tree = db.trees.find((entry) => entry.id === treeId);
+    const user = db.users.find((entry) => entry.id === authorId);
+    if (!tree || !user) {
+      return null;
+    }
+
+    const story = createStoryRecord({
+      treeId,
+      authorId,
+      authorName,
+      authorPhotoUrl,
+      type,
+      text,
+      mediaUrl,
+      thumbnailUrl,
+      expiresAt,
+    });
+    if (story.type === "text" && !story.text) {
+      return false;
+    }
+    if ((story.type === "image" || story.type === "video") && !story.mediaUrl) {
+      return false;
+    }
+
+    db.stories.push(story);
+    await this._write(db);
+    return structuredClone(story);
+  }
+
+  async markStoryViewed(storyId, userId) {
+    const db = await this._read();
+    db.stories = db.stories.filter((entry) => !isExpiredAt(entry.expiresAt));
+    const story = db.stories.find((entry) => entry.id === storyId);
+    if (!story) {
+      await this._write(db);
+      return null;
+    }
+
+    if (story.authorId === userId) {
+      return structuredClone(story);
+    }
+
+    story.viewedBy = Array.isArray(story.viewedBy) ? story.viewedBy : [];
+    if (!story.viewedBy.includes(userId)) {
+      story.viewedBy.push(userId);
+      story.updatedAt = nowIso();
+      await this._write(db);
+    }
+    return structuredClone(story);
+  }
+
+  async deleteStory(storyId, actorUserId) {
+    const db = await this._read();
+    const storyIndex = db.stories.findIndex((entry) => entry.id === storyId);
+    if (storyIndex < 0) {
+      return null;
+    }
+
+    const story = db.stories[storyIndex];
+    if (story.authorId !== actorUserId) {
+      return false;
+    }
+
+    db.stories.splice(storyIndex, 1);
+    await this._write(db);
+    return structuredClone(story);
   }
 
   async findPost(postId) {

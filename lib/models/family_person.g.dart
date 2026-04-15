@@ -40,13 +40,17 @@ class FamilyPersonAdapter extends TypeAdapter<FamilyPerson> {
       spouseId: fields[21] as String?,
       siblingIds: (fields[22] as List?)?.cast<String>(),
       details: fields[23] as FamilyPersonDetails?,
+      photoGallery: (fields[24] as List?)
+          ?.whereType<Map>()
+          .map((entry) => Map<String, dynamic>.from(entry))
+          .toList(),
     );
   }
 
   @override
   void write(BinaryWriter writer, FamilyPerson obj) {
     writer
-      ..writeByte(23)
+      ..writeByte(24)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -92,7 +96,9 @@ class FamilyPersonAdapter extends TypeAdapter<FamilyPerson> {
       ..writeByte(22)
       ..write(obj.siblingIds)
       ..writeByte(23)
-      ..write(obj.details);
+      ..write(obj.details)
+      ..writeByte(24)
+      ..write(obj.photoGallery);
   }
 
   @override

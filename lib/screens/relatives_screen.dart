@@ -11,6 +11,7 @@ import '../models/family_person.dart';
 import '../models/family_relation.dart';
 import '../models/chat_preview.dart';
 import '../providers/tree_provider.dart';
+import '../widgets/glass_panel.dart';
 import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/chat_service_interface.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
@@ -300,7 +301,7 @@ class _RelativesScreenState extends State<RelativesScreen> {
   }
 
   bool _isWideLayout(BuildContext context) =>
-      MediaQuery.of(context).size.width >= 1180;
+      MediaQuery.of(context).size.width >= 1500;
 
   bool _isFriendsTree(TreeProvider provider) =>
       provider.selectedTreeKind == TreeKind.friends;
@@ -539,39 +540,40 @@ class _RelativesScreenState extends State<RelativesScreen> {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24.0),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.info_outline, size: 60, color: Colors.grey),
-            SizedBox(height: 16),
-            Text(
-              'Граф не выбран',
-              style: theme.textTheme.headlineSmall?.copyWith(
-                fontWeight: FontWeight.w700,
+        child: GlassPanel(
+          padding: const EdgeInsets.all(24),
+          borderRadius: BorderRadius.circular(30),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.account_tree_outlined,
+                size: 42,
+                color: theme.colorScheme.primary,
               ),
-            ),
-            SizedBox(height: 8),
-            Text(
-              'Нажмите на иконку дерева вверху, чтобы выбрать семейное дерево или круг друзей',
-              textAlign: TextAlign.center,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-                height: 1.4,
+              const SizedBox(height: 14),
+              Text(
+                'Выберите дерево',
+                style: theme.textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
               ),
-            ),
-            SizedBox(height: 20),
-            FilledButton.icon(
-              icon: Icon(Icons.account_tree_outlined),
-              label: Text('Выбрать граф'),
-              onPressed: () => context.go('/tree?selector=1'),
-            ),
-            const SizedBox(height: 12),
-            OutlinedButton.icon(
-              icon: const Icon(Icons.add_circle_outline),
-              label: const Text('Открыть мои графы'),
-              onPressed: () => context.go('/trees'),
-            ),
-          ],
+              const SizedBox(height: 8),
+              Text(
+                'Здесь появятся люди и действия.',
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 18),
+              FilledButton.icon(
+                icon: const Icon(Icons.account_tree_outlined),
+                label: const Text('Открыть'),
+                onPressed: () => context.go('/tree?selector=1'),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -583,209 +585,88 @@ class _RelativesScreenState extends State<RelativesScreen> {
     required int inviteReadyCount,
     required String treeName,
   }) {
-    final theme = Theme.of(context);
     final treeProvider = Provider.of<TreeProvider>(context, listen: false);
     final isFriendsTree = _isFriendsTree(treeProvider);
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surface,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(
-          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.45),
-        ),
-      ),
+    final peopleLabel = isFriendsTree ? 'в круге' : 'в дереве';
+    return GlassPanel(
+      padding: const EdgeInsets.all(16),
+      borderRadius: BorderRadius.circular(30),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            isFriendsTree ? 'Сводка по кругу' : 'Сводка по дереву',
-            style: theme.textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 12),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              color: theme.colorScheme.primary.withValues(alpha: 0.10),
-              borderRadius: BorderRadius.circular(999),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  isFriendsTree
-                      ? Icons.diversity_3_outlined
-                      : Icons.account_tree_outlined,
-                  size: 16,
-                  color: theme.colorScheme.primary,
-                ),
-                const SizedBox(width: 8),
-                Flexible(
-                  child: Text(
-                    treeName,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.labelLarge?.copyWith(
-                      color: theme.colorScheme.primary,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 12),
-          Text(
-            isFriendsTree
-                ? 'Всего людей в круге: $relativesCount'
-                : 'Всего родственников: $relativesCount',
-            style: theme.textTheme.bodyLarge?.copyWith(
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 12),
           Wrap(
             spacing: 8,
             runSpacing: 8,
             children: [
               _buildSideStatChip(
+                icon: isFriendsTree
+                    ? Icons.diversity_3_outlined
+                    : Icons.account_tree_outlined,
+                label: treeName,
+              ),
+              _buildSideStatChip(
                 icon: Icons.people_outline,
-                label:
-                    '$relativesCount ${isFriendsTree ? 'в круге' : 'в дереве'}',
+                label: '$relativesCount $peopleLabel',
               ),
-              _buildSideStatChip(
-                icon: Icons.chat_bubble_outline,
-                label: _countLabel(
-                  _chatPreviews.length,
-                  one: 'чат',
-                  few: 'чата',
-                  many: 'чатов',
+              if (chatReadyCount > 0)
+                _buildSideStatChip(
+                  icon: Icons.chat_bubble_outline,
+                  label: _countLabel(
+                    chatReadyCount,
+                    one: 'чат',
+                    few: 'чата',
+                    many: 'чатов',
+                  ),
                 ),
-              ),
-              _buildSideStatChip(
-                icon: Icons.notifications_none,
-                label: _pendingRequestsCount > 0
-                    ? _countLabel(
-                        _pendingRequestsCount,
-                        one: 'запрос',
-                        few: 'запроса',
-                        many: 'запросов',
-                      )
-                    : 'Без запросов',
-              ),
+              if (inviteReadyCount > 0)
+                _buildSideStatChip(
+                  icon: Icons.person_add_alt_1_outlined,
+                  label: 'Пригласить $inviteReadyCount',
+                ),
+              if (_pendingRequestsCount > 0)
+                _buildSideStatChip(
+                  icon: Icons.notifications_none,
+                  label: 'Запросы $_pendingRequestsCount',
+                ),
             ],
           ),
-          const SizedBox(height: 12),
-          Text(
-            isFriendsTree
-                ? 'На desktop удобнее держать людей из круга отдельно, а действия по связям и приглашениям в боковой колонке.'
-                : 'На desktop удобнее держать список родственников отдельно, а действия по дереву и запросам на родство в боковой колонке.',
-            style: theme.textTheme.bodyMedium?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-              height: 1.4,
-            ),
-          ),
           const SizedBox(height: 16),
-          Text(
-            'Быстрые действия',
-            style: theme.textTheme.titleSmall?.copyWith(
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 10),
-          FilledButton.icon(
-            onPressed: _currentTreeId == null
-                ? null
-                : () => context.push('/relatives/add/${_currentTreeId!}'),
-            icon: const Icon(Icons.person_add_alt_1_outlined),
-            label: Text(_graphAddLabel(treeProvider)),
-          ),
-          const SizedBox(height: 10),
-          FilledButton.icon(
-            onPressed: () => context.go('/tree'),
-            icon: const Icon(Icons.account_tree_outlined),
-            label: const Text('Открыть дерево'),
-          ),
-          const SizedBox(height: 10),
-          OutlinedButton.icon(
-            onPressed: _currentTreeId == null
-                ? null
-                : () => context.push('/relatives/find/${_currentTreeId!}'),
-            icon: const Icon(Icons.search),
-            label: Text(_graphFindLabel(treeProvider)),
-          ),
-          const SizedBox(height: 16),
-          Text(
-            'Состояние контактов',
-            style: theme.textTheme.titleSmall?.copyWith(
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 10),
-          _buildStatusLine(
-            color: Colors.green.shade700,
-            label: isFriendsTree
-                ? 'Можно начать чат с ${_countLabel(chatReadyCount, one: 'человеком', few: 'людьми', many: 'людьми')}'
-                : 'Можно написать ${_countLabel(chatReadyCount, one: 'родственнику', few: 'родственникам', many: 'родственникам')}',
-          ),
-          const SizedBox(height: 8),
-          _buildStatusLine(
-            color: Colors.orange.shade700,
-            label: inviteReadyCount > 0
-                ? (isFriendsTree
-                    ? 'Ждут приглашения: ${_countLabel(inviteReadyCount, one: 'человек', few: 'человека', many: 'человек')}'
-                    : 'Нужно пригласить: ${_countLabel(inviteReadyCount, one: 'родственника', few: 'родственников', many: 'родственников')}')
-                : (isFriendsTree
-                    ? 'Все добавленные люди уже в приложении или только для просмотра'
-                    : 'Все добавленные родственники уже в приложении или только для просмотра'),
-          ),
-          if (_pendingRequestsCount > 0) ...[
-            const SizedBox(height: 10),
-            OutlinedButton.icon(
-              onPressed: _currentTreeId == null
-                  ? null
-                  : () =>
-                      context.push('/relatives/requests/${_currentTreeId!}'),
-              icon: const Icon(Icons.mark_email_unread_outlined),
-              label: Text(
-                isFriendsTree ? 'Открыть запросы на связи' : 'Открыть запросы',
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              FilledButton.icon(
+                onPressed: _currentTreeId == null
+                    ? null
+                    : () => context.push('/relatives/add/${_currentTreeId!}'),
+                icon: const Icon(Icons.person_add_alt_1_outlined),
+                label: const Text('Добавить'),
               ),
-            ),
-          ],
+              OutlinedButton.icon(
+                onPressed: () => context.go('/tree'),
+                icon: const Icon(Icons.account_tree_outlined),
+                label: const Text('Дерево'),
+              ),
+              OutlinedButton.icon(
+                onPressed: _currentTreeId == null
+                    ? null
+                    : () => context.push('/relatives/find/${_currentTreeId!}'),
+                icon: const Icon(Icons.search),
+                label: const Text('Найти'),
+              ),
+              if (_pendingRequestsCount > 0)
+                OutlinedButton.icon(
+                  onPressed: _currentTreeId == null
+                      ? null
+                      : () => context
+                          .push('/relatives/requests/${_currentTreeId!}'),
+                  icon: const Icon(Icons.mark_email_unread_outlined),
+                  label: const Text('Запросы'),
+                ),
+            ],
+          ),
         ],
       ),
-    );
-  }
-
-  Widget _buildStatusLine({
-    required Color color,
-    required String label,
-  }) {
-    final theme = Theme.of(context);
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          width: 10,
-          height: 10,
-          margin: const EdgeInsets.only(top: 5),
-          decoration: BoxDecoration(
-            color: color,
-            shape: BoxShape.circle,
-          ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Text(
-            label,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-              height: 1.35,
-            ),
-          ),
-        ),
-      ],
     );
   }
 
@@ -823,57 +704,91 @@ class _RelativesScreenState extends State<RelativesScreen> {
     required int relativesCount,
   }) {
     final theme = Theme.of(context);
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.secondaryContainer.withValues(alpha: 0.65),
-        borderRadius: BorderRadius.circular(24),
-      ),
-      child: Row(
+    final peopleLabel = isFriendsTree
+        ? _countLabel(
+            relativesCount,
+            one: 'человек',
+            few: 'человека',
+            many: 'человек',
+          )
+        : _countLabel(
+            relativesCount,
+            one: 'родственник',
+            few: 'родственника',
+            many: 'родственников',
+          );
+    return GlassPanel(
+      padding: const EdgeInsets.all(14),
+      color: theme.colorScheme.secondaryContainer.withValues(alpha: 0.42),
+      borderRadius: BorderRadius.circular(28),
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: theme.colorScheme.onSecondaryContainer
-                  .withValues(alpha: 0.08),
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Icon(
-              isFriendsTree
-                  ? Icons.diversity_3_outlined
-                  : Icons.account_tree_outlined,
-              color: theme.colorScheme.onSecondaryContainer,
-            ),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.onSecondaryContainer.withValues(
+                    alpha: 0.08,
+                  ),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Icon(
+                  isFriendsTree
+                      ? Icons.diversity_3_outlined
+                      : Icons.account_tree_outlined,
+                  color: theme.colorScheme.onSecondaryContainer,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      isFriendsTree ? 'Активен круг' : 'Активно дерево',
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w800,
+                        color: theme.colorScheme.onSecondaryContainer,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      treeName,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: theme.colorScheme.onSecondaryContainer,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  isFriendsTree
-                      ? 'Активен круг друзей'
-                      : 'Активно семейное дерево',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w800,
-                    color: theme.colorScheme.onSecondaryContainer,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  isFriendsTree
-                      ? '"$treeName" содержит $relativesCount человек. Здесь удобно поддерживать связи, приглашать новых людей и быстро переходить в чат.'
-                      : '"$treeName" содержит $relativesCount родственников. Здесь удобно поддерживать связи, приглашать новых людей и быстро переходить в чат.',
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: theme.colorScheme.onSecondaryContainer,
-                    height: 1.4,
-                  ),
-                ),
-              ],
-            ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _buildSideStatChip(
+                icon: isFriendsTree
+                    ? Icons.diversity_3_outlined
+                    : Icons.account_tree_outlined,
+                label: treeName,
+              ),
+              _buildSideStatChip(
+                icon: Icons.people_outline,
+                label: '$relativesCount $peopleLabel',
+              ),
+              FilledButton.tonalIcon(
+                onPressed: () => context.go('/tree'),
+                icon: const Icon(Icons.arrow_forward),
+                label: const Text('Дерево'),
+              ),
+            ],
           ),
         ],
       ),
@@ -894,50 +809,54 @@ class _RelativesScreenState extends State<RelativesScreen> {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(24.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                isOnlineTab ? Icons.chat_bubble_outline : Icons.people_outline,
-                size: 60,
-                color: Colors.grey,
-              ),
-              SizedBox(height: 16),
-              Text(
-                isOnlineTab
-                    ? 'Нет доступных чатов'
-                    : _isFriendsTree(Provider.of<TreeProvider>(
-                        context,
-                        listen: false,
-                      ))
-                        ? 'Пока нет людей в круге'
-                        : 'Нет родственников',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              SizedBox(height: 8),
-              Text(
-                isOnlineTab
-                    ? 'Здесь появятся чаты с родственниками, использующими приложение'
-                    : _isFriendsTree(Provider.of<TreeProvider>(
-                        context,
-                        listen: false,
-                      ))
-                        ? 'Добавьте друзей, коллег или близкий круг вручную либо отправьте приглашение'
-                        : 'Добавьте родственников вручную или пригласите их присоединиться',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.grey[600]),
-              ),
-              if (!isOnlineTab) ...[
-                const SizedBox(height: 16),
-                FilledButton.icon(
-                  onPressed: _currentTreeId == null
-                      ? null
-                      : () => context.push('/relatives/add/${_currentTreeId!}'),
-                  icon: const Icon(Icons.person_add_alt_1_outlined),
-                  label: Text(_graphAddLabel(treeProvider)),
+          child: GlassPanel(
+            padding: const EdgeInsets.all(24),
+            borderRadius: BorderRadius.circular(30),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  isOnlineTab
+                      ? Icons.chat_bubble_outline
+                      : Icons.people_outline,
+                  size: 42,
+                  color: Theme.of(context).colorScheme.primary,
                 ),
+                const SizedBox(height: 14),
+                Text(
+                  isOnlineTab
+                      ? 'Чатов нет'
+                      : _isFriendsTree(Provider.of<TreeProvider>(
+                          context,
+                          listen: false,
+                        ))
+                          ? 'Людей пока нет'
+                          : 'Родных пока нет',
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                ),
+                if (!isOnlineTab) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    'Добавьте первого человека.',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                  ),
+                  const SizedBox(height: 16),
+                  FilledButton.icon(
+                    onPressed: _currentTreeId == null
+                        ? null
+                        : () =>
+                            context.push('/relatives/add/${_currentTreeId!}'),
+                    icon: const Icon(Icons.person_add_alt_1_outlined),
+                    label: Text(_graphAddLabel(treeProvider)),
+                  ),
+                ],
               ],
-            ],
+            ),
           ),
         ),
       );
@@ -987,262 +906,280 @@ class _RelativesScreenState extends State<RelativesScreen> {
       flatList.addAll(groupedRelatives[key]!);
     }
 
-    return Container(
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(
-          color: Theme.of(context)
-              .colorScheme
-              .outlineVariant
-              .withValues(alpha: 0.45),
-        ),
-      ),
-      child: ListView.builder(
-        key: key,
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        itemCount: flatList.length,
-        itemBuilder: (context, index) {
-          final item = flatList[index];
+    return ListView.builder(
+      key: key,
+      padding: const EdgeInsets.only(top: 4, bottom: 12),
+      itemCount: flatList.length,
+      itemBuilder: (context, index) {
+        final item = flatList[index];
 
-          if (item is String) {
-            return Padding(
-              padding: const EdgeInsets.only(
-                left: 16.0,
-                top: 16.0,
-                bottom: 8.0,
-                right: 16.0,
-              ),
-              child: Text(
-                item,
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                  color: Theme.of(context).primaryColor,
-                ),
-              ),
-            );
-          } else if (item is FamilyPerson) {
-            final relative = item;
-            final relationDescription = _getRelationDescription(relative);
-
-            ChatPreview? chatPreview;
-            if (isOnlineTab && relative.userId != null) {
-              try {
-                chatPreview = _chatPreviews.firstWhere(
-                  (preview) => preview.otherUserId == relative.userId,
-                );
-              } catch (e) {
-                chatPreview = null;
-              }
-            }
-
-            final String lastMessageText = chatPreview?.lastMessage ?? '';
-            final DateTime? lastMessageTimestamp = chatPreview?.lastMessageTime;
-            final int unreadCount = chatPreview?.unreadCount ?? 0;
-            final bool isLastMessageFromMe =
-                chatPreview?.lastMessageSenderId == _currentUserId;
-            final bool canStartChat = _canStartChat(relative);
-            final bool canInvite = _canInviteRelative(relative);
-            final contactStatus = _getContactStatus(relative);
-
-            return ListTile(
-              leading: GestureDetector(
-                onTap: () {
-                  debugPrint(
-                    'Avatar tapped for ${relative.displayName}, navigating to details...',
-                  );
-                  context.push('/relative/details/${relative.id}');
-                },
-                child: CircleAvatar(
-                  radius: 25,
-                  backgroundImage: (relative.photoUrl != null &&
-                          relative.photoUrl!.isNotEmpty)
-                      ? NetworkImage(relative.photoUrl!)
-                      : null,
-                  child: (relative.photoUrl == null ||
-                          relative.photoUrl!.isEmpty)
-                      ? Text(relative.initials, style: TextStyle(fontSize: 18))
-                      : null,
-                ),
-              ),
-              title: Text(
-                relative.displayName,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontWeight: FontWeight.w500,
-                  color:
-                      unreadCount > 0 ? Theme.of(context).primaryColor : null,
-                ),
-              ),
-              subtitle: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    relationDescription,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(color: Colors.grey[600], fontSize: 13),
+        if (item is String) {
+          return Padding(
+            padding: const EdgeInsets.only(
+              left: 4,
+              top: 14,
+              bottom: 6,
+              right: 4,
+            ),
+            child: Text(
+              item,
+              style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                    fontWeight: FontWeight.w800,
+                    color: Theme.of(context).colorScheme.primary,
                   ),
-                  if (!isOnlineTab)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Row(
-                        children: [
-                          Container(
-                            width: 8,
-                            height: 8,
-                            decoration: BoxDecoration(
-                              color: contactStatus.color,
-                              shape: BoxShape.circle,
-                            ),
-                          ),
-                          const SizedBox(width: 6),
-                          Text(
-                            contactStatus.label,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: contactStatus.color,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  if (isOnlineTab && lastMessageText.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 2.0),
-                      child: Row(
-                        children: [
-                          if (isLastMessageFromMe)
-                            Text(
-                              'Вы: ',
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: Colors.grey[600],
-                              ),
-                            ),
-                          Expanded(
-                            child: Text(
-                              lastMessageText,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: unreadCount > 0
-                                    ? Colors.black87
-                                    : Colors.black54,
-                                fontWeight: unreadCount > 0
-                                    ? FontWeight.bold
-                                    : FontWeight.normal,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  if (isOnlineTab &&
-                      lastMessageText.isEmpty &&
-                      relative.userId != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 2.0),
-                      child: Text(
-                        'Нет сообщений',
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: Colors.grey[500],
-                          fontStyle: FontStyle.italic,
-                        ),
-                      ),
-                    ),
-                ],
+            ),
+          );
+        } else if (item is FamilyPerson) {
+          final relative = item;
+          final relationDescription = _getRelationDescription(relative);
+
+          ChatPreview? chatPreview;
+          if (isOnlineTab && relative.userId != null) {
+            try {
+              chatPreview = _chatPreviews.firstWhere(
+                (preview) => preview.otherUserId == relative.userId,
+              );
+            } catch (e) {
+              chatPreview = null;
+            }
+          }
+
+          final String lastMessageText = chatPreview?.lastMessage ?? '';
+          final DateTime? lastMessageTimestamp = chatPreview?.lastMessageTime;
+          final int unreadCount = chatPreview?.unreadCount ?? 0;
+          final bool isLastMessageFromMe =
+              chatPreview?.lastMessageSenderId == _currentUserId;
+          final bool canStartChat = _canStartChat(relative);
+          final bool canInvite = _canInviteRelative(relative);
+          final contactStatus = _getContactStatus(relative);
+          final int photoCount = relative.photoGallery.length;
+          final bool hasGallery = photoCount > 0;
+          final String? primaryPhotoUrl = relative.primaryPhotoUrl;
+
+          final theme = Theme.of(context);
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surface.withValues(alpha: 0.72),
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(
+                  color:
+                      theme.colorScheme.outlineVariant.withValues(alpha: 0.20),
+                ),
               ),
-              trailing: isOnlineTab && lastMessageTimestamp != null
-                  ? Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Text(
-                          _formatTimestamp(lastMessageTimestamp),
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: unreadCount > 0
-                                ? Theme.of(context).primaryColor
-                                : Colors.grey,
-                            fontWeight: unreadCount > 0
-                                ? FontWeight.bold
-                                : FontWeight.normal,
-                          ),
+              child: ListTile(
+                leading: GestureDetector(
+                  onTap: () {
+                    debugPrint(
+                      'Avatar tapped for ${relative.displayName}, navigating to details...',
+                    );
+                    context.push('/relative/details/${relative.id}');
+                  },
+                  child: CircleAvatar(
+                    radius: 25,
+                    backgroundImage:
+                        (primaryPhotoUrl != null && primaryPhotoUrl.isNotEmpty)
+                            ? NetworkImage(primaryPhotoUrl)
+                            : null,
+                    child: (primaryPhotoUrl == null || primaryPhotoUrl.isEmpty)
+                        ? Text(relative.initials,
+                            style: TextStyle(fontSize: 18))
+                        : null,
+                  ),
+                ),
+                title: Text(
+                  relative.displayName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w500,
+                    color:
+                        unreadCount > 0 ? Theme.of(context).primaryColor : null,
+                  ),
+                ),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      relationDescription,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                    ),
+                    if (!isOnlineTab || hasGallery)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            if (!isOnlineTab)
+                              _buildRelativeInfoChip(
+                                context,
+                                icon: Icons.circle,
+                                label: contactStatus.label,
+                                color: contactStatus.color,
+                                iconSize: 8,
+                              ),
+                            if (hasGallery)
+                              _buildRelativeInfoChip(
+                                context,
+                                icon: Icons.photo_library_outlined,
+                                label: _countLabel(
+                                  photoCount,
+                                  one: 'фото',
+                                  few: 'фото',
+                                  many: 'фото',
+                                ),
+                                color: Theme.of(context).colorScheme.secondary,
+                              ),
+                            if (relative.primaryPhotoUrl != null)
+                              _buildRelativeInfoChip(
+                                context,
+                                icon: Icons.star_outline,
+                                label: 'Основное фото',
+                                color: Theme.of(context).colorScheme.primary,
+                              ),
+                          ],
                         ),
-                        if (unreadCount > 0)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 4.0),
-                            child: CircleAvatar(
-                              radius: 9,
-                              backgroundColor: Theme.of(context).primaryColor,
-                              child: Text(
-                                unreadCount.toString(),
+                      ),
+                    if (isOnlineTab && lastMessageText.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2.0),
+                        child: Row(
+                          children: [
+                            if (isLastMessageFromMe)
+                              Text(
+                                'Вы: ',
                                 style: TextStyle(
-                                  color:
-                                      Theme.of(context).colorScheme.onPrimary,
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13,
+                                  color: Colors.grey[600],
+                                ),
+                              ),
+                            Expanded(
+                              child: Text(
+                                lastMessageText,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: unreadCount > 0
+                                      ? Colors.black87
+                                      : Colors.black54,
+                                  fontWeight: unreadCount > 0
+                                      ? FontWeight.bold
+                                      : FontWeight.normal,
                                 ),
                               ),
                             ),
+                          ],
+                        ),
+                      ),
+                    if (isOnlineTab &&
+                        lastMessageText.isEmpty &&
+                        relative.userId != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2.0),
+                        child: Text(
+                          'Нет сообщений',
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Colors.grey[500],
+                            fontStyle: FontStyle.italic,
                           ),
-                      ],
-                    )
-                  : Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (canStartChat)
-                          IconButton(
-                            icon: const Icon(Icons.message_outlined),
-                            tooltip: 'Написать ${relative.displayName}',
-                            visualDensity: VisualDensity.compact,
-                            onPressed: () => _openChatWithRelative(relative),
+                        ),
+                      ),
+                  ],
+                ),
+                trailing: isOnlineTab && lastMessageTimestamp != null
+                    ? Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(
+                            _formatTimestamp(lastMessageTimestamp),
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: unreadCount > 0
+                                  ? Theme.of(context).primaryColor
+                                  : Colors.grey,
+                              fontWeight: unreadCount > 0
+                                  ? FontWeight.bold
+                                  : FontWeight.normal,
+                            ),
                           ),
-                        if (canInvite)
-                          IconButton(
-                            icon: const Icon(Icons.person_add_alt_1_outlined),
-                            tooltip: 'Пригласить ${relative.displayName}',
-                            visualDensity: VisualDensity.compact,
-                            onPressed: () => _shareInviteForRelative(relative),
-                          ),
-                        const Icon(Icons.chevron_right),
-                      ],
-                    ),
-              onTap: () {
-                if (isOnlineTab) {
-                  if (canStartChat) {
-                    _openChatWithRelative(relative);
+                          if (unreadCount > 0)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 4.0),
+                              child: CircleAvatar(
+                                radius: 9,
+                                backgroundColor: Theme.of(context).primaryColor,
+                                child: Text(
+                                  unreadCount.toString(),
+                                  style: TextStyle(
+                                    color:
+                                        Theme.of(context).colorScheme.onPrimary,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
+                      )
+                    : Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (canStartChat)
+                            IconButton(
+                              icon: const Icon(Icons.message_outlined),
+                              tooltip: 'Написать ${relative.displayName}',
+                              visualDensity: VisualDensity.compact,
+                              onPressed: () => _openChatWithRelative(relative),
+                            ),
+                          if (canInvite)
+                            IconButton(
+                              icon: const Icon(Icons.person_add_alt_1_outlined),
+                              tooltip: 'Пригласить ${relative.displayName}',
+                              visualDensity: VisualDensity.compact,
+                              onPressed: () =>
+                                  _shareInviteForRelative(relative),
+                            ),
+                          const Icon(Icons.chevron_right),
+                        ],
+                      ),
+                onTap: () {
+                  if (isOnlineTab) {
+                    if (canStartChat) {
+                      _openChatWithRelative(relative);
+                    } else {
+                      debugPrint(
+                        'Cannot chat with self or invalid user, navigating to details for ${relative.displayName}',
+                      );
+                      context.push('/relative/details/${relative.id}');
+                    }
                   } else {
                     debugPrint(
-                      'Cannot chat with self or invalid user, navigating to details for ${relative.displayName}',
+                      'Offline tab, navigating to details for ${relative.displayName}',
                     );
                     context.push('/relative/details/${relative.id}');
                   }
-                } else {
-                  debugPrint(
-                    'Offline tab, navigating to details for ${relative.displayName}',
-                  );
-                  context.push('/relative/details/${relative.id}');
-                }
-              },
-              contentPadding: EdgeInsets.symmetric(
-                horizontal: 16.0,
-                vertical: 8.0,
+                },
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 8,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(24),
+                ),
               ),
-            );
-          }
-          return SizedBox.shrink();
-        },
-      ),
+            ),
+          );
+        }
+        return SizedBox.shrink();
+      },
     );
   }
 
@@ -1298,6 +1235,36 @@ class _RelativesScreenState extends State<RelativesScreen> {
     return 'Родственник';
   }
 
+  Widget _buildRelativeInfoChip(
+    BuildContext context, {
+    required IconData icon,
+    required String label,
+    required Color color,
+    double iconSize = 14,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: iconSize, color: color),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  color: color,
+                  fontWeight: FontWeight.w700,
+                ),
+          ),
+        ],
+      ),
+    );
+  }
+
   bool _canStartChat(FamilyPerson relative) {
     final userId = relative.userId;
     return userId != null &&
@@ -1340,10 +1307,10 @@ class _RelativesScreenState extends State<RelativesScreen> {
     }
 
     final nameParam = Uri.encodeComponent(relative.displayName);
-    final photoParam =
-        (relative.photoUrl != null && relative.photoUrl!.isNotEmpty)
-            ? Uri.encodeComponent(relative.photoUrl!)
-            : '';
+    final photoUrl = relative.primaryPhotoUrl;
+    final photoParam = (photoUrl != null && photoUrl.isNotEmpty)
+        ? Uri.encodeComponent(photoUrl)
+        : '';
     debugPrint(
       'Navigating to chat with ${relative.displayName} (ID: $userId)',
     );

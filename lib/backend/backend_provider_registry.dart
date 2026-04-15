@@ -8,6 +8,7 @@ import 'interfaces/notification_service_interface.dart';
 import 'interfaces/post_service_interface.dart';
 import 'interfaces/profile_service_interface.dart';
 import 'interfaces/safety_service_interface.dart';
+import 'interfaces/story_service_interface.dart';
 import 'interfaces/storage_service_interface.dart';
 import 'pending_backend_adapters.dart';
 
@@ -57,6 +58,12 @@ class BackendProviderRegistry {
     if (!getIt.isRegistered<PostServiceInterface>()) {
       getIt.registerSingleton<PostServiceInterface>(
         const PendingBackendPostService(),
+      );
+    }
+
+    if (!getIt.isRegistered<StoryServiceInterface>()) {
+      getIt.registerSingleton<StoryServiceInterface>(
+        const PendingBackendStoryService(),
       );
     }
 

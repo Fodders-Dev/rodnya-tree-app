@@ -1,10 +1,127 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lineage/models/family_person.dart';
 import 'package:lineage/models/family_relation.dart';
 import 'package:lineage/widgets/interactive_family_tree.dart';
 
+final Uint8List _transparentImageBytes = base64Decode(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WlH0X8AAAAASUVORK5CYII=',
+);
+
+class _TestHttpOverrides extends HttpOverrides {
+  @override
+  HttpClient createHttpClient(SecurityContext? context) {
+    return _TestHttpClient();
+  }
+}
+
+class _TestHttpClient implements HttpClient {
+  bool _autoUncompress = true;
+
+  @override
+  bool get autoUncompress => _autoUncompress;
+
+  @override
+  set autoUncompress(bool value) {
+    _autoUncompress = value;
+  }
+
+  @override
+  Future<HttpClientRequest> getUrl(Uri url) async => _TestHttpClientRequest();
+
+  @override
+  Future<HttpClientRequest> openUrl(String method, Uri url) async =>
+      _TestHttpClientRequest();
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _TestHttpClientRequest implements HttpClientRequest {
+  @override
+  HttpHeaders headers = _TestHttpHeaders();
+
+  @override
+  bool followRedirects = false;
+
+  @override
+  int maxRedirects = 5;
+
+  @override
+  Future<HttpClientResponse> close() async => _TestHttpClientResponse();
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _TestHttpClientResponse extends Stream<List<int>>
+    implements HttpClientResponse {
+  @override
+  final HttpHeaders headers = _TestHttpHeaders();
+
+  @override
+  int get statusCode => HttpStatus.ok;
+
+  @override
+  int get contentLength => _transparentImageBytes.length;
+
+  @override
+  HttpClientResponseCompressionState get compressionState =>
+      HttpClientResponseCompressionState.notCompressed;
+
+  @override
+  bool get persistentConnection => false;
+
+  @override
+  bool get isRedirect => false;
+
+  @override
+  StreamSubscription<List<int>> listen(
+    void Function(List<int> event)? onData, {
+    Function? onError,
+    void Function()? onDone,
+    bool? cancelOnError,
+  }) {
+    return Stream<List<int>>.fromIterable([_transparentImageBytes]).listen(
+      onData,
+      onError: onError,
+      onDone: onDone,
+      cancelOnError: cancelOnError,
+    );
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _TestHttpHeaders implements HttpHeaders {
+  @override
+  void add(
+    String name,
+    Object value, {
+    bool preserveHeaderCase = false,
+  }) {}
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
 void main() {
+  final originalHttpOverrides = HttpOverrides.current;
+
+  setUpAll(() {
+    HttpOverrides.global = _TestHttpOverrides();
+  });
+
+  tearDownAll(() {
+    HttpOverrides.global = originalHttpOverrides;
+  });
+
   testWidgets('InteractiveFamilyTree does not introduce a nested Scaffold',
       (tester) async {
     final person = FamilyPerson(
@@ -54,9 +171,12 @@ void main() {
 
   testWidgets('InteractiveFamilyTree shows inline edit actions in edit mode',
       (tester) async {
+    final semantics = tester.ensureSemantics();
     tester.view.physicalSize = const Size(1400, 1000);
     tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
+    addTearDown(() {
+      tester.view.reset();
+    });
 
     final person = FamilyPerson(
       id: 'person-1',
@@ -94,16 +214,108 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    expect(
-      find.textContaining('Добавляйте родственников прямо из дерева'),
-      findsOneWidget,
-    );
+    expect(find.text('Без фото'), findsOneWidget);
     expect(find.text('Родитель'), findsOneWidget);
     expect(find.text('Супруг'), findsOneWidget);
     expect(find.text('Ребёнок'), findsOneWidget);
     expect(find.text('Сиблинг'), findsOneWidget);
     expect(find.text('Карточка'), findsOneWidget);
-    expect(find.text('Ещё действия'), findsOneWidget);
+    expect(find.text('Фото'), findsOneWidget);
+    expect(find.text('История'), findsOneWidget);
+    expect(find.text('Ещё'), findsOneWidget);
+    expect(
+        find.bySemanticsLabel('tree-inspector-open-gallery'), findsOneWidget);
+    expect(
+        find.bySemanticsLabel('tree-inspector-open-history'), findsOneWidget);
+    expect(
+        find.bySemanticsLabel('tree-inspector-more-actions'), findsOneWidget);
+    semantics.dispose();
+  });
+
+  testWidgets(
+      'InteractiveFamilyTree bottom sheet exposes gallery and history quick actions',
+      (tester) async {
+    final semantics = tester.ensureSemantics();
+    tester.view.physicalSize = const Size(1400, 1000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(() {
+      tester.view.reset();
+    });
+
+    var historyOpened = false;
+    final person = FamilyPerson(
+      id: 'person-1',
+      treeId: 'tree-1',
+      name: 'Иван Петров',
+      gender: Gender.male,
+      isAlive: true,
+      photoUrl: 'https://example.com/photo-1.jpg',
+      photoGallery: const [
+        {
+          'id': 'media-1',
+          'url': 'https://example.com/photo-1.jpg',
+          'isPrimary': true,
+        },
+        {
+          'id': 'media-2',
+          'url': 'https://example.com/photo-2.jpg',
+          'isPrimary': false,
+        },
+      ],
+      createdAt: DateTime(2024, 1, 1),
+      updatedAt: DateTime(2024, 1, 1),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: InteractiveFamilyTree(
+            peopleData: [
+              {
+                'person': person,
+                'userProfile': null,
+              },
+            ],
+            relations: <FamilyRelation>[],
+            onPersonTap: (_) {},
+            isEditMode: true,
+            selectedEditPersonId: person.id,
+            onAddRelativeTapWithType: (_, __) {},
+            currentUserIsInTree: true,
+            onAddSelfTapWithType: (_, __) async {},
+            currentUserId: 'user-1',
+            onOpenPersonHistory: (_) {
+              historyOpened = true;
+            },
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    tester
+        .widget<ActionChip>(find.widgetWithText(ActionChip, 'Ещё'))
+        .onPressed!
+        .call();
+    await tester.pumpAndSettle();
+
+    expect(find.text('Быстрые переходы'), findsOneWidget);
+    expect(find.text('2 фото'), findsWidgets);
+    expect(find.text('Основное фото есть'), findsWidgets);
+    expect(find.text('Открыть фото'), findsOneWidget);
+    expect(find.text('История изменений'), findsOneWidget);
+    expect(find.bySemanticsLabel('tree-sheet-open-gallery'), findsOneWidget);
+    expect(find.bySemanticsLabel('tree-sheet-open-history'), findsOneWidget);
+
+    tester
+        .widget<ListTile>(find.widgetWithText(ListTile, 'История изменений'))
+        .onTap!
+        .call();
+    await tester.pumpAndSettle();
+
+    expect(historyOpened, isTrue);
+    semantics.dispose();
   });
 
   testWidgets(
@@ -538,9 +750,14 @@ void main() {
 
     await tester.pumpAndSettle();
 
+    final zoomIndicatorFinder = find.byWidgetPredicate(
+      (widget) => widget is Text && (widget.data?.endsWith('%') ?? false),
+      description: 'zoom indicator',
+    );
+
     expect(find.text('Старшее поколение'), findsOneWidget);
     expect(find.text('Младшее поколение'), findsOneWidget);
-    expect(find.text('100%'), findsOneWidget);
+    expect(zoomIndicatorFinder, findsOneWidget);
     expect(find.byTooltip('Сбросить ветку'), findsOneWidget);
 
     await tester.tap(find.byTooltip('Сбросить ветку'));

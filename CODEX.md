@@ -1,11 +1,14 @@
 # CODEX.md
 
 ## Purpose
-This file is the Codex-specific operating guide for Lineage.
+This file is the Codex-specific operating guide for Rodnya.
 Use it together with `AGENTS.md` and `Codex_rules.md`, not instead of them.
 
 ## Project stance
 - Ship a stable Android + web MVP first.
+- Treat `Родня` as the public-facing brand.
+- Keep the current Android `applicationId` unchanged for RuStore update compatibility.
+- Prefer phased `lineage` -> `rodnya` renames with compatibility aliases over big-bang package churn.
 - Treat Firebase-hosted paths as legacy unless they are still required by a specific migration task.
 - Default backend direction is custom API + PostgreSQL + object storage + self-controlled realtime/push path.
 - Preserve Russian UI quality when touching copy.
@@ -47,3 +50,4 @@ Use it together with `AGENTS.md` and `Codex_rules.md`, not instead of them.
 - relevant `flutter test`.
 - if web-facing behavior changed, a short Playwright smoke pass.
 - summarize changed files, what passed, what still blocks MVP.
+- keep `docs/rodnya_release_plan_2026-04-13.md` aligned when product priorities shift materially.

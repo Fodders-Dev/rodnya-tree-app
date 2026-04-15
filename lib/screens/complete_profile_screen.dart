@@ -1,24 +1,27 @@
-import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 import 'package:country_picker/country_picker.dart';
-import '../models/family_person.dart';
-import '../models/user_profile.dart';
-import 'package:go_router/go_router.dart';
+import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
+import 'package:go_router/go_router.dart';
+import 'package:intl/intl.dart';
+
 import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
 import '../backend/interfaces/profile_service_interface.dart';
 import '../backend/models/profile_form_data.dart';
+import '../models/family_person.dart';
+import '../models/user_profile.dart';
+import '../widgets/flow_overlays.dart';
+import '../widgets/glass_panel.dart';
 
 class CompleteProfileScreen extends StatefulWidget {
-  final UserProfile? initialData;
-  final Map<String, bool>? requiredFields;
-
   const CompleteProfileScreen({
     super.key,
     this.initialData,
     this.requiredFields,
   });
+
+  final UserProfile? initialData;
+  final Map<String, bool>? requiredFields;
 
   @override
   State<CompleteProfileScreen> createState() => _CompleteProfileScreenState();
@@ -40,7 +43,7 @@ class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
   Gender _selectedGender = Gender.unknown;
   DateTime? _birthDate;
   String? _selectedCountry;
-  String? _countryCode = '+7'; // По умолчанию российский код
+  String? _countryCode = '+7';
 
   bool _isLoading = false;
 
@@ -48,6 +51,16 @@ class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
   void initState() {
     super.initState();
     _loadExistingData();
+  }
+
+  @override
+  void dispose() {
+    _firstNameController.dispose();
+    _lastNameController.dispose();
+    _middleNameController.dispose();
+    _usernameController.dispose();
+    _phoneController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadExistingData() async {
@@ -64,6 +77,7 @@ class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
 
       final data = await _profileService.getCurrentUserProfileFormData();
       if (!mounted) return;
+
       setState(() {
         _firstNameController.text = data.firstName;
         _lastNameController.text = data.lastName;
@@ -88,7 +102,7 @@ class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
       debugPrint('Error loading user data: $e');
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Ошибка при загрузке данных пользователя')),
+        const SnackBar(content: Text('Не удалось загрузить профиль.')),
       );
     } finally {
       if (mounted) {
@@ -109,7 +123,8 @@ class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
     });
 
     try {
-      final fullPhoneNumber = _countryCode! + _phoneController.text.trim();
+      final fullPhoneNumber =
+          '${_countryCode ?? '+7'}${_phoneController.text.trim()}';
       final currentUserId = _authService.currentUserId;
       if (currentUserId == null) {
         throw Exception('Пользователь не авторизован');
@@ -131,10 +146,9 @@ class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
       );
 
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Профиль успешно обновлен')));
-
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Профиль сохранён.')),
+      );
       context.go(await _resolvePostSaveLocation());
     } catch (e) {
       debugPrint('Ошибка при сохранении профиля: $e');
@@ -153,214 +167,399 @@ class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
     return Scaffold(
-      appBar: AppBar(title: Text('Завершение регистрации')),
-      body: _isLoading
-          ? Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
-              padding: EdgeInsets.all(16),
-              child: Form(
-                key: _formKey,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Заполните профиль',
-                      style: TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    SizedBox(height: 16),
+      appBar: AppBar(title: const Text('Профиль')),
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              theme.colorScheme.primary.withValues(alpha: 0.08),
+              theme.colorScheme.surface,
+              theme.colorScheme.secondary.withValues(alpha: 0.05),
+            ],
+          ),
+        ),
+        child: _isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : LayoutBuilder(
+                builder: (context, constraints) {
+                  final isWide = constraints.maxWidth >= 980;
+                  final dateFormat = DateFormat.yMMMd('ru');
 
-                    // Имя
-                    TextFormField(
-                      controller: _firstNameController,
-                      decoration: InputDecoration(
-                        labelText: 'Имя',
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.person),
-                        hintText: 'Введите ваше имя',
-                      ),
-                      validator: (value) {
-                        if (value == null || value.trim().isEmpty) {
-                          return 'Введите имя';
-                        }
-                        return null;
-                      },
-                    ),
-                    SizedBox(height: 16),
-
-                    // Фамилия
-                    TextFormField(
-                      controller: _lastNameController,
-                      decoration: InputDecoration(
-                        labelText: 'Фамилия',
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.person),
-                        hintText: 'Введите вашу фамилию',
-                      ),
-                      validator: (value) {
-                        if (value == null || value.trim().isEmpty) {
-                          return 'Введите фамилию';
-                        }
-                        return null;
-                      },
-                    ),
-                    SizedBox(height: 16),
-
-                    // Отчество (опционально)
-                    TextFormField(
-                      controller: _middleNameController,
-                      decoration: InputDecoration(
-                        labelText: 'Отчество (если есть)',
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.person_outline),
-                        hintText: 'Введите ваше отчество',
-                      ),
-                    ),
-
-                    // Username (обязательно)
-                    TextFormField(
-                      controller: _usernameController,
-                      decoration: InputDecoration(
-                        labelText: 'Имя пользователя (username)',
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.alternate_email),
-                        hintText: 'Введите уникальное имя пользователя',
-                      ),
-                      validator: (value) {
-                        if (value == null || value.trim().isEmpty) {
-                          return 'Введите имя пользователя';
-                        }
-                        if (value.contains(' ')) {
-                          // Проверка на пробелы
-                          return 'Имя пользователя не должно содержать пробелов';
-                        }
-                        // Можно добавить другие проверки (длина, символы)
-                        return null;
-                      },
-                    ),
-                    SizedBox(height: 16),
-
-                    // Телефон (обязательно)
-                    Row(
-                      children: [
-                        // Выбор кода страны (можно оставить как есть или улучшить)
-                        ElevatedButton(
-                          onPressed: _selectCountry,
-                          style: ElevatedButton.styleFrom(
-                            padding: EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 16,
-                            ),
-                          ),
-                          child: Text(_countryCode ?? '+?'),
-                        ),
-                        SizedBox(width: 8),
-                        Expanded(
-                          child: TextFormField(
-                            controller: _phoneController,
-                            decoration: InputDecoration(
-                              labelText: 'Номер телефона',
-                              border: OutlineInputBorder(),
-                              prefixIcon: Icon(Icons.phone),
-                              hintText: 'Введите номер телефона',
-                            ),
-                            keyboardType: TextInputType.phone,
-                            validator: (value) {
-                              if (value == null || value.trim().isEmpty) {
-                                return 'Введите номер телефона';
-                              }
-                              // Можно добавить более строгую валидацию номера
-                              return null;
-                            },
-                          ),
-                        ),
-                      ],
-                    ),
-                    SizedBox(height: 16),
-
-                    // Пол (опционально)
-                    DropdownButtonFormField<Gender>(
-                      initialValue: _selectedGender,
-                      decoration: InputDecoration(
-                        labelText: 'Пол',
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.wc),
-                      ),
-                      items: Gender.values.map((Gender gender) {
-                        String genderText;
-                        switch (gender) {
-                          case Gender.male:
-                            genderText = 'Мужской';
-                            break;
-                          case Gender.female:
-                            genderText = 'Женский';
-                            break;
-                          case Gender.other:
-                            genderText = 'Другой';
-                            break;
-                          case Gender.unknown:
-                            genderText = 'Не указан';
-                            break;
-                        }
-                        return DropdownMenuItem<Gender>(
-                          value: gender,
-                          child: Text(genderText),
-                        );
-                      }).toList(),
-                      onChanged: (Gender? newValue) {
-                        setState(() {
-                          _selectedGender = newValue ?? Gender.unknown;
-                        });
-                      },
-                    ),
-                    SizedBox(height: 16),
-
-                    // Дата рождения (опционально)
-                    InkWell(
-                      onTap: _selectDate,
-                      child: InputDecorator(
-                        decoration: InputDecoration(
-                          labelText: 'Дата рождения',
-                          border: OutlineInputBorder(),
-                          prefixIcon: Icon(Icons.calendar_today),
-                        ),
-                        child: Text(
-                          _birthDate == null
-                              ? 'Выберите дату'
-                              : DateFormat.yMMMMd('ru').format(_birthDate!),
-                        ),
-                      ),
-                    ),
-                    SizedBox(height: 16),
-
-                    // Страна (опционально)
-                    _buildCountryPicker(), // Используем существующий виджет выбора страны
-
-                    SizedBox(height: 32),
-
-                    // Кнопка сохранения
-                    _isLoading
-                        ? Center(child: CircularProgressIndicator())
-                        : Center(
-                            child: ElevatedButton(
-                              onPressed: _saveProfile,
-                              style: ElevatedButton.styleFrom(
-                                padding: EdgeInsets.symmetric(
-                                  horizontal: 50,
-                                  vertical: 15,
+                  return Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 980),
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
+                        child: Form(
+                          key: _formKey,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              _buildHeaderCard(),
+                              const SizedBox(height: 16),
+                              if (isWide)
+                                Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Expanded(child: _buildIdentitySection()),
+                                    const SizedBox(width: 16),
+                                    Expanded(child: _buildContactsSection()),
+                                  ],
+                                )
+                              else ...[
+                                _buildIdentitySection(),
+                                const SizedBox(height: 16),
+                                _buildContactsSection(),
+                              ],
+                              const SizedBox(height: 16),
+                              _buildPersonalSection(dateFormat),
+                              const SizedBox(height: 20),
+                              FilledButton(
+                                onPressed: _isLoading ? null : _saveProfile,
+                                style: FilledButton.styleFrom(
+                                  minimumSize: const Size.fromHeight(54),
                                 ),
-                                textStyle: TextStyle(fontSize: 16),
+                                child: _isLoading
+                                    ? const SizedBox(
+                                        height: 22,
+                                        width: 22,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2.4,
+                                          color: Colors.white,
+                                        ),
+                                      )
+                                    : const Text('Сохранить'),
                               ),
-                              child: Text('Сохранить профиль'),
-                            ),
+                            ],
                           ),
-                  ],
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+      ),
+    );
+  }
+
+  Widget _buildHeaderCard() {
+    final theme = Theme.of(context);
+
+    return GlassPanel(
+      child: Row(
+        children: [
+          Container(
+            width: 52,
+            height: 52,
+            decoration: BoxDecoration(
+              color: theme.colorScheme.primary.withValues(alpha: 0.14),
+              borderRadius: BorderRadius.circular(18),
+            ),
+            child: Icon(
+              Icons.account_circle_outlined,
+              color: theme.colorScheme.primary,
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Почти готово',
+                  style: theme.textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
+                const SizedBox(height: 4),
+                Text(
+                  'Нужны основные данные.',
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildIdentitySection() {
+    return GlassPanel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _buildSectionTitle('Основное'),
+          const SizedBox(height: 14),
+          TextFormField(
+            controller: _firstNameController,
+            decoration: _inputDecoration(
+              label: 'Имя',
+              icon: Icons.person_outline,
+            ),
+            validator: (value) {
+              if (value == null || value.trim().isEmpty) {
+                return 'Введите имя';
+              }
+              return null;
+            },
+          ),
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: _lastNameController,
+            decoration: _inputDecoration(
+              label: 'Фамилия',
+              icon: Icons.badge_outlined,
+            ),
+            validator: (value) {
+              if (value == null || value.trim().isEmpty) {
+                return 'Введите фамилию';
+              }
+              return null;
+            },
+          ),
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: _middleNameController,
+            decoration: _inputDecoration(
+              label: 'Отчество',
+              icon: Icons.person_2_outlined,
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: _usernameController,
+            decoration: _inputDecoration(
+              label: 'Username',
+              icon: Icons.alternate_email,
+            ),
+            validator: (value) {
+              if (value == null || value.trim().isEmpty) {
+                return 'Введите username';
+              }
+              if (value.contains(' ')) {
+                return 'Без пробелов';
+              }
+              return null;
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildContactsSection() {
+    final theme = Theme.of(context);
+
+    return GlassPanel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _buildSectionTitle('Контакты'),
+          const SizedBox(height: 14),
+          _buildActionTile(
+            icon: Icons.flag_outlined,
+            title: _selectedCountry ?? 'Страна',
+            subtitle: _countryCode ?? '+7',
+            onTap: _selectCountry,
+          ),
+          const SizedBox(height: 12),
+          DecoratedBox(
+            decoration: BoxDecoration(
+              color: theme.colorScheme.surfaceContainerLowest
+                  .withValues(alpha: 0.9),
+              borderRadius: BorderRadius.circular(22),
+            ),
+            child: Row(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(left: 16),
+                  child: Text(
+                    _countryCode ?? '+7',
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TextFormField(
+                    controller: _phoneController,
+                    decoration: _inputDecoration(
+                      label: 'Телефон',
+                      icon: Icons.phone_outlined,
+                      noBorder: true,
+                    ),
+                    keyboardType: TextInputType.phone,
+                    validator: (value) {
+                      if (value == null || value.trim().isEmpty) {
+                        return 'Введите телефон';
+                      }
+                      return null;
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPersonalSection(DateFormat dateFormat) {
+    return GlassPanel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _buildSectionTitle('Личное'),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              _buildGenderChip(
+                label: 'Мужской',
+                value: Gender.male,
+                icon: Icons.male_rounded,
+              ),
+              _buildGenderChip(
+                label: 'Женский',
+                value: Gender.female,
+                icon: Icons.female_rounded,
+              ),
+              _buildGenderChip(
+                label: 'Не указан',
+                value: Gender.unknown,
+                icon: Icons.circle_outlined,
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          _buildActionTile(
+            icon: Icons.calendar_today_outlined,
+            title: 'Дата рождения',
+            subtitle: _birthDate == null
+                ? 'Не указана'
+                : dateFormat.format(_birthDate!),
+            onTap: _selectDate,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGenderChip({
+    required String label,
+    required Gender value,
+    required IconData icon,
+  }) {
+    final theme = Theme.of(context);
+    final isSelected = _selectedGender == value;
+
+    return ChoiceChip(
+      selected: isSelected,
+      onSelected: (_) {
+        setState(() {
+          _selectedGender = value;
+        });
+      },
+      avatar: Icon(
+        icon,
+        size: 18,
+        color: isSelected
+            ? theme.colorScheme.onPrimaryContainer
+            : theme.colorScheme.onSurfaceVariant,
+      ),
+      label: Text(label),
+      backgroundColor:
+          theme.colorScheme.surfaceContainerLowest.withValues(alpha: 0.88),
+      selectedColor: theme.colorScheme.primaryContainer.withValues(alpha: 0.92),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      side: BorderSide(
+        color: isSelected
+            ? theme.colorScheme.primary.withValues(alpha: 0.2)
+            : theme.colorScheme.outlineVariant.withValues(alpha: 0.4),
+      ),
+      labelStyle: theme.textTheme.bodyMedium?.copyWith(
+        fontWeight: FontWeight.w600,
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+    );
+  }
+
+  Widget _buildSectionTitle(String title) {
+    return Text(
+      title,
+      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.w800,
+          ),
+    );
+  }
+
+  Widget _buildActionTile({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+  }) {
+    final theme = Theme.of(context);
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerLowest.withValues(alpha: 0.9),
+        borderRadius: BorderRadius.circular(22),
+      ),
+      child: ListTile(
+        onTap: onTap,
+        leading: Icon(icon, color: theme.colorScheme.primary),
+        title: Text(title),
+        subtitle: Text(subtitle),
+        trailing: const Icon(Icons.chevron_right_rounded),
+      ),
+    );
+  }
+
+  InputDecoration _inputDecoration({
+    required String label,
+    required IconData icon,
+    bool noBorder = false,
+  }) {
+    final theme = Theme.of(context);
+    return InputDecoration(
+      labelText: label,
+      prefixIcon: Icon(icon),
+      filled: true,
+      fillColor:
+          theme.colorScheme.surfaceContainerLowest.withValues(alpha: 0.9),
+      border: noBorder
+          ? InputBorder.none
+          : OutlineInputBorder(
+              borderRadius: BorderRadius.circular(22),
+              borderSide: BorderSide.none,
+            ),
+      enabledBorder: noBorder
+          ? InputBorder.none
+          : OutlineInputBorder(
+              borderRadius: BorderRadius.circular(22),
+              borderSide: BorderSide.none,
+            ),
+      focusedBorder: noBorder
+          ? InputBorder.none
+          : OutlineInputBorder(
+              borderRadius: BorderRadius.circular(22),
+              borderSide: BorderSide(
+                color: theme.colorScheme.primary.withValues(alpha: 0.35),
               ),
             ),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 18),
     );
   }
 
@@ -372,45 +571,41 @@ class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
         return '/trees?tab=invitations';
       }
     } catch (_) {
-      // После сохранения профиля не блокируем переход, если polling инвайтов
-      // временно недоступен.
+      // Do not block navigation after save.
     }
     return '/';
-  }
-
-  Widget _buildCountryPicker() {
-    return GestureDetector(
-      onTap: _selectCountry,
-      child: Container(
-        padding: EdgeInsets.symmetric(vertical: 15, horizontal: 12),
-        decoration: BoxDecoration(
-          border: Border.all(color: Colors.grey),
-          borderRadius: BorderRadius.circular(4),
-        ),
-        child: Row(
-          children: [
-            Icon(Icons.flag, color: Colors.grey[700]),
-            SizedBox(width: 12),
-            Text(_selectedCountry ?? 'Выберите страну'),
-            Spacer(),
-            Text(
-              _countryCode ?? '+7',
-              style: TextStyle(fontWeight: FontWeight.bold),
-            ),
-            Icon(Icons.arrow_drop_down),
-          ],
-        ),
-      ),
-    );
   }
 
   void _selectCountry() {
     showCountryPicker(
       context: context,
       showPhoneCode: true,
+      countryListTheme: CountryListThemeData(
+        backgroundColor:
+            Theme.of(context).colorScheme.surface.withValues(alpha: 0.98),
+        borderRadius: const BorderRadius.only(
+          topLeft: Radius.circular(28),
+          topRight: Radius.circular(28),
+        ),
+        bottomSheetHeight: 560,
+        inputDecoration: InputDecoration(
+          labelText: 'Поиск',
+          hintText: 'Страна или код',
+          prefixIcon: const Icon(Icons.search),
+          filled: true,
+          fillColor: Theme.of(context)
+              .colorScheme
+              .surfaceContainerLowest
+              .withValues(alpha: 0.9),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(20),
+            borderSide: BorderSide.none,
+          ),
+        ),
+      ),
       onSelect: (Country country) {
         setState(() {
-          _countryCode = country.phoneCode;
+          _countryCode = '+${country.phoneCode}';
           _selectedCountry = country.name;
         });
       },
@@ -418,12 +613,11 @@ class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
   }
 
   Future<void> _selectDate() async {
-    final DateTime? picked = await showDatePicker(
+    final DateTime? picked = await showRodnyaDatePicker(
       context: context,
       initialDate: _birthDate ?? DateTime.now(),
       firstDate: DateTime(1900),
       lastDate: DateTime.now(),
-      locale: const Locale('ru', 'RU'),
     );
 
     if (picked != null && picked != _birthDate) {
@@ -431,15 +625,5 @@ class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
         _birthDate = picked;
       });
     }
-  }
-
-  @override
-  void dispose() {
-    _firstNameController.dispose();
-    _lastNameController.dispose();
-    _middleNameController.dispose();
-    _usernameController.dispose();
-    _phoneController.dispose();
-    super.dispose();
   }
 }

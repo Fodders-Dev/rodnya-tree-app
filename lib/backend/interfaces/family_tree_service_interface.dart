@@ -2,6 +2,7 @@ import '../../models/family_person.dart';
 import '../../models/family_relation.dart';
 import '../../models/relation_request.dart';
 import '../../models/family_tree.dart';
+import '../../models/tree_change_record.dart';
 import '../models/selectable_tree.dart';
 import '../models/tree_invitation.dart';
 
@@ -33,6 +34,8 @@ abstract class FamilyTreeServiceInterface {
     required String person2Id,
     required RelationType relation1to2,
     bool isConfirmed,
+    DateTime? marriageDate,
+    DateTime? divorceDate,
   });
   Future<List<FamilyPerson>> getOfflineProfilesByCreator(
     String treeId,
@@ -71,6 +74,28 @@ abstract class FamilyTreeServiceInterface {
   });
   Future<void> removeTree(String treeId);
   Future<void> deleteRelative(String treeId, String personId);
+  Future<FamilyPerson> addRelativeMedia({
+    required String treeId,
+    required String personId,
+    required Map<String, dynamic> mediaData,
+  });
+  Future<FamilyPerson> updateRelativeMedia({
+    required String treeId,
+    required String personId,
+    required String mediaId,
+    required Map<String, dynamic> mediaData,
+  });
+  Future<FamilyPerson> deleteRelativeMedia({
+    required String treeId,
+    required String personId,
+    required String mediaId,
+  });
+  Future<List<TreeChangeRecord>> getTreeHistory({
+    required String treeId,
+    String? personId,
+    String? type,
+    String? actorId,
+  });
   Future<bool> hasDirectRelation({
     required String treeId,
     required String person1Id,

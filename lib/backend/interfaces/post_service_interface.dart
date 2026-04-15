@@ -22,8 +22,8 @@ abstract class PostServiceInterface {
   /// Delete a post by ID.
   Future<void> deletePost(String postId);
 
-  /// Toggle like status for a post.
-  Future<void> toggleLike(String postId);
+  /// Toggle like status for a post and return the server-truth snapshot.
+  Future<Post> toggleLike(String postId);
 
   /// Fetch comments for a specific post.
   Future<List<Comment>> getComments(String postId);

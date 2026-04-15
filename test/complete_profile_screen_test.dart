@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:lineage/backend/interfaces/auth_service_interface.dart';
 import 'package:lineage/backend/interfaces/family_tree_service_interface.dart';
 import 'package:lineage/backend/interfaces/profile_service_interface.dart';
@@ -90,6 +91,10 @@ void main() {
     );
   });
 
+  setUpAll(() async {
+    await initializeDateFormatting('ru');
+  });
+
   tearDown(() async {
     await getIt.reset();
   });
@@ -116,18 +121,22 @@ void main() {
       await tester.pumpWidget(MaterialApp.router(routerConfig: router));
       await tester.pumpAndSettle();
 
+      expect(find.text('Почти готово'), findsOneWidget);
+      expect(find.text('Основное'), findsOneWidget);
+      expect(find.text('Контакты'), findsOneWidget);
+
       await tester.enterText(
-        find.bySemanticsLabel('Имя пользователя (username)'),
+        find.bySemanticsLabel('Username'),
         'shuflyak.nastya',
       );
       await tester.enterText(
-        find.bySemanticsLabel('Номер телефона'),
+        find.bySemanticsLabel('Телефон'),
         '9010001122',
       );
 
-      await tester.ensureVisible(find.text('Сохранить профиль'));
+      await tester.ensureVisible(find.text('Сохранить'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Сохранить профиль'));
+      await tester.tap(find.text('Сохранить'));
       await tester.pumpAndSettle();
 
       expect(find.text('trees invitations'), findsOneWidget);

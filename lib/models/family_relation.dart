@@ -85,6 +85,10 @@ class FamilyRelation extends HiveObject {
   final DateTime? updatedAt; // Дата обновления связи
   @HiveField(9)
   final String? createdBy; // Кто создал связь
+  @HiveField(10)
+  final DateTime? marriageDate; // Дата брака или заключения союза
+  @HiveField(11)
+  final DateTime? divorceDate; // Дата расторжения брака
 
   FamilyRelation({
     required this.id,
@@ -97,6 +101,8 @@ class FamilyRelation extends HiveObject {
     required this.createdAt,
     this.updatedAt,
     this.createdBy,
+    this.marriageDate,
+    this.divorceDate,
   });
 
   factory FamilyRelation.fromFirestore(dynamic doc) {
@@ -114,6 +120,8 @@ class FamilyRelation extends HiveObject {
       createdAt: parseDateTime(data['createdAt']) ?? DateTime.now(),
       updatedAt: parseDateTime(data['updatedAt']),
       createdBy: data['createdBy'],
+      marriageDate: parseDateTime(data['marriageDate']),
+      divorceDate: parseDateTime(data['divorceDate']),
     );
   }
 
@@ -128,6 +136,8 @@ class FamilyRelation extends HiveObject {
       'updatedAt': updatedAt?.toIso8601String(),
       'createdBy': createdBy,
       'isConfirmed': isConfirmed,
+      'marriageDate': marriageDate?.toIso8601String(),
+      'divorceDate': divorceDate?.toIso8601String(),
     };
   }
 

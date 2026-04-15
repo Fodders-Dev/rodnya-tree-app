@@ -5,17 +5,20 @@ import 'package:go_router/go_router.dart';
 import 'package:lineage/backend/interfaces/auth_service_interface.dart';
 import 'package:lineage/backend/interfaces/family_tree_service_interface.dart';
 import 'package:lineage/backend/interfaces/post_service_interface.dart';
+import 'package:lineage/backend/interfaces/story_service_interface.dart';
 import 'package:lineage/backend/backend_runtime_config.dart';
 import 'package:lineage/backend/models/tree_invitation.dart';
 import 'package:lineage/models/family_tree.dart';
 import 'package:lineage/models/family_person.dart';
 import 'package:lineage/models/family_relation.dart';
 import 'package:lineage/models/post.dart';
+import 'package:lineage/models/story.dart';
 import 'package:lineage/providers/tree_provider.dart';
 import 'package:lineage/screens/home_screen.dart';
 import 'package:lineage/services/browser_notification_bridge.dart';
 import 'package:lineage/services/custom_api_notification_service.dart';
 import 'package:lineage/services/local_storage_service.dart';
+import 'package:lineage/widgets/event_card.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -111,6 +114,15 @@ class _FakePostService implements PostServiceInterface {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
+class _FakeStoryService implements StoryServiceInterface {
+  @override
+  Future<List<Story>> getStories({String? treeId, String? authorId}) async =>
+      const <Story>[];
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
 class _FakeBrowserNotificationBridge implements BrowserNotificationBridge {
   _FakeBrowserNotificationBridge({
     required this.permissionStatusValue,
@@ -198,6 +210,7 @@ void main() {
       _FakeFamilyTreeService(),
     );
     getIt.registerSingleton<PostServiceInterface>(_FakePostService());
+    getIt.registerSingleton<StoryServiceInterface>(_FakeStoryService());
   });
 
   tearDown(() async {
@@ -226,19 +239,15 @@ void main() {
 
       await tester.pumpAndSettle();
 
-      expect(find.text('Тестовое дерево'), findsOneWidget);
-      expect(find.text('Ближайшие события'), findsOneWidget);
-      expect(find.text('Быстрые действия'), findsOneWidget);
-      expect(
-        find.text(
-          'Backend ленты пока не отвечает для этого дерева. Основные разделы работают, а публикации нужно восстановить отдельно.',
-        ),
-        findsOneWidget,
-      );
-      expect(find.text('Публикации временно недоступны'), findsOneWidget);
-      expect(find.text('Новая публикация'), findsOneWidget);
-      expect(find.text('Раздел родных'), findsOneWidget);
-      expect(find.text('Сменить дерево'), findsOneWidget);
+      expect(find.text('Тестовое дерево'), findsWidgets);
+      expect(find.text('События'), findsOneWidget);
+      expect(find.text('Дерево активно'), findsOneWidget);
+      expect(find.bySemanticsLabel('story-rail-add'), findsOneWidget);
+      expect(find.text('Обновите позже.'), findsOneWidget);
+      expect(find.text('Лента недоступна'), findsWidgets);
+      expect(find.text('Пост'), findsOneWidget);
+      expect(find.text('Родные'), findsOneWidget);
+      expect(find.text('Дерево'), findsOneWidget);
       expect(find.text('День рождения'), findsOneWidget);
       expect(find.byType(FloatingActionButton), findsOneWidget);
     },
@@ -259,11 +268,11 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Главная'), findsOneWidget);
-      expect(find.text('Сначала выберите дерево'), findsOneWidget);
+      expect(find.text('Выберите дерево'), findsOneWidget);
+      expect(find.text('Нет активного дерева'), findsOneWidget);
       expect(find.text('Выбрать дерево'), findsOneWidget);
       expect(find.text('Создать граф'), findsOneWidget);
-      expect(find.text('Что будет дальше'), findsOneWidget);
-      expect(find.text('Ближайшие события'), findsNothing);
+      expect(find.text('События'), findsNothing);
       expect(find.text('Лента новостей'), findsNothing);
       expect(find.byType(FloatingActionButton), findsNothing);
     },
@@ -299,6 +308,7 @@ void main() {
         ),
       );
       getIt.registerSingleton<PostServiceInterface>(_FakePostService());
+      getIt.registerSingleton<StoryServiceInterface>(_FakeStoryService());
 
       final treeProvider = TreeProvider();
       final router = GoRouter(
@@ -326,10 +336,10 @@ void main() {
       await tester.pumpWidget(MaterialApp.router(routerConfig: router));
       await tester.pumpAndSettle();
 
-      expect(find.text('Вас ждёт приглашение в дерево'), findsOneWidget);
+      expect(find.text('Семья Шуфляк'), findsOneWidget);
       expect(find.textContaining('Семья Шуфляк'), findsOneWidget);
 
-      await tester.tap(find.text('Открыть приглашение'));
+      await tester.tap(find.text('Открыть'));
       await tester.pumpAndSettle();
 
       expect(find.text('trees invitations'), findsOneWidget);
@@ -365,6 +375,43 @@ void main() {
       expect(find.byTooltip('Активность'), findsOneWidget);
       expect(notificationService.notificationsEnabled, isFalse);
       expect(bridge.permissionRequests, 0);
+    },
+  );
+
+  testWidgets(
+    'HomeScreen показывает компактные фильтры событий на главной',
+    (tester) async {
+      final semantics = tester.ensureSemantics();
+      tester.view.physicalSize = const Size(1400, 1200);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
+      final treeProvider = TreeProvider();
+      await treeProvider.selectTree('tree-1', 'Тестовое дерево');
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider<TreeProvider>.value(
+          value: treeProvider,
+          child: const MaterialApp(home: HomeScreen()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.widgetWithText(ChoiceChip, 'Все'), findsOneWidget);
+      expect(find.widgetWithText(ChoiceChip, 'Родня'), findsOneWidget);
+      expect(find.bySemanticsLabel('home-event-filter-all'), findsOneWidget);
+      expect(find.bySemanticsLabel('home-event-filter-rodnya'), findsOneWidget);
+      expect(find.byType(EventCard), findsAtLeastNWidgets(2));
+
+      await tester.tap(find.widgetWithText(ChoiceChip, 'Родня'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(EventCard), findsOneWidget);
+      expect(find.text('День рождения'), findsOneWidget);
+      semantics.dispose();
     },
   );
 

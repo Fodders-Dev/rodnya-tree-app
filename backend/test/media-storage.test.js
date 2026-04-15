@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
+const {Writable, Readable} = require("node:stream");
 
 const {
   LocalMediaStorage,
@@ -107,7 +108,92 @@ test("s3 media storage uses object storage client and redirects reads", async ()
     },
   ]);
 
+  await storage.handleGetRequest(
+    {params: {"0": "lineage/chat/room-1/clip.mp4"}},
+    {
+      redirect(statusCode, url) {
+        redirects.push({statusCode, url});
+      },
+    },
+  );
+  assert.deepEqual(redirects[1], {
+    statusCode: 302,
+    url: "https://cdn.rodnya-tree.ru/media/lineage/chat/room-1/clip.mp4",
+  });
+
   await storage.deleteObjectByUrl(saved.url);
   assert.equal(commands[1].name, "DeleteObjectCommand");
   assert.equal(commands[1].input.Key, "lineage/chat/room-1/clip.mp4");
+});
+
+test("s3 media storage streams public storage urls", async () => {
+  const commands = [];
+  const storage = new S3MediaStorage({
+    config: {
+      s3Bucket: "rodnya-media",
+      s3Region: "ru-msk",
+      s3Endpoint: "http://127.0.0.1:9000",
+      s3Prefix: "lineage",
+      mediaPublicBaseUrl: "https://api.rodnya-tree.ru/storage/rodnya-media",
+      s3ForcePathStyle: true,
+    },
+    client: {
+      async send(command) {
+        commands.push({
+          name: command.constructor.name,
+          input: command.input,
+        });
+        if (command.constructor.name === "GetObjectCommand") {
+          return {
+            ContentType: "image/jpeg",
+            ContentLength: 5,
+            ETag: '"abc123"',
+            Body: Readable.from([Buffer.from("photo")]),
+          };
+        }
+        throw new Error(`Unexpected command: ${command.constructor.name}`);
+      },
+    },
+  });
+
+  class MockResponse extends Writable {
+    constructor() {
+      super();
+      this.headers = {};
+      this.statusCode = 200;
+      this.bodyChunks = [];
+      this.on("finish", () => this.emit("close"));
+    }
+
+    _write(chunk, encoding, callback) {
+      this.bodyChunks.push(Buffer.from(chunk));
+      callback();
+    }
+
+    setHeader(name, value) {
+      this.headers[String(name).toLowerCase()] = value;
+    }
+
+    status(code) {
+      this.statusCode = code;
+      return this;
+    }
+  }
+
+  const response = new MockResponse();
+  await storage.handlePublicGetRequest(
+    {
+      method: "GET",
+      params: {"0": "rodnya-media/lineage/posts/post-1.jpg"},
+    },
+    response,
+  );
+
+  assert.equal(commands.length, 1);
+  assert.equal(commands[0].name, "GetObjectCommand");
+  assert.equal(commands[0].input.Bucket, "rodnya-media");
+  assert.equal(commands[0].input.Key, "lineage/posts/post-1.jpg");
+  assert.equal(response.headers["content-type"], "image/jpeg");
+  assert.equal(response.headers["content-length"], "5");
+  assert.equal(Buffer.concat(response.bodyChunks).toString("utf8"), "photo");
 });

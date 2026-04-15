@@ -414,10 +414,9 @@ void main() {
 
     await pumpRelativesScreen(tester);
 
-    expect(find.text('Быстрые действия'), findsOneWidget);
-    expect(find.text('Добавить родственника'), findsWidgets);
-    expect(find.text('Состояние контактов'), findsOneWidget);
-    expect(find.text('Можно написать 3 родственникам'), findsOneWidget);
-    expect(find.text('Нужно пригласить: 1 родственника'), findsOneWidget);
+    expect(find.text('Добавить'), findsOneWidget);
+    expect(find.text('Найти'), findsOneWidget);
+    expect(find.text('3 чата'), findsOneWidget);
+    expect(find.text('Пригласить 1'), findsOneWidget);
   });
 }

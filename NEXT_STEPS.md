@@ -1,27 +1,28 @@
-# Progress Log - Night Autonomous Mode
+# Current Next Steps
 
-## Status Overview
-- **Current Goal**: Achieve clean `flutter analyze` output.
-- **Main Focus**: Fix syntax, null-safety, and service stability issues.
+## Active release target
 
-## Completed Tasks
-- [x] Initialize progress log
-- [x] Run diagnostics (`flutter analyze`)
-- [x] Identify main problems
+Довести `Родню` до удобного релизного Android/web состояния без big-bang rewrite и без поломки совместимости RuStore-обновления.
 
-## Verified Fixes
-*(List of fixes that passed analysis/tests)*
+## Основной execution order
 
-## Issues Identified (To be fixed)
-### Critical (Errors)
-- [ ] `lib\navigation\app_router.dart:246`: Const constructor error (`const_with_non_const`)
-- [ ] `lib\screens\chat_screen.dart:874`: Undefined parameter 'decoration' (`undefined_named_parameter`)
-- [ ] `lib\services\browser_notification_bridge_web.dart:4`: Missing URI `dart:js_util`
+1. Закрепить phased rebrand в docs и agent-context, не меняя Android `applicationId`.
+2. Закрыть `like` как server-driven flow с production-parity валидацией и нормальным rollback/refresh.
+3. Ужать Home, Tree, Profile и Relatives до action-first UX без постоянных крупных helper-блоков.
+4. Расширить events/calendar до реально полезного семейного сценария.
+5. Доделать relative gallery, tree history и wiki-style collaboration.
+6. Поверх стабильного core добавить `24h stories`.
 
-### High Priority (Warnings)
-- [ ] `lib\screens\chat_screen.dart:119`: Unused field `_lastRecordedPath`
-- [ ] `lib\services\auth_service.dart:322`: Unnecessary null comparison/assertion
-- [ ] Cleanup unused fields and imports in various screens
+## Что считать ближайшим done
 
-## Remaining Risks
-- Large number of `info` level issues (lints) that need systematic cleanup.
+- Бренд `Родня` отражён в основных docs и публичных UI-строках, кроме совместимых legacy identifiers.
+- Основные экраны не тратят место на статичный текст без действий.
+- Семейные события показывают не только дни рождения.
+- Совместное редактирование дерева не теряет прозрачность изменений.
+- Медиа-path на Android/web стабилен для постов, чатов, профилей и родственников.
+
+## Опорные документы
+
+- [docs/rodnya_release_plan_2026-04-13.md](docs/rodnya_release_plan_2026-04-13.md)
+- [docs/mvp_web_audit_2026-04-09.md](docs/mvp_web_audit_2026-04-09.md)
+- [docs/rustore_release_remaining_plan_2026-04-12.md](docs/rustore_release_remaining_plan_2026-04-12.md)

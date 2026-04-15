@@ -7,6 +7,7 @@ import 'package:lineage/backend/interfaces/family_tree_service_interface.dart';
 import 'package:lineage/backend/interfaces/profile_service_interface.dart';
 import 'package:lineage/models/family_person.dart';
 import 'package:lineage/models/family_relation.dart';
+import 'package:lineage/models/tree_change_record.dart';
 import 'package:lineage/models/user_profile.dart';
 import 'package:lineage/screens/add_relative_screen.dart';
 
@@ -42,9 +43,21 @@ class _FakeAuthService implements AuthServiceInterface {
 
 class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
   bool failOnAdd = false;
+  RelationType relationToUser = RelationType.sibling;
+  List<TreeChangeRecord> historyRecords = const [];
+  FamilyPerson? personById;
 
   @override
   Future<List<FamilyPerson>> getRelatives(String treeId) async => const [];
+
+  @override
+  Future<FamilyPerson> getPersonById(String treeId, String personId) async {
+    final person = personById;
+    if (person != null && person.id == personId) {
+      return person;
+    }
+    throw StateError('Unknown person $personId');
+  }
 
   @override
   Future<String> addRelative(String treeId, Map<String, dynamic> personData) {
@@ -52,6 +65,22 @@ class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
       throw Exception('save failed');
     }
     return Future.value('person-1');
+  }
+
+  @override
+  Future<RelationType> getRelationToUser(
+      String treeId, String relativeId) async {
+    return relationToUser;
+  }
+
+  @override
+  Future<List<TreeChangeRecord>> getTreeHistory({
+    required String treeId,
+    String? personId,
+    String? type,
+    String? actorId,
+  }) async {
+    return historyRecords;
   }
 
   @override
@@ -93,8 +122,11 @@ void main() {
       routes: [
         GoRoute(
           path: '/add',
-          builder: (context, state) =>
-              const AddRelativeScreen(treeId: 'tree-1'),
+          builder: (context, state) => AddRelativeScreen(
+            treeId: 'tree-1',
+            routeExtra: state.extra as Map<String, dynamic>?,
+            routeQueryParameters: state.uri.queryParameters,
+          ),
         ),
       ],
       initialLocation: '/add',
@@ -141,6 +173,8 @@ void main() {
             relatedTo: relatedPerson,
             predefinedRelation: RelationType.child,
             quickAddMode: true,
+            routeExtra: state.extra as Map<String, dynamic>?,
+            routeQueryParameters: state.uri.queryParameters,
           ),
         ),
       ],
@@ -186,8 +220,11 @@ void main() {
       routes: [
         GoRoute(
           path: '/add',
-          builder: (context, state) =>
-              const AddRelativeScreen(treeId: 'tree-1'),
+          builder: (context, state) => AddRelativeScreen(
+            treeId: 'tree-1',
+            routeExtra: state.extra as Map<String, dynamic>?,
+            routeQueryParameters: state.uri.queryParameters,
+          ),
         ),
       ],
       initialLocation: '/add',
@@ -223,5 +260,190 @@ void main() {
       findsOneWidget,
     );
     expect(find.textContaining('Exception: save failed'), findsNothing);
+  });
+
+  testWidgets(
+      'при добавлении супруга показывает поле даты свадьбы в дополнительных сведениях',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(900, 1400));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final relatedPerson = FamilyPerson(
+      id: 'person-1',
+      treeId: 'tree-1',
+      name: 'Петров Иван',
+      gender: Gender.male,
+      isAlive: true,
+      createdAt: DateTime(2024, 1, 1),
+      updatedAt: DateTime(2024, 1, 1),
+    );
+
+    final router = GoRouter(
+      routes: [
+        GoRoute(
+          path: '/add',
+          builder: (context, state) => AddRelativeScreen(
+            treeId: 'tree-1',
+            relatedTo: relatedPerson,
+            predefinedRelation: RelationType.spouse,
+            routeExtra: state.extra as Map<String, dynamic>?,
+            routeQueryParameters: state.uri.queryParameters,
+          ),
+        ),
+      ],
+      initialLocation: '/add',
+    );
+
+    await tester.pumpWidget(
+      MaterialApp.router(
+        routerConfig: router,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Дополнительные сведения'));
+    await tester.tap(find.text('Дополнительные сведения'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Дата свадьбы'), findsOneWidget);
+    expect(find.text('Появится в семейном календаре'), findsOneWidget);
+  });
+
+  testWidgets(
+      'поддерживает query-параметры для открытия add-relative из e2e deep link',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(900, 1400));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final familyService = _FakeFamilyTreeService()
+      ..personById = FamilyPerson(
+        id: 'person-1',
+        treeId: 'tree-1',
+        name: 'Петров Иван',
+        gender: Gender.male,
+        isAlive: true,
+        createdAt: DateTime(2024, 1, 1),
+        updatedAt: DateTime(2024, 1, 1),
+      );
+
+    await getIt.reset();
+    getIt.registerSingleton<AuthServiceInterface>(_FakeAuthService());
+    getIt.registerSingleton<FamilyTreeServiceInterface>(familyService);
+    getIt.registerSingleton<ProfileServiceInterface>(_FakeProfileService());
+
+    final router = GoRouter(
+      routes: [
+        GoRoute(
+          path: '/add',
+          builder: (context, state) => AddRelativeScreen(
+            treeId: 'tree-1',
+            routeExtra: state.extra as Map<String, dynamic>?,
+            routeQueryParameters: state.uri.queryParameters,
+          ),
+        ),
+      ],
+      initialLocation:
+          '/add?contextPersonId=person-1&relationType=spouse&quickAddMode=1',
+    );
+
+    await tester.pumpWidget(
+      MaterialApp.router(
+        routerConfig: router,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Режим быстрого ввода'), findsOneWidget);
+    expect(
+        find.textContaining('Связь с Петров Иван уже выбрана'), findsOneWidget);
+
+    await tester.ensureVisible(find.text('Дополнительные сведения'));
+    await tester.tap(find.text('Дополнительные сведения'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Дата свадьбы'), findsOneWidget);
+  });
+
+  testWidgets(
+      'в режиме редактирования показывает быстрые действия для медиа и истории',
+      (tester) async {
+    final familyService = _FakeFamilyTreeService()
+      ..historyRecords = [
+        TreeChangeRecord(
+          id: 'record-1',
+          treeId: 'tree-1',
+          type: 'person_media.updated',
+          personId: 'person-1',
+          createdAt: DateTime(2024, 1, 2),
+        ),
+      ];
+
+    await getIt.reset();
+    getIt.registerSingleton<AuthServiceInterface>(_FakeAuthService());
+    getIt.registerSingleton<FamilyTreeServiceInterface>(familyService);
+    getIt.registerSingleton<ProfileServiceInterface>(_FakeProfileService());
+
+    final person = FamilyPerson(
+      id: 'person-1',
+      treeId: 'tree-1',
+      name: 'Петров Иван',
+      gender: Gender.male,
+      isAlive: true,
+      photoUrl: 'https://example.com/photo-1.jpg',
+      photoGallery: const [
+        {
+          'id': 'media-1',
+          'url': 'https://example.com/photo-1.jpg',
+          'isPrimary': true,
+        },
+        {
+          'id': 'media-2',
+          'url': 'https://example.com/photo-2.jpg',
+          'isPrimary': false,
+        },
+      ],
+      createdAt: DateTime(2024, 1, 1),
+      updatedAt: DateTime(2024, 1, 1),
+    );
+
+    final router = GoRouter(
+      routes: [
+        GoRoute(
+          path: '/edit',
+          builder: (context, state) => AddRelativeScreen(
+            treeId: 'tree-1',
+            person: person,
+            isEditing: true,
+          ),
+        ),
+        GoRoute(
+          path: '/relative/details/:personId',
+          builder: (context, state) => Scaffold(
+            body: Text('details ${state.pathParameters['personId']}'),
+          ),
+        ),
+      ],
+      initialLocation: '/edit',
+    );
+
+    await tester.pumpWidget(
+      MaterialApp.router(
+        routerConfig: router,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Медиа и история'), findsOneWidget);
+    expect(find.text('2 фото'), findsOneWidget);
+    expect(find.text('Основное фото есть'), findsOneWidget);
+    expect(find.text('Открыть карточку'), findsOneWidget);
+    expect(find.text('Фото (2)'), findsOneWidget);
+    expect(find.text('История'), findsOneWidget);
+
+    await tester.tap(find.text('История'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('История изменений'), findsOneWidget);
+    expect(find.text('Обновлено фото'), findsOneWidget);
   });
 }

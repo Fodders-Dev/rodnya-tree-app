@@ -1,246 +1,304 @@
 import 'package:flutter/material.dart';
 
-// Цветовая схема в стиле WhatsApp, но теплее
-// final Color primaryColor = Color(0xFF0C6E4E);  // Теплый темно-зеленый
-// final Color accentColor = Color(0xFF25A36F);   // Теплый зеленый
-// final Color lightGreen = Color(0xFF3DD182);    // Яркий зеленый
-// final Color lightBackground = Color(0xFFF5F2E3); // Теплый светлый фон (желтоватый)
-// final Color chatBubbleColor = Color(0xFFE6F7D4); // Теплый цвет сообщений
-// final Color darkerBackground = Color(0xFFEEEAD9); // Альтернативный теплый фон
-
-// <<< УБИРАЕМ СТАРУЮ appTheme >>>
-// final ThemeData appTheme = ThemeData(
-// ... (весь старый код темы)
-// );
-
 class AppTheme {
-  // Цвета WhatsApp (приблизительные)
-  static const Color waGreen = Color(
-    0xFF128C7E,
-  ); // Основной зеленый для светлой темы
-  static const Color waLightGreen = Color(0xFF25D366); // Акцентный зеленый
-  static const Color waBlue = Color(0xFF34B7F1); // Цвет ссылок
-  static const Color waLightBg = Color(0xFFFFFFFF); // Белый фон
-  static const Color waLightSurface = Color(0xFFFFFFFF); // Белый для карточек
+  static const Color accent = Color(0xFF129A8D);
+  static const Color accentStrong = Color(0xFF0E857A);
+  static const Color accentSoft = Color(0xFFE0F5F1);
+  static const Color warmCanvas = Color(0xFFF3F5F1);
+  static const Color warmSurface = Color(0xFFFFFFFF);
+  static const Color warmLine = Color(0xFFD7DED9);
+  static const Color warmText = Color(0xFF18201E);
+  static const Color warmMuted = Color(0xFF5B6863);
 
-  static const Color waDarkGreen = Color(
-    0xFF00A884,
-  ); // Основной/Акцентный зеленый для темной темы
-  static const Color waDarkBg = Color(0xFF111B21); // Темно-сине-серый фон
-  static const Color waDarkSurface = Color(
-    0xFF202C33,
-  ); // Темно-серый для карточек
+  static ThemeData get lightTheme {
+    final scheme = ColorScheme.fromSeed(
+      seedColor: accent,
+      brightness: Brightness.light,
+    ).copyWith(
+      primary: accentStrong,
+      secondary: const Color(0xFF71A59D),
+      tertiary: accentSoft,
+      surface: warmSurface,
+      surfaceContainerLowest: const Color(0xFFFFFFFF),
+      surfaceContainerLow: const Color(0xFFF9FBF8),
+      surfaceContainer: const Color(0xFFF2F5F1),
+      surfaceContainerHigh: const Color(0xFFEBF0EB),
+      surfaceContainerHighest: const Color(0xFFE3EAE4),
+      outline: warmLine,
+      outlineVariant: const Color(0xFFE5EBE6),
+      shadow: const Color(0xFF0F1614),
+      onSurface: warmText,
+      onSurfaceVariant: warmMuted,
+      onPrimary: Colors.white,
+      onSecondary: Colors.white,
+      onTertiary: accentStrong,
+    );
 
-  static final TextTheme _lightTextTheme = ThemeData.light()
-      .textTheme
-      .apply(
-        bodyColor: Colors.black,
-        displayColor: Colors.black,
-      )
-      .copyWith(
-        titleLarge: const TextStyle(
-          fontWeight: FontWeight.bold,
-          fontSize: 18,
-          color: Colors.black,
-        ),
-        titleMedium: const TextStyle(
-          fontWeight: FontWeight.bold,
-          fontSize: 16,
-          color: Colors.black,
-        ),
-        bodySmall: const TextStyle(
-          fontSize: 12,
-          color: Colors.black87,
-        ),
-      );
+    final base = ThemeData(
+      useMaterial3: true,
+      brightness: Brightness.light,
+      colorScheme: scheme,
+      scaffoldBackgroundColor: warmCanvas,
+      canvasColor: warmCanvas,
+    );
 
-  static final TextTheme _darkTextTheme = ThemeData.dark()
-      .textTheme
-      .apply(
-        bodyColor: Colors.white,
-        displayColor: Colors.white,
-      )
-      .copyWith(
-        titleLarge: const TextStyle(
-          fontWeight: FontWeight.bold,
-          fontSize: 18,
-          color: Colors.white,
-        ),
-        titleMedium: const TextStyle(
-          fontWeight: FontWeight.bold,
-          fontSize: 16,
-          color: Colors.white,
-        ),
-        bodySmall: const TextStyle(
-          fontSize: 12,
-          color: Colors.white60,
-        ),
-      );
+    final textTheme = base.textTheme.apply(
+      bodyColor: scheme.onSurface,
+      displayColor: scheme.onSurface,
+    );
 
-  static final ThemeData lightTheme = ThemeData(
-    brightness: Brightness.light,
-    primaryColor: waGreen,
-    colorScheme: const ColorScheme.light(
-      primary: waGreen, // Основной цвет элементов управления, AppBar
-      secondary: waLightGreen, // Фон Scaffold
-      surface: waLightSurface, // Фон карточек, диалогов
-      onPrimary: Colors.white, // Текст/иконки на primary цвете
-      onSecondary: Colors.white, // Основной цвет текста
-      onSurface: Colors.black87, // Цвет текста на карточках/диалогах
-      error: Colors.redAccent,
-      onError: Colors.white,
-    ),
-    iconTheme: const IconThemeData(
-      color: Colors.black87, // Гарантируем видимость иконок в светлой теме
-      size: 24,
-    ),
-    primaryIconTheme: const IconThemeData(
-      color: Colors.white, // Иконки на фоне primary ( AppBar и т.д.)
-    ),
-    scaffoldBackgroundColor: waLightBg,
-    appBarTheme: AppBarTheme(
-      backgroundColor: waGreen,
-      foregroundColor: Colors.white, // Цвет текста и иконок в AppBar
-      elevation: 1.0, // Небольшая тень как в WA
-      titleTextStyle: const TextStyle(
-        fontSize: 20,
-        fontWeight: FontWeight.w500,
+    return base.copyWith(
+      primaryColor: scheme.primary,
+      textTheme: textTheme.copyWith(
+        headlineSmall: textTheme.headlineSmall?.copyWith(
+          fontWeight: FontWeight.w700,
+          letterSpacing: -0.5,
+        ),
+        titleLarge: textTheme.titleLarge?.copyWith(
+          fontWeight: FontWeight.w700,
+          letterSpacing: -0.4,
+        ),
+        titleMedium: textTheme.titleMedium?.copyWith(
+          fontWeight: FontWeight.w700,
+          letterSpacing: -0.2,
+        ),
+        bodyLarge: textTheme.bodyLarge?.copyWith(height: 1.35),
+        bodyMedium: textTheme.bodyMedium?.copyWith(height: 1.32),
+        labelLarge: textTheme.labelLarge?.copyWith(
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0,
+        ),
       ),
-    ),
-    textTheme: _lightTextTheme,
-    cardTheme: CardThemeData(
-      color: waLightSurface,
-      elevation: 1,
-      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(8),
-      ), // Менее скругленные углы
-    ),
-    floatingActionButtonTheme: const FloatingActionButtonThemeData(
-      backgroundColor: waLightGreen,
-      foregroundColor: Colors.white,
-    ),
-    inputDecorationTheme: InputDecorationTheme(
-      filled: true,
-      fillColor: Colors.grey[200], // Сделали фон поля чуть темнее для контраста
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(8),
-        borderSide: BorderSide.none, // Без рамки по умолчанию
+      appBarTheme: AppBarTheme(
+        backgroundColor: Colors.transparent,
+        foregroundColor: scheme.onSurface,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        centerTitle: false,
+        titleSpacing: 18,
+        titleTextStyle: textTheme.titleLarge?.copyWith(
+          color: scheme.onSurface,
+          fontWeight: FontWeight.w700,
+          letterSpacing: -0.4,
+        ),
+        iconTheme: IconThemeData(color: scheme.onSurface),
       ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(8),
-        borderSide: const BorderSide(color: waGreen, width: 1.5),
+      cardTheme: CardThemeData(
+        color: scheme.surface.withValues(alpha: 0.76),
+        margin: EdgeInsets.zero,
+        elevation: 0,
+        shadowColor: scheme.shadow.withValues(alpha: 0.06),
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(28),
+          side: BorderSide(
+            color: scheme.outlineVariant.withValues(alpha: 0.9),
+          ),
+        ),
       ),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      hintStyle: const TextStyle(
-        color: Colors.black45, // Более видимый серый для подсказок
-        fontWeight: FontWeight.w400,
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(
+          backgroundColor: scheme.primary,
+          foregroundColor: scheme.onPrimary,
+          minimumSize: const Size(0, 46),
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(999),
+          ),
+          textStyle: textTheme.labelLarge,
+        ),
       ),
-    ),
-    elevatedButtonTheme: ElevatedButtonThemeData(
-      style: ElevatedButton.styleFrom(
-        backgroundColor: waGreen, // Основной цвет кнопки
-        foregroundColor: Colors.white, // Цвет текста на кнопке
-        elevation: 1,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 20),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: scheme.onSurface,
+          minimumSize: const Size(0, 46),
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+          side: BorderSide(color: scheme.outline),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(999),
+          ),
+          textStyle: textTheme.labelLarge,
+        ),
       ),
-    ),
-    textButtonTheme: TextButtonThemeData(
-      style: TextButton.styleFrom(
-        foregroundColor: waGreen, // Цвет текста для TextButton
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(
+          foregroundColor: scheme.primary,
+          textStyle: textTheme.labelLarge,
+        ),
       ),
-    ),
-    dividerTheme: DividerThemeData(color: Colors.grey.shade300, thickness: 0.5),
-    // Можно добавить другие настройки: bottomNavigationBarTheme, tabBarTheme и т.д.
-    bottomNavigationBarTheme: BottomNavigationBarThemeData(
-      backgroundColor: waLightSurface,
-      selectedItemColor: waGreen,
-      unselectedItemColor: Colors.grey.shade600,
-      type: BottomNavigationBarType.fixed,
-      elevation: 4,
-    ),
-  );
+      elevatedButtonTheme: ElevatedButtonThemeData(
+        style: ElevatedButton.styleFrom(
+          elevation: 0,
+          backgroundColor: scheme.primary,
+          foregroundColor: scheme.onPrimary,
+          minimumSize: const Size(0, 46),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(999),
+          ),
+          textStyle: textTheme.labelLarge,
+        ),
+      ),
+      floatingActionButtonTheme: FloatingActionButtonThemeData(
+        backgroundColor: scheme.primary,
+        foregroundColor: scheme.onPrimary,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      ),
+      chipTheme: base.chipTheme.copyWith(
+        backgroundColor: scheme.surface.withValues(alpha: 0.72),
+        selectedColor: scheme.primary.withValues(alpha: 0.14),
+        disabledColor: scheme.surfaceContainerHighest,
+        side: BorderSide(color: scheme.outlineVariant),
+        labelStyle: textTheme.labelLarge?.copyWith(color: scheme.onSurface),
+        secondaryLabelStyle:
+            textTheme.labelLarge?.copyWith(color: scheme.primary),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(999),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        iconTheme: IconThemeData(size: 18, color: scheme.onSurfaceVariant),
+      ),
+      dividerTheme: DividerThemeData(
+        color: scheme.outlineVariant.withValues(alpha: 0.8),
+        thickness: 0.8,
+        space: 1,
+      ),
+      iconTheme: IconThemeData(color: scheme.onSurface, size: 22),
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: scheme.surface.withValues(alpha: 0.78),
+        hintStyle:
+            textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(22),
+          borderSide: BorderSide(color: scheme.outlineVariant),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(22),
+          borderSide: BorderSide(color: scheme.outlineVariant),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(22),
+          borderSide: BorderSide(color: scheme.primary, width: 1.2),
+        ),
+        errorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(22),
+          borderSide: BorderSide(color: scheme.error),
+        ),
+      ),
+      snackBarTheme: SnackBarThemeData(
+        backgroundColor: const Color(0xFF1E2624),
+        contentTextStyle: textTheme.bodyMedium?.copyWith(color: Colors.white),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      ),
+      bottomNavigationBarTheme: BottomNavigationBarThemeData(
+        backgroundColor: Colors.transparent,
+        selectedItemColor: scheme.primary,
+        unselectedItemColor: scheme.onSurfaceVariant,
+        elevation: 0,
+      ),
+      navigationRailTheme: NavigationRailThemeData(
+        backgroundColor: Colors.transparent,
+        selectedIconTheme: IconThemeData(color: scheme.primary),
+        unselectedIconTheme: IconThemeData(color: scheme.onSurfaceVariant),
+        selectedLabelTextStyle:
+            textTheme.labelMedium?.copyWith(color: scheme.primary),
+        unselectedLabelTextStyle:
+            textTheme.labelMedium?.copyWith(color: scheme.onSurfaceVariant),
+      ),
+      splashFactory: InkSparkle.splashFactory,
+    );
+  }
 
-  static final ThemeData darkTheme = ThemeData(
-    brightness: Brightness.dark,
-    primaryColor: waDarkGreen,
-    colorScheme: const ColorScheme.dark(
-      primary: waDarkGreen, // Основной цвет элементов управления, AppBar
-      secondary: waDarkGreen, // Фон Scaffold
-      surface: waDarkSurface, // Фон карточек, диалогов
-      onPrimary: Colors.white, // Текст/иконки на primary цвете
-      onSecondary: Colors.white, // Основной цвет текста - сделали ярче
-      onSurface: Colors.white, // Цвет текста на карточках/диалогах
-      error: Colors.redAccent,
-      onError: Colors.black,
-    ),
-    iconTheme: const IconThemeData(
-      color: Colors.white, // Гарантируем видимость иконок в темной теме
-      size: 24,
-    ),
-    primaryIconTheme: const IconThemeData(
-      color: Colors.white,
-    ),
-    scaffoldBackgroundColor: waDarkBg,
-    appBarTheme: AppBarTheme(
-      backgroundColor: waDarkSurface, // В темной теме WA AppBar не зеленый
-      foregroundColor:
-          Colors.white, // Цвет текста и иконок в AppBar - сделали ярче
-      elevation: 1.0,
-      titleTextStyle: const TextStyle(
-        fontSize: 20,
-        fontWeight: FontWeight.w500,
-        color: Colors.white,
+  static ThemeData get darkTheme {
+    final scheme = ColorScheme.fromSeed(
+      seedColor: accent,
+      brightness: Brightness.dark,
+    ).copyWith(
+      primary: const Color(0xFF65D4C6),
+      secondary: const Color(0xFF78BDB4),
+      tertiary: const Color(0xFF173B37),
+      surface: const Color(0xFF161D1B),
+      surfaceContainerLowest: const Color(0xFF121715),
+      surfaceContainerLow: const Color(0xFF1B2320),
+      surfaceContainer: const Color(0xFF202A26),
+      surfaceContainerHigh: const Color(0xFF26312D),
+      surfaceContainerHighest: const Color(0xFF2C3833),
+      outline: const Color(0xFF41514B),
+      outlineVariant: const Color(0xFF33403B),
+      onSurface: const Color(0xFFF1F5F3),
+      onSurfaceVariant: const Color(0xFFB2BDB8),
+      shadow: Colors.black,
+    );
+
+    final base = ThemeData(
+      useMaterial3: true,
+      brightness: Brightness.dark,
+      colorScheme: scheme,
+      scaffoldBackgroundColor: const Color(0xFF101513),
+      canvasColor: const Color(0xFF101513),
+    );
+
+    final textTheme = base.textTheme.apply(
+      bodyColor: scheme.onSurface,
+      displayColor: scheme.onSurface,
+    );
+
+    return base.copyWith(
+      textTheme: textTheme,
+      appBarTheme: AppBarTheme(
+        backgroundColor: Colors.transparent,
+        foregroundColor: scheme.onSurface,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        titleTextStyle:
+            textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
       ),
-    ),
-    textTheme: _darkTextTheme,
-    cardTheme: CardThemeData(
-      color: waDarkSurface,
-      elevation: 1,
-      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-    ),
-    floatingActionButtonTheme: const FloatingActionButtonThemeData(
-      backgroundColor: waDarkGreen,
-      foregroundColor: Colors.white,
-    ),
-    inputDecorationTheme: InputDecorationTheme(
-      filled: true,
-      fillColor: Colors.grey[900], // Темно-серый фон поля ввода
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(8),
-        borderSide: BorderSide.none, // Без рамки по умолчанию
+      cardTheme: CardThemeData(
+        color: scheme.surface.withValues(alpha: 0.82),
+        margin: EdgeInsets.zero,
+        elevation: 0,
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(28),
+          side: BorderSide(color: scheme.outlineVariant),
+        ),
       ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(8),
-        borderSide: const BorderSide(color: waDarkGreen, width: 1.5),
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(
+          minimumSize: const Size(0, 46),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(999),
+          ),
+        ),
       ),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      hintStyle:
-          TextStyle(color: Colors.white38), // Видимый, но ненавязчивый хинт
-    ),
-    elevatedButtonTheme: ElevatedButtonThemeData(
-      style: ElevatedButton.styleFrom(
-        backgroundColor: waDarkGreen, // Основной цвет кнопки
-        foregroundColor: Colors.white, // Цвет текста на кнопке
-        elevation: 1,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 20),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          minimumSize: const Size(0, 46),
+          side: BorderSide(color: scheme.outline),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(999),
+          ),
+        ),
       ),
-    ),
-    textButtonTheme: TextButtonThemeData(
-      style: TextButton.styleFrom(
-        foregroundColor: waDarkGreen, // Цвет текста для TextButton
+      chipTheme: base.chipTheme.copyWith(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(999),
+        ),
       ),
-    ),
-    dividerTheme: DividerThemeData(color: Colors.grey.shade700, thickness: 0.5),
-    bottomNavigationBarTheme: BottomNavigationBarThemeData(
-      backgroundColor: waDarkSurface,
-      selectedItemColor: waDarkGreen,
-      unselectedItemColor: Colors.grey.shade500,
-      type: BottomNavigationBarType.fixed,
-      elevation: 4,
-    ),
-  );
+      bottomNavigationBarTheme: BottomNavigationBarThemeData(
+        backgroundColor: Colors.transparent,
+        selectedItemColor: scheme.primary,
+        unselectedItemColor: scheme.onSurfaceVariant,
+        elevation: 0,
+      ),
+      navigationRailTheme: NavigationRailThemeData(
+        backgroundColor: Colors.transparent,
+      ),
+    );
+  }
 }

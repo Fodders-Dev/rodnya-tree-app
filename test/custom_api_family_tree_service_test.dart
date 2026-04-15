@@ -478,6 +478,540 @@ void main() {
   });
 
   test(
+      'CustomApiFamilyTreeService round-trips marriage and divorce dates for spouse relations',
+      () async {
+    final persons = <Map<String, dynamic>>[
+      {
+        'id': 'person-a',
+        'treeId': 'tree-wedding',
+        'name': 'Ирина Смирнова',
+        'gender': 'female',
+        'isAlive': true,
+        'creatorId': 'user-1',
+        'createdAt': '2026-03-27T11:00:00.000Z',
+        'updatedAt': '2026-03-27T11:00:00.000Z',
+      },
+      {
+        'id': 'person-b',
+        'treeId': 'tree-wedding',
+        'name': 'Павел Смирнов',
+        'gender': 'male',
+        'isAlive': true,
+        'creatorId': 'user-1',
+        'createdAt': '2026-03-27T11:00:00.000Z',
+        'updatedAt': '2026-03-27T11:00:00.000Z',
+      },
+    ];
+    final relations = <Map<String, dynamic>>[];
+
+    final client = MockClient((request) async {
+      if (request.url.path == '/v1/trees/tree-wedding/persons' &&
+          request.method == 'GET') {
+        return http.Response(
+          jsonEncode({'persons': persons}),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+
+      if (request.url.path == '/v1/trees/tree-wedding/relations' &&
+          request.method == 'POST') {
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        expect(body['marriageDate'], '2014-07-12T00:00:00.000Z');
+        expect(body['divorceDate'], '2020-02-10T00:00:00.000Z');
+
+        final relation = <String, dynamic>{
+          'id': 'relation-wedding',
+          'treeId': 'tree-wedding',
+          'person1Id': body['person1Id'],
+          'person2Id': body['person2Id'],
+          'relation1to2': body['relation1to2'],
+          'relation2to1': body['relation2to1'],
+          'isConfirmed': body['isConfirmed'],
+          'marriageDate': body['marriageDate'],
+          'divorceDate': body['divorceDate'],
+          'createdAt': '2026-03-27T11:05:00.000Z',
+          'updatedAt': '2026-03-27T11:05:00.000Z',
+          'createdBy': 'user-1',
+        };
+        relations
+          ..clear()
+          ..add(relation);
+
+        return http.Response(
+          jsonEncode({'relation': relation}),
+          201,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+
+      if (request.url.path == '/v1/trees/tree-wedding/relations' &&
+          request.method == 'GET') {
+        return http.Response(
+          jsonEncode({'relations': relations}),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+
+      return http.Response('{"message":"not found"}', 404);
+    });
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'custom_api_session_v1',
+      jsonEncode({
+        'accessToken': 'access-token',
+        'refreshToken': 'refresh-token',
+        'userId': 'user-1',
+        'email': 'dev@lineage.app',
+        'displayName': 'Dev User',
+        'providerIds': ['password'],
+        'isProfileComplete': true,
+        'missingFields': const [],
+      }),
+    );
+
+    final authService = await CustomApiAuthService.create(
+      httpClient: client,
+      preferences: prefs,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      invitationService: InvitationService(),
+    );
+
+    final treeService = CustomApiFamilyTreeService(
+      authService: authService,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      httpClient: client,
+    );
+
+    final createdRelation = await treeService.createRelation(
+      treeId: 'tree-wedding',
+      person1Id: 'person-a',
+      person2Id: 'person-b',
+      relation1to2: RelationType.spouse,
+      isConfirmed: true,
+      marriageDate: DateTime.utc(2014, 7, 12),
+      divorceDate: DateTime.utc(2020, 2, 10),
+    );
+
+    expect(createdRelation.marriageDate, DateTime.utc(2014, 7, 12));
+    expect(createdRelation.divorceDate, DateTime.utc(2020, 2, 10));
+
+    final listedRelations = await treeService.getRelations('tree-wedding');
+    expect(listedRelations, hasLength(1));
+    expect(listedRelations.single.marriageDate, DateTime.utc(2014, 7, 12));
+    expect(listedRelations.single.divorceDate, DateTime.utc(2020, 2, 10));
+  });
+
+  test(
+      'CustomApiFamilyTreeService parses primaryPhotoUrl/photoGallery and normalizes nested payloads',
+      () async {
+    late Map<String, dynamic> lastPatchBody;
+
+    final client = MockClient((request) async {
+      if (request.url.path == '/v1/trees/tree-3/persons' &&
+          request.method == 'GET') {
+        return http.Response(
+          jsonEncode({
+            'persons': [
+              {
+                'id': 'person-gallery',
+                'treeId': 'tree-3',
+                'name': 'Галерея Анна',
+                'gender': 'female',
+                'isAlive': true,
+                'creatorId': 'user-1',
+                'createdAt': '2026-03-27T12:00:00.000Z',
+                'updatedAt': '2026-03-27T12:00:00.000Z',
+                'primaryPhotoUrl': 'https://cdn.example.ru/anna-primary.jpg',
+                'photoGallery': [
+                  {
+                    'id': 'media-1',
+                    'url': 'https://cdn.example.ru/anna-primary.jpg',
+                    'type': 'image',
+                    'isPrimary': true,
+                  },
+                  {
+                    'id': 'media-2',
+                    'url': 'https://cdn.example.ru/anna-second.jpg',
+                    'type': 'image',
+                    'isPrimary': false,
+                  },
+                ],
+              },
+            ],
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+
+      if (request.url.path == '/v1/trees/tree-3/persons/person-gallery' &&
+          request.method == 'PATCH') {
+        lastPatchBody = jsonDecode(request.body) as Map<String, dynamic>;
+        return http.Response(
+          jsonEncode({
+            'person': {
+              'id': 'person-gallery',
+              'treeId': 'tree-3',
+              'name': 'Галерея Анна',
+              'gender': 'female',
+              'isAlive': true,
+              'creatorId': 'user-1',
+              'createdAt': '2026-03-27T12:00:00.000Z',
+              'updatedAt': '2026-03-27T12:10:00.000Z',
+              'primaryPhotoUrl': 'https://cdn.example.ru/anna-second.jpg',
+              'photoGallery': lastPatchBody['photoGallery'],
+            },
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+
+      if (request.url.path == '/v1/trees' && request.method == 'GET') {
+        return http.Response(
+          jsonEncode({
+            'trees': [
+              {
+                'id': 'tree-3',
+                'name': 'Tree 3',
+                'description': '',
+                'creatorId': 'user-1',
+                'memberIds': ['user-1'],
+                'members': ['user-1'],
+                'createdAt': '2026-03-27T12:00:00.000Z',
+                'updatedAt': '2026-03-27T12:00:00.000Z',
+                'isPrivate': true,
+              },
+            ],
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+
+      return http.Response('{"message":"not found"}', 404);
+    });
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'custom_api_session_v1',
+      jsonEncode({
+        'accessToken': 'access-token',
+        'refreshToken': 'refresh-token',
+        'userId': 'user-1',
+        'email': 'dev@lineage.app',
+        'displayName': 'Dev User',
+        'providerIds': ['password'],
+        'isProfileComplete': true,
+        'missingFields': const [],
+      }),
+    );
+
+    final authService = await CustomApiAuthService.create(
+      httpClient: client,
+      preferences: prefs,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      invitationService: InvitationService(),
+    );
+
+    final treeService = CustomApiFamilyTreeService(
+      authService: authService,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      httpClient: client,
+    );
+
+    final relatives = await treeService.getRelatives('tree-3');
+    expect(relatives, hasLength(1));
+    expect(relatives.first.photoUrl, 'https://cdn.example.ru/anna-primary.jpg');
+    expect(relatives.first.primaryPhotoUrl,
+        'https://cdn.example.ru/anna-primary.jpg');
+    expect(relatives.first.photoGallery, hasLength(2));
+    expect(relatives.first.photoGallery.first['isPrimary'], true);
+
+    await treeService.updateRelative('person-gallery', {
+      'name': 'Галерея Анна',
+      'photoGallery': [
+        {
+          'id': 'media-2',
+          'url': 'https://cdn.example.ru/anna-second.jpg',
+          'type': 'image',
+          'isPrimary': true,
+          'updatedAt': DateTime.utc(2026, 3, 27, 12, 10),
+        },
+      ],
+    });
+
+    expect(lastPatchBody['photoGallery'], isA<List<dynamic>>());
+    expect(
+      (lastPatchBody['photoGallery'] as List<dynamic>).first['updatedAt'],
+      '2026-03-27T12:10:00.000Z',
+    );
+  });
+
+  test(
+      'CustomApiFamilyTreeService manages relative media and loads filtered tree history',
+      () async {
+    late Map<String, dynamic> addMediaBody;
+    late Map<String, dynamic> updateMediaBody;
+    final person = <String, dynamic>{
+      'id': 'person-gallery',
+      'treeId': 'tree-4',
+      'name': 'Галерея Анна',
+      'gender': 'female',
+      'isAlive': true,
+      'creatorId': 'user-1',
+      'createdAt': '2026-03-27T12:00:00.000Z',
+      'updatedAt': '2026-03-27T12:00:00.000Z',
+      'photoUrl': 'https://cdn.example.ru/anna-primary.jpg',
+      'primaryPhotoUrl': 'https://cdn.example.ru/anna-primary.jpg',
+      'photoGallery': [
+        {
+          'id': 'media-1',
+          'url': 'https://cdn.example.ru/anna-primary.jpg',
+          'type': 'image',
+          'isPrimary': true,
+        },
+      ],
+    };
+
+    final client = MockClient((request) async {
+      if (request.url.path == '/v1/trees/tree-4/persons' &&
+          request.method == 'GET') {
+        return http.Response(
+          jsonEncode({
+            'persons': [person]
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+
+      if (request.url.path == '/v1/trees/tree-4/persons/person-gallery/media' &&
+          request.method == 'POST') {
+        addMediaBody = jsonDecode(request.body) as Map<String, dynamic>;
+        person['updatedAt'] = '2026-03-27T12:05:00.000Z';
+        person['photoGallery'] = [
+          ...(person['photoGallery'] as List<dynamic>),
+          {
+            'id': 'media-2',
+            'url': addMediaBody['url'],
+            'type': addMediaBody['type'],
+            'isPrimary': addMediaBody['isPrimary'] == true,
+            'uploadedAt': addMediaBody['uploadedAt'],
+          },
+        ];
+        return http.Response(
+          jsonEncode({
+            'person': person,
+            'media': (person['photoGallery'] as List<dynamic>).last,
+          }),
+          201,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+
+      if (request.url.path ==
+              '/v1/trees/tree-4/persons/person-gallery/media/media-2' &&
+          request.method == 'PATCH') {
+        updateMediaBody = jsonDecode(request.body) as Map<String, dynamic>;
+        person['updatedAt'] = '2026-03-27T12:06:00.000Z';
+        person['primaryPhotoUrl'] = 'https://cdn.example.ru/anna-second.jpg';
+        person['photoUrl'] = 'https://cdn.example.ru/anna-second.jpg';
+        person['photoGallery'] = [
+          {
+            'id': 'media-1',
+            'url': 'https://cdn.example.ru/anna-primary.jpg',
+            'type': 'image',
+            'isPrimary': false,
+          },
+          {
+            'id': 'media-2',
+            'url': 'https://cdn.example.ru/anna-second.jpg',
+            'type': 'image',
+            'isPrimary': true,
+            'caption': updateMediaBody['caption'],
+          },
+        ];
+        return http.Response(
+          jsonEncode({
+            'person': person,
+            'media': (person['photoGallery'] as List<dynamic>).last,
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+
+      if (request.url.path ==
+              '/v1/trees/tree-4/persons/person-gallery/media/media-1' &&
+          request.method == 'DELETE') {
+        person['updatedAt'] = '2026-03-27T12:07:00.000Z';
+        person['photoGallery'] = [
+          {
+            'id': 'media-2',
+            'url': 'https://cdn.example.ru/anna-second.jpg',
+            'type': 'image',
+            'isPrimary': true,
+            'caption': 'Новая обложка',
+          },
+        ];
+        person['primaryPhotoUrl'] = 'https://cdn.example.ru/anna-second.jpg';
+        person['photoUrl'] = 'https://cdn.example.ru/anna-second.jpg';
+        return http.Response(
+          jsonEncode({
+            'person': person,
+            'deletedMediaId': 'media-1',
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+
+      if (request.url.path == '/v1/trees/tree-4/history' &&
+          request.method == 'GET') {
+        expect(request.url.queryParameters['personId'], 'person-gallery');
+        expect(request.url.queryParameters['actorId'], 'user-1');
+        return http.Response(
+          jsonEncode({
+            'records': [
+              {
+                'id': 'change-1',
+                'treeId': 'tree-4',
+                'actorId': 'user-1',
+                'type': 'person_media.created',
+                'personId': 'person-gallery',
+                'personIds': ['person-gallery'],
+                'mediaId': 'media-2',
+                'createdAt': '2026-03-27T12:05:00.000Z',
+                'details': {
+                  'media': {
+                    'id': 'media-2',
+                    'url': 'https://cdn.example.ru/anna-second.jpg',
+                  },
+                },
+              },
+              {
+                'id': 'change-2',
+                'treeId': 'tree-4',
+                'actorId': 'user-1',
+                'type': 'person_media.deleted',
+                'personId': 'person-gallery',
+                'personIds': ['person-gallery'],
+                'mediaId': 'media-1',
+                'createdAt': '2026-03-27T12:07:00.000Z',
+                'details': {
+                  'deletedMediaId': 'media-1',
+                },
+              },
+            ],
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+
+      return http.Response('{"message":"not found"}', 404);
+    });
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'custom_api_session_v1',
+      jsonEncode({
+        'accessToken': 'access-token',
+        'refreshToken': 'refresh-token',
+        'userId': 'user-1',
+        'email': 'dev@lineage.app',
+        'displayName': 'Dev User',
+        'providerIds': ['password'],
+        'isProfileComplete': true,
+        'missingFields': const [],
+      }),
+    );
+
+    final authService = await CustomApiAuthService.create(
+      httpClient: client,
+      preferences: prefs,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      invitationService: InvitationService(),
+    );
+
+    final treeService = CustomApiFamilyTreeService(
+      authService: authService,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      httpClient: client,
+    );
+
+    final relatives = await treeService.getRelatives('tree-4');
+    expect(relatives, hasLength(1));
+    expect(relatives.first.primaryPhotoUrl,
+        'https://cdn.example.ru/anna-primary.jpg');
+
+    final withAddedMedia = await treeService.addRelativeMedia(
+      treeId: 'tree-4',
+      personId: 'person-gallery',
+      mediaData: {
+        'url': 'https://cdn.example.ru/anna-second.jpg',
+        'type': 'image',
+        'uploadedAt': DateTime.utc(2026, 3, 27, 12, 5),
+      },
+    );
+    expect(addMediaBody['uploadedAt'], '2026-03-27T12:05:00.000Z');
+    expect(withAddedMedia.photoGallery, hasLength(2));
+    expect(withAddedMedia.primaryPhotoUrl,
+        'https://cdn.example.ru/anna-primary.jpg');
+
+    final withUpdatedPrimary = await treeService.updateRelativeMedia(
+      treeId: 'tree-4',
+      personId: 'person-gallery',
+      mediaId: 'media-2',
+      mediaData: {
+        'isPrimary': true,
+        'caption': 'Новая обложка',
+      },
+    );
+    expect(updateMediaBody['caption'], 'Новая обложка');
+    expect(withUpdatedPrimary.primaryPhotoUrl,
+        'https://cdn.example.ru/anna-second.jpg');
+    expect(withUpdatedPrimary.photoGallery.first['isPrimary'], true);
+    expect(withUpdatedPrimary.photoGallery.first['id'], 'media-2');
+
+    final withDeletedLegacy = await treeService.deleteRelativeMedia(
+      treeId: 'tree-4',
+      personId: 'person-gallery',
+      mediaId: 'media-1',
+    );
+    expect(
+        withDeletedLegacy.photoUrl, 'https://cdn.example.ru/anna-second.jpg');
+    expect(withDeletedLegacy.photoGallery, hasLength(1));
+
+    final history = await treeService.getTreeHistory(
+      treeId: 'tree-4',
+      personId: 'person-gallery',
+      actorId: 'user-1',
+    );
+    expect(history, hasLength(2));
+    expect(history.first.type, 'person_media.created');
+    expect(history.first.mediaId, 'media-2');
+    expect(history.last.type, 'person_media.deleted');
+    expect(history.last.details['deletedMediaId'], 'media-1');
+  });
+
+  test(
       'CustomApiFamilyTreeService links a new sibling to parents instead of siblings children',
       () async {
     final persons = <Map<String, dynamic>>[
