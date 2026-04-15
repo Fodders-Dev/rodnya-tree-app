@@ -323,7 +323,8 @@ class AppRouter {
                           ),
                           Expanded(
                             child: Padding(
-                              padding: const EdgeInsets.fromLTRB(0, 16, 16, 16),
+                              padding:
+                                  const EdgeInsets.fromLTRB(10, 16, 18, 16),
                               child: bodyContent,
                             ),
                           ),
@@ -590,7 +591,6 @@ class AppRouter {
                   // Просмотр конкретного дерева (открывается поверх)
                   GoRoute(
                     path: 'view/:treeId',
-                    parentNavigatorKey: rootNavigatorKey,
                     pageBuilder: (context, state) {
                       // treeId из pathParameters, name из queryParameters
                       final treeId = state.pathParameters['treeId'] ?? '';
@@ -1226,9 +1226,9 @@ class _AdaptiveNavigationRail extends StatelessWidget {
                     child: BackdropFilter(
                       filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
                       child: Container(
-                        width: 84,
+                        width: 94,
                         padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
+                          horizontal: 12,
                           vertical: 18,
                         ),
                         decoration: BoxDecoration(
@@ -1368,10 +1368,13 @@ class _RailDestination extends StatelessWidget {
               const SizedBox(height: 6),
               Text(
                 data.label,
-                maxLines: 2,
+                maxLines: 1,
+                softWrap: false,
                 textAlign: TextAlign.center,
                 overflow: TextOverflow.ellipsis,
                 style: theme.textTheme.labelSmall?.copyWith(
+                  fontSize: 11,
+                  height: 1.05,
                   color: selected ? scheme.primary : scheme.onSurfaceVariant,
                   fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
                 ),

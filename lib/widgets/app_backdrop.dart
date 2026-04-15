@@ -26,7 +26,7 @@ class AppBackdrop extends StatelessWidget {
             ),
           ),
           Opacity(
-            opacity: 0.9,
+            opacity: 0.98,
             child: SvgPicture.asset(
               'assets/backgrounds/rodnya_backdrop.svg',
               fit: BoxFit.cover,
