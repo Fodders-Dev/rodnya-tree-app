@@ -33,7 +33,9 @@ jobs:
         run: node tool/backend_runtime_watch.mjs --fail-on-warnings
 
       - name: Install smoke tooling
-        run: npm ci
+        run: |
+          npm ci
+          npm install --no-save playwright
 
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium

@@ -27,7 +27,9 @@ jobs:
         run: flutter pub get
 
       - name: Install smoke tooling
-        run: npm ci
+        run: |
+          npm ci
+          npm install --no-save playwright
 
       - name: Build web
         run: flutter build web --release --dart-define=RODNYA_RUNTIME_PRESET=prod_custom_api --dart-define=RODNYA_ENABLE_LEGACY_DYNAMIC_LINKS=false --dart-define=RODNYA_GOOGLE_WEB_CLIENT_ID=676171184233-hl6gauj8c1trtn25a8me7pvm4m4clndv.apps.googleusercontent.com
