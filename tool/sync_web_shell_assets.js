@@ -14,6 +14,28 @@ async function pathExists(targetPath) {
   }
 }
 
+async function resolveRepoRoot() {
+  const candidates = [
+    process.cwd(),
+    path.resolve(__dirname, ".."),
+  ];
+
+  for (const candidate of candidates) {
+    if (!candidate) {
+      continue;
+    }
+    const buildWebRoot = path.join(candidate, "build", "web");
+    const sourceWebRoot = path.join(candidate, "web");
+    if (await pathExists(buildWebRoot) && await pathExists(sourceWebRoot)) {
+      return candidate;
+    }
+  }
+
+  throw new Error(
+    "Could not resolve repository root with build/web and web directories.",
+  );
+}
+
 async function copyRecursive(sourcePath, targetPath) {
   const stats = await fs.stat(sourcePath);
   if (stats.isDirectory()) {
@@ -87,6 +109,38 @@ async function readAndroidFontManifest(repoRoot) {
   }
 
   return [];
+}
+
+async function resolveFlutterAssetSource(repoRoot) {
+  const candidates = [
+    path.join(repoRoot, "build", "unit_test_assets"),
+    path.join(
+      repoRoot,
+      "build",
+      "app",
+      "intermediates",
+      "flutter",
+      "rustoreRelease",
+      "flutter_assets",
+    ),
+    path.join(
+      repoRoot,
+      "build",
+      "app",
+      "intermediates",
+      "flutter",
+      "devRelease",
+      "flutter_assets",
+    ),
+  ];
+
+  for (const candidate of candidates) {
+    if (await pathExists(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
 }
 
 function filterFontManifest(fontManifest, assetFiles) {
@@ -171,22 +225,37 @@ async function writeGeneratedManifests(repoRoot) {
 }
 
 async function main() {
-  const repoRoot = path.resolve(__dirname, "..");
+  const repoRoot = await resolveRepoRoot();
   const buildWebRoot = path.join(repoRoot, "build", "web");
   const sourceWebRoot = path.join(repoRoot, "web");
+  const buildWebAssetRoot = path.join(buildWebRoot, "assets");
   const entriesToSync = [
     "icons",
     "favicon.png",
     "manifest.json",
     "push",
+    "max_auth.html",
+    "telegram_login.html",
   ];
 
   await fs.access(buildWebRoot);
+  await ensureDir(buildWebAssetRoot);
 
   for (const entry of entriesToSync) {
     const sourcePath = path.join(sourceWebRoot, entry);
     const targetPath = path.join(buildWebRoot, entry);
     await copyRecursive(sourcePath, targetPath);
+  }
+
+  const flutterAssetSource = await resolveFlutterAssetSource(repoRoot);
+  if (flutterAssetSource) {
+    for (const entry of ["assets", "fonts", "packages", "shaders"]) {
+      const sourcePath = path.join(flutterAssetSource, entry);
+      if (!await pathExists(sourcePath)) {
+        continue;
+      }
+      await copyRecursive(sourcePath, path.join(buildWebAssetRoot, entry));
+    }
   }
 
   const faviconPngPath = path.join(sourceWebRoot, "favicon.png");

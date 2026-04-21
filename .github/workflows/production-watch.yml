@@ -1,0 +1,78 @@
+name: Production Watch
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Backend readiness check
+        env:
+          RODNYA_READY_ALERT_WEBHOOK_URL: ${{ secrets.RODNYA_READY_ALERT_WEBHOOK_URL }}
+        run: node tool/backend_ready_alert.mjs --url https://api.rodnya-tree.ru/ready --fail-on-warnings
+
+      - name: Backend runtime watch
+        env:
+          RODNYA_RUNTIME_API_URL: https://api.rodnya-tree.ru
+          RODNYA_RUNTIME_EMAIL: ${{ secrets.RODNYA_RUNTIME_EMAIL }}
+          RODNYA_RUNTIME_PASSWORD: ${{ secrets.RODNYA_RUNTIME_PASSWORD }}
+          RODNYA_RUNTIME_ALERT_WEBHOOK_URL: ${{ secrets.RODNYA_RUNTIME_ALERT_WEBHOOK_URL }}
+          RODNYA_READY_ALERT_WEBHOOK_URL: ${{ secrets.RODNYA_READY_ALERT_WEBHOOK_URL }}
+        run: node tool/backend_runtime_watch.mjs --fail-on-warnings
+
+      - name: Install smoke tooling
+        run: npm ci
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Route smoke
+        env:
+          RODNYA_SMOKE_BASE_URL: https://rodnya-tree.ru
+          RODNYA_SMOKE_API_URL: https://api.rodnya-tree.ru
+          RODNYA_SMOKE_EMAIL: ${{ secrets.RODNYA_SMOKE_EMAIL }}
+          RODNYA_SMOKE_PASSWORD: ${{ secrets.RODNYA_SMOKE_PASSWORD }}
+          RODNYA_SMOKE_PARTNER_EMAIL: ${{ secrets.RODNYA_SMOKE_PARTNER_EMAIL }}
+          RODNYA_SMOKE_PARTNER_PASSWORD: ${{ secrets.RODNYA_SMOKE_PARTNER_PASSWORD }}
+          RODNYA_SMOKE_DISPLAY_NAME: Rodnya Smoke
+          RODNYA_SMOKE_TREE_NAME: Rodnya Smoke Tree
+          RODNYA_SMOKE_AUTO_REGISTER: "1"
+          RODNYA_SMOKE_FIXTURE_TREE_ID: ${{ secrets.RODNYA_SMOKE_FIXTURE_TREE_ID }}
+          RODNYA_SMOKE_CLAIM_URL: ${{ secrets.RODNYA_SMOKE_CLAIM_URL }}
+          RODNYA_SMOKE_INVITE_URL: ${{ secrets.RODNYA_SMOKE_INVITE_URL }}
+        run: node tool/prod_route_smoke.mjs --suite all --output-json output/playwright/prod-route-smoke.watch.json
+
+      - name: Setup SSH key
+        if: ${{ secrets.SERVER_SSH_KEY != '' && secrets.SERVER_HOST != '' && secrets.SERVER_USERNAME != '' }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Backup restore precheck
+        if: ${{ secrets.SERVER_SSH_KEY != '' && secrets.SERVER_HOST != '' && secrets.SERVER_USERNAME != '' }}
+        run: |
+          ssh -i ~/.ssh/id_ed25519 "${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_HOST }}" \
+            'bash -s -- /opt/rodnya/backups /tmp/rodnya-backup-watch' \
+            < deploy/backend/verify_backup_restore_drill.sh
+
+      - name: Upload watch artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-watch
+          path: output/playwright
+          if-no-files-found: ignore

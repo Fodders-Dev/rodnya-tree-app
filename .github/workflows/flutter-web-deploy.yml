@@ -20,8 +20,11 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
+      - name: Install smoke tooling
+        run: npm ci
+
       - name: Build web
-        run: flutter build web --release --dart-define=LINEAGE_RUNTIME_PRESET=prod_custom_api --dart-define=LINEAGE_ENABLE_LEGACY_DYNAMIC_LINKS=false
+        run: flutter build web --release --dart-define=RODNYA_RUNTIME_PRESET=prod_custom_api --dart-define=RODNYA_ENABLE_LEGACY_DYNAMIC_LINKS=false --dart-define=RODNYA_GOOGLE_WEB_CLIENT_ID=676171184233-hl6gauj8c1trtn25a8me7pvm4m4clndv.apps.googleusercontent.com
 
       - name: Sync web shell assets
         run: node tool/sync_web_shell_assets.js
@@ -61,3 +64,42 @@ jobs:
           fi
           rm -f "$archive"
           EOF
+
+      - name: Backend readiness check
+        env:
+          RODNYA_READY_ALERT_WEBHOOK_URL: ${{ secrets.RODNYA_READY_ALERT_WEBHOOK_URL }}
+        run: node tool/backend_ready_alert.mjs --url https://api.rodnya-tree.ru/ready
+
+      - name: Backend runtime watch
+        env:
+          RODNYA_RUNTIME_API_URL: https://api.rodnya-tree.ru
+          RODNYA_RUNTIME_EMAIL: ${{ secrets.RODNYA_RUNTIME_EMAIL }}
+          RODNYA_RUNTIME_PASSWORD: ${{ secrets.RODNYA_RUNTIME_PASSWORD }}
+          RODNYA_RUNTIME_ALERT_WEBHOOK_URL: ${{ secrets.RODNYA_RUNTIME_ALERT_WEBHOOK_URL }}
+          RODNYA_READY_ALERT_WEBHOOK_URL: ${{ secrets.RODNYA_READY_ALERT_WEBHOOK_URL }}
+        run: node tool/backend_runtime_watch.mjs --fail-on-warnings
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Route smoke after deploy
+        env:
+          RODNYA_SMOKE_EMAIL: ${{ secrets.RODNYA_SMOKE_EMAIL }}
+          RODNYA_SMOKE_PASSWORD: ${{ secrets.RODNYA_SMOKE_PASSWORD }}
+          RODNYA_SMOKE_PARTNER_EMAIL: ${{ secrets.RODNYA_SMOKE_PARTNER_EMAIL }}
+          RODNYA_SMOKE_PARTNER_PASSWORD: ${{ secrets.RODNYA_SMOKE_PARTNER_PASSWORD }}
+          RODNYA_SMOKE_DISPLAY_NAME: Rodnya Smoke
+          RODNYA_SMOKE_TREE_NAME: Rodnya Smoke Tree
+          RODNYA_SMOKE_AUTO_REGISTER: "1"
+          RODNYA_SMOKE_FIXTURE_TREE_ID: ${{ secrets.RODNYA_SMOKE_FIXTURE_TREE_ID }}
+          RODNYA_SMOKE_CLAIM_URL: ${{ secrets.RODNYA_SMOKE_CLAIM_URL }}
+          RODNYA_SMOKE_INVITE_URL: ${{ secrets.RODNYA_SMOKE_INVITE_URL }}
+        run: node tool/prod_route_smoke.mjs --base-url https://rodnya-tree.ru --api-url https://api.rodnya-tree.ru --output-json output/playwright/prod-route-smoke.ci.json
+
+      - name: Upload smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prod-route-smoke
+          path: output/playwright
+          if-no-files-found: ignore
