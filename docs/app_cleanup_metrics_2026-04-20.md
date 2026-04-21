@@ -227,6 +227,9 @@
   - `recentErrorCount=0`
 - backup/restore drill:
   - `deploy/backend/verify_backup_restore_drill.sh` успешно провалидировал последний backend backup на сервере
+- GitHub Actions:
+  - `Production Watch` workflow dispatch `24711915793` завершился `success`
+  - route smoke artifact сохранён как `production-watch`
 - live release markers:
   - web: `deploy 2026-04-21 11:08 +0300 / codex-local / dirty-tree-web-assets`
   - backend: `deploy 2026-04-21 10:53 +0300 / codex-local / dirty-tree-backend`

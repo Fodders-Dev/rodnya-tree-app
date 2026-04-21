@@ -85,6 +85,7 @@ Scope:
   - `https://api.rodnya-tree.ru/ready` returns `storage=postgres`, `media=s3`, `adminEmailsConfigured=1`, `warnings=[]`
   - runtime watch reports `recentErrorCount=0`
   - the latest backend backup archive was restored successfully in the backup/restore drill
+  - GitHub Actions `Production Watch` manual dispatch `24711915793` passed end-to-end with the same smoke/runtime contract
 - Auth flow itself works on web with the current custom API session logic.
 - Relatives list loads real data and reflects invite/chat affordances.
 - Tree route redirect and tree rendering work after login.
