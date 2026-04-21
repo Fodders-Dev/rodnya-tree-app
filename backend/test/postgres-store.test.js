@@ -98,7 +98,8 @@ test("PostgresStore reads can fall back when the write queue is stuck", async ()
   });
 
   await store.initialize();
-  store._writeQueue = new Promise(() => {});
+  store._stateWriteQueue = new Promise(() => {});
+  store._writeQueue = store._stateWriteQueue;
 
   const snapshot = await store._read();
   assert.deepEqual(snapshot.users, []);
@@ -318,10 +319,13 @@ test("PostgresStore auth hot paths avoid full state reads", async () => {
   const store = new PostgresStore({
     connectionString: "postgresql://unused/rodnya",
     pool,
+    queryTimeoutMs: 25,
   });
 
   await store.initialize();
   queries.length = 0;
+  store._stateWriteQueue = new Promise(() => {});
+  store._writeQueue = store._stateWriteQueue;
 
   const authenticatedUser = await store.authenticate(
     "smoke@rodnya-tree.ru",

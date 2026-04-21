@@ -178,6 +178,9 @@ class PostgresStore extends FileStore {
     this._writeQueueTimeoutMs = queryTimeoutMs > 0
       ? Math.max(queryTimeoutMs, DEFAULT_WRITE_QUEUE_TIMEOUT_MS)
       : DEFAULT_WRITE_QUEUE_TIMEOUT_MS;
+    this._stateWriteQueue = Promise.resolve();
+    this._sessionWriteQueue = Promise.resolve();
+    this._writeQueue = this._stateWriteQueue;
     this._lastUsersProjectionHash = null;
     this._lastSessionsProjectionHash = null;
   }
@@ -442,7 +445,7 @@ class PostgresStore extends FileStore {
 
   async _awaitReadConsistency() {
     try {
-      await this._awaitWriteQueue();
+      await this._awaitWriteQueue(this._stateWriteQueue);
     } catch (error) {
       if (error?.code !== "POSTGRES_WRITE_QUEUE_TIMEOUT") {
         throw error;
@@ -504,7 +507,6 @@ class PostgresStore extends FileStore {
 
   async _selectSessionsArray() {
     await this.initialize();
-    await this._awaitReadConsistency();
     return this._selectProjectedSessionsArray();
   }
 
@@ -527,7 +529,6 @@ class PostgresStore extends FileStore {
       return null;
     }
     await this.initialize();
-    await this._awaitReadConsistency();
     const result = await this._pool.query(
       `SELECT user_data
          FROM ${this._qualifiedAuthUsersTableName}
@@ -556,7 +557,6 @@ class PostgresStore extends FileStore {
     }
 
     await this.initialize();
-    await this._awaitReadConsistency();
     const result = await this._pool.query(
       `SELECT user_data
          FROM ${this._qualifiedAuthUsersTableName}
@@ -578,7 +578,6 @@ class PostgresStore extends FileStore {
     }
 
     await this.initialize();
-    await this._awaitReadConsistency();
     const result = await this._pool.query(
       `SELECT user_data
          FROM ${this._qualifiedAuthUsersTableName}
@@ -598,7 +597,7 @@ class PostgresStore extends FileStore {
     const token = crypto.randomBytes(32).toString("hex");
     const refreshToken = crypto.randomBytes(32).toString("hex");
 
-    const previousQueue = this._writeQueue.catch(() => {});
+    const previousQueue = this._sessionWriteQueue.catch(() => {});
     const nextWrite = previousQueue.then(async () => {
       await this.initialize();
       const userSessions = await this._selectProjectedSessionsForUser(userId);
@@ -628,7 +627,7 @@ class PostgresStore extends FileStore {
       return {createdSession, evictedSessions};
     });
 
-    this._writeQueue = nextWrite.catch((error) => {
+    this._sessionWriteQueue = nextWrite.catch((error) => {
       console.error(
         "[backend] postgres-store write failed",
         JSON.stringify({
@@ -659,7 +658,6 @@ class PostgresStore extends FileStore {
     }
 
     await this.initialize();
-    await this._awaitReadConsistency();
     const result = await this._pool.query(
       `SELECT session_data
          FROM ${this._qualifiedAuthSessionsTableName}
@@ -681,7 +679,6 @@ class PostgresStore extends FileStore {
     }
 
     await this.initialize();
-    await this._awaitReadConsistency();
     const result = await this._pool.query(
       `SELECT session_data
          FROM ${this._qualifiedAuthSessionsTableName}
@@ -712,7 +709,7 @@ class PostgresStore extends FileStore {
     }
 
     this._sessionTouchCache.set(normalizedToken, nowMs);
-    const previousQueue = this._writeQueue.catch(() => {});
+    const previousQueue = this._sessionWriteQueue.catch(() => {});
     const nextWrite = previousQueue.then(async () => {
       await this.initialize();
       const result = await this._pool.query(
@@ -744,7 +741,7 @@ class PostgresStore extends FileStore {
       return session;
     });
 
-    this._writeQueue = nextWrite.catch((error) => {
+    this._sessionWriteQueue = nextWrite.catch((error) => {
       console.error(
         "[backend] postgres-store write failed",
         JSON.stringify({
@@ -770,16 +767,16 @@ class PostgresStore extends FileStore {
       return;
     }
 
-    const previousQueue = this._writeQueue.catch(() => {});
+    const previousQueue = this._sessionWriteQueue.catch(() => {});
     const nextWrite = previousQueue.then(async () => {
       await this.initialize();
       await this._pool.query(
         `DELETE FROM ${this._qualifiedAuthSessionsTableName} WHERE token = $1`,
         [normalizedToken],
-      );
+        );
     });
 
-    this._writeQueue = nextWrite.catch((error) => {
+    this._sessionWriteQueue = nextWrite.catch((error) => {
       console.error(
         "[backend] postgres-store write failed",
         JSON.stringify({
@@ -801,7 +798,7 @@ class PostgresStore extends FileStore {
       return;
     }
 
-    const previousQueue = this._writeQueue.catch(() => {});
+    const previousQueue = this._sessionWriteQueue.catch(() => {});
     const nextWrite = previousQueue.then(async () => {
       await this.initialize();
       const result = await this._pool.query(
@@ -822,7 +819,7 @@ class PostgresStore extends FileStore {
       return deletedTokens;
     });
 
-    this._writeQueue = nextWrite.catch((error) => {
+    this._sessionWriteQueue = nextWrite.catch((error) => {
       console.error(
         "[backend] postgres-store write failed",
         JSON.stringify({
@@ -878,7 +875,7 @@ class PostgresStore extends FileStore {
       },
     });
 
-    const previousQueue = this._writeQueue.catch(() => {});
+    const previousQueue = this._stateWriteQueue.catch(() => {});
     const nextWrite = previousQueue.then(async () => {
       await this.initialize();
       const result = await this._pool.query(
@@ -933,7 +930,7 @@ class PostgresStore extends FileStore {
       return structuredClone(person);
     });
 
-    this._writeQueue = nextWrite.catch((error) => {
+    this._stateWriteQueue = nextWrite.catch((error) => {
       console.error(
         "[backend] postgres-store write failed",
         JSON.stringify({
@@ -944,6 +941,7 @@ class PostgresStore extends FileStore {
       );
       throw error;
     });
+    this._writeQueue = this._stateWriteQueue;
 
     return nextWrite;
   }
@@ -1389,7 +1387,7 @@ class PostgresStore extends FileStore {
   }
 
   async _write(data) {
-    const previousQueue = this._writeQueue.catch(() => {});
+    const previousQueue = this._stateWriteQueue.catch(() => {});
     const nextWrite = previousQueue.then(async () => {
       await this.initialize();
       const nextUsersHash = computeProjectionHash(data?.users);
@@ -1415,7 +1413,7 @@ class PostgresStore extends FileStore {
         this._lastSessionsProjectionHash = nextSessionsHash;
       }
     });
-    this._writeQueue = nextWrite.catch((error) => {
+    this._stateWriteQueue = nextWrite.catch((error) => {
       console.error(
         "[backend] postgres-store write failed",
         JSON.stringify({
@@ -1426,12 +1424,13 @@ class PostgresStore extends FileStore {
       );
       throw error;
     });
+    this._writeQueue = this._stateWriteQueue;
 
     return nextWrite;
   }
 
-  async _awaitWriteQueue() {
-    const pendingWrite = this._writeQueue.catch(() => {});
+  async _awaitWriteQueue(queuePromise = this._stateWriteQueue) {
+    const pendingWrite = queuePromise.catch(() => {});
     if (this._writeQueueTimeoutMs <= 0) {
       await pendingWrite;
       return;
@@ -1460,7 +1459,7 @@ class PostgresStore extends FileStore {
   }
 
   async close() {
-    await this._writeQueue;
+    await Promise.allSettled([this._stateWriteQueue, this._sessionWriteQueue]);
     if (this._poolRelease) {
       await this._poolRelease();
       this._poolRelease = null;
