@@ -525,8 +525,37 @@ test("PostgresStore createPerson skips auth projection rewrites when auth state 
           rows: projectedSessions.map((entry) => ({session_data: entry})),
         };
       }
+      if (
+        sql.includes("UPDATE \"public\".\"rodnya_state\"") &&
+        sql.includes("'{persons}'") &&
+        sql.includes("'{treeChangeRecords}'") &&
+        sql.includes("'{trees}'")
+      ) {
+        const nextPerson = JSON.parse(params[1]);
+        const nextChangeRecord = JSON.parse(params[2]);
+        const treeId = params[3];
+        const treeUpdatedAt = params[4];
+        const tree = state.trees.find((entry) => entry.id === treeId) || null;
+        if (!tree) {
+          return {rowCount: 0, rows: []};
+        }
+        state = {
+          ...state,
+          persons: [...state.persons, nextPerson],
+          treeChangeRecords: [...state.treeChangeRecords, nextChangeRecord],
+          trees: state.trees.map((entry) =>
+            entry.id === treeId
+              ? {
+                  ...entry,
+                  updatedAt: treeUpdatedAt,
+                }
+              : entry,
+          ),
+        };
+        return {rowCount: 1, rows: [{updated_at: treeUpdatedAt}]};
+      }
       if (sql.includes("SELECT data")) {
-        return {rows: [{data: state}]};
+        throw new Error("full_state_read_not_allowed");
       }
       if (sql.includes("ON CONFLICT (id) DO UPDATE")) {
         state = JSON.parse(params[1]);
@@ -571,6 +600,10 @@ test("PostgresStore createPerson skips auth projection rewrites when auth state 
         sql.includes("DELETE FROM \"public\".\"rodnya_state_auth_sessions\"") ||
         sql.includes("INSERT INTO \"public\".\"rodnya_state_auth_sessions\""),
     ),
+    false,
+  );
+  assert.equal(
+    queries.some((sql) => sql.includes("SELECT data FROM")),
     false,
   );
 });

@@ -4,7 +4,9 @@ const {Pool} = require("pg");
 const {
   FileStore,
   EMPTY_DB,
+  buildPersonRecord,
   cloneUserWithAuthState,
+  createTreeChangeRecord,
   describeMessagePreview,
   normalizeDbState,
   normalizeParticipantIds,
@@ -836,6 +838,114 @@ class PostgresStore extends FileStore {
     for (const token of deletedTokens) {
       this._forgetSession(token);
     }
+  }
+
+  async createPerson({
+    treeId,
+    creatorId,
+    personData,
+    userId = null,
+  }) {
+    if (userId) {
+      return super.createPerson({
+        treeId,
+        creatorId,
+        personData,
+        userId,
+      });
+    }
+
+    const normalizedTreeId = String(treeId || "").trim();
+    if (!normalizedTreeId) {
+      return null;
+    }
+
+    const person = buildPersonRecord({
+      treeId: normalizedTreeId,
+      creatorId,
+      personData,
+      userId: null,
+      identityId: null,
+    });
+    const treeUpdatedAt = person.updatedAt || nowIso();
+    const changeRecord = createTreeChangeRecord({
+      treeId: normalizedTreeId,
+      actorId: creatorId,
+      type: "person.created",
+      personId: person.id,
+      details: {
+        after: structuredClone(person),
+      },
+    });
+
+    const previousQueue = this._writeQueue.catch(() => {});
+    const nextWrite = previousQueue.then(async () => {
+      await this.initialize();
+      const result = await this._pool.query(
+        `UPDATE ${this._qualifiedTableName}
+            SET data = jsonb_set(
+                  jsonb_set(
+                    jsonb_set(
+                      data,
+                      '{persons}',
+                      COALESCE(data->'persons', '[]'::jsonb) || jsonb_build_array($2::jsonb),
+                      true
+                    ),
+                    '{treeChangeRecords}',
+                    COALESCE(data->'treeChangeRecords', '[]'::jsonb) || jsonb_build_array($3::jsonb),
+                    true
+                  ),
+                  '{trees}',
+                  COALESCE(
+                    (
+                      SELECT jsonb_agg(
+                        CASE
+                          WHEN COALESCE(tree_entry->>'id', '') = $4
+                            THEN jsonb_set(tree_entry, '{updatedAt}', to_jsonb($5::text), true)
+                          ELSE tree_entry
+                        END
+                      )
+                        FROM jsonb_array_elements(COALESCE(data->'trees', '[]'::jsonb)) AS tree_entry
+                    ),
+                    '[]'::jsonb
+                  ),
+                  true
+                ),
+                updated_at = NOW()
+          WHERE id = $1
+            AND EXISTS (
+              SELECT 1
+                FROM jsonb_array_elements(COALESCE(data->'trees', '[]'::jsonb)) AS tree_entry
+               WHERE COALESCE(tree_entry->>'id', '') = $4
+            )
+          RETURNING updated_at`,
+        [
+          this._rowId,
+          JSON.stringify(person),
+          JSON.stringify(changeRecord),
+          normalizedTreeId,
+          treeUpdatedAt,
+        ],
+      );
+      if (result.rowCount === 0) {
+        return null;
+      }
+      return structuredClone(person);
+    });
+
+    this._writeQueue = nextWrite.catch((error) => {
+      console.error(
+        "[backend] postgres-store write failed",
+        JSON.stringify({
+          table: `${this._schema}.${this._table}`,
+          rowId: this._rowId,
+          message: String(error?.message || error || "unknown_error"),
+        }),
+      );
+      throw error;
+    });
+
+    return nextWrite;
   }
 
   async _selectStoredTreeInvitationsForUser(userId) {
