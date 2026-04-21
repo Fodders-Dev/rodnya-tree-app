@@ -3949,6 +3949,8 @@ class FileStore {
     this.storageTarget = dataPath;
     this._writeQueue = Promise.resolve();
     this._sessionTouchCache = new Map();
+    this._sessionCache = new Map();
+    this._userCache = new Map();
   }
 
   async initialize() {
@@ -3963,6 +3965,11 @@ class FileStore {
         "utf8",
       );
     }
+  }
+
+  async healthCheck() {
+    await this.initialize();
+    await fs.access(path.dirname(this.dataPath));
   }
 
   async _read() {
@@ -3985,6 +3992,39 @@ class FileStore {
       await fs.rename(tempPath, this.dataPath);
     });
     return this._writeQueue;
+  }
+
+  _rememberSession(session) {
+    const normalizedToken = String(session?.token || "").trim();
+    if (!normalizedToken) {
+      return;
+    }
+    this._sessionCache.set(normalizedToken, structuredClone(session));
+  }
+
+  _forgetSession(token) {
+    const normalizedToken = String(token || "").trim();
+    if (!normalizedToken) {
+      return;
+    }
+    this._sessionCache.delete(normalizedToken);
+    this._sessionTouchCache.delete(normalizedToken);
+  }
+
+  _rememberUser(user) {
+    const normalizedUserId = String(user?.id || "").trim();
+    if (!normalizedUserId) {
+      return;
+    }
+    this._userCache.set(normalizedUserId, cloneUserWithAuthState(user));
+  }
+
+  _forgetUser(userId) {
+    const normalizedUserId = String(userId || "").trim();
+    if (!normalizedUserId) {
+      return;
+    }
+    this._userCache.delete(normalizedUserId);
   }
 
   _appendTreeChangeRecord(db, {
@@ -4417,6 +4457,7 @@ class FileStore {
 
     db.users.push(user);
     await this._write(db);
+    this._rememberUser(user);
     return cloneUserWithAuthState(user);
   }
 
@@ -4429,12 +4470,24 @@ class FileStore {
       return null;
     }
 
+    this._rememberUser(user);
     return cloneUserWithAuthState(user);
   }
 
   async findUserById(userId) {
+    const normalizedUserId = String(userId || "").trim();
+    if (!normalizedUserId) {
+      return null;
+    }
+    const cachedUser = this._userCache.get(normalizedUserId);
+    if (cachedUser) {
+      return cloneUserWithAuthState(cachedUser);
+    }
     const db = await this._read();
-    const user = db.users.find((entry) => entry.id === userId);
+    const user = db.users.find((entry) => entry.id === normalizedUserId);
+    if (user) {
+      this._rememberUser(user);
+    }
     return user ? cloneUserWithAuthState(user) : null;
   }
 
@@ -4446,6 +4499,9 @@ class FileStore {
     }
 
     const user = db.users.find((entry) => entry.email === normalizedEmail);
+    if (user) {
+      this._rememberUser(user);
+    }
     return user ? cloneUserWithAuthState(user) : null;
   }
 
@@ -4464,6 +4520,9 @@ class FileStore {
           identity.providerUserId === normalizedProviderUserId,
       ),
     );
+    if (user) {
+      this._rememberUser(user);
+    }
     return user ? cloneUserWithAuthState(user) : null;
   }
 
@@ -4478,20 +4537,29 @@ class FileStore {
     const otherSessions = db.sessions.filter((s) => s.userId !== userId);
     
     const sessionsToKeep = userSessions.slice(-4); // Keep 4 previous, total 5 after push
+    const evictedSessions = userSessions.slice(
+      0,
+      Math.max(0, userSessions.length - sessionsToKeep.length),
+    );
+    const createdSession = {
+      token,
+      refreshToken,
+      userId,
+      createdAt,
+      lastSeenAt: createdAt,
+    };
     
     db.sessions = [
       ...otherSessions,
       ...sessionsToKeep,
-      {
-        token,
-        refreshToken,
-        userId,
-        createdAt,
-        lastSeenAt: createdAt,
-      }
+      createdSession,
     ];
 
     await this._write(db);
+    for (const session of evictedSessions) {
+      this._forgetSession(session?.token);
+    }
+    this._rememberSession(createdSession);
     return {
       token,
       refreshToken,
@@ -4501,6 +4569,9 @@ class FileStore {
   async findSessionByRefreshToken(refreshToken) {
     const db = await this._read();
     const session = db.sessions.find((entry) => entry.refreshToken === refreshToken);
+    if (session) {
+      this._rememberSession(session);
+    }
     return session ? structuredClone(session) : null;
   }
 
@@ -4552,8 +4623,19 @@ class FileStore {
   }
 
   async findSession(token) {
+    const normalizedToken = String(token || "").trim();
+    if (!normalizedToken) {
+      return null;
+    }
+    const cachedSession = this._sessionCache.get(normalizedToken);
+    if (cachedSession) {
+      return structuredClone(cachedSession);
+    }
     const db = await this._read();
-    const session = db.sessions.find((entry) => entry.token === token);
+    const session = db.sessions.find((entry) => entry.token === normalizedToken);
+    if (session) {
+      this._rememberSession(session);
+    }
     return session ? structuredClone(session) : null;
   }
 
@@ -4576,7 +4658,7 @@ class FileStore {
     const db = await this._read();
     const session = db.sessions.find((entry) => entry.token === normalizedToken);
     if (!session) {
-      this._sessionTouchCache.delete(normalizedToken);
+      this._forgetSession(normalizedToken);
       return null;
     }
 
@@ -4586,6 +4668,7 @@ class FileStore {
       nowMs - lastSeenAtMs < SESSION_TOUCH_MIN_INTERVAL_MS
     ) {
       this._sessionTouchCache.set(normalizedToken, lastSeenAtMs);
+      this._rememberSession(session);
       return structuredClone(session);
     }
 
@@ -4593,16 +4676,17 @@ class FileStore {
     try {
       await this._write(db);
     } catch (error) {
-      this._sessionTouchCache.delete(normalizedToken);
+      this._forgetSession(normalizedToken);
       throw error;
     }
+    this._rememberSession(session);
     return structuredClone(session);
   }
 
   async deleteSession(token) {
     const db = await this._read();
     db.sessions = db.sessions.filter((entry) => entry.token !== token);
-    this._sessionTouchCache.delete(token);
+    this._forgetSession(token);
     await this._write(db);
   }
 
@@ -4613,7 +4697,7 @@ class FileStore {
       .map((entry) => entry.token);
     db.sessions = db.sessions.filter((entry) => entry.userId !== userId);
     for (const token of deletedTokens) {
-      this._sessionTouchCache.delete(token);
+      this._forgetSession(token);
     }
     await this._write(db);
   }
@@ -4794,6 +4878,7 @@ class FileStore {
     }
 
     await this._write(db);
+    this._rememberUser(user);
     return structuredClone(user);
   }
 
@@ -4803,6 +4888,9 @@ class FileStore {
     if (!existingUser) {
       return null;
     }
+    const deletedSessionTokens = db.sessions
+      .filter((entry) => entry.userId === userId)
+      .map((entry) => entry.token);
 
     const timestamp = nowIso();
     const removedTreeIds = new Set();
@@ -5024,6 +5112,10 @@ class FileStore {
     });
     this._reconcilePersonIdentities(db);
     await this._write(db);
+    this._forgetUser(userId);
+    for (const token of deletedSessionTokens) {
+      this._forgetSession(token);
+    }
     return {
       userId,
       removedTreeIds: Array.from(removedTreeIds),
@@ -5250,8 +5342,14 @@ class FileStore {
 
     if (changed) {
       tree.updatedAt = nowIso();
-      await this._write(db);
+    await this._write(db);
+    this._forgetUser(userId);
+    for (const entry of db.sessions) {
+      if (entry.userId === userId) {
+        this._forgetSession(entry.token);
+      }
     }
+  }
 
     return structuredClone(tree);
   }

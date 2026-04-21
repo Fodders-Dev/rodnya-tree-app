@@ -8133,3 +8133,56 @@ test("ready endpoint and auth rate limiting expose operational state", async () 
     await stopTestServer(ctx);
   }
 });
+
+test("ready endpoint prefers lightweight store health check when available", async () => {
+  const ctx = await startConfiguredTestServer();
+
+  try {
+    let healthCheckCalls = 0;
+    ctx.store.healthCheck = async () => {
+      healthCheckCalls += 1;
+    };
+    ctx.store._read = async () => {
+      throw new Error("ready_should_not_read_full_state");
+    };
+
+    const readyResponse = await fetch(`${ctx.baseUrl}/ready`);
+    assert.equal(readyResponse.status, 200);
+    const readyPayload = await readyResponse.json();
+    assert.equal(readyPayload.status, "ready");
+    assert.equal(healthCheckCalls, 1);
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("auth session endpoint can serve from cached auth context", async () => {
+  const ctx = await startTestServer();
+
+  try {
+    const registerResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "cache-auth@rodnya.app",
+        password: "secret123",
+        displayName: "Cache Auth",
+      }),
+    });
+    assert.equal(registerResponse.status, 201);
+    const registered = await registerResponse.json();
+
+    ctx.store._read = async () => {
+      throw new Error("store_read_should_not_be_used");
+    };
+
+    const sessionResponse = await fetch(`${ctx.baseUrl}/v1/auth/session`, {
+      headers: {authorization: `Bearer ${registered.accessToken}`},
+    });
+    assert.equal(sessionResponse.status, 200);
+    const sessionPayload = await sessionResponse.json();
+    assert.equal(sessionPayload.user.email, "cache-auth@rodnya.app");
+  } finally {
+    await stopTestServer(ctx);
+  }
+});

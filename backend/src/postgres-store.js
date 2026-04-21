@@ -64,6 +64,11 @@ class PostgresStore extends FileStore {
     await this._initializePromise;
   }
 
+  async healthCheck() {
+    await this.initialize();
+    await this._pool.query("SELECT 1");
+  }
+
   async _bootstrap() {
     await this._pool.query(
       `CREATE SCHEMA IF NOT EXISTS ${quoteIdentifier(this._schema)}`,

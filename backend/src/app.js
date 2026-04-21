@@ -607,16 +607,20 @@ function createApp({
 
   app.get("/ready", async (req, res) => {
     try {
-      if (storageMode === "file-store") {
-        const dataDir = path.dirname(config.dataPath);
-        await fs.mkdir(dataDir, {recursive: true});
-        await fs.access(dataDir);
-      }
-      if (typeof store?.initialize === "function") {
-        await store.initialize();
-      }
-      if (typeof store?._read === "function") {
-        await store._read();
+      if (typeof store?.healthCheck === "function") {
+        await store.healthCheck();
+      } else {
+        if (storageMode === "file-store") {
+          const dataDir = path.dirname(config.dataPath);
+          await fs.mkdir(dataDir, {recursive: true});
+          await fs.access(dataDir);
+        }
+        if (typeof store?.initialize === "function") {
+          await store.initialize();
+        }
+        if (typeof store?._read === "function") {
+          await store._read();
+        }
       }
       await resolvedMediaStorage.ensureReady();
       res.json(
