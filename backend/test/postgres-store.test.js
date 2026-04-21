@@ -26,6 +26,9 @@ test("PostgresStore recovers from a failed write without poisoning the queue", a
       ) {
         return {rows: []};
       }
+      if (sql.includes("SELECT session_data")) {
+        return {rows: []};
+      }
       if (sql.includes("SELECT data")) {
         return {rows: [{data: state}]};
       }
@@ -59,7 +62,7 @@ test("PostgresStore recovers from a failed write without poisoning the queue", a
   assert.deepEqual(snapshot.users, [{id: "u-2"}]);
 });
 
-test("PostgresStore read fails fast when the write queue is stuck", async () => {
+test("PostgresStore reads can fall back when the write queue is stuck", async () => {
   const pool = {
     async query(sql) {
       if (
@@ -78,6 +81,9 @@ test("PostgresStore read fails fast when the write queue is stuck", async () => 
       ) {
         return {rows: []};
       }
+      if (sql.includes("SELECT session_data")) {
+        return {rows: []};
+      }
       if (sql.includes("SELECT data")) {
         return {rows: [{data: {users: []}}]};
       }
@@ -94,10 +100,8 @@ test("PostgresStore read fails fast when the write queue is stuck", async () => 
   await store.initialize();
   store._writeQueue = new Promise(() => {});
 
-  await assert.rejects(store._read(), (error) => {
-    assert.equal(error?.code, "POSTGRES_WRITE_QUEUE_TIMEOUT");
-    return true;
-  });
+  const snapshot = await store._read();
+  assert.deepEqual(snapshot.users, []);
 });
 
 test("PostgresStore reuses one shared pool for identical config", async () => {
@@ -122,6 +126,9 @@ test("PostgresStore reuses one shared pool for identical config", async () => {
           sql.includes("INSERT INTO \"public\".\"rodnya_state_auth_users\"") ||
           sql.includes("INSERT INTO \"public\".\"rodnya_state_auth_sessions\"")
         ) {
+          return {rows: []};
+        }
+        if (sql.includes("SELECT session_data")) {
           return {rows: []};
         }
         if (sql.includes("SELECT data")) {
@@ -196,11 +203,17 @@ test("PostgresStore auth hot paths avoid full state reads", async () => {
       ) {
         return {rows: []};
       }
-      if (sql.includes("DELETE FROM \"public\".\"rodnya_state_auth_users\"")) {
+      if (
+        sql.includes("DELETE FROM \"public\".\"rodnya_state_auth_users\"") &&
+        !sql.includes("WHERE ")
+      ) {
         projectedUsers = [];
         return {rows: []};
       }
-      if (sql.includes("DELETE FROM \"public\".\"rodnya_state_auth_sessions\"")) {
+      if (
+        sql.includes("DELETE FROM \"public\".\"rodnya_state_auth_sessions\"") &&
+        !sql.includes("WHERE ")
+      ) {
         projectedSessions = [];
         return {rows: []};
       }
@@ -233,6 +246,18 @@ test("PostgresStore auth hot paths avoid full state reads", async () => {
         sessions = projectedSessions;
         return {rows: []};
       }
+      if (
+        sql.includes("INSERT INTO \"public\".\"rodnya_state_auth_sessions\"") &&
+        sql.includes("ON CONFLICT (token) DO UPDATE")
+      ) {
+        const nextSession = JSON.parse(params[4]);
+        projectedSessions = [
+          ...projectedSessions.filter((entry) => entry.token !== nextSession.token),
+          nextSession,
+        ];
+        sessions = projectedSessions;
+        return {rows: []};
+      }
       if (sql.includes("SELECT user_data")) {
         const userParam = params[0];
         const match = projectedUsers.find(
@@ -243,6 +268,13 @@ test("PostgresStore auth hot paths avoid full state reads", async () => {
       if (sql.includes("SELECT session_data")) {
         const sessionParam = params[0];
         if (sql.includes("ORDER BY created_at NULLS FIRST, token")) {
+          if (sql.includes("WHERE user_id = $1")) {
+            return {
+              rows: projectedSessions
+                .filter((entry) => entry.userId === sessionParam)
+                .map((entry) => ({session_data: entry})),
+            };
+          }
           return {
             rows: projectedSessions.map((entry) => ({session_data: entry})),
           };
@@ -250,10 +282,29 @@ test("PostgresStore auth hot paths avoid full state reads", async () => {
         const match = projectedSessions.find(
           (entry) =>
             entry.token === sessionParam || entry.refreshToken === sessionParam,
-        );
+          );
         return {rows: match ? [{session_data: match}] : []};
       }
-      if (sql.includes("jsonb_set(") && sql.includes("'{sessions}'")) {
+      if (sql.includes("SELECT token")) {
+        return {
+          rows: projectedSessions
+            .filter((entry) => entry.userId === params[0])
+            .map((entry) => ({token: entry.token})),
+        };
+      }
+      if (
+        sql.includes("DELETE FROM \"public\".\"rodnya_state_auth_sessions\"") &&
+        sql.includes("WHERE token = $1")
+      ) {
+        projectedSessions = projectedSessions.filter((entry) => entry.token !== params[0]);
+        sessions = projectedSessions;
+        return {rows: []};
+      }
+      if (
+        sql.includes("DELETE FROM \"public\".\"rodnya_state_auth_sessions\"") &&
+        sql.includes("WHERE user_id = $1")
+      ) {
+        projectedSessions = projectedSessions.filter((entry) => entry.userId !== params[0]);
         sessions = projectedSessions;
         return {rows: []};
       }
@@ -270,6 +321,7 @@ test("PostgresStore auth hot paths avoid full state reads", async () => {
   });
 
   await store.initialize();
+  queries.length = 0;
 
   const authenticatedUser = await store.authenticate(
     "smoke@rodnya-tree.ru",
@@ -306,6 +358,10 @@ test("PostgresStore auth hot paths avoid full state reads", async () => {
   assert.equal(sessions.length, 0);
   assert.equal(
     queries.some((sql) => sql.includes("SELECT data FROM")),
+    false,
+  );
+  assert.equal(
+    queries.some((sql) => sql.includes("jsonb_set(") && sql.includes("'{sessions}'")),
     false,
   );
 });

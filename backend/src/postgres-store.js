@@ -81,8 +81,6 @@ function acquireSharedPool({
         connectionString,
         connectionTimeoutMillis,
         idleTimeoutMillis,
-        query_timeout: queryTimeoutMs,
-        statement_timeout: queryTimeoutMs,
         keepAlive: true,
         max: poolMax,
         application_name:
@@ -423,9 +421,71 @@ class PostgresStore extends FileStore {
     );
   }
 
+  async _awaitReadConsistency() {
+    try {
+      await this._awaitWriteQueue();
+    } catch (error) {
+      if (error?.code !== "POSTGRES_WRITE_QUEUE_TIMEOUT") {
+        throw error;
+      }
+      console.warn(
+        "[backend] postgres-store continuing read while write queue is busy",
+        JSON.stringify({
+          table: `${this._schema}.${this._table}`,
+          rowId: this._rowId,
+          writeQueueTimeoutMs: this._writeQueueTimeoutMs,
+        }),
+      );
+    }
+  }
+
+  async _selectProjectedSessionsForUser(userId) {
+    const normalizedUserId = String(userId || "").trim();
+    if (!normalizedUserId) {
+      return [];
+    }
+    const result = await this._pool.query(
+      `SELECT session_data
+         FROM ${this._qualifiedAuthSessionsTableName}
+        WHERE user_id = $1
+        ORDER BY created_at NULLS FIRST, token`,
+      [normalizedUserId],
+    );
+    return result.rows.map((row) => row.session_data).filter(Boolean);
+  }
+
+  async _upsertProjectedSession(session) {
+    const token = String(session?.token || "").trim();
+    if (!token) {
+      return;
+    }
+    await this._pool.query(
+      `INSERT INTO ${this._qualifiedAuthSessionsTableName} (
+         token,
+         refresh_token,
+         user_id,
+         created_at,
+         session_data
+       )
+       VALUES ($1, $2, $3, $4, $5::jsonb)
+       ON CONFLICT (token) DO UPDATE
+       SET refresh_token = EXCLUDED.refresh_token,
+           user_id = EXCLUDED.user_id,
+           created_at = EXCLUDED.created_at,
+           session_data = EXCLUDED.session_data`,
+      [
+        token,
+        String(session?.refreshToken || "").trim() || null,
+        String(session?.userId || "").trim(),
+        String(session?.createdAt || "").trim() || null,
+        JSON.stringify(session),
+      ],
+    );
+  }
+
   async _selectSessionsArray() {
     await this.initialize();
-    await this._awaitWriteQueue();
+    await this._awaitReadConsistency();
     return this._selectProjectedSessionsArray();
   }
 
@@ -440,7 +500,6 @@ class PostgresStore extends FileStore {
 
   async _updateSessionsArray(sessions) {
     await this._replaceProjectedSessions(sessions);
-    await this._syncSessionsPathFromProjection();
   }
 
   async authenticate(email, password) {
@@ -449,7 +508,7 @@ class PostgresStore extends FileStore {
       return null;
     }
     await this.initialize();
-    await this._awaitWriteQueue();
+    await this._awaitReadConsistency();
     const result = await this._pool.query(
       `SELECT user_data
          FROM ${this._qualifiedAuthUsersTableName}
@@ -478,7 +537,7 @@ class PostgresStore extends FileStore {
     }
 
     await this.initialize();
-    await this._awaitWriteQueue();
+    await this._awaitReadConsistency();
     const result = await this._pool.query(
       `SELECT user_data
          FROM ${this._qualifiedAuthUsersTableName}
@@ -500,7 +559,7 @@ class PostgresStore extends FileStore {
     }
 
     await this.initialize();
-    await this._awaitWriteQueue();
+    await this._awaitReadConsistency();
     const result = await this._pool.query(
       `SELECT user_data
          FROM ${this._qualifiedAuthUsersTableName}
@@ -523,9 +582,7 @@ class PostgresStore extends FileStore {
     const previousQueue = this._writeQueue.catch(() => {});
     const nextWrite = previousQueue.then(async () => {
       await this.initialize();
-      const sessions = await this._selectProjectedSessionsArray();
-      const userSessions = sessions.filter((entry) => entry.userId === userId);
-      const otherSessions = sessions.filter((entry) => entry.userId !== userId);
+      const userSessions = await this._selectProjectedSessionsForUser(userId);
       const sessionsToKeep = userSessions.slice(-4);
       const evictedSessions = userSessions.slice(
         0,
@@ -538,12 +595,17 @@ class PostgresStore extends FileStore {
         createdAt,
         lastSeenAt: createdAt,
       };
-      const nextSessions = [
-        ...otherSessions,
-        ...sessionsToKeep,
-        createdSession,
-      ];
-      await this._updateSessionsArray(nextSessions);
+      for (const session of evictedSessions) {
+        const sessionToken = String(session?.token || "").trim();
+        if (!sessionToken) {
+          continue;
+        }
+        await this._pool.query(
+          `DELETE FROM ${this._qualifiedAuthSessionsTableName} WHERE token = $1`,
+          [sessionToken],
+        );
+      }
+      await this._upsertProjectedSession(createdSession);
       return {createdSession, evictedSessions};
     });
 
@@ -578,7 +640,7 @@ class PostgresStore extends FileStore {
     }
 
     await this.initialize();
-    await this._awaitWriteQueue();
+    await this._awaitReadConsistency();
     const result = await this._pool.query(
       `SELECT session_data
          FROM ${this._qualifiedAuthSessionsTableName}
@@ -600,7 +662,7 @@ class PostgresStore extends FileStore {
     }
 
     await this.initialize();
-    await this._awaitWriteQueue();
+    await this._awaitReadConsistency();
     const result = await this._pool.query(
       `SELECT session_data
          FROM ${this._qualifiedAuthSessionsTableName}
@@ -634,16 +696,20 @@ class PostgresStore extends FileStore {
     const previousQueue = this._writeQueue.catch(() => {});
     const nextWrite = previousQueue.then(async () => {
       await this.initialize();
-      const sessions = await this._selectProjectedSessionsArray();
-      const sessionIndex = sessions.findIndex(
-        (entry) => entry.token === normalizedToken,
+      const result = await this._pool.query(
+        `SELECT session_data
+           FROM ${this._qualifiedAuthSessionsTableName}
+          WHERE token = $1
+          LIMIT 1`,
+        [normalizedToken],
       );
-      if (sessionIndex < 0) {
+      const storedSession = result.rows[0]?.session_data ?? null;
+      if (!storedSession) {
         this._forgetSession(normalizedToken);
         return null;
       }
 
-      const session = structuredClone(sessions[sessionIndex]);
+      const session = structuredClone(storedSession);
       const lastSeenAtMs = new Date(session.lastSeenAt || 0).getTime();
       if (
         Number.isFinite(lastSeenAtMs) &&
@@ -655,8 +721,7 @@ class PostgresStore extends FileStore {
       }
 
       session.lastSeenAt = nowIso();
-      sessions[sessionIndex] = session;
-      await this._updateSessionsArray(sessions);
+      await this._upsertProjectedSession(session);
       return session;
     });
 
@@ -689,14 +754,10 @@ class PostgresStore extends FileStore {
     const previousQueue = this._writeQueue.catch(() => {});
     const nextWrite = previousQueue.then(async () => {
       await this.initialize();
-      const sessions = await this._selectProjectedSessionsArray();
-      const nextSessions = sessions.filter(
-        (entry) => entry.token !== normalizedToken,
+      await this._pool.query(
+        `DELETE FROM ${this._qualifiedAuthSessionsTableName} WHERE token = $1`,
+        [normalizedToken],
       );
-      if (nextSessions.length === sessions.length) {
-        return;
-      }
-      await this._updateSessionsArray(nextSessions);
     });
 
     this._writeQueue = nextWrite.catch((error) => {
@@ -724,15 +785,20 @@ class PostgresStore extends FileStore {
     const previousQueue = this._writeQueue.catch(() => {});
     const nextWrite = previousQueue.then(async () => {
       await this.initialize();
-      const sessions = await this._selectProjectedSessionsArray();
-      const deletedTokens = sessions
-        .filter((entry) => entry.userId === normalizedUserId)
-        .map((entry) => entry.token);
-      const nextSessions = sessions.filter(
-        (entry) => entry.userId !== normalizedUserId,
+      const result = await this._pool.query(
+        `SELECT token
+           FROM ${this._qualifiedAuthSessionsTableName}
+          WHERE user_id = $1`,
+        [normalizedUserId],
       );
-      if (nextSessions.length !== sessions.length) {
-        await this._updateSessionsArray(nextSessions);
+      const deletedTokens = result.rows
+        .map((row) => String(row?.token || "").trim())
+        .filter(Boolean);
+      if (deletedTokens.length > 0) {
+        await this._pool.query(
+          `DELETE FROM ${this._qualifiedAuthSessionsTableName} WHERE user_id = $1`,
+          [normalizedUserId],
+        );
       }
       return deletedTokens;
     });
@@ -757,14 +823,16 @@ class PostgresStore extends FileStore {
 
   async _read() {
     await this.initialize();
-    await this._awaitWriteQueue();
+    await this._awaitReadConsistency();
 
     const result = await this._pool.query(
       `SELECT data FROM ${this._qualifiedTableName} WHERE id = $1`,
       [this._rowId],
     );
     const rawData = result.rows[0]?.data ?? EMPTY_DB;
-    return normalizeDbState(rawData);
+    const normalizedState = normalizeDbState(rawData);
+    normalizedState.sessions = await this._selectProjectedSessionsArray();
+    return normalizedState;
   }
 
   async _write(data) {
