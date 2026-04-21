@@ -158,7 +158,7 @@ function createConfig() {
     postgresStateRowId:
       readEnvAlias("RODNYA_POSTGRES_STATE_ROW_ID") || "default",
     postgresPoolMax: readEnvNumber(
-      8,
+      24,
       "RODNYA_POSTGRES_POOL_MAX",
       legacyEnvKey("RODNYA_POSTGRES_POOL_MAX"),
     ),
