@@ -23,6 +23,8 @@ async function createStore(config) {
         table: config.postgresStateTable,
         rowId: config.postgresStateRowId,
         pool: config.postgresPool || config._pool || null,
+        poolMax: config.postgresPoolMax,
+        applicationName: config.postgresApplicationName,
       });
       await store.initialize();
       return store;

@@ -81,3 +81,55 @@ test("PostgresStore read fails fast when the write queue is stuck", async () => 
     return true;
   });
 });
+
+test("PostgresStore reuses one shared pool for identical config", async () => {
+  let state = {users: []};
+  let createdPoolCount = 0;
+  let endCount = 0;
+  const poolFactory = () => {
+    createdPoolCount += 1;
+    return {
+      async query(sql) {
+        if (
+          sql.includes("CREATE SCHEMA") ||
+          sql.includes("CREATE TABLE") ||
+          sql.includes("ON CONFLICT (id) DO NOTHING")
+        ) {
+          return {rows: []};
+        }
+        if (sql.includes("SELECT data")) {
+          return {rows: [{data: state}]};
+        }
+        throw new Error(`Unexpected query: ${sql}`);
+      },
+      async end() {
+        endCount += 1;
+      },
+    };
+  };
+
+  const firstStore = new PostgresStore({
+    connectionString: "postgresql://unused/rodnya",
+    poolFactory,
+  });
+  const secondStore = new PostgresStore({
+    connectionString: "postgresql://unused/rodnya",
+    poolFactory,
+  });
+
+  await firstStore.initialize();
+  await secondStore.initialize();
+
+  const firstSnapshot = await firstStore._read();
+  const secondSnapshot = await secondStore._read();
+
+  assert.deepEqual(firstSnapshot.users, state.users);
+  assert.deepEqual(secondSnapshot.users, state.users);
+  assert.equal(createdPoolCount, 1);
+
+  await firstStore.close();
+  assert.equal(endCount, 0);
+
+  await secondStore.close();
+  assert.equal(endCount, 1);
+});

@@ -157,6 +157,13 @@ function createConfig() {
       readEnvAlias("RODNYA_POSTGRES_STATE_TABLE") || "rodnya_state",
     postgresStateRowId:
       readEnvAlias("RODNYA_POSTGRES_STATE_ROW_ID") || "default",
+    postgresPoolMax: readEnvNumber(
+      8,
+      "RODNYA_POSTGRES_POOL_MAX",
+      legacyEnvKey("RODNYA_POSTGRES_POOL_MAX"),
+    ),
+    postgresApplicationName:
+      readEnvAlias("RODNYA_POSTGRES_APPLICATION_NAME") || "rodnya_backend",
     s3Endpoint: readEnvAlias("RODNYA_S3_ENDPOINT") || "",
     s3Region: readEnvAlias("RODNYA_S3_REGION") || "ru-msk",
     s3Bucket: readEnvAlias("RODNYA_S3_BUCKET") || "",

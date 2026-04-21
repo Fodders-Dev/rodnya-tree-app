@@ -6,6 +6,9 @@ const DEFAULT_POSTGRES_CONNECTION_TIMEOUT_MS = 5_000;
 const DEFAULT_POSTGRES_QUERY_TIMEOUT_MS = 15_000;
 const DEFAULT_POSTGRES_IDLE_TIMEOUT_MS = 30_000;
 const DEFAULT_WRITE_QUEUE_TIMEOUT_MS = 15_000;
+const DEFAULT_POSTGRES_POOL_MAX = 8;
+const DEFAULT_POSTGRES_APPLICATION_NAME = "rodnya_backend";
+const SHARED_POOL_REGISTRY = new Map();
 
 function quoteIdentifier(value) {
   const normalized = String(value || "").trim();
@@ -15,6 +18,80 @@ function quoteIdentifier(value) {
   return `"${normalized}"`;
 }
 
+function buildSharedPoolKey({
+  connectionString,
+  connectionTimeoutMillis,
+  queryTimeoutMs,
+  idleTimeoutMillis,
+  poolMax,
+  applicationName,
+}) {
+  return JSON.stringify({
+    connectionString: String(connectionString || "").trim(),
+    connectionTimeoutMillis,
+    queryTimeoutMs,
+    idleTimeoutMillis,
+    poolMax,
+    applicationName: String(applicationName || DEFAULT_POSTGRES_APPLICATION_NAME).trim() ||
+      DEFAULT_POSTGRES_APPLICATION_NAME,
+  });
+}
+
+function acquireSharedPool({
+  connectionString,
+  connectionTimeoutMillis,
+  queryTimeoutMs,
+  idleTimeoutMillis,
+  poolMax,
+  applicationName,
+  poolFactory,
+}) {
+  const registryKey = buildSharedPoolKey({
+    connectionString,
+    connectionTimeoutMillis,
+    queryTimeoutMs,
+    idleTimeoutMillis,
+    poolMax,
+    applicationName,
+  });
+  let entry = SHARED_POOL_REGISTRY.get(registryKey);
+  if (!entry) {
+    entry = {
+      refs: 0,
+      pool: poolFactory({
+        connectionString,
+        connectionTimeoutMillis,
+        idleTimeoutMillis,
+        query_timeout: queryTimeoutMs,
+        statement_timeout: queryTimeoutMs,
+        keepAlive: true,
+        max: poolMax,
+        application_name:
+          String(applicationName || DEFAULT_POSTGRES_APPLICATION_NAME).trim() ||
+          DEFAULT_POSTGRES_APPLICATION_NAME,
+      }),
+    };
+    SHARED_POOL_REGISTRY.set(registryKey, entry);
+  }
+  entry.refs += 1;
+
+  let released = false;
+  return {
+    pool: entry.pool,
+    async release() {
+      if (released) {
+        return;
+      }
+      released = true;
+      entry.refs = Math.max(0, entry.refs - 1);
+      if (entry.refs === 0) {
+        SHARED_POOL_REGISTRY.delete(registryKey);
+        await entry.pool.end();
+      }
+    },
+  };
+}
+
 class PostgresStore extends FileStore {
   constructor({
     connectionString,
@@ -22,9 +99,12 @@ class PostgresStore extends FileStore {
     table = "rodnya_state",
     rowId = "default",
     pool = null,
+    poolFactory = (options) => new Pool(options),
     connectionTimeoutMillis = DEFAULT_POSTGRES_CONNECTION_TIMEOUT_MS,
     queryTimeoutMs = DEFAULT_POSTGRES_QUERY_TIMEOUT_MS,
     idleTimeoutMillis = DEFAULT_POSTGRES_IDLE_TIMEOUT_MS,
+    poolMax = DEFAULT_POSTGRES_POOL_MAX,
+    applicationName = DEFAULT_POSTGRES_APPLICATION_NAME,
   }) {
     super(`postgres://${schema}.${table}/${rowId}`);
 
@@ -34,17 +114,24 @@ class PostgresStore extends FileStore {
       );
     }
 
-    this._pool =
-      pool ??
-      new Pool({
+    this._poolRelease = null;
+    if (pool) {
+      this._pool = pool;
+      this._ownsPool = false;
+    } else {
+      const sharedPool = acquireSharedPool({
         connectionString,
         connectionTimeoutMillis,
+        queryTimeoutMs,
         idleTimeoutMillis,
-        query_timeout: queryTimeoutMs,
-        statement_timeout: queryTimeoutMs,
-        keepAlive: true,
+        poolMax,
+        applicationName,
+        poolFactory,
       });
-    this._ownsPool = pool == null;
+      this._pool = sharedPool.pool;
+      this._poolRelease = sharedPool.release;
+      this._ownsPool = false;
+    }
     this._schema = String(schema || "public").trim() || "public";
     this._table = String(table || "rodnya_state").trim() || "rodnya_state";
     this._rowId = String(rowId || "default").trim() || "default";
@@ -164,6 +251,11 @@ class PostgresStore extends FileStore {
 
   async close() {
     await this._writeQueue;
+    if (this._poolRelease) {
+      await this._poolRelease();
+      this._poolRelease = null;
+      return;
+    }
     if (this._ownsPool) {
       await this._pool.end();
     }
