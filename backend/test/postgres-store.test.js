@@ -574,3 +574,243 @@ test("PostgresStore createPerson skips auth projection rewrites when auth state 
     false,
   );
 });
+
+test("PostgresStore communication hot paths avoid full state reads", async () => {
+  const invitations = [
+    {
+      id: "invite-1",
+      treeId: "tree-1",
+      userId: "user-1",
+      role: "pending",
+      addedAt: "2026-04-21T12:00:00.000Z",
+    },
+  ];
+  const notifications = [
+    {
+      id: "notification-unread",
+      userId: "user-1",
+      type: "tree_invitation",
+      title: "Приглашение",
+      body: "Вас пригласили",
+      data: {},
+      createdAt: "2026-04-21T12:05:00.000Z",
+      readAt: null,
+    },
+    {
+      id: "notification-read",
+      userId: "user-1",
+      type: "generic",
+      title: "Прочитано",
+      body: "Уже прочитано",
+      data: {},
+      createdAt: "2026-04-21T11:05:00.000Z",
+      readAt: "2026-04-21T11:10:00.000Z",
+    },
+  ];
+  const chats = [
+    {
+      id: "user-1_user-2",
+      type: "direct",
+      title: null,
+      participantIds: ["user-1", "user-2"],
+      createdAt: "2026-04-21T11:00:00.000Z",
+      updatedAt: "2026-04-21T12:02:00.000Z",
+    },
+    {
+      id: "chat_group",
+      type: "group",
+      title: "Семейный чат",
+      participantIds: ["user-1", "user-2", "user-3"],
+      createdAt: "2026-04-21T10:00:00.000Z",
+      updatedAt: "2026-04-21T11:30:00.000Z",
+    },
+  ];
+  const messages = [
+    {
+      id: "message-direct-1",
+      chatId: "user-1_user-2",
+      senderId: "user-2",
+      text: "Привет",
+      timestamp: "2026-04-21T12:01:00.000Z",
+      isRead: false,
+      participants: ["user-1", "user-2"],
+    },
+    {
+      id: "message-direct-2",
+      chatId: "user-2_user-1",
+      senderId: "user-2",
+      text: "Как дела?",
+      timestamp: "2026-04-21T12:02:00.000Z",
+      isRead: false,
+      participants: ["user-1", "user-2"],
+    },
+    {
+      id: "message-group-1",
+      chatId: "chat_group",
+      senderId: "user-3",
+      text: "Собираемся вечером",
+      timestamp: "2026-04-21T11:30:00.000Z",
+      isRead: true,
+      participants: ["user-1", "user-2", "user-3"],
+    },
+  ];
+  const projectedUsers = [
+    {
+      id: "user-2",
+      email: "anna@rodnya-tree.ru",
+      profile: {
+        displayName: "Анна",
+        photoUrl: "https://cdn.rodnya-tree.ru/anna.jpg",
+      },
+    },
+    {
+      id: "user-3",
+      email: "boris@rodnya-tree.ru",
+      profile: {
+        displayName: "Борис",
+        photoUrl: "https://cdn.rodnya-tree.ru/boris.jpg",
+      },
+    },
+  ];
+  const activeCall = {
+    id: "call-1",
+    chatId: "user-1_user-2",
+    initiatorId: "user-2",
+    recipientId: "user-1",
+    participantIds: ["user-1", "user-2"],
+    mediaMode: "audio",
+    state: "ringing",
+    roomName: null,
+    sessionByUserId: {},
+    createdAt: "2026-04-21T12:03:00.000Z",
+    updatedAt: "2026-04-21T12:04:00.000Z",
+    acceptedAt: null,
+    endedAt: null,
+    endedReason: null,
+    metrics: {
+      acceptLatencyMs: null,
+      roomJoinFailureCount: 0,
+      reconnectCount: 0,
+      lastRoomJoinFailureReason: null,
+      lastWebhookEvent: null,
+      connectedParticipantIds: [],
+    },
+  };
+  const queries = [];
+  const pool = {
+    async query(sql, params = []) {
+      queries.push(sql);
+      if (
+        sql.includes("CREATE SCHEMA") ||
+        sql.includes("CREATE TABLE") ||
+        sql.includes("CREATE INDEX") ||
+        sql.includes("ON CONFLICT (id) DO NOTHING")
+      ) {
+        return {rows: []};
+      }
+      if (
+        sql.includes("DELETE FROM \"public\".\"rodnya_state_auth_users\"") ||
+        sql.includes("DELETE FROM \"public\".\"rodnya_state_auth_sessions\"") ||
+        sql.includes("INSERT INTO \"public\".\"rodnya_state_auth_users\"") ||
+        sql.includes("INSERT INTO \"public\".\"rodnya_state_auth_sessions\"")
+      ) {
+        return {rows: []};
+      }
+      if (
+        sql.includes("SELECT invitation_entry AS invitation_data")
+      ) {
+        return {rows: invitations.map((entry) => ({invitation_data: entry}))};
+      }
+      if (
+        sql.includes("SELECT notification_entry AS notification_data")
+      ) {
+        const status = params[2];
+        const limit = Number(params[3] || 50);
+        const rows = notifications
+          .filter((entry) => {
+            if (status === "unread") {
+              return !entry.readAt;
+            }
+            if (status === "read") {
+              return Boolean(entry.readAt);
+            }
+            return true;
+          })
+          .slice(0, limit)
+          .map((entry) => ({notification_data: entry}));
+        return {rows};
+      }
+      if (
+        sql.includes("COUNT(*)::int AS total") &&
+        sql.includes("data->'notifications'")
+      ) {
+        return {rows: [{total: 1}]};
+      }
+      if (sql.includes("SELECT chat_entry AS chat_data")) {
+        return {rows: chats.map((entry) => ({chat_data: entry}))};
+      }
+      if (sql.includes("SELECT message_entry AS message_data")) {
+        return {rows: messages.map((entry) => ({message_data: entry}))};
+      }
+      if (
+        sql.includes("COUNT(*)::int AS total") &&
+        sql.includes("data->'messages'")
+      ) {
+        return {rows: [{total: 2}]};
+      }
+      if (sql.includes("SELECT id, user_data")) {
+        return {
+          rows: projectedUsers.map((entry) => ({
+            id: entry.id,
+            user_data: entry,
+          })),
+        };
+      }
+      if (sql.includes("SELECT call_entry AS call_data")) {
+        return {rows: [{call_data: activeCall}]};
+      }
+      if (sql.includes("SELECT data")) {
+        throw new Error("full_state_read_not_allowed");
+      }
+      throw new Error(`Unexpected query: ${sql}`);
+    },
+  };
+
+  const store = new PostgresStore({
+    connectionString: "postgresql://unused/rodnya",
+    pool,
+  });
+
+  await store.initialize();
+  queries.length = 0;
+
+  const pendingInvitations = await store.listPendingTreeInvitations("user-1");
+  assert.equal(pendingInvitations.length, 1);
+  assert.equal(pendingInvitations[0]?.id, "invite-1");
+
+  const unreadNotifications = await store.listNotifications("user-1", {
+    status: "unread",
+    limit: 10,
+  });
+  assert.deepEqual(unreadNotifications.map((entry) => entry.id), [
+    "notification-unread",
+  ]);
+  assert.equal(await store.countUnreadNotifications("user-1"), 1);
+
+  const previews = await store.listChatPreviews("user-1");
+  assert.equal(previews.length, 2);
+  assert.equal(previews[0]?.chatId, "user-1_user-2");
+  assert.equal(previews[0]?.lastMessage, "Как дела?");
+  assert.equal(previews[0]?.unreadCount, 2);
+  assert.equal(previews[0]?.otherUserName, "Анна");
+  assert.equal(await store.countUnreadChatMessages("user-1"), 2);
+
+  const activeCallRecord = await store.findActiveCall({userId: "user-1"});
+  assert.equal(activeCallRecord?.id, "call-1");
+  assert.equal(activeCallRecord?.state, "ringing");
+
+  assert.equal(
+    queries.some((sql) => sql.includes("SELECT data FROM")),
+    false,
+  );
+});

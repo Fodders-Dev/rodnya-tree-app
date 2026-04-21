@@ -8381,6 +8381,13 @@ class FileStore {
       .map((preview) => structuredClone(preview));
   }
 
+  async countUnreadChatMessages(userId) {
+    const previews = await this.listChatPreviews(userId);
+    return previews.reduce((sum, preview) => {
+      return sum + Number(preview?.unreadCount || 0);
+    }, 0);
+  }
+
   async listRelatedChatParticipantIds(userId) {
     const db = await this._read();
     const relatedParticipantIds = new Set();
@@ -8706,9 +8713,13 @@ module.exports = {
   buildGraphWarnings,
   buildBranchVisiblePersonIds,
   cloneUserWithAuthState,
+  describeMessagePreview,
   normalizeDbState,
+  normalizeParticipantIds,
   normalizePhoneNumber,
+  normalizeStoredCall,
   nowIso,
+  parseDirectParticipantsFromChatId,
   SESSION_TOUCH_MIN_INTERVAL_MS,
   verifyPassword,
 };

@@ -4222,12 +4222,17 @@ function createApp({
   app.get("/v1/tree-invitations/pending", requireAuth, async (req, res) => {
     const invitations = await store.listPendingTreeInvitations(req.auth.user.id);
     const treeCache = new Map();
-
-    for (const invitation of invitations) {
-      if (!treeCache.has(invitation.treeId)) {
-        treeCache.set(invitation.treeId, await store.findTree(invitation.treeId));
-      }
-    }
+    await Promise.all(
+      Array.from(
+        new Set(
+          invitations
+            .map((invitation) => String(invitation?.treeId || "").trim())
+            .filter(Boolean),
+        ),
+      ).map(async (treeId) => {
+        treeCache.set(treeId, await store.findTree(treeId));
+      }),
+    );
 
     res.json({
       invitations: invitations.map((invitation) =>
@@ -4600,10 +4605,11 @@ function createApp({
   });
 
   app.get("/v1/chats/unread-count", requireAuth, async (req, res) => {
-    const previews = await store.listChatPreviews(req.auth.user.id);
-    const totalUnread = previews.reduce((sum, preview) => {
-      return sum + Number(preview.unreadCount || 0);
-    }, 0);
+    const totalUnread = typeof store.countUnreadChatMessages === "function"
+      ? await store.countUnreadChatMessages(req.auth.user.id)
+      : (await store.listChatPreviews(req.auth.user.id)).reduce((sum, preview) => {
+        return sum + Number(preview.unreadCount || 0);
+      }, 0);
 
     res.json({
       totalUnread,

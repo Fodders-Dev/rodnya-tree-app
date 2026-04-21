@@ -5,8 +5,12 @@ const {
   FileStore,
   EMPTY_DB,
   cloneUserWithAuthState,
+  describeMessagePreview,
   normalizeDbState,
+  normalizeParticipantIds,
+  normalizeStoredCall,
   nowIso,
+  parseDirectParticipantsFromChatId,
   SESSION_TOUCH_MIN_INTERVAL_MS,
   verifyPassword,
 } = require("./store");
@@ -831,6 +835,372 @@ class PostgresStore extends FileStore {
     const deletedTokens = (await nextWrite) || [];
     for (const token of deletedTokens) {
       this._forgetSession(token);
+    }
+  }
+
+  async _selectStoredTreeInvitationsForUser(userId) {
+    const normalizedUserId = String(userId || "").trim();
+    if (!normalizedUserId) {
+      return [];
+    }
+    const result = await this._pool.query(
+      `SELECT invitation_entry AS invitation_data
+         FROM ${this._qualifiedTableName},
+              LATERAL jsonb_array_elements(COALESCE(data->'treeInvitations', '[]'::jsonb)) AS invitation_entry
+        WHERE id = $1
+          AND COALESCE(invitation_entry->>'userId', '') = $2
+          AND COALESCE(invitation_entry->>'role', 'pending') = 'pending'
+        ORDER BY COALESCE(invitation_entry->>'addedAt', '') DESC`,
+      [this._rowId, normalizedUserId],
+    );
+    return result.rows.map((row) => row.invitation_data).filter(Boolean);
+  }
+
+  async listPendingTreeInvitations(userId) {
+    await this.initialize();
+    await this._awaitReadConsistency();
+    return this._selectStoredTreeInvitationsForUser(userId);
+  }
+
+  async _selectStoredNotificationsForUser(userId, {status = null, limit = 50} = {}) {
+    const normalizedUserId = String(userId || "").trim();
+    if (!normalizedUserId) {
+      return [];
+    }
+    const normalizedLimit = Number.isFinite(Number(limit))
+      ? Math.max(0, Math.floor(Number(limit)))
+      : 50;
+    const normalizedStatus = String(status || "").trim().toLowerCase();
+    const result = await this._pool.query(
+      `SELECT notification_entry AS notification_data
+         FROM ${this._qualifiedTableName},
+              LATERAL jsonb_array_elements(COALESCE(data->'notifications', '[]'::jsonb)) AS notification_entry
+        WHERE id = $1
+          AND COALESCE(notification_entry->>'userId', '') = $2
+          AND (
+            $3 = ''
+            OR ($3 = 'unread' AND COALESCE(notification_entry->>'readAt', '') = '')
+            OR ($3 = 'read' AND COALESCE(notification_entry->>'readAt', '') <> '')
+          )
+        ORDER BY COALESCE(notification_entry->>'createdAt', '') DESC
+        LIMIT $4`,
+      [this._rowId, normalizedUserId, normalizedStatus, normalizedLimit],
+    );
+    return result.rows.map((row) => row.notification_data).filter(Boolean);
+  }
+
+  async listNotifications(userId, {status = null, limit = 50} = {}) {
+    await this.initialize();
+    await this._awaitReadConsistency();
+    return this._selectStoredNotificationsForUser(userId, {status, limit});
+  }
+
+  async countUnreadNotifications(userId) {
+    const normalizedUserId = String(userId || "").trim();
+    if (!normalizedUserId) {
+      return 0;
+    }
+    await this.initialize();
+    await this._awaitReadConsistency();
+    const result = await this._pool.query(
+      `SELECT COUNT(*)::int AS total
+         FROM ${this._qualifiedTableName},
+              LATERAL jsonb_array_elements(COALESCE(data->'notifications', '[]'::jsonb)) AS notification_entry
+        WHERE id = $1
+          AND COALESCE(notification_entry->>'userId', '') = $2
+          AND COALESCE(notification_entry->>'readAt', '') = ''`,
+      [this._rowId, normalizedUserId],
+    );
+    return Number(result.rows[0]?.total || 0);
+  }
+
+  async _selectStoredChatsForUser(userId) {
+    const normalizedUserId = String(userId || "").trim();
+    if (!normalizedUserId) {
+      return [];
+    }
+    const result = await this._pool.query(
+      `SELECT chat_entry AS chat_data
+         FROM ${this._qualifiedTableName},
+              LATERAL jsonb_array_elements(COALESCE(data->'chats', '[]'::jsonb)) AS chat_entry
+        WHERE id = $1
+          AND EXISTS (
+            SELECT 1
+              FROM jsonb_array_elements_text(COALESCE(chat_entry->'participantIds', '[]'::jsonb)) AS participant_id(value)
+             WHERE participant_id.value = $2
+          )
+        ORDER BY COALESCE(chat_entry->>'updatedAt', '') DESC`,
+      [this._rowId, normalizedUserId],
+    );
+    return result.rows.map((row) => row.chat_data).filter(Boolean);
+  }
+
+  async _selectStoredMessagesForUser(userId) {
+    const normalizedUserId = String(userId || "").trim();
+    if (!normalizedUserId) {
+      return [];
+    }
+    const nowTimestamp = nowIso();
+    const result = await this._pool.query(
+      `SELECT message_entry AS message_data
+         FROM ${this._qualifiedTableName},
+              LATERAL jsonb_array_elements(COALESCE(data->'messages', '[]'::jsonb)) AS message_entry
+        WHERE id = $1
+          AND EXISTS (
+            SELECT 1
+              FROM jsonb_array_elements_text(COALESCE(message_entry->'participants', '[]'::jsonb)) AS participant_id(value)
+             WHERE participant_id.value = $2
+          )
+          AND (
+            COALESCE(message_entry->>'expiresAt', '') = ''
+            OR COALESCE(message_entry->>'expiresAt', '') > $3
+          )
+        ORDER BY COALESCE(message_entry->>'timestamp', '') DESC`,
+      [this._rowId, normalizedUserId, nowTimestamp],
+    );
+    return result.rows.map((row) => row.message_data).filter(Boolean);
+  }
+
+  async _selectProjectedUsersByIds(userIds) {
+    const normalizedUserIds = Array.from(
+      new Set(
+        (Array.isArray(userIds) ? userIds : [])
+          .map((value) => String(value || "").trim())
+          .filter(Boolean),
+      ),
+    );
+    if (normalizedUserIds.length === 0) {
+      return new Map();
+    }
+    const result = await this._pool.query(
+      `SELECT id, user_data
+         FROM ${this._qualifiedAuthUsersTableName}
+        WHERE id = ANY($1::text[])`,
+      [normalizedUserIds],
+    );
+    return new Map(
+      result.rows
+        .map((row) => [String(row?.id || row?.user_data?.id || "").trim(), row?.user_data])
+        .filter(([userId, user]) => userId && user),
+    );
+  }
+
+  async listChatPreviews(userId) {
+    const normalizedUserId = String(userId || "").trim();
+    if (!normalizedUserId) {
+      return [];
+    }
+    await this.initialize();
+    await this._awaitReadConsistency();
+    try {
+      const storedChats = await this._selectStoredChatsForUser(normalizedUserId);
+      const storedMessages = await this._selectStoredMessagesForUser(normalizedUserId);
+      const relatedChats = new Map();
+      for (const chat of storedChats) {
+        if (chat?.id) {
+          relatedChats.set(String(chat.id).trim(), structuredClone(chat));
+        }
+      }
+
+      const messagesByChatId = new Map();
+      for (const message of storedMessages) {
+        const rawChatId = String(message?.chatId || "").trim();
+        const messageParticipants = normalizeParticipantIds(message?.participants);
+        let resolvedChat = rawChatId ? relatedChats.get(rawChatId) || null : null;
+        if (!resolvedChat && messageParticipants.length === 2) {
+          const canonicalChatId = messageParticipants.join("_");
+          resolvedChat = relatedChats.get(canonicalChatId) || {
+            id: canonicalChatId,
+            type: "direct",
+            participantIds: messageParticipants,
+            title: null,
+            createdBy: messageParticipants[0] || null,
+            treeId: null,
+            branchRootPersonIds: [],
+            createdAt: message?.timestamp || nowIso(),
+            updatedAt: message?.timestamp || nowIso(),
+          };
+          relatedChats.set(canonicalChatId, resolvedChat);
+        } else if (!resolvedChat) {
+          const parsedDirectParticipants = parseDirectParticipantsFromChatId(rawChatId);
+          if (parsedDirectParticipants.length === 2) {
+            const canonicalChatId = parsedDirectParticipants.join("_");
+            resolvedChat = relatedChats.get(canonicalChatId) || {
+              id: canonicalChatId,
+              type: "direct",
+              participantIds: parsedDirectParticipants,
+              title: null,
+              createdBy: parsedDirectParticipants[0] || null,
+              treeId: null,
+              branchRootPersonIds: [],
+              createdAt: message?.timestamp || nowIso(),
+              updatedAt: message?.timestamp || nowIso(),
+            };
+            relatedChats.set(canonicalChatId, resolvedChat);
+          }
+        }
+        if (!resolvedChat?.id) {
+          continue;
+        }
+        const resolvedChatId = String(resolvedChat.id).trim();
+        const bucket = messagesByChatId.get(resolvedChatId) || [];
+        bucket.push(message);
+        messagesByChatId.set(resolvedChatId, bucket);
+      }
+
+      const participantIds = new Set();
+      for (const chat of relatedChats.values()) {
+        for (const participantId of normalizeParticipantIds(chat?.participantIds)) {
+          if (participantId && participantId !== normalizedUserId) {
+            participantIds.add(participantId);
+          }
+        }
+      }
+      const usersById = await this._selectProjectedUsersByIds(Array.from(participantIds));
+      const previews = [];
+      for (const chat of relatedChats.values()) {
+        const participants = normalizeParticipantIds(chat?.participantIds);
+        const isGroup = chat?.type === "group" || chat?.type === "branch";
+        const otherUserId = isGroup
+          ? ""
+          : participants.find((participantId) => participantId !== normalizedUserId) || "";
+        const relevantMessages = (messagesByChatId.get(String(chat?.id || "").trim()) || [])
+          .sort((left, right) =>
+            String(right?.timestamp || "").localeCompare(String(left?.timestamp || "")),
+          );
+        const lastMessage = relevantMessages[0] || null;
+        const preview = {
+          chatId: String(chat?.id || "").trim(),
+          userId: normalizedUserId,
+          type: chat?.type || "direct",
+          title: chat?.title || null,
+          photoUrl: null,
+          participantIds: participants,
+          otherUserId,
+          otherUserName: "Пользователь",
+          otherUserPhotoUrl: null,
+          lastMessage: lastMessage ? describeMessagePreview(lastMessage) : "",
+          lastMessageTime:
+            lastMessage?.timestamp || chat?.updatedAt || chat?.createdAt || "",
+          unreadCount: relevantMessages.filter((message) => {
+            return message?.senderId !== normalizedUserId && message?.isRead !== true;
+          }).length,
+          lastMessageSenderId: lastMessage?.senderId || "",
+        };
+        if (isGroup) {
+          const otherParticipantNames = participants
+            .filter((participantId) => participantId !== normalizedUserId)
+            .map((participantId) => {
+              const user = usersById.get(participantId);
+              return user?.profile?.displayName || user?.email || "";
+            })
+            .filter(Boolean);
+          preview.otherUserName =
+            chat?.title ||
+            (otherParticipantNames.length > 0
+              ? otherParticipantNames.slice(0, 3).join(", ")
+              : "Групповой чат");
+        } else if (otherUserId) {
+          const otherUser = usersById.get(otherUserId);
+          if (otherUser) {
+            preview.otherUserName =
+              otherUser.profile?.displayName || otherUser.email || "Пользователь";
+            preview.otherUserPhotoUrl = otherUser.profile?.photoUrl || null;
+          }
+        }
+        previews.push(preview);
+      }
+
+      return previews
+        .sort((left, right) =>
+          String(right.lastMessageTime || "").localeCompare(String(left.lastMessageTime || "")),
+        )
+        .map((preview) => structuredClone(preview));
+    } catch (error) {
+      if (!isProjectionArrayTextFallbackError(error)) {
+        throw error;
+      }
+      return super.listChatPreviews(normalizedUserId);
+    }
+  }
+
+  async countUnreadChatMessages(userId) {
+    const normalizedUserId = String(userId || "").trim();
+    if (!normalizedUserId) {
+      return 0;
+    }
+    await this.initialize();
+    await this._awaitReadConsistency();
+    try {
+      const nowTimestamp = nowIso();
+      const result = await this._pool.query(
+        `SELECT COUNT(*)::int AS total
+           FROM ${this._qualifiedTableName},
+                LATERAL jsonb_array_elements(COALESCE(data->'messages', '[]'::jsonb)) AS message_entry
+          WHERE id = $1
+            AND EXISTS (
+              SELECT 1
+                FROM jsonb_array_elements_text(COALESCE(message_entry->'participants', '[]'::jsonb)) AS participant_id(value)
+               WHERE participant_id.value = $2
+            )
+            AND COALESCE(message_entry->>'senderId', '') <> $2
+            AND COALESCE(message_entry->>'isRead', 'false') <> 'true'
+            AND (
+              COALESCE(message_entry->>'expiresAt', '') = ''
+              OR COALESCE(message_entry->>'expiresAt', '') > $3
+            )`,
+        [this._rowId, normalizedUserId, nowTimestamp],
+      );
+      return Number(result.rows[0]?.total || 0);
+    } catch (error) {
+      if (!isProjectionArrayTextFallbackError(error)) {
+        throw error;
+      }
+      return super.countUnreadChatMessages(normalizedUserId);
+    }
+  }
+
+  async findActiveCall({userId, chatId = null} = {}) {
+    const normalizedUserId = String(userId || "").trim();
+    const normalizedChatId = String(chatId || "").trim();
+    if (!normalizedUserId) {
+      return null;
+    }
+    await this.initialize();
+    await this._awaitReadConsistency();
+    try {
+      const result = await this._pool.query(
+        `SELECT call_entry AS call_data
+           FROM ${this._qualifiedTableName},
+                LATERAL jsonb_array_elements(COALESCE(data->'calls', '[]'::jsonb)) AS call_entry
+          WHERE id = $1
+            AND COALESCE(call_entry->>'state', '') IN ('active', 'ringing')
+            AND (
+              $3 = ''
+              OR COALESCE(call_entry->>'chatId', '') = $3
+            )
+            AND EXISTS (
+              SELECT 1
+                FROM jsonb_array_elements_text(COALESCE(call_entry->'participantIds', '[]'::jsonb)) AS participant_id(value)
+               WHERE participant_id.value = $2
+            )
+          ORDER BY
+            CASE COALESCE(call_entry->>'state', '')
+              WHEN 'active' THEN 0
+              WHEN 'ringing' THEN 1
+              ELSE 99
+            END,
+            COALESCE(call_entry->>'updatedAt', '') DESC
+          LIMIT 1`,
+        [this._rowId, normalizedUserId, normalizedChatId],
+      );
+      const call = normalizeStoredCall(result.rows[0]?.call_data ?? null);
+      return call ? structuredClone(call) : null;
+    } catch (error) {
+      if (!isProjectionArrayTextFallbackError(error)) {
+        throw error;
+      }
+      return super.findActiveCall({userId: normalizedUserId, chatId: normalizedChatId});
     }
   }
 
