@@ -466,7 +466,7 @@ test("PostgresStore tree hot paths avoid full state reads", async () => {
   );
 });
 
-test("PostgresStore createPerson skips auth projection rewrites when auth state is unchanged", async () => {
+test("PostgresStore createPerson fast path skips auth projection rewrites", async () => {
   const userRecord = {
     id: "user-1",
     email: "smoke@rodnya-tree.ru",
@@ -531,14 +531,10 @@ test("PostgresStore createPerson skips auth projection rewrites when auth state 
       }
       if (
         sql.includes("UPDATE \"public\".\"rodnya_state\"") &&
-        sql.includes("'{persons}'") &&
-        sql.includes("'{treeChangeRecords}'") &&
-        sql.includes("'{trees}'")
+        sql.includes("'{persons}'")
       ) {
         const nextPerson = JSON.parse(params[1]);
-        const nextChangeRecord = JSON.parse(params[2]);
-        const treeId = params[3];
-        const treeUpdatedAt = params[4];
+        const treeId = params[2];
         const tree = state.trees.find((entry) => entry.id === treeId) || null;
         if (!tree) {
           return {rowCount: 0, rows: []};
@@ -546,17 +542,8 @@ test("PostgresStore createPerson skips auth projection rewrites when auth state 
         state = {
           ...state,
           persons: [...state.persons, nextPerson],
-          treeChangeRecords: [...state.treeChangeRecords, nextChangeRecord],
-          trees: state.trees.map((entry) =>
-            entry.id === treeId
-              ? {
-                  ...entry,
-                  updatedAt: treeUpdatedAt,
-                }
-              : entry,
-          ),
         };
-        return {rowCount: 1, rows: [{updated_at: treeUpdatedAt}]};
+        return {rowCount: 1, rows: [{updated_at: nextPerson.updatedAt}]};
       }
       if (sql.includes("SELECT data")) {
         throw new Error("full_state_read_not_allowed");
@@ -590,6 +577,7 @@ test("PostgresStore createPerson skips auth projection rewrites when auth state 
 
   assert.equal(person?.treeId, "tree-1");
   assert.equal(state.persons.length, 1);
+  assert.equal(state.treeChangeRecords.length, 0);
   assert.equal(
     queries.some(
       (sql) =>
@@ -608,6 +596,14 @@ test("PostgresStore createPerson skips auth projection rewrites when auth state 
   );
   assert.equal(
     queries.some((sql) => sql.includes("SELECT data FROM")),
+    false,
+  );
+  assert.equal(
+    queries.some((sql) => sql.includes("'{treeChangeRecords}'")),
+    false,
+  );
+  assert.equal(
+    queries.some((sql) => sql.includes("'{trees}'")),
     false,
   );
 });

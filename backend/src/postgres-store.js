@@ -6,7 +6,6 @@ const {
   EMPTY_DB,
   buildPersonRecord,
   cloneUserWithAuthState,
-  createTreeChangeRecord,
   describeMessagePreview,
   normalizeDbState,
   normalizeParticipantIds,
@@ -864,16 +863,6 @@ class PostgresStore extends FileStore {
       userId: null,
       identityId: null,
     });
-    const treeUpdatedAt = person.updatedAt || nowIso();
-    const changeRecord = createTreeChangeRecord({
-      treeId: normalizedTreeId,
-      actorId: creatorId,
-      type: "person.created",
-      personId: person.id,
-      details: {
-        after: structuredClone(person),
-      },
-    });
 
     const previousQueue = this._stateWriteQueue.catch(() => {});
     const nextWrite = previousQueue.then(async () => {
@@ -881,31 +870,9 @@ class PostgresStore extends FileStore {
       const result = await this._pool.query(
         `UPDATE ${this._qualifiedTableName}
             SET data = jsonb_set(
-                  jsonb_set(
-                    jsonb_set(
-                      data,
-                      '{persons}',
-                      COALESCE(data->'persons', '[]'::jsonb) || jsonb_build_array($2::jsonb),
-                      true
-                    ),
-                    '{treeChangeRecords}',
-                    COALESCE(data->'treeChangeRecords', '[]'::jsonb) || jsonb_build_array($3::jsonb),
-                    true
-                  ),
-                  '{trees}',
-                  COALESCE(
-                    (
-                      SELECT jsonb_agg(
-                        CASE
-                          WHEN COALESCE(tree_entry->>'id', '') = $4
-                            THEN jsonb_set(tree_entry, '{updatedAt}', to_jsonb($5::text), true)
-                          ELSE tree_entry
-                        END
-                      )
-                        FROM jsonb_array_elements(COALESCE(data->'trees', '[]'::jsonb)) AS tree_entry
-                    ),
-                    '[]'::jsonb
-                  ),
+                  data,
+                  '{persons}',
+                  COALESCE(data->'persons', '[]'::jsonb) || jsonb_build_array($2::jsonb),
                   true
                 ),
                 updated_at = NOW()
@@ -913,15 +880,13 @@ class PostgresStore extends FileStore {
             AND EXISTS (
               SELECT 1
                 FROM jsonb_array_elements(COALESCE(data->'trees', '[]'::jsonb)) AS tree_entry
-               WHERE COALESCE(tree_entry->>'id', '') = $4
+               WHERE COALESCE(tree_entry->>'id', '') = $3
             )
           RETURNING updated_at`,
         [
           this._rowId,
           JSON.stringify(person),
-          JSON.stringify(changeRecord),
           normalizedTreeId,
-          treeUpdatedAt,
         ],
       );
       if (result.rowCount === 0) {
