@@ -11,6 +11,10 @@ abstract class ChatServiceInterface {
   Stream<List<ChatPreview>> getUserChatsStream(String userId);
   Stream<int> getTotalUnreadCountStream(String userId);
   Stream<List<ChatMessage>> getMessagesStream(String chatId);
+  Future<void> refreshMessages(String chatId) {
+    throw UnsupportedError('refreshMessages is not supported');
+  }
+
   Future<void> sendMessageToChat({
     required String chatId,
     String text = '',

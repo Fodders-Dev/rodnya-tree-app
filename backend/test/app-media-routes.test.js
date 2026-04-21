@@ -42,13 +42,13 @@ test("createApp exposes public storage route for media backends", async () => {
   try {
     const address = server.address();
     const response = await fetch(
-      `http://127.0.0.1:${address.port}/storage/rodnya-media/lineage/posts/post-1.jpg`,
+      `http://127.0.0.1:${address.port}/storage/rodnya-media/rodnya/posts/post-1.jpg`,
     );
 
     assert.equal(response.status, 200);
     assert.deepEqual(await response.json(), {ok: true});
     assert.deepEqual(requestedPaths, [
-      "rodnya-media/lineage/posts/post-1.jpg",
+      "rodnya-media/rodnya/posts/post-1.jpg",
     ]);
   } finally {
     await new Promise((resolve, reject) => {

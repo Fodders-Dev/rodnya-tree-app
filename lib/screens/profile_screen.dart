@@ -1,10 +1,15 @@
+import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart'; // Импортируем Provider
+import 'package:qr_flutter/qr_flutter.dart';
+import 'package:share_plus/share_plus.dart';
 import '../models/family_person.dart';
 import '../models/family_tree.dart';
+import '../models/person_dossier.dart';
+import '../models/profile_contribution.dart';
+import '../models/account_linking_status.dart';
 import '../models/user_profile.dart';
-import '../models/profile_note.dart'; // Импортируем модель заметки
 import '../providers/tree_provider.dart'; // Импортируем TreeProvider
 import 'dart:async'; // Для Future
 import 'package:get_it/get_it.dart';
@@ -17,13 +22,21 @@ import '../models/post.dart';
 import '../models/story.dart';
 import '../widgets/post_card.dart';
 import '../widgets/post_card_shimmer.dart';
+import '../widgets/person_dossier_view.dart';
 import '../widgets/empty_state_widget.dart';
 import '../widgets/story_rail.dart';
 import '../widgets/tree_history_sheet.dart';
 import '../widgets/glass_panel.dart';
+import '../widgets/account_trust_summary_card.dart';
+import '../backend/backend_runtime_config.dart';
+import '../services/app_status_service.dart';
 import '../services/custom_api_post_service.dart';
+import '../utils/user_facing_error.dart';
 
 // Примерный виджет для отображения статистики (можно вынести в отдельный файл)
+
+part 'profile_screen_sections.dart';
+
 class _ProfileStatItem extends StatelessWidget {
   final String label;
   final String value;
@@ -154,6 +167,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       GetIt.I<ProfileServiceInterface>();
   final PostServiceInterface _postService = GetIt.I<PostServiceInterface>();
   final StoryServiceInterface _storyService = GetIt.I<StoryServiceInterface>();
+  final AppStatusService _appStatusService = GetIt.I<AppStatusService>();
   UserProfile? _userProfile;
   String? _currentUserId; // Храним ID текущего пользователя
   int _treeCount = 0;
@@ -161,8 +175,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
   int _postCount = 0;
   List<Post> _userPosts = [];
   List<Story> _userStories = [];
+  List<ProfileContribution> _pendingContributions = [];
   FamilyPerson? _selectedTreePerson;
+  AccountLinkingStatus? _accountLinkingStatus;
   bool _isLoading = true;
+  bool _isLoadingContributions = false;
   String _errorMessage = '';
   bool _postsUnavailable = false;
   bool _isLoadingStories = false;
@@ -256,6 +273,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
       _postsUnavailable = false;
       _storiesUnavailable = false;
       _selectedTreePerson = null;
+      _pendingContributions = [];
+      _isLoadingContributions = true;
     });
 
     try {
@@ -292,6 +311,22 @@ class _ProfileScreenState extends State<ProfileScreen> {
         }
       }
 
+      try {
+        _pendingContributions =
+            await _profileService.getPendingProfileContributions();
+      } catch (error) {
+        debugPrint('Не удалось загрузить предложения по профилю: $error');
+        _pendingContributions = [];
+      }
+
+      try {
+        _accountLinkingStatus =
+            await _profileService.getCurrentAccountLinkingStatus();
+      } catch (error) {
+        debugPrint('Не удалось загрузить trusted-channel summary: $error');
+        _accountLinkingStatus = null;
+      }
+
       if (!mounted) {
         return;
       }
@@ -306,9 +341,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
         currentUserId: userId,
       );
     } catch (e) {
+      _appStatusService.reportError(
+        e,
+        fallbackMessage: 'Не удалось загрузить профиль.',
+      );
       if (mounted) {
         setState(() {
-          _errorMessage = 'Ошибка загрузки данных: $e';
+          _errorMessage = describeUserFacingError(
+            authService: _authService,
+            error: e,
+            fallbackMessage: _appStatusService.isOffline
+                ? 'Нет соединения. Профиль обновится, когда интернет вернётся.'
+                : 'Не удалось загрузить профиль.',
+          );
         });
       }
       debugPrint('Ошибка при загрузке данных пользователя: $e');
@@ -316,9 +361,67 @@ class _ProfileScreenState extends State<ProfileScreen> {
       if (mounted) {
         setState(() {
           _isLoading = false;
+          _isLoadingContributions = false;
         });
       }
     }
+  }
+
+  Future<void> _copyProfileConnectionLink(Uri link) async {
+    await Clipboard.setData(ClipboardData(text: link.toString()));
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Ссылка для связи скопирована')),
+    );
+  }
+
+  Future<void> _shareProfileConnectionLink(Uri link) async {
+    final displayName =
+        _userProfile == null ? 'Я' : _getSafeDisplayName(_userProfile!).trim();
+    await Share.share(
+      '$displayName в Родне\n$link\n\n'
+      'Откройте ссылку, чтобы перейти к поиску по профильному коду, invite или claim flow.',
+    );
+  }
+
+  Uri? _buildProfileConnectionLink(String? treeId, String profileCode) {
+    final normalizedTreeId = treeId?.trim() ?? '';
+    final normalizedProfileCode = profileCode.trim().replaceFirst('@', '');
+    if (normalizedTreeId.isEmpty || normalizedProfileCode.isEmpty) {
+      return null;
+    }
+
+    final baseUri = Uri.parse(BackendRuntimeConfig.current.publicAppUrl);
+    return baseUri.replace(
+      fragment:
+          '/relatives/find/$normalizedTreeId?profileCode=${Uri.encodeQueryComponent(normalizedProfileCode)}',
+    );
+  }
+
+  String _buildProfileHeroSummary({required String? selectedTreeName}) {
+    final treeName = selectedTreeName?.trim();
+    if (_selectedTreePerson != null &&
+        treeName != null &&
+        treeName.isNotEmpty) {
+      return 'Эта карточка видна семье в “$treeName”. Здесь вы управляете тем, кто вы на дереве, как с вами связаться и что семье видно о вас.';
+    }
+
+    final status = _accountLinkingStatus;
+    final summaryTitle = status?.summaryTitle?.trim() ?? '';
+    final summaryDetail = status?.summaryDetail?.trim() ?? '';
+    if (summaryTitle.isNotEmpty && summaryDetail.isNotEmpty) {
+      return '$summaryTitle. $summaryDetail.';
+    }
+    if (summaryTitle.isNotEmpty) {
+      return summaryTitle;
+    }
+    if (summaryDetail.isNotEmpty) {
+      return summaryDetail;
+    }
+
+    return 'Заполните досье, чтобы семье было проще узнать вас, связаться с вами и связать ваш профиль с нужной карточкой на дереве.';
   }
 
   Future<int> _loadRelativeCount({
@@ -564,7 +667,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
           subtitle: person.displayName,
           currentUserId: _authService.currentUserId,
           emptyMessage: 'Для этой карточки пока нет записей в журнале.',
-          errorBuilder: (error) => 'Не удалось загрузить историю: $error',
+          errorBuilder: (error) => describeUserFacingError(
+            authService: _authService,
+            error: error,
+            fallbackMessage: 'Не удалось загрузить историю изменений.',
+          ),
           onOpenPerson: (personId) {
             Navigator.of(sheetContext).pop();
             if (!mounted) {
@@ -577,158 +684,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  // Функция для показа диалога добавления/редактирования заметки
-  void _showAddEditNoteDialog({ProfileNote? note}) {
-    final titleController = TextEditingController(text: note?.title ?? '');
-    final contentController = TextEditingController(text: note?.content ?? '');
-    final formKey = GlobalKey<FormState>();
-    final bool isEditing = note != null;
-
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: Text(isEditing ? 'Редактировать заметку' : 'Добавить заметку'),
-          content: Form(
-            key: formKey,
-            child: SingleChildScrollView(
-              // Добавим прокрутку на случай длинного контента
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextFormField(
-                    controller: titleController,
-                    decoration: InputDecoration(labelText: 'Заголовок'),
-                    validator: (value) {
-                      if (value == null || value.isEmpty) {
-                        return 'Пожалуйста, введите заголовок';
-                      }
-                      return null;
-                    },
-                  ),
-                  SizedBox(height: 16),
-                  TextFormField(
-                    controller: contentController,
-                    decoration: InputDecoration(
-                      labelText: 'Содержание',
-                      alignLabelWithHint: true, // Выравниваем метку по верху
-                    ),
-                    maxLines: 5, // Больше строк для удобства
-                    validator: (value) {
-                      if (value == null || value.isEmpty) {
-                        return 'Пожалуйста, введите содержание';
-                      }
-                      return null;
-                    },
-                  ),
-                ],
-              ),
-            ),
-          ),
-          actions: [
-            if (isEditing) // Кнопка удаления только при редактировании
-              TextButton(
-                child: Text('Удалить', style: TextStyle(color: Colors.red)),
-                onPressed: () async {
-                  // Запрос подтверждения перед удалением
-                  final confirm = await showDialog<bool>(
-                    context: context,
-                    builder: (context) => AlertDialog(
-                      title: Text('Подтверждение'),
-                      content: Text(
-                        'Вы уверены, что хотите удалить эту заметку?',
-                      ),
-                      actions: [
-                        TextButton(
-                          child: Text('Отмена'),
-                          onPressed: () => Navigator.of(context).pop(false),
-                        ),
-                        TextButton(
-                          child: Text('Удалить'),
-                          onPressed: () => Navigator.of(context).pop(true),
-                        ),
-                      ],
-                    ),
-                  );
-
-                  if (confirm == true && _currentUserId != null) {
-                    try {
-                      await _profileService.deleteProfileNote(
-                        _currentUserId!,
-                        note.id,
-                      );
-                      if (!context.mounted) return;
-                      Navigator.of(
-                        context,
-                      ).pop(); // Закрываем диалог редактирования
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('Заметка удалена')),
-                      );
-                    } catch (e) {
-                      if (!context.mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('Ошибка удаления: $e')),
-                      );
-                    }
-                  }
-                },
-              ),
-            TextButton(
-              child: Text('Отмена'),
-              onPressed: () => Navigator.of(context).pop(),
-            ),
-            TextButton(
-              child: Text(isEditing ? 'Сохранить' : 'Добавить'),
-              onPressed: () async {
-                if (formKey.currentState!.validate() &&
-                    _currentUserId != null) {
-                  try {
-                    if (isEditing) {
-                      // Создаем обновленную заметку (со старым id и createdAt)
-                      final updatedNote = ProfileNote(
-                        id: note.id,
-                        title: titleController.text,
-                        content: contentController.text,
-                        createdAt:
-                            note.createdAt, // Сохраняем исходную дату создания
-                      );
-                      await _profileService.updateProfileNote(
-                        _currentUserId!,
-                        updatedNote,
-                      );
-                      if (!context.mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('Заметка обновлена')),
-                      );
-                    } else {
-                      await _profileService.addProfileNote(
-                        _currentUserId!,
-                        titleController.text,
-                        contentController.text,
-                      );
-                      if (!context.mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('Заметка добавлена')),
-                      );
-                    }
-                    Navigator.of(context).pop(); // Закрываем диалог
-                  } catch (e) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Ошибка сохранения: $e')),
-                    );
-                  }
-                }
-              },
-            ),
-          ],
-        );
-      },
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final treeProvider = Provider.of<TreeProvider>(context);
+    final selectedTreeId = treeProvider.selectedTreeId;
     final selectedTreeKind = treeProvider.selectedTreeKind;
     final selectedTreeName = treeProvider.selectedTreeName;
     final isFriendsTree = selectedTreeKind == TreeKind.friends;
@@ -774,18 +733,51 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ],
       ),
       body: _isLoading
-          ? Center(child: CircularProgressIndicator())
+          ? _buildProfileStateCard(
+              icon: Icons.person_search_outlined,
+              title: 'Собираем профиль',
+              message:
+                  'Подтягиваем досье, доверенные каналы и семейный контекст.',
+              showProgress: true,
+            )
           : _errorMessage.isNotEmpty
-              ? Center(
-                  child: Padding(
-                    // Добавим отступы для ошибки
-                    padding: const EdgeInsets.all(16.0),
-                    child: Text(_errorMessage, textAlign: TextAlign.center),
-                  ),
+              ? _buildProfileStateCard(
+                  icon: _appStatusService.isOffline
+                      ? Icons.cloud_off_outlined
+                      : Icons.person_outline_rounded,
+                  title: _appStatusService.isOffline
+                      ? 'Нет соединения'
+                      : 'Профиль временно недоступен',
+                  message: _errorMessage,
+                  actions: [
+                    FilledButton.icon(
+                      onPressed: () {
+                        _appStatusService.requestRetry();
+                        unawaited(_loadUserData());
+                      },
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Повторить'),
+                    ),
+                  ],
                 )
               : _userProfile == null ||
                       _currentUserId == null // Проверяем и userId
-                  ? Center(child: Text('Не удалось загрузить профиль.'))
+                  ? _buildProfileStateCard(
+                      icon: Icons.person_off_outlined,
+                      title: 'Профиль не собрался',
+                      message:
+                          'Не удалось получить досье пользователя. Попробуйте обновить экран ещё раз.',
+                      actions: [
+                        FilledButton.icon(
+                          onPressed: () {
+                            _appStatusService.requestRetry();
+                            unawaited(_loadUserData());
+                          },
+                          icon: const Icon(Icons.refresh),
+                          label: const Text('Повторить'),
+                        ),
+                      ],
+                    )
                   : RefreshIndicator(
                       onRefresh: _loadUserData,
                       child: CustomScrollView(
@@ -840,6 +832,25 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                                         ?.copyWith(
                                                           fontWeight:
                                                               FontWeight.w800,
+                                                        ),
+                                                  ),
+                                                  const SizedBox(height: 10),
+                                                  Text(
+                                                    _buildProfileHeroSummary(
+                                                      selectedTreeName:
+                                                          selectedTreeName,
+                                                    ),
+                                                    textAlign: TextAlign.center,
+                                                    style: Theme.of(context)
+                                                        .textTheme
+                                                        .bodyMedium
+                                                        ?.copyWith(
+                                                          color: Theme.of(
+                                                            context,
+                                                          )
+                                                              .colorScheme
+                                                              .onSurfaceVariant,
+                                                          height: 1.35,
                                                         ),
                                                   ),
                                                 ],
@@ -1035,6 +1046,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                                     fontWeight: FontWeight.w800,
                                                   ),
                                             ),
+                                            const SizedBox(height: 10),
+                                            Text(
+                                              _buildProfileHeroSummary(
+                                                selectedTreeName:
+                                                    selectedTreeName,
+                                              ),
+                                              textAlign: TextAlign.center,
+                                              style: Theme.of(context)
+                                                  .textTheme
+                                                  .bodyMedium
+                                                  ?.copyWith(
+                                                    color: Theme.of(context)
+                                                        .colorScheme
+                                                        .onSurfaceVariant,
+                                                    height: 1.35,
+                                                  ),
+                                            ),
                                             const SizedBox(height: 4),
                                             if ((_userProfile!.city != null &&
                                                     _userProfile!
@@ -1150,18 +1178,72 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               ),
                             ),
                           ),
+                          if (_accountLinkingStatus != null)
+                            SliverToBoxAdapter(
+                              child: Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  16.0,
+                                  16.0,
+                                  16.0,
+                                  0,
+                                ),
+                                child: _buildTrustSummarySection(),
+                              ),
+                            ),
                           SliverToBoxAdapter(
                             child: Padding(
                               padding: const EdgeInsets.fromLTRB(
                                 16.0,
-                                0,
+                                16.0,
                                 16.0,
                                 0,
                               ),
                               child: _buildStoriesRailSection(),
                             ),
                           ),
-                          // --- НАЧАЛО: Секция для заметок ---
+                          if (_profileCodeLabel() != null)
+                            SliverToBoxAdapter(
+                              child: Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  16.0,
+                                  16.0,
+                                  16.0,
+                                  0,
+                                ),
+                                child: _buildProfileConnectionSection(
+                                  selectedTreeId: selectedTreeId,
+                                  selectedTreeName: selectedTreeName,
+                                ),
+                              ),
+                            ),
+                          SliverToBoxAdapter(
+                            child: Padding(
+                              padding: const EdgeInsets.fromLTRB(
+                                16.0,
+                                16.0,
+                                16.0,
+                                0,
+                              ),
+                              child: PersonDossierView(
+                                dossier: PersonDossier.fromProfile(
+                                  _userProfile!,
+                                  treePerson: _selectedTreePerson,
+                                  isSelf: true,
+                                ),
+                                headerChips: [
+                                  if (selectedTreeName != null)
+                                    Chip(
+                                      avatar: const Icon(
+                                        Icons.account_tree_outlined,
+                                        size: 18,
+                                      ),
+                                      label: Text(selectedTreeName),
+                                      visualDensity: VisualDensity.compact,
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ),
                           SliverPadding(
                             padding: const EdgeInsets.fromLTRB(
                               16.0,
@@ -1175,7 +1257,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                     MainAxisAlignment.spaceBetween,
                                 children: [
                                   Text(
-                                    'Заметки',
+                                    'Предложения от семьи',
                                     style: Theme.of(context)
                                         .textTheme
                                         .titleMedium
@@ -1183,106 +1265,68 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                           fontWeight: FontWeight.w800,
                                         ),
                                   ),
-                                  FilledButton.tonalIcon(
-                                    onPressed: () => _showAddEditNoteDialog(),
-                                    icon: const Icon(Icons.add),
-                                    label: const Text('Добавить'),
-                                  ),
                                 ],
                               ),
                             ),
                           ),
-                          StreamBuilder<List<ProfileNote>>(
-                            stream: _profileService.getProfileNotesStream(
-                              _currentUserId!,
-                            ),
-                            builder: (context, snapshot) {
-                              if (snapshot.connectionState ==
-                                  ConnectionState.waiting) {
-                                return SliverToBoxAdapter(
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(16),
-                                    child: Center(
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                      ),
-                                    ),
-                                  ),
-                                );
-                              }
-                              if (snapshot.hasError) {
-                                return SliverToBoxAdapter(
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 16,
-                                      vertical: 12,
-                                    ),
-                                    child: Text(
-                                      'Заметки временно недоступны.',
-                                      style: Theme.of(context)
-                                          .textTheme
-                                          .bodySmall
-                                          ?.copyWith(
-                                            color: Theme.of(context)
-                                                .colorScheme
-                                                .onSurfaceVariant,
-                                          ),
-                                    ),
-                                  ),
-                                );
-                              }
-                              if (!snapshot.hasData || snapshot.data!.isEmpty) {
-                                return SliverToBoxAdapter(
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 16,
-                                      vertical: 10,
-                                    ),
-                                    child: Text(
-                                      'Пока пусто.',
-                                      textAlign: TextAlign.center,
-                                      style: Theme.of(context)
-                                          .textTheme
-                                          .bodySmall
-                                          ?.copyWith(
-                                            color: Theme.of(context)
-                                                .colorScheme
-                                                .onSurfaceVariant,
-                                          ),
-                                    ),
-                                  ),
-                                );
-                              }
-
-                              final notes = snapshot.data!;
-
-                              return SliverPadding(
+                          if (_isLoadingContributions)
+                            SliverToBoxAdapter(
+                              child: Padding(
                                 padding: const EdgeInsets.fromLTRB(
                                   16,
                                   12,
                                   16,
                                   0,
                                 ),
-                                sliver: SliverList(
-                                  delegate: SliverChildBuilderDelegate(
-                                    (BuildContext context, int index) {
-                                      final note = notes[index];
-                                      return Padding(
-                                        padding: EdgeInsets.only(
-                                          bottom: index == notes.length - 1
-                                              ? 0
-                                              : 10,
-                                        ),
-                                        child: _buildNotePreviewCard(note),
-                                      );
-                                    },
-                                    childCount: notes.length,
-                                  ),
+                                child: _buildProfileStateCard(
+                                  icon: Icons.edit_note_outlined,
+                                  title: 'Проверяем семейные правки',
+                                  message:
+                                      'Смотрим, не прислали ли родственники новые предложения по вашему профилю.',
+                                  showProgress: true,
                                 ),
-                              );
-                            },
-                          ),
-
+                              ),
+                            )
+                          else if (_pendingContributions.isEmpty)
+                            SliverToBoxAdapter(
+                              child: Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  16,
+                                  12,
+                                  16,
+                                  0,
+                                ),
+                                child: _buildContributionEmptyState(),
+                              ),
+                            )
+                          else
+                            SliverPadding(
+                              padding: const EdgeInsets.fromLTRB(
+                                16,
+                                12,
+                                16,
+                                0,
+                              ),
+                              sliver: SliverList(
+                                delegate: SliverChildBuilderDelegate(
+                                  (BuildContext context, int index) {
+                                    final contribution =
+                                        _pendingContributions[index];
+                                    return Padding(
+                                      padding: EdgeInsets.only(
+                                        bottom: index ==
+                                                _pendingContributions.length - 1
+                                            ? 0
+                                            : 10,
+                                      ),
+                                      child:
+                                          _buildContributionCard(contribution),
+                                    );
+                                  },
+                                  childCount: _pendingContributions.length,
+                                ),
+                              ),
+                            ),
                           SliverPadding(
                             padding: const EdgeInsets.fromLTRB(
                                 16.0, 24.0, 16.0, 8.0),
@@ -1344,326 +1388,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         ],
                       ),
                     ),
-    );
-  }
-
-  Widget _buildStoriesRailSection() {
-    return StoryRail(
-      title: 'Истории',
-      currentUserId: _currentUserId ?? '',
-      stories: _userStories,
-      isLoading: _isLoadingStories,
-      unavailable: _storiesUnavailable,
-      onRetry: () {
-        if (_currentUserId != null) {
-          _loadStoriesForContext(
-            selectedTreeId: context.read<TreeProvider>().selectedTreeId,
-            currentUserId: _currentUserId!,
-          );
-        }
-      },
-      onCreateStory: () async {
-        final result = await context.push('/stories/create');
-        if (!mounted) {
-          return;
-        }
-        if (result == true && _currentUserId != null) {
-          _loadStoriesForContext(
-            selectedTreeId: context.read<TreeProvider>().selectedTreeId,
-            currentUserId: _currentUserId!,
-          );
-        }
-      },
-      onOpenStories: (stories) async {
-        if (stories.isEmpty) {
-          return;
-        }
-        final story = stories.last;
-        final route = '/stories/view/${story.treeId}/${story.authorId}';
-        await context.push(
-          route,
-        );
-        if (!mounted) {
-          return;
-        }
-        if (_currentUserId != null) {
-          _loadStoriesForContext(
-            selectedTreeId: context.read<TreeProvider>().selectedTreeId,
-            currentUserId: _currentUserId!,
-          );
-        }
-      },
-      emptyLabel: 'Добавьте первую историю.',
-    );
-  }
-
-  Widget _buildNotePreviewCard(ProfileNote note) {
-    final theme = Theme.of(context);
-    final previewText =
-        note.content.trim().isEmpty ? 'Без текста' : note.content.trim();
-    return InkWell(
-      borderRadius: BorderRadius.circular(24),
-      onTap: () => _showAddEditNoteDialog(note: note),
-      child: GlassPanel(
-        padding: const EdgeInsets.all(16),
-        borderRadius: BorderRadius.circular(24),
-        child: Row(
-          children: [
-            Container(
-              width: 42,
-              height: 42,
-              decoration: BoxDecoration(
-                color: theme.colorScheme.primary.withValues(alpha: 0.10),
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: Icon(
-                Icons.note_alt_outlined,
-                color: theme.colorScheme.primary,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    note.title.trim().isEmpty ? 'Без названия' : note.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    previewText,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                      height: 1.35,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 8),
-            Icon(
-              Icons.chevron_right,
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildContextBadge({
-    required BuildContext context,
-    required IconData icon,
-    required String label,
-  }) {
-    final theme = Theme.of(context);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.onSecondaryContainer.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            icon,
-            size: 16,
-            color: theme.colorScheme.onSecondaryContainer,
-          ),
-          const SizedBox(width: 8),
-          Text(
-            label,
-            style: theme.textTheme.labelLarge?.copyWith(
-              color: theme.colorScheme.onSecondaryContainer,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildGraphContextBanner(
-    BuildContext context, {
-    required bool isFriendsTree,
-    required String selectedTreeName,
-    FamilyPerson? selectedTreePerson,
-  }) {
-    final theme = Theme.of(context);
-    final personPhotoUrl = selectedTreePerson?.primaryPhotoUrl;
-    final photoCount = selectedTreePerson?.photoGallery.length ?? 0;
-    return GlassPanel(
-      padding: const EdgeInsets.all(14),
-      color: theme.colorScheme.secondaryContainer.withValues(alpha: 0.42),
-      borderRadius: BorderRadius.circular(24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(
-                isFriendsTree
-                    ? Icons.diversity_3_outlined
-                    : Icons.account_tree_outlined,
-                color: theme.colorScheme.onSecondaryContainer,
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  isFriendsTree ? 'Активен круг' : 'Активно дерево',
-                  style: theme.textTheme.titleSmall?.copyWith(
-                    color: theme.colorScheme.onSecondaryContainer,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              _buildContextBadge(
-                context: context,
-                icon: isFriendsTree
-                    ? Icons.diversity_3_outlined
-                    : Icons.account_tree_outlined,
-                label: selectedTreeName,
-              ),
-              _buildContextBadge(
-                context: context,
-                icon: Icons.person_outline,
-                label: 'Мой профиль',
-              ),
-              FilledButton.tonalIcon(
-                onPressed: () => context.go('/tree'),
-                icon: const Icon(Icons.arrow_forward),
-                label: const Text('Дерево'),
-              ),
-            ],
-          ),
-          if (selectedTreePerson != null) ...[
-            const SizedBox(height: 12),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: theme.colorScheme.onSecondaryContainer
-                    .withValues(alpha: 0.08),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                  color: theme.colorScheme.onSecondaryContainer
-                      .withValues(alpha: 0.12),
-                ),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      CircleAvatar(
-                        radius: 22,
-                        backgroundImage: personPhotoUrl != null
-                            ? NetworkImage(personPhotoUrl)
-                            : null,
-                        child: personPhotoUrl == null
-                            ? Text(
-                                selectedTreePerson.initials,
-                                style: const TextStyle(fontSize: 14),
-                              )
-                            : null,
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Карточка в дереве',
-                              style: theme.textTheme.labelLarge?.copyWith(
-                                color: theme.colorScheme.onSecondaryContainer,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              selectedTreePerson.displayName,
-                              style: theme.textTheme.bodyMedium?.copyWith(
-                                color: theme.colorScheme.onSecondaryContainer,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            Wrap(
-                              spacing: 8,
-                              runSpacing: 8,
-                              children: [
-                                _buildContextBadge(
-                                  context: context,
-                                  icon: Icons.photo_library_outlined,
-                                  label: photoCount == 0
-                                      ? 'Без фото'
-                                      : photoCount == 1
-                                          ? '1 фото'
-                                          : '$photoCount фото',
-                                ),
-                                if (selectedTreePerson.primaryPhotoUrl != null)
-                                  _buildContextBadge(
-                                    context: context,
-                                    icon: Icons.star_outline,
-                                    label: 'Основное фото',
-                                  ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      FilledButton.tonalIcon(
-                        onPressed: () => context
-                            .push('/relative/details/${selectedTreePerson.id}'),
-                        icon: const Icon(Icons.open_in_new),
-                        label: const Text('Открыть'),
-                      ),
-                      OutlinedButton.icon(
-                        onPressed: photoCount == 0
-                            ? null
-                            : () => _showSelectedTreePersonGallery(
-                                selectedTreePerson),
-                        icon: const Icon(Icons.photo_library_outlined),
-                        label: Text(
-                          photoCount == 0 ? 'Фото' : 'Фото ($photoCount)',
-                        ),
-                      ),
-                      OutlinedButton.icon(
-                        onPressed: () =>
-                            _showSelectedTreePersonHistory(selectedTreePerson),
-                        icon: const Icon(Icons.history_outlined),
-                        label: const Text('История'),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ],
-      ),
     );
   }
 }

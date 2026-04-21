@@ -2,8 +2,8 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
-import 'package:lineage/backend/interfaces/dynamic_link_service_interface.dart';
-import 'package:lineage/navigation/deep_link_handler.dart';
+import 'package:rodnya/backend/interfaces/dynamic_link_service_interface.dart';
+import 'package:rodnya/navigation/deep_link_handler.dart';
 
 class _FakeDynamicLinkService implements DynamicLinkServiceInterface {
   GoRouter? receivedRouter;

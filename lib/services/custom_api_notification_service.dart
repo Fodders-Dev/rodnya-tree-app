@@ -13,9 +13,10 @@ import '../backend/backend_runtime_config.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
 import '../backend/interfaces/notification_service_interface.dart';
 import '../models/app_notification_item.dart';
-import '../models/family_person.dart' as lineage_models;
-import '../navigation/app_router.dart';
+import '../models/family_person.dart' as rodnya_models;
+import '../navigation/app_router_shared.dart';
 import '../providers/tree_provider.dart';
+import 'call_coordinator_service.dart';
 import 'chat_notification_settings_store.dart';
 import 'browser_notification_bridge.dart';
 import 'custom_api_auth_service.dart';
@@ -137,6 +138,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
 
   bool _isInitialized = false;
   bool _notificationsEnabled = true;
+  bool _androidNotificationPermissionsChecked = false;
   int _unreadNotificationsCount = 0;
   String? _pendingNavigationPayload;
   Timer? _pollingTimer;
@@ -145,12 +147,12 @@ class CustomApiNotificationService implements NotificationServiceInterface {
   final StreamController<int> _unreadNotificationsCountController =
       StreamController<int>.broadcast();
 
-  static const String _channelIdGeneral = 'lineage_custom_general';
+  static const String _channelIdGeneral = 'rodnya_custom_general';
   static const String _channelNameGeneral = 'Родня уведомления';
   static const String _channelDescGeneral =
       'Локальные уведомления приложения Родня';
 
-  static const String _channelIdEvents = 'lineage_custom_events';
+  static const String _channelIdEvents = 'rodnya_custom_events';
   static const String _channelNameEvents = 'Родня события';
   static const String _channelDescEvents =
       'Напоминания о событиях семьи и локальные уведомления чатов';
@@ -207,6 +209,9 @@ class CustomApiNotificationService implements NotificationServiceInterface {
         importance: Importance.high,
       ),
     );
+    await _ensureAndroidNotificationSurfacePermissions(
+      androidPlugin: androidPlugin,
+    );
 
     await _restoreLaunchNotificationPayload();
     _isInitialized = true;
@@ -255,6 +260,60 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     final pendingPayload = _pendingNavigationPayload;
     if (pendingPayload != null && pendingPayload.isNotEmpty) {
       _schedulePayloadNavigation(pendingPayload);
+    }
+  }
+
+  Future<void> stopForegroundSync() async {
+    _pollingTimer?.cancel();
+    _pollingTimer = null;
+    await _realtimeSubscription?.cancel();
+    _realtimeSubscription = null;
+  }
+
+  Future<void> _ensureAndroidNotificationSurfacePermissions({
+    AndroidFlutterLocalNotificationsPlugin? androidPlugin,
+  }) async {
+    if (kIsWeb ||
+        defaultTargetPlatform != TargetPlatform.android ||
+        _androidNotificationPermissionsChecked) {
+      return;
+    }
+
+    final resolvedAndroidPlugin = androidPlugin ??
+        _plugin.resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>();
+    if (resolvedAndroidPlugin == null) {
+      return;
+    }
+
+    _androidNotificationPermissionsChecked = true;
+
+    try {
+      final notificationsEnabled =
+          await resolvedAndroidPlugin.areNotificationsEnabled();
+      if (notificationsEnabled != true) {
+        final granted =
+            await resolvedAndroidPlugin.requestNotificationsPermission();
+        if (granted != true) {
+          debugPrint(
+            'Custom API notifications permission denied on Android',
+          );
+        }
+      }
+    } catch (error, stackTrace) {
+      debugPrint(
+        'Failed to request Android notification permission: $error',
+      );
+      debugPrintStack(stackTrace: stackTrace);
+    }
+
+    try {
+      await resolvedAndroidPlugin.requestFullScreenIntentPermission();
+    } catch (error, stackTrace) {
+      debugPrint(
+        'Failed to request Android full-screen intent permission: $error',
+      );
+      debugPrintStack(stackTrace: stackTrace);
     }
   }
 
@@ -492,7 +551,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
 
   @override
   Future<void> showBirthdayNotification(
-    lineage_models.FamilyPerson person,
+    rodnya_models.FamilyPerson person,
   ) async {
     if (!_notificationsEnabled) {
       return;
@@ -609,6 +668,67 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     );
   }
 
+  Future<void> showIncomingCallNotification({
+    required String callId,
+    required String callerName,
+    required bool isVideo,
+  }) async {
+    if (!_notificationsEnabled) {
+      return;
+    }
+
+    final payload = jsonEncode({
+      'type': 'call',
+      'callId': callId,
+    });
+    final resolvedCallerName =
+        callerName.trim().isEmpty ? 'Родня' : callerName.trim();
+    final body = isVideo ? 'Входящий видеозвонок' : 'Входящий аудиозвонок';
+
+    if (kIsWeb) {
+      await _showBrowserNotification(
+        title: resolvedCallerName,
+        body: body,
+        tag: 'call-$callId',
+        payload: payload,
+      );
+      return;
+    }
+
+    await initialize();
+    await _plugin.show(
+      callId.hashCode,
+      resolvedCallerName,
+      body,
+      const NotificationDetails(
+        android: AndroidNotificationDetails(
+          _channelIdEvents,
+          _channelNameEvents,
+          channelDescription: _channelDescEvents,
+          importance: Importance.max,
+          priority: Priority.max,
+          category: AndroidNotificationCategory.call,
+          fullScreenIntent: true,
+          icon: _androidNotificationIcon,
+        ),
+        iOS: DarwinNotificationDetails(
+          presentAlert: true,
+          presentBadge: true,
+          presentSound: true,
+        ),
+      ),
+      payload: payload,
+    );
+  }
+
+  Future<void> dismissCallNotification(String callId) async {
+    if (callId.trim().isEmpty || kIsWeb) {
+      return;
+    }
+    await initialize();
+    await _plugin.cancel(callId.hashCode);
+  }
+
   Future<void> _handleRealtimeNotification(
     Map<String, dynamic> notification,
   ) async {
@@ -674,6 +794,20 @@ class CustomApiNotificationService implements NotificationServiceInterface {
         playSound: deliveryLevel != ChatNotificationLevel.silent,
       );
       return;
+    }
+
+    if (type == 'call_invite') {
+      final callData = _asStringDynamicMap(data);
+      final callId = callData['callId']?.toString() ?? '';
+      if (callId.isNotEmpty) {
+        await _hydrateIncomingCallCoordinator(callData);
+        await showIncomingCallNotification(
+          callId: callId,
+          callerName: title,
+          isVideo: callData['mediaMode']?.toString() == 'video',
+        );
+        return;
+      }
     }
 
     await _showGenericNotification(
@@ -1079,6 +1213,24 @@ class CustomApiNotificationService implements NotificationServiceInterface {
       return;
     }
 
+    if (type == 'call' || type == 'call_invite') {
+      if (!GetIt.I.isRegistered<CallCoordinatorService>()) {
+        return;
+      }
+      final callCoordinator = GetIt.I<CallCoordinatorService>();
+      final callId =
+          rootPayload['callId']?.toString() ?? data['callId']?.toString() ?? '';
+      await callCoordinator.ensureRuntimeReady();
+      final call = await callCoordinator.hydrateIncomingCall(
+        callId: callId,
+        chatId: data['chatId']?.toString(),
+      );
+      if (call != null && !call.state.isTerminal) {
+        await callCoordinator.activateCall(call);
+      }
+      return;
+    }
+
     if (type == 'birthday') {
       final personId =
           rootPayload['personId']?.toString() ?? data['personId']?.toString();
@@ -1257,6 +1409,21 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     }
   }
 
+  Future<void> _hydrateIncomingCallCoordinator(
+    Map<String, dynamic> data,
+  ) async {
+    if (!GetIt.I.isRegistered<CallCoordinatorService>()) {
+      return;
+    }
+
+    final coordinator = GetIt.I<CallCoordinatorService>();
+    await coordinator.ensureRuntimeReady();
+    await coordinator.hydrateIncomingCall(
+      callId: data['callId']?.toString(),
+      chatId: data['chatId']?.toString(),
+    );
+  }
+
   Future<bool> _handleUnauthorizedError(CustomApiException error) async {
     final normalizedMessage = error.message.toLowerCase();
     final isUnauthorized = error.statusCode == 401 ||
@@ -1269,14 +1436,13 @@ class CustomApiNotificationService implements NotificationServiceInterface {
 
     final authService = _authService;
     if (authService != null) {
-      await authService.clearSessionLocally();
+      await authService.clearSessionLocally(sessionExpired: true);
     }
     return true;
   }
 
   Future<void> dispose() async {
-    _pollingTimer?.cancel();
-    await _realtimeSubscription?.cancel();
+    await stopForegroundSync();
     await _unreadNotificationsCountController.close();
   }
 }

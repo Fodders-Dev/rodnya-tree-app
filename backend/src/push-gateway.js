@@ -60,7 +60,7 @@ class PushGateway {
 
       deliveries.push(delivery);
       this.logger.info?.(
-        `[lineage-backend] queued push delivery ${delivery.id} for ${device.provider}:${device.platform}`,
+        `[rodnya-backend] queued push delivery ${delivery.id} for ${device.provider}:${device.platform}`,
       );
 
       await this._deliverNotification(notification, device, delivery);

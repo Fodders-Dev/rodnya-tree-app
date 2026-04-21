@@ -34,6 +34,7 @@ class Person {
   final String? birthPlace;
   final DateTime? deathDate;
   final String? deathPlace;
+  final String? familySummary;
   final String? notes;
 
   Person({
@@ -51,6 +52,7 @@ class Person {
     this.birthPlace,
     this.deathDate,
     this.deathPlace,
+    this.familySummary,
     this.notes,
   }) : _photoUrl = UrlUtils.normalizeImageUrl(photoUrl);
 
@@ -106,6 +108,7 @@ class Person {
       birthPlace: person.birthPlace,
       deathDate: person.deathDate,
       deathPlace: person.deathPlace,
+      familySummary: person.familySummary,
       notes: person.notes,
     );
   }
@@ -125,6 +128,7 @@ class Person {
       birthPlace: birthPlace,
       deathDate: deathDate,
       deathPlace: deathPlace,
+      familySummary: familySummary,
       isAlive: deathDate == null,
       createdAt: DateTime.now(),
       updatedAt: DateTime.now(),
@@ -208,6 +212,8 @@ class FamilyPerson extends HiveObject {
       details; // Подробная информация (образование, карьера и т.д.)
   @HiveField(24)
   final List<Map<String, dynamic>> _photoGallery;
+  @HiveField(26)
+  final String? familySummary;
 
   String? get photoUrl => _photoUrl;
   String? get primaryPhotoUrl => _photoUrl;
@@ -241,6 +247,7 @@ class FamilyPerson extends HiveObject {
     this.deathDate,
     this.deathPlace,
     this.bio,
+    this.familySummary,
     required this.isAlive,
     this.creatorId,
     required this.createdAt,
@@ -417,6 +424,7 @@ class FamilyPerson extends HiveObject {
       deathDate: parseDateTime(data['deathDate']),
       deathPlace: data['deathPlace'],
       bio: data['bio'],
+      familySummary: data['familySummary'] ?? data['notes'] ?? data['bio'],
       isAlive: data['isAlive'] ?? (data['deathDate'] == null),
       creatorId: data['creatorId'],
       createdAt: parseDateTimeRequired(data['createdAt']),
@@ -427,6 +435,46 @@ class FamilyPerson extends HiveObject {
       childrenIds: List<String>.from(data['childrenIds'] ?? []),
       spouseId: data['spouseId'],
       siblingIds: List<String>.from(data['siblingIds'] ?? []),
+      photoGallery: _photoGalleryFromDynamic(data['photoGallery']),
+    );
+  }
+
+  factory FamilyPerson.fromMap(Map<String, dynamic> data, String id) {
+    return FamilyPerson(
+      id: id,
+      treeId: data['treeId']?.toString() ?? '',
+      userId: data['userId']?.toString(),
+      identityId: data['identityId']?.toString(),
+      name: data['name']?.toString() ?? '',
+      maidenName: data['maidenName']?.toString(),
+      photoUrl:
+          data['primaryPhotoUrl']?.toString() ?? data['photoUrl']?.toString(),
+      gender: genderFromString(data['gender']?.toString()),
+      birthDate: parseDateTime(data['birthDate']),
+      birthPlace: data['birthPlace']?.toString(),
+      deathDate: parseDateTime(data['deathDate']),
+      deathPlace: data['deathPlace']?.toString(),
+      familySummary: data['familySummary']?.toString() ??
+          data['notes']?.toString() ??
+          data['bio']?.toString(),
+      bio: data['bio']?.toString(),
+      isAlive: data['isAlive'] ?? (data['deathDate'] == null),
+      creatorId: data['creatorId']?.toString(),
+      createdAt: data['createdAt'] != null
+          ? parseDateTimeRequired(data['createdAt'])
+          : DateTime.now(),
+      updatedAt: data['updatedAt'] != null
+          ? parseDateTimeRequired(data['updatedAt'])
+          : DateTime.now(),
+      notes: data['notes']?.toString(),
+      relation: data['relation']?.toString(),
+      parentIds: List<String>.from(data['parentIds'] ?? const <String>[]),
+      childrenIds: List<String>.from(data['childrenIds'] ?? const <String>[]),
+      spouseId: data['spouseId']?.toString(),
+      siblingIds: List<String>.from(data['siblingIds'] ?? const <String>[]),
+      details: data['details'] is Map<String, dynamic>
+          ? FamilyPersonDetails.fromMap(data['details'] as Map<String, dynamic>)
+          : null,
       photoGallery: _photoGalleryFromDynamic(data['photoGallery']),
     );
   }
@@ -446,6 +494,7 @@ class FamilyPerson extends HiveObject {
       'birthPlace': birthPlace,
       'deathDate': deathDate?.toIso8601String(),
       'deathPlace': deathPlace,
+      'familySummary': familySummary,
       'bio': bio,
       'isAlive': isAlive,
       'creatorId': creatorId,
@@ -491,9 +540,9 @@ class FamilyPerson extends HiveObject {
 
   String? get biography {
     if (details == null || details!.customData == null) {
-      return bio; // Используем существующее поле bio
+      return familySummary ?? bio; // Используем существующее поле bio
     }
-    return details!.customData!['biography'] as String? ?? bio;
+    return details!.customData!['biography'] as String? ?? familySummary ?? bio;
   }
 
   String get fullName {

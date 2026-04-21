@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MAX вход | Родня</title>
+  <script src="https://st.max.ru/js/max-web-app.js"></script>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background:
+        radial-gradient(circle at top, rgba(52, 138, 255, 0.18), transparent 42%),
+        linear-gradient(180deg, #edf4ff 0%, #f8fbff 100%);
+      color: #17304d;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+    }
+
+    .card {
+      width: min(92vw, 460px);
+      border-radius: 28px;
+      background: rgba(255, 255, 255, 0.96);
+      padding: 28px;
+      box-shadow: 0 24px 80px rgba(20, 69, 129, 0.16);
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: rgba(52, 138, 255, 0.12);
+      color: #2564b0;
+      font-weight: 700;
+      font-size: 13px;
+    }
+
+    h1 {
+      margin: 14px 0 12px;
+      font-size: 28px;
+      line-height: 1.12;
+    }
+
+    p {
+      margin: 0 0 16px;
+      line-height: 1.55;
+      color: #4b6482;
+    }
+
+    .status {
+      min-height: 24px;
+      margin-bottom: 18px;
+      font-weight: 600;
+    }
+
+    .status[data-tone="error"] {
+      color: #a12f2f;
+    }
+
+    .status[data-tone="success"] {
+      color: #21744b;
+    }
+
+    .profile {
+      display: none;
+      align-items: center;
+      gap: 14px;
+      padding: 14px 16px;
+      border-radius: 20px;
+      background: #f3f8ff;
+      margin-bottom: 18px;
+    }
+
+    .avatar {
+      width: 52px;
+      height: 52px;
+      border-radius: 18px;
+      object-fit: cover;
+      background: linear-gradient(135deg, #d8e8ff 0%, #f3f8ff 100%);
+    }
+
+    .profile-name {
+      margin: 0;
+      font-weight: 700;
+      color: #17304d;
+    }
+
+    .profile-subtitle {
+      margin: 4px 0 0;
+      font-size: 14px;
+      color: #5d7899;
+    }
+
+    .actions {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    button,
+    a.button-link {
+      display: inline-flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 52px;
+      border-radius: 18px;
+      border: none;
+      padding: 0 18px;
+      font-size: 15px;
+      font-weight: 700;
+      text-decoration: none;
+      cursor: pointer;
+    }
+
+    button.primary,
+    a.button-link.primary {
+      background: #2564b0;
+      color: #fff;
+      box-shadow: 0 16px 40px rgba(37, 100, 176, 0.22);
+    }
+
+    a.button-link.secondary {
+      background: transparent;
+      color: #2564b0;
+      border: 1px solid rgba(37, 100, 176, 0.16);
+    }
+
+    button[disabled] {
+      opacity: 0.7;
+      cursor: wait;
+    }
+
+    .hint {
+      margin-top: 14px;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <div class="badge">MAX × Родня</div>
+    <h1>Подтверждаем MAX</h1>
+    <p>Мы проверим, что это действительно ваш MAX-профиль, а затем вернём вас в Родню для входа или привязки.</p>
+    <div id="status" class="status">Проверяем данные MAX…</div>
+    <section id="profile" class="profile">
+      <img id="avatar" class="avatar" alt="MAX avatar">
+      <div>
+        <p id="profile-name" class="profile-name"></p>
+        <p id="profile-subtitle" class="profile-subtitle"></p>
+      </div>
+    </section>
+    <div class="actions">
+      <button id="continue" class="primary" type="button" disabled>Продолжить в Родню</button>
+      <a class="button-link secondary" href="/#/login">Вернуться на экран входа</a>
+    </div>
+    <p class="hint">Если MAX уже привязан к вашему аккаунту, вход завершится автоматически. Если нет, Родня предложит привязать MAX без дубля профиля.</p>
+  </main>
+  <script>
+    (function () {
+      const statusNode = document.getElementById("status");
+      const continueButton = document.getElementById("continue");
+      const profileNode = document.getElementById("profile");
+      const avatarNode = document.getElementById("avatar");
+      const nameNode = document.getElementById("profile-name");
+      const subtitleNode = document.getElementById("profile-subtitle");
+      let redirectUrl = "";
+
+      function resolveApiBaseUrl() {
+        const {protocol, hostname, origin} = window.location;
+        if (hostname === "127.0.0.1" || hostname === "localhost") {
+          return `${protocol}//${hostname}:8080`;
+        }
+        if (hostname.startsWith("api.")) {
+          return origin;
+        }
+        return `${protocol}//api.${hostname}`;
+      }
+
+      function setStatus(message, tone) {
+        statusNode.textContent = message;
+        statusNode.dataset.tone = tone || "";
+      }
+
+      function renderProfile(user) {
+        if (!user || typeof user !== "object") {
+          return;
+        }
+        const fullName = [user.first_name, user.last_name]
+          .map((value) => String(value || "").trim())
+          .filter(Boolean)
+          .join(" ");
+        const username = String(user.username || "").trim();
+        if (!fullName && !username) {
+          return;
+        }
+        profileNode.style.display = "flex";
+        nameNode.textContent = fullName || username;
+        subtitleNode.textContent = username ? `@${username}` : "Профиль MAX";
+        const photoUrl = String(user.photo_url || "").trim();
+        if (photoUrl) {
+          avatarNode.src = photoUrl;
+          avatarNode.style.display = "block";
+        } else {
+          avatarNode.style.display = "none";
+        }
+      }
+
+      async function openReturnUrl() {
+        if (!redirectUrl) {
+          return;
+        }
+        const webApp = window.WebApp;
+        if (webApp && typeof webApp.openLink === "function") {
+          try {
+            await webApp.openLink(redirectUrl);
+            return;
+          } catch (_) {}
+        }
+        window.location.href = redirectUrl;
+      }
+
+      continueButton.addEventListener("click", openReturnUrl);
+
+      async function main() {
+        const webApp = window.WebApp;
+        if (!webApp || !webApp.initData) {
+          setStatus(
+            "MAX Bridge не передал стартовые данные. Откройте Родню внутри MAX ещё раз.",
+            "error",
+          );
+          return;
+        }
+
+        if (typeof webApp.ready === "function") {
+          try {
+            webApp.ready();
+          } catch (_) {}
+        }
+        if (typeof webApp.disableClosingConfirmation === "function") {
+          try {
+            webApp.disableClosingConfirmation();
+          } catch (_) {}
+        }
+
+        renderProfile(webApp.initDataUnsafe && webApp.initDataUnsafe.user);
+
+        try {
+          const response = await fetch(`${resolveApiBaseUrl()}/v1/auth/max/complete`, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              accept: "application/json",
+            },
+            body: JSON.stringify({
+              initData: webApp.initData,
+            }),
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            throw new Error(String(payload.message || "Не удалось проверить MAX."));
+          }
+          redirectUrl = String(payload.redirectUrl || "").trim();
+          if (!redirectUrl) {
+            throw new Error("Backend не вернул redirectUrl для завершения MAX flow.");
+          }
+          continueButton.disabled = false;
+          setStatus(
+            String(payload.message || "MAX подтверждён. Можно возвращаться в Родню."),
+            "success",
+          );
+        } catch (error) {
+          setStatus(
+            String(error && error.message ? error.message : error),
+            "error",
+          );
+        }
+      }
+
+      main();
+    })();
+  </script>
+</body>
+</html>

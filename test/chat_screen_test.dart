@@ -7,23 +7,29 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:get_it/get_it.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/date_symbol_data_local.dart';
-import 'package:lineage/backend/interfaces/chat_service_interface.dart';
-import 'package:lineage/backend/interfaces/safety_service_interface.dart';
-import 'package:lineage/models/chat_attachment.dart';
-import 'package:lineage/models/chat_details.dart';
-import 'package:lineage/models/chat_message.dart';
-import 'package:lineage/models/chat_preview.dart';
-import 'package:lineage/models/chat_send_progress.dart';
-import 'package:lineage/models/family_tree.dart';
-import 'package:lineage/models/user_block_record.dart';
-import 'package:lineage/providers/tree_provider.dart';
-import 'package:lineage/screens/chat_screen.dart';
-import 'package:lineage/services/chat_auto_delete_store.dart';
-import 'package:lineage/services/chat_draft_store.dart';
-import 'package:lineage/services/chat_notification_settings_store.dart';
-import 'package:lineage/services/chat_pin_store.dart';
-import 'package:lineage/services/chat_reaction_store.dart';
-import 'package:lineage/services/local_storage_service.dart';
+import 'package:rodnya/backend/interfaces/chat_service_interface.dart';
+import 'package:rodnya/backend/interfaces/call_service_interface.dart';
+import 'package:rodnya/backend/interfaces/safety_service_interface.dart';
+import 'package:rodnya/models/call_event.dart';
+import 'package:rodnya/models/call_invite.dart';
+import 'package:rodnya/models/call_media_mode.dart';
+import 'package:rodnya/models/chat_attachment.dart';
+import 'package:rodnya/models/chat_details.dart';
+import 'package:rodnya/models/chat_message.dart';
+import 'package:rodnya/models/chat_preview.dart';
+import 'package:rodnya/models/chat_send_progress.dart';
+import 'package:rodnya/models/family_tree.dart';
+import 'package:rodnya/models/user_block_record.dart';
+import 'package:rodnya/providers/tree_provider.dart';
+import 'package:rodnya/screens/chat_screen.dart';
+import 'package:rodnya/services/call_coordinator_service.dart';
+import 'package:rodnya/services/chat_auto_delete_store.dart';
+import 'package:rodnya/services/chat_draft_store.dart';
+import 'package:rodnya/services/chat_notification_settings_store.dart';
+import 'package:rodnya/services/chat_pin_store.dart';
+import 'package:rodnya/services/chat_reaction_store.dart';
+import 'package:rodnya/services/app_status_service.dart';
+import 'package:rodnya/services/local_storage_service.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -246,6 +252,9 @@ class _FakeChatService implements ChatServiceInterface {
   }
 
   @override
+  Future<void> refreshMessages(String chatId) async {}
+
+  @override
   Future<void> sendMessage({
     required String otherUserId,
     String text = '',
@@ -394,6 +403,63 @@ class _SentChatRequest {
   final int? expiresInSeconds;
 }
 
+class _FakeCallService implements CallServiceInterface {
+  CallInvite? activeCall;
+
+  @override
+  String? get currentUserId => 'user-1';
+
+  @override
+  Stream<CallEvent> get events => const Stream<CallEvent>.empty();
+
+  @override
+  Future<void> startRealtimeBridge() async {}
+
+  @override
+  Future<void> stopRealtimeBridge() async {}
+
+  @override
+  Future<CallInvite?> getActiveCall({String? chatId}) async {
+    if (chatId == null || chatId.isEmpty) {
+      return activeCall;
+    }
+    return activeCall?.chatId == chatId ? activeCall : null;
+  }
+
+  @override
+  Future<CallInvite?> getCall(String callId) async {
+    return activeCall?.id == callId ? activeCall : null;
+  }
+
+  @override
+  Future<CallInvite> acceptCall(String callId) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<CallInvite> cancelCall(String callId) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<CallInvite> hangUp(String callId) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<CallInvite> rejectCall(String callId) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<CallInvite> startCall({
+    required String chatId,
+    required CallMediaMode mediaMode,
+  }) {
+    throw UnimplementedError();
+  }
+}
+
 class _FakeSafetyService implements SafetyServiceInterface {
   String? lastReportedTargetType;
   String? lastReportedTargetId;
@@ -469,9 +535,18 @@ void main() {
     await getIt.reset();
     SharedPreferences.setMockInitialValues({});
     getIt.registerSingleton<LocalStorageService>(_FakeLocalStorageService());
+    getIt.registerSingleton<AppStatusService>(AppStatusService());
+    final callService = _FakeCallService();
+    getIt.registerSingleton<CallServiceInterface>(callService);
+    getIt.registerSingleton<CallCoordinatorService>(
+      CallCoordinatorService(callService: callService),
+    );
   });
 
   tearDown(() async {
+    if (getIt.isRegistered<CallCoordinatorService>()) {
+      getIt<CallCoordinatorService>().dispose();
+    }
     await getIt.reset();
   });
 
@@ -597,6 +672,10 @@ void main() {
 
   testWidgets('ChatScreen lets user choose video attachment from picker sheet',
       (tester) async {
+    tester.view.physicalSize = const Size(1440, 2000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
     final chatService = _FakeChatService();
     getIt.registerSingleton<ChatServiceInterface>(chatService);
 

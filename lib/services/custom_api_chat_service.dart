@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:get_it/get_it.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
+import 'package:video_player/video_player.dart';
 
 import '../backend/backend_runtime_config.dart';
 import '../backend/interfaces/chat_service_interface.dart';
@@ -13,8 +14,35 @@ import '../models/chat_details.dart';
 import '../models/chat_message.dart';
 import '../models/chat_preview.dart';
 import '../models/chat_send_progress.dart';
+import 'app_status_service.dart';
 import 'custom_api_auth_service.dart';
 import 'custom_api_realtime_service.dart';
+
+class _ChatMessageStreamState {
+  _ChatMessageStreamState(this.chatId);
+
+  final String chatId;
+  late final StreamController<List<ChatMessage>> controller;
+  StreamSubscription<CustomApiRealtimeEvent>? realtimeSubscription;
+  Timer? refreshDebounce;
+  int listenerCount = 0;
+  bool started = false;
+  bool isFetching = false;
+  bool hasQueuedRefresh = false;
+  List<ChatMessage> messages = const <ChatMessage>[];
+}
+
+class _UploadedAttachmentMetadata {
+  const _UploadedAttachmentMetadata({
+    this.durationMs,
+    this.width,
+    this.height,
+  });
+
+  final int? durationMs;
+  final int? width;
+  final int? height;
+}
 
 class CustomApiChatService implements ChatServiceInterface {
   CustomApiChatService({
@@ -23,6 +51,7 @@ class CustomApiChatService implements ChatServiceInterface {
     http.Client? httpClient,
     CustomApiRealtimeService? realtimeService,
     StorageServiceInterface? storageService,
+    AppStatusService? appStatusService,
     Duration? pollInterval,
     Duration? overviewPollInterval,
   })  : _authService = authService,
@@ -30,6 +59,7 @@ class CustomApiChatService implements ChatServiceInterface {
         _httpClient = httpClient ?? http.Client(),
         _realtimeService = realtimeService,
         _storageService = storageService,
+        _appStatusService = appStatusService,
         _pollInterval = pollInterval ?? const Duration(seconds: 3),
         _overviewPollInterval =
             overviewPollInterval ?? const Duration(seconds: 12);
@@ -39,19 +69,24 @@ class CustomApiChatService implements ChatServiceInterface {
   final http.Client _httpClient;
   final CustomApiRealtimeService? _realtimeService;
   final StorageServiceInterface? _storageService;
+  final AppStatusService? _appStatusService;
   final Duration _pollInterval;
   final Duration _overviewPollInterval;
   StreamController<List<ChatPreview>>? _chatPreviewsController;
   Timer? _chatPreviewsTimer;
+  Timer? _chatPreviewsRealtimeDebounce;
   StreamSubscription<CustomApiRealtimeEvent>? _chatPreviewsRealtimeSubscription;
   int _chatPreviewsListenerCount = 0;
   bool _chatPreviewsPollingEnabled = false;
 
   StreamController<int>? _totalUnreadController;
   Timer? _totalUnreadTimer;
+  Timer? _totalUnreadRealtimeDebounce;
   StreamSubscription<CustomApiRealtimeEvent>? _totalUnreadRealtimeSubscription;
   int _totalUnreadListenerCount = 0;
   bool _totalUnreadPollingEnabled = false;
+  final Map<String, _ChatMessageStreamState> _messageStates =
+      <String, _ChatMessageStreamState>{};
 
   @override
   String? get currentUserId => _authService.currentUserId;
@@ -81,72 +116,21 @@ class CustomApiChatService implements ChatServiceInterface {
 
   @override
   Stream<List<ChatMessage>> getMessagesStream(String chatId) {
-    return Stream<List<ChatMessage>>.multi((controller) {
-      Timer? timer;
-      StreamSubscription<CustomApiRealtimeEvent>? realtimeSubscription;
-      var pollingEnabled = true;
+    return _ensureMessageStream(chatId).controller.stream;
+  }
 
-      Future<void> emitMessages() async {
-        if (!pollingEnabled) {
-          return;
-        }
-        if (!_hasActiveSession) {
-          pollingEnabled = false;
-          timer?.cancel();
-          await realtimeSubscription?.cancel();
-          controller.add(const <ChatMessage>[]);
-          return;
-        }
-        try {
-          controller.add(await _fetchMessages(chatId));
-        } on CustomApiException catch (error, stackTrace) {
-          if (await _handleSessionError(error)) {
-            pollingEnabled = false;
-            timer?.cancel();
-            await realtimeSubscription?.cancel();
-            controller.add(const <ChatMessage>[]);
-            return;
-          }
-          controller.addError(error, stackTrace);
-        } catch (error, stackTrace) {
-          if (await _handleSessionError(error)) {
-            pollingEnabled = false;
-            timer?.cancel();
-            await realtimeSubscription?.cancel();
-            controller.add(const <ChatMessage>[]);
-            return;
-          }
-          controller.addError(error, stackTrace);
-        }
+  @override
+  Future<void> refreshMessages(String chatId) async {
+    final state = _messageStates[chatId];
+    if (state == null) {
+      if (!_hasActiveSession) {
+        return;
       }
+      await _fetchMessages(chatId);
+      return;
+    }
 
-      unawaited(emitMessages());
-      timer = Timer.periodic(_pollInterval, (_) {
-        unawaited(emitMessages());
-      });
-
-      if (_realtimeService != null) {
-        unawaited(_realtimeService!.connect());
-        realtimeSubscription = _realtimeService!.events.where((event) {
-          if (event.type == 'chat.read.updated') {
-            return event.chatId == chatId;
-          }
-          if (event.type == 'chat.message.created' ||
-              event.type == 'chat.message.updated' ||
-              event.type == 'chat.message.deleted') {
-            return event.chatId == chatId;
-          }
-          return false;
-        }).listen((_) {
-          unawaited(emitMessages());
-        });
-      }
-
-      controller.onCancel = () async {
-        timer?.cancel();
-        await realtimeSubscription?.cancel();
-      };
-    });
+    await _refreshMessageState(state);
   }
 
   @override
@@ -231,6 +215,10 @@ class CustomApiChatService implements ChatServiceInterface {
           'expiresInSeconds': expiresInSeconds,
       },
     );
+    final messageState = _messageStates[chatId];
+    if (messageState != null) {
+      _scheduleMessageRefresh(messageState, immediate: true);
+    }
   }
 
   @override
@@ -510,7 +498,7 @@ class CustomApiChatService implements ChatServiceInterface {
       _chatPreviewsRealtimeSubscription = _realtimeService!.events
           .where((event) => event.isChatEvent || event.isNotificationEvent)
           .listen((_) {
-        unawaited(_emitChatPreviews());
+        _scheduleChatPreviewsRefresh();
       });
     }
   }
@@ -519,6 +507,8 @@ class CustomApiChatService implements ChatServiceInterface {
     _chatPreviewsPollingEnabled = false;
     _chatPreviewsTimer?.cancel();
     _chatPreviewsTimer = null;
+    _chatPreviewsRealtimeDebounce?.cancel();
+    _chatPreviewsRealtimeDebounce = null;
     await _chatPreviewsRealtimeSubscription?.cancel();
     _chatPreviewsRealtimeSubscription = null;
   }
@@ -549,6 +539,10 @@ class CustomApiChatService implements ChatServiceInterface {
         }
         return;
       }
+      _appStatusService?.reportError(
+        error,
+        fallbackMessage: 'Не удалось обновить список чатов.',
+      );
       controller.addError(error, stackTrace);
     } catch (error, stackTrace) {
       if (await _handleSessionError(error)) {
@@ -558,8 +552,20 @@ class CustomApiChatService implements ChatServiceInterface {
         }
         return;
       }
+      _appStatusService?.reportError(
+        error,
+        fallbackMessage: 'Не удалось обновить список чатов.',
+      );
       controller.addError(error, stackTrace);
     }
+  }
+
+  void _scheduleChatPreviewsRefresh() {
+    _chatPreviewsRealtimeDebounce?.cancel();
+    _chatPreviewsRealtimeDebounce = Timer(
+      const Duration(milliseconds: 350),
+      () => unawaited(_emitChatPreviews()),
+    );
   }
 
   void _ensureTotalUnreadStream() {
@@ -601,7 +607,7 @@ class CustomApiChatService implements ChatServiceInterface {
       _totalUnreadRealtimeSubscription = _realtimeService!.events
           .where((event) => event.isChatEvent || event.isNotificationEvent)
           .listen((_) {
-        unawaited(_emitTotalUnread());
+        _scheduleTotalUnreadRefresh();
       });
     }
   }
@@ -610,6 +616,8 @@ class CustomApiChatService implements ChatServiceInterface {
     _totalUnreadPollingEnabled = false;
     _totalUnreadTimer?.cancel();
     _totalUnreadTimer = null;
+    _totalUnreadRealtimeDebounce?.cancel();
+    _totalUnreadRealtimeDebounce = null;
     await _totalUnreadRealtimeSubscription?.cancel();
     _totalUnreadRealtimeSubscription = null;
   }
@@ -640,6 +648,10 @@ class CustomApiChatService implements ChatServiceInterface {
         }
         return;
       }
+      _appStatusService?.reportError(
+        error,
+        fallbackMessage: 'Не удалось обновить счётчик непрочитанных.',
+      );
       controller.addError(error, stackTrace);
     } catch (error, stackTrace) {
       if (await _handleSessionError(error)) {
@@ -649,8 +661,266 @@ class CustomApiChatService implements ChatServiceInterface {
         }
         return;
       }
+      _appStatusService?.reportError(
+        error,
+        fallbackMessage: 'Не удалось обновить счётчик непрочитанных.',
+      );
       controller.addError(error, stackTrace);
     }
+  }
+
+  void _scheduleTotalUnreadRefresh() {
+    _totalUnreadRealtimeDebounce?.cancel();
+    _totalUnreadRealtimeDebounce = Timer(
+      const Duration(milliseconds: 350),
+      () => unawaited(_emitTotalUnread()),
+    );
+  }
+
+  _ChatMessageStreamState _ensureMessageStream(String chatId) {
+    final existingState = _messageStates[chatId];
+    if (existingState != null) {
+      return existingState;
+    }
+
+    final state = _ChatMessageStreamState(chatId);
+    state.controller = StreamController<List<ChatMessage>>.broadcast(
+      onListen: () {
+        state.listenerCount += 1;
+        if (state.listenerCount == 1) {
+          _startMessageState(state);
+        } else if (state.messages.isNotEmpty) {
+          state.controller.add(List<ChatMessage>.unmodifiable(state.messages));
+        }
+      },
+      onCancel: () async {
+        state.listenerCount -= 1;
+        if (state.listenerCount <= 0) {
+          state.listenerCount = 0;
+          await _disposeMessageState(chatId);
+        }
+      },
+    );
+    _messageStates[chatId] = state;
+    return state;
+  }
+
+  void _startMessageState(_ChatMessageStreamState state) {
+    if (state.started) {
+      return;
+    }
+
+    state.started = true;
+    if (!_hasActiveSession) {
+      state.messages = const <ChatMessage>[];
+      state.controller.add(const <ChatMessage>[]);
+      return;
+    }
+
+    unawaited(_refreshMessageState(state));
+
+    if (_realtimeService != null) {
+      unawaited(_realtimeService!.connect());
+      state.realtimeSubscription = _realtimeService!.events.listen((event) {
+        if (event.type == 'connection.ready') {
+          _scheduleMessageRefresh(state, immediate: true);
+          return;
+        }
+
+        if (event.chatId != state.chatId) {
+          return;
+        }
+
+        switch (event.type) {
+          case 'chat.message.created':
+          case 'chat.message.updated':
+            final payload = event.message;
+            if (payload == null) {
+              _scheduleMessageRefresh(state);
+              return;
+            }
+            _mergeRealtimeMessage(state, payload);
+            return;
+          case 'chat.message.deleted':
+            final messageId = event.payload['messageId']?.toString();
+            if (messageId == null || messageId.isEmpty) {
+              _scheduleMessageRefresh(state);
+              return;
+            }
+            _removeRealtimeMessage(state, messageId);
+            return;
+          case 'chat.read.updated':
+            final readerUserId = event.userId;
+            if (readerUserId == null || readerUserId.isEmpty) {
+              _scheduleMessageRefresh(state);
+              return;
+            }
+            _applyReadUpdate(state, readerUserId);
+            return;
+          default:
+            return;
+        }
+      });
+    }
+  }
+
+  Future<void> _disposeMessageState(String chatId) async {
+    final state = _messageStates.remove(chatId);
+    if (state == null) {
+      return;
+    }
+
+    state.refreshDebounce?.cancel();
+    await state.realtimeSubscription?.cancel();
+    await state.controller.close();
+  }
+
+  void _scheduleMessageRefresh(
+    _ChatMessageStreamState state, {
+    bool immediate = false,
+  }) {
+    state.refreshDebounce?.cancel();
+    if (immediate) {
+      unawaited(_refreshMessageState(state));
+      return;
+    }
+
+    final debounceMs = _pollInterval.inMilliseconds.clamp(150, 1000);
+    state.refreshDebounce = Timer(
+      Duration(milliseconds: debounceMs),
+      () => unawaited(_refreshMessageState(state)),
+    );
+  }
+
+  Future<void> _refreshMessageState(_ChatMessageStreamState state) async {
+    if (state.isFetching) {
+      state.hasQueuedRefresh = true;
+      return;
+    }
+
+    if (!_hasActiveSession) {
+      state.messages = const <ChatMessage>[];
+      if (!state.controller.isClosed) {
+        state.controller.add(const <ChatMessage>[]);
+      }
+      return;
+    }
+
+    state.isFetching = true;
+    try {
+      state.messages = await _fetchMessages(state.chatId);
+      if (!state.controller.isClosed) {
+        state.controller.add(List<ChatMessage>.unmodifiable(state.messages));
+      }
+    } on CustomApiException catch (error, stackTrace) {
+      if (await _handleSessionError(error)) {
+        state.messages = const <ChatMessage>[];
+        if (!state.controller.isClosed) {
+          state.controller.add(const <ChatMessage>[]);
+        }
+      } else {
+        _appStatusService?.reportError(
+          error,
+          fallbackMessage: 'Не удалось обновить сообщения.',
+        );
+        if (!state.controller.isClosed) {
+          state.controller.addError(error, stackTrace);
+        }
+      }
+    } catch (error, stackTrace) {
+      if (await _handleSessionError(error)) {
+        state.messages = const <ChatMessage>[];
+        if (!state.controller.isClosed) {
+          state.controller.add(const <ChatMessage>[]);
+        }
+      } else {
+        _appStatusService?.reportError(
+          error,
+          fallbackMessage: 'Не удалось обновить сообщения.',
+        );
+        if (!state.controller.isClosed) {
+          state.controller.addError(error, stackTrace);
+        }
+      }
+    } finally {
+      state.isFetching = false;
+      if (state.hasQueuedRefresh) {
+        state.hasQueuedRefresh = false;
+        unawaited(_refreshMessageState(state));
+      }
+    }
+  }
+
+  void _mergeRealtimeMessage(
+    _ChatMessageStreamState state,
+    Map<String, dynamic> rawMessage,
+  ) {
+    final incomingMessage = _parseChatMessage(rawMessage);
+    final existingIndex = state.messages.indexWhere(
+      (message) => message.id == incomingMessage.id,
+    );
+
+    final nextMessages = List<ChatMessage>.from(state.messages);
+    if (existingIndex == -1) {
+      nextMessages.add(incomingMessage);
+    } else {
+      nextMessages[existingIndex] = incomingMessage;
+    }
+    nextMessages.sort(_sortMessagesDescending);
+    state.messages = nextMessages;
+    if (!state.controller.isClosed) {
+      state.controller.add(List<ChatMessage>.unmodifiable(nextMessages));
+    }
+  }
+
+  void _removeRealtimeMessage(
+    _ChatMessageStreamState state,
+    String messageId,
+  ) {
+    final nextMessages = state.messages
+        .where((message) => message.id != messageId)
+        .toList(growable: false);
+    state.messages = nextMessages;
+    if (!state.controller.isClosed) {
+      state.controller.add(List<ChatMessage>.unmodifiable(nextMessages));
+    }
+  }
+
+  void _applyReadUpdate(_ChatMessageStreamState state, String readerUserId) {
+    final nextMessages = state.messages.map((message) {
+      if (message.senderId == readerUserId || message.isRead) {
+        return message;
+      }
+      return message.copyWith(isRead: true);
+    }).toList(growable: false);
+    state.messages = nextMessages;
+    if (!state.controller.isClosed) {
+      state.controller.add(List<ChatMessage>.unmodifiable(nextMessages));
+    }
+  }
+
+  int _sortMessagesDescending(ChatMessage left, ChatMessage right) {
+    return right.timestamp.compareTo(left.timestamp);
+  }
+
+  ChatMessage _parseChatMessage(Map<String, dynamic> message) {
+    return ChatMessage.fromMap({
+      'id': message['id'],
+      'chatId': message['chatId'],
+      'senderId': message['senderId'],
+      'text': message['text'],
+      'timestamp': message['timestamp'],
+      'updatedAt': message['updatedAt'],
+      'isRead': message['isRead'],
+      'attachments': message['attachments'],
+      'imageUrl': message['imageUrl'],
+      'mediaUrls': message['mediaUrls'],
+      'participants': message['participants'],
+      'senderName': message['senderName'],
+      'clientMessageId': message['clientMessageId'],
+      'expiresAt': message['expiresAt'],
+      'replyTo': message['replyTo'],
+    });
   }
 
   Future<List<ChatMessage>> _fetchMessages(String chatId) async {
@@ -664,25 +934,10 @@ class CustomApiChatService implements ChatServiceInterface {
       return const <ChatMessage>[];
     }
 
-    return rawMessages.whereType<Map<String, dynamic>>().map((message) {
-      return ChatMessage.fromMap({
-        'id': message['id'],
-        'chatId': message['chatId'],
-        'senderId': message['senderId'],
-        'text': message['text'],
-        'timestamp': message['timestamp'],
-        'updatedAt': message['updatedAt'],
-        'isRead': message['isRead'],
-        'attachments': message['attachments'],
-        'imageUrl': message['imageUrl'],
-        'mediaUrls': message['mediaUrls'],
-        'participants': message['participants'],
-        'senderName': message['senderName'],
-        'clientMessageId': message['clientMessageId'],
-        'expiresAt': message['expiresAt'],
-        'replyTo': message['replyTo'],
-      });
-    }).toList();
+    return rawMessages
+        .whereType<Map<String, dynamic>>()
+        .map(_parseChatMessage)
+        .toList();
   }
 
   Future<List<ChatAttachment>> _uploadAttachments(
@@ -725,13 +980,25 @@ class CustomApiChatService implements ChatServiceInterface {
         'chat-media/$userId',
       );
       if (uploadedUrl != null && uploadedUrl.isNotEmpty) {
+        final attachmentType = _attachmentTypeForFile(attachment, uploadedUrl);
+        final metadata = await _buildAttachmentMetadata(
+          attachment,
+          attachmentType,
+        );
         uploadedAttachments.add(
           ChatAttachment(
-            type: _attachmentTypeForFile(attachment, uploadedUrl),
+            type: attachmentType,
             url: uploadedUrl,
+            presentation: _attachmentPresentationForFile(
+              attachment,
+              attachmentType,
+            ),
             mimeType: attachment.mimeType,
             fileName: _attachmentFileName(attachment, uploadedUrl),
             sizeBytes: await attachment.length(),
+            durationMs: metadata.durationMs,
+            width: metadata.width,
+            height: metadata.height,
           ),
         );
       }
@@ -744,6 +1011,61 @@ class CustomApiChatService implements ChatServiceInterface {
       );
     }
     return uploadedAttachments;
+  }
+
+  Future<_UploadedAttachmentMetadata> _buildAttachmentMetadata(
+    XFile attachment,
+    ChatAttachmentType type,
+  ) async {
+    if (type == ChatAttachmentType.audio) {
+      return _UploadedAttachmentMetadata(
+        durationMs: _durationFromAttachmentName(attachment.name),
+      );
+    }
+    if (type != ChatAttachmentType.video) {
+      return const _UploadedAttachmentMetadata();
+    }
+
+    final sourceUri = _attachmentUri(attachment.path);
+    final controller = _isRemoteLikeUri(sourceUri)
+        ? VideoPlayerController.networkUrl(sourceUri)
+        : VideoPlayerController.contentUri(sourceUri);
+    try {
+      await controller.initialize();
+      final value = controller.value;
+      final durationMs = value.duration.inMilliseconds > 0
+          ? value.duration.inMilliseconds
+          : null;
+      final width = value.size.width > 0 ? value.size.width.round() : null;
+      final height = value.size.height > 0 ? value.size.height.round() : null;
+      return _UploadedAttachmentMetadata(
+        durationMs: durationMs,
+        width: width,
+        height: height,
+      );
+    } catch (_) {
+      return const _UploadedAttachmentMetadata();
+    } finally {
+      await controller.dispose();
+    }
+  }
+
+  ChatAttachmentPresentation _attachmentPresentationForFile(
+    XFile attachment,
+    ChatAttachmentType type,
+  ) {
+    final normalizedName = attachment.name.toLowerCase().trim();
+    if (type == ChatAttachmentType.audio &&
+        (normalizedName.startsWith('voice_note') ||
+            normalizedName.startsWith('voice-'))) {
+      return ChatAttachmentPresentation.voiceNote;
+    }
+    if (type == ChatAttachmentType.video &&
+        (normalizedName.startsWith('video_note') ||
+            normalizedName.startsWith('video-note'))) {
+      return ChatAttachmentPresentation.videoNote;
+    }
+    return ChatAttachmentPresentation.defaultPresentation;
   }
 
   ChatAttachmentType _attachmentTypeForFile(
@@ -789,6 +1111,28 @@ class CustomApiChatService implements ChatServiceInterface {
         ? uri!.pathSegments.last.trim()
         : '';
     return lastSegment.isNotEmpty ? lastSegment : null;
+  }
+
+  int? _durationFromAttachmentName(String rawName) {
+    final match = RegExp(r'_(\d+)s_').firstMatch(rawName.trim().toLowerCase());
+    final seconds = int.tryParse(match?.group(1) ?? '');
+    if (seconds == null || seconds <= 0) {
+      return null;
+    }
+    return Duration(seconds: seconds).inMilliseconds;
+  }
+
+  Uri _attachmentUri(String rawPath) {
+    final parsedUri = Uri.tryParse(rawPath);
+    if (parsedUri != null && parsedUri.hasScheme) {
+      return parsedUri;
+    }
+    return Uri.file(rawPath);
+  }
+
+  bool _isRemoteLikeUri(Uri uri) {
+    final scheme = uri.scheme.toLowerCase();
+    return scheme == 'http' || scheme == 'https' || scheme == 'blob';
   }
 
   Future<Map<String, dynamic>> _requestJson({
@@ -899,10 +1243,11 @@ class CustomApiChatService implements ChatServiceInterface {
     }
 
     if (_authService.currentUserId == null) {
+      _appStatusService?.reportSessionExpired();
       return true;
     }
 
-    await _authService.clearSessionLocally();
+    await _authService.clearSessionLocally(sessionExpired: true);
     return true;
   }
 }

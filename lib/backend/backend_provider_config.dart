@@ -31,7 +31,6 @@ class BackendProviderConfig {
     String storageProviderRaw = '',
     String notificationProviderRaw = '',
     bool isWebRuntime = false,
-    bool hasWebFirebaseOptions = false,
   }) {
     return const BackendProviderConfig();
   }

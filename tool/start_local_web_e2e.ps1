@@ -18,17 +18,17 @@ $publicAppUrl = "http://$Bind`:$Port"
 
 if (-not $SkipBuild) {
   & $flutterSafe build web `
-    --dart-define=LINEAGE_PUBLIC_APP_URL=$publicAppUrl `
-    --dart-define=LINEAGE_API_BASE_URL=$ApiBaseUrl `
-    --dart-define=LINEAGE_WS_BASE_URL=$WsBaseUrl `
-    --dart-define=LINEAGE_ENABLE_LEGACY_DYNAMIC_LINKS=false `
-    --dart-define=LINEAGE_E2E=true
+    --dart-define=RODNYA_PUBLIC_APP_URL=$publicAppUrl `
+    --dart-define=RODNYA_API_BASE_URL=$ApiBaseUrl `
+    --dart-define=RODNYA_WS_BASE_URL=$WsBaseUrl `
+    --dart-define=RODNYA_ENABLE_LEGACY_DYNAMIC_LINKS=false `
+    --dart-define=RODNYA_E2E=true
   if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
   }
 }
 
-if ($RepairShellAssets) {
+if ((Test-Path $buildWebDir) -or $RepairShellAssets) {
   node $syncAssetsScript
   if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE

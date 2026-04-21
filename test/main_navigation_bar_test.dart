@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:lineage/widgets/main_navigation_bar.dart';
+import 'package:rodnya/widgets/main_navigation_bar.dart';
 
 void main() {
   late StreamController<int> notificationsController;
@@ -77,5 +77,36 @@ void main() {
     await tester.pump();
 
     expect(tappedIndex, 3);
+  });
+
+  testWidgets('MainNavigationBar скрывает подписи на узких мобильных экранах',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          bottomNavigationBar: MainNavigationBar(
+            currentIndex: 0,
+            onTap: (_) {},
+            unreadNotificationsStream: notificationsController.stream,
+            unreadChatsStream: unreadController.stream,
+            pendingInvitationsCountStream: invitationsController.stream,
+          ),
+        ),
+      ),
+    );
+
+    notificationsController.add(0);
+    unreadController.add(0);
+    invitationsController.add(0);
+    await tester.pump();
+
+    expect(find.text('Главная'), findsNothing);
+    expect(find.text('Родные'), findsNothing);
+    expect(find.text('Дерево'), findsNothing);
+    expect(find.text('Чаты'), findsNothing);
+    expect(find.text('Профиль'), findsNothing);
   });
 }

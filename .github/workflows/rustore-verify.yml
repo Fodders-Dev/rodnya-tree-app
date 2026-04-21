@@ -9,10 +9,15 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
 
       - name: Setup Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
@@ -53,25 +58,25 @@ jobs:
             -keystore $keystorePath `
             -storepass android `
             -keypass android `
-            -alias lineageci `
+            -alias rodnyaci `
             -keyalg RSA `
             -keysize 2048 `
             -validity 3650 `
-            -dname "CN=Lineage CI, OU=CI, O=Lineage, L=Moscow, ST=Moscow, C=RU"
-          "LINEAGE_KEYSTORE_FILE=$keystorePath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "LINEAGE_KEYSTORE_PASSWORD=android" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "LINEAGE_KEY_ALIAS=lineageci" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "LINEAGE_KEY_PASSWORD=android" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            -dname "CN=Rodnya CI, OU=CI, O=Rodnya, L=Moscow, ST=Moscow, C=RU"
+          "RODNYA_KEYSTORE_FILE=$keystorePath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "RODNYA_KEYSTORE_PASSWORD=android" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "RODNYA_KEY_ALIAS=rodnyaci" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "RODNYA_KEY_PASSWORD=android" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Build rustore release bundle
         shell: powershell
         env:
-          LINEAGE_BUILD_NAME: 1.0.2-ci
-          LINEAGE_BUILD_NUMBER: 9999
+          RODNYA_BUILD_NAME: 1.0.2-ci
+          RODNYA_BUILD_NUMBER: 9999
         run: powershell -ExecutionPolicy Bypass -File .\tool\build_rustore_release.ps1
 
       - name: Upload rustore bundle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rustore-release-bundle
           path: build/app/outputs/bundle/rustoreRelease/app-rustore-release.aab

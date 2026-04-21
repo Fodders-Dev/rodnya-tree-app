@@ -29,13 +29,21 @@ class FamilyRelationAdapter extends TypeAdapter<FamilyRelation> {
       createdBy: fields[9] as String?,
       marriageDate: fields[10] as DateTime?,
       divorceDate: fields[11] as DateTime?,
+      customRelationLabel1to2: fields[12] as String?,
+      customRelationLabel2to1: fields[13] as String?,
+      parentSetId: fields[14] as String?,
+      parentSetType: fields[15] as String?,
+      isPrimaryParentSet: fields[16] as bool?,
+      unionId: fields[17] as String?,
+      unionType: fields[18] as String?,
+      unionStatus: fields[19] as String?,
     );
   }
 
   @override
   void write(BinaryWriter writer, FamilyRelation obj) {
     writer
-      ..writeByte(12)
+      ..writeByte(20)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -59,7 +67,23 @@ class FamilyRelationAdapter extends TypeAdapter<FamilyRelation> {
       ..writeByte(10)
       ..write(obj.marriageDate)
       ..writeByte(11)
-      ..write(obj.divorceDate);
+      ..write(obj.divorceDate)
+      ..writeByte(12)
+      ..write(obj.customRelationLabel1to2)
+      ..writeByte(13)
+      ..write(obj.customRelationLabel2to1)
+      ..writeByte(14)
+      ..write(obj.parentSetId)
+      ..writeByte(15)
+      ..write(obj.parentSetType)
+      ..writeByte(16)
+      ..write(obj.isPrimaryParentSet)
+      ..writeByte(17)
+      ..write(obj.unionId)
+      ..writeByte(18)
+      ..write(obj.unionType)
+      ..writeByte(19)
+      ..write(obj.unionStatus);
   }
 
   @override

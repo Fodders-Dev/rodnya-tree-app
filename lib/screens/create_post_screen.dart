@@ -6,13 +6,16 @@ import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
+import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
 import '../backend/interfaces/post_service_interface.dart';
 import '../models/family_person.dart';
 import '../models/family_tree.dart';
 import '../models/post.dart';
 import '../providers/tree_provider.dart';
+import '../services/app_status_service.dart';
 import '../services/local_storage_service.dart';
+import '../utils/user_facing_error.dart';
 import '../widgets/glass_panel.dart';
 
 class CreatePostScreen extends StatefulWidget {
@@ -25,15 +28,18 @@ class CreatePostScreen extends StatefulWidget {
 class _CreatePostScreenState extends State<CreatePostScreen> {
   final _contentController = TextEditingController();
   final ImagePicker _picker = ImagePicker();
+  final AuthServiceInterface _authService = GetIt.I<AuthServiceInterface>();
   final FamilyTreeServiceInterface _familyTreeService =
       GetIt.I<FamilyTreeServiceInterface>();
   final PostServiceInterface _postService = GetIt.I<PostServiceInterface>();
   final LocalStorageService _localStorageService =
       GetIt.I<LocalStorageService>();
+  final AppStatusService _appStatusService = GetIt.I<AppStatusService>();
 
   bool _isPublic = false;
   bool _isLoading = false;
   bool _isLoadingPeople = false;
+  bool _branchCandidatesUnavailable = false;
   List<XFile> _selectedImages = <XFile>[];
   List<FamilyPerson> _availablePeople = <FamilyPerson>[];
   final Set<String> _selectedBranchPersonIds = <String>{};
@@ -90,16 +96,19 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
       }
       setState(() {
         _availablePeople = sortedPeople;
+        _branchCandidatesUnavailable = false;
       });
-    } catch (_) {
+    } catch (error) {
+      _appStatusService.reportError(
+        error,
+        fallbackMessage: 'Не удалось загрузить список веток для публикации.',
+      );
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Не удалось загрузить список веток для публикации.'),
-        ),
-      );
+      setState(() {
+        _branchCandidatesUnavailable = true;
+      });
     } finally {
       if (mounted) {
         setState(() {
@@ -134,9 +143,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     } catch (e) {
       debugPrint('Ошибка выбора изображений: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Не удалось выбрать изображения.')),
-        );
+        _showMessage('Не удалось выбрать изображения.');
       }
     }
   }
@@ -144,10 +151,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
   Future<void> _createPost() async {
     final content = _contentController.text.trim();
     if (content.isEmpty && _selectedImages.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text('Пожалуйста, введите текст или добавьте фото.')),
-      );
+      _showMessage('Добавьте текст или хотя бы одно фото.');
       return;
     }
 
@@ -166,19 +170,36 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
       );
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Запись успешно опубликована!')),
-        );
+        _showMessage('Запись опубликована.');
         context.pop(true); // Return true to signal refresh
       }
-    } catch (e) {
+    } catch (error) {
+      _appStatusService.reportError(
+        error,
+        fallbackMessage: 'Не удалось опубликовать запись.',
+      );
       if (mounted) {
         setState(() => _isLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Ошибка при публикации: $e')),
+        _showMessage(
+          describeUserFacingError(
+            authService: _authService,
+            error: error,
+            fallbackMessage: _appStatusService.isOffline
+                ? 'Нет соединения. Проверьте интернет и отправьте запись ещё раз.'
+                : 'Не удалось опубликовать запись. Попробуйте ещё раз.',
+          ),
         );
       }
     }
+  }
+
+  void _showMessage(String message) {
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
   }
 
   @override
@@ -397,7 +418,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Нужен активный контекст.',
+                  'Сначала выберите дерево, чтобы было понятно, кому показывать публикацию.',
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.bodyMedium,
                 ),
@@ -476,14 +497,39 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
             ),
             const SizedBox(height: 10),
             if (_isLoadingPeople)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 12),
-                child: Center(child: CircularProgressIndicator()),
+              _buildScopeState(
+                icon: Icons.sync,
+                title: 'Подбираем ветки',
+                message:
+                    'Проверяем, какие люди и ветки доступны для выборочной публикации.',
+                showProgress: true,
+              )
+            else if (_branchCandidatesUnavailable)
+              _buildScopeState(
+                icon: _appStatusService.isOffline
+                    ? Icons.cloud_off_outlined
+                    : Icons.error_outline,
+                title: _appStatusService.isOffline
+                    ? 'Нет соединения'
+                    : 'Ветки сейчас недоступны',
+                message: _appStatusService.isOffline
+                    ? 'Список веток вернётся, как только интернет снова появится.'
+                    : 'Не удалось обновить список веток. Попробуйте ещё раз.',
+                actions: [
+                  OutlinedButton.icon(
+                    onPressed: _loadBranchCandidates,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Повторить'),
+                  ),
+                ],
               )
             else if (_availablePeople.isEmpty)
-              Text(
-                _isFriendsTree ? 'Кругов пока нет.' : 'Веток пока нет.',
-                style: Theme.of(context).textTheme.bodyMedium,
+              _buildScopeState(
+                icon: Icons.alt_route,
+                title: _isFriendsTree ? 'Кругов пока нет' : 'Веток пока нет',
+                message: _isFriendsTree
+                    ? 'Сначала соберите людей в круге, затем можно будет сузить видимость поста.'
+                    : 'Сначала добавьте людей и связи в дерево, затем публикацию можно будет адресовать отдельной ветке.',
               )
             else
               Wrap(
@@ -507,6 +553,65 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
                   );
                 }).toList(),
               ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildScopeState({
+    required IconData icon,
+    required String title,
+    required String message,
+    bool showProgress = false,
+    List<Widget> actions = const <Widget>[],
+  }) {
+    final theme = Theme.of(context);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color:
+            theme.colorScheme.surfaceContainerLowest.withValues(alpha: 0.9),
+        borderRadius: BorderRadius.circular(22),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, color: theme.colorScheme.primary),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  title,
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              if (showProgress)
+                SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: theme.colorScheme.primary,
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            message,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+              height: 1.35,
+            ),
+          ),
+          if (actions.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Wrap(spacing: 8, runSpacing: 8, children: actions),
           ],
         ],
       ),

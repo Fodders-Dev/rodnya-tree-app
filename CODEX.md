@@ -7,8 +7,8 @@ Use it together with `AGENTS.md` and `Codex_rules.md`, not instead of them.
 ## Project stance
 - Ship a stable Android + web MVP first.
 - Treat `Родня` as the public-facing brand.
-- Keep the current Android `applicationId` unchanged for RuStore update compatibility.
-- Prefer phased `lineage` -> `rodnya` renames with compatibility aliases over big-bang package churn.
+- Keep Android and iOS package identifiers aligned with `rodnya` when release packaging changes require it.
+- Prefer coordinated `rodnya` naming across active code, config, and release tooling.
 - Treat Firebase-hosted paths as legacy unless they are still required by a specific migration task.
 - Default backend direction is custom API + PostgreSQL + object storage + self-controlled realtime/push path.
 - Preserve Russian UI quality when touching copy.

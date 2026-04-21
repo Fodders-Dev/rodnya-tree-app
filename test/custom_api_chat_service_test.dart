@@ -6,16 +6,16 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:lineage/backend/backend_runtime_config.dart';
-import 'package:lineage/models/chat_attachment.dart';
-import 'package:lineage/models/chat_details.dart';
-import 'package:lineage/models/chat_message.dart';
-import 'package:lineage/models/chat_send_progress.dart';
-import 'package:lineage/backend/interfaces/storage_service_interface.dart';
-import 'package:lineage/services/custom_api_auth_service.dart';
-import 'package:lineage/services/custom_api_chat_service.dart';
-import 'package:lineage/services/custom_api_realtime_service.dart';
-import 'package:lineage/services/invitation_service.dart';
+import 'package:rodnya/backend/backend_runtime_config.dart';
+import 'package:rodnya/models/chat_attachment.dart';
+import 'package:rodnya/models/chat_details.dart';
+import 'package:rodnya/models/chat_message.dart';
+import 'package:rodnya/models/chat_send_progress.dart';
+import 'package:rodnya/backend/interfaces/storage_service_interface.dart';
+import 'package:rodnya/services/custom_api_auth_service.dart';
+import 'package:rodnya/services/custom_api_chat_service.dart';
+import 'package:rodnya/services/custom_api_realtime_service.dart';
+import 'package:rodnya/services/invitation_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
@@ -144,7 +144,7 @@ void main() {
         'accessToken': 'access-token',
         'refreshToken': 'refresh-token',
         'userId': 'user-1',
-        'email': 'dev@lineage.app',
+        'email': 'dev@rodnya.app',
         'displayName': 'Dev User',
         'providerIds': ['password'],
         'isProfileComplete': true,
@@ -230,7 +230,7 @@ void main() {
         'accessToken': 'access-token',
         'refreshToken': 'refresh-token',
         'userId': 'user-1',
-        'email': 'dev@lineage.app',
+        'email': 'dev@rodnya.app',
         'displayName': 'Dev User',
         'providerIds': ['password'],
         'isProfileComplete': true,
@@ -311,7 +311,7 @@ void main() {
         'accessToken': 'access-token',
         'refreshToken': 'refresh-token',
         'userId': 'user-1',
-        'email': 'dev@lineage.app',
+        'email': 'dev@rodnya.app',
         'displayName': 'Dev User',
         'providerIds': ['password'],
         'isProfileComplete': true,
@@ -379,7 +379,7 @@ void main() {
         'accessToken': 'access-token',
         'refreshToken': 'refresh-token',
         'userId': 'user-1',
-        'email': 'dev@lineage.app',
+        'email': 'dev@rodnya.app',
         'displayName': 'Dev User',
         'providerIds': ['password'],
         'isProfileComplete': true,
@@ -436,7 +436,7 @@ void main() {
         'accessToken': 'access-token',
         'refreshToken': 'refresh-token',
         'userId': 'user-1',
-        'email': 'dev@lineage.app',
+        'email': 'dev@rodnya.app',
         'displayName': 'Dev User',
         'providerIds': ['password'],
         'isProfileComplete': true,
@@ -517,7 +517,7 @@ void main() {
         'accessToken': 'access-token',
         'refreshToken': 'refresh-token',
         'userId': 'user-1',
-        'email': 'dev@lineage.app',
+        'email': 'dev@rodnya.app',
         'displayName': 'Dev User',
         'providerIds': ['password'],
         'isProfileComplete': true,
@@ -648,7 +648,7 @@ void main() {
         'accessToken': 'access-token',
         'refreshToken': 'refresh-token',
         'userId': 'user-1',
-        'email': 'dev@lineage.app',
+        'email': 'dev@rodnya.app',
         'displayName': 'Dev User',
         'providerIds': ['password'],
         'isProfileComplete': true,
@@ -716,7 +716,7 @@ void main() {
           'accessToken': 'access-token',
           'refreshToken': 'refresh-token',
           'userId': 'user-1',
-          'email': 'dev@lineage.app',
+          'email': 'dev@rodnya.app',
           'displayName': 'Dev User',
           'providerIds': ['password'],
           'isProfileComplete': true,
@@ -813,7 +813,7 @@ void main() {
         'accessToken': 'access-token',
         'refreshToken': 'refresh-token',
         'userId': 'user-1',
-        'email': 'dev@lineage.app',
+        'email': 'dev@rodnya.app',
         'displayName': 'Dev User',
         'providerIds': ['password'],
         'isProfileComplete': true,
@@ -886,7 +886,7 @@ void main() {
         'accessToken': 'access-token',
         'refreshToken': 'refresh-token',
         'userId': 'user-1',
-        'email': 'dev@lineage.app',
+        'email': 'dev@rodnya.app',
         'displayName': 'Dev User',
         'providerIds': ['password'],
         'isProfileComplete': true,
@@ -1052,7 +1052,7 @@ void main() {
         'accessToken': 'access-token',
         'refreshToken': 'refresh-token',
         'userId': 'user-1',
-        'email': 'dev@lineage.app',
+        'email': 'dev@rodnya.app',
         'displayName': 'Dev User',
         'providerIds': ['password'],
         'isProfileComplete': true,
@@ -1140,7 +1140,7 @@ void main() {
         'accessToken': 'access-token',
         'refreshToken': 'refresh-token',
         'userId': 'user-1',
-        'email': 'dev@lineage.app',
+        'email': 'dev@rodnya.app',
         'displayName': 'Dev User',
         'providerIds': ['password'],
         'isProfileComplete': true,
@@ -1252,7 +1252,7 @@ void main() {
           'accessToken': 'access-token',
           'refreshToken': 'refresh-token',
           'userId': 'user-1',
-          'email': 'dev@lineage.app',
+          'email': 'dev@rodnya.app',
           'displayName': 'Dev User',
           'providerIds': ['password'],
           'isProfileComplete': true,

@@ -1,11 +1,12 @@
 // ignore_for_file: library_private_types_in_public_api
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
-import 'package:intl/intl.dart'; // Для форматирования дат
-import 'package:lineage/models/family_person.dart';
+import 'package:rodnya/models/family_person.dart';
 import '../models/family_relation.dart'; // Добавляем импорт
 
+import '../models/person_dossier.dart';
 import '../models/user_profile.dart';
 import '../providers/tree_provider.dart'; // Для treeId
 import 'package:go_router/go_router.dart';
@@ -16,8 +17,16 @@ import '../backend/interfaces/family_tree_service_interface.dart';
 import '../backend/interfaces/invitation_link_service_interface.dart';
 import '../backend/interfaces/profile_service_interface.dart';
 import '../backend/interfaces/storage_service_interface.dart';
+import '../backend/interfaces/tree_graph_capable_family_tree_service.dart';
 import '../models/tree_change_record.dart';
+import '../models/tree_graph_snapshot.dart';
+import '../widgets/custom_relation_label_dialog.dart';
+import '../widgets/glass_panel.dart';
+import '../widgets/person_dossier_view.dart';
 import '../widgets/tree_history_sheet.dart';
+import '../utils/user_facing_error.dart';
+
+part 'relative_details_screen_sections.dart';
 
 class _RelativeContactStatus {
   const _RelativeContactStatus({
@@ -38,10 +47,27 @@ enum _RelativeGalleryAction {
   delete,
 }
 
+class _EditableRelationLink {
+  const _EditableRelationLink({
+    required this.relation,
+    required this.relatedPerson,
+    required this.relationFromRelatedPerson,
+  });
+
+  final FamilyRelation relation;
+  final FamilyPerson relatedPerson;
+  final RelationType relationFromRelatedPerson;
+}
+
 class RelativeDetailsScreen extends StatefulWidget {
   final String personId;
+  final String? initialAction;
 
-  const RelativeDetailsScreen({required this.personId, super.key});
+  const RelativeDetailsScreen({
+    required this.personId,
+    this.initialAction,
+    super.key,
+  });
 
   @override
   _RelativeDetailsScreenState createState() => _RelativeDetailsScreenState();
@@ -68,11 +94,24 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
   List<FamilyRelation> _relations = [];
   List<TreeChangeRecord> _historyRecords = [];
   UserProfile? _userProfile;
+  PersonDossier? _dossier;
   RelationType? _relationToCurrentUser;
+  TreeGraphSnapshot? _graphSnapshot;
+  TreeGraphViewerDescriptor? _viewerDescriptor;
+  String? _viewerRelationLabel;
   bool _isLoading = true;
   String _errorMessage = '';
   String? _currentTreeId;
   String? _currentUserPersonId;
+  bool _initialActionHandled = false;
+
+  TreeGraphCapableFamilyTreeService? get _graphTreeService {
+    final service = _familyService;
+    if (service is TreeGraphCapableFamilyTreeService) {
+      return service as TreeGraphCapableFamilyTreeService;
+    }
+    return null;
+  }
 
   @override
   void initState() {
@@ -97,7 +136,11 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
       _relations = [];
       _historyRecords = [];
       _userProfile = null;
+      _dossier = null;
       _relationToCurrentUser = null;
+      _graphSnapshot = null;
+      _viewerDescriptor = null;
+      _viewerRelationLabel = null;
       _currentUserPersonId = null;
       _isLoadingHistory = true;
     });
@@ -105,7 +148,8 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
     if (_currentTreeId == null) {
       setState(() {
         _isLoading = false;
-        _errorMessage = 'Ошибка: Не удалось определить текущее дерево.';
+        _errorMessage =
+            'Не удалось определить активное дерево. Откройте карточку ещё раз из дерева или списка родственников.';
       });
       return;
     }
@@ -135,8 +179,21 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
       _person =
           await _familyService.getPersonById(_currentTreeId!, widget.personId);
 
+      try {
+        _dossier = await _familyService.getPersonDossier(
+          _currentTreeId!,
+          widget.personId,
+        );
+        _person = _dossier!.person;
+        _userProfile = _dossier!.linkedProfile;
+      } catch (_) {
+        _dossier = null;
+      }
+
       // 2. Если есть userId, пытаемся загрузить UserProfile
-      if (_person!.userId != null && _person!.userId!.isNotEmpty) {
+      if (_userProfile == null &&
+          _person!.userId != null &&
+          _person!.userId!.isNotEmpty) {
         _userProfile = await _profileService.getUserProfile(_person!.userId!);
         // Ошибку загрузки профиля пока не считаем критичной
       }
@@ -152,6 +209,13 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
           'Связь ${widget.personId} с текущим пользователем ($_currentUserPersonId): $_relationToCurrentUser',
         );
         debugPrint('Пол родственника ${_person!.id}: ${_person!.gender}');
+      }
+      if (_graphTreeService != null && _person != null) {
+        final snapshot =
+            await _graphTreeService!.getTreeGraphSnapshot(_currentTreeId!);
+        _graphSnapshot = snapshot;
+        _viewerDescriptor = snapshot.findViewerDescriptor(_person!.id);
+        _viewerRelationLabel = _viewerDescriptor?.primaryRelationLabel?.trim();
       }
 
       try {
@@ -173,6 +237,7 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
           _isLoading = false;
           _isLoadingHistory = false;
         });
+        _maybeHandleInitialAction();
       }
     } catch (e) {
       debugPrint('Ошибка загрузки данных родственника ${widget.personId}: $e');
@@ -186,10 +251,43 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
     }
   }
 
-  // Форматирование даты
-  String _formatDate(DateTime? date) {
-    if (date == null) return 'Неизвестно';
-    return DateFormat.yMMMMd('ru').format(date);
+  void _maybeHandleInitialAction() {
+    if (!mounted || _initialActionHandled) {
+      return;
+    }
+    final action = widget.initialAction?.trim().toLowerCase();
+    if (action == null || action.isEmpty) {
+      return;
+    }
+
+    VoidCallback? handler;
+    switch (action) {
+      case 'path':
+        handler = _showRelationPathSheet;
+        break;
+      case 'parents':
+        if (_hasAdditionalParentSets()) {
+          handler = _showOtherParentsSheet;
+        }
+        break;
+      case 'relations':
+        if (_canEditOrDelete()) {
+          handler = _showRelationManagementSheet;
+        }
+        break;
+    }
+
+    if (handler == null) {
+      return;
+    }
+
+    _initialActionHandled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      handler!();
+    });
   }
 
   @override
@@ -202,13 +300,13 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
           onPressed: () => context.pop(),
         ),
         actions: [
-          if (_canEditOrDelete())
+          if (_canDirectEditProfile())
             IconButton(
               icon: Icon(Icons.edit_outlined),
               tooltip: 'Редактировать профиль',
               onPressed: _editRelative,
             ),
-          if (_canEditOrDelete())
+          if (_canDirectEditProfile())
             IconButton(
               icon: Icon(Icons.delete_outline, color: Colors.redAccent),
               tooltip: 'Удалить профиль',
@@ -220,763 +318,683 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
     );
   }
 
-  Widget _buildBody() {
-    if (_isLoading) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    if (_errorMessage.isNotEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Text(_errorMessage, textAlign: TextAlign.center),
-        ),
-      );
-    }
-    if (_person == null) {
-      // Эта ситуация не должна возникать, если _loadData отработал без ошибок
-      return const Center(child: Text('Данные родственника не найдены.'));
+  Future<void> _showQuickAddRelativeSheet() async {
+    if (_person == null || _currentTreeId == null) {
+      return;
     }
 
-    // Определяем, онлайн ли пользователь
-    // Используем данные UserProfile если они есть, иначе данные FamilyPerson
-    final String displayName =
-        _userProfile?.displayName ?? _person!.displayName;
-    final String? photoUrl = _person!.primaryPhotoUrl ?? _userProfile?.photoURL;
-    final String? city = _userProfile?.city;
-    final String? country = _userProfile?.country;
-    final String? placeLabel = _buildPlaceLabel(city, country);
-    final bool canStartChat = _canStartChatWithPerson();
-    final bool canInvite = _canInvitePerson();
-    final contactStatus = _getContactStatus();
-    final directRelationLabel = _getDirectRelationLabel();
-    final galleryEntries = _person!.photoGallery;
-
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surfaceContainerLowest,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: Theme.of(context).colorScheme.outlineVariant,
-              ),
-            ),
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
             child: Column(
+              mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    CircleAvatar(
-                      radius: 34,
-                      backgroundImage:
-                          photoUrl != null ? NetworkImage(photoUrl) : null,
-                      child: photoUrl == null
-                          ? Text(
-                              _person!.initials,
-                              style: const TextStyle(fontSize: 22),
-                            )
-                          : null,
-                    ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            displayName,
-                            style: Theme.of(context)
-                                .textTheme
-                                .headlineSmall
-                                ?.copyWith(fontWeight: FontWeight.w700),
-                          ),
-                          const SizedBox(height: 8),
-                          Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            children: [
-                              _buildStatusChip(contactStatus),
-                              if (directRelationLabel != null)
-                                Chip(
-                                  avatar: const Icon(
-                                    Icons.family_restroom_outlined,
-                                    size: 18,
-                                  ),
-                                  label: Text('Для вас: $directRelationLabel'),
-                                  visualDensity: VisualDensity.compact,
-                                ),
-                            ],
-                          ),
-                          if (placeLabel != null) ...[
-                            const SizedBox(height: 10),
-                            Row(
-                              children: [
-                                Icon(
-                                  Icons.location_on_outlined,
-                                  size: 16,
-                                  color: Colors.grey[700],
-                                ),
-                                const SizedBox(width: 6),
-                                Expanded(
-                                  child: Text(
-                                    placeLabel,
-                                    style: TextStyle(color: Colors.grey[700]),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 14),
                 Text(
-                  contactStatus.description,
-                  style: TextStyle(color: Colors.grey[800], height: 1.35),
+                  'Добавить к карточке',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
                 ),
-                const SizedBox(height: 14),
-                Wrap(
-                  spacing: 10,
-                  runSpacing: 10,
-                  children: [
-                    if (canStartChat)
-                      FilledButton.icon(
-                        onPressed: _openChatWithPerson,
-                        icon: const Icon(Icons.message_outlined, size: 18),
-                        label: const Text('Написать'),
+                const SizedBox(height: 8),
+                Text(
+                  'Новый человек будет сразу привязан к ${_person!.displayName}.',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: Colors.grey[700],
+                        height: 1.35,
                       ),
-                    if (canInvite)
-                      OutlinedButton.icon(
-                        onPressed: _isGeneratingLink
-                            ? null
-                            : _generateAndShareInviteLink,
-                        icon: _isGeneratingLink
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : const Icon(Icons.person_add_alt_1_outlined),
-                        label: const Text('Пригласить в Родню'),
-                      ),
-                    if (_canEditOrDelete())
-                      OutlinedButton.icon(
-                        onPressed: _editRelative,
-                        icon: const Icon(Icons.edit_outlined),
-                        label: const Text('Редактировать'),
-                      ),
-                  ],
+                ),
+                const SizedBox(height: 12),
+                _buildQuickAddOption(
+                  sheetContext: sheetContext,
+                  icon: Icons.arrow_upward,
+                  label: 'Добавить родителя',
+                  relationType: RelationType.parent,
+                ),
+                _buildQuickAddOption(
+                  sheetContext: sheetContext,
+                  icon: Icons.favorite_border,
+                  label: 'Добавить супруга или партнёра',
+                  relationType: RelationType.spouse,
+                ),
+                _buildQuickAddOption(
+                  sheetContext: sheetContext,
+                  icon: Icons.arrow_downward,
+                  label: 'Добавить ребёнка',
+                  relationType: RelationType.child,
+                ),
+                _buildQuickAddOption(
+                  sheetContext: sheetContext,
+                  icon: Icons.people_outline,
+                  label: 'Добавить брата или сестру',
+                  relationType: RelationType.sibling,
                 ),
               ],
             ),
           ),
-          if (galleryEntries.isNotEmpty || _canEditOrDelete()) ...[
-            const SizedBox(height: 20),
-            _buildGallerySection(galleryEntries),
-          ],
-          if (_person != null) ...[
-            const SizedBox(height: 20),
-            _buildHistorySection(),
-          ],
-          const Divider(height: 32),
-
-          // --- Основная информация ---
-          _buildInfoSection('Основная информация', [
-            _buildInfoRow('Пол:', _genderToString(_person!.gender)),
-            if (_person!.maidenName != null && _person!.maidenName!.isNotEmpty)
-              _buildInfoRow('Девичья фамилия:', _person!.maidenName!),
-            if (_relationToCurrentUser != null &&
-                _relationToCurrentUser != RelationType.other)
-              _buildInfoRow('Родственная связь:', () {
-                // Отношение пользователя к родственнику (результат getRelationBetween)
-                final relationUserToRelative = _relationToCurrentUser!;
-                // Получаем зеркальное отношение (родственника к пользователю)
-                final relationRelativeToUser = FamilyRelation.getMirrorRelation(
-                  relationUserToRelative,
-                );
-                debugPrint(
-                  'Отображаемая связь (пользователь -> ${_person!.id}): $relationUserToRelative',
-                );
-                debugPrint(
-                  'Зеркальная связь (${_person!.id} -> пользователь): $relationRelativeToUser',
-                );
-                // Используем ЗЕРКАЛЬНОЕ отношение и ПОЛ РОДСТВЕННИКА для имени
-                return FamilyRelation.getRelationName(
-                  relationRelativeToUser,
-                  _person!.gender,
-                );
-              }()),
-          ]),
-
-          // --- Даты жизни ---
-          _buildInfoSection('Даты жизни', [
-            _buildInfoRow('Дата рождения:', _formatDate(_person!.birthDate)),
-            if (_person!.birthPlace != null && _person!.birthPlace!.isNotEmpty)
-              _buildInfoRow('Место рождения:', _person!.birthPlace!),
-            if (!_person!.isAlive) ...[
-              _buildInfoRow('Дата смерти:', _formatDate(_person!.deathDate)),
-              if (_person!.deathPlace != null &&
-                  _person!.deathPlace!.isNotEmpty)
-                _buildInfoRow('Место смерти:', _person!.deathPlace!),
-            ] else
-              _buildInfoRow('Статус:', 'Жив(а)'),
-          ]),
-
-          // --- Заметки ---
-          if (_person!.notes != null && _person!.notes!.isNotEmpty)
-            _buildInfoSection('Заметки', [
-              Text(
-                _person!.notes!,
-                style: Theme.of(context).textTheme.bodyMedium,
-              ),
-            ]),
-
-          if (_buildDirectFamilyRows().isNotEmpty)
-            _buildInfoSection('Семья', _buildDirectFamilyRows()),
-          const SizedBox(height: 20), // Отступ снизу
-        ],
-      ),
+        );
+      },
     );
   }
 
-  Widget _buildInfoSection(String title, List<Widget> children) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  color: Theme.of(context).primaryColor,
-                  fontWeight: FontWeight.bold,
-                ),
-          ),
-          const SizedBox(height: 8),
-          ...children,
-        ],
-      ),
+  Widget _buildQuickAddOption({
+    required BuildContext sheetContext,
+    required IconData icon,
+    required String label,
+    required RelationType relationType,
+  }) {
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: Icon(icon),
+      title: Text(label),
+      onTap: () {
+        Navigator.of(sheetContext).pop();
+        _openContextualAddRelative(relationType);
+      },
     );
   }
 
-  Widget _buildInfoRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6.0),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 120, // Фиксированная ширина для метки
-            child: Text(label, style: TextStyle(color: Colors.grey[600])),
-          ),
-          Expanded(
-            child: Text(value, style: Theme.of(context).textTheme.bodyMedium),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildGallerySection(List<Map<String, dynamic>> galleryEntries) {
-    final canManageGallery = _canEditOrDelete();
-    final countLabel = galleryEntries.isEmpty
-        ? 'Фотографий пока нет'
-        : galleryEntries.length == 1
-            ? '1 фото'
-            : '${galleryEntries.length} фото';
-
-    return _buildInfoSection('Фотографии', [
-      Row(
-        children: [
-          Expanded(
-            child: Text(
-              countLabel,
-              style: TextStyle(color: Colors.grey[700]),
-            ),
-          ),
-          if (_isUpdatingGallery)
-            const SizedBox(
-              width: 18,
-              height: 18,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
-          else if (canManageGallery)
-            OutlinedButton.icon(
-              onPressed: _pickAndUploadGalleryImage,
-              icon: const Icon(Icons.add_photo_alternate_outlined, size: 18),
-              label: const Text('Добавить фото'),
-            ),
-        ],
-      ),
-      const SizedBox(height: 12),
-      if (galleryEntries.isEmpty)
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.surfaceContainerLowest,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: Theme.of(context).colorScheme.outlineVariant,
-            ),
-          ),
-          child: Text(
-            canManageGallery
-                ? 'Добавьте первое фото, чтобы у родственника появилась медиакарточка.'
-                : 'У этого родственника пока нет загруженных фотографий.',
-            style: TextStyle(color: Colors.grey[700], height: 1.35),
-          ),
-        )
-      else
-        SizedBox(
-          height: 146,
-          child: ListView.separated(
-            scrollDirection: Axis.horizontal,
-            itemCount: galleryEntries.length,
-            separatorBuilder: (_, __) => const SizedBox(width: 12),
-            itemBuilder: (context, index) {
-              final media = galleryEntries[index];
-              final mediaUrl = media['url']?.toString() ?? '';
-              final isPrimary = media['isPrimary'] == true;
-
-              return InkWell(
-                onTap: mediaUrl.isEmpty
-                    ? null
-                    : () => _openGalleryViewer(
-                          galleryEntries,
-                          initialIndex: index,
-                        ),
-                borderRadius: BorderRadius.circular(18),
-                child: SizedBox(
-                  width: 116,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: Stack(
-                          children: [
-                            Container(
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(18),
-                                border: Border.all(
-                                  color: isPrimary
-                                      ? Theme.of(context).colorScheme.primary
-                                      : Theme.of(context)
-                                          .colorScheme
-                                          .outlineVariant,
-                                  width: isPrimary ? 2 : 1,
-                                ),
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .surfaceContainerLowest,
-                              ),
-                              clipBehavior: Clip.antiAlias,
-                              child: mediaUrl.isEmpty
-                                  ? Center(
-                                      child: Icon(
-                                        Icons.broken_image_outlined,
-                                        color: Colors.grey[600],
-                                      ),
-                                    )
-                                  : Image.network(
-                                      mediaUrl,
-                                      fit: BoxFit.cover,
-                                      width: double.infinity,
-                                      errorBuilder:
-                                          (context, error, stackTrace) =>
-                                              Center(
-                                        child: Icon(
-                                          Icons.broken_image_outlined,
-                                          color: Colors.grey[600],
-                                        ),
-                                      ),
-                                    ),
-                            ),
-                            Positioned(
-                              left: 8,
-                              top: 8,
-                              child: DecoratedBox(
-                                decoration: BoxDecoration(
-                                  color: Colors.black.withValues(alpha: 0.58),
-                                  borderRadius: BorderRadius.circular(999),
-                                ),
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 4,
-                                  ),
-                                  child: Text(
-                                    isPrimary ? 'Основное' : 'Фото',
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                            if (canManageGallery)
-                              Positioned(
-                                right: 4,
-                                top: 4,
-                                child: PopupMenuButton<_RelativeGalleryAction>(
-                                  tooltip: 'Действия с фото',
-                                  onSelected: (action) {
-                                    switch (action) {
-                                      case _RelativeGalleryAction.makePrimary:
-                                        _setPrimaryGalleryMedia(media);
-                                        break;
-                                      case _RelativeGalleryAction.delete:
-                                        _deleteGalleryMedia(media);
-                                        break;
-                                    }
-                                  },
-                                  itemBuilder: (context) => [
-                                    if (!isPrimary)
-                                      const PopupMenuItem<
-                                          _RelativeGalleryAction>(
-                                        value:
-                                            _RelativeGalleryAction.makePrimary,
-                                        child: Text('Сделать основным'),
-                                      ),
-                                    const PopupMenuItem<_RelativeGalleryAction>(
-                                      value: _RelativeGalleryAction.delete,
-                                      child: Text('Удалить фото'),
-                                    ),
-                                  ],
-                                  child: Container(
-                                    decoration: BoxDecoration(
-                                      color:
-                                          Colors.black.withValues(alpha: 0.55),
-                                      shape: BoxShape.circle,
-                                    ),
-                                    padding: const EdgeInsets.all(6),
-                                    child: const Icon(
-                                      Icons.more_vert,
-                                      size: 16,
-                                      color: Colors.white,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        isPrimary ? 'Используется в дереве' : 'Дополнительное',
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: Colors.grey[800],
-                          fontSize: 12,
-                          height: 1.25,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
-    ]);
-  }
-
-  Widget _buildHistorySection() {
-    final latestRecord =
-        _historyRecords.isNotEmpty ? _historyRecords.first : null;
-    final summaryLabel = _historyRecords.isEmpty
-        ? 'Журнал пока пуст'
-        : _historyRecords.length == 1
-            ? '1 запись'
-            : '${_historyRecords.length} записей';
-
-    return _buildInfoSection('История изменений', [
-      if (_isLoadingHistory)
-        const Padding(
-          padding: EdgeInsets.symmetric(vertical: 12),
-          child: Center(child: CircularProgressIndicator()),
-        )
-      else
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.surfaceContainerLowest,
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(
-              color: Theme.of(context).colorScheme.outlineVariant,
-            ),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    width: 38,
-                    height: 38,
-                    decoration: BoxDecoration(
-                      color: Theme.of(context)
-                          .colorScheme
-                          .primaryContainer
-                          .withValues(alpha: 0.72),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Icon(
-                      latestRecord == null
-                          ? Icons.history_outlined
-                          : _historyIcon(latestRecord),
-                      size: 18,
-                      color: Theme.of(context).colorScheme.primary,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          latestRecord == null
-                              ? 'Для этой карточки пока нет записей.'
-                              : _historyTitle(latestRecord),
-                          style:
-                              Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          latestRecord == null
-                              ? 'Журнал появится после первых изменений профиля, связей или фотографий.'
-                              : _historySubtitle(latestRecord),
-                          style: TextStyle(
-                            color: Colors.grey[700],
-                            fontSize: 12,
-                            height: 1.3,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  Chip(
-                    visualDensity: VisualDensity.compact,
-                    avatar: const Icon(Icons.summarize_outlined, size: 16),
-                    label: Text(summaryLabel),
-                  ),
-                  FilledButton.tonalIcon(
-                    onPressed: _openHistorySheet,
-                    icon: const Icon(Icons.history_outlined, size: 18),
-                    label: const Text('Открыть историю'),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-    ]);
-  }
-
-  String _genderToString(Gender gender) {
-    switch (gender) {
-      case Gender.male:
-        return 'Мужской';
-      case Gender.female:
-        return 'Женский';
-      case Gender.other:
-        return 'Другой';
-      case Gender.unknown:
-        return 'Не указан';
+  void _openContextualAddRelative(RelationType relationType) {
+    if (_person == null || _currentTreeId == null) {
+      return;
     }
+    context.push(
+      '/relatives/add/$_currentTreeId',
+      extra: {
+        'contextPersonId': _person!.id,
+        'relationType': relationType,
+        'quickAddMode': true,
+      },
+    );
   }
 
   bool _canEditOrDelete() {
+    return _person != null && (_dossier?.canEditFamilyFields ?? true);
+  }
+
+  bool _canDirectEditProfile() {
     return _person != null &&
-        (_person!.userId == null || _person!.userId!.isEmpty) &&
-        _person!.creatorId == _authService.currentUserId;
+        (_person!.userId == null ||
+            _person!.userId!.isEmpty ||
+            !_person!.isAlive) &&
+        _canEditOrDelete();
+  }
+
+  bool _canSuggestProfileEdits() {
+    return _person != null && (_dossier?.canSuggestOwnerFields ?? false);
   }
 
   bool _canStartChatWithPerson() {
     final userId = _person?.userId;
     return userId != null &&
         userId.isNotEmpty &&
+        _person?.isAlive == true &&
         userId != _authService.currentUserId;
   }
 
   bool _canInvitePerson() {
     final userId = _person?.userId;
     return _person != null &&
+        _person!.isAlive &&
         (userId == null || userId.isEmpty) &&
         _person!.id != _currentUserPersonId;
   }
 
-  String? _buildPlaceLabel(String? city, String? country) {
-    final hasCity = city != null && city.isNotEmpty;
-    final hasCountry = country != null && country.isNotEmpty;
-    if (!hasCity && !hasCountry) {
-      return null;
-    }
-
-    if (hasCity && hasCountry) {
-      return '$city, $country';
-    }
-
-    return city ?? country;
-  }
-
-  _RelativeContactStatus _getContactStatus() {
-    if (_person?.id == _currentUserPersonId) {
-      return const _RelativeContactStatus(
-        label: 'Это вы',
-        description:
-            'Эта карточка привязана к вашему профилю в текущем дереве.',
-        icon: Icons.person,
-        color: Colors.blue,
-      );
-    }
-
-    if (_canStartChatWithPerson()) {
-      return _RelativeContactStatus(
-        label: 'Есть аккаунт в Родне',
-        description:
-            'С этим родственником уже можно общаться в личных сообщениях.',
-        icon: Icons.verified_user_outlined,
-        color: Colors.green.shade700,
-      );
-    }
-
-    if (_canInvitePerson()) {
-      return _RelativeContactStatus(
-        label: 'Пока без аккаунта',
-        description:
-            'Отправьте приглашение, чтобы родственник подключился к дереву и чату.',
-        icon: Icons.person_add_alt_1_outlined,
-        color: Colors.orange.shade700,
-      );
-    }
-
-    return _RelativeContactStatus(
-      label: 'Карточка в дереве',
-      description:
-          'Профиль доступен для просмотра в дереве, даже если аккаунт ещё не привязан.',
-      icon: Icons.visibility_outlined,
-      color: Colors.grey.shade700,
+  String _describeRelativeActionError(
+    Object error, {
+    required String fallbackMessage,
+  }) {
+    return describeUserFacingError(
+      authService: _authService,
+      error: error,
+      fallbackMessage: fallbackMessage,
     );
   }
 
-  String? _getDirectRelationLabel() {
-    if (_person == null ||
-        _relationToCurrentUser == null ||
-        _relationToCurrentUser == RelationType.other) {
-      return null;
+  void _showRelativeSnackBar(
+    String message, {
+    Duration duration = const Duration(seconds: 4),
+  }) {
+    if (!mounted) {
+      return;
     }
-
-    final relationRelativeToUser = FamilyRelation.getMirrorRelation(
-      _relationToCurrentUser!,
-    );
-    return FamilyRelation.getRelationName(
-      relationRelativeToUser,
-      _person!.gender,
-    );
-  }
-
-  Widget _buildStatusChip(_RelativeContactStatus status) {
-    return Chip(
-      avatar: Icon(status.icon, size: 18, color: status.color),
-      label: Text(status.label),
-      labelStyle: TextStyle(
-        color: status.color,
-        fontWeight: FontWeight.w600,
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        duration: duration,
       ),
-      backgroundColor: status.color.withValues(alpha: 0.1),
-      side: BorderSide(color: status.color.withValues(alpha: 0.18)),
-      visualDensity: VisualDensity.compact,
     );
   }
 
-  List<Widget> _buildDirectFamilyRows() {
+  Future<void> _showOtherParentsSheet() async {
     if (_person == null) {
-      return const [];
+      return;
+    }
+    final units = _parentFamilyUnitsForCurrentPerson();
+    if (units.isEmpty || !mounted) {
+      return;
     }
 
-    final peopleById = {for (final person in _treePeople) person.id: person};
-    final rows = <Widget>[];
+    final peopleById = {
+      for (final person in (_graphSnapshot?.people ?? _treePeople))
+        person.id: person,
+    };
 
-    for (final relation in _relations) {
-      late final String relatedPersonId;
-      late final RelationType relationFromRelatedPerson;
-
-      if (relation.person1Id == _person!.id) {
-        relatedPersonId = relation.person2Id;
-        relationFromRelatedPerson = relation.relation2to1;
-      } else if (relation.person2Id == _person!.id) {
-        relatedPersonId = relation.person1Id;
-        relationFromRelatedPerson = relation.relation1to2;
-      } else {
-        continue;
-      }
-
-      final relatedPerson = peopleById[relatedPersonId];
-      if (relatedPerson == null) {
-        continue;
-      }
-
-      rows.add(
-        InkWell(
-          onTap: () => context.push('/relative/details/${relatedPerson.id}'),
-          child: Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: Row(
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) {
+        return SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(
-                  child: Text(
-                    relatedPerson.displayName,
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          fontWeight: FontWeight.w600,
-                        ),
-                  ),
-                ),
-                const SizedBox(width: 12),
                 Text(
-                  FamilyRelation.getRelationName(
-                    relationFromRelatedPerson,
-                    relatedPerson.gender,
-                  ),
-                  style: TextStyle(color: Colors.grey[700]),
+                  'Другие родители',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
                 ),
-                const SizedBox(width: 4),
-                const Icon(Icons.chevron_right, size: 18),
+                const SizedBox(height: 8),
+                Text(
+                  'Здесь показаны все родительские наборы для этой карточки. На основном полотне дерево использует основной набор, остальные раскрываются здесь.',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: Colors.grey[700],
+                        height: 1.35,
+                      ),
+                ),
+                const SizedBox(height: 16),
+                ...units.map((unit) {
+                  final adultNames = unit.adultIds
+                      .map((personId) =>
+                          peopleById[personId]?.displayName ?? personId)
+                      .toList();
+                  return Container(
+                    width: double.infinity,
+                    margin: const EdgeInsets.only(bottom: 12),
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color:
+                          Theme.of(context).colorScheme.surfaceContainerLowest,
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(
+                        color: Theme.of(context).colorScheme.outlineVariant,
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          adultNames.isEmpty
+                              ? 'Родители не указаны'
+                              : adultNames.join(' • '),
+                          style:
+                              Theme.of(context).textTheme.titleSmall?.copyWith(
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          unit.label,
+                          style:
+                              Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    color: Colors.grey[700],
+                                  ),
+                        ),
+                        const SizedBox(height: 10),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            _buildPathInfoChip(
+                              icon: unit.isPrimaryParentSet
+                                  ? Icons.star_outline
+                                  : Icons.layers_outlined,
+                              label: unit.isPrimaryParentSet
+                                  ? 'Основной набор'
+                                  : 'Дополнительный набор',
+                            ),
+                            if (_normalizeOptionalText(unit.parentSetType) !=
+                                null)
+                              _buildPathInfoChip(
+                                icon: Icons.family_restroom_outlined,
+                                label: FamilyRelation.getParentSetTypeLabel(
+                                  unit.parentSetType,
+                                ),
+                              ),
+                            if (_normalizeOptionalText(unit.unionType) != null)
+                              _buildPathInfoChip(
+                                icon: Icons.favorite_border,
+                                label: FamilyRelation.getUnionTypeLabel(
+                                    unit.unionType),
+                              ),
+                            if (_normalizeOptionalText(unit.unionStatus) !=
+                                null)
+                              _buildPathInfoChip(
+                                icon: Icons.schedule_outlined,
+                                label: FamilyRelation.getUnionStatusLabel(
+                                    unit.unionStatus),
+                              ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  );
+                }),
               ],
             ),
           ),
-        ),
-      );
+        );
+      },
+    );
+  }
+
+  Future<void> _showRelationPathSheet() async {
+    if (_currentTreeId == null ||
+        _person == null ||
+        _graphTreeService == null) {
+      return;
     }
 
-    return rows;
+    final descriptor =
+        _viewerDescriptor ?? _graphSnapshot?.findViewerDescriptor(_person!.id);
+    final pathPersonIds = (descriptor?.primaryPathPersonIds.isNotEmpty ?? false)
+        ? descriptor!.primaryPathPersonIds
+        : await _graphTreeService!.getRelationPath(
+            treeId: _currentTreeId!,
+            targetPersonId: _person!.id,
+          );
+    final peopleById = {
+      for (final person in (_graphSnapshot?.people ?? _treePeople))
+        person.id: person,
+    };
+
+    if (!mounted) {
+      return;
+    }
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) {
+        return SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Путь родства',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    if (_normalizeOptionalText(
+                            descriptor?.primaryRelationLabel) !=
+                        null)
+                      _buildPathInfoChip(
+                        icon: Icons.badge_outlined,
+                        label: descriptor!.primaryRelationLabel!.trim(),
+                      ),
+                    if (descriptor != null)
+                      _buildPathInfoChip(
+                        icon: descriptor.isBlood
+                            ? Icons.favorite_outline
+                            : Icons.link_outlined,
+                        label: descriptor.isBlood
+                            ? 'Кровная связь'
+                            : 'Родство по браку',
+                      ),
+                    if (pathPersonIds.isNotEmpty)
+                      _buildPathInfoChip(
+                        icon: Icons.stairs_outlined,
+                        label: 'Шагов: ${pathPersonIds.length - 1}',
+                      ),
+                    if ((descriptor?.alternatePathCount ?? 0) > 0)
+                      _buildPathInfoChip(
+                        icon: Icons.alt_route_outlined,
+                        label: 'Еще путей: ${descriptor!.alternatePathCount}',
+                      ),
+                  ],
+                ),
+                if (_normalizeOptionalText(descriptor?.pathSummary) !=
+                    null) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    descriptor!.pathSummary!,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: Colors.grey[700],
+                          height: 1.35,
+                        ),
+                  ),
+                ],
+                const SizedBox(height: 16),
+                if (pathPersonIds.isEmpty)
+                  const Text(
+                    'Backend пока не вернул путь родства для этого человека.',
+                  )
+                else
+                  ...List<Widget>.generate(pathPersonIds.length, (index) {
+                    final personId = pathPersonIds[index];
+                    final person = peopleById[personId];
+                    final isViewer = personId ==
+                        (_graphSnapshot?.viewerPersonId ??
+                            _currentUserPersonId);
+                    final isTarget = personId == _person!.id;
+                    final widgets = <Widget>[
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: Theme.of(context)
+                              .colorScheme
+                              .surfaceContainerLowest,
+                          borderRadius: BorderRadius.circular(18),
+                          border: Border.all(
+                            color: Theme.of(context).colorScheme.outlineVariant,
+                          ),
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            CircleAvatar(
+                              radius: 16,
+                              child: Text('${index + 1}'),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    person?.displayName ?? personId,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .titleSmall
+                                        ?.copyWith(fontWeight: FontWeight.w700),
+                                  ),
+                                  if (isViewer || isTarget) ...[
+                                    const SizedBox(height: 8),
+                                    Wrap(
+                                      spacing: 8,
+                                      runSpacing: 8,
+                                      children: [
+                                        if (isViewer)
+                                          _buildPathInfoChip(
+                                            icon: Icons.person_outline,
+                                            label: 'Это вы',
+                                          ),
+                                        if (isTarget)
+                                          _buildPathInfoChip(
+                                            icon: Icons.adjust_outlined,
+                                            label: 'Выбранный человек',
+                                          ),
+                                      ],
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ];
+                    if (index < pathPersonIds.length - 1) {
+                      final nextPersonId = pathPersonIds[index + 1];
+                      final relation =
+                          _findDirectRelation(personId, nextPersonId);
+                      final relationContext = relation == null
+                          ? null
+                          : _describeRelationContext(relation);
+                      widgets.add(
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 6, 16, 10),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const SizedBox(
+                                width: 32,
+                                child: Center(
+                                  child: Icon(Icons.south, size: 18),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      _buildPathStepLabel(
+                                        fromPersonId: personId,
+                                        toPersonId: nextPersonId,
+                                        peopleById: peopleById,
+                                      ),
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodyMedium
+                                          ?.copyWith(
+                                              fontWeight: FontWeight.w600),
+                                    ),
+                                    if (relationContext != null) ...[
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        relationContext,
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall
+                                            ?.copyWith(color: Colors.grey[700]),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: widgets,
+                    );
+                  }),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _disconnectRelation(_EditableRelationLink link) async {
+    if (_currentTreeId == null || _graphTreeService == null) {
+      return;
+    }
+    await _graphTreeService!.disconnectRelation(
+      treeId: _currentTreeId!,
+      relationId: link.relation.id,
+    );
+    if (!mounted) {
+      return;
+    }
+    await _loadData();
+  }
+
+  Future<void> _changeRelationType(
+    _EditableRelationLink link,
+    RelationType relationType,
+  ) async {
+    if (_currentTreeId == null ||
+        _graphTreeService == null ||
+        _person == null) {
+      return;
+    }
+    CustomRelationLabels? customLabels;
+    if (relationType == RelationType.other) {
+      customLabels = await showCustomRelationLabelDialog(
+        context: context,
+        person1Name: link.relatedPerson.displayName,
+        person2Name: _person!.displayName,
+        person1Gender: link.relatedPerson.gender,
+        person2Gender: _person!.gender,
+        initialRelation1to2: link.relation.customLabelToPerson(_person!.id),
+        initialRelation2to1: link.relation.customLabelFromPerson(_person!.id),
+      );
+      if (customLabels == null) {
+        return;
+      }
+    }
+    await _graphTreeService!.setRelationType(
+      treeId: _currentTreeId!,
+      anchorPerson: _person!,
+      targetPerson: link.relatedPerson,
+      relationType: FamilyRelation.relationTypeToString(relationType),
+      customRelationLabel1to2: customLabels?.relation1to2,
+      customRelationLabel2to1: customLabels?.relation2to1,
+    );
+    if (!mounted) {
+      return;
+    }
+    await _loadData();
+  }
+
+  Future<void> _showRelationManagementSheet() async {
+    final links = _buildEditableRelationLinks();
+    final warnings = _graphWarningsForRelationManagement(links);
+    if (!mounted) {
+      return;
+    }
+
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) {
+        return SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Исправить связи',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                ),
+                const SizedBox(height: 12),
+                if (warnings.isNotEmpty) ...[
+                  ...warnings.map(
+                    (warning) => Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: _buildGraphWarningCard(warning, compact: true),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                ],
+                if (links.isEmpty)
+                  const Text(
+                      'У этого человека пока нет прямых связей для редактирования.')
+                else
+                  ...links.map((link) {
+                    final relationLabel =
+                        link.relation.customLabelToPerson(_person!.id) ??
+                            FamilyRelation.getRelationName(
+                              link.relationFromRelatedPerson,
+                              link.relatedPerson.gender,
+                            );
+                    final relationContext =
+                        _describeRelationContext(link.relation);
+                    return ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(link.relatedPerson.displayName),
+                      subtitle: relationContext == null
+                          ? Text(relationLabel)
+                          : Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(relationLabel),
+                                const SizedBox(height: 2),
+                                Text(
+                                  relationContext,
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .bodySmall
+                                      ?.copyWith(color: Colors.grey[700]),
+                                ),
+                              ],
+                            ),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          PopupMenuButton<RelationType>(
+                            tooltip: 'Сменить тип родства',
+                            onSelected: (value) async {
+                              Navigator.of(context).pop();
+                              await _changeRelationType(link, value);
+                            },
+                            itemBuilder: (context) => const [
+                              PopupMenuItem(
+                                value: RelationType.parent,
+                                child: Text('Родитель'),
+                              ),
+                              PopupMenuItem(
+                                value: RelationType.child,
+                                child: Text('Ребенок'),
+                              ),
+                              PopupMenuItem(
+                                value: RelationType.sibling,
+                                child: Text('Брат / сестра'),
+                              ),
+                              PopupMenuItem(
+                                value: RelationType.spouse,
+                                child: Text('Супруг'),
+                              ),
+                              PopupMenuItem(
+                                value: RelationType.partner,
+                                child: Text('Партнер'),
+                              ),
+                              PopupMenuItem(
+                                value: RelationType.other,
+                                child: Text('Другое...'),
+                              ),
+                            ],
+                            icon: const Icon(Icons.swap_horiz_outlined),
+                          ),
+                          IconButton(
+                            tooltip: 'Разорвать связь',
+                            onPressed: () async {
+                              Navigator.of(context).pop();
+                              await _disconnectRelation(link);
+                            },
+                            icon: const Icon(Icons.link_off_outlined),
+                          ),
+                        ],
+                      ),
+                    );
+                  }),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   void _editRelative() {
-    if (!_canEditOrDelete() || _currentTreeId == null) return;
+    if (!_canDirectEditProfile() || _currentTreeId == null) return;
 
     debugPrint(
       'Переход на редактирование: personId=${_person!.id}, treeId=$_currentTreeId',
@@ -994,8 +1012,125 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
     });
   }
 
+  Future<void> _suggestProfileChanges() async {
+    if (!_canSuggestProfileEdits() ||
+        _currentTreeId == null ||
+        _person == null) {
+      return;
+    }
+
+    final summaryController = TextEditingController(
+      text: _dossier?.familySummary ?? '',
+    );
+    final bioController = TextEditingController(text: _dossier?.bio ?? '');
+    final workController = TextEditingController(text: _dossier?.work ?? '');
+    final messageController = TextEditingController();
+
+    final approved = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Предложить правку профиля'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: summaryController,
+                minLines: 2,
+                maxLines: 4,
+                decoration: const InputDecoration(
+                  labelText: 'Семейная справка',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: bioController,
+                minLines: 2,
+                maxLines: 4,
+                decoration: const InputDecoration(
+                  labelText: 'О человеке',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: workController,
+                decoration: const InputDecoration(
+                  labelText: 'Работа и дело',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: messageController,
+                minLines: 2,
+                maxLines: 3,
+                decoration: const InputDecoration(
+                  labelText: 'Комментарий для владельца',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Отправить'),
+          ),
+        ],
+      ),
+    );
+
+    if (approved != true) {
+      summaryController.dispose();
+      bioController.dispose();
+      workController.dispose();
+      messageController.dispose();
+      return;
+    }
+
+    try {
+      await _familyService.proposePersonProfileContribution(
+        treeId: _currentTreeId!,
+        personId: _person!.id,
+        fields: {
+          'bio': bioController.text.trim(),
+          'work': workController.text.trim(),
+          'aboutFamily': summaryController.text.trim(),
+        },
+        message: messageController.text.trim(),
+      );
+      if (!mounted) {
+        return;
+      }
+      _showRelativeSnackBar('Предложение отправлено владельцу профиля.');
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      _showRelativeSnackBar(
+        _describeRelativeActionError(
+          error,
+          fallbackMessage:
+              'Не удалось отправить правку. Попробуйте ещё раз чуть позже.',
+        ),
+      );
+    } finally {
+      summaryController.dispose();
+      bioController.dispose();
+      workController.dispose();
+      messageController.dispose();
+    }
+  }
+
   Future<void> _deleteRelative() async {
-    if (!_canEditOrDelete() || _currentTreeId == null) return;
+    if (!_canDirectEditProfile() || _currentTreeId == null) return;
 
     final confirm = await showDialog<bool>(
       context: context,
@@ -1029,22 +1164,18 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
       try {
         await _familyService.deleteRelative(_currentTreeId!, widget.personId);
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                'Профиль '
-                '${_person!.displayName}'
-                ' удален.',
-              ),
-            ),
-          );
+          _showRelativeSnackBar('Карточка ${_person!.displayName} удалена.');
           context.pop();
         }
       } catch (e) {
         debugPrint('Ошибка удаления родственника: $e');
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Ошибка при удалении профиля: $e')),
+          _showRelativeSnackBar(
+            _describeRelativeActionError(
+              e,
+              fallbackMessage:
+                  'Не удалось удалить карточку. Попробуйте ещё раз.',
+            ),
           );
           setState(() {
             _isLoading = false;
@@ -1080,9 +1211,13 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
     } catch (e) {
       debugPrint('Ошибка при генерации или отправке ссылки: $e');
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Ошибка: $e')));
+        _showRelativeSnackBar(
+          _describeRelativeActionError(
+            e,
+            fallbackMessage:
+                'Не удалось подготовить приглашение. Попробуйте ещё раз.',
+          ),
+        );
       }
     } finally {
       if (mounted) {
@@ -1113,9 +1248,10 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Ошибка при открытии чата.'),
+      _showRelativeSnackBar(
+        _describeRelativeActionError(
+          e,
+          fallbackMessage: 'Не удалось открыть чат. Попробуйте ещё раз.',
         ),
       );
     }
@@ -1169,14 +1305,16 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Фото добавлено в галерею.')),
-      );
+      _showRelativeSnackBar('Фото добавлено в галерею.');
     } catch (e) {
       debugPrint('Ошибка загрузки фото родственника: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Не удалось добавить фото: $e')),
+        _showRelativeSnackBar(
+          _describeRelativeActionError(
+            e,
+            fallbackMessage:
+                'Не удалось добавить фото. Попробуйте выбрать другой файл или повторить позже.',
+          ),
         );
       }
     } finally {
@@ -1223,14 +1361,16 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Основное фото обновлено.')),
-      );
+      _showRelativeSnackBar('Основное фото обновлено.');
     } catch (e) {
       debugPrint('Ошибка обновления основного фото: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Не удалось сменить основное фото: $e')),
+        _showRelativeSnackBar(
+          _describeRelativeActionError(
+            e,
+            fallbackMessage:
+                'Не удалось сменить основное фото. Попробуйте ещё раз.',
+          ),
         );
       }
     } finally {
@@ -1311,14 +1451,16 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Фото удалено из галереи.')),
-      );
+      _showRelativeSnackBar('Фото удалено из галереи.');
     } catch (e) {
       debugPrint('Ошибка удаления фото родственника: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Не удалось удалить фото: $e')),
+        _showRelativeSnackBar(
+          _describeRelativeActionError(
+            e,
+            fallbackMessage:
+                'Не удалось удалить фото. Попробуйте ещё раз чуть позже.',
+          ),
         );
       }
     } finally {

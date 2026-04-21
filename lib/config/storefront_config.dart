@@ -7,19 +7,19 @@ class StorefrontConfig {
   });
 
   static const String _storeIdEnv = String.fromEnvironment(
-    'LINEAGE_APP_STORE',
+    'RODNYA_APP_STORE',
     defaultValue: 'rustore',
   );
   static const String _billingEnv = String.fromEnvironment(
-    'LINEAGE_ENABLE_RUSTORE_BILLING',
+    'RODNYA_ENABLE_RUSTORE_BILLING',
     defaultValue: 'false',
   );
   static const String _reviewEnv = String.fromEnvironment(
-    'LINEAGE_ENABLE_RUSTORE_REVIEW',
+    'RODNYA_ENABLE_RUSTORE_REVIEW',
     defaultValue: 'true',
   );
   static const String _updatesEnv = String.fromEnvironment(
-    'LINEAGE_ENABLE_RUSTORE_UPDATES',
+    'RODNYA_ENABLE_RUSTORE_UPDATES',
     defaultValue: 'true',
   );
 

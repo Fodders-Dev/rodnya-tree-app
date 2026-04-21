@@ -37,7 +37,7 @@ Turn the current web MVP into a cleaner, denser, more controllable product surfa
   - less hierarchy, more freeform network
   - manual arrangement is primary
   - no generation guides by default
-  - relation chips should emphasize social meaning rather than lineage
+  - relation chips should emphasize social meaning rather than kinship
 
 ## Execution order
 1. Manual drag + persistence for family tree.

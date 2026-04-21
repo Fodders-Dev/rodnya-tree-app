@@ -12,14 +12,16 @@ import 'package:go_router/go_router.dart';
 import '../backend/interfaces/auth_service_interface.dart';
 import '../providers/tree_provider.dart';
 import '../services/custom_api_notification_service.dart';
+import '../services/app_status_service.dart';
 import '../config/storefront_config.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/flow_overlays.dart';
+import '../utils/user_facing_error.dart';
 
 // --- ID нашего тестового продукта ---
-const String PREMIUM_PRODUCT_ID = 'lineage_premium';
+const String PREMIUM_PRODUCT_ID = 'rodnya_premium';
 // --- ID для разовой покупки ---
-const String ONE_TIME_PRODUCT_ID = 'lineage_premium_product';
+const String ONE_TIME_PRODUCT_ID = 'rodnya_premium_product';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -32,9 +34,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final AuthServiceInterface _authService = GetIt.I<AuthServiceInterface>();
   // Получаем RustoreService из GetIt
   final RustoreService _rustoreService = GetIt.I<RustoreService>();
+  final AppStatusService _appStatusService = GetIt.I<AppStatusService>();
   final StorefrontConfig _storefrontConfig = StorefrontConfig.current;
   bool _isLoading = false;
-  bool _isDarkMode = false;
   bool _notificationsEnabled = true;
   bool _profilePrivate = false;
 
@@ -104,25 +106,41 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final notificationService = _customNotificationService;
     var nextValue = value;
 
-    if (notificationService != null) {
-      nextValue = await notificationService.setNotificationsEnabled(
-        value,
-        promptForBrowserPermission: value,
-      );
+    try {
+      if (notificationService != null) {
+        nextValue = await notificationService.setNotificationsEnabled(
+          value,
+          promptForBrowserPermission: value,
+        );
 
+        if (!mounted) {
+          return;
+        }
+
+        if (value && !nextValue) {
+          _showMessage(
+            'Разрешите уведомления в браузере, чтобы не пропустить сообщения и приглашения.',
+          );
+        }
+      }
+    } catch (error) {
+      _appStatusService.reportError(
+        error,
+        fallbackMessage: 'Не удалось обновить настройки уведомлений.',
+      );
       if (!mounted) {
         return;
       }
-
-      if (value && !nextValue) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Разрешите уведомления в браузере, чтобы Родня могла показать новые сообщения и приглашения.',
-            ),
-          ),
-        );
-      }
+      _showMessage(
+        describeUserFacingError(
+          authService: _authService,
+          error: error,
+          fallbackMessage: _appStatusService.isOffline
+              ? 'Нет соединения. Настройка применится, когда интернет вернётся.'
+              : 'Не удалось обновить настройки уведомлений. Попробуйте ещё раз.',
+        ),
+      );
+      nextValue = _notificationsEnabled;
     }
 
     if (!mounted) {
@@ -132,6 +150,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() {
       _notificationsEnabled = nextValue;
     });
+  }
+
+  void _showMessage(String message, {Color? backgroundColor}) {
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: backgroundColor,
+      ),
+    );
   }
 
   // Функция для проверки статуса премиум
@@ -220,9 +250,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (products.isEmpty) {
         debugPrint("Product $PREMIUM_PRODUCT_ID not found in RuStore.");
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Товар $PREMIUM_PRODUCT_ID не найден.')),
-          );
+          _showMessage('Премиум сейчас недоступен. Попробуйте позже.');
         }
         setState(() {
           _billingLoading = false;
@@ -270,9 +298,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ); // Передаем не-null ID
             debugPrint('Purchase $currentPurchaseId confirmed successfully.');
             if (mounted) {
-              ScaffoldMessenger.of(
-                context,
-              ).showSnackBar(SnackBar(content: Text('Покупка подтверждена!')));
+              _showMessage('Премиум успешно подключён.');
             }
           } else {
             debugPrint(
@@ -283,12 +309,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
         } catch (confirmError) {
           debugPrint('Error confirming purchase: $confirmError');
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(
-                  'Ошибка при подтверждении покупки: $confirmError',
-                ),
-              ),
+            _showMessage(
+              'Платёж прошёл, но подтверждение ещё обрабатывается. Статус обновится автоматически.',
             );
           }
           // Продолжаем, чтобы обновить статус
@@ -301,17 +323,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
           "Purchase flow returned null result (likely cancelled or failed).",
         );
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Покупка не удалась или была отменена.')),
-          );
+          _showMessage('Покупка отменена или не завершилась.');
         }
       }
     } catch (e) {
       debugPrint("Error during purchase process: $e");
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Ошибка покупки премиума: $e')));
+        _showMessage('Не удалось оформить премиум. Попробуйте ещё раз.');
       }
     } finally {
       if (mounted) {
@@ -334,9 +352,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (products.isEmpty) {
         debugPrint("Product $ONE_TIME_PRODUCT_ID not found in RuStore.");
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Товар $ONE_TIME_PRODUCT_ID не найден.')),
-          );
+          _showMessage('Разовая покупка сейчас недоступна. Попробуйте позже.');
         }
         setState(() {
           _oneTimePurchaseLoading = false;
@@ -387,11 +403,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               'One-time purchase $currentPurchaseId confirmed/consumed successfully.',
             );
             if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text('Разовая покупка подтверждена/потреблена!'),
-                ),
-              );
+              _showMessage('Разовая покупка успешно завершена.');
             }
           } else {
             debugPrint(
@@ -402,12 +414,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           debugPrint(
               'Error confirming/consuming one-time purchase: $confirmError');
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(
-                  'Ошибка подтверждения/потребления разовой покупки: $confirmError',
-                ),
-              ),
+            _showMessage(
+              'Платёж прошёл, но подтверждение ещё обрабатывается. Проверьте статус чуть позже.',
             );
           }
         }
@@ -418,19 +426,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
           "One-time purchase flow returned null result (likely cancelled or failed).",
         );
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Разовая покупка не удалась или была отменена.'),
-            ),
-          );
+          _showMessage('Разовая покупка отменена или не завершилась.');
         }
       }
     } catch (e) {
       debugPrint("Error during one-time purchase process: $e");
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Ошибка разовой покупки: $e')));
+        _showMessage(
+            'Не удалось оформить разовую покупку. Попробуйте ещё раз.');
       }
     } finally {
       if (mounted) {
@@ -457,21 +460,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _checkPremiumStatus(); // Обновляем статус
       } else {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Не удалось удалить тестовую покупку.')),
-          );
+          _showMessage('Не удалось удалить тестовую покупку.');
         }
         setState(() {
           _billingLoading = false;
         });
       }
     }
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _isDarkMode = Theme.of(context).brightness == Brightness.dark;
   }
 
   // Функция для отображения диалога подтверждения удаления аккаунта
@@ -555,11 +550,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     if (passwordController.text.isNotEmpty) {
                       _deleteAccount(passwordController.text);
                     } else {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('Введите пароль для удаления аккаунта'),
-                          backgroundColor: Colors.red,
-                        ),
+                      _showMessage(
+                        'Введите пароль для удаления аккаунта.',
+                        backgroundColor: theme.colorScheme.error,
                       );
                     }
                   },
@@ -586,21 +579,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
       }
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Ваш аккаунт был успешно удален'),
-            backgroundColor: Colors.green,
-          ),
+        _showMessage(
+          'Аккаунт удалён.',
+          backgroundColor: Colors.green,
         );
         context.go('/login');
       }
-    } catch (e) {
+    } catch (error) {
+      _appStatusService.reportError(
+        error,
+        fallbackMessage: 'Не удалось удалить аккаунт.',
+      );
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Ошибка при удалении аккаунта: $e'),
-            backgroundColor: Colors.red,
+        _showMessage(
+          describeUserFacingError(
+            authService: _authService,
+            error: error,
+            fallbackMessage: _appStatusService.isOffline
+                ? 'Нет соединения. Попробуйте удалить аккаунт, когда интернет вернётся.'
+                : 'Не удалось удалить аккаунт. Проверьте пароль и попробуйте ещё раз.',
           ),
+          backgroundColor: Theme.of(context).colorScheme.error,
         );
 
         setState(() {
@@ -617,7 +616,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('Настройки')),
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
+          ? _buildSettingsStateCard(
+              icon: Icons.tune,
+              title: 'Открываем настройки',
+              message:
+                  'Подтягиваем уведомления, внешний вид и параметры аккаунта.',
+              showProgress: true,
+            )
           : Center(
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 980),
@@ -795,12 +800,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Родня',
+            'Управление аккаунтом',
             style: theme.textTheme.titleLarge?.copyWith(
               fontWeight: FontWeight.w800,
             ),
           ),
           const SizedBox(height: 4),
+          Text(
+            'Здесь всё про доступ, уведомления, внешний вид и безопасность вашего профиля.',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+              height: 1.35,
+            ),
+          ),
+          const SizedBox(height: 8),
           Text(
             _appVersionLabel,
             style: theme.textTheme.bodySmall?.copyWith(
@@ -808,6 +821,67 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildSettingsStateCard({
+    required IconData icon,
+    required String title,
+    required String message,
+    bool showProgress = false,
+  }) {
+    final theme = Theme.of(context);
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: GlassPanel(
+            padding: const EdgeInsets.all(24),
+            borderRadius: BorderRadius.circular(30),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 58,
+                  height: 58,
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.primary.withValues(alpha: 0.12),
+                    shape: BoxShape.circle,
+                  ),
+                  child: showProgress
+                      ? const Padding(
+                          padding: EdgeInsets.all(14),
+                          child: CircularProgressIndicator(strokeWidth: 2.4),
+                        )
+                      : Icon(
+                          icon,
+                          size: 28,
+                          color: theme.colorScheme.primary,
+                        ),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  title,
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  message,
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                    height: 1.38,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

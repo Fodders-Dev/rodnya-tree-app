@@ -4,7 +4,7 @@
 
 ## Цель
 
-Довести Lineage до Android/web MVP без прямой зависимости клиента от Firebase cloud и hosted Supabase, сохранив быстрый путь к релизу и возможность поэтапной миграции без big-bang rewrite.
+Довести Rodnya до Android/web MVP без прямой зависимости клиента от Firebase cloud и hosted Supabase, сохранив быстрый путь к релизу и возможность поэтапной миграции без big-bang rewrite.
 
 ## Рекомендованное целевое состояние
 

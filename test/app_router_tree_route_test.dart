@@ -1,10 +1,10 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
-import 'package:lineage/models/family_tree.dart';
-import 'package:lineage/navigation/app_router.dart';
-import 'package:lineage/providers/tree_provider.dart';
-import 'package:lineage/services/local_storage_service.dart';
+import 'package:rodnya/models/family_tree.dart';
+import 'package:rodnya/navigation/app_router.dart';
+import 'package:rodnya/providers/tree_provider.dart';
+import 'package:rodnya/services/local_storage_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class _FakeLocalStorageService implements LocalStorageService {
@@ -113,6 +113,70 @@ void main() {
     );
 
     expect(restored, '/chats?tab=unread');
+  });
+
+  test('публичные legal/support маршруты доступны без авторизации', () {
+    expect(AppRouter.allowsAnonymousAccess('/privacy'), isTrue);
+    expect(AppRouter.allowsAnonymousAccess('/terms'), isTrue);
+    expect(AppRouter.allowsAnonymousAccess('/support'), isTrue);
+    expect(AppRouter.allowsAnonymousAccess('/account-deletion'), isTrue);
+  });
+
+  test('legal/support маршруты не считаются auth entry страницами', () {
+    expect(AppRouter.isAuthEntryPage('/privacy'), isFalse);
+    expect(AppRouter.isAuthEntryPage('/terms'), isFalse);
+    expect(AppRouter.isAuthEntryPage('/support'), isFalse);
+    expect(AppRouter.isAuthEntryPage('/account-deletion'), isFalse);
+    expect(AppRouter.isAuthEntryPage('/login'), isTrue);
+    expect(AppRouter.isAuthEntryPage('/password_reset'), isTrue);
+  });
+
+  test('telegram auth callback query не должен теряться на /login', () {
+    expect(
+      AppRouter.hasTelegramAuthPayload(
+        Uri.parse('/login?telegramAuthCode=abc123'),
+      ),
+      isTrue,
+    );
+    expect(
+      AppRouter.hasTelegramAuthPayload(
+        Uri.parse('/login?telegramAuthError=failed'),
+      ),
+      isTrue,
+    );
+    expect(
+      AppRouter.hasTelegramAuthPayload(
+        Uri.parse('/login?from=%2Fprofile'),
+      ),
+      isFalse,
+    );
+  });
+
+  test('vk auth callback query не должен теряться на /login', () {
+    expect(
+      AppRouter.hasVkAuthPayload(
+        Uri.parse('/login?vkAuthCode=abc123'),
+      ),
+      isTrue,
+    );
+    expect(
+      AppRouter.hasVkAuthPayload(
+        Uri.parse('/login?vkAuthError=failed'),
+      ),
+      isTrue,
+    );
+    expect(
+      AppRouter.hasSocialAuthPayload(
+        Uri.parse('/login?vkAuthCode=abc123'),
+      ),
+      isTrue,
+    );
+    expect(
+      AppRouter.hasSocialAuthPayload(
+        Uri.parse('/login?from=%2Fprofile'),
+      ),
+      isFalse,
+    );
   });
 }
 

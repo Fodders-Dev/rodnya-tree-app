@@ -1,15 +1,15 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive/hive.dart';
 import 'package:hive_test/hive_test.dart';
-import 'package:lineage/models/family_person.dart';
+import 'package:rodnya/models/family_person.dart';
 
-import 'package:lineage/models/family_person.dart' as lineage_models;
+import 'package:rodnya/models/family_person.dart' as rodnya_models;
 
 class FakeNotificationService {
-  final List<lineage_models.FamilyPerson> shownBirthdays = [];
+  final List<rodnya_models.FamilyPerson> shownBirthdays = [];
 
   Future<void> showBirthdayNotification(
-      lineage_models.FamilyPerson person) async {
+      rodnya_models.FamilyPerson person) async {
     shownBirthdays.add(person);
   }
 }
@@ -33,12 +33,12 @@ void main() {
     'birthdayCheckTask should show notification for person with birthday today',
     () async {
       final notificationService = FakeNotificationService();
-      final personsBox = await Hive.openBox<lineage_models.FamilyPerson>(
+      final personsBox = await Hive.openBox<rodnya_models.FamilyPerson>(
         'testPersonsBox',
       );
 
       final today = DateTime.now();
-      final personWithBirthday = lineage_models.FamilyPerson(
+      final personWithBirthday = rodnya_models.FamilyPerson(
         id: '1',
         treeId: 't1',
         name: 'Сегодняшний Именинник',
@@ -52,7 +52,7 @@ void main() {
         createdAt: today,
         updatedAt: today,
       );
-      final personWithoutBirthday = lineage_models.FamilyPerson(
+      final personWithoutBirthday = rodnya_models.FamilyPerson(
         id: '2',
         treeId: 't1',
         name: 'Вчерашний Не Именинник',
@@ -66,7 +66,7 @@ void main() {
         createdAt: today,
         updatedAt: today,
       );
-      final personWithNullBirthday = lineage_models.FamilyPerson(
+      final personWithNullBirthday = rodnya_models.FamilyPerson(
         id: '3',
         treeId: 't1',
         name: 'Без Даты',
@@ -81,7 +81,7 @@ void main() {
       await personsBox.put(personWithoutBirthday.id, personWithoutBirthday);
       await personsBox.put(personWithNullBirthday.id, personWithNullBirthday);
 
-      final List<lineage_models.FamilyPerson> relatives =
+      final List<rodnya_models.FamilyPerson> relatives =
           personsBox.values.toList();
       for (final person in relatives) {
         if (person.birthDate != null &&

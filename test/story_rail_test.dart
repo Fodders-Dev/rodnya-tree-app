@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:lineage/models/story.dart';
-import 'package:lineage/widgets/story_rail.dart';
+import 'package:rodnya/models/story.dart';
+import 'package:rodnya/widgets/story_rail.dart';
 
 Story _buildStory({
   required String id,

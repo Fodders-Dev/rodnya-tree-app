@@ -30,9 +30,9 @@
 
 ### 1. Rebrand в `Родню`
 
-- Перевести публичные UI-строки, README, docs, backend labels, CI labels, logger prefixes и служебные названия с `lineage` на `rodnya`.
+- Перевести публичные UI-строки, README, docs, backend labels, CI labels, logger prefixes и служебные названия с `rodnya` на `rodnya`.
 - Переименовывать package/repo/import identifiers поэтапно, без массового риска для сборки.
-- Оставить backward-compatible слой для legacy `lineage` storage/table/prefix aliases, пока не завершится мягкая миграция.
+- Оставить backward-compatible слой для legacy `rodnya` storage/table/prefix aliases, пока не завершится мягкая миграция.
 - Не менять Android `applicationId`.
 
 ### 2. Product hardening и плотность интерфейса

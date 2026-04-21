@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get_it/get_it.dart';
-import 'package:lineage/models/app_notification_item.dart';
-import 'package:lineage/models/family_tree.dart';
-import 'package:lineage/providers/tree_provider.dart';
-import 'package:lineage/screens/notifications_screen.dart';
-import 'package:lineage/services/local_storage_service.dart';
+import 'package:rodnya/backend/interfaces/auth_service_interface.dart';
+import 'package:rodnya/models/app_notification_item.dart';
+import 'package:rodnya/models/family_tree.dart';
+import 'package:rodnya/providers/tree_provider.dart';
+import 'package:rodnya/screens/notifications_screen.dart';
+import 'package:rodnya/services/app_status_service.dart';
+import 'package:rodnya/services/local_storage_service.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -16,6 +18,8 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     await getIt.reset();
     getIt.registerSingleton<LocalStorageService>(_FakeLocalStorageService());
+    getIt.registerSingleton<AppStatusService>(AppStatusService());
+    getIt.registerSingleton<AuthServiceInterface>(_FakeAuthService());
   });
 
   tearDown(() async {
@@ -167,6 +171,43 @@ void main() {
       );
     },
   );
+
+  testWidgets(
+    'NotificationsScreen показывает понятную ошибку при массовом обновлении',
+    (tester) async {
+      await tester.pumpWidget(
+        await _buildNotificationsApp(
+          NotificationsScreen(
+            notificationLoader: () async => [
+              AppNotificationItem(
+                id: 'notification-1',
+                type: 'tree_invitation',
+                title: 'Семья Шуфляк',
+                body: 'Вас пригласили в дерево',
+                createdAt: DateTime(2026, 4, 3, 12, 30),
+                data: const {'treeId': 'tree-1'},
+                payload: '{"type":"tree_invitation"}',
+              ),
+            ],
+            onMarkAllNotificationsRead: (_) async {
+              throw Exception('boom');
+            },
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Прочитать всё'));
+      await tester.pump();
+
+      expect(
+        find.text(
+          'Не удалось отметить уведомления прочитанными. Попробуйте ещё раз.',
+        ),
+        findsOneWidget,
+      );
+    },
+  );
 }
 
 Future<List<AppNotificationItem>> _emptyLoader() async =>
@@ -186,6 +227,36 @@ Future<Widget> _buildNotificationsApp(Widget child) async {
 }
 
 class _FakeLocalStorageService implements LocalStorageService {
+  final FamilyTree _tree = FamilyTree(
+    id: 'tree-1',
+    name: 'Семья Шуфляк',
+    description: '',
+    creatorId: 'user-1',
+    memberIds: const ['user-1'],
+    createdAt: DateTime(2026, 4, 3),
+    updatedAt: DateTime(2026, 4, 3),
+    isPrivate: true,
+    members: const ['user-1'],
+  );
+
+  @override
+  Future<List<FamilyTree>> getAllTrees() async => [_tree];
+
+  @override
+  Future<FamilyTree?> getTree(String treeId) async =>
+      treeId == _tree.id ? _tree : null;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _FakeAuthService implements AuthServiceInterface {
+  @override
+  String? get currentUserId => 'user-1';
+
+  @override
+  String describeError(Object error) => error.toString();
+
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

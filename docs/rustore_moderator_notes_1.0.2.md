@@ -2,7 +2,7 @@
 
 ## Build Summary
 - Приложение: `Родня`
-- Package: `com.ahjkuio.lineage_family_app`
+- Package: `com.ahjkuio.rodnya_family_app`
 - Store flavor: `rustore`
 - Publish type: `MANUAL`
 - Основной backend: `https://api.rodnya-tree.ru`

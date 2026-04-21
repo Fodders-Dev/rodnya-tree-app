@@ -82,7 +82,7 @@
 <ВСТАВЬ СЮДА ОДИН УЗКИЙ CLOUD-SCOPE>
 
 Примеры хороших cloud-scope для этого репозитория:
-- rebrand UI/docs from Lineage to Родня, without changing Android applicationId
+- rebrand UI/docs from Rodnya to Родня, without changing Android applicationId
 - make likes server-driven across post service, widget state, and tests
 - expand EventService with birthdays, anniversaries, memorials, RF holidays, orthodox holidays, and tests
 - declutter HomeScreen and remove permanent greeting hero while preserving key actions

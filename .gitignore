@@ -49,9 +49,24 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
-/android/app/google-services.json
+/android/app/.cxx/
 /android/release-signing.properties
 /android/KEYS
+/output/
+/test-results/
+/.playwright-cli/
+/analyze*.txt
+/flutter_*.log
+/flutter-test-*.log
+/web-*.log
+/emu*.xml
+/emu*.png
+/phone*.xml
+/phone*.png
+/tmp_*.xml
+/tmp_*.txt
+/tmp_*.png
+/remote_backend_src_files.txt
 
 # Добавим папки для игнорирования
 ДОМАШКИ/

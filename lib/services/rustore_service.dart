@@ -1,4 +1,5 @@
 import 'dart:async'; // Добавляем для StreamSubscription
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 // Используем новые импорты для API v8.0.0
@@ -16,6 +17,7 @@ import 'package:flutter_rustore_billing/pigeons/rustore.dart'
 
 // Импорт для Push API
 import 'package:flutter_rustore_push/flutter_rustore_push.dart'; // Содержит RustorePushClient
+import 'package:flutter_rustore_push/pigeons/rustore_push.dart' as rustore_push;
 // Типы Message, Notification доступны из основного импорта
 
 // <<< Добавляем импорт SharedPreferences >>>
@@ -35,12 +37,116 @@ const int installStatusFailed = 3;
 const int installStatusPending = 5;
 
 // Ключ для сохранения статуса запроса отзыва
-const String _reviewRequestedKey = 'lineage_review_requested';
+const String _reviewRequestedKey = 'rodnya_review_requested';
 
 enum RustoreReviewRequestStatus {
   shown,
   alreadyExists,
   unavailable,
+}
+
+class RustorePushMessage {
+  const RustorePushMessage({
+    required this.messageId,
+    required this.data,
+    this.title,
+    this.body,
+  });
+
+  final String messageId;
+  final Map<String, String> data;
+  final String? title;
+  final String? body;
+
+  Map<String, dynamic> get payload {
+    final rawPayload = data['payload'];
+    if (rawPayload == null || rawPayload.trim().isEmpty) {
+      return const <String, dynamic>{};
+    }
+    try {
+      final decoded = jsonDecode(rawPayload);
+      if (decoded is Map<String, dynamic>) {
+        return decoded;
+      }
+      if (decoded is Map) {
+        return decoded.map(
+          (key, value) => MapEntry(key.toString(), value),
+        );
+      }
+    } catch (_) {
+      // Пустой payload не должен ронять обработку пуша.
+    }
+    return const <String, dynamic>{};
+  }
+
+  Map<String, dynamic> get payloadData {
+    final value = payload['data'];
+    if (value is Map<String, dynamic>) {
+      return value;
+    }
+    if (value is Map) {
+      return value.map(
+        (key, mapValue) => MapEntry(key.toString(), mapValue),
+      );
+    }
+    return const <String, dynamic>{};
+  }
+
+  String get type {
+    final directType = data['type']?.trim();
+    if (directType != null && directType.isNotEmpty) {
+      return directType;
+    }
+    final payloadType = payload['type']?.toString().trim();
+    if (payloadType != null && payloadType.isNotEmpty) {
+      return payloadType;
+    }
+    return '';
+  }
+
+  String? get callId {
+    final directCallId = data['callId']?.trim();
+    if (directCallId != null && directCallId.isNotEmpty) {
+      return directCallId;
+    }
+    final payloadCallId = payloadData['callId']?.toString().trim();
+    if (payloadCallId != null && payloadCallId.isNotEmpty) {
+      return payloadCallId;
+    }
+    return null;
+  }
+
+  String? get chatId {
+    final directChatId = data['chatId']?.trim();
+    if (directChatId != null && directChatId.isNotEmpty) {
+      return directChatId;
+    }
+    final payloadChatId = payloadData['chatId']?.toString().trim();
+    if (payloadChatId != null && payloadChatId.isNotEmpty) {
+      return payloadChatId;
+    }
+    return null;
+  }
+
+  bool get isCallInvite => type == 'call_invite';
+
+  factory RustorePushMessage.fromMessage(rustore_push.Message message) {
+    final normalizedData = <String, String>{};
+    for (final entry in message.data.entries) {
+      final key = entry.key?.toString().trim() ?? '';
+      if (key.isEmpty) {
+        continue;
+      }
+      normalizedData[key] = entry.value?.toString() ?? '';
+    }
+
+    return RustorePushMessage(
+      messageId: message.messageId?.trim() ?? '',
+      data: normalizedData,
+      title: message.notification?.title?.trim(),
+      body: message.notification?.body?.trim(),
+    );
+  }
 }
 
 class RustoreService {
@@ -53,6 +159,10 @@ class RustoreService {
         _reviewShow = reviewShow ?? RustoreReviewClient.review;
 
   bool _isReviewInitialized = false; // Флаг для инициализации Review SDK
+  bool _pushListenersInitialized = false;
+  bool _foregroundWarmupStarted = false;
+  final StreamController<RustorePushMessage> _pushMessagesController =
+      StreamController<RustorePushMessage>.broadcast();
   // StreamSubscription больше не нужен
   final Future<void> Function() _reviewInitialize;
   final Future<void> Function() _reviewRequest;
@@ -61,6 +171,8 @@ class RustoreService {
   // --- SharedPreferences Instance ---
   // Делаем Future, чтобы можно было получить его асинхронно
   late final Future<SharedPreferences> _prefs = SharedPreferences.getInstance();
+
+  Stream<RustorePushMessage> get pushMessages => _pushMessagesController.stream;
 
   // Проверка наличия обновлений (возвращает UpdateInfo или null)
   Future<update.UpdateInfo?> checkForUpdate() async {
@@ -275,7 +387,7 @@ class RustoreService {
             'Initializing RuStore Billing Client...'); // Лог инициализации
         // <<< Используем правильный числовой ID приложения >>>
         const String consoleAppId = '2063621085';
-        const String deeplinkScheme = 'lineagebilling'; // Выбранная схема
+        const String deeplinkScheme = 'rodnyabilling'; // Выбранная схема
         await RustoreBillingClient.initialize(
           consoleAppId,
           deeplinkScheme,
@@ -442,6 +554,10 @@ class RustoreService {
   // Вызывать один раз при старте приложения
   void initializePushListeners() {
     if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      if (_pushListenersInitialized) {
+        return;
+      }
+      _pushListenersInitialized = true;
       debugPrint('Initializing RuStore Push SDK v6.5.0 listeners...');
 
       try {
@@ -452,10 +568,19 @@ class RustoreService {
             // TODO: Отправить новый токен на бэкенд
           },
           onMessageReceived: (message) {
+            final pushMessage = RustorePushMessage.fromMessage(message);
             debugPrint(
-              '[RuStore Push v6.5.0] Message received: id=${message.messageId}, data=${message.data}, notification=${message.notification.title}',
+              '[RuStore Push v6.5.0] Message received: '
+              'id=${pushMessage.messageId}, '
+              'type=${pushMessage.type}, '
+              'callId=${pushMessage.callId}, '
+              'chatId=${pushMessage.chatId}, '
+              'data=${pushMessage.data}, '
+              'notification=${pushMessage.title}',
             );
-            // TODO: Обработать полученное сообщение
+            if (!_pushMessagesController.isClosed) {
+              _pushMessagesController.add(pushMessage);
+            }
           },
           onDeletedMessages: () {
             debugPrint('[RuStore Push v6.5.0] Messages deleted on server.');
@@ -487,6 +612,22 @@ class RustoreService {
     } else {
       debugPrint('RuStore Push v6.5.0 skipped (not Android).');
     }
+  }
+
+  Future<void> startForegroundWarmup({
+    required bool enableUpdates,
+  }) async {
+    if (_foregroundWarmupStarted ||
+        kIsWeb ||
+        defaultTargetPlatform != TargetPlatform.android) {
+      return;
+    }
+    _foregroundWarmupStarted = true;
+    initializePushListeners();
+    if (enableUpdates) {
+      await checkForUpdate();
+    }
+    unawaited(getRustorePushToken());
   }
 
   // Получение Push-токена RuStore

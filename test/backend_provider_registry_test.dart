@@ -1,14 +1,15 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get_it/get_it.dart';
-import 'package:lineage/backend/backend_provider_config.dart';
-import 'package:lineage/backend/backend_provider_registry.dart';
-import 'package:lineage/backend/interfaces/auth_service_interface.dart';
-import 'package:lineage/backend/interfaces/chat_service_interface.dart';
-import 'package:lineage/backend/interfaces/family_tree_service_interface.dart';
-import 'package:lineage/backend/interfaces/notification_service_interface.dart';
-import 'package:lineage/backend/interfaces/profile_service_interface.dart';
-import 'package:lineage/backend/interfaces/storage_service_interface.dart';
-import 'package:lineage/backend/pending_backend_adapters.dart';
+import 'package:rodnya/backend/backend_provider_config.dart';
+import 'package:rodnya/backend/backend_provider_registry.dart';
+import 'package:rodnya/backend/interfaces/auth_service_interface.dart';
+import 'package:rodnya/backend/interfaces/call_service_interface.dart';
+import 'package:rodnya/backend/interfaces/chat_service_interface.dart';
+import 'package:rodnya/backend/interfaces/family_tree_service_interface.dart';
+import 'package:rodnya/backend/interfaces/notification_service_interface.dart';
+import 'package:rodnya/backend/interfaces/profile_service_interface.dart';
+import 'package:rodnya/backend/interfaces/storage_service_interface.dart';
+import 'package:rodnya/backend/pending_backend_adapters.dart';
 
 void main() {
   final getIt = GetIt.instance;
@@ -43,6 +44,7 @@ void main() {
       isA<PendingBackendFamilyTreeService>(),
     );
     expect(getIt<ChatServiceInterface>(), isA<PendingBackendChatService>());
+    expect(getIt<CallServiceInterface>(), isA<PendingBackendCallService>());
     expect(getIt<StorageServiceInterface>(), isA<NoopStorageService>());
     expect(
       getIt<NotificationServiceInterface>(),

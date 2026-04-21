@@ -89,6 +89,24 @@ class FamilyRelation extends HiveObject {
   final DateTime? marriageDate; // Дата брака или заключения союза
   @HiveField(11)
   final DateTime? divorceDate; // Дата расторжения брака
+  @HiveField(12)
+  final String?
+      customRelationLabel1to2; // Пользовательская подпись от person1 к person2
+  @HiveField(13)
+  final String?
+      customRelationLabel2to1; // Пользовательская подпись от person2 к person1
+  @HiveField(14)
+  final String? parentSetId; // Идентификатор набора родителей
+  @HiveField(15)
+  final String? parentSetType; // biological, adoptive, guardian...
+  @HiveField(16)
+  final bool? isPrimaryParentSet; // Основной ли это родительский набор
+  @HiveField(17)
+  final String? unionId; // Идентификатор союза
+  @HiveField(18)
+  final String? unionType; // spouse, partner, friend...
+  @HiveField(19)
+  final String? unionStatus; // current, past
 
   FamilyRelation({
     required this.id,
@@ -103,6 +121,14 @@ class FamilyRelation extends HiveObject {
     this.createdBy,
     this.marriageDate,
     this.divorceDate,
+    this.customRelationLabel1to2,
+    this.customRelationLabel2to1,
+    this.parentSetId,
+    this.parentSetType,
+    this.isPrimaryParentSet,
+    this.unionId,
+    this.unionType,
+    this.unionStatus,
   });
 
   factory FamilyRelation.fromFirestore(dynamic doc) {
@@ -122,6 +148,16 @@ class FamilyRelation extends HiveObject {
       createdBy: data['createdBy'],
       marriageDate: parseDateTime(data['marriageDate']),
       divorceDate: parseDateTime(data['divorceDate']),
+      customRelationLabel1to2: data['customRelationLabel1to2']?.toString(),
+      customRelationLabel2to1: data['customRelationLabel2to1']?.toString(),
+      parentSetId: data['parentSetId']?.toString(),
+      parentSetType: data['parentSetType']?.toString(),
+      isPrimaryParentSet: data['isPrimaryParentSet'] is bool
+          ? data['isPrimaryParentSet'] as bool
+          : null,
+      unionId: data['unionId']?.toString(),
+      unionType: data['unionType']?.toString(),
+      unionStatus: data['unionStatus']?.toString(),
     );
   }
 
@@ -138,7 +174,75 @@ class FamilyRelation extends HiveObject {
       'isConfirmed': isConfirmed,
       'marriageDate': marriageDate?.toIso8601String(),
       'divorceDate': divorceDate?.toIso8601String(),
+      'customRelationLabel1to2': customRelationLabel1to2,
+      'customRelationLabel2to1': customRelationLabel2to1,
+      'parentSetId': parentSetId,
+      'parentSetType': parentSetType,
+      'isPrimaryParentSet': isPrimaryParentSet,
+      'unionId': unionId,
+      'unionType': unionType,
+      'unionStatus': unionStatus,
     };
+  }
+
+  RelationType? relationFromPerson(String fromPersonId) {
+    final normalizedPersonId = fromPersonId.trim();
+    if (normalizedPersonId.isEmpty) {
+      return null;
+    }
+    if (person1Id == normalizedPersonId) {
+      return relation1to2;
+    }
+    if (person2Id == normalizedPersonId) {
+      return relation2to1;
+    }
+    return null;
+  }
+
+  String? otherPersonId(String personId) {
+    final normalizedPersonId = personId.trim();
+    if (normalizedPersonId.isEmpty) {
+      return null;
+    }
+    if (person1Id == normalizedPersonId) {
+      return person2Id;
+    }
+    if (person2Id == normalizedPersonId) {
+      return person1Id;
+    }
+    return null;
+  }
+
+  String? customLabelFromPerson(String fromPersonId) {
+    final normalizedPersonId = fromPersonId.trim();
+    if (normalizedPersonId.isEmpty) {
+      return null;
+    }
+    if (person1Id == normalizedPersonId) {
+      final label = customRelationLabel1to2?.trim();
+      return label == null || label.isEmpty ? null : label;
+    }
+    if (person2Id == normalizedPersonId) {
+      final label = customRelationLabel2to1?.trim();
+      return label == null || label.isEmpty ? null : label;
+    }
+    return null;
+  }
+
+  String? customLabelToPerson(String toPersonId) {
+    final normalizedPersonId = toPersonId.trim();
+    if (normalizedPersonId.isEmpty) {
+      return null;
+    }
+    if (person2Id == normalizedPersonId) {
+      final label = customRelationLabel1to2?.trim();
+      return label == null || label.isEmpty ? null : label;
+    }
+    if (person1Id == normalizedPersonId) {
+      final label = customRelationLabel2to1?.trim();
+      return label == null || label.isEmpty ? null : label;
+    }
+    return null;
   }
 
   // Метод для получения противоположной (зеркальной) связи
@@ -351,6 +455,53 @@ class FamilyRelation extends HiveObject {
         return 'Коллега';
       default:
         return getGenericRelationTypeStringRu(relationType);
+    }
+  }
+
+  static String getParentSetTypeLabel(String? type) {
+    switch ((type ?? '').trim().toLowerCase()) {
+      case 'biological':
+        return 'Биологическая связь';
+      case 'adoptive':
+        return 'Усыновление / удочерение';
+      case 'foster':
+        return 'Приемная семья';
+      case 'guardian':
+        return 'Опека';
+      case 'step':
+        return 'Неродная семья';
+      case 'unknown':
+        return 'Тип родительства не указан';
+      default:
+        return 'Связь в дереве';
+    }
+  }
+
+  static String getUnionTypeLabel(String? type) {
+    switch ((type ?? '').trim().toLowerCase()) {
+      case 'spouse':
+        return 'Брак';
+      case 'partner':
+        return 'Партнерский союз';
+      case 'friend':
+        return 'Близкая связь';
+      case 'single':
+        return 'Один родитель';
+      case 'other':
+        return 'Семейный союз';
+      default:
+        return 'Союз';
+    }
+  }
+
+  static String getUnionStatusLabel(String? status) {
+    switch ((status ?? '').trim().toLowerCase()) {
+      case 'current':
+        return 'Текущий союз';
+      case 'past':
+        return 'Прошлый союз';
+      default:
+        return 'Статус союза не указан';
     }
   }
 

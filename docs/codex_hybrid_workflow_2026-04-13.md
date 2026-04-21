@@ -127,7 +127,7 @@
 - `local`: сливать, проверять, добивать device/deploy/store хвосты
 
 Практичная схема на ближайшее время:
-- cloud task 1: `rebrand UI/docs from Lineage to Родня, without package id changes`
+- cloud task 1: `rebrand UI/docs from Rodnya to Родня, without package id changes`
 - cloud task 2: `stories backend + service layer`
 - cloud task 3: `event service expansion + tests`
 - local task 1: `Android media and voice UX on physical device`

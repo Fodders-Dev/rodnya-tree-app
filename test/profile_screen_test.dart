@@ -1,22 +1,25 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get_it/get_it.dart';
-import 'package:lineage/backend/interfaces/auth_service_interface.dart';
-import 'package:lineage/backend/interfaces/family_tree_service_interface.dart';
-import 'package:lineage/backend/interfaces/post_service_interface.dart';
-import 'package:lineage/backend/interfaces/profile_service_interface.dart';
-import 'package:lineage/backend/interfaces/story_service_interface.dart';
-import 'package:lineage/models/post.dart';
-import 'package:lineage/models/family_person.dart';
-import 'package:lineage/models/family_relation.dart';
-import 'package:lineage/models/family_tree.dart';
-import 'package:lineage/models/profile_note.dart';
-import 'package:lineage/models/story.dart';
-import 'package:lineage/models/tree_change_record.dart';
-import 'package:lineage/models/user_profile.dart';
-import 'package:lineage/providers/tree_provider.dart';
-import 'package:lineage/screens/profile_screen.dart';
-import 'package:lineage/services/local_storage_service.dart';
+import 'package:rodnya/backend/interfaces/auth_service_interface.dart';
+import 'package:rodnya/backend/interfaces/family_tree_service_interface.dart';
+import 'package:rodnya/backend/interfaces/post_service_interface.dart';
+import 'package:rodnya/backend/interfaces/profile_service_interface.dart';
+import 'package:rodnya/models/account_linking_status.dart';
+import 'package:rodnya/backend/interfaces/story_service_interface.dart';
+import 'package:rodnya/models/post.dart';
+import 'package:rodnya/models/family_person.dart';
+import 'package:rodnya/models/family_relation.dart';
+import 'package:rodnya/models/family_tree.dart';
+import 'package:rodnya/models/profile_contribution.dart';
+import 'package:rodnya/models/profile_note.dart';
+import 'package:rodnya/models/story.dart';
+import 'package:rodnya/models/tree_change_record.dart';
+import 'package:rodnya/models/user_profile.dart';
+import 'package:rodnya/providers/tree_provider.dart';
+import 'package:rodnya/screens/profile_screen.dart';
+import 'package:rodnya/services/app_status_service.dart';
+import 'package:rodnya/services/local_storage_service.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -177,6 +180,41 @@ class _FakeProfileService implements ProfileServiceInterface {
       );
 
   @override
+  Future<AccountLinkingStatus> getCurrentAccountLinkingStatus() async =>
+      const AccountLinkingStatus(
+        summaryTitle: 'Аккаунт подтверждён через Telegram',
+        summaryDetail: 'Основной канал: Telegram',
+        mergeStrategySummary:
+            'Для объединения используем identity провайдера, email и приглашения.',
+        trustedChannels: [
+          AccountTrustedChannel(
+            provider: 'telegram',
+            label: 'Telegram',
+            description: 'Подтверждённый канал',
+            verificationLabel: 'Связь подтверждена через Telegram',
+            isLinked: true,
+            isTrustedChannel: true,
+            isLoginMethod: true,
+            isPrimary: true,
+          ),
+          AccountTrustedChannel(
+            provider: 'google',
+            label: 'Google',
+            description: 'Резервный вход',
+            verificationLabel: 'Аккаунт подтверждён через Google',
+            isLinked: true,
+            isTrustedChannel: true,
+            isLoginMethod: true,
+            isPrimary: false,
+          ),
+        ],
+      );
+
+  @override
+  Future<List<ProfileContribution>> getPendingProfileContributions() async =>
+      const <ProfileContribution>[];
+
+  @override
   Stream<List<ProfileNote>> getProfileNotesStream(String userId) =>
       Stream.value(const []);
 
@@ -225,6 +263,7 @@ void main() {
     getIt.registerSingleton<LocalStorageService>(_FakeLocalStorageService());
     getIt.registerSingleton<PostServiceInterface>(_FakePostService());
     getIt.registerSingleton<StoryServiceInterface>(_FakeStoryService());
+    getIt.registerSingleton<AppStatusService>(AppStatusService());
   });
 
   tearDown(() async {
@@ -271,6 +310,37 @@ void main() {
     expect(find.text('Открыть'), findsOneWidget);
     expect(find.text('Фото'), findsOneWidget);
     expect(find.text('История'), findsOneWidget);
+  });
+
+  testWidgets('ProfileScreen показывает доверенные каналы и профильный код',
+      (tester) async {
+    final treeProvider = TreeProvider();
+    await treeProvider.selectTree('tree-1', 'Первое дерево');
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<TreeProvider>.value(
+        value: treeProvider,
+        child: const MaterialApp(home: ProfileScreen()),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    await tester.scrollUntilVisible(
+      find.text('Доверенные каналы'),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+
+    expect(find.text('Доверенные каналы'), findsOneWidget);
+    expect(find.text('Аккаунт подтверждён через Telegram'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('Профильный код и QR'),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('Профильный код и QR'), findsOneWidget);
+    expect(find.textContaining('@petrov'), findsWidgets);
   });
 
   testWidgets(

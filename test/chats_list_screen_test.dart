@@ -5,29 +5,34 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/date_symbol_data_local.dart';
-import 'package:lineage/backend/interfaces/auth_service_interface.dart';
-import 'package:lineage/backend/interfaces/chat_service_interface.dart';
-import 'package:lineage/backend/interfaces/family_tree_service_interface.dart';
-import 'package:lineage/models/chat_attachment.dart';
-import 'package:lineage/models/chat_details.dart';
-import 'package:lineage/models/chat_message.dart';
-import 'package:lineage/models/chat_preview.dart';
-import 'package:lineage/models/chat_send_progress.dart';
-import 'package:lineage/models/family_person.dart';
-import 'package:lineage/models/family_relation.dart';
-import 'package:lineage/models/family_tree.dart';
-import 'package:lineage/providers/tree_provider.dart';
-import 'package:lineage/screens/chats_list_screen.dart';
-import 'package:lineage/services/chat_archive_store.dart';
-import 'package:lineage/services/chat_draft_store.dart';
-import 'package:lineage/services/chat_notification_settings_store.dart';
-import 'package:lineage/services/local_storage_service.dart';
+import 'package:rodnya/backend/interfaces/auth_service_interface.dart';
+import 'package:rodnya/backend/interfaces/chat_service_interface.dart';
+import 'package:rodnya/backend/interfaces/family_tree_service_interface.dart';
+import 'package:rodnya/models/chat_attachment.dart';
+import 'package:rodnya/models/chat_details.dart';
+import 'package:rodnya/models/chat_message.dart';
+import 'package:rodnya/models/chat_preview.dart';
+import 'package:rodnya/models/chat_send_progress.dart';
+import 'package:rodnya/models/family_person.dart';
+import 'package:rodnya/models/family_relation.dart';
+import 'package:rodnya/models/family_tree.dart';
+import 'package:rodnya/providers/tree_provider.dart';
+import 'package:rodnya/screens/chats_list_screen.dart';
+import 'package:rodnya/services/app_status_service.dart';
+import 'package:rodnya/services/chat_archive_store.dart';
+import 'package:rodnya/services/chat_draft_store.dart';
+import 'package:rodnya/services/chat_notification_settings_store.dart';
+import 'package:rodnya/services/local_storage_service.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
 class _FakeAuthService implements AuthServiceInterface {
+  _FakeAuthService({this.userId = 'user-1'});
+
+  final String? userId;
+
   @override
-  String? get currentUserId => 'user-1';
+  String? get currentUserId => userId;
 
   @override
   String? get currentUserEmail => 'user@example.com';
@@ -78,6 +83,9 @@ class _FakeChatService implements ChatServiceInterface {
   Stream<List<ChatMessage>> getMessagesStream(String chatId) {
     return Stream.value(const <ChatMessage>[]);
   }
+
+  @override
+  Future<void> refreshMessages(String chatId) async {}
 
   @override
   Future<void> sendMessage({
@@ -260,8 +268,7 @@ class _FakeFamilyTreeService extends Fake
 }
 
 class _FakeLocalStorageService extends Fake implements LocalStorageService {
-  @override
-  Future<FamilyTree?> getTree(String treeId) async {
+  FamilyTree _treeFor(String treeId) {
     return FamilyTree(
       id: treeId,
       name: 'Семья Кузнецовых',
@@ -274,6 +281,16 @@ class _FakeLocalStorageService extends Fake implements LocalStorageService {
       members: const ['user-1', 'user-root-1', 'user-root-2'],
       kind: TreeKind.family,
     );
+  }
+
+  @override
+  Future<List<FamilyTree>> getAllTrees() async {
+    return <FamilyTree>[_treeFor('tree-1')];
+  }
+
+  @override
+  Future<FamilyTree?> getTree(String treeId) async {
+    return _treeFor(treeId);
   }
 }
 
@@ -377,6 +394,7 @@ void main() {
     getIt.registerSingleton<FamilyTreeServiceInterface>(
         _FakeFamilyTreeService());
     getIt.registerSingleton<LocalStorageService>(_FakeLocalStorageService());
+    getIt.registerSingleton<AppStatusService>(AppStatusService());
   });
 
   tearDown(() async {
@@ -418,6 +436,11 @@ void main() {
           path: '/tree',
           builder: (context, state) => const Text('tree-screen'),
         ),
+        GoRoute(
+          path: '/login',
+          builder: (context, state) =>
+              Text('login-screen:${state.uri.queryParameters['from'] ?? ''}'),
+        ),
       ],
     );
 
@@ -438,6 +461,39 @@ void main() {
     expect(find.text('Открыть родных'), findsOneWidget);
     expect(find.text('Открыть дерево'), findsOneWidget);
   });
+
+  testWidgets(
+    'ChatsListScreen предлагает войти снова после истечения сессии',
+    (tester) async {
+      await getIt.reset();
+      getIt.registerSingleton<AuthServiceInterface>(
+        _FakeAuthService(userId: null),
+      );
+      getIt.registerSingleton<ChatServiceInterface>(_FakeChatService());
+      getIt.registerSingleton<FamilyTreeServiceInterface>(
+        _FakeFamilyTreeService(),
+      );
+      getIt.registerSingleton<LocalStorageService>(_FakeLocalStorageService());
+      getIt.registerSingleton<AppStatusService>(AppStatusService());
+
+      await tester.pumpWidget(buildApp());
+      await tester.pumpAndSettle();
+
+      expect(find.text('Нужно снова войти'), findsOneWidget);
+      expect(
+        find.text(
+          'Сессия закончилась. Войдите снова, чтобы открыть чаты и черновики.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Войти снова'), findsOneWidget);
+
+      await tester.tap(find.text('Войти снова'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('login-screen:/chats'), findsOneWidget);
+    },
+  );
 
   testWidgets(
       'ChatsListScreen показывает оболочку сразу, пока чаты догружаются',

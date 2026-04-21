@@ -4,10 +4,20 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
     <!-- Разрешение на показ уведомлений (необходимо для Android 13+) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- Нужен для полноэкранного входящего звонка -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT"/>
     <!-- Разрешение на вибрацию для уведомлений (если используется) -->
     <uses-permission android:name="android.permission.VIBRATE"/>
     <!-- Интернет нужен для синхронизации -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Микрофон нужен для голосовых и звонков -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <!-- Камера нужна для видеозвонков и видеосообщений -->
+    <uses-permission android:name="android.permission.CAMERA"/>
+    <!-- Улучшает управление аудиотрактом во время звонков -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>
+    <!-- Контакты нужны для поиска родственников по телефонной книге -->
+    <uses-permission android:name="android.permission.READ_CONTACTS"/>
     <!-- Доступ к состоянию сети нужен WorkManager для ограничений по сети -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
     <!-- Разрешение WAKE_LOCK может помочь для надежности фоновых задач -->
@@ -18,7 +28,7 @@
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <meta-data
-            android:name="lineage.notification.icon"
+            android:name="rodnya.notification.icon"
             android:resource="@drawable/ic_stat_notification" />
         <activity
             android:name=".MainActivity"
@@ -46,7 +56,7 @@
                 <action android:name="android.intent.action.VIEW"/>
                 <category android:name="android.intent.category.DEFAULT"/>
                 <category android:name="android.intent.category.BROWSABLE"/>
-                <data android:scheme="lineagebilling"/>
+                <data android:scheme="rodnyabilling"/>
             </intent-filter>
 
         </activity>

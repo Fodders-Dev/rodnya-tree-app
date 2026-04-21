@@ -1,10 +1,10 @@
-# Lineage agent guide
+# Rodnya agent guide
 
 ## Mission
 Ship a reliable Flutter MVP for Android and web as fast as possible. iOS later.
 
 ## Product
-Lineage is a family tree + private family social network for relatives.
+Rodnya is a family tree + private family social network for relatives.
 Short-term MVP:
 - auth and onboarding
 - family tree CRUD and viewing

@@ -210,10 +210,17 @@ class CustomApiStoryService implements StoryServiceInterface {
 
   Map<String, String> _headers() {
     final token = _authService.accessToken;
+    if (token == null || token.isEmpty) {
+      throw const CustomApiStoryException(
+        'Нет активной сессии',
+        statusCode: 401,
+      );
+    }
+
     return {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
-      if (token != null) 'Authorization': 'Bearer $token',
+      'Authorization': 'Bearer $token',
     };
   }
 

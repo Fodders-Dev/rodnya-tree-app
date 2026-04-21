@@ -72,43 +72,56 @@ class MainNavigationBar extends StatelessWidget {
 
                 return SafeArea(
                   minimum: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(30),
-                    child: BackdropFilter(
-                      filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 8,
-                        ),
-                        decoration: BoxDecoration(
-                          color: scheme.surface.withValues(alpha: 0.84),
-                          borderRadius: BorderRadius.circular(30),
-                          border: Border.all(
-                            color: scheme.outlineVariant.withValues(alpha: 0.9),
-                          ),
-                          boxShadow: [
-                            BoxShadow(
-                              color: scheme.shadow.withValues(alpha: 0.1),
-                              blurRadius: 28,
-                              offset: const Offset(0, 14),
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final showLabels = constraints.maxWidth >= 480;
+                      final itemBorderRadius = showLabels ? 22.0 : 20.0;
+
+                      return ClipRRect(
+                        borderRadius: BorderRadius.circular(30),
+                        child: BackdropFilter(
+                          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+                          child: Container(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: showLabels ? 8 : 6,
+                              vertical: showLabels ? 8 : 6,
                             ),
-                          ],
-                        ),
-                        child: Row(
-                          children: [
-                            for (var index = 0; index < items.length; index++)
-                              Expanded(
-                                child: _NavItem(
-                                  data: items[index],
-                                  selected: currentIndex == index,
-                                  onTap: () => onTap(index),
+                            decoration: BoxDecoration(
+                              color: scheme.surface.withValues(alpha: 0.84),
+                              borderRadius: BorderRadius.circular(30),
+                              border: Border.all(
+                                color: scheme.outlineVariant.withValues(
+                                  alpha: 0.9,
                                 ),
                               ),
-                          ],
+                              boxShadow: [
+                                BoxShadow(
+                                  color: scheme.shadow.withValues(alpha: 0.1),
+                                  blurRadius: 28,
+                                  offset: const Offset(0, 14),
+                                ),
+                              ],
+                            ),
+                            child: Row(
+                              children: [
+                                for (var index = 0;
+                                    index < items.length;
+                                    index++)
+                                  Expanded(
+                                    child: _NavItem(
+                                      data: items[index],
+                                      selected: currentIndex == index,
+                                      showLabel: showLabels,
+                                      itemBorderRadius: itemBorderRadius,
+                                      onTap: () => onTap(index),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
                         ),
-                      ),
-                    ),
+                      );
+                    },
                   ),
                 );
               },
@@ -138,11 +151,15 @@ class _NavItem extends StatelessWidget {
   const _NavItem({
     required this.data,
     required this.selected,
+    required this.showLabel,
+    required this.itemBorderRadius,
     required this.onTap,
   });
 
   final _NavItemData data;
   final bool selected;
+  final bool showLabel;
+  final double itemBorderRadius;
   final VoidCallback onTap;
 
   @override
@@ -167,34 +184,40 @@ class _NavItem extends StatelessWidget {
       selected: selected,
       label: data.label,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4),
+        padding: EdgeInsets.symmetric(horizontal: showLabel ? 4 : 2),
         child: InkWell(
-          borderRadius: BorderRadius.circular(22),
+          borderRadius: BorderRadius.circular(itemBorderRadius),
           onTap: onTap,
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 180),
             curve: Curves.easeOutCubic,
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+            padding: EdgeInsets.symmetric(
+              horizontal: showLabel ? 8 : 4,
+              vertical: showLabel ? 8 : 10,
+            ),
             decoration: BoxDecoration(
               color: selected
                   ? scheme.primary.withValues(alpha: 0.14)
                   : Colors.transparent,
-              borderRadius: BorderRadius.circular(22),
+              borderRadius: BorderRadius.circular(itemBorderRadius),
             ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 iconWithBadge,
-                const SizedBox(height: 4),
-                Text(
-                  data.label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    color: selected ? scheme.primary : scheme.onSurfaceVariant,
-                    fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+                if (showLabel) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    data.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color:
+                          selected ? scheme.primary : scheme.onSurfaceVariant,
+                      fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+                    ),
                   ),
-                ),
+                ],
               ],
             ),
           ),

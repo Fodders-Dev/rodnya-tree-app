@@ -3,13 +3,19 @@ import 'dart:typed_data';
 import 'package:image_picker/image_picker.dart';
 
 import '../models/chat_attachment.dart';
+import '../models/call_event.dart';
+import '../models/call_invite.dart';
+import '../models/call_media_mode.dart';
 import '../models/chat_message.dart';
 import '../models/chat_details.dart';
 import '../models/chat_preview.dart';
 import '../models/chat_send_progress.dart';
+import '../models/account_linking_status.dart';
 import '../models/family_person.dart';
 import '../models/family_relation.dart';
 import '../models/family_tree.dart';
+import '../models/person_dossier.dart';
+import '../models/profile_contribution.dart';
 import '../models/profile_note.dart';
 import '../models/relation_request.dart';
 import '../models/user_profile.dart';
@@ -18,8 +24,8 @@ import '../models/comment.dart';
 import '../models/story.dart';
 import '../models/tree_change_record.dart';
 import '../models/user_block_record.dart';
-
 import 'interfaces/auth_service_interface.dart';
+import 'interfaces/call_service_interface.dart';
 import 'interfaces/chat_service_interface.dart';
 import 'interfaces/family_tree_service_interface.dart';
 import 'interfaces/profile_service_interface.dart';
@@ -134,6 +140,11 @@ class PendingBackendProfileService implements ProfileServiceInterface {
   }
 
   @override
+  Future<AccountLinkingStatus> getCurrentAccountLinkingStatus() async {
+    return const AccountLinkingStatus();
+  }
+
+  @override
   Future<UserProfile?> getCurrentUserProfile() async => null;
 
   @override
@@ -179,10 +190,17 @@ class PendingBackendProfileService implements ProfileServiceInterface {
   }
 
   @override
-  Future<void> verifyCurrentUserPhone({
-    required String phoneNumber,
-    required String countryCode,
-  }) {
+  Future<List<ProfileContribution>> getPendingProfileContributions() async {
+    return const [];
+  }
+
+  @override
+  Future<void> acceptProfileContribution(String contributionId) {
+    throw UnsupportedError(_pendingProviderMessage('profile'));
+  }
+
+  @override
+  Future<void> rejectProfileContribution(String contributionId) {
     throw UnsupportedError(_pendingProviderMessage('profile'));
   }
 }
@@ -284,6 +302,8 @@ class PendingBackendFamilyTreeService implements FamilyTreeServiceInterface {
     bool isConfirmed = true,
     DateTime? marriageDate,
     DateTime? divorceDate,
+    String? customRelationLabel1to2,
+    String? customRelationLabel2to1,
   }) {
     throw UnsupportedError(_pendingProviderMessage('tree'));
   }
@@ -301,6 +321,21 @@ class PendingBackendFamilyTreeService implements FamilyTreeServiceInterface {
 
   @override
   Future<FamilyPerson> getPersonById(String treeId, String personId) {
+    throw UnsupportedError(_pendingProviderMessage('tree'));
+  }
+
+  @override
+  Future<PersonDossier> getPersonDossier(String treeId, String personId) {
+    throw UnsupportedError(_pendingProviderMessage('tree'));
+  }
+
+  @override
+  Future<void> proposePersonProfileContribution({
+    required String treeId,
+    required String personId,
+    required Map<String, dynamic> fields,
+    String? message,
+  }) {
     throw UnsupportedError(_pendingProviderMessage('tree'));
   }
 
@@ -476,6 +511,9 @@ class PendingBackendChatService implements ChatServiceInterface {
   }
 
   @override
+  Future<void> refreshMessages(String chatId) async {}
+
+  @override
   Stream<int> getTotalUnreadCountStream(String userId) {
     return Stream<int>.value(0);
   }
@@ -583,6 +621,56 @@ class PendingBackendChatService implements ChatServiceInterface {
     required String participantId,
   }) {
     throw UnsupportedError(_pendingProviderMessage('chat'));
+  }
+}
+
+class PendingBackendCallService implements CallServiceInterface {
+  const PendingBackendCallService();
+
+  @override
+  String? get currentUserId => null;
+
+  @override
+  Stream<CallEvent> get events => const Stream<CallEvent>.empty();
+
+  @override
+  Future<void> startRealtimeBridge() async {}
+
+  @override
+  Future<void> stopRealtimeBridge() async {}
+
+  @override
+  Future<CallInvite?> getActiveCall({String? chatId}) async => null;
+
+  @override
+  Future<CallInvite?> getCall(String callId) async => null;
+
+  @override
+  Future<CallInvite> acceptCall(String callId) {
+    throw UnsupportedError(_pendingProviderMessage('calls'));
+  }
+
+  @override
+  Future<CallInvite> cancelCall(String callId) {
+    throw UnsupportedError(_pendingProviderMessage('calls'));
+  }
+
+  @override
+  Future<CallInvite> hangUp(String callId) {
+    throw UnsupportedError(_pendingProviderMessage('calls'));
+  }
+
+  @override
+  Future<CallInvite> rejectCall(String callId) {
+    throw UnsupportedError(_pendingProviderMessage('calls'));
+  }
+
+  @override
+  Future<CallInvite> startCall({
+    required String chatId,
+    required CallMediaMode mediaMode,
+  }) {
+    throw UnsupportedError(_pendingProviderMessage('calls'));
   }
 }
 

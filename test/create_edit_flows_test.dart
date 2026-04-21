@@ -1,28 +1,32 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get_it/get_it.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/date_symbol_data_local.dart';
-import 'package:lineage/backend/interfaces/auth_service_interface.dart';
-import 'package:lineage/backend/interfaces/family_tree_service_interface.dart';
-import 'package:lineage/backend/interfaces/post_service_interface.dart';
-import 'package:lineage/backend/interfaces/profile_service_interface.dart';
-import 'package:lineage/backend/interfaces/story_service_interface.dart';
-import 'package:lineage/backend/models/profile_form_data.dart';
-import 'package:lineage/models/family_person.dart';
-import 'package:lineage/models/family_tree.dart';
-import 'package:lineage/models/post.dart';
-import 'package:lineage/models/story.dart';
-import 'package:lineage/providers/theme_provider.dart';
-import 'package:lineage/providers/tree_provider.dart';
-import 'package:lineage/screens/create_post_screen.dart';
-import 'package:lineage/screens/create_story_screen.dart';
-import 'package:lineage/screens/profile_edit_screen.dart';
-import 'package:lineage/screens/settings_screen.dart';
-import 'package:lineage/services/local_storage_service.dart';
-import 'package:lineage/services/rustore_service.dart';
+import 'package:rodnya/backend/interfaces/auth_service_interface.dart';
+import 'package:rodnya/backend/interfaces/family_tree_service_interface.dart';
+import 'package:rodnya/backend/interfaces/post_service_interface.dart';
+import 'package:rodnya/backend/interfaces/profile_service_interface.dart';
+import 'package:rodnya/backend/interfaces/story_service_interface.dart';
+import 'package:rodnya/backend/models/profile_form_data.dart';
+import 'package:rodnya/models/account_linking_status.dart';
+import 'package:rodnya/models/family_person.dart';
+import 'package:rodnya/models/family_relation.dart';
+import 'package:rodnya/models/family_tree.dart';
+import 'package:rodnya/models/post.dart';
+import 'package:rodnya/models/story.dart';
+import 'package:rodnya/providers/theme_provider.dart';
+import 'package:rodnya/providers/tree_provider.dart';
+import 'package:rodnya/screens/create_post_screen.dart';
+import 'package:rodnya/screens/create_story_screen.dart';
+import 'package:rodnya/screens/profile_edit_screen.dart';
+import 'package:rodnya/screens/settings_screen.dart';
+import 'package:rodnya/services/app_status_service.dart';
+import 'package:rodnya/services/local_storage_service.dart';
+import 'package:rodnya/services/rustore_service.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 
@@ -53,6 +57,20 @@ class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
           updatedAt: DateTime(2026, 4, 15),
           isPrivate: true,
           members: const ['user-1'],
+        ),
+      ];
+
+  @override
+  Future<List<FamilyRelation>> getRelations(String treeId) async => [
+        FamilyRelation(
+          id: 'relation-1',
+          treeId: treeId,
+          person1Id: 'person-root',
+          person2Id: 'person-1',
+          relation1to2: RelationType.parent,
+          relation2to1: RelationType.child,
+          isConfirmed: true,
+          createdAt: DateTime(2026, 4, 15),
         ),
       ];
 
@@ -157,6 +175,13 @@ class _FakeAuthService implements AuthServiceInterface {
 
 class _FakeProfileService implements ProfileServiceInterface {
   @override
+  Future<AccountLinkingStatus> getCurrentAccountLinkingStatus() async =>
+      const AccountLinkingStatus(
+        summaryTitle: 'Аккаунт подтверждён через Telegram',
+        summaryDetail: 'Основной канал: Telegram',
+      );
+
+  @override
   Future<ProfileFormData> getCurrentUserProfileFormData() async =>
       ProfileFormData(
         userId: 'user-1',
@@ -170,9 +195,24 @@ class _FakeProfileService implements ProfileServiceInterface {
         countryCode: '7',
         countryName: 'Russia',
         city: 'Москва',
-        isPhoneVerified: true,
         gender: Gender.male,
         birthDate: DateTime(1990, 1, 1),
+        bio: 'Люблю семейные истории',
+        familyStatus: 'Женат',
+        aboutFamily: 'Собираю рассказы старших родственников.',
+        education: 'МГУ',
+        work: 'Родня',
+        hometown: 'Тверь',
+        languages: 'Русский, английский',
+        values: 'Семья',
+        religion: 'Православие',
+        interests: 'Генеалогия и путешествия',
+        profileVisibilityScopes: const {
+          'contacts': 'private',
+          'about': 'shared_trees',
+          'background': 'public',
+          'worldview': 'shared_trees',
+        },
       );
 
   @override
@@ -181,12 +221,6 @@ class _FakeProfileService implements ProfileServiceInterface {
   @override
   Future<String?> uploadProfilePhoto(XFile photo) async =>
       'https://example.com/a.jpg';
-
-  @override
-  Future<void> verifyCurrentUserPhone({
-    required String phoneNumber,
-    required String countryCode,
-  }) async {}
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -210,12 +244,20 @@ Widget _withTheme(Widget child) {
 
 void main() {
   final getIt = GetIt.instance;
+  const phoneNumberChannel = MethodChannel('com.julienvignali/phone_number');
 
   setUpAll(() async {
     await initializeDateFormatting('ru');
   });
 
   setUp(() async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(phoneNumberChannel, (call) async {
+      if (call.method == 'validate') {
+        return {'isValid': true};
+      }
+      return null;
+    });
     await getIt.reset();
     PackageInfo.setMockInitialValues(
       appName: 'Rodnya',
@@ -231,6 +273,7 @@ void main() {
     getIt.registerSingleton<LocalStorageService>(_FakeLocalStorageService());
     getIt.registerSingleton<AuthServiceInterface>(_FakeAuthService());
     getIt.registerSingleton<ProfileServiceInterface>(_FakeProfileService());
+    getIt.registerSingleton<AppStatusService>(AppStatusService());
     getIt.registerSingleton<RustoreService>(RustoreService(
       reviewInitialize: () async {},
       reviewRequest: () async {},
@@ -239,6 +282,8 @@ void main() {
   });
 
   tearDown(() async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(phoneNumberChannel, null);
     await getIt.reset();
   });
 
@@ -274,9 +319,35 @@ void main() {
 
     expect(find.text('Профиль'), findsOneWidget);
     expect(find.text('Фото профиля'), findsOneWidget);
-    expect(find.text('Основное'), findsOneWidget);
-    expect(find.text('Контакты'), findsOneWidget);
+    expect(find.text('Основное'), findsWidgets);
+    expect(find.text('О человеке'), findsOneWidget);
+    expect(find.text('Учёба и дело'), findsOneWidget);
+    expect(find.text('Ценности и взгляды'), findsOneWidget);
+    expect(find.text('Что хотите рассказать семье'), findsOneWidget);
+    expect(find.text('Родной город'), findsOneWidget);
+    expect(find.text('Языки'), findsOneWidget);
+    expect(find.text('Интересы и увлечения'), findsOneWidget);
+    expect(find.text('Подтверждённые каналы'), findsOneWidget);
+    expect(find.text('Контакты и приватность'), findsOneWidget);
+    expect(find.text('Все в Родне'), findsWidgets);
+    expect(find.text('Мои деревья'), findsWidgets);
+    expect(find.text('Выбранные деревья'), findsWidgets);
+    expect(find.text('Выбранные ветки'), findsWidgets);
+    expect(find.text('Конкретные люди'), findsWidgets);
     expect(find.text('Сохранить'), findsOneWidget);
+  });
+
+  testWidgets('ProfileEditScreen explains that phone is only a contact',
+      (tester) async {
+    await tester.pumpWidget(_withTheme(const ProfileEditScreen()));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('Подтверждённые каналы'), findsOneWidget);
+    expect(
+      find.textContaining('Телефон больше не считается подтверждённым каналом'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('SettingsScreen shows compact settings sections', (tester) async {
@@ -284,7 +355,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 
-    expect(find.text('Настройки'), findsOneWidget);
+    expect(find.text('Управление аккаунтом'), findsOneWidget);
     expect(find.text('Внешний вид'), findsOneWidget);
     expect(find.text('Документы и поддержка'), findsOneWidget);
     expect(find.text('Аккаунт'), findsOneWidget);

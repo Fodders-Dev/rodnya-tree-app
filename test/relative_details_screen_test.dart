@@ -8,24 +8,26 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:get_it/get_it.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/date_symbol_data_local.dart';
-import 'package:lineage/backend/interfaces/auth_service_interface.dart';
-import 'package:lineage/backend/interfaces/chat_service_interface.dart';
-import 'package:lineage/backend/interfaces/family_tree_service_interface.dart';
-import 'package:lineage/backend/interfaces/invitation_link_service_interface.dart';
-import 'package:lineage/backend/interfaces/profile_service_interface.dart';
-import 'package:lineage/backend/interfaces/storage_service_interface.dart';
-import 'package:lineage/models/chat_attachment.dart';
-import 'package:lineage/models/chat_details.dart';
-import 'package:lineage/models/chat_message.dart';
-import 'package:lineage/models/family_person.dart';
-import 'package:lineage/models/family_relation.dart';
-import 'package:lineage/models/family_tree.dart';
-import 'package:lineage/models/chat_send_progress.dart';
-import 'package:lineage/models/tree_change_record.dart';
-import 'package:lineage/models/user_profile.dart';
-import 'package:lineage/providers/tree_provider.dart';
-import 'package:lineage/screens/relative_details_screen.dart';
-import 'package:lineage/services/local_storage_service.dart';
+import 'package:rodnya/backend/interfaces/auth_service_interface.dart';
+import 'package:rodnya/backend/interfaces/chat_service_interface.dart';
+import 'package:rodnya/backend/interfaces/family_tree_service_interface.dart';
+import 'package:rodnya/backend/interfaces/invitation_link_service_interface.dart';
+import 'package:rodnya/backend/interfaces/profile_service_interface.dart';
+import 'package:rodnya/backend/interfaces/storage_service_interface.dart';
+import 'package:rodnya/backend/interfaces/tree_graph_capable_family_tree_service.dart';
+import 'package:rodnya/models/chat_attachment.dart';
+import 'package:rodnya/models/chat_details.dart';
+import 'package:rodnya/models/chat_message.dart';
+import 'package:rodnya/models/family_person.dart';
+import 'package:rodnya/models/family_relation.dart';
+import 'package:rodnya/models/family_tree.dart';
+import 'package:rodnya/models/chat_send_progress.dart';
+import 'package:rodnya/models/tree_graph_snapshot.dart';
+import 'package:rodnya/models/tree_change_record.dart';
+import 'package:rodnya/models/user_profile.dart';
+import 'package:rodnya/providers/tree_provider.dart';
+import 'package:rodnya/screens/relative_details_screen.dart';
+import 'package:rodnya/services/local_storage_service.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -94,6 +96,9 @@ class _FakeChatService implements ChatServiceInterface {
 
   @override
   String buildChatId(String otherUserId) => 'chat-$otherUserId';
+
+  @override
+  Future<void> refreshMessages(String chatId) async {}
 
   @override
   Future<void> sendMessageToChat({
@@ -192,7 +197,8 @@ class _FakeStorageService implements StorageServiceInterface {
       null;
 }
 
-class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
+class _FakeFamilyTreeService
+    implements FamilyTreeServiceInterface, TreeGraphCapableFamilyTreeService {
   final _father = FamilyPerson(
     id: 'father',
     treeId: 'tree-1',
@@ -256,7 +262,19 @@ class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
   final _grandmother = FamilyPerson(
     id: 'grandmother',
     treeId: 'tree-1',
+    creatorId: 'user-1',
     name: 'Кузнецова Валентина',
+    gender: Gender.female,
+    isAlive: true,
+    createdAt: DateTime(2024, 1, 1),
+    updatedAt: DateTime(2024, 1, 1),
+  );
+
+  final _guardian = FamilyPerson(
+    id: 'guardian',
+    treeId: 'tree-1',
+    creatorId: 'user-1',
+    name: 'Петрова Мария Ивановна',
     gender: Gender.female,
     isAlive: true,
     createdAt: DateTime(2024, 1, 1),
@@ -269,6 +287,7 @@ class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
     _son,
     _daughter,
     _grandmother,
+    _guardian,
   ];
   late final List<FamilyRelation> _relations = [
     FamilyRelation(
@@ -280,6 +299,9 @@ class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
       relation2to1: RelationType.child,
       isConfirmed: true,
       createdAt: DateTime(2024, 1, 1),
+      parentSetId: 'parent-set-son-1',
+      parentSetType: 'biological',
+      isPrimaryParentSet: true,
     ),
     FamilyRelation(
       id: 'father-daughter',
@@ -290,6 +312,9 @@ class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
       relation2to1: RelationType.child,
       isConfirmed: true,
       createdAt: DateTime(2024, 1, 1),
+      parentSetId: 'parent-set-daughter-1',
+      parentSetType: 'biological',
+      isPrimaryParentSet: true,
     ),
     FamilyRelation(
       id: 'father-mother',
@@ -300,6 +325,9 @@ class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
       relation2to1: RelationType.spouse,
       isConfirmed: true,
       createdAt: DateTime(2024, 1, 1),
+      unionId: 'union-1',
+      unionType: 'spouse',
+      unionStatus: 'current',
     ),
     FamilyRelation(
       id: 'grandmother-father',
@@ -310,6 +338,22 @@ class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
       relation2to1: RelationType.child,
       isConfirmed: true,
       createdAt: DateTime(2024, 1, 1),
+      parentSetId: 'parent-set-father-1',
+      parentSetType: 'biological',
+      isPrimaryParentSet: true,
+    ),
+    FamilyRelation(
+      id: 'guardian-father',
+      treeId: 'tree-1',
+      person1Id: 'guardian',
+      person2Id: 'father',
+      relation1to2: RelationType.parent,
+      relation2to1: RelationType.child,
+      isConfirmed: true,
+      createdAt: DateTime(2024, 1, 1),
+      parentSetId: 'parent-set-father-2',
+      parentSetType: 'guardian',
+      isPrimaryParentSet: false,
     ),
   ];
   late final List<TreeChangeRecord> _historyRecords = [
@@ -397,6 +441,156 @@ class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
       return true;
     }).toList();
   }
+
+  @override
+  Future<TreeGraphSnapshot> getTreeGraphSnapshot(String treeId) async {
+    return TreeGraphSnapshot(
+      treeId: treeId,
+      people: _people,
+      relations: _relations,
+      familyUnits: const [
+        TreeGraphFamilyUnit(
+          id: 'unit-parents',
+          rootParentSetId: 'parent-set-1',
+          adultIds: ['father', 'mother'],
+          childIds: ['son', 'daughter'],
+          relationIds: ['father-son', 'father-daughter', 'father-mother'],
+          unionId: 'union-1',
+          isPrimaryParentSet: true,
+          parentSetType: 'biological',
+          unionType: 'spouse',
+          unionStatus: 'current',
+          label: 'Семья Кузнецовых',
+        ),
+        TreeGraphFamilyUnit(
+          id: 'unit-father-primary',
+          rootParentSetId: 'parent-set-father-1',
+          adultIds: ['grandmother'],
+          childIds: ['father'],
+          relationIds: ['grandmother-father'],
+          unionId: null,
+          isPrimaryParentSet: true,
+          parentSetType: 'biological',
+          unionType: 'single',
+          unionStatus: 'past',
+          label: 'Родители Андрея',
+        ),
+        TreeGraphFamilyUnit(
+          id: 'unit-father-guardian',
+          rootParentSetId: 'parent-set-father-2',
+          adultIds: ['guardian'],
+          childIds: ['father'],
+          relationIds: ['guardian-father'],
+          unionId: null,
+          isPrimaryParentSet: false,
+          parentSetType: 'guardian',
+          unionType: 'single',
+          unionStatus: 'current',
+          label: 'Опека Марии',
+        ),
+      ],
+      viewerDescriptors: const [
+        TreeGraphViewerDescriptor(
+          personId: 'father',
+          primaryRelationLabel: 'Отец',
+          isBlood: true,
+          alternatePathCount: 1,
+          pathSummary: 'Кузнецов Артем -> Кузнецов Андрей Анатольевич',
+          primaryPathPersonIds: ['son', 'father'],
+        ),
+      ],
+      branchBlocks: const [
+        TreeGraphBranchBlock(
+          id: 'branch-1',
+          rootUnitId: 'unit-parents',
+          label: 'Семья Кузнецовых',
+          memberPersonIds: ['father', 'mother', 'son', 'daughter', 'guardian'],
+        ),
+      ],
+      generationRows: const [
+        TreeGraphGenerationRow(
+          row: 0,
+          label: 'Поколение 1',
+          personIds: ['father', 'mother'],
+          familyUnitIds: ['unit-parents'],
+        ),
+        TreeGraphGenerationRow(
+          row: 1,
+          label: 'Поколение 2',
+          personIds: ['son', 'daughter'],
+          familyUnitIds: [],
+        ),
+      ],
+      warnings: const [
+        TreeGraphWarning(
+          id: 'warning-father-parent-sets',
+          code: 'multiple_primary_parent_sets',
+          severity: 'warning',
+          message: 'У Андрея несколько основных наборов родителей.',
+          hint:
+              'Оставьте только один основной набор родителей, а остальные переведите в дополнительные.',
+          personIds: ['father', 'grandmother', 'guardian'],
+          familyUnitIds: ['unit-father-primary', 'unit-father-guardian'],
+          relationIds: ['grandmother-father', 'guardian-father'],
+        ),
+        TreeGraphWarning(
+          id: 'warning-grandmother-conflict',
+          code: 'conflicting_direct_links',
+          severity: 'warning',
+          message: 'У Валентины есть конфликтующая прямая связь с Андреем.',
+          hint: 'Проверьте тип прямой связи перед редактированием.',
+          personIds: ['grandmother', 'father'],
+          familyUnitIds: ['unit-father-primary'],
+          relationIds: ['grandmother-father'],
+        ),
+      ],
+      viewerPersonId: 'son',
+    );
+  }
+
+  @override
+  Future<List<String>> getRelationPath({
+    required String treeId,
+    required String targetPersonId,
+  }) async {
+    if (targetPersonId == 'father') {
+      return const ['son', 'father'];
+    }
+    return const [];
+  }
+
+  @override
+  Future<void> disconnectRelation({
+    required String treeId,
+    required String relationId,
+  }) async {}
+
+  @override
+  Future<void> reassignParentSet({
+    required String treeId,
+    required String childPersonId,
+    required String parentPersonId,
+    required String parentSetId,
+    String? parentSetType,
+    bool isPrimaryParentSet = true,
+  }) async {}
+
+  @override
+  Future<void> setRelationType({
+    required String treeId,
+    required FamilyPerson anchorPerson,
+    required FamilyPerson targetPerson,
+    required String relationType,
+    String? customRelationLabel1to2,
+    String? customRelationLabel2to1,
+  }) async {}
+
+  @override
+  Future<void> setUnionStatus({
+    required String treeId,
+    required String relationId,
+    required String unionStatus,
+  }) async {}
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -561,12 +755,13 @@ void main() {
       expect(find.text('Кузнецов Андрей Анатольевич'), findsWidgets);
       expect(find.text('Есть аккаунт в Родне'), findsOneWidget);
       expect(
-          find.text(
-              'С этим родственником уже можно общаться в личных сообщениях.'),
-          findsOneWidget);
+        find.text(
+          'Сейчас проще всего быстро выйти на контакт: написать человеку или помочь с обновлением профиля.',
+        ),
+        findsOneWidget,
+      );
       expect(find.text('Написать'), findsOneWidget);
-      expect(find.text('Родственная связь:'), findsOneWidget);
-      expect(find.text('Отец'), findsOneWidget);
+      expect(find.text('Для вас: Отец'), findsOneWidget);
       expect(find.text('Семья'), findsOneWidget);
       expect(find.text('Кузнецов Артем'), findsOneWidget);
       expect(find.text('Кузнецова Валентина'), findsWidgets);
@@ -574,12 +769,22 @@ void main() {
       expect(find.text('Сын'), findsOneWidget);
       expect(find.text('Дочь'), findsOneWidget);
       expect(find.text('Жена'), findsOneWidget);
-      expect(find.text('Мать'), findsOneWidget);
+      expect(find.text('Мать'), findsWidgets);
       expect(find.text('Фотографии'), findsOneWidget);
       expect(find.text('2 фото'), findsOneWidget);
       expect(find.text('История изменений'), findsOneWidget);
       expect(find.text('Добавлено фото'), findsOneWidget);
       expect(find.text('Открыть историю'), findsOneWidget);
+      expect(find.text('Связанный профиль'), findsOneWidget);
+      expect(find.text('Связи и родство'), findsOneWidget);
+      expect(find.text('Добавить родственника'), findsOneWidget);
+      expect(find.text('Путь родства'), findsOneWidget);
+      expect(find.text('Другие родители'), findsOneWidget);
+      expect(find.text('Несколько основных родителей'), findsOneWidget);
+      expect(
+        find.text('У Андрея несколько основных наборов родителей.'),
+        findsOneWidget,
+      );
 
       await tester.tap(find.text('Открыть историю'));
       await tester.pumpAndSettle();
@@ -588,6 +793,143 @@ void main() {
       expect(find.text('Все'), findsOneWidget);
       expect(find.widgetWithText(ChoiceChip, 'Фото'), findsOneWidget);
       expect(find.text('Добавлено фото'), findsWidgets);
+    },
+  );
+
+  testWidgets(
+    'RelativeDetailsScreen открывает быстрый выбор связи для добавления родственника',
+    (tester) async {
+      tester.view.physicalSize = const Size(1400, 2000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final treeProvider = TreeProvider();
+      await treeProvider.selectTree('tree-1', 'Семья Кузнецовых');
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider<TreeProvider>.value(
+          value: treeProvider,
+          child: const MaterialApp(
+            home: RelativeDetailsScreen(personId: 'father'),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(find.text('Добавить родственника'));
+      await tester.tap(find.text('Добавить родственника'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Добавить к карточке'), findsOneWidget);
+      expect(find.text('Добавить родителя'), findsOneWidget);
+      expect(find.text('Добавить супруга или партнёра'), findsOneWidget);
+      expect(find.text('Добавить ребёнка'), findsOneWidget);
+      expect(find.text('Добавить брата или сестру'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'RelativeDetailsScreen показывает расширенный путь родства из graph snapshot',
+    (tester) async {
+      tester.view.physicalSize = const Size(1400, 2000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final treeProvider = TreeProvider();
+      await treeProvider.selectTree('tree-1', 'Семья Кузнецовых');
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider<TreeProvider>.value(
+          value: treeProvider,
+          child: const MaterialApp(
+            home: RelativeDetailsScreen(personId: 'father'),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(find.text('Путь родства'));
+      await tester.tap(find.text('Путь родства'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Кровная связь'), findsOneWidget);
+      expect(find.text('Шагов: 1'), findsOneWidget);
+      expect(find.text('Еще путей: 1'), findsOneWidget);
+      expect(
+        find.text('Кузнецов Артем -> Кузнецов Андрей Анатольевич'),
+        findsOneWidget,
+      );
+      expect(find.text('Это вы'), findsOneWidget);
+      expect(find.text('Выбранный человек'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'RelativeDetailsScreen открывает путь родства по initialAction',
+    (tester) async {
+      tester.view.physicalSize = const Size(1400, 2000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final treeProvider = TreeProvider();
+      await treeProvider.selectTree('tree-1', 'Семья Кузнецовых');
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider<TreeProvider>.value(
+          value: treeProvider,
+          child: const MaterialApp(
+            home: RelativeDetailsScreen(
+              personId: 'father',
+              initialAction: 'path',
+            ),
+          ),
+        ),
+      );
+
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      expect(find.text('Кровная связь'), findsOneWidget);
+      expect(
+        find.text('Кузнецов Артем -> Кузнецов Андрей Анатольевич'),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
+    'RelativeDetailsScreen показывает дополнительные наборы родителей',
+    (tester) async {
+      tester.view.physicalSize = const Size(1400, 2000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final treeProvider = TreeProvider();
+      await treeProvider.selectTree('tree-1', 'Семья Кузнецовых');
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider<TreeProvider>.value(
+          value: treeProvider,
+          child: const MaterialApp(
+            home: RelativeDetailsScreen(personId: 'father'),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(find.text('Другие родители'));
+      await tester.tap(find.text('Другие родители'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Другие родители'), findsWidgets);
+      expect(find.text('Петрова Мария Ивановна'), findsWidgets);
+      expect(find.text('Основной набор'), findsOneWidget);
+      expect(find.text('Дополнительный набор'), findsOneWidget);
+      expect(find.text('Биологическая связь'), findsOneWidget);
+      expect(find.text('Опека'), findsOneWidget);
     },
   );
 
@@ -612,12 +954,50 @@ void main() {
       expect(find.text('Пока без аккаунта'), findsOneWidget);
       expect(
         find.text(
-          'Отправьте приглашение, чтобы родственник подключился к дереву и чату.',
+          'Сначала отправьте приглашение, чтобы человек подключился к дереву, чату и своему профилю.',
         ),
         findsOneWidget,
       );
       expect(find.text('Пригласить в Родню'), findsOneWidget);
       expect(find.text('Написать'), findsNothing);
+      expect(find.text('Связанный профиль'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'RelativeDetailsScreen показывает graph warnings в редактировании связей',
+    (tester) async {
+      tester.view.physicalSize = const Size(1400, 2000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final treeProvider = TreeProvider();
+      await treeProvider.selectTree('tree-1', 'Семья Кузнецовых');
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider<TreeProvider>.value(
+          value: treeProvider,
+          child: const MaterialApp(
+            home: RelativeDetailsScreen(personId: 'grandmother'),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(find.text('Исправить связи'));
+      await tester.tap(find.text('Исправить связи'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Конфликт прямых связей'), findsWidgets);
+      expect(
+        find.text('У Валентины есть конфликтующая прямая связь с Андреем.'),
+        findsWidgets,
+      );
+      expect(
+        find.text('Проверьте тип прямой связи перед редактированием.'),
+        findsWidgets,
+      );
     },
   );
 }

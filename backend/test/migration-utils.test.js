@@ -34,7 +34,7 @@ test("inferMediaContentType covers common media extensions", () => {
 });
 
 test("collectLocalMediaObjects maps bucket-relative media layout", async () => {
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "lineage-media-"));
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "rodnya-media-"));
   const imagePath = path.join(tempDir, "chat", "2026", "photo.jpg");
   const audioPath = path.join(tempDir, "voice", "note.ogg");
 

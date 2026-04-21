@@ -1,16 +1,17 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const crypto = require("node:crypto");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const os = require("node:os");
 
 const {createApp} = require("../src/app");
-const {FileStore} = require("../src/store");
+const {FileStore, buildTreeGraphSnapshot, buildGraphWarnings} = require("../src/store");
 const {RealtimeHub} = require("../src/realtime-hub");
 const {PushGateway} = require("../src/push-gateway");
 
 async function startTestServer() {
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "lineage-backend-"));
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "rodnya-backend-"));
   const dataPath = path.join(tempDir, "dev-db.json");
   const store = new FileStore(dataPath);
   await store.initialize();
@@ -46,8 +47,12 @@ async function startConfiguredTestServer({
   configOverrides = {},
   pushGateway = null,
   pushGatewayFactory = null,
+  googleTokenVerifier = null,
+  vkAuthClient = null,
+  liveKitService = null,
+  runtimeInfo = null,
 } = {}) {
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "lineage-backend-"));
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "rodnya-backend-"));
   const dataPath = path.join(tempDir, "dev-db.json");
   const store = new FileStore(dataPath);
   await store.initialize();
@@ -74,6 +79,10 @@ async function startConfiguredTestServer({
     config: resolvedConfig,
     realtimeHub,
     pushGateway: resolvedPushGateway,
+    googleTokenVerifier,
+    vkAuthClient,
+    liveKitService,
+    runtimeInfo,
   });
 
   const server = await new Promise((resolve) => {
@@ -100,6 +109,50 @@ async function stopTestServer(ctx) {
   await fs.rm(ctx.tempDir, {recursive: true, force: true});
 }
 
+function extractHashQueryParameters(redirectUrl) {
+  const parsedUrl = new URL(redirectUrl);
+  const hashValue = String(parsedUrl.hash || "");
+  const queryPart = hashValue.includes("?") ? hashValue.split("?").slice(1).join("?") : "";
+  return new URLSearchParams(queryPart);
+}
+
+function buildMaxInitData({
+  botToken,
+  startParam,
+  queryId = crypto.randomUUID(),
+  authDate = Math.floor(Date.now() / 1000),
+  user,
+}) {
+  const payload = {
+    auth_date: String(authDate),
+    query_id: String(queryId),
+    start_param: String(startParam || ""),
+    user: JSON.stringify(user || {}),
+  };
+  const launchParams = Object.entries(payload)
+    .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey))
+    .map(([key, value]) => `${key}=${value}`)
+    .join("\n");
+  const secretKey = crypto
+    .createHmac("sha256", "WebAppData")
+    .update(String(botToken || ""), "utf8")
+    .digest();
+  const hash = crypto
+    .createHmac("sha256", secretKey)
+    .update(launchParams, "utf8")
+    .digest("hex");
+
+  return Object.entries({
+    ...payload,
+    hash,
+  })
+    .map(
+      ([key, value]) =>
+        `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`,
+    )
+    .join("&");
+}
+
 test("auth + profile bootstrap flow works end-to-end", async () => {
   const ctx = await startTestServer();
 
@@ -108,14 +161,14 @@ test("auth + profile bootstrap flow works end-to-end", async () => {
       method: "POST",
       headers: {"content-type": "application/json"},
       body: JSON.stringify({
-        email: "dev@lineage.app",
+        email: "dev@rodnya.app",
         password: "secret123",
         displayName: "Dev User",
       }),
     });
     assert.equal(registerResponse.status, 201);
     const registered = await registerResponse.json();
-    assert.equal(registered.user.email, "dev@lineage.app");
+    assert.equal(registered.user.email, "dev@rodnya.app");
     assert.equal(registered.profileStatus.isComplete, false);
 
     const token = registered.accessToken;
@@ -172,6 +225,946 @@ test("auth + profile bootstrap flow works end-to-end", async () => {
     const search = await searchResponse.json();
     assert.equal(search.users.length, 1);
     assert.equal(search.users[0].username, "ivanov");
+    assert.equal("email" in search.users[0], false);
+    assert.equal("phoneNumber" in search.users[0], false);
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("auth routes stay available even when session touch fails in the background", async () => {
+  const ctx = await startConfiguredTestServer();
+
+  try {
+    const registerResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "touch-failure@rodnya.app",
+        password: "secret123",
+        displayName: "Touch Failure",
+      }),
+    });
+    assert.equal(registerResponse.status, 201);
+    const registered = await registerResponse.json();
+
+    let touchCalls = 0;
+    ctx.store.touchSession = async () => {
+      touchCalls += 1;
+      throw new Error("touch_failed");
+    };
+
+    const sessionResponse = await fetch(`${ctx.baseUrl}/v1/auth/session`, {
+      headers: {authorization: `Bearer ${registered.accessToken}`},
+    });
+    assert.equal(sessionResponse.status, 200);
+    const sessionPayload = await sessionResponse.json();
+    assert.equal(sessionPayload.user.email, "touch-failure@rodnya.app");
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    assert.equal(touchCalls, 1);
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("direct call lifecycle works with backend signaling and webhook updates", async () => {
+  const fakeLiveKitService = {
+    isConfigured: true,
+    async ensureRoom() {},
+    async createSession({
+      roomName,
+      participantIdentity,
+      participantName,
+    }) {
+      return {
+        roomName,
+        url: "wss://livekit.test",
+        token: `token-${participantIdentity}`,
+        participantIdentity,
+        participantName,
+        createdAt: new Date().toISOString(),
+      };
+    },
+    async receiveWebhook(body) {
+      return JSON.parse(body);
+    },
+  };
+  const ctx = await startConfiguredTestServer({
+    liveKitService: fakeLiveKitService,
+  });
+
+  async function registerUser(email, displayName) {
+    const response = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email,
+        password: "secret123",
+        displayName,
+      }),
+    });
+    assert.equal(response.status, 201);
+    return response.json();
+  }
+
+  try {
+    const caller = await registerUser("caller@rodnya.app", "Арина");
+    const callee = await registerUser("callee@rodnya.app", "Егор");
+
+    const createChatResponse = await fetch(`${ctx.baseUrl}/v1/chats/direct`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${caller.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        otherUserId: callee.user.id,
+      }),
+    });
+    assert.equal(createChatResponse.status, 200);
+    const createdChat = await createChatResponse.json();
+    const chatId = createdChat.chat.id;
+
+    const startCallResponse = await fetch(`${ctx.baseUrl}/v1/calls`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${caller.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        chatId,
+        mediaMode: "video",
+      }),
+    });
+    assert.equal(startCallResponse.status, 201);
+    const startedCall = await startCallResponse.json();
+    assert.equal(startedCall.call.state, "ringing");
+    assert.equal(startedCall.call.mediaMode, "video");
+
+    const activeRingingResponse = await fetch(
+      `${ctx.baseUrl}/v1/calls/active?chatId=${encodeURIComponent(chatId)}`,
+      {
+        headers: {
+          authorization: `Bearer ${caller.accessToken}`,
+        },
+      },
+    );
+    assert.equal(activeRingingResponse.status, 200);
+    const activeRingingPayload = await activeRingingResponse.json();
+    assert.equal(activeRingingPayload.call.id, startedCall.call.id);
+    assert.equal(activeRingingPayload.call.state, "ringing");
+
+    const acceptCallResponse = await fetch(
+      `${ctx.baseUrl}/v1/calls/${startedCall.call.id}/accept`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${callee.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({}),
+      },
+    );
+    assert.equal(acceptCallResponse.status, 200);
+    const acceptedCall = await acceptCallResponse.json();
+    assert.equal(acceptedCall.call.state, "active");
+    assert.equal(acceptedCall.call.session.roomName, `call_${startedCall.call.id}`);
+    assert.equal(acceptedCall.call.session.url, "wss://livekit.test");
+
+    const getAcceptedCallResponse = await fetch(
+      `${ctx.baseUrl}/v1/calls/${startedCall.call.id}`,
+      {
+        headers: {
+          authorization: `Bearer ${callee.accessToken}`,
+        },
+      },
+    );
+    assert.equal(getAcceptedCallResponse.status, 200);
+    const fetchedAcceptedCall = await getAcceptedCallResponse.json();
+    assert.equal(fetchedAcceptedCall.call.id, startedCall.call.id);
+    assert.equal(fetchedAcceptedCall.call.state, "active");
+    assert.equal(fetchedAcceptedCall.call.session.participantIdentity, callee.user.id);
+
+    const webhookResponse = await fetch(`${ctx.baseUrl}/v1/livekit/webhook`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/webhook+json",
+      },
+      body: JSON.stringify({
+        event: "participant_left",
+        room: {
+          name: `call_${startedCall.call.id}`,
+        },
+        participant: {
+          identity: callee.user.id,
+        },
+      }),
+    });
+    assert.equal(webhookResponse.status, 200);
+
+    const endedCall = await ctx.store.findCall(startedCall.call.id);
+    assert.equal(endedCall.state, "ended");
+    assert.equal(endedCall.endedReason, callee.user.id);
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("ringing calls automatically expire to missed after timeout", async () => {
+  const fakeLiveKitService = {
+    isConfigured: true,
+    async ensureRoom() {},
+    async createSession({
+      roomName,
+      participantIdentity,
+      participantName,
+    }) {
+      return {
+        roomName,
+        url: "wss://livekit.test",
+        token: `token-${participantIdentity}`,
+        participantIdentity,
+        participantName,
+        createdAt: new Date().toISOString(),
+      };
+    },
+    async receiveWebhook(body) {
+      return JSON.parse(body);
+    },
+  };
+  const ctx = await startConfiguredTestServer({
+    configOverrides: {
+      callInviteTimeoutMs: 75,
+    },
+    liveKitService: fakeLiveKitService,
+  });
+
+  async function registerUser(email, displayName) {
+    const response = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email,
+        password: "secret123",
+        displayName,
+      }),
+    });
+    assert.equal(response.status, 201);
+    return response.json();
+  }
+
+  try {
+    const caller = await registerUser("caller-timeout@rodnya.app", "Зоя");
+    const callee = await registerUser("callee-timeout@rodnya.app", "Никита");
+
+    const createChatResponse = await fetch(`${ctx.baseUrl}/v1/chats/direct`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${caller.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        otherUserId: callee.user.id,
+      }),
+    });
+    assert.equal(createChatResponse.status, 200);
+    const createdChat = await createChatResponse.json();
+    const chatId = createdChat.chat.id;
+
+    const startCallResponse = await fetch(`${ctx.baseUrl}/v1/calls`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${caller.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        chatId,
+        mediaMode: "audio",
+      }),
+    });
+    assert.equal(startCallResponse.status, 201);
+    const startedCall = await startCallResponse.json();
+    assert.equal(startedCall.call.state, "ringing");
+
+    await new Promise((resolve) => setTimeout(resolve, 380));
+
+    const expiredCall = await ctx.store.findCall(startedCall.call.id);
+    assert.equal(expiredCall.state, "missed");
+    assert.equal(expiredCall.endedReason, "missed");
+
+    const activeCallResponse = await fetch(
+      `${ctx.baseUrl}/v1/calls/active?chatId=${encodeURIComponent(chatId)}`,
+      {
+        headers: {
+          authorization: `Bearer ${caller.accessToken}`,
+        },
+      },
+    );
+    assert.equal(activeCallResponse.status, 200);
+    const activeCallPayload = await activeCallResponse.json();
+    assert.equal(activeCallPayload.call, null);
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("stale ringing call lazily expires consistently for both participants", async () => {
+  const fakeLiveKitService = {
+    isConfigured: true,
+    async ensureRoom() {},
+    async createSession({
+      roomName,
+      participantIdentity,
+      participantName,
+    }) {
+      return {
+        roomName,
+        url: "wss://livekit.test",
+        token: `token-${participantIdentity}`,
+        participantIdentity,
+        participantName,
+        createdAt: new Date().toISOString(),
+      };
+    },
+    async receiveWebhook(body) {
+      return JSON.parse(body);
+    },
+  };
+  const ctx = await startConfiguredTestServer({
+    configOverrides: {
+      callInviteTimeoutMs: 60_000,
+    },
+    liveKitService: fakeLiveKitService,
+  });
+
+  async function registerUser(email, displayName) {
+    const response = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email,
+        password: "secret123",
+        displayName,
+      }),
+    });
+    assert.equal(response.status, 201);
+    return response.json();
+  }
+
+  try {
+    const caller = await registerUser("caller-lazy-timeout@rodnya.app", "Лена");
+    const callee = await registerUser("callee-lazy-timeout@rodnya.app", "Павел");
+
+    const createChatResponse = await fetch(`${ctx.baseUrl}/v1/chats/direct`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${caller.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        otherUserId: callee.user.id,
+      }),
+    });
+    assert.equal(createChatResponse.status, 200);
+    const createdChat = await createChatResponse.json();
+    const chatId = createdChat.chat.id;
+
+    const startCallResponse = await fetch(`${ctx.baseUrl}/v1/calls`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${caller.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        chatId,
+        mediaMode: "audio",
+      }),
+    });
+    assert.equal(startCallResponse.status, 201);
+    const startedCall = await startCallResponse.json();
+
+    const db = await ctx.store._read();
+    const storedCall = db.calls.find((entry) => entry.id === startedCall.call.id);
+    storedCall.createdAt = new Date(Date.now() - 120_000).toISOString();
+    storedCall.updatedAt = storedCall.createdAt;
+    await ctx.store._write(db);
+
+    const callerCallResponse = await fetch(
+      `${ctx.baseUrl}/v1/calls/${startedCall.call.id}`,
+      {
+        headers: {
+          authorization: `Bearer ${caller.accessToken}`,
+        },
+      },
+    );
+    assert.equal(callerCallResponse.status, 200);
+    const callerCallPayload = await callerCallResponse.json();
+    assert.equal(callerCallPayload.call.state, "missed");
+
+    const calleeCallResponse = await fetch(
+      `${ctx.baseUrl}/v1/calls/${startedCall.call.id}`,
+      {
+        headers: {
+          authorization: `Bearer ${callee.accessToken}`,
+        },
+      },
+    );
+    assert.equal(calleeCallResponse.status, 200);
+    const calleeCallPayload = await calleeCallResponse.json();
+    assert.equal(calleeCallPayload.call.state, "missed");
+
+    const activeCallResponse = await fetch(
+      `${ctx.baseUrl}/v1/calls/active?chatId=${encodeURIComponent(chatId)}`,
+      {
+        headers: {
+          authorization: `Bearer ${callee.accessToken}`,
+        },
+      },
+    );
+    assert.equal(activeCallResponse.status, 200);
+    const activeCallPayload = await activeCallResponse.json();
+    assert.equal(activeCallPayload.call, null);
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("new call creation ignores stale ringing busy state after lazy reconciliation", async () => {
+  const fakeLiveKitService = {
+    isConfigured: true,
+    async ensureRoom() {},
+    async createSession({
+      roomName,
+      participantIdentity,
+      participantName,
+    }) {
+      return {
+        roomName,
+        url: "wss://livekit.test",
+        token: `token-${participantIdentity}`,
+        participantIdentity,
+        participantName,
+        createdAt: new Date().toISOString(),
+      };
+    },
+    async receiveWebhook(body) {
+      return JSON.parse(body);
+    },
+  };
+  const ctx = await startConfiguredTestServer({
+    configOverrides: {
+      callInviteTimeoutMs: 60_000,
+    },
+    liveKitService: fakeLiveKitService,
+  });
+
+  async function registerUser(email, displayName) {
+    const response = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email,
+        password: "secret123",
+        displayName,
+      }),
+    });
+    assert.equal(response.status, 201);
+    return response.json();
+  }
+
+  try {
+    const caller = await registerUser("caller-reconcile@rodnya.app", "Ира");
+    const callee = await registerUser("callee-reconcile@rodnya.app", "Матвей");
+
+    const createChatResponse = await fetch(`${ctx.baseUrl}/v1/chats/direct`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${caller.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        otherUserId: callee.user.id,
+      }),
+    });
+    assert.equal(createChatResponse.status, 200);
+    const createdChat = await createChatResponse.json();
+    const chatId = createdChat.chat.id;
+
+    const firstCallResponse = await fetch(`${ctx.baseUrl}/v1/calls`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${caller.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        chatId,
+        mediaMode: "audio",
+      }),
+    });
+    assert.equal(firstCallResponse.status, 201);
+    const firstCallPayload = await firstCallResponse.json();
+
+    const db = await ctx.store._read();
+    const storedCall = db.calls.find(
+      (entry) => entry.id === firstCallPayload.call.id,
+    );
+    storedCall.createdAt = new Date(Date.now() - 120_000).toISOString();
+    storedCall.updatedAt = storedCall.createdAt;
+    await ctx.store._write(db);
+
+    const secondCallResponse = await fetch(`${ctx.baseUrl}/v1/calls`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${caller.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        chatId,
+        mediaMode: "video",
+      }),
+    });
+    assert.equal(secondCallResponse.status, 201);
+    const secondCallPayload = await secondCallResponse.json();
+    assert.notEqual(secondCallPayload.call.id, firstCallPayload.call.id);
+    assert.equal(secondCallPayload.call.state, "ringing");
+    assert.equal(secondCallPayload.call.mediaMode, "video");
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("person dossier merges profile data, preserves family summary, and handles suggestions", async () => {
+  const ctx = await startTestServer();
+
+  async function registerUser(email, displayName) {
+    const response = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email,
+        password: "secret123",
+        displayName,
+      }),
+    });
+    assert.equal(response.status, 201);
+    return response.json();
+  }
+
+  try {
+    const owner = await registerUser("dossier-owner@rodnya.app", "Анна Иванова");
+    const ownerHeaders = {
+      authorization: `Bearer ${owner.accessToken}`,
+      "content-type": "application/json",
+    };
+
+    const bootstrapResponse = await fetch(
+      `${ctx.baseUrl}/v1/profile/me/bootstrap`,
+      {
+        method: "PUT",
+        headers: ownerHeaders,
+        body: JSON.stringify({
+          firstName: "Анна",
+          lastName: "Иванова",
+          middleName: "Петровна",
+          username: "anna",
+          birthPlace: "Тула",
+          countryName: "Россия",
+          city: "Москва",
+          bio: "Собирает хронику семьи.",
+          work: "Архивист",
+          profileContributionPolicy: "suggestions",
+        }),
+      },
+    );
+    assert.equal(bootstrapResponse.status, 200);
+
+    const treeResponse = await fetch(`${ctx.baseUrl}/v1/trees`, {
+      method: "POST",
+      headers: ownerHeaders,
+      body: JSON.stringify({
+        name: "Семья Ивановых",
+        description: "",
+        isPrivate: true,
+      }),
+    });
+    assert.equal(treeResponse.status, 201);
+    const tree = await treeResponse.json();
+
+    const personResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${tree.tree.id}/persons`,
+      {
+        method: "POST",
+        headers: ownerHeaders,
+        body: JSON.stringify({
+          userId: owner.user.id,
+          familySummary: "Любит собирать семейные документы.",
+        }),
+      },
+    );
+    assert.equal(personResponse.status, 201);
+    const person = await personResponse.json();
+
+    const patchLinkedResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${tree.tree.id}/persons/${person.person.id}`,
+      {
+        method: "PATCH",
+        headers: ownerHeaders,
+        body: JSON.stringify({
+          firstName: "Зоя",
+          familySummary: "Хранит письма и фотографии семьи.",
+        }),
+      },
+    );
+    assert.equal(patchLinkedResponse.status, 200);
+    const patchedPersonPayload = await patchLinkedResponse.json();
+    assert.equal(
+      patchedPersonPayload.person.name,
+      "Иванова Анна Петровна",
+    );
+    assert.equal(
+      patchedPersonPayload.person.familySummary,
+      "Хранит письма и фотографии семьи.",
+    );
+
+    const dossierResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${tree.tree.id}/persons/${person.person.id}/dossier`,
+      {
+        headers: {
+          authorization: `Bearer ${owner.accessToken}`,
+        },
+      },
+    );
+    assert.equal(dossierResponse.status, 200);
+    const dossierPayload = await dossierResponse.json();
+    assert.equal(dossierPayload.dossier.mode, "self");
+    assert.equal(dossierPayload.dossier.person.familySummary, "Хранит письма и фотографии семьи.");
+    assert.equal(dossierPayload.dossier.linkedProfile.birthPlace, "Тула");
+    assert.equal(dossierPayload.dossier.linkedProfile.bio, "Собирает хронику семьи.");
+
+    const createContributionResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${tree.tree.id}/persons/${person.person.id}/profile-contributions`,
+      {
+        method: "POST",
+        headers: ownerHeaders,
+        body: JSON.stringify({
+          message: "Добавил более точное описание работы.",
+          fields: {
+            work: "Семейный архивист",
+            bio: "Собирает хронику семьи и ведёт архив.",
+          },
+        }),
+      },
+    );
+    assert.equal(createContributionResponse.status, 201);
+    const contributionPayload = await createContributionResponse.json();
+    assert.equal(contributionPayload.contribution.fields.work, "Семейный архивист");
+
+    const queueResponse = await fetch(`${ctx.baseUrl}/v1/profile/me/contributions`, {
+      headers: {
+        authorization: `Bearer ${owner.accessToken}`,
+      },
+    });
+    assert.equal(queueResponse.status, 200);
+    const queuePayload = await queueResponse.json();
+    assert.equal(queuePayload.contributions.length, 1);
+
+    const acceptResponse = await fetch(
+      `${ctx.baseUrl}/v1/profile/me/contributions/${contributionPayload.contribution.id}/accept`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${owner.accessToken}`,
+        },
+      },
+    );
+    assert.equal(acceptResponse.status, 200);
+    const acceptedPayload = await acceptResponse.json();
+    assert.equal(acceptedPayload.profile.work, "Семейный архивист");
+    assert.equal(
+      acceptedPayload.profile.bio,
+      "Собирает хронику семьи и ведёт архив.",
+    );
+
+    const disableSuggestionsResponse = await fetch(
+      `${ctx.baseUrl}/v1/profile/me`,
+      {
+        method: "PATCH",
+        headers: ownerHeaders,
+        body: JSON.stringify({
+          profileContributionPolicy: "disabled",
+        }),
+      },
+    );
+    assert.equal(disableSuggestionsResponse.status, 200);
+
+    const blockedContributionResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${tree.tree.id}/persons/${person.person.id}/profile-contributions`,
+      {
+        method: "POST",
+        headers: ownerHeaders,
+        body: JSON.stringify({
+          fields: {
+            bio: "Это предложение не должно пройти.",
+          },
+        }),
+      },
+    );
+    assert.equal(blockedContributionResponse.status, 403);
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("legacy first-party http media urls are normalized to https in API responses", async () => {
+  const ctx = await startTestServer();
+
+  async function registerUser(email, displayName) {
+    const response = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email,
+        password: "secret123",
+        displayName,
+      }),
+    });
+    assert.equal(response.status, 201);
+    return response.json();
+  }
+
+  try {
+    const alice = await registerUser("legacy-alice@rodnya.app", "Legacy Alice");
+    const bob = await registerUser("legacy-bob@rodnya.app", "Legacy Bob");
+
+    const legacyAlicePhoto =
+      "http://api.rodnya-tree.ru/media/avatars/alice/avatar.png";
+    const legacyBobPhoto =
+      "http://api.rodnya-tree.ru/media/avatars/bob/avatar.png";
+    const legacyPostImage =
+      "http://api.rodnya-tree.ru/media/posts/post-image.png";
+    const legacyStoryMedia =
+      "http://api.rodnya-tree.ru/media/stories/story-image.png";
+    const legacyStoryThumb =
+      "http://api.rodnya-tree.ru/media/stories/story-thumb.png";
+    const legacyChatImage =
+      "http://api.rodnya-tree.ru/media/chat/chat-image.png";
+    const legacyChatThumb =
+      "http://api.rodnya-tree.ru/media/chat/chat-thumb.png";
+
+    await ctx.store.updateProfile(alice.user.id, (profile) => ({
+      ...profile,
+      firstName: "Алиса",
+      lastName: "Легаси",
+      photoUrl: legacyAlicePhoto,
+    }));
+    await ctx.store.updateProfile(bob.user.id, (profile) => ({
+      ...profile,
+      firstName: "Боб",
+      lastName: "Легаси",
+      photoUrl: legacyBobPhoto,
+    }));
+
+    const aliceHeaders = {authorization: `Bearer ${alice.accessToken}`};
+    const bobHeaders = {authorization: `Bearer ${bob.accessToken}`};
+
+    const sessionResponse = await fetch(`${ctx.baseUrl}/v1/auth/session`, {
+      headers: aliceHeaders,
+    });
+    assert.equal(sessionResponse.status, 200);
+    const sessionPayload = await sessionResponse.json();
+    assert.equal(
+      sessionPayload.user.photoUrl,
+      legacyAlicePhoto.replace(/^http:/, "https:"),
+    );
+
+    const bootstrapResponse = await fetch(
+      `${ctx.baseUrl}/v1/profile/me/bootstrap`,
+      {headers: aliceHeaders},
+    );
+    assert.equal(bootstrapResponse.status, 200);
+    const bootstrapPayload = await bootstrapResponse.json();
+    assert.equal(
+      bootstrapPayload.profile.photoUrl,
+      legacyAlicePhoto.replace(/^http:/, "https:"),
+    );
+
+    const treeResponse = await fetch(`${ctx.baseUrl}/v1/trees`, {
+      method: "POST",
+      headers: {
+        ...aliceHeaders,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "Legacy Media Tree",
+        description: "Tree for URL normalization",
+      }),
+    });
+    assert.equal(treeResponse.status, 201);
+    const treePayload = await treeResponse.json();
+    const treeId = treePayload.tree.id;
+
+    const personsResponse = await fetch(`${ctx.baseUrl}/v1/trees/${treeId}/persons`, {
+      headers: aliceHeaders,
+    });
+    assert.equal(personsResponse.status, 200);
+    const personsPayload = await personsResponse.json();
+    const alicePerson = personsPayload.persons.find(
+      (person) => person.userId === alice.user.id,
+    );
+    assert.ok(alicePerson);
+    assert.equal(
+      alicePerson.photoUrl,
+      legacyAlicePhoto.replace(/^http:/, "https:"),
+    );
+
+    const postCreateResponse = await fetch(`${ctx.baseUrl}/v1/posts`, {
+      method: "POST",
+      headers: {
+        ...aliceHeaders,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        treeId,
+        content: "Legacy media post",
+        imageUrls: [legacyPostImage],
+      }),
+    });
+    assert.equal(postCreateResponse.status, 201);
+    const postCreatePayload = await postCreateResponse.json();
+    assert.equal(
+      postCreatePayload.authorPhotoUrl,
+      legacyAlicePhoto.replace(/^http:/, "https:"),
+    );
+    assert.deepEqual(postCreatePayload.imageUrls, [
+      legacyPostImage.replace(/^http:/, "https:"),
+    ]);
+
+    const postsFeedResponse = await fetch(`${ctx.baseUrl}/v1/posts?treeId=${treeId}`, {
+      headers: aliceHeaders,
+    });
+    assert.equal(postsFeedResponse.status, 200);
+    const postsFeedPayload = await postsFeedResponse.json();
+    assert.equal(
+      postsFeedPayload[0].authorPhotoUrl,
+      legacyAlicePhoto.replace(/^http:/, "https:"),
+    );
+    assert.deepEqual(postsFeedPayload[0].imageUrls, [
+      legacyPostImage.replace(/^http:/, "https:"),
+    ]);
+
+    const storyCreateResponse = await fetch(`${ctx.baseUrl}/v1/stories`, {
+      method: "POST",
+      headers: {
+        ...aliceHeaders,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        treeId,
+        type: "image",
+        mediaUrl: legacyStoryMedia,
+        thumbnailUrl: legacyStoryThumb,
+      }),
+    });
+    assert.equal(storyCreateResponse.status, 201);
+    const storyCreatePayload = await storyCreateResponse.json();
+    assert.equal(
+      storyCreatePayload.authorPhotoUrl,
+      legacyAlicePhoto.replace(/^http:/, "https:"),
+    );
+    assert.equal(
+      storyCreatePayload.mediaUrl,
+      legacyStoryMedia.replace(/^http:/, "https:"),
+    );
+    assert.equal(
+      storyCreatePayload.thumbnailUrl,
+      legacyStoryThumb.replace(/^http:/, "https:"),
+    );
+
+    const storiesResponse = await fetch(`${ctx.baseUrl}/v1/stories?treeId=${treeId}`, {
+      headers: aliceHeaders,
+    });
+    assert.equal(storiesResponse.status, 200);
+    const storiesPayload = await storiesResponse.json();
+    assert.equal(
+      storiesPayload[0].mediaUrl,
+      legacyStoryMedia.replace(/^http:/, "https:"),
+    );
+    assert.equal(
+      storiesPayload[0].thumbnailUrl,
+      legacyStoryThumb.replace(/^http:/, "https:"),
+    );
+
+    const directChatResponse = await fetch(`${ctx.baseUrl}/v1/chats/direct`, {
+      method: "POST",
+      headers: {
+        ...aliceHeaders,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({otherUserId: bob.user.id}),
+    });
+    assert.equal(directChatResponse.status, 200);
+    const directChatPayload = await directChatResponse.json();
+    const chatId = directChatPayload.chatId;
+
+    const aliceChatsResponse = await fetch(`${ctx.baseUrl}/v1/chats`, {
+      headers: aliceHeaders,
+    });
+    assert.equal(aliceChatsResponse.status, 200);
+    const aliceChatsPayload = await aliceChatsResponse.json();
+    assert.equal(
+      aliceChatsPayload.chats[0].otherUserPhotoUrl,
+      legacyBobPhoto.replace(/^http:/, "https:"),
+    );
+
+    const sendMessageResponse = await fetch(
+      `${ctx.baseUrl}/v1/chats/${chatId}/messages`,
+      {
+        method: "POST",
+        headers: {
+          ...aliceHeaders,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          text: "Legacy image",
+          attachments: [
+            {
+              type: "image",
+              url: legacyChatImage,
+              thumbnailUrl: legacyChatThumb,
+              mimeType: "image/png",
+            },
+          ],
+        }),
+      },
+    );
+    assert.equal(sendMessageResponse.status, 201);
+    const sendMessagePayload = await sendMessageResponse.json();
+    assert.equal(
+      sendMessagePayload.message.attachments[0].url,
+      legacyChatImage.replace(/^http:/, "https:"),
+    );
+    assert.equal(
+      sendMessagePayload.message.attachments[0].thumbnailUrl,
+      legacyChatThumb.replace(/^http:/, "https:"),
+    );
+
+    const historyResponse = await fetch(
+      `${ctx.baseUrl}/v1/chats/${chatId}/messages`,
+      {
+        headers: bobHeaders,
+      },
+    );
+    assert.equal(historyResponse.status, 200);
+    const historyPayload = await historyResponse.json();
+    assert.equal(
+      historyPayload.messages[0].attachments[0].url,
+      legacyChatImage.replace(/^http:/, "https:"),
+    );
+    assert.equal(
+      historyPayload.messages[0].attachments[0].thumbnailUrl,
+      legacyChatThumb.replace(/^http:/, "https:"),
+    );
   } finally {
     await stopTestServer(ctx);
   }
@@ -185,7 +1178,7 @@ test("delete account cascades owned state and local media cleanup", async () => 
       method: "POST",
       headers: {"content-type": "application/json"},
       body: JSON.stringify({
-        email: "owner-delete@lineage.app",
+        email: "owner-delete@rodnya.app",
         password: "secret123",
         displayName: "Delete Owner",
       }),
@@ -198,7 +1191,7 @@ test("delete account cascades owned state and local media cleanup", async () => 
       method: "POST",
       headers: {"content-type": "application/json"},
       body: JSON.stringify({
-        email: "peer-delete@lineage.app",
+        email: "peer-delete@rodnya.app",
         password: "secret123",
         displayName: "Delete Peer",
       }),
@@ -390,7 +1383,7 @@ test("delete account cascades owned state and local media cleanup", async () => 
 });
 
 test("file store stays readable during queued writes", async () => {
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "lineage-store-"));
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "rodnya-store-"));
   const dataPath = path.join(tempDir, "dev-db.json");
   const store = new FileStore(dataPath);
   await store.initialize();
@@ -439,18 +1432,1535 @@ test("file store stays readable during queued writes", async () => {
   }
 });
 
-test("google auth endpoint is explicit stub in minimal backend", async () => {
+test("google auth endpoint requires backend configuration", async () => {
   const ctx = await startTestServer();
 
   try {
     const response = await fetch(`${ctx.baseUrl}/v1/auth/google`, {
       method: "POST",
       headers: {"content-type": "application/json"},
-      body: "{}",
+      body: JSON.stringify({idToken: "fake-token"}),
     });
-    assert.equal(response.status, 501);
+    assert.equal(response.status, 503);
     const payload = await response.json();
     assert.match(payload.message, /Google sign-in/i);
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("google auth creates a social account and reuses it on repeated login", async () => {
+  const googleTokenVerifier = {
+    async verifyIdToken(idToken) {
+      assert.equal(idToken, "google-token-new-user");
+      return {
+        sub: "google-sub-new-user",
+        email: "google-new@rodnya.app",
+        email_verified: true,
+        name: "Google New User",
+        picture: "https://example.com/google-new-user.jpg",
+      };
+    },
+  };
+  const ctx = await startConfiguredTestServer({
+    configOverrides: {
+      googleWebClientId:
+        "676171184233-hl6gauj8c1trtn25a8me7pvm4m4clndv.apps.googleusercontent.com",
+    },
+    googleTokenVerifier,
+  });
+
+  try {
+    const firstResponse = await fetch(`${ctx.baseUrl}/v1/auth/google`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({idToken: "google-token-new-user"}),
+    });
+    assert.equal(firstResponse.status, 200);
+    const firstPayload = await firstResponse.json();
+    assert.ok(firstPayload.accessToken);
+    assert.equal(firstPayload.user.email, "google-new@rodnya.app");
+    assert.deepEqual(firstPayload.user.providerIds, ["google"]);
+    assert.equal(firstPayload.user.displayName, "Google New User");
+
+    const linkingStatusResponse = await fetch(
+      `${ctx.baseUrl}/v1/profile/me/account-linking-status`,
+      {
+        headers: {authorization: `Bearer ${firstPayload.accessToken}`},
+      },
+    );
+    assert.equal(linkingStatusResponse.status, 200);
+    const linkingStatusPayload = await linkingStatusResponse.json();
+    assert.deepEqual(linkingStatusPayload.linkedProviderIds, ["google"]);
+    assert.ok(
+      linkingStatusPayload.identities.some(
+        (entry) => entry.provider === "google" && entry.emailMasked,
+      ),
+    );
+
+    const secondResponse = await fetch(`${ctx.baseUrl}/v1/auth/google`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({idToken: "google-token-new-user"}),
+    });
+    assert.equal(secondResponse.status, 200);
+    const secondPayload = await secondResponse.json();
+    assert.equal(secondPayload.user.id, firstPayload.user.id);
+    assert.deepEqual(secondPayload.user.providerIds, ["google"]);
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("google auth links to an existing password account by verified email", async () => {
+  const googleTokenVerifier = {
+    async verifyIdToken() {
+      return {
+        sub: "google-sub-existing-email",
+        email: "existing-google@rodnya.app",
+        email_verified: true,
+        name: "Existing Google",
+      };
+    },
+  };
+  const ctx = await startConfiguredTestServer({
+    configOverrides: {
+      googleWebClientId:
+        "676171184233-hl6gauj8c1trtn25a8me7pvm4m4clndv.apps.googleusercontent.com",
+    },
+    googleTokenVerifier,
+  });
+
+  async function registerUser(email, displayName) {
+    const response = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email,
+        password: "secret123",
+        displayName,
+      }),
+    });
+    assert.equal(response.status, 201);
+    return response.json();
+  }
+
+  try {
+    const registered = await registerUser(
+      "existing-google@rodnya.app",
+      "Existing Email User",
+    );
+    const googleResponse = await fetch(`${ctx.baseUrl}/v1/auth/google`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({idToken: "google-token-existing-email"}),
+    });
+    assert.equal(googleResponse.status, 200);
+    const googlePayload = await googleResponse.json();
+    assert.equal(googlePayload.user.id, registered.user.id);
+    assert.deepEqual(
+      [...googlePayload.user.providerIds].sort(),
+      ["google", "password"],
+    );
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("google link endpoint attaches google to the current account and enables later google login", async () => {
+  const googleTokenVerifier = {
+    async verifyIdToken(idToken) {
+      assert.equal(idToken, "google-link-token");
+      return {
+        sub: "google-sub-linked-manually",
+        email: "manual-link@rodnya.app",
+        email_verified: false,
+        name: "Manual Link Google",
+      };
+    },
+  };
+  const ctx = await startConfiguredTestServer({
+    configOverrides: {
+      googleWebClientId:
+        "676171184233-hl6gauj8c1trtn25a8me7pvm4m4clndv.apps.googleusercontent.com",
+    },
+    googleTokenVerifier,
+  });
+
+  async function registerUser(email, displayName) {
+    const response = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email,
+        password: "secret123",
+        displayName,
+      }),
+    });
+    assert.equal(response.status, 201);
+    return response.json();
+  }
+
+  try {
+    const registered = await registerUser(
+      "manual-link@rodnya.app",
+      "Manual Link User",
+    );
+    const linkResponse = await fetch(`${ctx.baseUrl}/v1/auth/google/link`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${registered.accessToken}`,
+      },
+      body: JSON.stringify({idToken: "google-link-token"}),
+    });
+    assert.equal(linkResponse.status, 200);
+    const linkPayload = await linkResponse.json();
+    assert.equal(linkPayload.ok, true);
+    assert.deepEqual(
+      [...linkPayload.user.providerIds].sort(),
+      ["google", "password"],
+    );
+
+    const googleLoginResponse = await fetch(`${ctx.baseUrl}/v1/auth/google`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({idToken: "google-link-token"}),
+    });
+    assert.equal(googleLoginResponse.status, 200);
+    const googleLoginPayload = await googleLoginResponse.json();
+    assert.equal(googleLoginPayload.user.id, registered.user.id);
+    assert.deepEqual(
+      [...googleLoginPayload.user.providerIds].sort(),
+      ["google", "password"],
+    );
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("legacy phone verification and discovery routes are removed", async () => {
+  const ctx = await startConfiguredTestServer();
+
+  async function registerUser(email, displayName) {
+    const response = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email,
+        password: "secret123",
+        displayName,
+      }),
+    });
+    assert.equal(response.status, 201);
+    return response.json();
+  }
+
+  try {
+    const owner = await registerUser("phone-owner@rodnya.app", "Phone Owner");
+
+    const requestResponse = await fetch(
+      `${ctx.baseUrl}/v1/profile/me/phone-verification/request`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${owner.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          phoneNumber: "9990001122",
+          countryCode: "+7",
+        }),
+      },
+    );
+    assert.equal(requestResponse.status, 404);
+
+    const confirmResponse = await fetch(
+      `${ctx.baseUrl}/v1/profile/me/phone-verification/confirm`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${owner.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          challengeId: "challenge-1",
+          code: "123456",
+        }),
+      },
+    );
+    assert.equal(confirmResponse.status, 404);
+
+    const discoverResponse = await fetch(
+      `${ctx.baseUrl}/v1/users/discover-by-phones`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${owner.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          phoneNumbers: ["+7 999 000-11-22"],
+        }),
+      },
+    );
+    assert.equal(discoverResponse.status, 404);
+
+    const verifyPhoneResponse = await fetch(
+      `${ctx.baseUrl}/v1/profile/me/verify-phone`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${owner.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          phoneNumber: "+7 999 000-11-22",
+        }),
+      },
+    );
+    assert.equal(verifyPhoneResponse.status, 404);
+
+    const searchByPhoneResponse = await fetch(
+      `${ctx.baseUrl}/v1/users/search/by-field?field=phoneNumber&value=9990001122`,
+      {
+        headers: {
+          authorization: `Bearer ${owner.accessToken}`,
+        },
+      },
+    );
+    assert.equal(searchByPhoneResponse.status, 410);
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("MAX webapp flow supports pending link, link, and later login", async () => {
+  const maxBotToken = "max-bot-token";
+  const maxBotUsername = "RodnyaMaxBot";
+  const ctx = await startConfiguredTestServer({
+    configOverrides: {
+      maxBotToken,
+      maxBotUsername,
+      publicAppUrl: "https://rodnya-tree.ru",
+    },
+  });
+
+  async function registerUser(email, displayName) {
+    const response = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email,
+        password: "secret123",
+        displayName,
+      }),
+    });
+    assert.equal(response.status, 201);
+    return response.json();
+  }
+
+  try {
+    const owner = await registerUser("max-owner@rodnya.app", "MAX Owner");
+
+    const linkStartResponse = await fetch(
+      `${ctx.baseUrl}/v1/auth/max/start?intent=link`,
+      {redirect: "manual"},
+    );
+    assert.equal(linkStartResponse.status, 302);
+    const linkStartLocation = linkStartResponse.headers.get("location");
+    assert.ok(linkStartLocation);
+    assert.match(linkStartLocation, /https:\/\/max\.ru\/RodnyaMaxBot\?startapp=/);
+    const linkStartParam = new URL(linkStartLocation).searchParams.get("startapp");
+    assert.ok(linkStartParam);
+
+    const maxUser = {
+      id: "900100200",
+      first_name: "Макс",
+      last_name: "Роднин",
+      username: "max_rodnya_user",
+      language_code: "ru",
+      photo_url: "https://cdn.max.test/avatar.png",
+    };
+    const linkCompleteResponse = await fetch(
+      `${ctx.baseUrl}/v1/auth/max/complete`,
+      {
+        method: "POST",
+        headers: {"content-type": "application/json"},
+        body: JSON.stringify({
+          initData: buildMaxInitData({
+            botToken: maxBotToken,
+            startParam: linkStartParam,
+            user: maxUser,
+          }),
+        }),
+      },
+    );
+    assert.equal(linkCompleteResponse.status, 200);
+    const linkCompletePayload = await linkCompleteResponse.json();
+    assert.equal(linkCompletePayload.status, "pending_link");
+    const linkResultCode = extractHashQueryParameters(
+      linkCompletePayload.redirectUrl,
+    ).get("maxAuthCode");
+    assert.ok(linkResultCode);
+    assert.equal(
+      extractHashQueryParameters(linkCompletePayload.redirectUrl).get("maxIntent"),
+      "link",
+    );
+
+    const exchangePendingResponse = await fetch(
+      `${ctx.baseUrl}/v1/auth/max/exchange`,
+      {
+        method: "POST",
+        headers: {"content-type": "application/json"},
+        body: JSON.stringify({code: linkResultCode}),
+      },
+    );
+    assert.equal(exchangePendingResponse.status, 200);
+    const exchangePendingPayload = await exchangePendingResponse.json();
+    assert.equal(exchangePendingPayload.status, "pending_link");
+    assert.ok(exchangePendingPayload.linkCode);
+
+    const linkIdentityResponse = await fetch(`${ctx.baseUrl}/v1/auth/max/link`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${owner.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({code: exchangePendingPayload.linkCode}),
+    });
+    assert.equal(linkIdentityResponse.status, 200);
+    const linkIdentityPayload = await linkIdentityResponse.json();
+    assert.equal(linkIdentityPayload.ok, true);
+    assert.deepEqual(
+      [...linkIdentityPayload.user.providerIds].sort(),
+      ["max", "password"],
+    );
+
+    const loginStartResponse = await fetch(`${ctx.baseUrl}/v1/auth/max/start`, {
+      redirect: "manual",
+    });
+    assert.equal(loginStartResponse.status, 302);
+    const loginStartLocation = loginStartResponse.headers.get("location");
+    assert.ok(loginStartLocation);
+    const loginStartParam = new URL(loginStartLocation).searchParams.get("startapp");
+    assert.ok(loginStartParam);
+
+    const loginCompleteResponse = await fetch(
+      `${ctx.baseUrl}/v1/auth/max/complete`,
+      {
+        method: "POST",
+        headers: {"content-type": "application/json"},
+        body: JSON.stringify({
+          initData: buildMaxInitData({
+            botToken: maxBotToken,
+            startParam: loginStartParam,
+            user: maxUser,
+          }),
+        }),
+      },
+    );
+    assert.equal(loginCompleteResponse.status, 200);
+    const loginCompletePayload = await loginCompleteResponse.json();
+    assert.equal(loginCompletePayload.status, "authenticated");
+    const loginResultCode = extractHashQueryParameters(
+      loginCompletePayload.redirectUrl,
+    ).get("maxAuthCode");
+    assert.ok(loginResultCode);
+
+    const exchangeAuthenticatedResponse = await fetch(
+      `${ctx.baseUrl}/v1/auth/max/exchange`,
+      {
+        method: "POST",
+        headers: {"content-type": "application/json"},
+        body: JSON.stringify({code: loginResultCode}),
+      },
+    );
+    assert.equal(exchangeAuthenticatedResponse.status, 200);
+    const exchangeAuthenticatedPayload = await exchangeAuthenticatedResponse.json();
+    assert.equal(exchangeAuthenticatedPayload.status, "authenticated");
+    assert.equal(
+      exchangeAuthenticatedPayload.auth.user.id,
+      owner.user.id,
+    );
+    assert.deepEqual(
+      [...exchangeAuthenticatedPayload.auth.user.providerIds].sort(),
+      ["max", "password"],
+    );
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("account linking status exposes trusted-channel discovery model", async () => {
+  const ctx = await startConfiguredTestServer();
+
+  async function registerUser(email, displayName) {
+    const response = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email,
+        password: "secret123",
+        displayName,
+      }),
+    });
+    assert.equal(response.status, 201);
+    return response.json();
+  }
+
+  try {
+    const owner = await registerUser("discover-owner@rodnya.app", "Discover Owner");
+
+    const statusResponse = await fetch(
+      `${ctx.baseUrl}/v1/profile/me/account-linking-status`,
+      {
+        headers: {
+          authorization: `Bearer ${owner.accessToken}`,
+        },
+      },
+    );
+    assert.equal(statusResponse.status, 200);
+    const statusPayload = await statusResponse.json();
+    assert.equal(statusPayload.legacyPhoneVerification, false);
+    assert.deepEqual(statusPayload.discoveryModes, [
+      "username",
+      "profile_code",
+      "email",
+      "invite_link",
+      "claim_link",
+      "qr",
+    ]);
+    assert.equal(statusPayload.linkedProviderIds.includes("password"), true);
+    assert.equal(
+      statusPayload.mergeStrategy.summary.includes("identity"),
+      true,
+    );
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("user profile respects section visibility and self view still returns full data", async () => {
+  const ctx = await startTestServer();
+
+  async function registerUser(email, displayName) {
+    const response = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email,
+        password: "secret123",
+        displayName,
+      }),
+    });
+    assert.equal(response.status, 201);
+    return response.json();
+  }
+
+  try {
+    const owner = await registerUser("rich-owner@rodnya.app", "Rich Owner");
+    const viewer = await registerUser("rich-viewer@rodnya.app", "Rich Viewer");
+
+    const saveProfileResponse = await fetch(
+      `${ctx.baseUrl}/v1/profile/me/bootstrap`,
+      {
+        method: "PUT",
+        headers: {
+          authorization: `Bearer ${owner.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          firstName: "Артем",
+          lastName: "Кузнецов",
+          username: "artem-rich",
+          phoneNumber: "9990001122",
+          countryCode: "+7",
+          countryName: "Россия",
+          city: "Москва",
+          bio: "Люблю семейные архивы и длинные разговоры.",
+          familyStatus: "Женат",
+          aboutFamily: "Вечерами собираю семейные истории для детей.",
+          education: "МГУ, исторический факультет",
+          work: "Семейный бизнес",
+          hometown: "Тула",
+          languages: "Русский, английский",
+          values: "Семья, доверие, память",
+          religion: "Православие",
+          interests: "Генеалогия, фотографии, поездки по родным местам",
+          profileVisibility: {
+            contacts: {scope: "private"},
+            about: {scope: "shared_trees"},
+            background: {scope: "public"},
+            worldview: {scope: "private"},
+          },
+        }),
+      },
+    );
+    assert.equal(saveProfileResponse.status, 200);
+
+    const outsiderViewResponse = await fetch(
+      `${ctx.baseUrl}/v1/users/${owner.user.id}/profile`,
+      {
+        headers: {authorization: `Bearer ${viewer.accessToken}`},
+      },
+    );
+    assert.equal(outsiderViewResponse.status, 200);
+    const outsiderView = await outsiderViewResponse.json();
+    assert.equal(outsiderView.profile.bio, "");
+    assert.equal(outsiderView.profile.familyStatus, "");
+    assert.equal(outsiderView.profile.aboutFamily, "");
+    assert.equal(outsiderView.profile.education, "МГУ, исторический факультет");
+    assert.equal(outsiderView.profile.work, "Семейный бизнес");
+    assert.equal(outsiderView.profile.hometown, "Тула");
+    assert.equal(outsiderView.profile.languages, "Русский, английский");
+    assert.equal(outsiderView.profile.values, "");
+    assert.equal(outsiderView.profile.interests, "");
+    assert.equal(outsiderView.profile.phoneNumber, "");
+    assert.deepEqual(
+      outsiderView.profile.hiddenProfileSections.sort(),
+      ["about", "contacts", "worldview"],
+    );
+    assert.deepEqual(outsiderView.profile.profileVisibility, {
+      contacts: {scope: "private"},
+      about: {scope: "shared_trees"},
+      background: {scope: "public"},
+      worldview: {scope: "private"},
+    });
+
+    const db = await ctx.store._read();
+    const timestamp = new Date().toISOString();
+    db.trees.push({
+      id: "tree-shared-profile",
+      name: "Общее дерево",
+      description: "",
+      creatorId: owner.user.id,
+      memberIds: [owner.user.id, viewer.user.id],
+      members: [owner.user.id, viewer.user.id],
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      isPrivate: true,
+      kind: "family",
+      publicSlug: null,
+      isCertified: false,
+      certificationNote: null,
+    });
+    await ctx.store._write(db);
+
+    const relativeViewResponse = await fetch(
+      `${ctx.baseUrl}/v1/users/${owner.user.id}/profile`,
+      {
+        headers: {authorization: `Bearer ${viewer.accessToken}`},
+      },
+    );
+    assert.equal(relativeViewResponse.status, 200);
+    const relativeView = await relativeViewResponse.json();
+    assert.equal(relativeView.profile.bio, "Люблю семейные архивы и длинные разговоры.");
+    assert.equal(relativeView.profile.familyStatus, "Женат");
+    assert.equal(
+      relativeView.profile.aboutFamily,
+      "Вечерами собираю семейные истории для детей.",
+    );
+    assert.equal(relativeView.profile.education, "МГУ, исторический факультет");
+    assert.equal(relativeView.profile.hometown, "Тула");
+    assert.equal(relativeView.profile.languages, "Русский, английский");
+    assert.equal(relativeView.profile.values, "");
+    assert.equal(relativeView.profile.interests, "");
+    assert.equal(relativeView.profile.phoneNumber, "");
+    assert.deepEqual(
+      relativeView.profile.hiddenProfileSections.sort(),
+      ["contacts", "worldview"],
+    );
+
+    const selfViewResponse = await fetch(
+      `${ctx.baseUrl}/v1/users/${owner.user.id}/profile`,
+      {
+        headers: {authorization: `Bearer ${owner.accessToken}`},
+      },
+    );
+    assert.equal(selfViewResponse.status, 200);
+    const selfView = await selfViewResponse.json();
+    assert.equal(selfView.profile.bio, "Люблю семейные архивы и длинные разговоры.");
+    assert.equal(
+      selfView.profile.aboutFamily,
+      "Вечерами собираю семейные истории для детей.",
+    );
+    assert.equal(selfView.profile.hometown, "Тула");
+    assert.equal(selfView.profile.languages, "Русский, английский");
+    assert.equal(selfView.profile.values, "Семья, доверие, память");
+    assert.equal(
+      selfView.profile.interests,
+      "Генеалогия, фотографии, поездки по родным местам",
+    );
+    assert.equal(selfView.profile.phoneNumber, "9990001122");
+    assert.equal(selfView.profile.email, owner.user.email);
+    assert.equal(selfView.profile.hiddenProfileSections.length, 0);
+    assert.deepEqual(selfView.profile.profileVisibility, {
+      contacts: {
+        scope: "private",
+        treeIds: [],
+        branchRootPersonIds: [],
+        userIds: [],
+      },
+      about: {
+        scope: "shared_trees",
+        treeIds: [],
+        branchRootPersonIds: [],
+        userIds: [],
+      },
+      background: {
+        scope: "public",
+        treeIds: [],
+        branchRootPersonIds: [],
+        userIds: [],
+      },
+      worldview: {
+        scope: "private",
+        treeIds: [],
+        branchRootPersonIds: [],
+        userIds: [],
+      },
+    });
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("user profile supports specific tree, branch and specific user visibility targets", async () => {
+  const ctx = await startTestServer();
+
+  async function registerUser(email, displayName) {
+    const response = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email,
+        password: "secret123",
+        displayName,
+      }),
+    });
+    assert.equal(response.status, 201);
+    return response.json();
+  }
+
+  try {
+    const owner = await registerUser("specific-owner@rodnya.app", "Specific Owner");
+    const treeViewer = await registerUser("specific-tree@rodnya.app", "Tree Viewer");
+    const branchViewer = await registerUser("specific-branch@rodnya.app", "Branch Viewer");
+    const userViewer = await registerUser("specific-user@rodnya.app", "User Viewer");
+
+    const saveProfileResponse = await fetch(
+      `${ctx.baseUrl}/v1/profile/me/bootstrap`,
+      {
+        method: "PUT",
+        headers: {
+          authorization: `Bearer ${owner.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          firstName: "Мария",
+          lastName: "Орлова",
+          username: "specific-owner",
+          phoneNumber: "9990001133",
+          countryCode: "+7",
+          countryName: "Россия",
+          city: "Казань",
+          bio: "Обо мне знают только участники выбранного дерева.",
+          familyStatus: "Замужем",
+          aboutFamily: "В семье храню письма прадеда и показываю их только близким.",
+          education: "КФУ",
+          work: "Семейная мастерская",
+          hometown: "Казань",
+          languages: "Русский, татарский",
+          values: "Вера и семья",
+          religion: "Православие",
+          interests: "Ручная работа и семейные праздники",
+          profileVisibility: {
+            contacts: {
+              scope: "specific_branches",
+              branchRootPersonIds: ["person-branch-root"],
+            },
+            about: {scope: "specific_trees", treeIds: ["tree-allowed"]},
+            background: {scope: "public"},
+            worldview: {scope: "specific_users", userIds: [userViewer.user.id]},
+          },
+        }),
+      },
+    );
+    assert.equal(saveProfileResponse.status, 200);
+
+    const db = await ctx.store._read();
+    const timestamp = new Date().toISOString();
+    db.trees.push(
+      {
+        id: "tree-allowed",
+        name: "Нужное дерево",
+        description: "",
+        creatorId: owner.user.id,
+        memberIds: [owner.user.id, treeViewer.user.id],
+        members: [owner.user.id, treeViewer.user.id],
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        isPrivate: true,
+        kind: "family",
+        publicSlug: null,
+        isCertified: false,
+        certificationNote: null,
+      },
+      {
+        id: "tree-other",
+        name: "Другое дерево",
+        description: "",
+        creatorId: owner.user.id,
+        memberIds: [owner.user.id],
+        members: [owner.user.id],
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        isPrivate: true,
+        kind: "family",
+        publicSlug: null,
+        isCertified: false,
+        certificationNote: null,
+      },
+      {
+        id: "tree-branch",
+        name: "Ветка по ветке",
+        description: "",
+        creatorId: owner.user.id,
+        memberIds: [owner.user.id, branchViewer.user.id],
+        members: [owner.user.id, branchViewer.user.id],
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        isPrivate: true,
+        kind: "family",
+        publicSlug: null,
+        isCertified: false,
+        certificationNote: null,
+      },
+    );
+    db.persons.push(
+      {
+        id: "person-owner-branch",
+        treeId: "tree-branch",
+        userId: owner.user.id,
+        identityId: null,
+        name: "Мария Орлова",
+        maidenName: null,
+        photoUrl: null,
+        gender: "female",
+        birthDate: null,
+        birthPlace: null,
+        deathDate: null,
+        deathPlace: null,
+        bio: "",
+        isAlive: true,
+        creatorId: owner.user.id,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        notes: "",
+      },
+      {
+        id: "person-branch-root",
+        treeId: "tree-branch",
+        userId: null,
+        identityId: null,
+        name: "Старшая ветка",
+        maidenName: null,
+        photoUrl: null,
+        gender: "female",
+        birthDate: null,
+        birthPlace: null,
+        deathDate: null,
+        deathPlace: null,
+        bio: "",
+        isAlive: true,
+        creatorId: owner.user.id,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        notes: "",
+      },
+      {
+        id: "person-branch-viewer",
+        treeId: "tree-branch",
+        userId: branchViewer.user.id,
+        identityId: null,
+        name: "Видимый Родственник",
+        maidenName: null,
+        photoUrl: null,
+        gender: "male",
+        birthDate: null,
+        birthPlace: null,
+        deathDate: null,
+        deathPlace: null,
+        bio: "",
+        isAlive: true,
+        creatorId: owner.user.id,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        notes: "",
+      },
+    );
+    db.relations.push({
+      id: "relation-branch-root-child",
+      treeId: "tree-branch",
+      person1Id: "person-branch-root",
+      person2Id: "person-branch-viewer",
+      relation1to2: "parent",
+      relation2to1: "child",
+      isConfirmed: true,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      createdBy: owner.user.id,
+      marriageDate: null,
+      divorceDate: null,
+    });
+    await ctx.store._write(db);
+
+    const treeViewerResponse = await fetch(
+      `${ctx.baseUrl}/v1/users/${owner.user.id}/profile`,
+      {
+        headers: {authorization: `Bearer ${treeViewer.accessToken}`},
+      },
+    );
+    assert.equal(treeViewerResponse.status, 200);
+    const treeViewerProfile = await treeViewerResponse.json();
+    assert.equal(
+      treeViewerProfile.profile.bio,
+      "Обо мне знают только участники выбранного дерева.",
+    );
+    assert.equal(
+      treeViewerProfile.profile.aboutFamily,
+      "В семье храню письма прадеда и показываю их только близким.",
+    );
+    assert.equal(treeViewerProfile.profile.hometown, "Казань");
+    assert.equal(treeViewerProfile.profile.languages, "Русский, татарский");
+    assert.equal(treeViewerProfile.profile.values, "");
+    assert.equal(treeViewerProfile.profile.interests, "");
+    assert.deepEqual(
+      treeViewerProfile.profile.hiddenProfileSections.sort(),
+      ["contacts", "worldview"],
+    );
+
+    const branchViewerResponse = await fetch(
+      `${ctx.baseUrl}/v1/users/${owner.user.id}/profile`,
+      {
+        headers: {authorization: `Bearer ${branchViewer.accessToken}`},
+      },
+    );
+    assert.equal(branchViewerResponse.status, 200);
+    const branchViewerProfile = await branchViewerResponse.json();
+    assert.equal(branchViewerProfile.profile.phoneNumber, "9990001133");
+    assert.equal(branchViewerProfile.profile.countryCode, "+7");
+    assert.equal(branchViewerProfile.profile.city, "Казань");
+    assert.equal(branchViewerProfile.profile.bio, "");
+    assert.equal(branchViewerProfile.profile.values, "");
+    assert.deepEqual(
+      branchViewerProfile.profile.hiddenProfileSections.sort(),
+      ["about", "worldview"],
+    );
+
+    const userViewerResponse = await fetch(
+      `${ctx.baseUrl}/v1/users/${owner.user.id}/profile`,
+      {
+        headers: {authorization: `Bearer ${userViewer.accessToken}`},
+      },
+    );
+    assert.equal(userViewerResponse.status, 200);
+    const userViewerProfile = await userViewerResponse.json();
+    assert.equal(userViewerProfile.profile.bio, "");
+    assert.equal(userViewerProfile.profile.aboutFamily, "");
+    assert.equal(userViewerProfile.profile.hometown, "Казань");
+    assert.equal(userViewerProfile.profile.languages, "Русский, татарский");
+    assert.equal(userViewerProfile.profile.values, "Вера и семья");
+    assert.equal(
+      userViewerProfile.profile.interests,
+      "Ручная работа и семейные праздники",
+    );
+    assert.deepEqual(
+      userViewerProfile.profile.hiddenProfileSections.sort(),
+      ["about", "contacts"],
+    );
+
+    const selfViewResponse = await fetch(
+      `${ctx.baseUrl}/v1/users/${owner.user.id}/profile`,
+      {
+        headers: {authorization: `Bearer ${owner.accessToken}`},
+      },
+    );
+    assert.equal(selfViewResponse.status, 200);
+    const selfView = await selfViewResponse.json();
+    assert.deepEqual(selfView.profile.profileVisibility, {
+      contacts: {
+        scope: "specific_branches",
+        treeIds: [],
+        branchRootPersonIds: ["person-branch-root"],
+        userIds: [],
+      },
+      about: {
+        scope: "specific_trees",
+        treeIds: ["tree-allowed"],
+        branchRootPersonIds: [],
+        userIds: [],
+      },
+      background: {
+        scope: "public",
+        treeIds: [],
+        branchRootPersonIds: [],
+        userIds: [],
+      },
+      worldview: {
+        scope: "specific_users",
+        treeIds: [],
+        branchRootPersonIds: [],
+        userIds: [userViewer.user.id],
+      },
+    });
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("auth identity linking resolves by provider first, then email", async () => {
+  const ctx = await startTestServer();
+
+  async function registerUser(email, displayName) {
+    const response = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email,
+        password: "secret123",
+        displayName,
+      }),
+    });
+    assert.equal(response.status, 201);
+    return response.json();
+  }
+
+  try {
+    const owner = await registerUser("identity-owner@rodnya.app", "Owner");
+    const secondary = await registerUser("identity-secondary@rodnya.app", "Secondary");
+
+    const linkedOwner = await ctx.store.linkAuthIdentity(owner.user.id, {
+      provider: "google",
+      providerUserId: "google-sub-1",
+      email: "identity-owner@rodnya.app",
+      displayName: "Owner Google",
+    });
+    assert.ok(linkedOwner.providerIds.includes("google"));
+
+    const providerResolved = await ctx.store.resolveAuthIdentityTarget({
+      provider: "google",
+      providerUserId: "google-sub-1",
+      email: "other@rodnya.app",
+      phoneNumber: "+7 999 999 99 99",
+    });
+    assert.equal(providerResolved.reason, "provider_identity");
+    assert.equal(providerResolved.user.id, owner.user.id);
+
+    const emailResolved = await ctx.store.resolveAuthIdentityTarget({
+      provider: "vk",
+      providerUserId: "vk-777",
+      email: secondary.user.email,
+    });
+    assert.equal(emailResolved.reason, "email");
+    assert.equal(emailResolved.user.id, secondary.user.id);
+
+    const newAccountResolved = await ctx.store.resolveAuthIdentityTarget({
+      provider: "max",
+      providerUserId: "max-888",
+      email: "brand-new@rodnya.app",
+      phoneNumber: "+7 999 555 55 55",
+    });
+    assert.equal(newAccountResolved.reason, "new_account");
+    assert.equal(newAccountResolved.user, null);
+
+    const linkingStatusResponse = await fetch(
+      `${ctx.baseUrl}/v1/profile/me/account-linking-status`,
+      {
+        headers: {authorization: `Bearer ${owner.accessToken}`},
+      },
+    );
+    assert.equal(linkingStatusResponse.status, 200);
+    const linkingStatusPayload = await linkingStatusResponse.json();
+    assert.deepEqual(
+      linkingStatusPayload.linkedProviderIds.sort(),
+      ["google", "password"],
+    );
+    assert.equal(linkingStatusPayload.legacyPhoneVerification, false);
+    assert.equal(linkingStatusPayload.mergeStrategy.order[0], "provider_identity");
+    assert.equal(linkingStatusPayload.discoveryModes.includes("username"), true);
+    assert.ok(Array.isArray(linkingStatusPayload.identities));
+    assert.equal(linkingStatusPayload.identities.length, 2);
+    assert.ok(
+      linkingStatusPayload.identities.some(
+        (entry) => entry.provider === "google" && entry.emailMasked,
+      ),
+    );
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("telegram auth start, exchange and pending link flow work end-to-end", async () => {
+  const telegramBotToken = "telegram-test-token";
+  const telegramBotUsername = "RodnyaFamilyBot";
+  const ctx = await startConfiguredTestServer({
+    configOverrides: {
+      publicAppUrl: "https://rodnya-tree.ru",
+      publicApiUrl: "",
+      telegramBotToken,
+      telegramBotUsername,
+      telegramLoginEnabled: true,
+    },
+  });
+
+  function buildTelegramQuery(params) {
+    const entries = Object.entries(params)
+      .filter(([, value]) => value !== undefined && value !== null && String(value).trim() !== "")
+      .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey));
+    const dataCheckString = entries
+      .map(([key, value]) => `${key}=${value}`)
+      .join("\n");
+    const secretKey = crypto.createHash("sha256").update(telegramBotToken, "utf8").digest();
+    const hash = crypto
+      .createHmac("sha256", secretKey)
+      .update(dataCheckString, "utf8")
+      .digest("hex");
+    return new URLSearchParams({
+      ...Object.fromEntries(entries),
+      hash,
+    }).toString();
+  }
+
+  function extractHashQueryParam(location, name) {
+    const url = new URL(location);
+    const fragment = url.hash.startsWith("#") ? url.hash.slice(1) : url.hash;
+    const queryPart = fragment.includes("?") ? fragment.split("?").slice(1).join("?") : "";
+    return new URLSearchParams(queryPart).get(name);
+  }
+
+  async function registerUser(email, displayName) {
+    const response = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email,
+        password: "secret123",
+        displayName,
+      }),
+    });
+    assert.equal(response.status, 201);
+    return response.json();
+  }
+
+  try {
+    const startResponse = await fetch(`${ctx.baseUrl}/v1/auth/telegram/start`);
+    assert.equal(startResponse.status, 200);
+    const startHtml = await startResponse.text();
+    assert.match(startHtml, /RodnyaFamilyBot/);
+    assert.match(startHtml, /telegram-widget/);
+
+    const existingUser = await registerUser("tg-linked@rodnya.app", "TG Linked");
+    await ctx.store.linkAuthIdentity(existingUser.user.id, {
+      provider: "telegram",
+      providerUserId: "100500",
+      displayName: "TG Linked",
+      metadata: {username: "linked_user"},
+    });
+
+    const linkedCallbackResponse = await fetch(
+      `${ctx.baseUrl}/v1/auth/telegram/callback?${buildTelegramQuery({
+        id: "100500",
+        first_name: "TG",
+        last_name: "Linked",
+        username: "linked_user",
+        auth_date: Math.floor(Date.now() / 1000),
+      })}`,
+      {redirect: "manual"},
+    );
+    assert.equal(linkedCallbackResponse.status, 302);
+    const linkedLocation = linkedCallbackResponse.headers.get("location");
+    assert.match(linkedLocation, /telegramAuthCode=/);
+    const linkedAuthCode = extractHashQueryParam(linkedLocation, "telegramAuthCode");
+    assert.ok(linkedAuthCode);
+
+    const linkedExchangeResponse = await fetch(
+      `${ctx.baseUrl}/v1/auth/telegram/exchange`,
+      {
+        method: "POST",
+        headers: {"content-type": "application/json"},
+        body: JSON.stringify({code: linkedAuthCode}),
+      },
+    );
+    assert.equal(linkedExchangeResponse.status, 200);
+    const linkedExchangePayload = await linkedExchangeResponse.json();
+    assert.equal(linkedExchangePayload.status, "authenticated");
+    assert.equal(linkedExchangePayload.auth.user.id, existingUser.user.id);
+    assert.ok(linkedExchangePayload.auth.user.providerIds.includes("telegram"));
+
+    const linkedIntentCallbackResponse = await fetch(
+      `${ctx.baseUrl}/v1/auth/telegram/callback?intent=link&${buildTelegramQuery({
+        id: "100500",
+        first_name: "TG",
+        last_name: "Linked",
+        username: "linked_user",
+        auth_date: Math.floor(Date.now() / 1000),
+      })}`,
+      {redirect: "manual"},
+    );
+    assert.equal(linkedIntentCallbackResponse.status, 302);
+    const linkedIntentLocation = linkedIntentCallbackResponse.headers.get("location");
+    assert.equal(
+      extractHashQueryParam(linkedIntentLocation, "telegramIntent"),
+      "link",
+    );
+    const linkedIntentCode = extractHashQueryParam(
+      linkedIntentLocation,
+      "telegramAuthCode",
+    );
+    assert.ok(linkedIntentCode);
+
+    const linkedIntentExchangeResponse = await fetch(
+      `${ctx.baseUrl}/v1/auth/telegram/exchange`,
+      {
+        method: "POST",
+        headers: {"content-type": "application/json"},
+        body: JSON.stringify({code: linkedIntentCode}),
+      },
+    );
+    assert.equal(linkedIntentExchangeResponse.status, 200);
+    const linkedIntentExchangePayload = await linkedIntentExchangeResponse.json();
+    assert.equal(linkedIntentExchangePayload.status, "already_linked");
+    assert.match(linkedIntentExchangePayload.message, /уже привязан/i);
+
+    const pendingUser = await registerUser("tg-pending@rodnya.app", "TG Pending");
+    const pendingCallbackResponse = await fetch(
+      `${ctx.baseUrl}/v1/auth/telegram/callback?${buildTelegramQuery({
+        id: "200600",
+        first_name: "Rodnya",
+        last_name: "Telegram",
+        username: "rodnya_tg",
+        auth_date: Math.floor(Date.now() / 1000),
+      })}`,
+      {redirect: "manual"},
+    );
+    assert.equal(pendingCallbackResponse.status, 302);
+    const pendingLocation = pendingCallbackResponse.headers.get("location");
+    const pendingAuthCode = extractHashQueryParam(
+      pendingLocation,
+      "telegramAuthCode",
+    );
+    assert.ok(pendingAuthCode);
+
+    const pendingExchangeResponse = await fetch(
+      `${ctx.baseUrl}/v1/auth/telegram/exchange`,
+      {
+        method: "POST",
+        headers: {"content-type": "application/json"},
+        body: JSON.stringify({code: pendingAuthCode}),
+      },
+    );
+    assert.equal(pendingExchangeResponse.status, 200);
+    const pendingExchangePayload = await pendingExchangeResponse.json();
+    assert.equal(pendingExchangePayload.status, "pending_link");
+    assert.ok(pendingExchangePayload.linkCode);
+    assert.match(pendingExchangePayload.message, /Telegram подтверждён/i);
+
+    const linkResponse = await fetch(`${ctx.baseUrl}/v1/auth/telegram/link`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${pendingUser.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({code: pendingExchangePayload.linkCode}),
+    });
+    assert.equal(linkResponse.status, 200);
+    const linkPayload = await linkResponse.json();
+    assert.equal(linkPayload.ok, true);
+    assert.ok(linkPayload.user.providerIds.includes("telegram"));
+
+    const secondPendingCallbackResponse = await fetch(
+      `${ctx.baseUrl}/v1/auth/telegram/callback?intent=link&${buildTelegramQuery({
+        id: "300700",
+        first_name: "Second",
+        last_name: "Telegram",
+        username: "second_tg",
+        auth_date: Math.floor(Date.now() / 1000),
+      })}`,
+      {redirect: "manual"},
+    );
+    assert.equal(secondPendingCallbackResponse.status, 302);
+    const secondPendingLocation = secondPendingCallbackResponse.headers.get("location");
+    const secondPendingAuthCode = extractHashQueryParam(
+      secondPendingLocation,
+      "telegramAuthCode",
+    );
+    assert.ok(secondPendingAuthCode);
+
+    const secondPendingExchangeResponse = await fetch(
+      `${ctx.baseUrl}/v1/auth/telegram/exchange`,
+      {
+        method: "POST",
+        headers: {"content-type": "application/json"},
+        body: JSON.stringify({code: secondPendingAuthCode}),
+      },
+    );
+    assert.equal(secondPendingExchangeResponse.status, 200);
+    const secondPendingExchangePayload = await secondPendingExchangeResponse.json();
+    assert.equal(secondPendingExchangePayload.status, "pending_link");
+
+    const secondLinkResponse = await fetch(`${ctx.baseUrl}/v1/auth/telegram/link`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${pendingUser.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({code: secondPendingExchangePayload.linkCode}),
+    });
+    assert.equal(secondLinkResponse.status, 409);
+    const secondLinkPayload = await secondLinkResponse.json();
+    assert.match(secondLinkPayload.message, /уже привязан другой Telegram/i);
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("vk auth start, exchange and pending link flow work end-to-end", async () => {
+  const vkAuthClient = {
+    isEnabled: true,
+    webAppId: "54549672",
+    async exchangeCode({code, deviceId, state, codeVerifier, redirectUri}) {
+      assert.ok(code);
+      assert.ok(deviceId);
+      assert.ok(state);
+      assert.ok(codeVerifier);
+      assert.match(redirectUri, /\/v1\/auth\/vk\/callback$/);
+      return {access_token: `vk-token-${code}`};
+    },
+    async fetchUserInfo(accessToken) {
+      switch (accessToken) {
+        case "vk-token-existing-code":
+          return {
+            user: {
+              user_id: "vk-existing",
+              first_name: "VK",
+              last_name: "Existing",
+              email: "vk-linked@rodnya.app",
+            },
+          };
+        case "vk-token-pending-code":
+          return {
+            user: {
+              user_id: "vk-pending",
+              first_name: "VK",
+              last_name: "Pending",
+            },
+          };
+        case "vk-token-phone-match-code":
+          return {
+            user: {
+              user_id: "vk-phone-match",
+              first_name: "VK",
+              last_name: "Phone",
+              phone: "+7 999 000 11 22",
+            },
+          };
+        default:
+          throw new Error(`Unexpected access token: ${accessToken}`);
+      }
+    },
+  };
+  const ctx = await startConfiguredTestServer({
+    configOverrides: {
+      publicAppUrl: "https://rodnya-tree.ru",
+      publicApiUrl: "",
+      vkWebAppId: "54549672",
+      vkAuthEnabled: true,
+    },
+    vkAuthClient,
+  });
+
+  function extractHashQueryParam(location, name) {
+    const url = new URL(location);
+    const fragment = url.hash.startsWith("#") ? url.hash.slice(1) : url.hash;
+    const queryPart = fragment.includes("?")
+      ? fragment.split("?").slice(1).join("?")
+      : "";
+    return new URLSearchParams(queryPart).get(name);
+  }
+
+  async function registerUser(email, displayName) {
+    const response = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email,
+        password: "secret123",
+        displayName,
+      }),
+    });
+    assert.equal(response.status, 201);
+    return response.json();
+  }
+
+  async function startVkFlow(intent = "login") {
+    const query = intent === "link" ? "?intent=link" : "";
+    const response = await fetch(`${ctx.baseUrl}/v1/auth/vk/start${query}`, {
+      redirect: "manual",
+    });
+    assert.equal(response.status, 302);
+    const location = response.headers.get("location");
+    assert.ok(location);
+    const url = new URL(location);
+    assert.equal(url.hostname, "id.vk.ru");
+    assert.equal(url.pathname, "/authorize");
+    assert.equal(url.searchParams.get("client_id"), "54549672");
+    assert.ok(url.searchParams.get("state"));
+    assert.ok(url.searchParams.get("code_challenge"));
+    return {
+      state: url.searchParams.get("state"),
+      redirectUri: url.searchParams.get("redirect_uri"),
+    };
+  }
+
+  try {
+    const existingUser = await registerUser("vk-linked@rodnya.app", "VK Linked");
+    await ctx.store.linkAuthIdentity(existingUser.user.id, {
+      provider: "vk",
+      providerUserId: "vk-existing",
+      email: "vk-linked@rodnya.app",
+      displayName: "VK Existing",
+    });
+
+    const existingStart = await startVkFlow();
+    assert.match(existingStart.redirectUri, /\/v1\/auth\/vk\/callback$/);
+    const linkedCallbackResponse = await fetch(
+      `${ctx.baseUrl}/v1/auth/vk/callback?state=${encodeURIComponent(existingStart.state)}&code=existing-code&device_id=device-1`,
+      {redirect: "manual"},
+    );
+    assert.equal(linkedCallbackResponse.status, 302);
+    const linkedLocation = linkedCallbackResponse.headers.get("location");
+    assert.match(linkedLocation, /vkAuthCode=/);
+    const linkedAuthCode = extractHashQueryParam(linkedLocation, "vkAuthCode");
+    assert.ok(linkedAuthCode);
+
+    const linkedExchangeResponse = await fetch(
+      `${ctx.baseUrl}/v1/auth/vk/exchange`,
+      {
+        method: "POST",
+        headers: {"content-type": "application/json"},
+        body: JSON.stringify({code: linkedAuthCode}),
+      },
+    );
+    assert.equal(linkedExchangeResponse.status, 200);
+    const linkedExchangePayload = await linkedExchangeResponse.json();
+    assert.equal(linkedExchangePayload.status, "authenticated");
+    assert.equal(linkedExchangePayload.auth.user.id, existingUser.user.id);
+    assert.ok(linkedExchangePayload.auth.user.providerIds.includes("vk"));
+
+    const linkedIntentStart = await startVkFlow("link");
+    const linkedIntentCallbackResponse = await fetch(
+      `${ctx.baseUrl}/v1/auth/vk/callback?state=${encodeURIComponent(linkedIntentStart.state)}&code=existing-code&device_id=device-2`,
+      {redirect: "manual"},
+    );
+    assert.equal(linkedIntentCallbackResponse.status, 302);
+    const linkedIntentLocation = linkedIntentCallbackResponse.headers.get("location");
+    assert.equal(extractHashQueryParam(linkedIntentLocation, "vkIntent"), "link");
+    const linkedIntentCode = extractHashQueryParam(linkedIntentLocation, "vkAuthCode");
+    assert.ok(linkedIntentCode);
+
+    const linkedIntentExchangeResponse = await fetch(
+      `${ctx.baseUrl}/v1/auth/vk/exchange`,
+      {
+        method: "POST",
+        headers: {"content-type": "application/json"},
+        body: JSON.stringify({code: linkedIntentCode}),
+      },
+    );
+    assert.equal(linkedIntentExchangeResponse.status, 200);
+    const linkedIntentExchangePayload = await linkedIntentExchangeResponse.json();
+    assert.equal(linkedIntentExchangePayload.status, "already_linked");
+    assert.match(linkedIntentExchangePayload.message, /уже привязан/i);
+
+    const pendingUser = await registerUser("vk-pending@rodnya.app", "VK Pending");
+    const pendingStart = await startVkFlow();
+    const pendingCallbackResponse = await fetch(
+      `${ctx.baseUrl}/v1/auth/vk/callback?state=${encodeURIComponent(pendingStart.state)}&code=pending-code&device_id=device-3`,
+      {redirect: "manual"},
+    );
+    assert.equal(pendingCallbackResponse.status, 302);
+    const pendingLocation = pendingCallbackResponse.headers.get("location");
+    const pendingAuthCode = extractHashQueryParam(pendingLocation, "vkAuthCode");
+    assert.ok(pendingAuthCode);
+
+    const pendingExchangeResponse = await fetch(
+      `${ctx.baseUrl}/v1/auth/vk/exchange`,
+      {
+        method: "POST",
+        headers: {"content-type": "application/json"},
+        body: JSON.stringify({code: pendingAuthCode}),
+      },
+    );
+    assert.equal(pendingExchangeResponse.status, 200);
+    const pendingExchangePayload = await pendingExchangeResponse.json();
+    assert.equal(pendingExchangePayload.status, "pending_link");
+    assert.ok(pendingExchangePayload.linkCode);
+    assert.match(pendingExchangePayload.message, /VK ID/i);
+
+    const linkResponse = await fetch(`${ctx.baseUrl}/v1/auth/vk/link`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${pendingUser.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({code: pendingExchangePayload.linkCode}),
+    });
+    assert.equal(linkResponse.status, 200);
+    const linkPayload = await linkResponse.json();
+    assert.equal(linkPayload.ok, true);
+    assert.ok(linkPayload.user.providerIds.includes("vk"));
+
+    const owner = await registerUser("vk-owner@rodnya.app", "VK Owner");
+    const outsider = await registerUser("vk-outsider@rodnya.app", "VK Outsider");
+
+    const phoneMatchStart = await startVkFlow("link");
+    const phoneMatchCallbackResponse = await fetch(
+      `${ctx.baseUrl}/v1/auth/vk/callback?state=${encodeURIComponent(phoneMatchStart.state)}&code=phone-match-code&device_id=device-4`,
+      {redirect: "manual"},
+    );
+    assert.equal(phoneMatchCallbackResponse.status, 302);
+    const phoneMatchLocation = phoneMatchCallbackResponse.headers.get("location");
+    const phoneMatchAuthCode = extractHashQueryParam(
+      phoneMatchLocation,
+      "vkAuthCode",
+    );
+    assert.ok(phoneMatchAuthCode);
+
+    const phoneMatchExchangeResponse = await fetch(
+      `${ctx.baseUrl}/v1/auth/vk/exchange`,
+      {
+        method: "POST",
+        headers: {"content-type": "application/json"},
+        body: JSON.stringify({code: phoneMatchAuthCode}),
+      },
+    );
+    assert.equal(phoneMatchExchangeResponse.status, 200);
+    const phoneMatchExchangePayload = await phoneMatchExchangeResponse.json();
+    assert.equal(phoneMatchExchangePayload.status, "pending_link");
+    assert.ok(phoneMatchExchangePayload.linkCode);
+
+    const conflictingLinkResponse = await fetch(`${ctx.baseUrl}/v1/auth/vk/link`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${outsider.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({code: phoneMatchExchangePayload.linkCode}),
+    });
+    assert.equal(conflictingLinkResponse.status, 200);
+    const conflictingLinkPayload = await conflictingLinkResponse.json();
+    assert.equal(conflictingLinkPayload.user.providerIds.includes("vk"), true);
   } finally {
     await stopTestServer(ctx);
   }
@@ -464,7 +2974,7 @@ test("profile notes and media endpoints work for authenticated user", async () =
       method: "POST",
       headers: {"content-type": "application/json"},
       body: JSON.stringify({
-        email: "notes@lineage.app",
+        email: "notes@rodnya.app",
         password: "secret123",
         displayName: "Notes User",
       }),
@@ -575,7 +3085,7 @@ test("tree endpoints cover create tree, persons and relations", async () => {
       method: "POST",
       headers: {"content-type": "application/json"},
       body: JSON.stringify({
-        email: "tree@lineage.app",
+        email: "tree@rodnya.app",
         password: "secret123",
         displayName: "Иван Иванов",
       }),
@@ -695,7 +3205,7 @@ test("tree history and relative gallery endpoints keep legacy photo alias", asyn
       method: "POST",
       headers: {"content-type": "application/json"},
       body: JSON.stringify({
-        email: "tree-history@lineage.app",
+        email: "tree-history@rodnya.app",
         password: "secret123",
         displayName: "История Дерева",
       }),
@@ -896,7 +3406,7 @@ test("relation endpoints persist marriage and divorce dates", async () => {
       method: "POST",
       headers: {"content-type": "application/json"},
       body: JSON.stringify({
-        email: "relations-dates@lineage.app",
+        email: "relations-dates@rodnya.app",
         password: "secret123",
         displayName: "Relation Dates",
       }),
@@ -1009,7 +3519,7 @@ test("public tree endpoints expose read-only tree data without auth", async () =
       method: "POST",
       headers: {"content-type": "application/json"},
       body: JSON.stringify({
-        email: "public-tree@lineage.app",
+        email: "public-tree@rodnya.app",
         password: "secret123",
         displayName: "Публичный Автор",
       }),
@@ -1120,7 +3630,7 @@ test("tree delete removes owned trees and lets members leave invited trees", asy
       method: "POST",
       headers: {"content-type": "application/json"},
       body: JSON.stringify({
-        email: "tree-delete-owner@lineage.app",
+        email: "tree-delete-owner@rodnya.app",
         password: "secret123",
         displayName: "Tree Delete Owner",
       }),
@@ -1132,7 +3642,7 @@ test("tree delete removes owned trees and lets members leave invited trees", asy
       method: "POST",
       headers: {"content-type": "application/json"},
       body: JSON.stringify({
-        email: "tree-delete-member@lineage.app",
+        email: "tree-delete-member@rodnya.app",
         password: "secret123",
         displayName: "Tree Delete Member",
       }),
@@ -1278,7 +3788,7 @@ test("post endpoints cover feed, likes and comments", async () => {
       method: "POST",
       headers: {"content-type": "application/json"},
       body: JSON.stringify({
-        email: "posts-alice@lineage.app",
+        email: "posts-alice@rodnya.app",
         password: "secret123",
         displayName: "Alice Posts",
       }),
@@ -1290,7 +3800,7 @@ test("post endpoints cover feed, likes and comments", async () => {
       method: "POST",
       headers: {"content-type": "application/json"},
       body: JSON.stringify({
-        email: "posts-bob@lineage.app",
+        email: "posts-bob@rodnya.app",
         password: "secret123",
         displayName: "Bob Posts",
       }),
@@ -1474,7 +3984,7 @@ test("story endpoints support create, view, expiry and delete", async () => {
       method: "POST",
       headers: {"content-type": "application/json"},
       body: JSON.stringify({
-        email: "stories-alice@lineage.app",
+        email: "stories-alice@rodnya.app",
         password: "secret123",
         displayName: "Alice Stories",
       }),
@@ -1486,7 +3996,7 @@ test("story endpoints support create, view, expiry and delete", async () => {
       method: "POST",
       headers: {"content-type": "application/json"},
       body: JSON.stringify({
-        email: "stories-bob@lineage.app",
+        email: "stories-bob@rodnya.app",
         password: "secret123",
         displayName: "Bob Stories",
       }),
@@ -1647,7 +4157,7 @@ test("chat endpoints cover preview list, history, send and mark as read", async 
       method: "POST",
       headers: {"content-type": "application/json"},
       body: JSON.stringify({
-        email: "alice@lineage.app",
+        email: "alice@rodnya.app",
         password: "secret123",
         displayName: "Alice",
       }),
@@ -1659,7 +4169,7 @@ test("chat endpoints cover preview list, history, send and mark as read", async 
       method: "POST",
       headers: {"content-type": "application/json"},
       body: JSON.stringify({
-        email: "bob@lineage.app",
+        email: "bob@rodnya.app",
         password: "secret123",
         displayName: "Bob",
       }),
@@ -1764,7 +4274,7 @@ test("group chat endpoints create previews before first message and keep media p
       method: "POST",
       headers: {"content-type": "application/json"},
       body: JSON.stringify({
-        email: "group-alice@lineage.app",
+        email: "group-alice@rodnya.app",
         password: "secret123",
         displayName: "Alice Group",
       }),
@@ -1776,7 +4286,7 @@ test("group chat endpoints create previews before first message and keep media p
       method: "POST",
       headers: {"content-type": "application/json"},
       body: JSON.stringify({
-        email: "group-bob@lineage.app",
+        email: "group-bob@rodnya.app",
         password: "secret123",
         displayName: "Bob Group",
       }),
@@ -1788,7 +4298,7 @@ test("group chat endpoints create previews before first message and keep media p
       method: "POST",
       headers: {"content-type": "application/json"},
       body: JSON.stringify({
-        email: "group-cara@lineage.app",
+        email: "group-cara@rodnya.app",
         password: "secret123",
         displayName: "Cara Group",
       }),
@@ -1878,6 +4388,58 @@ test("group chat endpoints create previews before first message and keep media p
   }
 });
 
+test("direct chat details accept reversed participant order and return canonical chat id", async () => {
+  const ctx = await startTestServer();
+
+  try {
+    const register = async (email, displayName) => {
+      const response = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+        method: "POST",
+        headers: {"content-type": "application/json"},
+        body: JSON.stringify({
+          email,
+          password: "secret123",
+          displayName,
+        }),
+      });
+      assert.equal(response.status, 201);
+      return response.json();
+    };
+
+    const alice = await register("direct-details-alice@rodnya.app", "Alice");
+    const bob = await register("direct-details-bob@rodnya.app", "Bob");
+
+    const createChatResponse = await fetch(`${ctx.baseUrl}/v1/chats/direct`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${alice.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({otherUserId: bob.user.id}),
+    });
+    assert.equal(createChatResponse.status, 200);
+    const createdChat = await createChatResponse.json();
+    assert.equal(
+      createdChat.chatId,
+      [alice.user.id, bob.user.id].sort().join("_"),
+    );
+
+    const detailsResponse = await fetch(
+      `${ctx.baseUrl}/v1/chats/${bob.user.id}_${alice.user.id}`,
+      {
+        headers: {authorization: `Bearer ${bob.accessToken}`},
+      },
+    );
+    assert.equal(detailsResponse.status, 200);
+    const detailsPayload = await detailsResponse.json();
+    assert.equal(detailsPayload.chat.id, createdChat.chatId);
+    assert.equal(detailsPayload.chat.type, "direct");
+    assert.equal(detailsPayload.participants.length, 2);
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
 test("chat message edit and delete endpoints enforce ownership", async () => {
   const ctx = await startTestServer();
 
@@ -1886,7 +4448,7 @@ test("chat message edit and delete endpoints enforce ownership", async () => {
       method: "POST",
       headers: {"content-type": "application/json"},
       body: JSON.stringify({
-        email: "edit-alice@lineage.app",
+        email: "edit-alice@rodnya.app",
         password: "secret123",
         displayName: "Alice Edit",
       }),
@@ -1898,7 +4460,7 @@ test("chat message edit and delete endpoints enforce ownership", async () => {
       method: "POST",
       headers: {"content-type": "application/json"},
       body: JSON.stringify({
-        email: "edit-bob@lineage.app",
+        email: "edit-bob@rodnya.app",
         password: "secret123",
         displayName: "Bob Edit",
       }),
@@ -2016,10 +4578,10 @@ test("group chat details and participant management work for ordinary groups", a
       return response.json();
     };
 
-    const alice = await register("group-details-alice@lineage.app", "Alice");
-    const bob = await register("group-details-bob@lineage.app", "Bob");
-    const cara = await register("group-details-cara@lineage.app", "Cara");
-    const dan = await register("group-details-dan@lineage.app", "Dan");
+    const alice = await register("group-details-alice@rodnya.app", "Alice");
+    const bob = await register("group-details-bob@rodnya.app", "Bob");
+    const cara = await register("group-details-cara@rodnya.app", "Cara");
+    const dan = await register("group-details-dan@rodnya.app", "Dan");
 
     const createResponse = await fetch(`${ctx.baseUrl}/v1/chats/groups`, {
       method: "POST",
@@ -2100,6 +4662,1747 @@ test("group chat details and participant management work for ordinary groups", a
   }
 });
 
+test("tree graph snapshot syncs profile fields and normalizes family units", async () => {
+  const ctx = await startTestServer();
+
+  try {
+    const aliceResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "graph-alice@rodnya.app",
+        password: "secret123",
+        displayName: "Артем Кузнецов",
+      }),
+    });
+    assert.equal(aliceResponse.status, 201);
+    const alice = await aliceResponse.json();
+
+    const bobResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "graph-bob@rodnya.app",
+        password: "secret123",
+        displayName: "Анастасия Шульяк",
+      }),
+    });
+    assert.equal(bobResponse.status, 201);
+    const bob = await bobResponse.json();
+
+    const createTreeResponse = await fetch(`${ctx.baseUrl}/v1/trees`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${alice.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "Семья Кузнецовых",
+        description: "Проверка graph snapshot",
+        isPrivate: true,
+      }),
+    });
+    assert.equal(createTreeResponse.status, 201);
+    const createdTreePayload = await createTreeResponse.json();
+    const treeId = createdTreePayload.tree.id;
+
+    const initialPersonsResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeId}/persons`,
+      {
+        headers: {authorization: `Bearer ${alice.accessToken}`},
+      },
+    );
+    assert.equal(initialPersonsResponse.status, 200);
+    const initialPersonsPayload = await initialPersonsResponse.json();
+    const alicePersonId = initialPersonsPayload.persons[0].id;
+
+    const updateProfileResponse = await fetch(`${ctx.baseUrl}/v1/profile/me`, {
+      method: "PATCH",
+      headers: {
+        authorization: `Bearer ${alice.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        firstName: "Артем",
+        lastName: "Кузнецов",
+        middleName: "Андреевич",
+        displayName: "Кузнецов Артем Андреевич",
+        photoUrl: "https://cdn.example.com/artem-profile.jpg",
+        gender: "male",
+      }),
+    });
+    assert.equal(updateProfileResponse.status, 200);
+
+    const inviteResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeId}/invitations`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${alice.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          recipientUserId: bob.user.id,
+        }),
+      },
+    );
+    assert.equal(inviteResponse.status, 201);
+    const invitePayload = await inviteResponse.json();
+
+    const acceptInviteResponse = await fetch(
+      `${ctx.baseUrl}/v1/tree-invitations/${invitePayload.invitation.invitationId}/respond`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${bob.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({accept: true}),
+      },
+    );
+    assert.equal(acceptInviteResponse.status, 200);
+
+    const createPerson = async (token, payload) => {
+      const response = await fetch(`${ctx.baseUrl}/v1/trees/${treeId}/persons`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+      assert.equal(response.status, 201);
+      return (await response.json()).person;
+    };
+
+    const createRelation = async (token, payload) => {
+      const response = await fetch(`${ctx.baseUrl}/v1/trees/${treeId}/relations`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+      assert.equal(response.status, 201);
+      return (await response.json()).relation;
+    };
+
+    const father = await createPerson(alice.accessToken, {
+      firstName: "Геннадий",
+      lastName: "Мочалкин",
+      gender: "male",
+    });
+    const mother = await createPerson(alice.accessToken, {
+      firstName: "Лидия",
+      lastName: "Мочалкина",
+      gender: "female",
+    });
+    const sibling = await createPerson(alice.accessToken, {
+      firstName: "Дарья",
+      lastName: "Кузнецова",
+      gender: "female",
+    });
+    const spouse = await createPerson(bob.accessToken, {
+      firstName: "Анастасия",
+      lastName: "Шульяк",
+      gender: "female",
+      userId: bob.user.id,
+    });
+    const child = await createPerson(alice.accessToken, {
+      firstName: "Павел",
+      lastName: "Кузнецов",
+      gender: "male",
+    });
+
+    await createRelation(alice.accessToken, {
+      person1Id: father.id,
+      person2Id: alicePersonId,
+      relation1to2: "parent",
+      isConfirmed: true,
+    });
+    await createRelation(alice.accessToken, {
+      person1Id: mother.id,
+      person2Id: alicePersonId,
+      relation1to2: "parent",
+      isConfirmed: true,
+    });
+    await createRelation(alice.accessToken, {
+      person1Id: sibling.id,
+      person2Id: alicePersonId,
+      relation1to2: "sibling",
+      isConfirmed: true,
+    });
+    await createRelation(alice.accessToken, {
+      person1Id: alicePersonId,
+      person2Id: spouse.id,
+      relation1to2: "spouse",
+      isConfirmed: true,
+    });
+    await createRelation(alice.accessToken, {
+      person1Id: child.id,
+      person2Id: alicePersonId,
+      relation1to2: "child",
+      isConfirmed: true,
+    });
+
+    const relationsResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeId}/relations`,
+      {
+        headers: {authorization: `Bearer ${alice.accessToken}`},
+      },
+    );
+    assert.equal(relationsResponse.status, 200);
+    const relationsPayload = await relationsResponse.json();
+    const siblingParentRelations = relationsPayload.relations.filter((relation) => {
+      return (
+        relation.relation1to2 === "parent" &&
+        relation.person2Id === sibling.id
+      );
+    });
+    assert.equal(siblingParentRelations.length, 2);
+    assert.equal(
+      new Set(siblingParentRelations.map((relation) => relation.parentSetId)).size,
+      1,
+    );
+
+    const childParentRelations = relationsPayload.relations.filter((relation) => {
+      return (
+        relation.parentSetType === "biological" &&
+        ((relation.person1Id === child.id && relation.relation1to2 === "child") ||
+          (relation.person2Id === child.id && relation.relation1to2 === "parent"))
+      );
+    });
+    assert.equal(childParentRelations.length, 2);
+    assert.ok(
+      childParentRelations.some(
+        (relation) =>
+          relation.person1Id === spouse.id || relation.person2Id === spouse.id,
+      ),
+    );
+
+    const graphResponse = await fetch(`${ctx.baseUrl}/v1/trees/${treeId}/graph`, {
+      headers: {authorization: `Bearer ${alice.accessToken}`},
+    });
+    assert.equal(graphResponse.status, 200);
+    const graphPayload = await graphResponse.json();
+    assert.equal(graphPayload.snapshot.viewerPersonId, alicePersonId);
+
+    const aliceGraphPerson = graphPayload.snapshot.people.find(
+      (person) => person.id === alicePersonId,
+    );
+    assert.equal(aliceGraphPerson.name, "Кузнецов Артем Андреевич");
+    assert.equal(
+      aliceGraphPerson.photoUrl,
+      "https://cdn.example.com/artem-profile.jpg",
+    );
+
+    const siblingDescriptor = graphPayload.snapshot.viewerDescriptors.find(
+      (descriptor) => descriptor.personId === sibling.id,
+    );
+    assert.ok(
+      siblingDescriptor.primaryRelationLabel.toLowerCase().includes("сестр"),
+    );
+
+    const spouseUnit = graphPayload.snapshot.familyUnits.find((unit) => {
+      return (
+        unit.adultIds.includes(alicePersonId) &&
+        unit.adultIds.includes(spouse.id) &&
+        unit.childIds.includes(child.id)
+      );
+    });
+    assert.ok(spouseUnit);
+
+    const generationRows = graphPayload.snapshot.generationRows;
+    assert.ok(generationRows.length >= 3);
+    assert.ok(
+      generationRows.some((row) => row.personIds.includes(child.id)),
+    );
+    assert.ok(
+      generationRows.some(
+        (row) =>
+          row.personIds.includes(father.id) && row.personIds.includes(mother.id),
+      ),
+    );
+
+    const branchBlock = graphPayload.snapshot.branchBlocks.find((block) => {
+      return (
+        block.memberPersonIds.includes(alicePersonId) &&
+        block.memberPersonIds.includes(spouse.id) &&
+        block.memberPersonIds.includes(child.id)
+      );
+    });
+    assert.ok(branchBlock);
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("tree graph snapshot backfills linked profile photo for stale tree persons", async () => {
+  const ctx = await startTestServer();
+
+  try {
+    const registerResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "graph-stale@rodnya.app",
+        password: "secret123",
+        displayName: "Артем Кузнецов",
+      }),
+    });
+    assert.equal(registerResponse.status, 201);
+    const registered = await registerResponse.json();
+
+    const createTreeResponse = await fetch(`${ctx.baseUrl}/v1/trees`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${registered.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "Семья Кузнецовых",
+        description: "Проверка stale linked person",
+        isPrivate: true,
+      }),
+    });
+    assert.equal(createTreeResponse.status, 201);
+    const createdTreePayload = await createTreeResponse.json();
+    const treeId = createdTreePayload.tree.id;
+
+    const personsResponse = await fetch(`${ctx.baseUrl}/v1/trees/${treeId}/persons`, {
+      headers: {authorization: `Bearer ${registered.accessToken}`},
+    });
+    assert.equal(personsResponse.status, 200);
+    const personsPayload = await personsResponse.json();
+    const personId = personsPayload.persons[0].id;
+
+    const snapshot = await ctx.store._read();
+    const linkedPerson = snapshot.persons.find((entry) => entry.id === personId);
+    const linkedUser = snapshot.users.find((entry) => entry.id === registered.user.id);
+    assert.ok(linkedPerson);
+    assert.ok(linkedUser);
+
+    linkedPerson.name = "Кузнецов Артем";
+    linkedPerson.photoUrl = null;
+    linkedPerson.primaryPhotoUrl = null;
+    linkedPerson.photoGallery = [];
+    linkedUser.profile = {
+      ...linkedUser.profile,
+      firstName: "Артем",
+      middleName: "Андреевич",
+      lastName: "Кузнецов",
+      displayName: "Артем Андреевич Кузнецов",
+      photoUrl: "https://cdn.example.com/artem-read-sync.jpg",
+      gender: "male",
+    };
+    await ctx.store._write(snapshot);
+
+    const refreshedPersonsResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeId}/persons`,
+      {
+        headers: {authorization: `Bearer ${registered.accessToken}`},
+      },
+    );
+    assert.equal(refreshedPersonsResponse.status, 200);
+    const refreshedPersonsPayload = await refreshedPersonsResponse.json();
+    const refreshedPerson = refreshedPersonsPayload.persons.find(
+      (entry) => entry.id === personId,
+    );
+    assert.equal(
+      refreshedPerson.primaryPhotoUrl,
+      "https://cdn.example.com/artem-read-sync.jpg",
+    );
+    assert.equal(
+      refreshedPerson.name,
+      "Кузнецов Артем Андреевич",
+    );
+
+    const graphResponse = await fetch(`${ctx.baseUrl}/v1/trees/${treeId}/graph`, {
+      headers: {authorization: `Bearer ${registered.accessToken}`},
+    });
+    assert.equal(graphResponse.status, 200);
+    const graphPayload = await graphResponse.json();
+    const graphPerson = graphPayload.snapshot.people.find((entry) => entry.id === personId);
+    assert.equal(
+      graphPerson.primaryPhotoUrl,
+      "https://cdn.example.com/artem-read-sync.jpg",
+    );
+    assert.equal(
+      graphPerson.name,
+      "Кузнецов Артем Андреевич",
+    );
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("tree graph snapshot infers detailed Russian in-law labels for the viewer", async () => {
+  const ctx = await startTestServer();
+
+  try {
+    const viewerResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "graph-inlaw-viewer@rodnya.app",
+        password: "secret123",
+        displayName: "Артем Кузнецов",
+      }),
+    });
+    assert.equal(viewerResponse.status, 201);
+    const viewer = await viewerResponse.json();
+
+    const createTreeResponse = await fetch(`${ctx.baseUrl}/v1/trees`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${viewer.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "Семья для свойств",
+        isPrivate: true,
+      }),
+    });
+    assert.equal(createTreeResponse.status, 201);
+    const treePayload = await createTreeResponse.json();
+    const treeId = treePayload.tree.id;
+
+    const initialPersonsResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeId}/persons`,
+      {
+        headers: {authorization: `Bearer ${viewer.accessToken}`},
+      },
+    );
+    assert.equal(initialPersonsResponse.status, 200);
+    const initialPersonsPayload = await initialPersonsResponse.json();
+    const viewerPersonId = initialPersonsPayload.persons[0].id;
+
+    const createPerson = async (payload) => {
+      const response = await fetch(`${ctx.baseUrl}/v1/trees/${treeId}/persons`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${viewer.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+      assert.equal(response.status, 201);
+      return (await response.json()).person;
+    };
+
+    const createRelation = async (payload) => {
+      const response = await fetch(`${ctx.baseUrl}/v1/trees/${treeId}/relations`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${viewer.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+      assert.equal(response.status, 201);
+      return (await response.json()).relation;
+    };
+
+    const wife = await createPerson({
+      firstName: "Анна",
+      lastName: "Иванова",
+      gender: "female",
+    });
+    const fatherInLaw = await createPerson({
+      firstName: "Иван",
+      lastName: "Иванов",
+      gender: "male",
+    });
+    const motherInLaw = await createPerson({
+      firstName: "Мария",
+      lastName: "Иванова",
+      gender: "female",
+    });
+    const brotherInLaw = await createPerson({
+      firstName: "Петр",
+      lastName: "Иванов",
+      gender: "male",
+    });
+    const sisterInLaw = await createPerson({
+      firstName: "Ольга",
+      lastName: "Иванова",
+      gender: "female",
+    });
+    const svoyak = await createPerson({
+      firstName: "Сергей",
+      lastName: "Петров",
+      gender: "male",
+    });
+    const sister = await createPerson({
+      firstName: "Дарья",
+      lastName: "Кузнецова",
+      gender: "female",
+    });
+    const zyat = await createPerson({
+      firstName: "Никита",
+      lastName: "Смирнов",
+      gender: "male",
+    });
+    const child = await createPerson({
+      firstName: "Павел",
+      lastName: "Кузнецов",
+      gender: "male",
+    });
+    const daughterInLaw = await createPerson({
+      firstName: "Елена",
+      lastName: "Соколова",
+      gender: "female",
+    });
+    const svat = await createPerson({
+      firstName: "Виктор",
+      lastName: "Соколов",
+      gender: "male",
+    });
+
+    await createRelation({
+      person1Id: viewerPersonId,
+      person2Id: wife.id,
+      relation1to2: "spouse",
+      isConfirmed: true,
+    });
+
+    for (const childId of [wife.id, brotherInLaw.id, sisterInLaw.id]) {
+      await createRelation({
+        person1Id: fatherInLaw.id,
+        person2Id: childId,
+        relation1to2: "parent",
+        isConfirmed: true,
+      });
+      await createRelation({
+        person1Id: motherInLaw.id,
+        person2Id: childId,
+        relation1to2: "parent",
+        isConfirmed: true,
+      });
+    }
+
+    await createRelation({
+      person1Id: sisterInLaw.id,
+      person2Id: svoyak.id,
+      relation1to2: "spouse",
+      isConfirmed: true,
+    });
+    await createRelation({
+      person1Id: sister.id,
+      person2Id: zyat.id,
+      relation1to2: "spouse",
+      isConfirmed: true,
+    });
+    await createRelation({
+      person1Id: viewerPersonId,
+      person2Id: sister.id,
+      relation1to2: "sibling",
+      relation2to1: "sibling",
+      isConfirmed: true,
+    });
+    await createRelation({
+      person1Id: viewerPersonId,
+      person2Id: child.id,
+      relation1to2: "parent",
+      isConfirmed: true,
+    });
+    await createRelation({
+      person1Id: wife.id,
+      person2Id: child.id,
+      relation1to2: "parent",
+      isConfirmed: true,
+    });
+    await createRelation({
+      person1Id: child.id,
+      person2Id: daughterInLaw.id,
+      relation1to2: "spouse",
+      isConfirmed: true,
+    });
+    await createRelation({
+      person1Id: svat.id,
+      person2Id: daughterInLaw.id,
+      relation1to2: "parent",
+      isConfirmed: true,
+    });
+
+    const graphResponse = await fetch(`${ctx.baseUrl}/v1/trees/${treeId}/graph`, {
+      headers: {authorization: `Bearer ${viewer.accessToken}`},
+    });
+    assert.equal(graphResponse.status, 200);
+    const graphPayload = await graphResponse.json();
+    const labelsByPersonId = new Map(
+      graphPayload.snapshot.viewerDescriptors.map((descriptor) => [
+        descriptor.personId,
+        descriptor.primaryRelationLabel,
+      ]),
+    );
+
+    assert.equal(labelsByPersonId.get(fatherInLaw.id), "Тесть");
+    assert.equal(labelsByPersonId.get(motherInLaw.id), "Теща");
+    assert.equal(labelsByPersonId.get(brotherInLaw.id), "Шурин");
+    assert.equal(labelsByPersonId.get(sisterInLaw.id), "Свояченица");
+    assert.equal(labelsByPersonId.get(svoyak.id), "Свояк");
+    assert.equal(labelsByPersonId.get(zyat.id), "Зять");
+    assert.equal(labelsByPersonId.get(daughterInLaw.id), "Невестка");
+    assert.equal(labelsByPersonId.get(svat.id), "Сват");
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("tree graph snapshot repairs a missing primary parent from sibling-supported data", () => {
+  const treeId = "tree-parent-repair";
+  const viewerPersonId = "viewer-person";
+  const fatherId = "father-person";
+  const motherId = "mother-person";
+  const siblingId = "sibling-person";
+
+  const snapshot = buildTreeGraphSnapshot({
+    treeId,
+    viewerPersonId,
+    persons: [
+      {
+        id: viewerPersonId,
+        treeId,
+        name: "Наталья Кузнецова",
+        gender: "female",
+      },
+      {
+        id: fatherId,
+        treeId,
+        name: "Мочалкин Геннадий",
+        gender: "male",
+      },
+      {
+        id: motherId,
+        treeId,
+        name: "Мочалкина Лидия",
+        gender: "female",
+      },
+      {
+        id: siblingId,
+        treeId,
+        name: "Мочалкин Евгений",
+        gender: "male",
+      },
+    ],
+    relations: [
+      {
+        id: "union-1",
+        treeId,
+        person1Id: fatherId,
+        person2Id: motherId,
+        relation1to2: "spouse",
+        relation2to1: "spouse",
+        isConfirmed: true,
+      },
+      {
+        id: "parent-1",
+        treeId,
+        person1Id: fatherId,
+        person2Id: viewerPersonId,
+        relation1to2: "parent",
+        relation2to1: "child",
+        parentSetType: "biological",
+        isPrimaryParentSet: true,
+        isConfirmed: true,
+      },
+      {
+        id: "parent-2",
+        treeId,
+        person1Id: fatherId,
+        person2Id: siblingId,
+        relation1to2: "parent",
+        relation2to1: "child",
+        parentSetType: "biological",
+        isPrimaryParentSet: true,
+        isConfirmed: true,
+      },
+      {
+        id: "parent-3",
+        treeId,
+        person1Id: motherId,
+        person2Id: siblingId,
+        relation1to2: "parent",
+        relation2to1: "child",
+        parentSetType: "biological",
+        isPrimaryParentSet: true,
+        isConfirmed: true,
+      },
+    ],
+  });
+
+  const inferredRelation = snapshot.relations.find((relation) => {
+    return relation.person1Id === motherId && relation.person2Id === viewerPersonId;
+  });
+
+  assert.ok(inferredRelation);
+  assert.match(inferredRelation.id, /^inferred:/);
+  const repairWarning = snapshot.warnings.find((warning) => {
+    return warning.code === "auto_repaired_parent_link";
+  });
+  assert.ok(repairWarning);
+  assert.ok(repairWarning.relationIds.includes(inferredRelation.id));
+  assert.ok(repairWarning.personIds.includes(motherId));
+  assert.ok(repairWarning.personIds.includes(viewerPersonId));
+
+  const labelsByPersonId = new Map(
+    snapshot.viewerDescriptors.map((descriptor) => [
+      descriptor.personId,
+      descriptor.primaryRelationLabel,
+    ]),
+  );
+  assert.equal(labelsByPersonId.get(motherId), "Мать");
+});
+
+test("tree graph snapshot keeps spouse-only unions on the same generation row", () => {
+  const treeId = "tree-generation-row-harmonization";
+  const viewerPersonId = "viewer-person";
+  const viewerPartnerId = "viewer-partner";
+  const siblingId = "sibling-person";
+  const siblingPartnerId = "sibling-partner";
+  const childId = "child-person";
+  const fatherId = "father-person";
+  const motherId = "mother-person";
+  const grandfatherId = "grandfather-person";
+  const grandmotherId = "grandmother-person";
+
+  const snapshot = buildTreeGraphSnapshot({
+    treeId,
+    viewerPersonId,
+    persons: [
+      {id: viewerPersonId, treeId, name: "Артем Кузнецов", gender: "male"},
+      {id: viewerPartnerId, treeId, name: "Анастасия Шуфляк", gender: "female"},
+      {id: siblingId, treeId, name: "Дарья Кузнецова", gender: "female"},
+      {id: siblingPartnerId, treeId, name: "Сергей Понькин", gender: "male"},
+      {id: childId, treeId, name: "Павел Понькин", gender: "male"},
+      {id: fatherId, treeId, name: "Андрей Кузнецов", gender: "male"},
+      {id: motherId, treeId, name: "Наталья Кузнецова", gender: "female"},
+      {id: grandfatherId, treeId, name: "Анатолий Кузнецов", gender: "male"},
+      {id: grandmotherId, treeId, name: "Валентина Кузнецова", gender: "female"},
+    ],
+    relations: [
+      {
+        id: "grand-union",
+        treeId,
+        person1Id: grandfatherId,
+        person2Id: grandmotherId,
+        relation1to2: "spouse",
+        relation2to1: "spouse",
+        isConfirmed: true,
+      },
+      {
+        id: "grandfather-parent",
+        treeId,
+        person1Id: grandfatherId,
+        person2Id: fatherId,
+        relation1to2: "parent",
+        relation2to1: "child",
+        parentSetId: "grand-parents",
+        parentSetType: "biological",
+        isPrimaryParentSet: true,
+        isConfirmed: true,
+      },
+      {
+        id: "grandmother-parent",
+        treeId,
+        person1Id: grandmotherId,
+        person2Id: fatherId,
+        relation1to2: "parent",
+        relation2to1: "child",
+        parentSetId: "grand-parents",
+        parentSetType: "biological",
+        isPrimaryParentSet: true,
+        isConfirmed: true,
+      },
+      {
+        id: "parent-union",
+        treeId,
+        person1Id: fatherId,
+        person2Id: motherId,
+        relation1to2: "spouse",
+        relation2to1: "spouse",
+        isConfirmed: true,
+      },
+      {
+        id: "father-viewer",
+        treeId,
+        person1Id: fatherId,
+        person2Id: viewerPersonId,
+        relation1to2: "parent",
+        relation2to1: "child",
+        parentSetId: "viewer-parents",
+        parentSetType: "biological",
+        isPrimaryParentSet: true,
+        isConfirmed: true,
+      },
+      {
+        id: "mother-viewer",
+        treeId,
+        person1Id: motherId,
+        person2Id: viewerPersonId,
+        relation1to2: "parent",
+        relation2to1: "child",
+        parentSetId: "viewer-parents",
+        parentSetType: "biological",
+        isPrimaryParentSet: true,
+        isConfirmed: true,
+      },
+      {
+        id: "father-sibling",
+        treeId,
+        person1Id: fatherId,
+        person2Id: siblingId,
+        relation1to2: "parent",
+        relation2to1: "child",
+        parentSetId: "viewer-parents",
+        parentSetType: "biological",
+        isPrimaryParentSet: true,
+        isConfirmed: true,
+      },
+      {
+        id: "mother-sibling",
+        treeId,
+        person1Id: motherId,
+        person2Id: siblingId,
+        relation1to2: "parent",
+        relation2to1: "child",
+        parentSetId: "viewer-parents",
+        parentSetType: "biological",
+        isPrimaryParentSet: true,
+        isConfirmed: true,
+      },
+      {
+        id: "viewer-union",
+        treeId,
+        person1Id: viewerPersonId,
+        person2Id: viewerPartnerId,
+        relation1to2: "partner",
+        relation2to1: "partner",
+        isConfirmed: true,
+      },
+      {
+        id: "sibling-union",
+        treeId,
+        person1Id: siblingId,
+        person2Id: siblingPartnerId,
+        relation1to2: "spouse",
+        relation2to1: "spouse",
+        isConfirmed: true,
+      },
+      {
+        id: "sibling-child",
+        treeId,
+        person1Id: siblingId,
+        person2Id: childId,
+        relation1to2: "parent",
+        relation2to1: "child",
+        parentSetId: "child-parents",
+        parentSetType: "biological",
+        isPrimaryParentSet: true,
+        isConfirmed: true,
+      },
+      {
+        id: "sibling-partner-child",
+        treeId,
+        person1Id: siblingPartnerId,
+        person2Id: childId,
+        relation1to2: "parent",
+        relation2to1: "child",
+        parentSetId: "child-parents",
+        parentSetType: "biological",
+        isPrimaryParentSet: true,
+        isConfirmed: true,
+      },
+    ],
+  });
+
+  const rowByPersonId = new Map();
+  for (const row of snapshot.generationRows) {
+    for (const personId of row.personIds) {
+      rowByPersonId.set(personId, row.row);
+    }
+  }
+
+  assert.equal(rowByPersonId.get(viewerPartnerId), rowByPersonId.get(viewerPersonId));
+  assert.equal(rowByPersonId.get(siblingPartnerId), rowByPersonId.get(siblingId));
+  assert.equal(rowByPersonId.get(fatherId), rowByPersonId.get(motherId));
+  assert.equal(rowByPersonId.get(grandfatherId), rowByPersonId.get(grandmotherId));
+  assert.equal(rowByPersonId.get(childId), rowByPersonId.get(siblingId) + 1);
+  assert.ok(rowByPersonId.get(viewerPartnerId) > rowByPersonId.get(grandfatherId));
+});
+
+test("tree graph snapshot merges sibling children with the same parents into one family unit", () => {
+  const treeId = "tree-merged-sibling-family-unit";
+  const firstChildId = "first-child";
+  const secondChildId = "second-child";
+  const fatherId = "father-person";
+  const motherId = "mother-person";
+
+  const snapshot = buildTreeGraphSnapshot({
+    treeId,
+    viewerPersonId: firstChildId,
+    persons: [
+      {id: firstChildId, treeId, name: "Наталья Кузнецова", gender: "female"},
+      {id: secondChildId, treeId, name: "Евгений Мочалкин", gender: "male"},
+      {id: fatherId, treeId, name: "Геннадий Мочалкин", gender: "male"},
+      {id: motherId, treeId, name: "Лидия Мочалкина", gender: "female"},
+    ],
+    relations: [
+      {
+        id: "parent-first-father",
+        treeId,
+        person1Id: fatherId,
+        person2Id: firstChildId,
+        relation1to2: "parent",
+        relation2to1: "child",
+        parentSetId: "first-child-parents",
+        parentSetType: "biological",
+        isPrimaryParentSet: true,
+        isConfirmed: true,
+      },
+      {
+        id: "parent-first-mother",
+        treeId,
+        person1Id: motherId,
+        person2Id: firstChildId,
+        relation1to2: "parent",
+        relation2to1: "child",
+        parentSetId: "first-child-parents",
+        parentSetType: "biological",
+        isPrimaryParentSet: true,
+        isConfirmed: true,
+      },
+      {
+        id: "parent-second-father",
+        treeId,
+        person1Id: fatherId,
+        person2Id: secondChildId,
+        relation1to2: "parent",
+        relation2to1: "child",
+        parentSetId: "second-child-parents",
+        parentSetType: "biological",
+        isPrimaryParentSet: true,
+        isConfirmed: true,
+      },
+      {
+        id: "parent-second-mother",
+        treeId,
+        person1Id: motherId,
+        person2Id: secondChildId,
+        relation1to2: "parent",
+        relation2to1: "child",
+        parentSetId: "second-child-parents",
+        parentSetType: "biological",
+        isPrimaryParentSet: true,
+        isConfirmed: true,
+      },
+      {
+        id: "parent-union",
+        treeId,
+        person1Id: fatherId,
+        person2Id: motherId,
+        relation1to2: "spouse",
+        relation2to1: "spouse",
+        isConfirmed: true,
+      },
+    ],
+  });
+
+  const mergedUnit = snapshot.familyUnits.find((unit) => {
+    return (
+      unit.adultIds.includes(fatherId) &&
+      unit.adultIds.includes(motherId) &&
+      unit.childIds.includes(firstChildId) &&
+      unit.childIds.includes(secondChildId)
+    );
+  });
+
+  assert.ok(mergedUnit);
+  assert.equal(mergedUnit.childIds.length, 2);
+  assert.ok(
+    snapshot.generationRows.some((row) => {
+      return row.familyUnitIds.includes(mergedUnit.id);
+    }),
+  );
+});
+
+test("tree graph snapshot keeps paternal grandparents below great-grandparents", () => {
+  const treeId = "tree-paternal-grandparents-below-great-grandparents";
+  const alexanderId = "great-grandfather";
+  const mariaId = "great-grandmother";
+  const gennadyId = "maternal-grandfather";
+  const lydiaId = "maternal-grandmother";
+  const anatolyId = "paternal-grandfather";
+  const valentinaId = "paternal-grandmother";
+  const andreyId = "father-person";
+  const nataliaId = "mother-person";
+  const evgeniyId = "uncle-person";
+  const artemId = "viewer-person";
+
+  const snapshot = buildTreeGraphSnapshot({
+    treeId,
+    viewerPersonId: artemId,
+    persons: [
+      {id: alexanderId, treeId, name: "Супрунов Александр", gender: "male"},
+      {id: mariaId, treeId, name: "Супрунова Мария", gender: "female"},
+      {id: gennadyId, treeId, name: "Мочалкин Геннадий Иванович", gender: "male"},
+      {id: lydiaId, treeId, name: "Мочалкина Лидия Александровна", gender: "female"},
+      {id: anatolyId, treeId, name: "Кузнецов Анатолий Степанович", gender: "male"},
+      {id: valentinaId, treeId, name: "Кузнецова Валентина", gender: "female"},
+      {id: andreyId, treeId, name: "Кузнецов Андрей Анатольевич", gender: "male"},
+      {id: nataliaId, treeId, name: "Кузнецова Наталья Геннадьевна", gender: "female"},
+      {id: evgeniyId, treeId, name: "Мочалкин Евгений Геннадьевич", gender: "male"},
+      {id: artemId, treeId, name: "Кузнецов Артем Андреевич", gender: "male"},
+    ],
+    relations: [
+      {
+        id: "suprunov-union",
+        treeId,
+        person1Id: alexanderId,
+        person2Id: mariaId,
+        relation1to2: "spouse",
+        relation2to1: "spouse",
+        isConfirmed: true,
+      },
+      {
+        id: "maternal-grandparents-union",
+        treeId,
+        person1Id: gennadyId,
+        person2Id: lydiaId,
+        relation1to2: "spouse",
+        relation2to1: "spouse",
+        isConfirmed: true,
+      },
+      {
+        id: "paternal-grandparents-union",
+        treeId,
+        person1Id: anatolyId,
+        person2Id: valentinaId,
+        relation1to2: "spouse",
+        relation2to1: "spouse",
+        isConfirmed: true,
+      },
+      {
+        id: "parents-union",
+        treeId,
+        person1Id: andreyId,
+        person2Id: nataliaId,
+        relation1to2: "spouse",
+        relation2to1: "spouse",
+        isConfirmed: true,
+      },
+      {
+        id: "alexander-lydia",
+        treeId,
+        person1Id: alexanderId,
+        person2Id: lydiaId,
+        relation1to2: "parent",
+        relation2to1: "child",
+        parentSetId: "lydia-parents",
+        parentSetType: "biological",
+        isPrimaryParentSet: true,
+        isConfirmed: true,
+      },
+      {
+        id: "maria-lydia",
+        treeId,
+        person1Id: mariaId,
+        person2Id: lydiaId,
+        relation1to2: "parent",
+        relation2to1: "child",
+        parentSetId: "lydia-parents",
+        parentSetType: "biological",
+        isPrimaryParentSet: true,
+        isConfirmed: true,
+      },
+      {
+        id: "anatoly-andrey",
+        treeId,
+        person1Id: anatolyId,
+        person2Id: andreyId,
+        relation1to2: "parent",
+        relation2to1: "child",
+        parentSetId: "andrey-parents",
+        parentSetType: "biological",
+        isPrimaryParentSet: true,
+        isConfirmed: true,
+      },
+      {
+        id: "valentina-andrey",
+        treeId,
+        person1Id: valentinaId,
+        person2Id: andreyId,
+        relation1to2: "parent",
+        relation2to1: "child",
+        parentSetId: "andrey-parents",
+        parentSetType: "biological",
+        isPrimaryParentSet: true,
+        isConfirmed: true,
+      },
+      {
+        id: "gennady-natalia",
+        treeId,
+        person1Id: gennadyId,
+        person2Id: nataliaId,
+        relation1to2: "parent",
+        relation2to1: "child",
+        parentSetId: "natalia-parents",
+        parentSetType: "biological",
+        isPrimaryParentSet: true,
+        isConfirmed: true,
+      },
+      {
+        id: "lydia-natalia",
+        treeId,
+        person1Id: lydiaId,
+        person2Id: nataliaId,
+        relation1to2: "parent",
+        relation2to1: "child",
+        parentSetId: "natalia-parents",
+        parentSetType: "biological",
+        isPrimaryParentSet: true,
+        isConfirmed: true,
+      },
+      {
+        id: "gennady-evgeniy",
+        treeId,
+        person1Id: gennadyId,
+        person2Id: evgeniyId,
+        relation1to2: "parent",
+        relation2to1: "child",
+        parentSetId: "evgeniy-parents",
+        parentSetType: "biological",
+        isPrimaryParentSet: true,
+        isConfirmed: true,
+      },
+      {
+        id: "lydia-evgeniy",
+        treeId,
+        person1Id: lydiaId,
+        person2Id: evgeniyId,
+        relation1to2: "parent",
+        relation2to1: "child",
+        parentSetId: "evgeniy-parents",
+        parentSetType: "biological",
+        isPrimaryParentSet: true,
+        isConfirmed: true,
+      },
+      {
+        id: "andrey-artem",
+        treeId,
+        person1Id: andreyId,
+        person2Id: artemId,
+        relation1to2: "parent",
+        relation2to1: "child",
+        parentSetId: "artem-parents",
+        parentSetType: "biological",
+        isPrimaryParentSet: true,
+        isConfirmed: true,
+      },
+      {
+        id: "natalia-artem",
+        treeId,
+        person1Id: nataliaId,
+        person2Id: artemId,
+        relation1to2: "parent",
+        relation2to1: "child",
+        parentSetId: "artem-parents",
+        parentSetType: "biological",
+        isPrimaryParentSet: true,
+        isConfirmed: true,
+      },
+    ],
+  });
+
+  const rowByPersonId = new Map();
+  for (const row of snapshot.generationRows) {
+    for (const personId of row.personIds) {
+      rowByPersonId.set(personId, row.row);
+    }
+  }
+
+  assert.equal(rowByPersonId.get(alexanderId), rowByPersonId.get(mariaId));
+  assert.equal(rowByPersonId.get(gennadyId), rowByPersonId.get(lydiaId));
+  assert.equal(rowByPersonId.get(anatolyId), rowByPersonId.get(valentinaId));
+  assert.equal(rowByPersonId.get(gennadyId), rowByPersonId.get(anatolyId));
+  assert.equal(rowByPersonId.get(andreyId), rowByPersonId.get(nataliaId));
+  assert.equal(rowByPersonId.get(nataliaId), rowByPersonId.get(evgeniyId));
+  assert.equal(rowByPersonId.get(andreyId), rowByPersonId.get(gennadyId) + 1);
+  assert.equal(rowByPersonId.get(artemId), rowByPersonId.get(andreyId) + 1);
+  assert.ok(rowByPersonId.get(alexanderId) < rowByPersonId.get(anatolyId));
+});
+
+test("tree graph snapshot marks direct grandparent relations as blood relatives", () => {
+  const treeId = "tree-direct-grandparents";
+  const viewerPersonId = "viewer-person";
+  const grandfatherId = "grandfather-person";
+  const grandmotherId = "grandmother-person";
+
+  const snapshot = buildTreeGraphSnapshot({
+    treeId,
+    viewerPersonId,
+    persons: [
+      {id: viewerPersonId, treeId, name: "Артем Кузнецов", gender: "male"},
+      {id: grandfatherId, treeId, name: "Геннадий Мочалкин", gender: "male"},
+      {id: grandmotherId, treeId, name: "Лидия Мочалкина", gender: "female"},
+    ],
+    relations: [
+      {
+        id: "grandfather-direct",
+        treeId,
+        person1Id: grandfatherId,
+        person2Id: viewerPersonId,
+        relation1to2: "grandparent",
+        relation2to1: "grandchild",
+        isConfirmed: true,
+      },
+      {
+        id: "grandmother-direct",
+        treeId,
+        person1Id: grandmotherId,
+        person2Id: viewerPersonId,
+        relation1to2: "grandparent",
+        relation2to1: "grandchild",
+        isConfirmed: true,
+      },
+    ],
+  });
+
+  const descriptorsByPersonId = new Map(
+    snapshot.viewerDescriptors.map((descriptor) => [descriptor.personId, descriptor]),
+  );
+
+  assert.equal(descriptorsByPersonId.get(grandfatherId)?.primaryRelationLabel, "Дедушка");
+  assert.equal(descriptorsByPersonId.get(grandmotherId)?.primaryRelationLabel, "Бабушка");
+  assert.equal(descriptorsByPersonId.get(grandfatherId)?.isBlood, true);
+  assert.equal(descriptorsByPersonId.get(grandmotherId)?.isBlood, true);
+});
+
+test("graph warnings detect multiple primary parent sets for one child", () => {
+  const treeId = "tree-multi-primary-parent-sets";
+  const childId = "child-person";
+  const fatherId = "father-person";
+  const motherId = "mother-person";
+
+  const warnings = buildGraphWarnings({
+    persons: [
+      {id: childId, treeId, name: "Артем Кузнецов", gender: "male"},
+      {id: fatherId, treeId, name: "Андрей Кузнецов", gender: "male"},
+      {id: motherId, treeId, name: "Наталья Кузнецова", gender: "female"},
+    ],
+    relations: [
+      {
+        id: "parent-primary-1",
+        treeId,
+        person1Id: fatherId,
+        person2Id: childId,
+        relation1to2: "parent",
+        relation2to1: "child",
+        parentSetId: "set-biological-1",
+        parentSetType: "biological",
+        isPrimaryParentSet: true,
+        isConfirmed: true,
+      },
+      {
+        id: "parent-primary-2",
+        treeId,
+        person1Id: motherId,
+        person2Id: childId,
+        relation1to2: "parent",
+        relation2to1: "child",
+        parentSetId: "set-biological-2",
+        parentSetType: "biological",
+        isPrimaryParentSet: true,
+        isConfirmed: true,
+      },
+    ],
+    familyUnits: [
+      {
+        id: "unit-primary-a",
+        rootParentSetId: "set-biological-1",
+        adultIds: [fatherId],
+        childIds: [childId],
+        relationIds: ["parent-primary-1"],
+      },
+      {
+        id: "unit-primary-b",
+        rootParentSetId: "set-biological-2",
+        adultIds: [motherId],
+        childIds: [childId],
+        relationIds: ["parent-primary-2"],
+      },
+    ],
+  });
+
+  const warning = warnings.find((entry) => {
+    return entry.code === "multiple_primary_parent_sets";
+  });
+
+  assert.ok(warning);
+  assert.ok(warning.personIds.includes(childId));
+  assert.ok(warning.relationIds.includes("parent-primary-1"));
+  assert.ok(warning.relationIds.includes("parent-primary-2"));
+});
+
+test("tree graph snapshot warns about conflicting direct link categories", () => {
+  const treeId = "tree-conflicting-direct-links";
+  const viewerPersonId = "viewer-person";
+  const otherPersonId = "other-person";
+
+  const snapshot = buildTreeGraphSnapshot({
+    treeId,
+    viewerPersonId,
+    persons: [
+      {id: viewerPersonId, treeId, name: "Артем Кузнецов", gender: "male"},
+      {id: otherPersonId, treeId, name: "Анастасия Шуляк", gender: "female"},
+    ],
+    relations: [
+      {
+        id: "relation-union",
+        treeId,
+        person1Id: viewerPersonId,
+        person2Id: otherPersonId,
+        relation1to2: "partner",
+        relation2to1: "partner",
+        isConfirmed: true,
+      },
+      {
+        id: "relation-sibling",
+        treeId,
+        person1Id: viewerPersonId,
+        person2Id: otherPersonId,
+        relation1to2: "sibling",
+        relation2to1: "sibling",
+        isConfirmed: true,
+      },
+    ],
+  });
+
+  const warning = snapshot.warnings.find((entry) => {
+    return entry.code === "conflicting_direct_links";
+  });
+
+  assert.ok(warning);
+  assert.ok(warning.personIds.includes(viewerPersonId));
+  assert.ok(warning.personIds.includes(otherPersonId));
+  assert.ok(warning.relationIds.includes("relation-union"));
+  assert.ok(warning.relationIds.includes("relation-sibling"));
+});
+
+test("tree graph snapshot infers male-side in-law and stepchild labels", () => {
+  const treeId = "tree-male-inlaws";
+  const viewerPersonId = "viewer-person";
+  const husbandId = "husband-person";
+  const fatherInLawId = "father-in-law";
+  const motherInLawId = "mother-in-law";
+  const brotherInLawId = "brother-in-law";
+  const sisterInLawId = "sister-in-law";
+  const stepSonId = "step-son";
+
+  const snapshot = buildTreeGraphSnapshot({
+    treeId,
+    viewerPersonId,
+    persons: [
+      {id: viewerPersonId, treeId, name: "Мария Смирнова", gender: "female"},
+      {id: husbandId, treeId, name: "Иван Смирнов", gender: "male"},
+      {id: fatherInLawId, treeId, name: "Петр Смирнов", gender: "male"},
+      {id: motherInLawId, treeId, name: "Анна Смирнова", gender: "female"},
+      {id: brotherInLawId, treeId, name: "Олег Смирнов", gender: "male"},
+      {id: sisterInLawId, treeId, name: "Елена Смирнова", gender: "female"},
+      {id: stepSonId, treeId, name: "Максим Смирнов", gender: "male"},
+    ],
+    relations: [
+      {
+        id: "union-viewer",
+        treeId,
+        person1Id: viewerPersonId,
+        person2Id: husbandId,
+        relation1to2: "spouse",
+        relation2to1: "spouse",
+        isConfirmed: true,
+      },
+      {
+        id: "parent-father",
+        treeId,
+        person1Id: fatherInLawId,
+        person2Id: husbandId,
+        relation1to2: "parent",
+        relation2to1: "child",
+        parentSetType: "biological",
+        isPrimaryParentSet: true,
+        isConfirmed: true,
+      },
+      {
+        id: "parent-mother",
+        treeId,
+        person1Id: motherInLawId,
+        person2Id: husbandId,
+        relation1to2: "parent",
+        relation2to1: "child",
+        parentSetType: "biological",
+        isPrimaryParentSet: true,
+        isConfirmed: true,
+      },
+      {
+        id: "sibling-brother",
+        treeId,
+        person1Id: husbandId,
+        person2Id: brotherInLawId,
+        relation1to2: "sibling",
+        relation2to1: "sibling",
+        isConfirmed: true,
+      },
+      {
+        id: "sibling-sister",
+        treeId,
+        person1Id: husbandId,
+        person2Id: sisterInLawId,
+        relation1to2: "sibling",
+        relation2to1: "sibling",
+        isConfirmed: true,
+      },
+      {
+        id: "child-step",
+        treeId,
+        person1Id: husbandId,
+        person2Id: stepSonId,
+        relation1to2: "parent",
+        relation2to1: "child",
+        parentSetType: "biological",
+        isPrimaryParentSet: true,
+        isConfirmed: true,
+      },
+    ],
+  });
+
+  const labelsByPersonId = new Map(
+    snapshot.viewerDescriptors.map((descriptor) => [
+      descriptor.personId,
+      descriptor.primaryRelationLabel,
+    ]),
+  );
+
+  assert.equal(labelsByPersonId.get(fatherInLawId), "Свекор");
+  assert.equal(labelsByPersonId.get(motherInLawId), "Свекровь");
+  assert.equal(labelsByPersonId.get(brotherInLawId), "Деверь");
+  assert.equal(labelsByPersonId.get(sisterInLawId), "Золовка");
+  assert.equal(labelsByPersonId.get(stepSonId), "Пасынок");
+});
+
+test("tree graph snapshot preserves direct custom relation labels", () => {
+  const treeId = "tree-custom-direct";
+  const viewerPersonId = "viewer-person";
+  const godfatherId = "godfather-person";
+
+  const snapshot = buildTreeGraphSnapshot({
+    treeId,
+    viewerPersonId,
+    persons: [
+      {id: viewerPersonId, treeId, name: "Артем Кузнецов", gender: "male"},
+      {id: godfatherId, treeId, name: "Павел Иванов", gender: "male"},
+    ],
+    relations: [
+      {
+        id: "custom-relation",
+        treeId,
+        person1Id: godfatherId,
+        person2Id: viewerPersonId,
+        relation1to2: "other",
+        relation2to1: "other",
+        customRelationLabel1to2: "Кум",
+        customRelationLabel2to1: "Кум",
+        isConfirmed: true,
+      },
+    ],
+  });
+
+  const labelsByPersonId = new Map(
+    snapshot.viewerDescriptors.map((descriptor) => [
+      descriptor.personId,
+      descriptor.primaryRelationLabel,
+    ]),
+  );
+
+  assert.equal(labelsByPersonId.get(godfatherId), "Кум");
+  const directRelation = snapshot.relations.find((relation) => relation.id === "custom-relation");
+  assert.equal(directRelation?.customRelationLabel1to2, "Кум");
+  assert.equal(directRelation?.customRelationLabel2to1, "Кум");
+});
+
+test("tree graph snapshot infers stepparent and aunt-uncle-by-marriage labels", () => {
+  const treeId = "tree-affinal-extended";
+  const viewerPersonId = "viewer-person";
+  const fatherId = "father-person";
+  const motherId = "mother-person";
+  const stepMotherId = "step-mother";
+  const auntId = "aunt-person";
+  const auntSpouseId = "aunt-spouse";
+  const uncleId = "uncle-person";
+  const uncleSpouseId = "uncle-spouse";
+
+  const snapshot = buildTreeGraphSnapshot({
+    treeId,
+    viewerPersonId,
+    persons: [
+      {id: viewerPersonId, treeId, name: "Артем Кузнецов", gender: "male"},
+      {id: fatherId, treeId, name: "Андрей Кузнецов", gender: "male"},
+      {id: motherId, treeId, name: "Наталья Кузнецова", gender: "female"},
+      {id: stepMotherId, treeId, name: "Ольга Кузнецова", gender: "female"},
+      {id: auntId, treeId, name: "Марина Кузнецова", gender: "female"},
+      {id: auntSpouseId, treeId, name: "Сергей Кузнецов", gender: "male"},
+      {id: uncleId, treeId, name: "Виктор Кузнецов", gender: "male"},
+      {id: uncleSpouseId, treeId, name: "Ирина Кузнецова", gender: "female"},
+    ],
+    relations: [
+      {
+        id: "parent-father",
+        treeId,
+        person1Id: fatherId,
+        person2Id: viewerPersonId,
+        relation1to2: "parent",
+        relation2to1: "child",
+        parentSetType: "biological",
+        isPrimaryParentSet: true,
+        isConfirmed: true,
+      },
+      {
+        id: "parent-mother",
+        treeId,
+        person1Id: motherId,
+        person2Id: viewerPersonId,
+        relation1to2: "parent",
+        relation2to1: "child",
+        parentSetType: "biological",
+        isPrimaryParentSet: true,
+        isConfirmed: true,
+      },
+      {
+        id: "union-step",
+        treeId,
+        person1Id: fatherId,
+        person2Id: stepMotherId,
+        relation1to2: "spouse",
+        relation2to1: "spouse",
+        isConfirmed: true,
+      },
+      {
+        id: "mother-sibling",
+        treeId,
+        person1Id: motherId,
+        person2Id: auntId,
+        relation1to2: "sibling",
+        relation2to1: "sibling",
+        isConfirmed: true,
+      },
+      {
+        id: "aunt-union",
+        treeId,
+        person1Id: auntId,
+        person2Id: auntSpouseId,
+        relation1to2: "spouse",
+        relation2to1: "spouse",
+        isConfirmed: true,
+      },
+      {
+        id: "father-sibling",
+        treeId,
+        person1Id: fatherId,
+        person2Id: uncleId,
+        relation1to2: "sibling",
+        relation2to1: "sibling",
+        isConfirmed: true,
+      },
+      {
+        id: "uncle-union",
+        treeId,
+        person1Id: uncleId,
+        person2Id: uncleSpouseId,
+        relation1to2: "spouse",
+        relation2to1: "spouse",
+        isConfirmed: true,
+      },
+    ],
+  });
+
+  const labelsByPersonId = new Map(
+    snapshot.viewerDescriptors.map((descriptor) => [
+      descriptor.personId,
+      descriptor.primaryRelationLabel,
+    ]),
+  );
+
+  assert.equal(labelsByPersonId.get(stepMotherId), "Мачеха");
+  assert.equal(labelsByPersonId.get(auntSpouseId), "Дядя");
+  assert.equal(labelsByPersonId.get(uncleSpouseId), "Тетя");
+});
+
+test("tree graph snapshot infers extended collateral blood labels", async () => {
+  const ctx = await startTestServer();
+
+  try {
+    const viewerResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "graph-blood-viewer@rodnya.app",
+        password: "secret123",
+        displayName: "Максим Орлов",
+      }),
+    });
+    assert.equal(viewerResponse.status, 201);
+    const viewer = await viewerResponse.json();
+
+    const createTreeResponse = await fetch(`${ctx.baseUrl}/v1/trees`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${viewer.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "Семья для боковых линий",
+        isPrivate: true,
+      }),
+    });
+    assert.equal(createTreeResponse.status, 201);
+    const treePayload = await createTreeResponse.json();
+    const treeId = treePayload.tree.id;
+
+    const initialPersonsResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeId}/persons`,
+      {
+        headers: {authorization: `Bearer ${viewer.accessToken}`},
+      },
+    );
+    assert.equal(initialPersonsResponse.status, 200);
+    const initialPersonsPayload = await initialPersonsResponse.json();
+    const viewerPersonId = initialPersonsPayload.persons[0].id;
+
+    const createPerson = async (payload) => {
+      const response = await fetch(`${ctx.baseUrl}/v1/trees/${treeId}/persons`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${viewer.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+      assert.equal(response.status, 201);
+      return (await response.json()).person;
+    };
+
+    const createRelation = async (payload) => {
+      const response = await fetch(`${ctx.baseUrl}/v1/trees/${treeId}/relations`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${viewer.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+      assert.equal(response.status, 201);
+      return (await response.json()).relation;
+    };
+
+    const greatGrandfather = await createPerson({
+      firstName: "Степан",
+      lastName: "Орлов",
+      gender: "male",
+    });
+    const grandfather = await createPerson({
+      firstName: "Алексей",
+      lastName: "Орлов",
+      gender: "male",
+    });
+    const granduncle = await createPerson({
+      firstName: "Григорий",
+      lastName: "Орлов",
+      gender: "male",
+    });
+    const parent = await createPerson({
+      firstName: "Игорь",
+      lastName: "Орлов",
+      gender: "male",
+    });
+    const sibling = await createPerson({
+      firstName: "Роман",
+      lastName: "Орлов",
+      gender: "male",
+    });
+    const nephew = await createPerson({
+      firstName: "Олег",
+      lastName: "Орлов",
+      gender: "male",
+    });
+    const grandnephew = await createPerson({
+      firstName: "Лев",
+      lastName: "Орлов",
+      gender: "male",
+    });
+    const parentSibling = await createPerson({
+      firstName: "Сергей",
+      lastName: "Орлов",
+      gender: "male",
+    });
+    const cousin = await createPerson({
+      firstName: "Павел",
+      lastName: "Орлов",
+      gender: "male",
+    });
+    const cousinChild = await createPerson({
+      firstName: "Кирилл",
+      lastName: "Орлов",
+      gender: "male",
+    });
+    const parentCousin = await createPerson({
+      firstName: "Виктор",
+      lastName: "Орлов",
+      gender: "male",
+    });
+
+    const parentRelation = async (parentId, childId) =>
+      createRelation({
+        person1Id: parentId,
+        person2Id: childId,
+        relation1to2: "parent",
+        isConfirmed: true,
+      });
+
+    await parentRelation(greatGrandfather.id, grandfather.id);
+    await parentRelation(greatGrandfather.id, granduncle.id);
+    await parentRelation(grandfather.id, parent.id);
+    await parentRelation(grandfather.id, parentSibling.id);
+    await parentRelation(parent.id, viewerPersonId);
+    await parentRelation(parent.id, sibling.id);
+    await parentRelation(sibling.id, nephew.id);
+    await parentRelation(nephew.id, grandnephew.id);
+    await parentRelation(parentSibling.id, cousin.id);
+    await parentRelation(cousin.id, cousinChild.id);
+    await parentRelation(granduncle.id, parentCousin.id);
+
+    const graphResponse = await fetch(`${ctx.baseUrl}/v1/trees/${treeId}/graph`, {
+      headers: {authorization: `Bearer ${viewer.accessToken}`},
+    });
+    assert.equal(graphResponse.status, 200);
+    const graphPayload = await graphResponse.json();
+    const labelsByPersonId = new Map(
+      graphPayload.snapshot.viewerDescriptors.map((descriptor) => [
+        descriptor.personId,
+        descriptor.primaryRelationLabel,
+      ]),
+    );
+
+    assert.equal(labelsByPersonId.get(granduncle.id), "Двоюродный дедушка");
+    assert.equal(labelsByPersonId.get(parentCousin.id), "Двоюродный дядя");
+    assert.equal(labelsByPersonId.get(cousin.id), "Двоюродный брат");
+    assert.equal(labelsByPersonId.get(cousinChild.id), "Двоюродный племянник");
+    assert.equal(labelsByPersonId.get(grandnephew.id), "Внучатый племянник");
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
 test("branch chat endpoint reuses branch thread and limits participants to that branch", async () => {
   const ctx = await startTestServer();
 
@@ -2108,7 +6411,7 @@ test("branch chat endpoint reuses branch thread and limits participants to that 
       method: "POST",
       headers: {"content-type": "application/json"},
       body: JSON.stringify({
-        email: "branch-alice@lineage.app",
+        email: "branch-alice@rodnya.app",
         password: "secret123",
         displayName: "Alice Branch",
       }),
@@ -2120,7 +6423,7 @@ test("branch chat endpoint reuses branch thread and limits participants to that 
       method: "POST",
       headers: {"content-type": "application/json"},
       body: JSON.stringify({
-        email: "branch-bob@lineage.app",
+        email: "branch-bob@rodnya.app",
         password: "secret123",
         displayName: "Bob Branch",
       }),
@@ -2278,7 +6581,7 @@ test("relation requests and invite processing work on custom backend", async () 
       method: "POST",
       headers: {"content-type": "application/json"},
       body: JSON.stringify({
-        email: "owner@lineage.app",
+        email: "owner@rodnya.app",
         password: "secret123",
         displayName: "Owner User",
       }),
@@ -2292,7 +6595,7 @@ test("relation requests and invite processing work on custom backend", async () 
         method: "POST",
         headers: {"content-type": "application/json"},
         body: JSON.stringify({
-          email: "recipient@lineage.app",
+          email: "recipient@rodnya.app",
           password: "secret123",
           displayName: "Recipient User",
         }),
@@ -2547,7 +6850,7 @@ test("tree invitations support pending list and accept flow", async () => {
       method: "POST",
       headers: {"content-type": "application/json"},
       body: JSON.stringify({
-        email: "tree-owner@lineage.app",
+        email: "tree-owner@rodnya.app",
         password: "secret123",
         displayName: "Tree Owner",
       }),
@@ -2559,7 +6862,7 @@ test("tree invitations support pending list and accept flow", async () => {
       method: "POST",
       headers: {"content-type": "application/json"},
       body: JSON.stringify({
-        email: "tree-invitee@lineage.app",
+        email: "tree-invitee@rodnya.app",
         password: "secret123",
         displayName: "Tree Invitee",
       }),
@@ -2647,7 +6950,7 @@ test("notification feed tracks unread events from chat, relation requests and tr
       method: "POST",
       headers: {"content-type": "application/json"},
       body: JSON.stringify({
-        email: "notify-alice@lineage.app",
+        email: "notify-alice@rodnya.app",
         password: "secret123",
         displayName: "Alice",
       }),
@@ -2659,7 +6962,7 @@ test("notification feed tracks unread events from chat, relation requests and tr
       method: "POST",
       headers: {"content-type": "application/json"},
       body: JSON.stringify({
-        email: "notify-bob@lineage.app",
+        email: "notify-bob@rodnya.app",
         password: "secret123",
         displayName: "Bob",
       }),
@@ -2825,7 +7128,7 @@ test("web push config exposes VAPID public key when enabled", async () => {
       method: "POST",
       headers: {"content-type": "application/json"},
       body: JSON.stringify({
-        email: "webpush-config@lineage.app",
+        email: "webpush-config@rodnya.app",
         password: "secret123",
         displayName: "Web Push Config",
       }),
@@ -2874,7 +7177,7 @@ test("web push delivery marks delivery as sent for subscribed browser", async ()
       method: "POST",
       headers: {"content-type": "application/json"},
       body: JSON.stringify({
-        email: "webpush-owner@lineage.app",
+        email: "webpush-owner@rodnya.app",
         password: "secret123",
         displayName: "Web Push Owner",
       }),
@@ -2886,7 +7189,7 @@ test("web push delivery marks delivery as sent for subscribed browser", async ()
       method: "POST",
       headers: {"content-type": "application/json"},
       body: JSON.stringify({
-        email: "webpush-invitee@lineage.app",
+        email: "webpush-invitee@rodnya.app",
         password: "secret123",
         displayName: "Web Push Invitee",
       }),
@@ -2988,7 +7291,7 @@ test("websocket realtime and push queue work for chat delivery", async () => {
       method: "POST",
       headers: {"content-type": "application/json"},
       body: JSON.stringify({
-        email: "ws-alice@lineage.app",
+        email: "ws-alice@rodnya.app",
         password: "secret123",
         displayName: "Alice WS",
       }),
@@ -3000,7 +7303,7 @@ test("websocket realtime and push queue work for chat delivery", async () => {
       method: "POST",
       headers: {"content-type": "application/json"},
       body: JSON.stringify({
-        email: "ws-bob@lineage.app",
+        email: "ws-bob@rodnya.app",
         password: "secret123",
         displayName: "Bob WS",
       }),
@@ -3125,6 +7428,60 @@ test("websocket realtime and push queue work for chat delivery", async () => {
   }
 });
 
+test("websocket realtime stays available when session touch fails in the background", async () => {
+  const ctx = await startTestServer();
+
+  try {
+    const registerResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "ws-touch-failure@rodnya.app",
+        password: "secret123",
+        displayName: "WS Touch Failure",
+      }),
+    });
+    assert.equal(registerResponse.status, 201);
+    const registered = await registerResponse.json();
+
+    let touchCalls = 0;
+    ctx.store.touchSession = async () => {
+      touchCalls += 1;
+      throw new Error("touch_failed");
+    };
+
+    const socket = new WebSocket(
+      `${ctx.wsBaseUrl}/v1/realtime?accessToken=${registered.accessToken}`,
+    );
+    const observedEvents = [];
+    socket.addEventListener("message", (event) => {
+      observedEvents.push(JSON.parse(String(event.data)));
+    });
+
+    await new Promise((resolve, reject) => {
+      socket.addEventListener("open", resolve, {once: true});
+      socket.addEventListener("error", reject, {once: true});
+    });
+
+    const startedAt = Date.now();
+    let readyPayload = null;
+    while (Date.now() - startedAt < 3000 && !readyPayload) {
+      readyPayload = observedEvents.find((item) => item.type === "connection.ready") || null;
+      if (!readyPayload) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+    }
+    assert.ok(readyPayload, "Timed out waiting for realtime connection.ready");
+
+    assert.equal(readyPayload.userId, registered.user.id);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    assert.equal(touchCalls, 1);
+    socket.close();
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
 test("chat message idempotency and auto-delete TTL work end-to-end", async () => {
   const ctx = await startTestServer();
 
@@ -3133,7 +7490,7 @@ test("chat message idempotency and auto-delete TTL work end-to-end", async () =>
       method: "POST",
       headers: {"content-type": "application/json"},
       body: JSON.stringify({
-        email: "ttl-alice@lineage.app",
+        email: "ttl-alice@rodnya.app",
         password: "secret123",
         displayName: "Alice TTL",
       }),
@@ -3145,7 +7502,7 @@ test("chat message idempotency and auto-delete TTL work end-to-end", async () =>
       method: "POST",
       headers: {"content-type": "application/json"},
       body: JSON.stringify({
-        email: "ttl-bob@lineage.app",
+        email: "ttl-bob@rodnya.app",
         password: "secret123",
         displayName: "Bob TTL",
       }),
@@ -3263,7 +7620,7 @@ test("presence, typing and read-state realtime updates reach chat participants",
       method: "POST",
       headers: {"content-type": "application/json"},
       body: JSON.stringify({
-        email: "presence-alice@lineage.app",
+        email: "presence-alice@rodnya.app",
         password: "secret123",
         displayName: "Alice Presence",
       }),
@@ -3275,7 +7632,7 @@ test("presence, typing and read-state realtime updates reach chat participants",
       method: "POST",
       headers: {"content-type": "application/json"},
       body: JSON.stringify({
-        email: "presence-bob@lineage.app",
+        email: "presence-bob@rodnya.app",
         password: "secret123",
         displayName: "Bob Presence",
       }),
@@ -3429,7 +7786,7 @@ test("rustore push delivery sends notification through RuStore API", async () =>
       method: "POST",
       headers: {"content-type": "application/json"},
       body: JSON.stringify({
-        email: "rustore-sender@lineage.app",
+        email: "rustore-sender@rodnya.app",
         password: "secret123",
         displayName: "Rustore Sender",
       }),
@@ -3441,7 +7798,7 @@ test("rustore push delivery sends notification through RuStore API", async () =>
       method: "POST",
       headers: {"content-type": "application/json"},
       body: JSON.stringify({
-        email: "rustore-recipient@lineage.app",
+        email: "rustore-recipient@rodnya.app",
         password: "secret123",
         displayName: "Rustore Recipient",
       }),
@@ -3538,7 +7895,7 @@ test("rustore push delivery sends notification through RuStore API", async () =>
 test("reports, blocks and admin moderation endpoints work end-to-end", async () => {
   const ctx = await startConfiguredTestServer({
     configOverrides: {
-      adminEmails: ["moderation@lineage.app"],
+      adminEmails: ["moderation@rodnya.app"],
     },
   });
 
@@ -3557,9 +7914,9 @@ test("reports, blocks and admin moderation endpoints work end-to-end", async () 
   }
 
   try {
-    const reporter = await registerUser("reporter@lineage.app", "Reporter");
-    const target = await registerUser("target@lineage.app", "Target");
-    const admin = await registerUser("moderation@lineage.app", "Moderator");
+    const reporter = await registerUser("reporter@rodnya.app", "Reporter");
+    const target = await registerUser("target@rodnya.app", "Target");
+    const admin = await registerUser("moderation@rodnya.app", "Moderator");
 
     const createChatResponse = await fetch(`${ctx.baseUrl}/v1/chats/direct`, {
       method: "POST",
@@ -3694,27 +8051,65 @@ test("reports, blocks and admin moderation endpoints work end-to-end", async () 
 test("ready endpoint and auth rate limiting expose operational state", async () => {
   const ctx = await startConfiguredTestServer({
     configOverrides: {
-      authRateLimitMax: 2,
+      adminEmails: ["ops-admin@rodnya.app"],
+      authRateLimitMax: 3,
       rateLimitWindowMs: 60_000,
+    },
+    runtimeInfo: {
+      releaseLabel: "test-release-ops",
+      startedAt: "2026-04-20T09:00:00.000Z",
+      pid: 4242,
+      nodeVersion: "v22.0.0-test",
     },
   });
 
   try {
+    const healthResponse = await fetch(`${ctx.baseUrl}/health`);
+    assert.equal(healthResponse.status, 200);
+    assert.equal(healthResponse.headers.get("x-rodnya-release"), "test-release-ops");
+    const healthPayload = await healthResponse.json();
+    assert.equal(healthPayload.runtime.releaseLabel, "test-release-ops");
+    assert.equal(healthPayload.runtime.pid, 4242);
+    assert.equal(healthPayload.adminEmailsConfigured, 1);
+
     const readyResponse = await fetch(`${ctx.baseUrl}/ready`);
     assert.equal(readyResponse.status, 200);
     const readyPayload = await readyResponse.json();
     assert.equal(readyPayload.status, "ready");
     assert.equal(readyPayload.storage, "file-store");
     assert.equal(readyPayload.media, "local-filesystem");
+    assert.equal(readyPayload.liveKitEnabled, false);
     assert.ok(Array.isArray(readyPayload.warnings));
+    assert.equal(readyPayload.runtime.releaseLabel, "test-release-ops");
+    assert.equal(readyPayload.runtime.realtime.onlineUsers, 0);
     assert.ok(readyPayload.requestId);
+
+    const adminRegisterResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "ops-admin@rodnya.app",
+        password: "secret123",
+        displayName: "Ops Admin",
+      }),
+    });
+    assert.equal(adminRegisterResponse.status, 201);
+    const admin = await adminRegisterResponse.json();
+
+    const runtimeResponse = await fetch(`${ctx.baseUrl}/v1/admin/runtime`, {
+      headers: {authorization: `Bearer ${admin.accessToken}`},
+    });
+    assert.equal(runtimeResponse.status, 200);
+    const runtimePayload = await runtimeResponse.json();
+    assert.equal(runtimePayload.runtime.releaseLabel, "test-release-ops");
+    assert.equal(runtimePayload.adminEmailsConfigured, 1);
 
     for (let index = 0; index < 2; index += 1) {
       const loginResponse = await fetch(`${ctx.baseUrl}/v1/auth/login`, {
         method: "POST",
         headers: {"content-type": "application/json"},
         body: JSON.stringify({
-          email: "missing@lineage.app",
+          email: "missing@rodnya.app",
           password: "nope",
         }),
       });
@@ -3725,12 +8120,12 @@ test("ready endpoint and auth rate limiting expose operational state", async () 
       method: "POST",
       headers: {"content-type": "application/json"},
       body: JSON.stringify({
-        email: "missing@lineage.app",
+        email: "missing@rodnya.app",
         password: "nope",
       }),
     });
     assert.equal(throttledResponse.status, 429);
-    assert.equal(throttledResponse.headers.get("x-ratelimit-limit"), "2");
+    assert.equal(throttledResponse.headers.get("x-ratelimit-limit"), "3");
     assert.ok(throttledResponse.headers.get("retry-after"));
     const throttledPayload = await throttledResponse.json();
     assert.ok(throttledPayload.requestId);

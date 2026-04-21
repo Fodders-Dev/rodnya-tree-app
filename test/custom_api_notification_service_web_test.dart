@@ -6,11 +6,11 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
-import 'package:lineage/backend/backend_runtime_config.dart';
-import 'package:lineage/services/browser_notification_bridge.dart';
-import 'package:lineage/services/custom_api_auth_service.dart';
-import 'package:lineage/services/custom_api_notification_service.dart';
-import 'package:lineage/services/invitation_service.dart';
+import 'package:rodnya/backend/backend_runtime_config.dart';
+import 'package:rodnya/services/browser_notification_bridge.dart';
+import 'package:rodnya/services/custom_api_auth_service.dart';
+import 'package:rodnya/services/custom_api_notification_service.dart';
+import 'package:rodnya/services/invitation_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -103,7 +103,7 @@ void main() {
           'accessToken': 'access-token',
           'refreshToken': 'refresh-token',
           'userId': 'user-1',
-          'email': 'dev@lineage.app',
+          'email': 'dev@rodnya.app',
           'displayName': 'Dev User',
           'providerIds': ['password'],
           'isProfileComplete': true,
@@ -169,7 +169,7 @@ void main() {
           'accessToken': 'access-token',
           'refreshToken': 'refresh-token',
           'userId': 'user-1',
-          'email': 'dev@lineage.app',
+          'email': 'dev@rodnya.app',
           'displayName': 'Dev User',
           'providerIds': ['password'],
           'isProfileComplete': true,
@@ -226,7 +226,7 @@ void main() {
           'accessToken': 'access-token',
           'refreshToken': 'refresh-token',
           'userId': 'user-1',
-          'email': 'dev@lineage.app',
+          'email': 'dev@rodnya.app',
           'displayName': 'Dev User',
           'providerIds': ['password'],
           'isProfileComplete': true,

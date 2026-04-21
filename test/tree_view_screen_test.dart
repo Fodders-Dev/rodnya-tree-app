@@ -2,22 +2,25 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
-import 'package:lineage/backend/interfaces/auth_service_interface.dart';
-import 'package:lineage/backend/interfaces/chat_service_interface.dart';
-import 'package:lineage/backend/interfaces/family_tree_service_interface.dart';
-import 'package:lineage/models/chat_attachment.dart';
-import 'package:lineage/models/chat_details.dart';
-import 'package:lineage/models/chat_message.dart';
-import 'package:lineage/models/chat_preview.dart';
-import 'package:lineage/models/chat_send_progress.dart';
-import 'package:lineage/models/family_person.dart';
-import 'package:lineage/models/family_relation.dart';
-import 'package:lineage/models/family_tree.dart';
-import 'package:lineage/models/tree_change_record.dart';
-import 'package:lineage/providers/tree_provider.dart';
-import 'package:lineage/screens/tree_view_screen.dart';
-import 'package:lineage/services/local_storage_service.dart';
-import 'package:lineage/widgets/interactive_family_tree.dart';
+import 'package:rodnya/backend/interfaces/auth_service_interface.dart';
+import 'package:rodnya/backend/interfaces/chat_service_interface.dart';
+import 'package:rodnya/backend/interfaces/family_tree_service_interface.dart';
+import 'package:rodnya/backend/interfaces/tree_graph_capable_family_tree_service.dart';
+import 'package:rodnya/models/chat_attachment.dart';
+import 'package:rodnya/models/chat_details.dart';
+import 'package:rodnya/models/chat_message.dart';
+import 'package:rodnya/models/chat_preview.dart';
+import 'package:rodnya/models/chat_send_progress.dart';
+import 'package:rodnya/models/family_person.dart';
+import 'package:rodnya/models/family_relation.dart';
+import 'package:rodnya/models/family_tree.dart';
+import 'package:rodnya/models/tree_change_record.dart';
+import 'package:rodnya/models/tree_graph_snapshot.dart';
+import 'package:rodnya/providers/tree_provider.dart';
+import 'package:rodnya/screens/tree_view_screen.dart';
+import 'package:rodnya/services/app_status_service.dart';
+import 'package:rodnya/services/local_storage_service.dart';
+import 'package:rodnya/widgets/interactive_family_tree.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -119,6 +122,9 @@ class _FakeChatService implements ChatServiceInterface {
   }
 
   @override
+  Future<void> refreshMessages(String chatId) async {}
+
+  @override
   Future<void> sendMessage({
     required String otherUserId,
     String text = '',
@@ -218,7 +224,8 @@ class _FakeChatService implements ChatServiceInterface {
   }) async {}
 }
 
-class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
+class _FakeFamilyTreeService
+    implements FamilyTreeServiceInterface, TreeGraphCapableFamilyTreeService {
   final List<String> requestedTreeIds = [];
   bool showFirstPerson = false;
   bool showBranchFamily = false;
@@ -266,6 +273,10 @@ class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
   @override
   Future<List<FamilyPerson>> getRelatives(String treeId) async {
     requestedTreeIds.add(treeId);
+    return _peopleForTree(treeId);
+  }
+
+  List<FamilyPerson> _peopleForTree(String treeId) {
     if (showBranchFamily) {
       return [
         FamilyPerson(
@@ -308,6 +319,10 @@ class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
 
   @override
   Future<List<FamilyRelation>> getRelations(String treeId) async {
+    return _relationsForTree(treeId);
+  }
+
+  List<FamilyRelation> _relationsForTree(String treeId) {
     if (!showBranchFamily) {
       return const [];
     }
@@ -325,6 +340,64 @@ class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
         updatedAt: DateTime(2024, 1, 1),
       ),
     ];
+  }
+
+  @override
+  Future<TreeGraphSnapshot> getTreeGraphSnapshot(String treeId) async {
+    requestedTreeIds.add(treeId);
+    final people = _peopleForTree(treeId);
+    final relations = _relationsForTree(treeId);
+    final branchBlocks = showBranchFamily
+        ? const <TreeGraphBranchBlock>[
+            TreeGraphBranchBlock(
+              id: 'branch-1',
+              rootUnitId: 'unit-1',
+              label: 'Ветка Иван Петров',
+              memberPersonIds: ['person-1', 'person-2'],
+            ),
+          ]
+        : const <TreeGraphBranchBlock>[];
+    final generationRows = people.isEmpty
+        ? const <TreeGraphGenerationRow>[]
+        : <TreeGraphGenerationRow>[
+            TreeGraphGenerationRow(
+              row: 0,
+              label: people.length == 1 ? 'Поколение 1' : 'Старшее поколение',
+              personIds: people.map((person) => person.id).toList(),
+              familyUnitIds: showBranchFamily ? const ['unit-1'] : const [],
+            ),
+          ];
+    final familyUnits = showBranchFamily
+        ? const <TreeGraphFamilyUnit>[
+            TreeGraphFamilyUnit(
+              id: 'unit-1',
+              rootParentSetId: null,
+              adultIds: ['person-1', 'person-2'],
+              childIds: <String>[],
+              relationIds: ['relation-1'],
+              unionId: 'union-1',
+              unionType: 'spouse',
+              unionStatus: 'current',
+              parentSetType: null,
+              isPrimaryParentSet: true,
+              label: 'Семья Ивана и Марии',
+            ),
+          ]
+        : const <TreeGraphFamilyUnit>[];
+
+    return TreeGraphSnapshot(
+      treeId: treeId,
+      viewerPersonId: people.any((person) => person.userId == 'user-1')
+          ? people.firstWhere((person) => person.userId == 'user-1').id
+          : null,
+      people: people,
+      relations: relations,
+      familyUnits: familyUnits,
+      viewerDescriptors: const <TreeGraphViewerDescriptor>[],
+      branchBlocks: branchBlocks,
+      generationRows: generationRows,
+      warnings: const <TreeGraphWarning>[],
+    );
   }
 
   @override
@@ -357,6 +430,47 @@ class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
   }
 
   @override
+  Future<List<String>> getRelationPath({
+    required String treeId,
+    required String targetPersonId,
+  }) async {
+    return <String>[targetPersonId];
+  }
+
+  @override
+  Future<void> reassignParentSet({
+    required String treeId,
+    required String childPersonId,
+    required String parentPersonId,
+    required String parentSetId,
+    String? parentSetType,
+    bool isPrimaryParentSet = true,
+  }) async {}
+
+  @override
+  Future<void> disconnectRelation({
+    required String treeId,
+    required String relationId,
+  }) async {}
+
+  @override
+  Future<void> setRelationType({
+    required String treeId,
+    required FamilyPerson anchorPerson,
+    required FamilyPerson targetPerson,
+    required String relationType,
+    String? customRelationLabel1to2,
+    String? customRelationLabel2to1,
+  }) async {}
+
+  @override
+  Future<void> setUnionStatus({
+    required String treeId,
+    required String relationId,
+    required String unionStatus,
+  }) async {}
+
+  @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
@@ -369,6 +483,7 @@ void main() {
     getIt.registerSingleton<AuthServiceInterface>(_FakeAuthService());
     getIt.registerSingleton<ChatServiceInterface>(_FakeChatService());
     getIt.registerSingleton<LocalStorageService>(_FakeLocalStorageService());
+    getIt.registerSingleton<AppStatusService>(AppStatusService());
   });
 
   tearDown(() async {
@@ -509,6 +624,46 @@ void main() {
     expect(find.byTooltip('Действия дерева'), findsOneWidget);
   });
 
+  testWidgets(
+      'desktop tree view показывает контекстную колонку и быстрые действия',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1440, 1024));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final familyService = _FakeFamilyTreeService()..showBranchFamily = true;
+    getIt.registerSingleton<FamilyTreeServiceInterface>(familyService);
+    final treeProvider = TreeProvider();
+    await treeProvider.selectTree('tree-1', 'Тест');
+
+    final router = GoRouter(
+      initialLocation: '/tree/view/tree-1?name=%D0%A2%D0%B5%D1%81%D1%82',
+      routes: [
+        GoRoute(
+          path: '/tree/view/:treeId',
+          builder: (context, state) => TreeViewScreen(
+            routeTreeId: state.pathParameters['treeId'],
+            routeTreeName: state.uri.queryParameters['name'],
+          ),
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<TreeProvider>.value(
+        value: treeProvider,
+        child: MaterialApp.router(routerConfig: router),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(find.text('Карта рода'), findsOneWidget);
+    expect(find.text('Сразу к делу'), findsOneWidget);
+    expect(find.text('Состояние дерева'), findsOneWidget);
+    expect(find.text('Изменения'), findsOneWidget);
+    expect(find.text('Новый пост'), findsOneWidget);
+  });
+
   testWidgets('после фокуса на ветке можно открыть общий чат ветки',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(390, 844));
@@ -612,7 +767,8 @@ void main() {
 
     await tester.tap(find.byTooltip('Действия дерева'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Открыть родных'));
+    await tester.ensureVisible(find.text('Открыть родных').last);
+    await tester.tap(find.text('Открыть родных').last, warnIfMissed: false);
     await tester.pumpAndSettle();
     expect(find.text('relatives-screen'), findsOneWidget);
 
@@ -626,7 +782,8 @@ void main() {
 
     await tester.tap(find.byTooltip('Действия дерева'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Открыть чаты'));
+    await tester.ensureVisible(find.text('Открыть чаты').last);
+    await tester.tap(find.text('Открыть чаты').last, warnIfMissed: false);
     await tester.pumpAndSettle();
     expect(find.text('chats-screen'), findsOneWidget);
   });

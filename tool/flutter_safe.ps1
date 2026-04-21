@@ -20,7 +20,7 @@ function Resolve-FlutterBinary {
 }
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$safeRoot = Join-Path $env:TEMP 'lineage_safe_workspace'
+$safeRoot = Join-Path $env:TEMP 'rodnya_safe_workspace'
 $safeWorkspace = Join-Path $safeRoot 'repo'
 $flutterBinary = Resolve-FlutterBinary
 

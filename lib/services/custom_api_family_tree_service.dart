@@ -6,18 +6,22 @@ import 'package:http/http.dart' as http;
 import '../backend/backend_runtime_config.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
 import '../backend/interfaces/profile_service_interface.dart';
+import '../backend/interfaces/tree_graph_capable_family_tree_service.dart';
 import '../backend/models/selectable_tree.dart';
 import '../backend/models/tree_invitation.dart';
 import '../models/family_person.dart';
 import '../models/family_relation.dart';
 import '../models/family_tree.dart';
+import '../models/person_dossier.dart';
 import '../models/relation_request.dart';
+import '../models/tree_graph_snapshot.dart';
 import '../models/tree_change_record.dart';
 import '../models/user_profile.dart';
 import 'custom_api_auth_service.dart';
 import 'local_storage_service.dart';
 
-class CustomApiFamilyTreeService implements FamilyTreeServiceInterface {
+class CustomApiFamilyTreeService
+    implements FamilyTreeServiceInterface, TreeGraphCapableFamilyTreeService {
   CustomApiFamilyTreeService({
     required CustomApiAuthService authService,
     required BackendRuntimeConfig runtimeConfig,
@@ -36,6 +40,8 @@ class CustomApiFamilyTreeService implements FamilyTreeServiceInterface {
   final LocalStorageService? _localStorageService;
   final ProfileServiceInterface? _profileService;
   final Map<String, String> _personTreeIds = <String, String>{};
+  final Map<String, TreeGraphSnapshot> _graphSnapshotCache =
+      <String, TreeGraphSnapshot>{};
   late final StreamController<List<TreeInvitation>>
       _pendingInvitationsController =
       StreamController<List<TreeInvitation>>.broadcast(
@@ -109,6 +115,132 @@ class CustomApiFamilyTreeService implements FamilyTreeServiceInterface {
   }
 
   @override
+  Future<TreeGraphSnapshot> getTreeGraphSnapshot(String treeId) async {
+    final response = await _requestJson(
+      method: 'GET',
+      path: '/v1/trees/$treeId/graph',
+    );
+    final snapshotJson = response['snapshot'];
+    if (snapshotJson is! Map<String, dynamic>) {
+      throw const CustomApiException(
+        'Backend не вернул graph snapshot дерева',
+      );
+    }
+
+    final snapshot = TreeGraphSnapshot.fromJson(
+      snapshotJson,
+      personParser: (json) => _personFromJson(json, fallbackTreeId: treeId),
+      relationParser: (json) => _relationFromJson(json, fallbackTreeId: treeId),
+    );
+    _graphSnapshotCache[treeId] = snapshot;
+    for (final person in snapshot.people) {
+      _personTreeIds[person.id] = treeId;
+    }
+    await _cachePersons(snapshot.people);
+    await _cacheRelations(snapshot.relations);
+    return snapshot;
+  }
+
+  @override
+  Future<List<String>> getRelationPath({
+    required String treeId,
+    required String targetPersonId,
+  }) async {
+    final snapshot =
+        _graphSnapshotCache[treeId] ?? await getTreeGraphSnapshot(treeId);
+    final descriptor = snapshot.viewerDescriptorByPersonId[targetPersonId];
+    return descriptor?.primaryPathPersonIds ?? const <String>[];
+  }
+
+  @override
+  Future<void> reassignParentSet({
+    required String treeId,
+    required String childPersonId,
+    required String parentPersonId,
+    required String parentSetId,
+    String? parentSetType,
+    bool isPrimaryParentSet = true,
+  }) async {
+    await _requestJson(
+      method: 'POST',
+      path: '/v1/trees/$treeId/relations',
+      body: {
+        'person1Id': parentPersonId,
+        'person2Id': childPersonId,
+        'relation1to2': 'parent',
+        'relation2to1': 'child',
+        'isConfirmed': true,
+        'parentSetId': parentSetId,
+        if (parentSetType != null) 'parentSetType': parentSetType,
+        'isPrimaryParentSet': isPrimaryParentSet,
+      },
+    );
+    _graphSnapshotCache.remove(treeId);
+  }
+
+  @override
+  Future<void> disconnectRelation({
+    required String treeId,
+    required String relationId,
+  }) async {
+    await _requestDelete(path: '/v1/trees/$treeId/relations/$relationId');
+    _graphSnapshotCache.remove(treeId);
+  }
+
+  @override
+  Future<void> setRelationType({
+    required String treeId,
+    required FamilyPerson anchorPerson,
+    required FamilyPerson targetPerson,
+    required String relationType,
+    String? customRelationLabel1to2,
+    String? customRelationLabel2to1,
+  }) async {
+    final relationTypeEnum = FamilyRelation.stringToRelationType(relationType);
+    await createRelation(
+      treeId: treeId,
+      person1Id: targetPerson.id,
+      person2Id: anchorPerson.id,
+      relation1to2: relationTypeEnum,
+      isConfirmed: true,
+      customRelationLabel1to2: customRelationLabel1to2,
+      customRelationLabel2to1: customRelationLabel2to1,
+    );
+    _graphSnapshotCache.remove(treeId);
+  }
+
+  @override
+  Future<void> setUnionStatus({
+    required String treeId,
+    required String relationId,
+    required String unionStatus,
+  }) async {
+    final relations = await getRelations(treeId);
+    final relation = relations.firstWhere(
+      (entry) => entry.id == relationId,
+      orElse: () => throw const CustomApiException('Связь не найдена'),
+    );
+    await _requestJson(
+      method: 'POST',
+      path: '/v1/trees/$treeId/relations',
+      body: {
+        'person1Id': relation.person1Id,
+        'person2Id': relation.person2Id,
+        'relation1to2':
+            FamilyRelation.relationTypeToString(relation.relation1to2),
+        'relation2to1':
+            FamilyRelation.relationTypeToString(relation.relation2to1),
+        'isConfirmed': relation.isConfirmed,
+        if (relation.marriageDate != null)
+          'marriageDate': relation.marriageDate,
+        if (relation.divorceDate != null) 'divorceDate': relation.divorceDate,
+        'unionStatus': unionStatus,
+      },
+    );
+    _graphSnapshotCache.remove(treeId);
+  }
+
+  @override
   Stream<List<FamilyPerson>> getRelativesStream(String treeId) {
     return Stream.fromFuture(getRelatives(treeId));
   }
@@ -129,6 +261,7 @@ class CustomApiFamilyTreeService implements FamilyTreeServiceInterface {
 
     final person = _personFromResponse(response, fallbackTreeId: treeId);
     _personTreeIds[person.id] = treeId;
+    _graphSnapshotCache.remove(treeId);
     await _cachePerson(person);
     return person.id;
   }
@@ -151,6 +284,7 @@ class CustomApiFamilyTreeService implements FamilyTreeServiceInterface {
 
     final updatedPerson = _personFromResponse(response, fallbackTreeId: treeId);
     _personTreeIds[updatedPerson.id] = treeId;
+    _graphSnapshotCache.remove(treeId);
     await _cachePerson(updatedPerson);
   }
 
@@ -168,14 +302,52 @@ class CustomApiFamilyTreeService implements FamilyTreeServiceInterface {
   }
 
   @override
-  Future<RelationType> getRelationToUser(
-      String treeId, String relativeId) async {
-    final currentUserId = _authService.currentUserId;
-    if (currentUserId == null || currentUserId.isEmpty) {
-      return RelationType.other;
+  Future<PersonDossier> getPersonDossier(String treeId, String personId) async {
+    final response = await _requestJson(
+      method: 'GET',
+      path: '/v1/trees/$treeId/persons/$personId/dossier',
+    );
+    final dossier = response['dossier'];
+    if (dossier is! Map<String, dynamic>) {
+      throw const CustomApiException('Backend не вернул dossier человека');
     }
 
-    return getRelationBetween(treeId, currentUserId, relativeId);
+    return PersonDossier.fromJson(dossier);
+  }
+
+  @override
+  Future<void> proposePersonProfileContribution({
+    required String treeId,
+    required String personId,
+    required Map<String, dynamic> fields,
+    String? message,
+  }) async {
+    await _requestJson(
+      method: 'POST',
+      path: '/v1/trees/$treeId/persons/$personId/profile-contributions',
+      body: {
+        'fields': _normalizePersonPayload(fields),
+        if (message != null && message.trim().isNotEmpty)
+          'message': message.trim(),
+      },
+    );
+  }
+
+  @override
+  Future<RelationType> getRelationToUser(
+      String treeId, String relativeId) async {
+    try {
+      final snapshot =
+          _graphSnapshotCache[treeId] ?? await getTreeGraphSnapshot(treeId);
+      final descriptor = snapshot.viewerDescriptorByPersonId[relativeId];
+      if (descriptor?.primaryRelationLabel != null) {
+        return _relationTypeFromViewerLabel(descriptor!.primaryRelationLabel);
+      }
+    } catch (_) {
+      // Fallback to direct-relation lookup below.
+    }
+
+    return RelationType.other;
   }
 
   @override
@@ -203,6 +375,8 @@ class CustomApiFamilyTreeService implements FamilyTreeServiceInterface {
     bool isConfirmed = true,
     DateTime? marriageDate,
     DateTime? divorceDate,
+    String? customRelationLabel1to2,
+    String? customRelationLabel2to1,
   }) async {
     final resolvedPerson1Id = await _resolvePersonIdForTree(treeId, person1Id);
     final resolvedPerson2Id = await _resolvePersonIdForTree(treeId, person2Id);
@@ -226,10 +400,17 @@ class CustomApiFamilyTreeService implements FamilyTreeServiceInterface {
         'isConfirmed': isConfirmed,
         if (marriageDate != null) 'marriageDate': marriageDate,
         if (divorceDate != null) 'divorceDate': divorceDate,
+        if (customRelationLabel1to2 != null &&
+            customRelationLabel1to2.trim().isNotEmpty)
+          'customRelationLabel1to2': customRelationLabel1to2.trim(),
+        if (customRelationLabel2to1 != null &&
+            customRelationLabel2to1.trim().isNotEmpty)
+          'customRelationLabel2to1': customRelationLabel2to1.trim(),
       },
     );
 
     final relation = _relationFromResponse(response, fallbackTreeId: treeId);
+    _graphSnapshotCache.remove(treeId);
     await _cacheRelation(relation);
     return relation;
   }
@@ -497,6 +678,27 @@ class CustomApiFamilyTreeService implements FamilyTreeServiceInterface {
       return RelationType.other;
     }
 
+    try {
+      final snapshot =
+          _graphSnapshotCache[treeId] ?? await getTreeGraphSnapshot(treeId);
+      if (snapshot.viewerPersonId == resolvedPerson1Id) {
+        final descriptor =
+            snapshot.viewerDescriptorByPersonId[resolvedPerson2Id];
+        if (descriptor?.primaryRelationLabel != null) {
+          return _relationTypeFromViewerLabel(descriptor!.primaryRelationLabel);
+        }
+      }
+      if (snapshot.viewerPersonId == resolvedPerson2Id) {
+        final descriptor =
+            snapshot.viewerDescriptorByPersonId[resolvedPerson1Id];
+        if (descriptor?.primaryRelationLabel != null) {
+          return _relationTypeFromViewerLabel(descriptor!.primaryRelationLabel);
+        }
+      }
+    } catch (_) {
+      // Fallback to legacy direct-edge lookup below.
+    }
+
     final relations = await getRelations(treeId);
     for (final relation in relations) {
       if (relation.person1Id == resolvedPerson1Id &&
@@ -591,6 +793,7 @@ class CustomApiFamilyTreeService implements FamilyTreeServiceInterface {
 
     await _requestDelete(path: '/v1/trees/$treeId/persons/$resolvedPersonId');
     _personTreeIds.remove(resolvedPersonId);
+    _graphSnapshotCache.remove(treeId);
     final localStorageService = _localStorageService;
     if (localStorageService != null) {
       await localStorageService.deleteRelative(resolvedPersonId);
@@ -1044,12 +1247,20 @@ class CustomApiFamilyTreeService implements FamilyTreeServiceInterface {
       birthPlace: json['birthPlace']?.toString(),
       deathDate: deathDate,
       deathPlace: json['deathPlace']?.toString(),
+      familySummary: json['familySummary']?.toString() ??
+          json['notes']?.toString() ??
+          json['bio']?.toString(),
       bio: json['bio']?.toString(),
       isAlive: json['isAlive'] != false,
       creatorId: json['creatorId']?.toString(),
       createdAt: createdAt ?? DateTime.now(),
       updatedAt: updatedAt ?? createdAt ?? DateTime.now(),
-      notes: json['notes']?.toString(),
+      notes: json['notes']?.toString() ??
+          json['familySummary']?.toString() ??
+          json['bio']?.toString(),
+      details: json['details'] is Map<String, dynamic>
+          ? FamilyPersonDetails.fromMap(json['details'] as Map<String, dynamic>)
+          : null,
     );
   }
 
@@ -1084,6 +1295,10 @@ class CustomApiFamilyTreeService implements FamilyTreeServiceInterface {
   }) {
     final createdAt = DateTime.tryParse(json['createdAt']?.toString() ?? '');
     final updatedAt = DateTime.tryParse(json['updatedAt']?.toString() ?? '');
+    final customRelationLabel1to2 =
+        json['customRelationLabel1to2']?.toString().trim();
+    final customRelationLabel2to1 =
+        json['customRelationLabel2to1']?.toString().trim();
 
     return FamilyRelation(
       id: json['id']?.toString() ?? '',
@@ -1102,7 +1317,122 @@ class CustomApiFamilyTreeService implements FamilyTreeServiceInterface {
       createdBy: json['createdBy']?.toString(),
       marriageDate: DateTime.tryParse(json['marriageDate']?.toString() ?? ''),
       divorceDate: DateTime.tryParse(json['divorceDate']?.toString() ?? ''),
+      customRelationLabel1to2:
+          customRelationLabel1to2 == null || customRelationLabel1to2.isEmpty
+              ? null
+              : customRelationLabel1to2,
+      customRelationLabel2to1:
+          customRelationLabel2to1 == null || customRelationLabel2to1.isEmpty
+              ? null
+              : customRelationLabel2to1,
+      parentSetId: json['parentSetId']?.toString(),
+      parentSetType: json['parentSetType']?.toString(),
+      isPrimaryParentSet: json['isPrimaryParentSet'] is bool
+          ? json['isPrimaryParentSet'] as bool
+          : null,
+      unionId: json['unionId']?.toString(),
+      unionType: json['unionType']?.toString(),
+      unionStatus: json['unionStatus']?.toString(),
     );
+  }
+
+  RelationType _relationTypeFromViewerLabel(String? label) {
+    final normalizedLabel = (label ?? '').trim().toLowerCase();
+    if (normalizedLabel.isEmpty) {
+      return RelationType.other;
+    }
+    if (normalizedLabel.contains('отчим') ||
+        normalizedLabel.contains('мачех')) {
+      return RelationType.stepparent;
+    }
+    if (normalizedLabel.contains('пасын') ||
+        normalizedLabel.contains('падчер')) {
+      return RelationType.stepchild;
+    }
+    if (normalizedLabel.contains('супруг') ||
+        normalizedLabel == 'муж' ||
+        normalizedLabel == 'жена') {
+      return RelationType.spouse;
+    }
+    if (normalizedLabel.contains('партнер')) {
+      return RelationType.partner;
+    }
+    if (normalizedLabel.contains('тесть') ||
+        normalizedLabel.contains('теща') ||
+        normalizedLabel.contains('свекор') ||
+        normalizedLabel.contains('свекров')) {
+      return RelationType.parentInLaw;
+    }
+    if (normalizedLabel.contains('прадед') ||
+        normalizedLabel.contains('прабаб')) {
+      return RelationType.greatGrandparent;
+    }
+    if (normalizedLabel.contains('дедуш') ||
+        normalizedLabel.contains('бабуш')) {
+      return RelationType.grandparent;
+    }
+    if (normalizedLabel.contains('дяд')) {
+      return RelationType.uncle;
+    }
+    if (normalizedLabel.contains('тет')) {
+      return RelationType.aunt;
+    }
+    if (normalizedLabel.contains('отец') ||
+        normalizedLabel.contains('мать') ||
+        normalizedLabel.contains('родитель') ||
+        normalizedLabel.contains('предок')) {
+      return RelationType.parent;
+    }
+    if (normalizedLabel.contains('зять') ||
+        normalizedLabel.contains('невестк')) {
+      return RelationType.childInLaw;
+    }
+    if (normalizedLabel.contains('правнук') ||
+        normalizedLabel.contains('правнуч')) {
+      return RelationType.greatGrandchild;
+    }
+    if (normalizedLabel.contains('внук') || normalizedLabel.contains('внуч')) {
+      return RelationType.grandchild;
+    }
+    if (normalizedLabel.contains('племянниц')) {
+      return RelationType.niece;
+    }
+    if (normalizedLabel.contains('племян')) {
+      return RelationType.nephew;
+    }
+    if (normalizedLabel.contains('сын') ||
+        normalizedLabel.contains('дочь') ||
+        normalizedLabel.contains('ребен') ||
+        normalizedLabel.contains('потомок')) {
+      return RelationType.child;
+    }
+    if (normalizedLabel.contains('брат') ||
+        normalizedLabel.contains('девер') ||
+        normalizedLabel.contains('золов') ||
+        normalizedLabel.contains('шурин') ||
+        normalizedLabel.contains('своячениц') ||
+        normalizedLabel.contains('свояк') ||
+        normalizedLabel.contains('сестр') ||
+        normalizedLabel.contains('сиблинг')) {
+      if (normalizedLabel.contains('девер') ||
+          normalizedLabel.contains('золов') ||
+          normalizedLabel.contains('шурин') ||
+          normalizedLabel.contains('своячениц') ||
+          normalizedLabel.contains('свояк')) {
+        return RelationType.siblingInLaw;
+      }
+      return RelationType.sibling;
+    }
+    if (normalizedLabel.contains('двоюрод') ||
+        normalizedLabel.contains('троюрод') ||
+        normalizedLabel.contains('четвероюрод') ||
+        normalizedLabel.contains('кровный родственник')) {
+      return RelationType.cousin;
+    }
+    if (normalizedLabel.contains('сват')) {
+      return RelationType.inlaw;
+    }
+    return RelationType.other;
   }
 
   List<RelationRequest> _relationRequestListFromResponse(

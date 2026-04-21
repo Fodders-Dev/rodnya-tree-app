@@ -2,15 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
-import 'package:lineage/backend/interfaces/auth_service_interface.dart';
-import 'package:lineage/backend/interfaces/family_tree_service_interface.dart';
-import 'package:lineage/backend/interfaces/profile_service_interface.dart';
-import 'package:lineage/backend/interfaces/storage_service_interface.dart';
-import 'package:lineage/models/family_person.dart';
-import 'package:lineage/models/family_relation.dart';
-import 'package:lineage/models/tree_change_record.dart';
-import 'package:lineage/models/user_profile.dart';
-import 'package:lineage/screens/add_relative_screen.dart';
+import 'package:rodnya/backend/interfaces/auth_service_interface.dart';
+import 'package:rodnya/backend/interfaces/family_tree_service_interface.dart';
+import 'package:rodnya/backend/interfaces/profile_service_interface.dart';
+import 'package:rodnya/backend/interfaces/storage_service_interface.dart';
+import 'package:rodnya/models/family_person.dart';
+import 'package:rodnya/models/family_relation.dart';
+import 'package:rodnya/models/tree_change_record.dart';
+import 'package:rodnya/models/user_profile.dart';
+import 'package:rodnya/screens/add_relative_screen.dart';
 import 'package:image_picker/image_picker.dart';
 
 class _FakeAuthService implements AuthServiceInterface {
@@ -480,5 +480,91 @@ void main() {
 
     expect(find.text('История изменений'), findsOneWidget);
     expect(find.text('Обновлено фото'), findsOneWidget);
+  });
+
+  testWidgets(
+      'в режиме редактирования дедушка показывается как дедушка, а не как внук',
+      (tester) async {
+    final familyService =
+        getIt<FamilyTreeServiceInterface>() as _FakeFamilyTreeService;
+    familyService.relationToUser = RelationType.grandparent;
+
+    final person = FamilyPerson(
+      id: 'grandfather-1',
+      treeId: 'tree-1',
+      name: 'Мочалкин Геннадий',
+      gender: Gender.male,
+      isAlive: false,
+      birthDate: DateTime(1940, 1, 25),
+      createdAt: DateTime(2024, 1, 1),
+      updatedAt: DateTime(2024, 1, 1),
+    );
+
+    final router = GoRouter(
+      routes: [
+        GoRoute(
+          path: '/edit',
+          builder: (context, state) => AddRelativeScreen(
+            treeId: 'tree-1',
+            person: person,
+            isEditing: true,
+          ),
+        ),
+      ],
+      initialLocation: '/edit',
+    );
+
+    await tester.pumpWidget(
+      MaterialApp.router(
+        routerConfig: router,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Дедушка'), findsWidgets);
+    expect(find.text('Внук'), findsNothing);
+  });
+
+  testWidgets(
+      'в режиме редактирования бабушка показывается как бабушка, а не как внучка',
+      (tester) async {
+    final familyService =
+        getIt<FamilyTreeServiceInterface>() as _FakeFamilyTreeService;
+    familyService.relationToUser = RelationType.grandparent;
+
+    final person = FamilyPerson(
+      id: 'grandmother-1',
+      treeId: 'tree-1',
+      name: 'Мочалкина Лидия',
+      gender: Gender.female,
+      isAlive: false,
+      birthDate: DateTime(1949, 2, 19),
+      createdAt: DateTime(2024, 1, 1),
+      updatedAt: DateTime(2024, 1, 1),
+    );
+
+    final router = GoRouter(
+      routes: [
+        GoRoute(
+          path: '/edit',
+          builder: (context, state) => AddRelativeScreen(
+            treeId: 'tree-1',
+            person: person,
+            isEditing: true,
+          ),
+        ),
+      ],
+      initialLocation: '/edit',
+    );
+
+    await tester.pumpWidget(
+      MaterialApp.router(
+        routerConfig: router,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Бабушка'), findsWidgets);
+    expect(find.text('Внучка'), findsNothing);
   });
 }

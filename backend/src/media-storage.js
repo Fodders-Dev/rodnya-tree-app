@@ -137,13 +137,13 @@ class S3MediaStorage {
     const bucket = String(config?.s3Bucket || "").trim();
     if (!bucket) {
       throw new Error(
-        "LINEAGE_S3_BUCKET is required when LINEAGE_MEDIA_BACKEND=s3",
+        "RODNYA_S3_BUCKET is required when RODNYA_MEDIA_BACKEND=s3",
       );
     }
 
     this.config = config;
     this.bucket = bucket;
-    this.prefix = sanitizeRelativePath(config?.s3Prefix || "lineage");
+    this.prefix = sanitizeRelativePath(config?.s3Prefix || "rodnya");
     this.mediaMode = "s3";
     this.mediaTarget = `${bucket}/${this.prefix}`;
     this._client =
@@ -172,6 +172,10 @@ class S3MediaStorage {
     };
   }
 
+  hasAllowedPrefix(value) {
+    return value.startsWith(`${this.prefix}/`);
+  }
+
   buildPublicUrl(bucket, relativePath) {
     const {objectKey} = this.buildObjectKey(
       bucket,
@@ -193,7 +197,7 @@ class S3MediaStorage {
 
     if (!this.config.s3Endpoint) {
       throw new Error(
-        "LINEAGE_MEDIA_PUBLIC_BASE_URL or LINEAGE_S3_ENDPOINT is required for S3 media URLs",
+        "RODNYA_MEDIA_PUBLIC_BASE_URL or RODNYA_S3_ENDPOINT is required for S3 media URLs",
       );
     }
 
@@ -251,16 +255,16 @@ class S3MediaStorage {
     }
     const normalizedKey = pathParts.join("/");
 
-    if (!normalizedKey.startsWith(`${this.prefix}/`)) {
+    if (!this.hasAllowedPrefix(normalizedKey)) {
       throw new Error("UNSUPPORTED_MEDIA_URL");
     }
 
     return normalizedKey;
   }
 
-  resolveLegacyObjectKey(requestedPath) {
+  resolveObjectKey(requestedPath) {
     const normalizedPath = sanitizeRelativePath(requestedPath);
-    if (normalizedPath.startsWith(`${this.prefix}/`)) {
+    if (this.hasAllowedPrefix(normalizedPath)) {
       return normalizedPath;
     }
 
@@ -282,7 +286,7 @@ class S3MediaStorage {
     }
 
     const objectKey = pathParts.join("/");
-    if (!objectKey || !objectKey.startsWith(`${this.prefix}/`)) {
+    if (!objectKey || !this.hasAllowedPrefix(objectKey)) {
       throw new Error("UNSUPPORTED_MEDIA_URL");
     }
 
@@ -410,7 +414,7 @@ class S3MediaStorage {
       throw new Error("INVALID_MEDIA_PATH");
     }
 
-    const objectKey = this.resolveLegacyObjectKey(requestedPath);
+    const objectKey = this.resolveObjectKey(requestedPath);
     const redirectUrl = this.buildPublicUrlForObjectKey(objectKey);
     res.redirect(302, redirectUrl);
   }
@@ -440,7 +444,7 @@ function createMediaStorage(config, overrides = {}) {
       return new S3MediaStorage({config, client: overrides.s3Client || null});
     default:
       throw new Error(
-        `Unsupported LINEAGE_MEDIA_BACKEND value: ${mediaBackend}`,
+        `Unsupported RODNYA_MEDIA_BACKEND value: ${mediaBackend}`,
       );
   }
 }

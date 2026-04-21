@@ -1,8 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart'
-    show kDebugMode, kIsWeb, defaultTargetPlatform, TargetPlatform;
+import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'theme/app_theme.dart';
 import 'package:provider/provider.dart';
 import 'providers/theme_provider.dart';
@@ -11,9 +10,7 @@ import 'navigation/app_router.dart';
 import 'services/local_storage_service.dart';
 import 'package:get_it/get_it.dart';
 import 'providers/tree_provider.dart';
-import 'services/rustore_service.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'package:flutter_rustore_update/pigeons/rustore.dart' as update;
 import 'package:flutter/scheduler.dart'; // Для postFrameCallback
 import 'package:shared_preferences/shared_preferences.dart';
 import 'backend/interfaces/app_startup_service_interface.dart';
@@ -21,9 +18,11 @@ import 'backend/interfaces/auth_service_interface.dart';
 import 'backend/interfaces/story_service_interface.dart';
 import 'backend/backend_runtime_config.dart';
 import 'services/app_startup_service.dart';
+import 'services/call_coordinator_service.dart';
 import 'startup/startup_failure_policy.dart';
+import 'startup/app_warmup_coordinator.dart';
+import 'widgets/call_runtime_host.dart';
 import 'widgets/startup_failure_view.dart';
-import 'config/storefront_config.dart';
 import 'utils/e2e_state_bridge.dart';
 
 // --- Переменная для хранения SnackBarContext ---
@@ -47,12 +46,7 @@ Future<void> _bootstrapAndRunApp() async {
     await GetIt.I<AppStartupServiceInterface>().initializeForeground();
 
     final localStorageService = GetIt.I<LocalStorageService>();
-    final rustoreService = GetIt.I<RustoreService>();
-    final storefrontConfig = StorefrontConfig.current;
     final runtimeConfig = BackendRuntimeConfig.current;
-    final isRuStoreRuntime = !kIsWeb &&
-        defaultTargetPlatform == TargetPlatform.android &&
-        storefrontConfig.isRustore;
 
     if (kIsWeb && runtimeConfig.enableE2e) {
       _e2eSemanticsHandle ??= WidgetsBinding.instance.ensureSemantics();
@@ -68,19 +62,6 @@ Future<void> _bootstrapAndRunApp() async {
           'Error loading .env file: $e. Ensure the file exists at the project root and is listed in pubspec.yaml assets.',
         );
       }
-    }
-
-    // --- Проверка обновлений RuStore ---
-    if (isRuStoreRuntime) {
-      if (storefrontConfig.enableRustoreUpdates) {
-        _checkRuStoreUpdate(rustoreService);
-      }
-      rustoreService.initializePushListeners();
-      rustoreService.getRustorePushToken().then((token) {
-        if (token != null) {
-          debugPrint('[RuStore Push] Token received for demonstration: $token');
-        }
-      });
     }
 
     runApp(
@@ -101,7 +82,7 @@ Future<void> _bootstrapAndRunApp() async {
       FlutterErrorDetails(
         exception: error,
         stack: stackTrace,
-        library: 'lineage_bootstrap',
+        library: 'rodnya_bootstrap',
         context: ErrorDescription('while starting the application'),
       ),
     );
@@ -133,74 +114,6 @@ Future<bool> _shouldOfferSessionReset(Object error) async {
   return preferences.containsKey('custom_api_session_v1');
 }
 
-void _checkRuStoreUpdate(RustoreService rustoreService) {
-  rustoreService.checkForUpdate().then((update.UpdateInfo? info) {
-    if (info != null &&
-        info.updateAvailability == updateAvailabilityAvailable) {
-      debugPrint(
-        "!!! Доступно обновление в RuStore (v8 API) !!! Info: ${info.toString()}",
-      );
-
-      SchedulerBinding.instance.addPostFrameCallback((_) {
-        scaffoldMessengerKey.currentState?.showSnackBar(
-          SnackBar(
-            content: Text('Доступно обновление приложения.'),
-            duration: const Duration(days: 1),
-            action: SnackBarAction(
-              label: 'ОБНОВИТЬ',
-              onPressed: () {
-                _startUpdateProcess(rustoreService);
-              },
-            ),
-          ),
-        );
-      });
-    }
-  }).catchError((error) {
-    debugPrint("Error during checkForUpdate: $error");
-  });
-}
-
-void _startUpdateProcess(RustoreService rustoreService) {
-  rustoreService.startUpdateListener((update.RequestResponse state) {
-    if (state.installStatus == installStatusDownloaded) {
-      SchedulerBinding.instance.addPostFrameCallback((_) {
-        scaffoldMessengerKey.currentState?.showSnackBar(
-          SnackBar(
-            content: Text('Обновление скачано.'),
-            duration: const Duration(days: 1),
-            action: SnackBarAction(
-              label: 'УСТАНОВИТЬ',
-              onPressed: () {
-                rustoreService.completeUpdateFlexible();
-              },
-            ),
-          ),
-        );
-      });
-    } else if (state.installStatus == installStatusFailed) {
-      SchedulerBinding.instance.addPostFrameCallback((_) {
-        scaffoldMessengerKey.currentState?.showSnackBar(
-          SnackBar(
-            content: Text(
-              'Ошибка загрузки обновления: ${state.installErrorCode}',
-            ),
-            duration: const Duration(seconds: 10),
-          ),
-        );
-      });
-    }
-  });
-
-  rustoreService.startUpdateFlow().then((update.DownloadResponse? response) {
-    if (response != null) {
-      debugPrint("Update flow (download) response code: ${response.code}");
-    }
-  }).catchError((error) {
-    debugPrint("Error during startUpdateFlow: $error");
-  });
-}
-
 class MyApp extends StatefulWidget {
   const MyApp({super.key});
 
@@ -217,6 +130,14 @@ class _MyAppState extends State<MyApp> {
     super.initState();
     _appRouter = AppRouter();
     _configureE2EBridge();
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !GetIt.I.isRegistered<AppWarmupCoordinator>()) {
+        return;
+      }
+      unawaited(
+        GetIt.I<AppWarmupCoordinator>().start(scaffoldMessengerKey),
+      );
+    });
   }
 
   @override
@@ -224,6 +145,9 @@ class _MyAppState extends State<MyApp> {
     final routerE2EListener = _routerE2EListener;
     if (routerE2EListener != null) {
       _appRouter.router.routerDelegate.removeListener(routerE2EListener);
+    }
+    if (GetIt.I.isRegistered<AppWarmupCoordinator>()) {
+      unawaited(GetIt.I<AppWarmupCoordinator>().dispose());
     }
     super.dispose();
   }
@@ -512,7 +436,11 @@ class _MyAppState extends State<MyApp> {
       supportedLocales: [const Locale('ru', 'RU'), const Locale('en', 'US')],
       locale: const Locale('ru', 'RU'),
       builder: (context, child) {
-        return child ?? const SizedBox.shrink();
+        final content = child ?? const SizedBox.shrink();
+        if (!GetIt.I.isRegistered<CallCoordinatorService>()) {
+          return content;
+        }
+        return CallRuntimeHost(child: content);
       },
     );
   }

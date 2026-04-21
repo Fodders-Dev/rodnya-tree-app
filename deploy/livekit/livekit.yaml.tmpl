@@ -1,0 +1,28 @@
+port: 7880
+log_level: info
+
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 60000
+  use_external_ip: false
+  node_ip: ${LIVEKIT_NODE_IP}
+  interfaces:
+    includes:
+      - ${LIVEKIT_NETWORK_INTERFACE}
+  ips:
+    includes:
+      - ${LIVEKIT_NODE_IP}/32
+
+redis:
+  address: 127.0.0.1:6379
+
+keys:
+  ${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}
+
+turn:
+  enabled: true
+  domain: ${LIVEKIT_TURN_DOMAIN}
+  tls_port: ${LIVEKIT_TURN_TLS_PORT}
+  cert_file: ${LIVEKIT_TURN_CERT_FILE}
+  key_file: ${LIVEKIT_TURN_KEY_FILE}

@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get_it/get_it.dart';
-import 'package:lineage/backend/interfaces/family_tree_service_interface.dart';
-import 'package:lineage/backend/interfaces/profile_service_interface.dart';
-import 'package:lineage/models/user_profile.dart';
-import 'package:lineage/screens/send_relation_request_screen.dart';
+import 'package:rodnya/backend/interfaces/family_tree_service_interface.dart';
+import 'package:rodnya/backend/interfaces/profile_service_interface.dart';
+import 'package:rodnya/models/user_profile.dart';
+import 'package:rodnya/screens/send_relation_request_screen.dart';
 
 class _FakeProfileService implements ProfileServiceInterface {
   _FakeProfileService(this.results);

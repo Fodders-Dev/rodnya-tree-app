@@ -2,8 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
-import 'package:lineage/backend/interfaces/auth_service_interface.dart';
-import 'package:lineage/screens/auth_screen.dart';
+import 'package:rodnya/backend/interfaces/auth_service_interface.dart';
+import 'package:rodnya/screens/auth_screen.dart';
+import 'package:rodnya/services/app_status_service.dart';
 
 class _FakeAuthService implements AuthServiceInterface {
   String? _currentUserId;
@@ -45,6 +46,7 @@ void main() {
   setUp(() async {
     await getIt.reset();
     getIt.registerSingleton<AuthServiceInterface>(_FakeAuthService());
+    getIt.registerSingleton<AppStatusService>(AppStatusService());
   });
 
   tearDown(() async {
@@ -70,6 +72,9 @@ void main() {
     expect(find.text('Stories'), findsWidgets);
     expect(find.text('Вход'), findsWidgets);
     expect(find.text('Email'), findsOneWidget);
+    expect(find.text('Telegram'), findsOneWidget);
+    expect(find.text('VK ID'), findsOneWidget);
+    expect(find.text('MAX'), findsOneWidget);
   });
 
   testWidgets('wide CTA switches auth screen into registration mode',
@@ -115,6 +120,8 @@ void main() {
     expect(find.text('Родные'), findsOneWidget);
     expect(find.text('Чат'), findsOneWidget);
     expect(find.text('Stories'), findsWidgets);
+    expect(find.text('Google'), findsOneWidget);
+    expect(find.text('Telegram'), findsOneWidget);
   });
 
   testWidgets('AuthScreen respects deferred route after successful login',
@@ -160,5 +167,28 @@ void main() {
     expect(authService.currentUserId, 'user-1');
     expect(find.text('chats-screen'), findsOneWidget);
     expect(find.text('home-screen'), findsNothing);
+  });
+
+  testWidgets('AuthScreen clears stale session banner on reauth input',
+      (tester) async {
+    final appStatusService = getIt<AppStatusService>();
+    appStatusService.reportSessionExpired();
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: AuthScreen(),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(find.text('Сессия истекла. Войдите снова.'), findsOneWidget);
+    expect(appStatusService.hasSessionIssue, isTrue);
+
+    await tester.enterText(find.byType(TextFormField).at(0), 'user@test.dev');
+    await tester.pump();
+
+    expect(appStatusService.hasSessionIssue, isFalse);
+    expect(find.text('Сессия истекла. Войдите снова.'), findsNothing);
   });
 }

@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get_it/get_it.dart';
-import 'package:lineage/backend/interfaces/auth_service_interface.dart';
-import 'package:lineage/backend/interfaces/family_tree_service_interface.dart';
-import 'package:lineage/models/family_tree.dart';
-import 'package:lineage/screens/public_tree_entry_screen.dart';
-import 'package:lineage/services/public_tree_service.dart';
+import 'package:rodnya/backend/interfaces/auth_service_interface.dart';
+import 'package:rodnya/backend/interfaces/family_tree_service_interface.dart';
+import 'package:rodnya/models/family_tree.dart';
+import 'package:rodnya/screens/public_tree_entry_screen.dart';
+import 'package:rodnya/services/public_tree_service.dart';
 
 class _FakeAuthService implements AuthServiceInterface {
   _FakeAuthService(this._currentUserId);

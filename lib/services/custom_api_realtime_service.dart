@@ -34,6 +34,11 @@ class CustomApiRealtimeEvent {
     return value is Map<String, dynamic> ? value : null;
   }
 
+  Map<String, dynamic>? get call {
+    final value = payload['call'];
+    return value is Map<String, dynamic> ? value : null;
+  }
+
   String? get userId => payload['userId']?.toString();
 
   bool? get isTyping =>
@@ -60,6 +65,9 @@ class CustomApiRealtimeEvent {
       type == 'chat.typing.updated';
 
   bool get isNotificationEvent => type == 'notification.created';
+
+  bool get isCallEvent =>
+      type == 'call.invite.created' || type == 'call.state.updated';
 
   bool get isPresenceEvent =>
       type == 'connection.ready' || type == 'presence.updated';
@@ -125,12 +133,18 @@ class CustomApiRealtimeService {
     }
   }
 
-  Future<void> dispose() async {
-    _disposed = true;
+  Future<void> disconnect() async {
     _reconnectTimer?.cancel();
+    _reconnectTimer = null;
     await _channelSubscription?.cancel();
+    _channelSubscription = null;
     await _channel?.sink.close();
     _channel = null;
+  }
+
+  Future<void> dispose() async {
+    _disposed = true;
+    await disconnect();
     await _eventsController.close();
   }
 

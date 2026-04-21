@@ -3,13 +3,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/date_symbol_data_local.dart';
-import 'package:lineage/backend/interfaces/auth_service_interface.dart';
-import 'package:lineage/backend/interfaces/family_tree_service_interface.dart';
-import 'package:lineage/backend/interfaces/profile_service_interface.dart';
-import 'package:lineage/backend/models/profile_form_data.dart';
-import 'package:lineage/backend/models/tree_invitation.dart';
-import 'package:lineage/models/family_tree.dart';
-import 'package:lineage/screens/complete_profile_screen.dart';
+import 'package:rodnya/backend/interfaces/auth_service_interface.dart';
+import 'package:rodnya/backend/interfaces/family_tree_service_interface.dart';
+import 'package:rodnya/backend/interfaces/profile_service_interface.dart';
+import 'package:rodnya/backend/models/profile_form_data.dart';
+import 'package:rodnya/backend/models/tree_invitation.dart';
+import 'package:rodnya/models/family_tree.dart';
+import 'package:rodnya/screens/complete_profile_screen.dart';
 
 class _FakeAuthService implements AuthServiceInterface {
   @override
@@ -123,16 +123,14 @@ void main() {
 
       expect(find.text('Почти готово'), findsOneWidget);
       expect(find.text('Основное'), findsOneWidget);
-      expect(find.text('Контакты'), findsOneWidget);
+      expect(find.text('Как с вами связаться'), findsOneWidget);
 
       await tester.enterText(
         find.bySemanticsLabel('Username'),
         'shuflyak.nastya',
       );
-      await tester.enterText(
-        find.bySemanticsLabel('Телефон'),
-        '9010001122',
-      );
+      tester.testTextInput.hide();
+      await tester.pumpAndSettle();
 
       await tester.ensureVisible(find.text('Сохранить'));
       await tester.pumpAndSettle();

@@ -2,22 +2,23 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
-import 'package:lineage/backend/interfaces/auth_service_interface.dart';
-import 'package:lineage/backend/interfaces/chat_service_interface.dart';
-import 'package:lineage/backend/interfaces/family_tree_service_interface.dart';
-import 'package:lineage/backend/interfaces/invitation_link_service_interface.dart';
-import 'package:lineage/models/chat_attachment.dart';
-import 'package:lineage/models/chat_details.dart';
-import 'package:lineage/models/chat_message.dart';
-import 'package:lineage/models/chat_preview.dart';
-import 'package:lineage/models/chat_send_progress.dart';
-import 'package:lineage/models/family_person.dart';
-import 'package:lineage/models/family_relation.dart';
-import 'package:lineage/models/family_tree.dart';
-import 'package:lineage/models/relation_request.dart';
-import 'package:lineage/providers/tree_provider.dart';
-import 'package:lineage/screens/relatives_screen.dart';
-import 'package:lineage/services/local_storage_service.dart';
+import 'package:rodnya/backend/interfaces/auth_service_interface.dart';
+import 'package:rodnya/backend/interfaces/chat_service_interface.dart';
+import 'package:rodnya/backend/interfaces/family_tree_service_interface.dart';
+import 'package:rodnya/backend/interfaces/invitation_link_service_interface.dart';
+import 'package:rodnya/models/chat_attachment.dart';
+import 'package:rodnya/models/chat_details.dart';
+import 'package:rodnya/models/chat_message.dart';
+import 'package:rodnya/models/chat_preview.dart';
+import 'package:rodnya/models/chat_send_progress.dart';
+import 'package:rodnya/models/family_person.dart';
+import 'package:rodnya/models/family_relation.dart';
+import 'package:rodnya/models/family_tree.dart';
+import 'package:rodnya/models/relation_request.dart';
+import 'package:rodnya/providers/tree_provider.dart';
+import 'package:rodnya/screens/relatives_screen.dart';
+import 'package:rodnya/services/app_status_service.dart';
+import 'package:rodnya/services/local_storage_service.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:image_picker/image_picker.dart';
@@ -69,6 +70,9 @@ class _FakeChatService implements ChatServiceInterface {
   Stream<List<ChatMessage>> getMessagesStream(String chatId) {
     return Stream.value(const <ChatMessage>[]);
   }
+
+  @override
+  Future<void> refreshMessages(String chatId) async {}
 
   @override
   Future<void> sendMessage({
@@ -326,6 +330,7 @@ void main() {
     getIt.registerSingleton<InvitationLinkServiceInterface>(
       _FakeInvitationLinkService(),
     );
+    getIt.registerSingleton<AppStatusService>(AppStatusService());
   });
 
   tearDown(() async {

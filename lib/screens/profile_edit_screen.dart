@@ -1,15 +1,75 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:country_picker/country_picker.dart';
-import 'package:phone_number/phone_number.dart';
+import 'package:url_launcher/url_launcher.dart';
+import '../backend/interfaces/family_tree_service_interface.dart';
+import '../models/account_linking_status.dart';
 import '../models/family_person.dart';
+import '../models/family_tree.dart';
 import 'package:get_it/get_it.dart';
 import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/profile_service_interface.dart';
 import '../backend/models/profile_form_data.dart';
+import '../services/custom_api_auth_service.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/flow_overlays.dart';
+import '../widgets/google_sign_in_action.dart';
+
+part 'profile_edit_screen_sections.dart';
+
+class _ProfileVisibilityOptions {
+  const _ProfileVisibilityOptions({
+    this.trees = const [],
+    this.branches = const [],
+    this.users = const [],
+  });
+
+  final List<FamilyTree> trees;
+  final List<_VisibilityBranchTarget> branches;
+  final List<_VisibilityUserTarget> users;
+}
+
+class _VisibilityBranchTarget {
+  const _VisibilityBranchTarget({
+    required this.personId,
+    required this.displayName,
+    required this.treeId,
+    required this.treeName,
+  });
+
+  final String personId;
+  final String displayName;
+  final String treeId;
+  final String treeName;
+}
+
+class _VisibilityUserTarget {
+  const _VisibilityUserTarget({
+    required this.userId,
+    required this.displayName,
+    this.treeNames = const [],
+  });
+
+  final String userId;
+  final String displayName;
+  final List<String> treeNames;
+}
+
+class _VisibilityTargetOption {
+  const _VisibilityTargetOption({
+    required this.id,
+    required this.title,
+    this.subtitle = '',
+  });
+
+  final String id;
+  final String title;
+  final String subtitle;
+}
 
 class ProfileEditScreen extends StatefulWidget {
   const ProfileEditScreen({super.key});
@@ -28,18 +88,68 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
   final _phoneController = TextEditingController();
   final _cityController = TextEditingController();
   final _maidenNameController = TextEditingController();
+  final _birthPlaceController = TextEditingController();
+  final _bioController = TextEditingController();
+  final _familyStatusController = TextEditingController();
+  final _aboutFamilyController = TextEditingController();
+  final _educationController = TextEditingController();
+  final _workController = TextEditingController();
+  final _hometownController = TextEditingController();
+  final _languagesController = TextEditingController();
+  final _valuesController = TextEditingController();
+  final _religionController = TextEditingController();
+  final _interestsController = TextEditingController();
 
   DateTime? _birthDate;
   String? _countryCode;
   String? _countryName;
   String? _profileImageUrl;
+  AccountLinkingStatus? _accountLinkingStatus;
+  String? _primaryTrustedChannel;
+  String _profileContributionPolicy = 'suggestions';
+  Map<String, String> _profileVisibilityScopes = const {
+    'contacts': 'private',
+    'about': 'shared_trees',
+    'background': 'shared_trees',
+    'worldview': 'shared_trees',
+  };
+  Map<String, List<String>> _profileVisibilityTreeIds = const {
+    'contacts': <String>[],
+    'about': <String>[],
+    'background': <String>[],
+    'worldview': <String>[],
+  };
+  Map<String, List<String>> _profileVisibilityBranchRootIds = const {
+    'contacts': <String>[],
+    'about': <String>[],
+    'background': <String>[],
+    'worldview': <String>[],
+  };
+  Map<String, List<String>> _profileVisibilityUserIds = const {
+    'contacts': <String>[],
+    'about': <String>[],
+    'background': <String>[],
+    'worldview': <String>[],
+  };
+  List<FamilyTree> _availableVisibilityTrees = const [];
+  List<_VisibilityBranchTarget> _availableVisibilityBranches = const [];
+  List<_VisibilityUserTarget> _availableVisibilityUsers = const [];
   bool _isLoading = false;
-  bool _isPhoneVerified = false;
+  bool _isGoogleLinkLoading = false;
+  bool _isTelegramLinkLoading = false;
+  bool _isVkLinkLoading = false;
+  bool _isMaxLinkLoading = false;
   Gender _gender = Gender.unknown;
+
+  void _updateSectionState(VoidCallback update) {
+    setState(update);
+  }
 
   final AuthServiceInterface _authService = GetIt.I<AuthServiceInterface>();
   final ProfileServiceInterface _profileService =
       GetIt.I<ProfileServiceInterface>();
+  final FamilyTreeServiceInterface _familyTreeService =
+      GetIt.I<FamilyTreeServiceInterface>();
 
   @override
   void initState() {
@@ -57,6 +167,17 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
     _phoneController.dispose();
     _cityController.dispose();
     _maidenNameController.dispose();
+    _birthPlaceController.dispose();
+    _bioController.dispose();
+    _familyStatusController.dispose();
+    _aboutFamilyController.dispose();
+    _educationController.dispose();
+    _workController.dispose();
+    _hometownController.dispose();
+    _languagesController.dispose();
+    _valuesController.dispose();
+    _religionController.dispose();
+    _interestsController.dispose();
     super.dispose();
   }
 
@@ -76,6 +197,19 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
       }
 
       final data = await _profileService.getCurrentUserProfileFormData();
+      _ProfileVisibilityOptions visibilityOptions =
+          const _ProfileVisibilityOptions();
+      AccountLinkingStatus? linkingStatus;
+      try {
+        visibilityOptions = await _loadVisibilityOptions();
+      } catch (error) {
+        debugPrint('Не удалось загрузить варианты приватности профиля: $error');
+      }
+      try {
+        linkingStatus = await _profileService.getCurrentAccountLinkingStatus();
+      } catch (error) {
+        debugPrint('Не удалось загрузить trusted channels: $error');
+      }
       if (!mounted) return;
 
       // Разделяем displayName на компоненты, если отдельные поля не заполнены
@@ -106,11 +240,43 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
         _countryCode = data.countryCode;
         _countryName = data.countryName;
         _profileImageUrl = data.photoUrl;
-        _isPhoneVerified = data.isPhoneVerified;
+        _accountLinkingStatus = linkingStatus;
+        _primaryTrustedChannel =
+            data.primaryTrustedChannel?.trim().isNotEmpty == true
+                ? data.primaryTrustedChannel!.trim()
+                : linkingStatus?.primaryTrustedChannelProvider;
 
         _gender = data.gender;
 
         _birthDate = data.birthDate;
+        _birthPlaceController.text = data.birthPlace;
+        _bioController.text = data.bio;
+        _familyStatusController.text = data.familyStatus;
+        _aboutFamilyController.text = data.aboutFamily;
+        _educationController.text = data.education;
+        _workController.text = data.work;
+        _hometownController.text = data.hometown;
+        _languagesController.text = data.languages;
+        _valuesController.text = data.values;
+        _religionController.text = data.religion;
+        _interestsController.text = data.interests;
+        _profileContributionPolicy = data.profileContributionPolicy;
+        _profileVisibilityScopes = {
+          'contacts': 'private',
+          'about': 'shared_trees',
+          'background': 'shared_trees',
+          'worldview': 'shared_trees',
+          ...data.profileVisibilityScopes,
+        };
+        _profileVisibilityTreeIds =
+            _resolveVisibilityTargets(data.profileVisibilityTreeIds);
+        _profileVisibilityBranchRootIds =
+            _resolveVisibilityTargets(data.profileVisibilityBranchRootIds);
+        _profileVisibilityUserIds =
+            _resolveVisibilityTargets(data.profileVisibilityUserIds);
+        _availableVisibilityTrees = visibilityOptions.trees;
+        _availableVisibilityBranches = visibilityOptions.branches;
+        _availableVisibilityUsers = visibilityOptions.users;
 
         if (_gender == Gender.female) {
           _maidenNameController.text = data.maidenName;
@@ -129,6 +295,184 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
         });
       }
     }
+  }
+
+  Future<void> _refreshAccountLinkingStatus() async {
+    try {
+      final linkingStatus =
+          await _profileService.getCurrentAccountLinkingStatus();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _accountLinkingStatus = linkingStatus;
+        _primaryTrustedChannel =
+            _sanitizeTrustedChannelProvider(_primaryTrustedChannel) ??
+                linkingStatus.primaryTrustedChannelProvider;
+      });
+    } catch (error) {
+      debugPrint('Не удалось обновить trusted channels: $error');
+    }
+  }
+
+  String? _sanitizeTrustedChannelProvider(String? value) {
+    switch ((value ?? '').trim()) {
+      case 'google':
+      case 'telegram':
+      case 'vk':
+      case 'max':
+        return value!.trim();
+      default:
+        return null;
+    }
+  }
+
+  bool _canSetPrimaryTrustedChannel(String provider) {
+    return _accountLinkingStatus?.trustedChannels.any(
+          (channel) =>
+              channel.provider == provider &&
+              channel.isLinked &&
+              channel.isTrustedChannel,
+        ) ==
+        true;
+  }
+
+  Map<String, List<String>> _resolveVisibilityTargets(
+    Map<String, List<String>> targets,
+  ) {
+    return {
+      'contacts': List<String>.from(targets['contacts'] ?? const <String>[]),
+      'about': List<String>.from(targets['about'] ?? const <String>[]),
+      'background':
+          List<String>.from(targets['background'] ?? const <String>[]),
+      'worldview': List<String>.from(targets['worldview'] ?? const <String>[]),
+    };
+  }
+
+  Future<_ProfileVisibilityOptions> _loadVisibilityOptions() async {
+    final trees = await _familyTreeService.getUserTrees();
+    final currentUserId = _authService.currentUserId;
+    final labelsByUserId = <String, String>{};
+    final treeNamesByUserId = <String, Set<String>>{};
+    final branchesByPersonId = <String, _VisibilityBranchTarget>{};
+
+    for (final tree in trees) {
+      List<FamilyPerson> relatives;
+      List<dynamic> relations;
+      try {
+        final loaded = await Future.wait<dynamic>([
+          _familyTreeService.getRelatives(tree.id),
+          _familyTreeService.getRelations(tree.id),
+        ]);
+        relatives = loaded[0] as List<FamilyPerson>;
+        relations = loaded[1] as List<dynamic>;
+      } catch (error) {
+        debugPrint(
+          'Не удалось загрузить варианты приватности для дерева ${tree.id}: $error',
+        );
+        continue;
+      }
+
+      for (final relative in relatives) {
+        final userId = relative.userId?.trim();
+        if (userId == null || userId.isEmpty || userId == currentUserId) {
+          continue;
+        }
+        labelsByUserId.putIfAbsent(userId, () => relative.displayName);
+        treeNamesByUserId.putIfAbsent(userId, () => <String>{}).add(tree.name);
+      }
+
+      for (final relative in relatives) {
+        final displayName = relative.displayName.trim();
+        if (displayName.isEmpty) {
+          continue;
+        }
+
+        final hasRelations = relations.any(
+          (entry) =>
+              entry.person1Id == relative.id || entry.person2Id == relative.id,
+        );
+        if (!hasRelations && relatives.length > 1) {
+          continue;
+        }
+
+        branchesByPersonId.putIfAbsent(
+          relative.id,
+          () => _VisibilityBranchTarget(
+            personId: relative.id,
+            displayName: displayName,
+            treeId: tree.id,
+            treeName: tree.name,
+          ),
+        );
+      }
+    }
+
+    final branches = branchesByPersonId.values.toList()
+      ..sort(
+        (left, right) => left.displayName
+            .toLowerCase()
+            .compareTo(right.displayName.toLowerCase()),
+      );
+    final users = labelsByUserId.entries
+        .map(
+          (entry) => _VisibilityUserTarget(
+            userId: entry.key,
+            displayName: entry.value,
+            treeNames:
+                (treeNamesByUserId[entry.key] ?? const <String>{}).toList()
+                  ..sort(),
+          ),
+        )
+        .toList()
+      ..sort(
+        (left, right) => left.displayName
+            .toLowerCase()
+            .compareTo(right.displayName.toLowerCase()),
+      );
+
+    return _ProfileVisibilityOptions(
+      trees: trees,
+      branches: branches,
+      users: users,
+    );
+  }
+
+  bool _validateVisibilitySelections() {
+    for (final sectionKey in _profileVisibilityScopes.keys) {
+      final scope = _profileVisibilityScopes[sectionKey] ?? 'shared_trees';
+      if (scope == 'specific_trees' &&
+          (_profileVisibilityTreeIds[sectionKey] ?? const <String>[]).isEmpty) {
+        _showVisibilityValidationError(
+          'Для блока "${_visibilitySectionTitle(sectionKey)}" выберите хотя бы одно дерево.',
+        );
+        return false;
+      }
+      if (scope == 'specific_branches' &&
+          (_profileVisibilityBranchRootIds[sectionKey] ?? const <String>[])
+              .isEmpty) {
+        _showVisibilityValidationError(
+          'Для блока "${_visibilitySectionTitle(sectionKey)}" выберите хотя бы одну ветку.',
+        );
+        return false;
+      }
+      if (scope == 'specific_users' &&
+          (_profileVisibilityUserIds[sectionKey] ?? const <String>[]).isEmpty) {
+        _showVisibilityValidationError(
+          'Для блока "${_visibilitySectionTitle(sectionKey)}" выберите хотя бы одного человека.',
+        );
+        return false;
+      }
+    }
+    return true;
+  }
+
+  void _showVisibilityValidationError(String message) {
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _pickImage() async {
@@ -168,6 +512,286 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
             _isLoading = false;
           });
         }
+      }
+    }
+  }
+
+  Future<void> _startTelegramLinking() async {
+    if (!kIsWeb) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Пока привязка Telegram включена через web-версию Родни.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    final authService = _authService;
+    if (authService is! CustomApiAuthService) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Этот backend ещё не поддерживает Telegram link flow.'),
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _isTelegramLinkLoading = true;
+    });
+
+    try {
+      final launched = await launchUrl(
+        Uri.parse(authService.telegramLinkStartUrl),
+        mode: LaunchMode.platformDefault,
+        webOnlyWindowName: '_self',
+      );
+      if (!launched && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Не удалось открыть Telegram link flow.'),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isTelegramLinkLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _startGoogleLinking() async {
+    final authService = _authService;
+    if (authService is! CustomApiAuthService) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Этот backend ещё не поддерживает Google link flow.'),
+        ),
+      );
+      return;
+    }
+    if (!authService.isGoogleSignInConfigured) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Google sign-in ещё не настроен. Добавьте Web client ID на backend и во Flutter.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    if (kIsWeb) {
+      await _showGoogleLinkDialog(authService);
+      return;
+    }
+
+    await _linkGoogleIdentity();
+  }
+
+  Future<void> _showGoogleLinkDialog(CustomApiAuthService authService) async {
+    if (!mounted) {
+      return;
+    }
+
+    try {
+      final shouldContinue = await showDialog<bool>(
+        context: context,
+        barrierDismissible: true,
+        builder: (dialogContext) {
+          final theme = Theme.of(dialogContext);
+          return AlertDialog(
+            title: const Text('Привязать Google'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                  'Выберите Google-аккаунт, который хотите привязать к текущему аккаунту Родни.',
+                ),
+                const SizedBox(height: 16),
+                Align(
+                  child: buildGoogleSignInAction(
+                    theme: theme,
+                    isLoading: false,
+                    enabled: true,
+                    onPressed: () async {
+                      await authService.resetGoogleSelection();
+                      if (!dialogContext.mounted) {
+                        return;
+                      }
+                      Navigator.of(dialogContext).pop(true);
+                    },
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('Отмена'),
+              ),
+            ],
+          );
+        },
+      );
+
+      if (shouldContinue == true) {
+        await _linkGoogleIdentity();
+      }
+    } finally {}
+  }
+
+  Future<void> _linkGoogleIdentity() async {
+    final authService = _authService;
+    if (authService is! CustomApiAuthService) {
+      return;
+    }
+
+    if (_isGoogleLinkLoading) {
+      return;
+    }
+
+    setState(() {
+      _isGoogleLinkLoading = true;
+    });
+
+    try {
+      await authService.linkGoogleIdentity();
+      await _refreshAccountLinkingStatus();
+      if (!mounted) {
+        return;
+      }
+      setState(() {});
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Google привязан к аккаунту Родни.'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(authService.describeError(error)),
+          backgroundColor: Colors.red.shade800,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isGoogleLinkLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _startVkLinking() async {
+    if (!kIsWeb) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Пока привязка VK ID включена через web-версию Родни.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    final authService = _authService;
+    if (authService is! CustomApiAuthService) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Этот backend ещё не поддерживает VK ID link flow.'),
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _isVkLinkLoading = true;
+    });
+
+    try {
+      final launched = await launchUrl(
+        Uri.parse(authService.vkLinkStartUrl),
+        mode: LaunchMode.platformDefault,
+        webOnlyWindowName: '_self',
+      );
+      if (!launched && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Не удалось открыть VK ID link flow.'),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isVkLinkLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _startMaxLinking() async {
+    if (!kIsWeb) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Пока привязка MAX включена через web-версию Родни.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    final authService = _authService;
+    if (authService is! CustomApiAuthService) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Этот backend ещё не поддерживает MAX link flow.'),
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _isMaxLinkLoading = true;
+    });
+
+    try {
+      final launched = await launchUrl(
+        Uri.parse(authService.maxLinkStartUrl),
+        mode: LaunchMode.platformDefault,
+        webOnlyWindowName: '_self',
+      );
+      if (!launched && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Не удалось открыть MAX link flow.'),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isMaxLinkLoading = false;
+        });
       }
     }
   }
@@ -221,78 +845,18 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
       ),
       onSelect: (Country country) {
         setState(() {
-          _countryCode = country.countryCode;
+          _countryCode = country.phoneCode;
           _countryName = country.name;
         });
       },
     );
   }
 
-  Future<void> _verifyPhoneNumber() async {
-    if (_phoneController.text.isEmpty || _countryCode == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Введите номер телефона и выберите страну')),
-      );
-      return;
-    }
-
-    setState(() {
-      _isLoading = true;
-    });
-
-    try {
-      final phoneUtil = PhoneNumberUtil();
-      bool isValid = false;
-
-      final phoneNumberWithCode = '+$_countryCode${_phoneController.text}';
-
-      try {
-        isValid = await phoneUtil.validate(phoneNumberWithCode);
-      } catch (e) {
-        isValid = false;
-        debugPrint('Ошибка валидации номера: $e');
-      }
-
-      if (!isValid) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Неверный формат номера телефона')),
-        );
-        setState(() {
-          _isLoading = false;
-        });
-        return;
-      }
-
-      await _profileService.verifyCurrentUserPhone(
-        phoneNumber: _phoneController.text,
-        countryCode: _countryCode!,
-      );
-
-      if (!mounted) return;
-      setState(() {
-        _isPhoneVerified = true;
-      });
-
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Номер телефона проверен')));
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Ошибка: $e')));
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
-    }
-  }
-
   Future<void> _saveProfile({String? newPhotoUrl}) async {
     if (!_formKey.currentState!.validate()) {
+      return;
+    }
+    if (!_validateVisibilitySelections()) {
       return;
     }
 
@@ -325,11 +889,29 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
           countryName: _countryName,
           city: _cityController.text.trim(),
           photoUrl: newPhotoUrl ?? _profileImageUrl,
-          isPhoneVerified: _isPhoneVerified,
           gender: _gender,
           maidenName:
               _gender == Gender.female ? _maidenNameController.text.trim() : '',
           birthDate: _birthDate,
+          birthPlace: _birthPlaceController.text.trim(),
+          bio: _bioController.text.trim(),
+          familyStatus: _familyStatusController.text.trim(),
+          aboutFamily: _aboutFamilyController.text.trim(),
+          education: _educationController.text.trim(),
+          work: _workController.text.trim(),
+          hometown: _hometownController.text.trim(),
+          languages: _languagesController.text.trim(),
+          values: _valuesController.text.trim(),
+          religion: _religionController.text.trim(),
+          interests: _interestsController.text.trim(),
+          profileContributionPolicy: _profileContributionPolicy,
+          primaryTrustedChannel: _sanitizeTrustedChannelProvider(
+            _primaryTrustedChannel,
+          ),
+          profileVisibilityScopes: _profileVisibilityScopes,
+          profileVisibilityTreeIds: _profileVisibilityTreeIds,
+          profileVisibilityBranchRootIds: _profileVisibilityBranchRootIds,
+          profileVisibilityUserIds: _profileVisibilityUserIds,
         ),
       );
 
@@ -391,6 +973,25 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                           _buildPersonalSection(dateFormat),
                         ],
                         const SizedBox(height: 16),
+                        _buildAboutSection(),
+                        const SizedBox(height: 16),
+                        if (isWide)
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(child: _buildBackgroundSection()),
+                              const SizedBox(width: 16),
+                              Expanded(child: _buildWorldviewSection()),
+                            ],
+                          )
+                        else ...[
+                          _buildBackgroundSection(),
+                          const SizedBox(height: 16),
+                          _buildWorldviewSection(),
+                        ],
+                        const SizedBox(height: 16),
+                        _buildLinkedAuthMethodsSection(),
+                        const SizedBox(height: 16),
                         _buildContactsSection(),
                         const SizedBox(height: 24),
                       ],
@@ -421,219 +1022,371 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
     );
   }
 
-  Widget _buildAvatarCard() {
-    final theme = Theme.of(context);
-    return GlassPanel(
-      child: Row(
-        children: [
-          GestureDetector(
-            onTap: _pickImage,
-            child: Stack(
-              alignment: Alignment.bottomRight,
-              children: [
-                CircleAvatar(
-                  radius: 42,
-                  backgroundImage: _profileImageUrl != null
-                      ? NetworkImage(_profileImageUrl!)
-                      : null,
-                  child: _profileImageUrl == null
-                      ? const Icon(Icons.person, size: 42)
-                      : null,
-                ),
-                Container(
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.primary,
-                    shape: BoxShape.circle,
-                  ),
-                  padding: const EdgeInsets.all(6),
-                  child: Icon(
-                    Icons.camera_alt_outlined,
-                    color: theme.colorScheme.onPrimary,
-                    size: 16,
-                  ),
-                ),
-              ],
+  Future<void> _pickVisibilityTrees(String sectionKey) async {
+    final selected = await _showVisibilityTargetDialog(
+      title: 'Кто увидит "${_visibilitySectionTitle(sectionKey)}"',
+      options: _availableVisibilityTrees
+          .map(
+            (tree) => _VisibilityTargetOption(
+              id: tree.id,
+              title: tree.name,
+              subtitle: tree.description,
             ),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Фото профиля',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'Обновите аватар и основные данные.',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          FilledButton.tonalIcon(
-            onPressed: _pickImage,
-            icon: const Icon(Icons.photo_library_outlined),
-            label: const Text('Фото'),
-          ),
-        ],
-      ),
+          )
+          .toList(),
+      initialSelection:
+          _profileVisibilityTreeIds[sectionKey] ?? const <String>[],
     );
+    if (selected == null || !mounted) {
+      return;
+    }
+    setState(() {
+      _profileVisibilityTreeIds = {
+        ..._profileVisibilityTreeIds,
+        sectionKey: selected,
+      };
+    });
   }
 
-  Widget _buildIdentitySection() {
-    return GlassPanel(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _buildSectionTitle('Основное'),
-          const SizedBox(height: 14),
-          TextFormField(
-            controller: _firstNameController,
-            decoration: _inputDecoration('Имя'),
-            validator: (value) {
-              if (value == null || value.trim().isEmpty) {
-                return 'Введите имя';
-              }
-              return null;
-            },
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: _lastNameController,
-            decoration: _inputDecoration('Фамилия'),
-            validator: (value) {
-              if (value == null || value.trim().isEmpty) {
-                return 'Введите фамилию';
-              }
-              return null;
-            },
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: _middleNameController,
-            decoration: _inputDecoration('Отчество'),
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: _usernameController,
-            decoration: _inputDecoration('Username'),
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: _emailController,
-            readOnly: true,
-            decoration: _inputDecoration(
-              'Email',
-              suffixIcon: const Icon(Icons.lock_outline),
+  Future<void> _pickVisibilityUsers(String sectionKey) async {
+    final selected = await _showVisibilityTargetDialog(
+      title: 'Кто увидит "${_visibilitySectionTitle(sectionKey)}"',
+      options: _availableVisibilityUsers
+          .map(
+            (user) => _VisibilityTargetOption(
+              id: user.userId,
+              title: user.displayName,
+              subtitle: user.treeNames.join(' • '),
             ),
-          ),
-        ],
-      ),
+          )
+          .toList(),
+      initialSelection:
+          _profileVisibilityUserIds[sectionKey] ?? const <String>[],
     );
+    if (selected == null || !mounted) {
+      return;
+    }
+    setState(() {
+      _profileVisibilityUserIds = {
+        ..._profileVisibilityUserIds,
+        sectionKey: selected,
+      };
+    });
   }
 
-  Widget _buildPersonalSection(DateFormat dateFormat) {
-    return GlassPanel(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _buildSectionTitle('Личное'),
-          const SizedBox(height: 14),
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: [
-              ChoiceChip(
-                label: const Text('Мужской'),
-                avatar: const Icon(Icons.male, size: 18),
-                selected: _gender == Gender.male,
-                onSelected: (_) {
-                  setState(() {
-                    _gender = Gender.male;
-                  });
-                },
+  Future<void> _pickVisibilityBranches(String sectionKey) async {
+    final selected = await _showVisibilityTargetDialog(
+      title: 'Кто увидит "${_visibilitySectionTitle(sectionKey)}"',
+      options: _availableVisibilityBranches
+          .map(
+            (branch) => _VisibilityTargetOption(
+              id: branch.personId,
+              title: branch.displayName,
+              subtitle: branch.treeName,
+            ),
+          )
+          .toList(),
+      initialSelection:
+          _profileVisibilityBranchRootIds[sectionKey] ?? const <String>[],
+    );
+    if (selected == null || !mounted) {
+      return;
+    }
+    setState(() {
+      _profileVisibilityBranchRootIds = {
+        ..._profileVisibilityBranchRootIds,
+        sectionKey: selected,
+      };
+    });
+  }
+
+  Future<List<String>?> _showVisibilityTargetDialog({
+    required String title,
+    required List<_VisibilityTargetOption> options,
+    required List<String> initialSelection,
+  }) {
+    return showDialog<List<String>>(
+      context: context,
+      builder: (dialogContext) {
+        final selectedIds = initialSelection.toSet();
+        return StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+            title: Text(title),
+            content: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 520, maxHeight: 420),
+              child: options.isEmpty
+                  ? const Text('Пока нет доступных вариантов для выбора.')
+                  : Scrollbar(
+                      child: ListView(
+                        shrinkWrap: true,
+                        children: [
+                          for (final option in options)
+                            CheckboxListTile(
+                              value: selectedIds.contains(option.id),
+                              title: Text(option.title),
+                              subtitle: option.subtitle.trim().isEmpty
+                                  ? null
+                                  : Text(option.subtitle),
+                              controlAffinity: ListTileControlAffinity.leading,
+                              contentPadding: EdgeInsets.zero,
+                              onChanged: (value) {
+                                setDialogState(() {
+                                  if (value == true) {
+                                    selectedIds.add(option.id);
+                                  } else {
+                                    selectedIds.remove(option.id);
+                                  }
+                                });
+                              },
+                            ),
+                        ],
+                      ),
+                    ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () =>
+                    Navigator.of(dialogContext).pop(initialSelection),
+                child: const Text('Отмена'),
               ),
-              ChoiceChip(
-                label: const Text('Женский'),
-                avatar: const Icon(Icons.female, size: 18),
-                selected: _gender == Gender.female,
-                onSelected: (_) {
-                  setState(() {
-                    _gender = Gender.female;
-                  });
-                },
+              TextButton(
+                onPressed: () =>
+                    Navigator.of(dialogContext).pop(const <String>[]),
+                child: const Text('Очистить'),
+              ),
+              FilledButton(
+                onPressed: () =>
+                    Navigator.of(dialogContext).pop(selectedIds.toList()),
+                child: const Text('Готово'),
               ),
             ],
           ),
-          const SizedBox(height: 12),
-          _buildActionTile(
-            icon: Icons.calendar_today_outlined,
-            title: 'Дата рождения',
-            subtitle: _birthDate != null
-                ? dateFormat.format(_birthDate!)
-                : 'Не указана',
-            onTap: _pickDate,
+        );
+      },
+    );
+  }
+
+  String _visibilitySectionTitle(String sectionKey) {
+    switch (sectionKey) {
+      case 'contacts':
+        return 'Контакты';
+      case 'about':
+        return 'О человеке';
+      case 'background':
+        return 'Учёба и дело';
+      case 'worldview':
+        return 'Ценности и взгляды';
+      default:
+        return sectionKey;
+    }
+  }
+
+  String _visibilityScopeDescription(String scope) {
+    switch (scope) {
+      case 'public':
+        return 'Блок видят все авторизованные пользователи Родни.';
+      case 'specific_trees':
+        return 'Блок увидят только участники выбранных деревьев, где вы с ними действительно пересекаетесь.';
+      case 'specific_branches':
+        return 'Блок увидят только те родственники, которые попадают в выбранные ветки внутри ваших общих деревьев.';
+      case 'specific_users':
+        return 'Блок откроется только выбранным людям, даже если они есть и в других ваших деревьях.';
+      case 'private':
+        return 'Блок останется только в вашем личном просмотре.';
+      case 'shared_trees':
+      default:
+        return 'Блок увидят только люди, у которых с вами есть общее дерево.';
+    }
+  }
+
+  Widget _buildLinkedAuthMethodsSection() {
+    final customApiAuthService = _authService is CustomApiAuthService
+        ? _authService as CustomApiAuthService
+        : null;
+    final linkingStatus = _accountLinkingStatus;
+    final linkedProviderIds = linkingStatus?.linkedProviderIds.toSet() ??
+        _authService.currentProviderIds.toSet();
+    final trustedChannelsByProvider = {
+      for (final channel
+          in linkingStatus?.trustedChannels ?? const <AccountTrustedChannel>[])
+        channel.provider: channel,
+    };
+    final primaryTrustedChannel =
+        _sanitizeTrustedChannelProvider(_primaryTrustedChannel) ??
+            linkingStatus?.primaryTrustedChannelProvider;
+    final isGoogleReady =
+        customApiAuthService?.isGoogleSignInConfigured ?? true;
+
+    String providerLabel(String provider) {
+      switch (provider) {
+        case 'google':
+          return 'Google';
+        case 'telegram':
+          return 'Telegram';
+        case 'vk':
+          return 'VK ID';
+        case 'max':
+          return 'MAX';
+        case 'password':
+        default:
+          return 'Email и пароль';
+      }
+    }
+
+    String providerDescription(String provider) {
+      switch (provider) {
+        case 'google':
+          return isGoogleReady
+              ? 'Вход и подтверждение личности через Google.'
+              : 'Подключим после добавления client id для web и Android.';
+        case 'telegram':
+          return 'Подтверждённый канал связи и вход через Telegram.';
+        case 'vk':
+          return 'Подтверждённый профиль и вход через VK ID.';
+        case 'max':
+          return 'Подтверждённый канал связи через MAX.';
+        case 'password':
+        default:
+          return 'Резервный вход для восстановления доступа.';
+      }
+    }
+
+    Widget buildTrailing({
+      required String provider,
+      required bool isLinked,
+      required bool isTrusted,
+      required bool isPrimary,
+    }) {
+      if (isLinked && isPrimary) {
+        return const Text('Основной');
+      }
+      if (isLinked && isTrusted) {
+        return FilledButton.tonal(
+          onPressed: _canSetPrimaryTrustedChannel(provider)
+              ? () {
+                  _updateSectionState(() {
+                    _primaryTrustedChannel = provider;
+                  });
+                }
+              : null,
+          child: const Text('Сделать основным'),
+        );
+      }
+      if (isLinked) {
+        return const Text('Привязан');
+      }
+      if (provider == 'google') {
+        return FilledButton.tonal(
+          onPressed: isGoogleReady && !_isGoogleLinkLoading
+              ? _startGoogleLinking
+              : null,
+          child: Text(_isGoogleLinkLoading ? 'Связываем...' : 'Привязать'),
+        );
+      }
+      if (provider == 'telegram') {
+        return FilledButton.tonal(
+          onPressed: _isTelegramLinkLoading ? null : _startTelegramLinking,
+          child: Text(_isTelegramLinkLoading ? 'Открываем...' : 'Привязать'),
+        );
+      }
+      if (provider == 'vk') {
+        return FilledButton.tonal(
+          onPressed: _isVkLinkLoading ? null : _startVkLinking,
+          child: Text(_isVkLinkLoading ? 'Открываем...' : 'Привязать'),
+        );
+      }
+      if (provider == 'max') {
+        return FilledButton.tonal(
+          onPressed: _isMaxLinkLoading ? null : _startMaxLinking,
+          child: Text(_isMaxLinkLoading ? 'Открываем...' : 'Привязать'),
+        );
+      }
+      return Text(
+        'Скоро',
+        style: TextStyle(
+          color: Theme.of(context).colorScheme.primary,
+          fontWeight: FontWeight.w600,
+        ),
+      );
+    }
+
+    return GlassPanel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _buildSectionTitle('Подтверждённые каналы'),
+          const SizedBox(height: 8),
+          Text(
+            linkingStatus?.summaryTitle ??
+                'Привяжите VK, Telegram, Google или MAX и выберите основной канал.',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
           ),
-          if (_gender == Gender.female) ...[
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _maidenNameController,
-              decoration: _inputDecoration('Девичья фамилия'),
+          if ((linkingStatus?.summaryDetail ?? '').trim().isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              linkingStatus!.summaryDetail!,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
             ),
           ],
-        ],
-      ),
-    );
-  }
-
-  Widget _buildContactsSection() {
-    return GlassPanel(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _buildSectionTitle('Контакты'),
           const SizedBox(height: 14),
-          _buildActionTile(
-            icon: Icons.public_outlined,
-            title: 'Страна',
-            subtitle: _countryName ?? 'Не указана',
-            onTap: _selectCountry,
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: _cityController,
-            decoration: _inputDecoration('Город'),
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: TextFormField(
-                  controller: _phoneController,
-                  keyboardType: TextInputType.phone,
-                  decoration: _inputDecoration(
-                    'Телефон',
-                    suffixIcon: _isPhoneVerified
-                        ? const Icon(Icons.verified, color: Colors.green)
-                        : null,
-                    prefixText: _countryCode != null ? '+' : null,
+          ...['password', 'google', 'telegram', 'vk', 'max'].map(
+            (provider) {
+              final channel = trustedChannelsByProvider[provider];
+              final isLinked =
+                  channel?.isLinked ?? linkedProviderIds.contains(provider);
+              final isTrusted = channel?.isTrustedChannel ??
+                  (provider != 'password' && isLinked);
+              final isPrimary = primaryTrustedChannel == provider && isTrusted;
+              final subtitleParts = <String>[
+                channel?.description ?? providerDescription(provider),
+                if (isLinked &&
+                    (channel?.verificationLabel ?? '').trim().isNotEmpty)
+                  channel!.verificationLabel,
+                if ((channel?.emailMasked ?? '').trim().isNotEmpty)
+                  channel!.emailMasked!,
+                if ((channel?.phoneMasked ?? '').trim().isNotEmpty)
+                  channel!.phoneMasked!,
+              ];
+
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: Theme.of(context)
+                        .colorScheme
+                        .surfaceContainerLowest
+                        .withValues(alpha: 0.88),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: ListTile(
+                    leading: Icon(
+                      isLinked
+                          ? (isTrusted
+                              ? Icons.verified_user_outlined
+                              : Icons.login_outlined)
+                          : Icons.link_outlined,
+                      color: isLinked
+                          ? (isTrusted
+                              ? Colors.green
+                              : Theme.of(context).colorScheme.primary)
+                          : Theme.of(context).colorScheme.primary,
+                    ),
+                    title: Text(channel?.label ?? providerLabel(provider)),
+                    subtitle: Text(subtitleParts.join('\n')),
+                    trailing: buildTrailing(
+                      provider: provider,
+                      isLinked: isLinked,
+                      isTrusted: isTrusted,
+                      isPrimary: isPrimary,
+                    ),
                   ),
                 ),
-              ),
-              if (!_isPhoneVerified) ...[
-                const SizedBox(width: 10),
-                FilledButton.tonal(
-                  onPressed: _verifyPhoneNumber,
-                  child: const Text('Проверить'),
-                ),
-              ],
-            ],
+              );
+            },
           ),
         ],
       ),

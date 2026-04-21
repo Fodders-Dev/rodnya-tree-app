@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:lineage/widgets/startup_failure_view.dart';
+import 'package:rodnya/widgets/startup_failure_view.dart';
 
 void main() {
   testWidgets('StartupFailureView keeps technical details collapsed by default',

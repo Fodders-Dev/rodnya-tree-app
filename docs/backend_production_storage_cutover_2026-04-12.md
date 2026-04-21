@@ -2,8 +2,8 @@
 
 ## Result
 - Production backend on `https://api.rodnya-tree.ru` now runs with:
-  - `LINEAGE_BACKEND_STORAGE=postgres`
-  - `LINEAGE_MEDIA_BACKEND=s3`
+  - `RODNYA_BACKEND_STORAGE=postgres`
+  - `RODNYA_MEDIA_BACKEND=s3`
 - State storage: local `PostgreSQL` on the production host.
 - Media storage: local `MinIO` with public HTTPS delivery through Caddy at:
   - `https://api.rodnya-tree.ru/storage/rodnya-media/...`

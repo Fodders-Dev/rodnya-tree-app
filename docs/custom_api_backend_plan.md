@@ -18,7 +18,6 @@
 - Реализовать `GET /v1/profile/me/bootstrap`.
 - Реализовать `PUT /v1/profile/me/bootstrap`.
 - Реализовать `PATCH /v1/profile/me`.
-- Реализовать `POST /v1/profile/me/verify-phone`.
 - Реализовать `GET /v1/users/search`.
 - Реализовать `GET /v1/users/search/by-field`.
 - Реализовать `GET /v1/users/:id/profile`.
@@ -45,10 +44,10 @@
 
 1. Запускать backend локально.
 2. Переключать Flutter dev-сборку на:
-   - `LINEAGE_AUTH_PROVIDER=customApi`
-   - `LINEAGE_PROFILE_PROVIDER=customApi`
-   - `LINEAGE_API_BASE_URL=http://127.0.0.1:8080`
-   - `LINEAGE_ENABLE_LEGACY_DYNAMIC_LINKS=false`
+   - `RODNYA_AUTH_PROVIDER=customApi`
+   - `RODNYA_PROFILE_PROVIDER=customApi`
+   - `RODNYA_API_BASE_URL=http://127.0.0.1:8080`
+   - `RODNYA_ENABLE_LEGACY_DYNAMIC_LINKS=false`
 3. Проверять auth + profile bootstrap end-to-end.
 4. Только потом подключать следующие домены.
 

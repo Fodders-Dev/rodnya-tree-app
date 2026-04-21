@@ -18,6 +18,7 @@ import '../backend/interfaces/post_service_interface.dart';
 import '../backend/interfaces/story_service_interface.dart';
 import '../models/post.dart';
 import '../models/story.dart';
+import '../services/app_status_service.dart';
 import '../widgets/post_card.dart';
 import '../widgets/post_card_shimmer.dart';
 import '../widgets/empty_state_widget.dart';
@@ -40,6 +41,7 @@ class _HomeScreenState extends State<HomeScreen> {
       GetIt.I<FamilyTreeServiceInterface>();
   final PostServiceInterface _postService = GetIt.I<PostServiceInterface>();
   final StoryServiceInterface _storyService = GetIt.I<StoryServiceInterface>();
+  final AppStatusService _appStatusService = GetIt.I<AppStatusService>();
   late final EventService _eventService;
 
   List<AppEvent> _upcomingEvents = [];
@@ -141,10 +143,13 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     } catch (e) {
       debugPrint('Ошибка загрузки stories: $e');
+      _appStatusService.reportError(
+        e,
+        fallbackMessage: 'Не удалось обновить истории.',
+      );
       if (mounted) {
         setState(() {
           _storiesUnavailable = true;
-          _stories = [];
           _isLoadingStories = false;
         });
       }
@@ -172,6 +177,10 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     } catch (e) {
       debugPrint('Ошибка загрузки событий: $e');
+      _appStatusService.reportError(
+        e,
+        fallbackMessage: 'Не удалось обновить события.',
+      );
       if (mounted) {
         setState(() {
           _isLoadingEvents = false;
@@ -307,10 +316,13 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     } catch (e) {
       debugPrint('Ошибка загрузки постов: $e');
+      _appStatusService.reportError(
+        e,
+        fallbackMessage: 'Не удалось обновить ленту.',
+      );
       if (mounted) {
         setState(() {
           _postsUnavailable = true;
-          _posts = [];
           _isLoadingPosts = false;
         });
       }
@@ -319,6 +331,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final treeProvider = Provider.of<TreeProvider>(context);
     final selectedTreeName = treeProvider.selectedTreeName;
     final selectedTreeKind = treeProvider.selectedTreeKind;
@@ -334,6 +347,10 @@ class _HomeScreenState extends State<HomeScreen> {
       backgroundColor: Colors.transparent,
       appBar: AppBar(
         title: Text(selectedTreeName ?? 'Главная'),
+        backgroundColor: theme.colorScheme.surface.withValues(
+          alpha: theme.brightness == Brightness.dark ? 0.84 : 0.76,
+        ),
+        surfaceTintColor: Colors.transparent,
         actions: [
           _buildNotificationsAction(),
           IconButton(
@@ -368,6 +385,12 @@ class _HomeScreenState extends State<HomeScreen> {
                       SliverToBoxAdapter(
                         child: _buildPendingInvitationsBanner(
                           pendingInvitations,
+                        ),
+                      ),
+                    if (_shouldShowOperationalBanner(hasSelectedTree))
+                      SliverToBoxAdapter(
+                        child: _buildOperationalBanner(
+                          hasSelectedTree: hasSelectedTree,
                         ),
                       ),
                     SliverToBoxAdapter(
@@ -447,6 +470,125 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isWideHomeLayout(BuildContext context) =>
       MediaQuery.of(context).size.width >= 1180;
 
+  bool _shouldShowOperationalBanner(bool hasSelectedTree) {
+    if (_appStatusService.hasVisibleStatus) {
+      return true;
+    }
+    if (!hasSelectedTree) {
+      return false;
+    }
+    return _postsUnavailable || _storiesUnavailable;
+  }
+
+  Widget _buildOperationalBanner({required bool hasSelectedTree}) {
+    final theme = Theme.of(context);
+    final issue = _appStatusService.issue;
+    final isSessionIssue = _appStatusService.hasSessionIssue;
+    final title = isSessionIssue
+        ? 'Нужно заново войти'
+        : _appStatusService.isOffline
+            ? 'Часть данных временно офлайн'
+            : 'Есть что обновить';
+    final message = issue?.message ??
+        (_appStatusService.isOffline
+            ? 'Связь прервалась. Экран можно просматривать, но часть действий и обновлений сейчас недоступна.'
+            : hasSelectedTree && _postsUnavailable && _storiesUnavailable
+                ? 'Истории и лента не обновились. Откройте экран ещё раз или попробуйте ручное обновление.'
+                : hasSelectedTree && _postsUnavailable
+                    ? 'Лента не обновилась. Остальные разделы можно продолжать использовать.'
+                    : hasSelectedTree && _storiesUnavailable
+                        ? 'Истории не обновились. Остальные разделы продолжают работать.'
+                        : 'Проверьте состояние экрана и попробуйте обновить данные.');
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+      child: GlassPanel(
+        padding: const EdgeInsets.all(14),
+        borderRadius: BorderRadius.circular(26),
+        color: theme.colorScheme.secondaryContainer.withValues(alpha: 0.42),
+        borderColor: theme.colorScheme.secondary.withValues(alpha: 0.16),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: theme.colorScheme.secondary.withValues(alpha: 0.14),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Icon(
+                isSessionIssue
+                    ? Icons.lock_reset_outlined
+                    : _appStatusService.isOffline
+                        ? Icons.cloud_off_outlined
+                        : Icons.sync_problem_outlined,
+                color: theme.colorScheme.secondary,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    message,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                      height: 1.35,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      FilledButton.tonalIcon(
+                        onPressed: isSessionIssue
+                            ? () => context.go('/login')
+                            : () async {
+                                _appStatusService.requestRetry();
+                                if (_currentTreeId != null) {
+                                  await Future.wait([
+                                    _loadStories(_currentTreeId!),
+                                    _loadEvents(_currentTreeId!),
+                                    _loadPosts(_currentTreeId!),
+                                  ]);
+                                }
+                              },
+                        icon: Icon(
+                          isSessionIssue
+                              ? Icons.login_outlined
+                              : Icons.refresh_rounded,
+                        ),
+                        label: Text(
+                          isSessionIssue ? 'Войти снова' : 'Обновить данные',
+                        ),
+                      ),
+                      if (!hasSelectedTree)
+                        OutlinedButton.icon(
+                          onPressed: () => context.go('/tree?selector=1'),
+                          icon: const Icon(Icons.account_tree_outlined),
+                          label: const Text('Выбрать дерево'),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildHomeContentSections({required bool isWideLayout}) {
     return Column(
       children: [
@@ -464,6 +606,17 @@ class _HomeScreenState extends State<HomeScreen> {
     required bool isFriendsTree,
     required String? selectedTreeName,
   }) {
+    final theme = Theme.of(context);
+    final title = !hasSelectedTree
+        ? 'С чего начнём'
+        : isFriendsTree
+            ? 'Круг под рукой'
+            : 'Семья под рукой';
+    final subtitle = !hasSelectedTree
+        ? 'Выберите активное дерево, чтобы сразу открыть ленту, карточки, события и чаты.'
+        : selectedTreeName?.trim().isNotEmpty == true
+            ? 'Сейчас вы в “$selectedTreeName”. Здесь главное действие всегда сверху: пост, люди, дерево и приглашения.'
+            : 'Главные действия уже готовы: публикации, люди, дерево и семейная активность.';
     final statusChips = <Widget>[];
     if (!hasSelectedTree) {
       statusChips.add(
@@ -507,18 +660,18 @@ class _HomeScreenState extends State<HomeScreen> {
         ? [
             _buildQuickActionButton(
               icon: Icons.post_add_outlined,
-              label: 'Пост',
+              label: 'Новый пост',
               onTap: () => context.push('/post/create'),
               primary: true,
             ),
             _buildQuickActionButton(
               icon: isFriendsTree ? Icons.hub_outlined : Icons.people_outline,
-              label: isFriendsTree ? 'Люди' : 'Родные',
+              label: isFriendsTree ? 'Люди круга' : 'Открыть родных',
               onTap: () => context.go('/relatives'),
             ),
             _buildQuickActionButton(
               icon: Icons.account_tree_outlined,
-              label: 'Дерево',
+              label: isFriendsTree ? 'Открыть круг' : 'Открыть дерево',
               onTap: () => context.go('/tree?selector=1'),
             ),
           ]
@@ -538,16 +691,43 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
-      child: Align(
-        alignment: Alignment.centerLeft,
-        child: Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            ...statusChips,
-            ...actions,
-          ],
+      child: GlassPanel(
+        padding: const EdgeInsets.all(12),
+        borderRadius: BorderRadius.circular(28),
+        color: theme.colorScheme.surface.withValues(
+          alpha: theme.brightness == Brightness.dark ? 0.86 : 0.78,
+        ),
+        borderColor: theme.colorScheme.outlineVariant.withValues(alpha: 0.82),
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: theme.textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                subtitle,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  ...statusChips,
+                  ...actions,
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -561,6 +741,78 @@ class _HomeScreenState extends State<HomeScreen> {
       padding: padding,
       borderRadius: BorderRadius.circular(30),
       child: child,
+    );
+  }
+
+  Widget _buildEventStatePanel({
+    required IconData icon,
+    required String title,
+    required String message,
+    bool showProgress = false,
+    String? actionLabel,
+    VoidCallback? onAction,
+  }) {
+    final theme = Theme.of(context);
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface.withValues(alpha: 0.72),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(
+          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.82),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 46,
+            height: 46,
+            decoration: BoxDecoration(
+              color: theme.colorScheme.primary.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: showProgress
+                ? const Padding(
+                    padding: EdgeInsets.all(11),
+                    child: CircularProgressIndicator(strokeWidth: 2.4),
+                  )
+                : Icon(icon, color: theme.colorScheme.primary),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  message,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                    height: 1.35,
+                  ),
+                ),
+                if (actionLabel != null && onAction != null) ...[
+                  const SizedBox(height: 10),
+                  FilledButton.tonalIcon(
+                    onPressed: onAction,
+                    icon: const Icon(Icons.refresh_rounded, size: 18),
+                    label: Text(actionLabel),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -915,51 +1167,38 @@ class _HomeScreenState extends State<HomeScreen> {
             const SizedBox(height: 10),
           ],
           if (_isLoadingEvents)
-            const Padding(
-              padding: EdgeInsets.all(16.0),
-              child: Center(child: CircularProgressIndicator()),
+            _buildEventStatePanel(
+              icon: Icons.schedule_outlined,
+              title: 'Собираем ближайшие даты',
+              message:
+                  'Подтягиваем дни рождения, памятные даты и поводы для семьи.',
+              showProgress: true,
             )
           else if (_upcomingEvents.isEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 6),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.event_busy_outlined,
-                    size: 18,
-                    color: theme.colorScheme.onSurfaceVariant,
-                  ),
-                  const SizedBox(width: 10),
-                  Text(
-                    'Событий пока нет',
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-              ),
+            _buildEventStatePanel(
+              icon: Icons.event_busy_outlined,
+              title: 'Ближайшие даты появятся здесь',
+              message: _treeProviderInstance?.selectedTreeKind ==
+                      TreeKind.friends
+                  ? 'Добавьте памятные поводы, чтобы круг видел, что важно сейчас.'
+                  : 'Когда в семье появятся дни рождения и памятные даты, они сразу соберутся в эту ленту.',
+              actionLabel: _currentTreeId == null ? null : 'Обновить события',
+              onAction: _currentTreeId == null
+                  ? null
+                  : () => _loadEvents(_currentTreeId!),
             )
           else if (visibleEvents.isEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 6),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.filter_alt_off_outlined,
-                    size: 18,
-                    color: theme.colorScheme.onSurfaceVariant,
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      'Под фильтр пока пусто.',
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+            _buildEventStatePanel(
+              icon: Icons.filter_alt_off_outlined,
+              title: 'Под выбранный фильтр пока пусто',
+              message:
+                  'Сбросьте фильтр и посмотрите все ближайшие события одним списком.',
+              actionLabel: 'Показать все',
+              onAction: () {
+                setState(() {
+                  _selectedEventCategoryFilter = null;
+                });
+              },
             )
           else
             Container(

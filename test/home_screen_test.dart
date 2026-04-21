@@ -2,23 +2,24 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
-import 'package:lineage/backend/interfaces/auth_service_interface.dart';
-import 'package:lineage/backend/interfaces/family_tree_service_interface.dart';
-import 'package:lineage/backend/interfaces/post_service_interface.dart';
-import 'package:lineage/backend/interfaces/story_service_interface.dart';
-import 'package:lineage/backend/backend_runtime_config.dart';
-import 'package:lineage/backend/models/tree_invitation.dart';
-import 'package:lineage/models/family_tree.dart';
-import 'package:lineage/models/family_person.dart';
-import 'package:lineage/models/family_relation.dart';
-import 'package:lineage/models/post.dart';
-import 'package:lineage/models/story.dart';
-import 'package:lineage/providers/tree_provider.dart';
-import 'package:lineage/screens/home_screen.dart';
-import 'package:lineage/services/browser_notification_bridge.dart';
-import 'package:lineage/services/custom_api_notification_service.dart';
-import 'package:lineage/services/local_storage_service.dart';
-import 'package:lineage/widgets/event_card.dart';
+import 'package:rodnya/backend/interfaces/auth_service_interface.dart';
+import 'package:rodnya/backend/interfaces/family_tree_service_interface.dart';
+import 'package:rodnya/backend/interfaces/post_service_interface.dart';
+import 'package:rodnya/backend/interfaces/story_service_interface.dart';
+import 'package:rodnya/backend/backend_runtime_config.dart';
+import 'package:rodnya/backend/models/tree_invitation.dart';
+import 'package:rodnya/models/family_tree.dart';
+import 'package:rodnya/models/family_person.dart';
+import 'package:rodnya/models/family_relation.dart';
+import 'package:rodnya/models/post.dart';
+import 'package:rodnya/models/story.dart';
+import 'package:rodnya/providers/tree_provider.dart';
+import 'package:rodnya/screens/home_screen.dart';
+import 'package:rodnya/services/app_status_service.dart';
+import 'package:rodnya/services/browser_notification_bridge.dart';
+import 'package:rodnya/services/custom_api_notification_service.dart';
+import 'package:rodnya/services/local_storage_service.dart';
+import 'package:rodnya/widgets/event_card.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -211,6 +212,7 @@ void main() {
     );
     getIt.registerSingleton<PostServiceInterface>(_FakePostService());
     getIt.registerSingleton<StoryServiceInterface>(_FakeStoryService());
+    getIt.registerSingleton<AppStatusService>(AppStatusService());
   });
 
   tearDown(() async {
@@ -245,9 +247,9 @@ void main() {
       expect(find.bySemanticsLabel('story-rail-add'), findsOneWidget);
       expect(find.text('Обновите позже.'), findsOneWidget);
       expect(find.text('Лента недоступна'), findsWidgets);
-      expect(find.text('Пост'), findsOneWidget);
-      expect(find.text('Родные'), findsOneWidget);
-      expect(find.text('Дерево'), findsOneWidget);
+      expect(find.text('Новый пост'), findsOneWidget);
+      expect(find.text('Открыть родных'), findsOneWidget);
+      expect(find.text('Открыть дерево'), findsOneWidget);
       expect(find.text('День рождения'), findsOneWidget);
       expect(find.byType(FloatingActionButton), findsOneWidget);
     },
@@ -308,6 +310,7 @@ void main() {
       );
       getIt.registerSingleton<PostServiceInterface>(_FakePostService());
       getIt.registerSingleton<StoryServiceInterface>(_FakeStoryService());
+      getIt.registerSingleton<AppStatusService>(AppStatusService());
 
       final treeProvider = TreeProvider();
       final router = GoRouter(

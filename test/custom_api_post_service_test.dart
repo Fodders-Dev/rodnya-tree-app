@@ -3,11 +3,11 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
-import 'package:lineage/backend/backend_runtime_config.dart';
-import 'package:lineage/backend/interfaces/storage_service_interface.dart';
-import 'package:lineage/services/custom_api_auth_service.dart';
-import 'package:lineage/services/custom_api_post_service.dart';
-import 'package:lineage/services/invitation_service.dart';
+import 'package:rodnya/backend/backend_runtime_config.dart';
+import 'package:rodnya/backend/interfaces/storage_service_interface.dart';
+import 'package:rodnya/services/custom_api_auth_service.dart';
+import 'package:rodnya/services/custom_api_post_service.dart';
+import 'package:rodnya/services/invitation_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {

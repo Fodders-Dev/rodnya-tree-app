@@ -3,12 +3,12 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
-import 'package:lineage/backend/backend_runtime_config.dart';
-import 'package:lineage/backend/interfaces/storage_service_interface.dart';
-import 'package:lineage/models/story.dart';
-import 'package:lineage/services/custom_api_auth_service.dart';
-import 'package:lineage/services/custom_api_story_service.dart';
-import 'package:lineage/services/invitation_service.dart';
+import 'package:rodnya/backend/backend_runtime_config.dart';
+import 'package:rodnya/backend/interfaces/storage_service_interface.dart';
+import 'package:rodnya/models/story.dart';
+import 'package:rodnya/services/custom_api_auth_service.dart';
+import 'package:rodnya/services/custom_api_story_service.dart';
+import 'package:rodnya/services/invitation_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -147,6 +147,43 @@ void main() {
     expect(created.id, 'story-2');
     expect(viewed.viewedBy, ['user-1']);
     expect(viewed.isViewedBy('user-1'), isTrue);
+  });
+
+  test('CustomApiStoryService does not send requests without active session',
+      () async {
+    final client = MockClient((request) async {
+      fail('Story request should not reach network without session');
+    });
+
+    final prefs = await SharedPreferences.getInstance();
+    final authService = await CustomApiAuthService.create(
+      httpClient: client,
+      preferences: prefs,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      invitationService: InvitationService(),
+    );
+
+    final service = CustomApiStoryService(
+      authService: authService,
+      storageService: _FakeStorageService(),
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      httpClient: client,
+    );
+
+    await expectLater(
+      () => service.getStories(treeId: 'tree-1'),
+      throwsA(
+        isA<CustomApiStoryException>().having(
+          (error) => error.statusCode,
+          'statusCode',
+          401,
+        ),
+      ),
+    );
   });
 }
 

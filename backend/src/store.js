@@ -2,14 +2,44 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const crypto = require("node:crypto");
 
+const PROFILE_CONTRIBUTION_POLICIES = new Set([
+  "disabled",
+  "suggestions",
+]);
+
+const PROFILE_SUGGESTION_FIELDS = Object.freeze([
+  "firstName",
+  "lastName",
+  "middleName",
+  "maidenName",
+  "photoUrl",
+  "gender",
+  "birthDate",
+  "birthPlace",
+  "countryName",
+  "city",
+  "bio",
+  "familyStatus",
+  "aboutFamily",
+  "education",
+  "work",
+  "hometown",
+  "languages",
+  "values",
+  "religion",
+  "interests",
+]);
+
 const EMPTY_DB = {
   users: [],
   sessions: [],
+  authHandoffs: [],
   trees: [],
   persons: [],
   personIdentities: [],
   relations: [],
   chats: [],
+  calls: [],
   messages: [],
   relationRequests: [],
   treeInvitations: [],
@@ -20,6 +50,7 @@ const EMPTY_DB = {
   comments: [],
   reports: [],
   blocks: [],
+  profileContributions: [],
   pushDevices: [],
   pushDeliveries: [],
 };
@@ -28,6 +59,7 @@ function normalizeDbState(parsed) {
   return {
     users: Array.isArray(parsed?.users) ? parsed.users : [],
     sessions: Array.isArray(parsed?.sessions) ? parsed.sessions : [],
+    authHandoffs: Array.isArray(parsed?.authHandoffs) ? parsed.authHandoffs : [],
     trees: Array.isArray(parsed?.trees) ? parsed.trees : [],
     persons: Array.isArray(parsed?.persons) ? parsed.persons : [],
     personIdentities: Array.isArray(parsed?.personIdentities)
@@ -35,6 +67,9 @@ function normalizeDbState(parsed) {
       : [],
     relations: Array.isArray(parsed?.relations) ? parsed.relations : [],
     chats: Array.isArray(parsed?.chats) ? parsed.chats : [],
+    calls: Array.isArray(parsed?.calls)
+      ? parsed.calls.map((entry) => normalizeStoredCall(entry)).filter(Boolean)
+      : [],
     messages: Array.isArray(parsed?.messages) ? parsed.messages : [],
     relationRequests: Array.isArray(parsed?.relationRequests)
       ? parsed.relationRequests
@@ -53,6 +88,9 @@ function normalizeDbState(parsed) {
     comments: Array.isArray(parsed?.comments) ? parsed.comments : [],
     reports: Array.isArray(parsed?.reports) ? parsed.reports : [],
     blocks: Array.isArray(parsed?.blocks) ? parsed.blocks : [],
+    profileContributions: Array.isArray(parsed?.profileContributions)
+      ? parsed.profileContributions
+      : [],
     pushDevices: Array.isArray(parsed?.pushDevices) ? parsed.pushDevices : [],
     pushDeliveries: Array.isArray(parsed?.pushDeliveries)
       ? parsed.pushDeliveries
@@ -63,6 +101,8 @@ function normalizeDbState(parsed) {
 function nowIso() {
   return new Date().toISOString();
 }
+
+const SESSION_TOUCH_MIN_INTERVAL_MS = 60_000;
 
 function normalizeOptionalIsoTimestamp(value) {
   const rawValue = String(value || "").trim();
@@ -419,6 +459,16 @@ function describeMessagePreview(message) {
   }
 
   const attachments = normalizeMessageAttachments(message);
+  if (
+    attachments.some((attachment) => attachment.presentation === "video_note")
+  ) {
+    return "Видеосообщение";
+  }
+  if (
+    attachments.some((attachment) => attachment.presentation === "voice_note")
+  ) {
+    return "Голосовое";
+  }
   const imageCount = attachments.filter((attachment) => attachment.type === "image")
     .length;
   if (imageCount > 1) {
@@ -438,6 +488,26 @@ function describeMessagePreview(message) {
   }
 
   return "";
+}
+
+function normalizeAttachmentPresentation(rawPresentation, rawType) {
+  const normalizedPresentation = String(rawPresentation || "").trim().toLowerCase();
+  if (
+    normalizedPresentation === "default" ||
+    normalizedPresentation === "voice_note" ||
+    normalizedPresentation === "video_note"
+  ) {
+    return normalizedPresentation;
+  }
+
+  const normalizedType = String(rawType || "").trim().toLowerCase();
+  if (normalizedType === "audio") {
+    return "default";
+  }
+  if (normalizedType === "video") {
+    return "default";
+  }
+  return "default";
 }
 
 function normalizeAttachmentType(rawType, url, mimeType) {
@@ -490,6 +560,10 @@ function normalizeMessageAttachments(message) {
               attachment?.mimeType,
             ),
             url,
+            presentation: normalizeAttachmentPresentation(
+              attachment?.presentation,
+              attachment?.type,
+            ),
             mimeType: attachment?.mimeType
               ? String(attachment.mimeType).trim()
               : null,
@@ -536,6 +610,7 @@ function normalizeMessageAttachments(message) {
   return Array.from(legacyUrls).map((url) => ({
     type: normalizeAttachmentType("image", url, "image/jpeg"),
     url,
+    presentation: "default",
     mimeType: "image/jpeg",
     fileName: null,
     sizeBytes: null,
@@ -561,6 +636,177 @@ function normalizeReplyReference(replyTo) {
     senderId: String(replyTo.senderId || "").trim(),
     senderName: String(replyTo.senderName || "Участник").trim() || "Участник",
     text: String(replyTo.text || "").trim(),
+  };
+}
+
+function normalizeCallMediaMode(value) {
+  return String(value || "").trim().toLowerCase() === "video"
+    ? "video"
+    : "audio";
+}
+
+function normalizeCallState(value) {
+  const normalizedState = String(value || "").trim().toLowerCase();
+  switch (normalizedState) {
+    case "ringing":
+    case "active":
+    case "rejected":
+    case "cancelled":
+    case "ended":
+    case "missed":
+    case "failed":
+      return normalizedState;
+    default:
+      return "ringing";
+  }
+}
+
+function isCallTerminalState(state) {
+  return (
+    state === "rejected" ||
+    state === "cancelled" ||
+    state === "ended" ||
+    state === "missed" ||
+    state === "failed"
+  );
+}
+
+function isCallBusyState(state) {
+  return state === "ringing" || state === "active";
+}
+
+function normalizeCallSession(session) {
+  if (!session || typeof session !== "object") {
+    return null;
+  }
+
+  const roomName = String(session.roomName || "").trim();
+  const url = String(session.url || "").trim();
+  const token = String(session.token || "").trim();
+  const participantIdentity = String(session.participantIdentity || "").trim();
+  if (!roomName || !url || !token || !participantIdentity) {
+    return null;
+  }
+
+  return {
+    roomName,
+    url,
+    token,
+    participantIdentity,
+    participantName: normalizeNullableString(session.participantName),
+    createdAt: normalizeOptionalIsoTimestamp(session.createdAt) || nowIso(),
+  };
+}
+
+function normalizeCallSessionMap(value) {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+
+  return Object.entries(value).reduce((accumulator, [userId, session]) => {
+    const normalizedUserId = String(userId || "").trim();
+    const normalizedSession = normalizeCallSession(session);
+    if (normalizedUserId && normalizedSession) {
+      accumulator[normalizedUserId] = normalizedSession;
+    }
+    return accumulator;
+  }, {});
+}
+
+function normalizeNonNegativeInteger(value, fallback = 0) {
+  const normalizedFallback =
+    Number.isFinite(Number(fallback)) && Number(fallback) >= 0
+      ? Math.floor(Number(fallback))
+      : 0;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return normalizedFallback;
+  }
+  return Math.floor(parsed);
+}
+
+function normalizeNullableDurationMs(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return null;
+  }
+  return Math.floor(parsed);
+}
+
+function normalizeCallMetrics(value) {
+  const source = value && typeof value === "object" ? value : {};
+  return {
+    acceptLatencyMs: normalizeNullableDurationMs(source.acceptLatencyMs),
+    roomJoinFailureCount: normalizeNonNegativeInteger(
+      source.roomJoinFailureCount,
+    ),
+    reconnectCount: normalizeNonNegativeInteger(source.reconnectCount),
+    connectedParticipantIds: normalizeParticipantIds(
+      source.connectedParticipantIds,
+    ),
+    lastRoomJoinFailureReason: normalizeNullableString(
+      source.lastRoomJoinFailureReason,
+    ),
+    lastWebhookEvent: normalizeNullableString(source.lastWebhookEvent),
+  };
+}
+
+function createCallRecord({
+  chatId,
+  initiatorId,
+  recipientId,
+  mediaMode,
+}) {
+  const timestamp = nowIso();
+  return {
+    id: `call_${crypto.randomUUID()}`,
+    chatId,
+    initiatorId,
+    recipientId,
+    participantIds: normalizeParticipantIds([initiatorId, recipientId]),
+    mediaMode: normalizeCallMediaMode(mediaMode),
+    state: "ringing",
+    roomName: null,
+    sessionByUserId: {},
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    acceptedAt: null,
+    endedAt: null,
+    endedReason: null,
+    metrics: normalizeCallMetrics(null),
+  };
+}
+
+function normalizeStoredCall(call) {
+  if (!call || typeof call !== "object") {
+    return null;
+  }
+
+  const initiatorId = String(call.initiatorId || "").trim();
+  const recipientId = String(call.recipientId || "").trim();
+  const chatId = String(call.chatId || "").trim();
+  if (!initiatorId || !recipientId || !chatId) {
+    return null;
+  }
+
+  return {
+    id: String(call.id || `call_${crypto.randomUUID()}`),
+    chatId,
+    initiatorId,
+    recipientId,
+    participantIds: normalizeParticipantIds(
+      call.participantIds || [initiatorId, recipientId],
+    ),
+    mediaMode: normalizeCallMediaMode(call.mediaMode),
+    state: normalizeCallState(call.state),
+    roomName: normalizeNullableString(call.roomName),
+    sessionByUserId: normalizeCallSessionMap(call.sessionByUserId),
+    createdAt: normalizeOptionalIsoTimestamp(call.createdAt) || nowIso(),
+    updatedAt: normalizeOptionalIsoTimestamp(call.updatedAt) || nowIso(),
+    acceptedAt: normalizeOptionalIsoTimestamp(call.acceptedAt),
+    endedAt: normalizeOptionalIsoTimestamp(call.endedAt),
+    endedReason: normalizeNullableString(call.endedReason),
+    metrics: normalizeCallMetrics(call.metrics),
   };
 }
 
@@ -613,6 +859,257 @@ function childIdFromRelation(relation) {
     return relation.person1Id;
   }
   return null;
+}
+
+const PARENT_SET_TYPES = new Set([
+  "biological",
+  "adoptive",
+  "foster",
+  "guardian",
+  "step",
+  "unknown",
+]);
+
+const BLOOD_PARENT_SET_TYPES = new Set(["biological", "unknown"]);
+
+const UNION_TYPES = new Set([
+  "spouse",
+  "partner",
+  "friend",
+  "single",
+  "other",
+]);
+
+const UNION_STATUSES = new Set(["current", "past"]);
+
+function buildSortedIdKey(values) {
+  return (Array.isArray(values) ? values : [])
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .sort((left, right) => left.localeCompare(right))
+    .join(":");
+}
+
+function extractSurnameFromName(name) {
+  const parts = String(name || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (parts.length === 0) {
+    return null;
+  }
+  return parts[0];
+}
+
+function normalizeParentSetType(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return PARENT_SET_TYPES.has(normalized) ? normalized : "biological";
+}
+
+function isBloodParentSetType(value) {
+  return BLOOD_PARENT_SET_TYPES.has(normalizeParentSetType(value));
+}
+
+function normalizeUnionType(value, {relationType = null} = {}) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (UNION_TYPES.has(normalized)) {
+    return normalized;
+  }
+
+  const normalizedRelationType = String(relationType || "")
+    .trim()
+    .toLowerCase();
+  if (normalizedRelationType === "spouse" || normalizedRelationType === "ex_spouse") {
+    return "spouse";
+  }
+  if (normalizedRelationType === "partner" || normalizedRelationType === "ex_partner") {
+    return "partner";
+  }
+  if (normalizedRelationType === "friend") {
+    return "friend";
+  }
+
+  return "other";
+}
+
+function normalizeUnionStatus(value, {relationType = null, divorceDate = null} = {}) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (UNION_STATUSES.has(normalized)) {
+    return normalized;
+  }
+
+  const normalizedRelationType = String(relationType || "")
+    .trim()
+    .toLowerCase();
+  if (
+    normalizedRelationType === "ex_spouse" ||
+    normalizedRelationType === "ex_partner" ||
+    normalizeOptionalIsoTimestamp(divorceDate)
+  ) {
+    return "past";
+  }
+
+  return "current";
+}
+
+function relationTypeForPerson(relation, personId) {
+  const normalizedPersonId = String(personId || "").trim();
+  if (!normalizedPersonId) {
+    return null;
+  }
+  if (String(relation?.person1Id || "").trim() === normalizedPersonId) {
+    return String(relation?.relation1to2 || "").trim() || null;
+  }
+  if (String(relation?.person2Id || "").trim() === normalizedPersonId) {
+    return String(relation?.relation2to1 || "").trim() || null;
+  }
+  return null;
+}
+
+function relationCustomLabelForPerson(relation, personId) {
+  const normalizedPersonId = String(personId || "").trim();
+  if (!normalizedPersonId) {
+    return null;
+  }
+  if (String(relation?.person1Id || "").trim() === normalizedPersonId) {
+    return normalizeNullableString(relation?.customRelationLabel1to2);
+  }
+  if (String(relation?.person2Id || "").trim() === normalizedPersonId) {
+    return normalizeNullableString(relation?.customRelationLabel2to1);
+  }
+  return null;
+}
+
+function isUnionRelationType(relationType) {
+  switch (String(relationType || "").trim().toLowerCase()) {
+    case "spouse":
+    case "partner":
+    case "friend":
+    case "ex_spouse":
+    case "ex_partner":
+      return true;
+    default:
+      return false;
+  }
+}
+
+function isUnionRelation(relation) {
+  return (
+    isUnionRelationType(relation?.relation1to2) ||
+    isUnionRelationType(relation?.relation2to1)
+  );
+}
+
+function isBloodDirectRelationType(relationType, parentSetType = null) {
+  switch (String(relationType || "").trim().toLowerCase()) {
+    case "parent":
+    case "child":
+      return isBloodParentSetType(parentSetType);
+    case "sibling":
+    case "cousin":
+    case "uncle":
+    case "aunt":
+    case "nephew":
+    case "niece":
+    case "nibling":
+    case "grandparent":
+    case "grandchild":
+    case "greatgrandparent":
+    case "greatgrandchild":
+      return true;
+    default:
+      return false;
+  }
+}
+
+function isCurrentUnionRelation(relation) {
+  if (!isUnionRelation(relation)) {
+    return false;
+  }
+  return normalizeUnionStatus(relation?.unionStatus, {
+    relationType: relation?.relation1to2 || relation?.relation2to1,
+    divorceDate: relation?.divorceDate,
+  }) === "current";
+}
+
+function buildLinkedPersonCanonicalPatchFromProfile(profile = {}) {
+  const displayName = composeDisplayNameFromProfile(profile);
+  const photoState = normalizePersonPhotoGallery([], {
+    photoUrl: profile.photoUrl,
+    primaryPhotoUrl: profile.photoUrl,
+  });
+
+  return {
+    name: displayName || null,
+    maidenName: normalizeNullableString(profile.maidenName),
+    photoUrl: photoState.photoUrl,
+    primaryPhotoUrl: photoState.primaryPhotoUrl,
+    gender: String(profile.gender || "unknown").trim() || "unknown",
+    birthDate: normalizeIsoDate(profile.birthDate),
+    birthPlace: normalizeNullableString(profile.birthPlace),
+  };
+}
+
+function applyCanonicalProfileToPerson(person, profile = {}, {
+  touchUpdatedAt = true,
+} = {}) {
+  if (!person || !profile || typeof profile !== "object") {
+    return person;
+  }
+
+  const patch = buildLinkedPersonCanonicalPatchFromProfile(profile);
+  if (patch.name) {
+    person.name = patch.name;
+  }
+  person.maidenName = patch.maidenName;
+  if (patch.photoUrl) {
+    person.photoUrl = patch.photoUrl;
+    person.primaryPhotoUrl = patch.primaryPhotoUrl;
+  }
+  person.gender = patch.gender;
+  person.birthDate = patch.birthDate;
+  person.birthPlace = patch.birthPlace;
+  if (touchUpdatedAt) {
+    person.updatedAt = nowIso();
+  }
+  return person;
+}
+
+function buildCanonicalPersonView(db, person, {
+  touchUpdatedAt = false,
+} = {}) {
+  const personView = structuredClone(person);
+  if (!personView?.userId) {
+    return personView;
+  }
+
+  const user = db.users.find((entry) => entry.id === personView.userId);
+  if (!user?.profile) {
+    return personView;
+  }
+
+  return applyCanonicalProfileToPerson(personView, user.profile, {
+    touchUpdatedAt,
+  });
+}
+
+function buildBranchVisiblePersonIds(persons, relations, branchRootPersonId) {
+  const normalizedRootId = String(branchRootPersonId || "").trim();
+  if (!normalizedRootId) {
+    return new Set();
+  }
+  const treeId = Array.isArray(persons) && persons.length > 0 ? persons[0]?.treeId : null;
+  if (!treeId) {
+    return new Set([normalizedRootId]);
+  }
+  const snapshot = buildTreeGraphSnapshot({
+    treeId,
+    persons,
+    relations,
+    viewerPersonId: null,
+  });
+  const branchBlock = chooseBranchBlockForPerson(snapshot, normalizedRootId);
+  return new Set(branchBlock?.memberPersonIds || [normalizedRootId]);
 }
 
 function relationMirror(relationType) {
@@ -672,6 +1169,2223 @@ function relationMirror(relationType) {
   }
 }
 
+function genderAwareWord(gender, {
+  male,
+  female,
+  neutral,
+}) {
+  const normalizedGender = String(gender || "").trim().toLowerCase();
+  if (normalizedGender === "male" && male) {
+    return male;
+  }
+  if (normalizedGender === "female" && female) {
+    return female;
+  }
+  return neutral || male || female || "";
+}
+
+function normalizeGenderValue(gender) {
+  return String(gender || "").trim().toLowerCase();
+}
+
+function isMaleGender(gender) {
+  return normalizeGenderValue(gender) === "male";
+}
+
+function isFemaleGender(gender) {
+  return normalizeGenderValue(gender) === "female";
+}
+
+function addMapSetValue(map, key, value) {
+  const normalizedKey = String(key || "").trim();
+  const normalizedValue = String(value || "").trim();
+  if (!normalizedKey || !normalizedValue) {
+    return;
+  }
+  if (!map.has(normalizedKey)) {
+    map.set(normalizedKey, new Set());
+  }
+  map.get(normalizedKey).add(normalizedValue);
+}
+
+function getMapSetValues(map, key) {
+  return Array.from(map.get(String(key || "").trim()) || []);
+}
+
+function hasMapSetValue(map, key, value) {
+  return Boolean(map.get(String(key || "").trim())?.has(String(value || "").trim()));
+}
+
+function describeDirectRelationLabel({
+  relationType,
+  gender = "unknown",
+  parentSetType = "biological",
+}) {
+  const normalizedRelationType = String(relationType || "").trim().toLowerCase();
+  const normalizedParentSetType = normalizeParentSetType(parentSetType);
+
+  if (normalizedRelationType === "parent") {
+    if (normalizedParentSetType === "adoptive") {
+      return "Приемный родитель";
+    }
+    if (normalizedParentSetType === "guardian") {
+      return "Опекун";
+    }
+    if (normalizedParentSetType === "foster") {
+      return "Приемный родитель";
+    }
+    if (normalizedParentSetType === "step") {
+      return genderAwareWord(gender, {
+        male: "Отчим",
+        female: "Мачеха",
+        neutral: "Сводный родитель",
+      });
+    }
+    return genderAwareWord(gender, {
+      male: "Отец",
+      female: "Мать",
+      neutral: "Родитель",
+    });
+  }
+
+  if (normalizedRelationType === "child") {
+    if (normalizedParentSetType === "adoptive") {
+      return "Приемный ребенок";
+    }
+    if (normalizedParentSetType === "guardian") {
+      return "Подопечный";
+    }
+    if (normalizedParentSetType === "foster") {
+      return "Приемный ребенок";
+    }
+    if (normalizedParentSetType === "step") {
+      return genderAwareWord(gender, {
+        male: "Пасынок",
+        female: "Падчерица",
+        neutral: "Сводный ребенок",
+      });
+    }
+    return genderAwareWord(gender, {
+      male: "Сын",
+      female: "Дочь",
+      neutral: "Ребенок",
+    });
+  }
+
+  switch (normalizedRelationType) {
+    case "sibling":
+      return genderAwareWord(gender, {
+        male: "Брат",
+        female: "Сестра",
+        neutral: "Сиблинг",
+      });
+    case "spouse":
+      return genderAwareWord(gender, {
+        male: "Муж",
+        female: "Жена",
+        neutral: "Супруг",
+      });
+    case "partner":
+      return "Партнер";
+    case "ex_spouse":
+      return "Бывший супруг";
+    case "ex_partner":
+      return "Бывший партнер";
+    case "friend":
+      return "Друг";
+    case "stepparent":
+      return genderAwareWord(gender, {
+        male: "Отчим",
+        female: "Мачеха",
+        neutral: "Сводный родитель",
+      });
+    case "stepchild":
+      return genderAwareWord(gender, {
+        male: "Пасынок",
+        female: "Падчерица",
+        neutral: "Сводный ребенок",
+      });
+    case "grandparent":
+      return genderAwareWord(gender, {
+        male: "Дедушка",
+        female: "Бабушка",
+        neutral: "Прародитель",
+      });
+    case "grandchild":
+      return genderAwareWord(gender, {
+        male: "Внук",
+        female: "Внучка",
+        neutral: "Внук/внучка",
+      });
+    case "uncle":
+      return genderAwareWord(gender, {
+        male: "Дядя",
+        female: "Тетя",
+        neutral: "Дядя/тетя",
+      });
+    case "aunt":
+      return genderAwareWord(gender, {
+        male: "Дядя",
+        female: "Тетя",
+        neutral: "Дядя/тетя",
+      });
+    case "nephew":
+    case "niece":
+    case "nibling":
+      return genderAwareWord(gender, {
+        male: "Племянник",
+        female: "Племянница",
+        neutral: "Племянник/племянница",
+      });
+    case "cousin":
+      return genderAwareWord(gender, {
+        male: "Двоюродный брат",
+        female: "Двоюродная сестра",
+        neutral: "Двоюродный родственник",
+      });
+    case "parentInLaw":
+      return genderAwareWord(gender, {
+        male: "Родитель супруга",
+        female: "Родительница супруга",
+        neutral: "Родитель супруга",
+      });
+    case "childInLaw":
+      return genderAwareWord(gender, {
+        male: "Зять",
+        female: "Невестка",
+        neutral: "Родня по браку",
+      });
+    case "siblingInLaw":
+      return genderAwareWord(gender, {
+        male: "Брат супруга",
+        female: "Сестра супруга",
+        neutral: "Сиблинг супруга",
+      });
+    case "inlaw":
+      return "Родня по браку";
+    case "colleague":
+      return "Коллега";
+    default:
+      return "Родственник";
+  }
+}
+
+function buildPathSummary(pathPersonIds, peopleById) {
+  const labels = (Array.isArray(pathPersonIds) ? pathPersonIds : [])
+    .map((personId) => {
+      const person = peopleById.get(personId);
+      return String(person?.name || "").trim() || personId;
+    })
+    .filter(Boolean);
+  return labels.join(" -> ");
+}
+
+function collectAncestorDepths(startPersonId, parentsByChild) {
+  const depths = new Map();
+  const queue = [{personId: startPersonId, depth: 0}];
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current) {
+      continue;
+    }
+    const previousDepth = depths.get(current.personId);
+    if (previousDepth !== undefined && previousDepth <= current.depth) {
+      continue;
+    }
+    depths.set(current.personId, current.depth);
+    for (const parentId of parentsByChild.get(current.personId) || []) {
+      queue.push({
+        personId: parentId,
+        depth: current.depth + 1,
+      });
+    }
+  }
+
+  return depths;
+}
+
+function ordinalCousinLabel(degree) {
+  switch (degree) {
+    case 1:
+      return "Двоюродный";
+    case 2:
+      return "Троюродный";
+    case 3:
+      return "Четвероюродный";
+    default:
+      return "Дальний";
+  }
+}
+
+function ordinalCousinPrefix(degree, gender) {
+  switch (degree) {
+    case 1:
+      return genderAwareWord(gender, {
+        male: "Двоюродный",
+        female: "Двоюродная",
+        neutral: "Двоюродный",
+      });
+    case 2:
+      return genderAwareWord(gender, {
+        male: "Троюродный",
+        female: "Троюродная",
+        neutral: "Троюродный",
+      });
+    case 3:
+      return genderAwareWord(gender, {
+        male: "Четвероюродный",
+        female: "Четвероюродная",
+        neutral: "Четвероюродный",
+      });
+    default:
+      return genderAwareWord(gender, {
+        male: "Дальний",
+        female: "Дальняя",
+        neutral: "Дальний",
+      });
+  }
+}
+
+function buildAncestorLabel(depth, gender) {
+  if (depth === 1) {
+    return genderAwareWord(gender, {
+      male: "Отец",
+      female: "Мать",
+      neutral: "Родитель",
+    });
+  }
+  if (depth === 2) {
+    return genderAwareWord(gender, {
+      male: "Дедушка",
+      female: "Бабушка",
+      neutral: "Прародитель",
+    });
+  }
+  if (depth === 3) {
+    return genderAwareWord(gender, {
+      male: "Прадедушка",
+      female: "Прабабушка",
+      neutral: "Предок",
+    });
+  }
+  return "Предок";
+}
+
+function buildDescendantLabel(depth, gender) {
+  if (depth === 1) {
+    return genderAwareWord(gender, {
+      male: "Сын",
+      female: "Дочь",
+      neutral: "Ребенок",
+    });
+  }
+  if (depth === 2) {
+    return genderAwareWord(gender, {
+      male: "Внук",
+      female: "Внучка",
+      neutral: "Внук/внучка",
+    });
+  }
+  if (depth === 3) {
+    return genderAwareWord(gender, {
+      male: "Правнук",
+      female: "Правнучка",
+      neutral: "Правнук/правнучка",
+    });
+  }
+  return "Потомок";
+}
+
+function buildUncleAuntLabel(gender, prefix = null) {
+  const value = genderAwareWord(gender, {
+    male: "дядя",
+    female: "тетя",
+    neutral: "дядя/тетя",
+  });
+  if (!prefix) {
+    return value.charAt(0).toUpperCase() + value.slice(1);
+  }
+  return `${prefix} ${value}`.trim();
+}
+
+function buildNephewNieceLabel(gender, prefix = null) {
+  const value = genderAwareWord(gender, {
+    male: "племянник",
+    female: "племянница",
+    neutral: "племянник/племянница",
+  });
+  if (!prefix) {
+    return value.charAt(0).toUpperCase() + value.slice(1);
+  }
+  return `${prefix} ${value}`.trim();
+}
+
+function buildGrandUncleAuntLabel(gender) {
+  return genderAwareWord(gender, {
+    male: "Двоюродный дедушка",
+    female: "Двоюродная бабушка",
+    neutral: "Двоюродный дедушка/бабушка",
+  });
+}
+
+function buildGrandNephewNieceLabel(gender) {
+  return genderAwareWord(gender, {
+    male: "Внучатый племянник",
+    female: "Внучатая племянница",
+    neutral: "Внучатый племянник/племянница",
+  });
+}
+
+function buildCousinOlderGenerationLabel(cousinDegree, gender) {
+  const prefix = ordinalCousinPrefix(cousinDegree, gender);
+  return genderAwareWord(gender, {
+    male: `${prefix} дядя`,
+    female: `${prefix} тетя`,
+    neutral: `${prefix} дядя/тетя`,
+  });
+}
+
+function buildCousinYoungerGenerationLabel(cousinDegree, gender) {
+  const prefix = ordinalCousinPrefix(cousinDegree, gender);
+  return genderAwareWord(gender, {
+    male: `${prefix} племянник`,
+    female: `${prefix} племянница`,
+    neutral: `${prefix} племянник/племянница`,
+  });
+}
+
+function buildBloodRelationshipLabel({
+  viewerDepth,
+  targetDepth,
+  targetGender,
+}) {
+  if (viewerDepth === 0 && targetDepth === 0) {
+    return "Это вы";
+  }
+
+  if (targetDepth === 0 && viewerDepth > 0) {
+    return buildAncestorLabel(viewerDepth, targetGender);
+  }
+
+  if (viewerDepth === 0 && targetDepth > 0) {
+    return buildDescendantLabel(targetDepth, targetGender);
+  }
+
+  if (viewerDepth === 1 && targetDepth === 1) {
+    return genderAwareWord(targetGender, {
+      male: "Брат",
+      female: "Сестра",
+      neutral: "Сиблинг",
+    });
+  }
+
+  if (viewerDepth === 1 && targetDepth === 2) {
+    return genderAwareWord(targetGender, {
+      male: "Племянник",
+      female: "Племянница",
+      neutral: "Племянник/племянница",
+    });
+  }
+
+  if (viewerDepth === 1 && targetDepth === 3) {
+    return buildGrandNephewNieceLabel(targetGender);
+  }
+
+  if (viewerDepth === 2 && targetDepth === 1) {
+    return buildUncleAuntLabel(targetGender);
+  }
+
+  if (viewerDepth === 3 && targetDepth === 1) {
+    return buildGrandUncleAuntLabel(targetGender);
+  }
+
+  if (viewerDepth > 1 && targetDepth > 1) {
+    const cousinDegree = Math.min(viewerDepth, targetDepth) - 1;
+    const removed = Math.abs(viewerDepth - targetDepth);
+    if (removed === 0) {
+      return `${ordinalCousinPrefix(cousinDegree, targetGender)} ${genderAwareWord(targetGender, {
+        male: "брат",
+        female: "сестра",
+        neutral: "родственник",
+      })}`.trim();
+    }
+    if (removed === 1) {
+      if (viewerDepth < targetDepth) {
+        return buildCousinYoungerGenerationLabel(cousinDegree, targetGender);
+      }
+      return buildCousinOlderGenerationLabel(cousinDegree, targetGender);
+    }
+  }
+
+  return "Кровный родственник";
+}
+
+function computeBloodRelationshipDescriptor(
+  viewerPersonId,
+  targetPersonId,
+  bloodParentsByChild,
+  peopleById,
+) {
+  if (!viewerPersonId || !targetPersonId) {
+    return null;
+  }
+
+  const viewerAncestors = collectAncestorDepths(viewerPersonId, bloodParentsByChild);
+  const targetAncestors = collectAncestorDepths(targetPersonId, bloodParentsByChild);
+  let bestMatch = null;
+
+  for (const [ancestorId, viewerDepth] of viewerAncestors.entries()) {
+    if (!targetAncestors.has(ancestorId)) {
+      continue;
+    }
+    const targetDepth = targetAncestors.get(ancestorId);
+    const candidate = {
+      ancestorId,
+      viewerDepth,
+      targetDepth,
+      totalDepth: viewerDepth + targetDepth,
+      maxDepth: Math.max(viewerDepth, targetDepth),
+    };
+    if (
+      !bestMatch ||
+      candidate.totalDepth < bestMatch.totalDepth ||
+      (candidate.totalDepth === bestMatch.totalDepth &&
+        candidate.maxDepth < bestMatch.maxDepth)
+    ) {
+      bestMatch = candidate;
+    }
+  }
+
+  if (!bestMatch) {
+    return null;
+  }
+
+  const target = peopleById.get(targetPersonId);
+  return {
+    ancestorId: bestMatch.ancestorId,
+    isBlood: true,
+    label: buildBloodRelationshipLabel({
+      viewerDepth: bestMatch.viewerDepth,
+      targetDepth: bestMatch.targetDepth,
+      targetGender: target?.gender,
+    }),
+    viewerDepth: bestMatch.viewerDepth,
+    targetDepth: bestMatch.targetDepth,
+  };
+}
+
+function collectBloodSiblingIds(personId, bloodParentsByChild, bloodChildrenByParent) {
+  const siblingIds = new Set();
+  for (const parentId of getMapSetValues(bloodParentsByChild, personId)) {
+    for (const childId of getMapSetValues(bloodChildrenByParent, parentId)) {
+      if (childId !== personId) {
+        siblingIds.add(childId);
+      }
+    }
+  }
+  return Array.from(siblingIds);
+}
+
+function collectKnownSiblingIds(
+  personId,
+  bloodParentsByChild,
+  bloodChildrenByParent,
+  siblingsByPerson,
+) {
+  const siblingIds = new Set(
+    collectBloodSiblingIds(personId, bloodParentsByChild, bloodChildrenByParent),
+  );
+  for (const siblingId of getMapSetValues(siblingsByPerson, personId)) {
+    if (siblingId !== personId) {
+      siblingIds.add(siblingId);
+    }
+  }
+  return Array.from(siblingIds);
+}
+
+function buildParentInLawLabel({spouseGender, targetGender}) {
+  if (isFemaleGender(spouseGender)) {
+    return genderAwareWord(targetGender, {
+      male: "Тесть",
+      female: "Теща",
+      neutral: "Родитель жены",
+    });
+  }
+  if (isMaleGender(spouseGender)) {
+    return genderAwareWord(targetGender, {
+      male: "Свекор",
+      female: "Свекровь",
+      neutral: "Родитель мужа",
+    });
+  }
+  return genderAwareWord(targetGender, {
+    male: "Родитель супруга",
+    female: "Родительница супруга",
+    neutral: "Родитель супруга",
+  });
+}
+
+function buildSiblingInLawLabel({spouseGender, targetGender}) {
+  if (isFemaleGender(spouseGender)) {
+    return genderAwareWord(targetGender, {
+      male: "Шурин",
+      female: "Свояченица",
+      neutral: "Родня жены",
+    });
+  }
+  if (isMaleGender(spouseGender)) {
+    return genderAwareWord(targetGender, {
+      male: "Деверь",
+      female: "Золовка",
+      neutral: "Родня мужа",
+    });
+  }
+  return genderAwareWord(targetGender, {
+    male: "Брат супруга",
+    female: "Сестра супруга",
+    neutral: "Сиблинг супруга",
+  });
+}
+
+function buildChildInLawLabel(targetGender) {
+  return genderAwareWord(targetGender, {
+    male: "Зять",
+    female: "Невестка",
+    neutral: "Родня по браку",
+  });
+}
+
+function buildMatchmakerLabel(targetGender) {
+  return genderAwareWord(targetGender, {
+    male: "Сват",
+    female: "Сватья",
+    neutral: "Сват",
+  });
+}
+
+function buildAffinalInheritedLabel(baseLabel, targetGender) {
+  const normalizedLabel = String(baseLabel || "").trim().toLowerCase();
+  if (!normalizedLabel) {
+    return null;
+  }
+  if (
+    normalizedLabel === "дядя" ||
+    normalizedLabel === "тетя" ||
+    normalizedLabel.startsWith("двоюродный дяд") ||
+    normalizedLabel.startsWith("двоюродная тет")
+  ) {
+    if (normalizedLabel.startsWith("двоюрод")) {
+      return buildCousinOlderGenerationLabel(1, targetGender);
+    }
+    return buildUncleAuntLabel(targetGender);
+  }
+  if (
+    normalizedLabel.startsWith("двоюродный дед") ||
+    normalizedLabel.startsWith("двоюродная баб")
+  ) {
+    return buildGrandUncleAuntLabel(targetGender);
+  }
+  return null;
+}
+
+function computeAffinityRelationshipDescriptor({
+  viewerPersonId,
+  targetPersonId,
+  peopleById,
+  parentsByChild,
+  childrenByParent,
+  bloodParentsByChild,
+  bloodChildrenByParent,
+  currentUnionPartnersByPerson,
+  siblingsByPerson,
+}) {
+  const viewer = peopleById.get(viewerPersonId);
+  const target = peopleById.get(targetPersonId);
+  if (!viewer || !target) {
+    return null;
+  }
+
+  const viewerPartners = getMapSetValues(currentUnionPartnersByPerson, viewerPersonId);
+  for (const spouseId of viewerPartners) {
+    const spouse = peopleById.get(spouseId);
+    if (!spouse) {
+      continue;
+    }
+    if (hasMapSetValue(parentsByChild, spouseId, targetPersonId)) {
+      return {
+        label: buildParentInLawLabel({
+          spouseGender: spouse.gender,
+          targetGender: target.gender,
+        }),
+        isBlood: false,
+      };
+    }
+
+    const spouseSiblingIds = collectKnownSiblingIds(
+      spouseId,
+      bloodParentsByChild,
+      bloodChildrenByParent,
+      siblingsByPerson,
+    );
+    if (spouseSiblingIds.includes(targetPersonId)) {
+      return {
+        label: buildSiblingInLawLabel({
+          spouseGender: spouse.gender,
+          targetGender: target.gender,
+        }),
+        isBlood: false,
+      };
+    }
+
+    if (
+      hasMapSetValue(childrenByParent, spouseId, targetPersonId) &&
+      !hasMapSetValue(childrenByParent, viewerPersonId, targetPersonId)
+    ) {
+      return {
+        label: describeDirectRelationLabel({
+          relationType: "stepchild",
+          gender: target.gender,
+          parentSetType: "step",
+        }),
+        isBlood: false,
+      };
+    }
+
+    for (const spouseSiblingId of spouseSiblingIds) {
+      const spouseSibling = peopleById.get(spouseSiblingId);
+      if (!spouseSibling) {
+        continue;
+      }
+      if (
+        hasMapSetValue(currentUnionPartnersByPerson, spouseSiblingId, targetPersonId) &&
+        isMaleGender(target.gender) &&
+        isFemaleGender(spouseSibling.gender)
+      ) {
+        return {
+          label: "Свояк",
+          isBlood: false,
+        };
+      }
+    }
+  }
+
+  for (const parentId of getMapSetValues(parentsByChild, viewerPersonId)) {
+    if (
+      hasMapSetValue(currentUnionPartnersByPerson, parentId, targetPersonId) &&
+      !hasMapSetValue(parentsByChild, viewerPersonId, targetPersonId)
+    ) {
+      return {
+        label: describeDirectRelationLabel({
+          relationType: "stepparent",
+          gender: target.gender,
+          parentSetType: "step",
+        }),
+        isBlood: false,
+      };
+    }
+  }
+
+  for (const childId of getMapSetValues(childrenByParent, viewerPersonId)) {
+    if (hasMapSetValue(currentUnionPartnersByPerson, childId, targetPersonId)) {
+      return {
+        label: buildChildInLawLabel(target.gender),
+        isBlood: false,
+      };
+    }
+
+    for (const childPartnerId of getMapSetValues(currentUnionPartnersByPerson, childId)) {
+      if (
+        childPartnerId !== viewerPersonId &&
+        hasMapSetValue(parentsByChild, childPartnerId, targetPersonId)
+      ) {
+        return {
+          label: buildMatchmakerLabel(target.gender),
+          isBlood: false,
+        };
+      }
+    }
+  }
+
+  for (const siblingId of collectKnownSiblingIds(
+    viewerPersonId,
+    bloodParentsByChild,
+    bloodChildrenByParent,
+    siblingsByPerson,
+  )) {
+    if (hasMapSetValue(currentUnionPartnersByPerson, siblingId, targetPersonId)) {
+      return {
+        label: buildChildInLawLabel(target.gender),
+        isBlood: false,
+      };
+    }
+  }
+
+  for (const partnerId of getMapSetValues(currentUnionPartnersByPerson, targetPersonId)) {
+    const partnerBloodDescriptor = computeBloodRelationshipDescriptor(
+      viewerPersonId,
+      partnerId,
+      bloodParentsByChild,
+      peopleById,
+    );
+    const inheritedLabel = buildAffinalInheritedLabel(
+      partnerBloodDescriptor?.label,
+      target.gender,
+    );
+    if (inheritedLabel) {
+      return {
+        label: inheritedLabel,
+        isBlood: false,
+      };
+    }
+  }
+
+  return null;
+}
+
+function relationTypeAlongPath(directRelations, fromPersonId, toPersonId) {
+  const relation = directRelations.get(buildSortedIdKey([fromPersonId, toPersonId]));
+  if (!relation) {
+    return null;
+  }
+  return String(relationTypeForPerson(relation, toPersonId) || "")
+    .trim()
+    .toLowerCase() || null;
+}
+
+function buildSparsePathRelationshipDescriptor({
+  targetPersonId,
+  primaryPathPersonIds,
+  directRelations,
+  peopleById,
+}) {
+  if (!Array.isArray(primaryPathPersonIds) || primaryPathPersonIds.length < 2) {
+    return null;
+  }
+
+  const target = peopleById.get(String(targetPersonId || "").trim());
+  if (!target) {
+    return null;
+  }
+
+  const edgeTypes = [];
+  for (let index = 0; index < primaryPathPersonIds.length - 1; index += 1) {
+    const relationType = relationTypeAlongPath(
+      directRelations,
+      primaryPathPersonIds[index],
+      primaryPathPersonIds[index + 1],
+    );
+    if (!relationType) {
+      return null;
+    }
+    edgeTypes.push(relationType);
+  }
+
+  if (edgeTypes.length === 2 && edgeTypes[0] === "parent" && edgeTypes[1] === "sibling") {
+    return {
+      label: buildUncleAuntLabel(target.gender),
+      isBlood: true,
+    };
+  }
+
+  if (
+    edgeTypes.length === 3 &&
+    edgeTypes[0] === "parent" &&
+    edgeTypes[1] === "sibling" &&
+    edgeTypes[2] === "child"
+  ) {
+    return {
+      label: genderAwareWord(target.gender, {
+        male: "Двоюродный брат",
+        female: "Двоюродная сестра",
+        neutral: "Двоюродный родственник",
+      }),
+      isBlood: true,
+    };
+  }
+
+  if (
+    edgeTypes.length === 2 &&
+    edgeTypes[0] === "sibling" &&
+    edgeTypes[1] === "child"
+  ) {
+    return {
+      label: buildNephewNieceLabel(target.gender),
+      isBlood: true,
+    };
+  }
+
+  if (
+    edgeTypes.length === 3 &&
+    edgeTypes[0] === "sibling" &&
+    edgeTypes[1] === "child" &&
+    edgeTypes[2] === "child"
+  ) {
+    return {
+      label: buildGrandNephewNieceLabel(target.gender),
+      isBlood: true,
+    };
+  }
+
+  if (
+    edgeTypes.length === 3 &&
+    edgeTypes[0] === "parent" &&
+    edgeTypes[1] === "parent" &&
+    edgeTypes[2] === "sibling"
+  ) {
+    return {
+      label: buildGrandUncleAuntLabel(target.gender),
+      isBlood: true,
+    };
+  }
+
+  const lastEdgeType = edgeTypes[edgeTypes.length - 1];
+  const olderGenerationChain = edgeTypes.slice(0, -1);
+  if (
+    isUnionRelationType(lastEdgeType) &&
+    olderGenerationChain.length >= 2 &&
+    olderGenerationChain[olderGenerationChain.length - 1] === "sibling" &&
+    olderGenerationChain.slice(0, -1).every((relationType) => relationType === "parent")
+  ) {
+    const parentDepth = olderGenerationChain.length - 1;
+    if (parentDepth === 1) {
+      return {
+        label: buildUncleAuntLabel(target.gender),
+        isBlood: false,
+      };
+    }
+    if (parentDepth === 2) {
+      return {
+        label: buildGrandUncleAuntLabel(target.gender),
+        isBlood: false,
+      };
+    }
+  }
+
+  return null;
+}
+
+function buildFamilyUnitLabel({adultIds, peopleById}) {
+  const adults = (Array.isArray(adultIds) ? adultIds : [])
+    .map((personId) => peopleById.get(personId))
+    .filter(Boolean);
+
+  if (adults.length === 0) {
+    return "Семья";
+  }
+
+  const surnames = Array.from(
+    new Set(
+      adults
+        .map((person) => extractSurnameFromName(person.name))
+        .filter(Boolean),
+    ),
+  );
+  if (surnames.length === 1) {
+    return `Ветка ${surnames[0]}`;
+  }
+
+  if (adults.length === 1) {
+    return `Семья ${adults[0].name}`;
+  }
+
+  return `Семья ${adults[0].name} и ${adults[1].name}`;
+}
+
+function buildBranchLabel({rootUnit, peopleById}) {
+  if (!rootUnit) {
+    return "Семья";
+  }
+  return buildFamilyUnitLabel({
+    adultIds: rootUnit.adultIds,
+    peopleById,
+  });
+}
+
+function comparePathCost(left, right) {
+  if (!left && !right) {
+    return 0;
+  }
+  if (!left) {
+    return 1;
+  }
+  if (!right) {
+    return -1;
+  }
+  if (left.nonBlood !== right.nonBlood) {
+    return left.nonBlood - right.nonBlood;
+  }
+  if (left.length !== right.length) {
+    return left.length - right.length;
+  }
+  return left.pastUnion - right.pastUnion;
+}
+
+function buildTraversalGraph(relations) {
+  const adjacency = new Map();
+  const parentsByChild = new Map();
+  const bloodParentsByChild = new Map();
+  const childrenByParent = new Map();
+  const bloodChildrenByParent = new Map();
+  const currentUnionPartnersByPerson = new Map();
+  const anyUnionPartnersByPerson = new Map();
+  const siblingsByPerson = new Map();
+  const directRelations = new Map();
+
+  for (const relation of Array.isArray(relations) ? relations : []) {
+    const pairKey = buildSortedIdKey([relation.person1Id, relation.person2Id]);
+    if (pairKey) {
+      directRelations.set(pairKey, relation);
+    }
+
+    const parentId = parentIdFromRelation(relation);
+    const childId = childIdFromRelation(relation);
+    if (parentId && childId) {
+      addMapSetValue(parentsByChild, childId, parentId);
+      addMapSetValue(childrenByParent, parentId, childId);
+      if (isBloodParentSetType(relation.parentSetType)) {
+        addMapSetValue(bloodParentsByChild, childId, parentId);
+        addMapSetValue(bloodChildrenByParent, parentId, childId);
+      }
+      if (!adjacency.has(parentId)) {
+        adjacency.set(parentId, []);
+      }
+      if (!adjacency.has(childId)) {
+        adjacency.set(childId, []);
+      }
+      adjacency.get(parentId).push({
+        toId: childId,
+        kind: "child",
+        isBlood: isBloodParentSetType(relation.parentSetType),
+        isPast: false,
+      });
+      adjacency.get(childId).push({
+        toId: parentId,
+        kind: "parent",
+        isBlood: isBloodParentSetType(relation.parentSetType),
+        isPast: false,
+      });
+    }
+
+    if (isUnionRelation(relation)) {
+      const isPast = normalizeUnionStatus(relation.unionStatus, {
+        relationType: relation.relation1to2 || relation.relation2to1,
+        divorceDate: relation.divorceDate,
+      }) === "past";
+      addMapSetValue(anyUnionPartnersByPerson, relation.person1Id, relation.person2Id);
+      addMapSetValue(anyUnionPartnersByPerson, relation.person2Id, relation.person1Id);
+      if (!isPast) {
+        addMapSetValue(currentUnionPartnersByPerson, relation.person1Id, relation.person2Id);
+        addMapSetValue(currentUnionPartnersByPerson, relation.person2Id, relation.person1Id);
+      }
+      if (!adjacency.has(relation.person1Id)) {
+        adjacency.set(relation.person1Id, []);
+      }
+      if (!adjacency.has(relation.person2Id)) {
+        adjacency.set(relation.person2Id, []);
+      }
+      adjacency.get(relation.person1Id).push({
+        toId: relation.person2Id,
+        kind: "union",
+        isBlood: false,
+        isPast,
+      });
+      adjacency.get(relation.person2Id).push({
+        toId: relation.person1Id,
+        kind: "union",
+        isBlood: false,
+        isPast,
+      });
+    }
+
+    if (
+      String(relation.relation1to2 || "").trim().toLowerCase() === "sibling" &&
+      String(relation.relation2to1 || "").trim().toLowerCase() === "sibling"
+    ) {
+      addMapSetValue(siblingsByPerson, relation.person1Id, relation.person2Id);
+      addMapSetValue(siblingsByPerson, relation.person2Id, relation.person1Id);
+      if (!adjacency.has(relation.person1Id)) {
+        adjacency.set(relation.person1Id, []);
+      }
+      if (!adjacency.has(relation.person2Id)) {
+        adjacency.set(relation.person2Id, []);
+      }
+      adjacency.get(relation.person1Id).push({
+        toId: relation.person2Id,
+        kind: "sibling",
+        isBlood: true,
+        isPast: false,
+      });
+      adjacency.get(relation.person2Id).push({
+        toId: relation.person1Id,
+        kind: "sibling",
+        isBlood: true,
+        isPast: false,
+      });
+    }
+  }
+
+  return {
+    adjacency,
+    parentsByChild,
+    bloodParentsByChild,
+    childrenByParent,
+    bloodChildrenByParent,
+    currentUnionPartnersByPerson,
+    anyUnionPartnersByPerson,
+    siblingsByPerson,
+    directRelations,
+  };
+}
+
+function buildBestPathIndex(startPersonId, adjacency) {
+  const costs = new Map();
+  const pathCounts = new Map();
+  const predecessors = new Map();
+  costs.set(startPersonId, {
+    nonBlood: 0,
+    length: 0,
+    pastUnion: 0,
+  });
+  pathCounts.set(startPersonId, 1);
+  const pending = [{
+    personId: startPersonId,
+    cost: {
+      nonBlood: 0,
+      length: 0,
+      pastUnion: 0,
+    },
+  }];
+
+  while (pending.length > 0) {
+    pending.sort((left, right) => comparePathCost(left.cost, right.cost));
+    const current = pending.shift();
+    if (!current) {
+      continue;
+    }
+    const previousBest = costs.get(current.personId);
+    if (previousBest && comparePathCost(current.cost, previousBest) > 0) {
+      continue;
+    }
+
+    for (const edge of adjacency.get(current.personId) || []) {
+      const nextCost = {
+        nonBlood: current.cost.nonBlood + (edge.isBlood ? 0 : 1),
+        length: current.cost.length + 1,
+        pastUnion: current.cost.pastUnion + (edge.isPast ? 1 : 0),
+      };
+      const existingCost = costs.get(edge.toId);
+      const comparison = comparePathCost(nextCost, existingCost);
+      if (comparison < 0 || existingCost === undefined) {
+        costs.set(edge.toId, nextCost);
+        if (edge.toId !== startPersonId) {
+          predecessors.set(edge.toId, current.personId);
+        }
+        pathCounts.set(edge.toId, pathCounts.get(current.personId) || 1);
+        pending.push({
+          personId: edge.toId,
+          cost: nextCost,
+        });
+      } else if (comparison === 0) {
+        pathCounts.set(
+          edge.toId,
+          (pathCounts.get(edge.toId) || 0) + (pathCounts.get(current.personId) || 1),
+        );
+      }
+    }
+  }
+
+  return {
+    costs,
+    pathCounts,
+    predecessors,
+  };
+}
+
+function reconstructPersonPath(targetPersonId, predecessors) {
+  const path = [];
+  const seen = new Set();
+  let currentId = targetPersonId;
+  while (currentId && !seen.has(currentId)) {
+    path.unshift(currentId);
+    seen.add(currentId);
+    currentId = predecessors.get(currentId);
+  }
+  return path;
+}
+
+function normalizeTreeGraph(treeId, persons = [], relations = []) {
+  const normalizedPeople = (Array.isArray(persons) ? persons : [])
+    .filter((person) => person.treeId === treeId)
+    .map((person) => structuredClone(person));
+  const normalizedRelations = (Array.isArray(relations) ? relations : [])
+    .filter((relation) => relation.treeId === treeId)
+    .map((relation) => {
+      const normalizedRelation = structuredClone(relation);
+      const normalizedParentId = parentIdFromRelation(normalizedRelation);
+      const normalizedChildId = childIdFromRelation(normalizedRelation);
+      if (normalizedParentId && normalizedChildId) {
+        normalizedRelation.parentSetType = normalizeParentSetType(
+          normalizedRelation.parentSetType,
+        );
+        normalizedRelation.parentSetId =
+          normalizeNullableString(normalizedRelation.parentSetId) || null;
+        normalizedRelation.isPrimaryParentSet =
+          normalizedRelation.isPrimaryParentSet !== false;
+      } else {
+        normalizedRelation.parentSetType = null;
+        normalizedRelation.parentSetId = null;
+        normalizedRelation.isPrimaryParentSet = null;
+      }
+
+      if (isUnionRelation(normalizedRelation)) {
+        const relationType =
+          normalizedRelation.relation1to2 || normalizedRelation.relation2to1;
+        normalizedRelation.unionType = normalizeUnionType(
+          normalizedRelation.unionType,
+          {relationType},
+        );
+        normalizedRelation.unionStatus = normalizeUnionStatus(
+          normalizedRelation.unionStatus,
+          {
+            relationType,
+            divorceDate: normalizedRelation.divorceDate,
+          },
+        );
+        normalizedRelation.unionId =
+          normalizeNullableString(normalizedRelation.unionId) ||
+          `union:${treeId}:${buildSortedIdKey([
+            normalizedRelation.person1Id,
+            normalizedRelation.person2Id,
+          ])}:${normalizedRelation.unionType}:${normalizedRelation.unionStatus}`;
+      } else {
+        normalizedRelation.unionType = null;
+        normalizedRelation.unionStatus = null;
+        normalizedRelation.unionId = null;
+      }
+
+      return normalizedRelation;
+    });
+
+  const relationGroups = new Map();
+  for (const relation of normalizedRelations) {
+    const childId = childIdFromRelation(relation);
+    if (!childId) {
+      continue;
+    }
+    const groupKey = `${childId}:${relation.parentSetType}`;
+    if (!relationGroups.has(groupKey)) {
+      relationGroups.set(groupKey, []);
+    }
+    relationGroups.get(groupKey).push(relation);
+  }
+
+  for (const [groupKey, groupRelations] of relationGroups.entries()) {
+    const [childId, parentSetType] = groupKey.split(":");
+    const explicitIds = Array.from(
+      new Set(
+        groupRelations
+          .map((relation) => normalizeNullableString(relation.parentSetId))
+          .filter(Boolean),
+      ),
+    );
+
+    if (explicitIds.length === 0) {
+      const uniqueParentIds = Array.from(
+        new Set(groupRelations.map((relation) => parentIdFromRelation(relation)).filter(Boolean)),
+      );
+      if (uniqueParentIds.length <= 2) {
+        const sharedId = `ps:${treeId}:${childId}:${parentSetType}:primary`;
+        for (const relation of groupRelations) {
+          relation.parentSetId = sharedId;
+          relation.isPrimaryParentSet = true;
+        }
+      } else {
+        let index = 0;
+        for (const relation of groupRelations) {
+          index += 1;
+          relation.parentSetId = `ps:${treeId}:${childId}:${parentSetType}:${index}`;
+          relation.isPrimaryParentSet = index === 1;
+        }
+      }
+      continue;
+    }
+
+    const primaryId =
+      groupRelations.find((relation) => relation.isPrimaryParentSet)?.parentSetId ||
+      explicitIds[0];
+    const primaryParentIds = new Set(
+      groupRelations
+        .filter((relation) => relation.parentSetId === primaryId)
+        .map((relation) => parentIdFromRelation(relation))
+        .filter(Boolean),
+    );
+    let generatedIndex = explicitIds.length;
+    for (const relation of groupRelations) {
+      if (relation.parentSetId) {
+        relation.isPrimaryParentSet = relation.parentSetId === primaryId;
+        continue;
+      }
+      const parentId = parentIdFromRelation(relation);
+      if (primaryParentIds.has(parentId) || primaryParentIds.size < 2) {
+        relation.parentSetId = primaryId;
+        relation.isPrimaryParentSet = true;
+        if (parentId) {
+          primaryParentIds.add(parentId);
+        }
+      } else {
+        generatedIndex += 1;
+        relation.parentSetId =
+          `ps:${treeId}:${childId}:${parentSetType}:${generatedIndex}`;
+        relation.isPrimaryParentSet = false;
+      }
+    }
+  }
+
+  return {
+    people: normalizedPeople,
+    relations: normalizedRelations,
+  };
+}
+
+function buildDisplayTreeRelations(treeId, relations = []) {
+  const normalizedRelations = (Array.isArray(relations) ? relations : []).map((relation) =>
+    structuredClone(relation),
+  );
+  const anyUnionPartnersByPerson = new Map();
+  const primaryParentGroups = new Map();
+  const childIdsByParentAndType = new Map();
+  const existingParentRelationKeys = new Set();
+
+  for (const relation of normalizedRelations) {
+    if (isUnionRelation(relation)) {
+      addMapSetValue(anyUnionPartnersByPerson, relation.person1Id, relation.person2Id);
+      addMapSetValue(anyUnionPartnersByPerson, relation.person2Id, relation.person1Id);
+    }
+
+    const parentId = parentIdFromRelation(relation);
+    const childId = childIdFromRelation(relation);
+    if (!parentId || !childId) {
+      continue;
+    }
+    const normalizedParentSetType = normalizeParentSetType(relation.parentSetType);
+    existingParentRelationKeys.add(`${parentId}:${childId}:${normalizedParentSetType}`);
+    if (relation.isPrimaryParentSet === false || !isBloodParentSetType(normalizedParentSetType)) {
+      continue;
+    }
+    const groupKey = `${childId}:${normalizedParentSetType}`;
+    if (!primaryParentGroups.has(groupKey)) {
+      primaryParentGroups.set(groupKey, []);
+    }
+    primaryParentGroups.get(groupKey).push(relation);
+    addMapSetValue(
+      childIdsByParentAndType,
+      `${parentId}:${normalizedParentSetType}`,
+      childId,
+    );
+  }
+
+  const inferredRelations = [];
+  for (const groupRelations of primaryParentGroups.values()) {
+    const uniqueParentIds = Array.from(
+      new Set(groupRelations.map((relation) => parentIdFromRelation(relation)).filter(Boolean)),
+    );
+    if (uniqueParentIds.length !== 1) {
+      continue;
+    }
+
+    const knownParentId = uniqueParentIds[0];
+    const childId = childIdFromRelation(groupRelations[0]);
+    const parentSetType = normalizeParentSetType(groupRelations[0].parentSetType);
+    if (!knownParentId || !childId || !parentSetType) {
+      continue;
+    }
+
+    const candidateSupport = new Map();
+    for (const siblingChildId of getMapSetValues(
+      childIdsByParentAndType,
+      `${knownParentId}:${parentSetType}`,
+    )) {
+      if (siblingChildId === childId) {
+        continue;
+      }
+      const siblingRelations =
+        primaryParentGroups.get(`${siblingChildId}:${parentSetType}`) || [];
+      const siblingParentIds = Array.from(
+        new Set(
+          siblingRelations
+            .map((relation) => parentIdFromRelation(relation))
+            .filter(Boolean),
+        ),
+      );
+      if (siblingParentIds.length !== 2 || !siblingParentIds.includes(knownParentId)) {
+        continue;
+      }
+      const candidateParentId = siblingParentIds.find((id) => id !== knownParentId);
+      if (
+        !candidateParentId ||
+        !hasMapSetValue(anyUnionPartnersByPerson, knownParentId, candidateParentId)
+      ) {
+        continue;
+      }
+      candidateSupport.set(
+        candidateParentId,
+        (candidateSupport.get(candidateParentId) || 0) + 1,
+      );
+    }
+
+    if (candidateSupport.size !== 1) {
+      continue;
+    }
+    const [[candidateParentId]] = Array.from(candidateSupport.entries());
+    const inferredKey = `${candidateParentId}:${childId}:${parentSetType}`;
+    if (existingParentRelationKeys.has(inferredKey)) {
+      continue;
+    }
+
+    const templateRelation = groupRelations[0];
+    inferredRelations.push({
+      ...structuredClone(templateRelation),
+      id: `inferred:${treeId}:${candidateParentId}:${childId}:${parentSetType}`,
+      person1Id: candidateParentId,
+      person2Id: childId,
+      relation1to2: "parent",
+      relation2to1: "child",
+      isConfirmed: true,
+      customRelationLabel1to2: null,
+      customRelationLabel2to1: null,
+      parentSetType,
+      parentSetId: templateRelation.parentSetId,
+      isPrimaryParentSet: true,
+      unionType: null,
+      unionStatus: null,
+      unionId: null,
+      inferredDisplayOnly: true,
+    });
+    existingParentRelationKeys.add(inferredKey);
+  }
+
+  return [...normalizedRelations, ...inferredRelations];
+}
+
+function buildFamilyUnits(treeId, persons = [], relations = []) {
+  const normalizedGraph = normalizeTreeGraph(treeId, persons, relations);
+  const displayRelations = buildDisplayTreeRelations(
+    treeId,
+    normalizedGraph.relations,
+  );
+  const peopleById = new Map(
+    normalizedGraph.people.map((person) => [String(person.id || "").trim(), person]),
+  );
+  const familyUnits = [];
+  const representedUnionIds = new Set();
+  const parentSetGroups = new Map();
+
+  for (const relation of displayRelations) {
+    const parentId = parentIdFromRelation(relation);
+    const childId = childIdFromRelation(relation);
+    if (!parentId || !childId || !relation.parentSetId) {
+      continue;
+    }
+    if (!parentSetGroups.has(relation.parentSetId)) {
+      parentSetGroups.set(relation.parentSetId, {
+        id: relation.parentSetId,
+        parentSetType: relation.parentSetType,
+        isPrimaryParentSet: relation.isPrimaryParentSet !== false,
+        adultIds: new Set(),
+        childIds: new Set(),
+        relationIds: new Set(),
+      });
+    }
+    const group = parentSetGroups.get(relation.parentSetId);
+    group.adultIds.add(parentId);
+    group.childIds.add(childId);
+    group.relationIds.add(relation.id);
+    if (relation.isPrimaryParentSet === false) {
+      group.isPrimaryParentSet = false;
+    }
+  }
+
+  const mergedParentFamilyGroups = new Map();
+
+  for (const group of parentSetGroups.values()) {
+    const adultIds = Array.from(group.adultIds).sort((left, right) =>
+      left.localeCompare(right),
+    );
+    const childIds = Array.from(group.childIds).sort((left, right) =>
+      left.localeCompare(right),
+    );
+    const matchingUnion = adultIds.length >= 2
+      ? displayRelations.find((relation) => {
+          return (
+            relation.unionId &&
+            buildSortedIdKey([relation.person1Id, relation.person2Id]) ===
+              buildSortedIdKey(adultIds)
+          );
+        })
+      : null;
+    const mergeKey = [
+      buildSortedIdKey(adultIds),
+      matchingUnion?.unionId || `single:${buildSortedIdKey(adultIds)}`,
+      normalizeParentSetType(group.parentSetType),
+      group.isPrimaryParentSet ? "primary" : "secondary",
+    ].join("|");
+
+    if (!mergedParentFamilyGroups.has(mergeKey)) {
+      mergedParentFamilyGroups.set(mergeKey, {
+        rootParentSetIds: new Set(),
+        adultIds: new Set(),
+        childIds: new Set(),
+        relationIds: new Set(),
+        unionId: matchingUnion?.unionId || null,
+        unionType:
+          matchingUnion?.unionType || (adultIds.length > 1 ? "other" : "single"),
+        unionStatus: matchingUnion?.unionStatus || "current",
+        parentSetType: group.parentSetType,
+        isPrimaryParentSet: group.isPrimaryParentSet,
+      });
+    }
+
+    const mergedGroup = mergedParentFamilyGroups.get(mergeKey);
+    mergedGroup.rootParentSetIds.add(group.id);
+    for (const adultId of adultIds) {
+      mergedGroup.adultIds.add(adultId);
+    }
+    for (const childId of childIds) {
+      mergedGroup.childIds.add(childId);
+    }
+    for (const relationId of group.relationIds) {
+      mergedGroup.relationIds.add(relationId);
+    }
+  }
+
+  for (const mergedGroup of mergedParentFamilyGroups.values()) {
+    const adultIds = Array.from(mergedGroup.adultIds).sort((left, right) =>
+      left.localeCompare(right),
+    );
+    const childIds = Array.from(mergedGroup.childIds).sort((left, right) =>
+      left.localeCompare(right),
+    );
+    const relationIds = Array.from(mergedGroup.relationIds).sort((left, right) =>
+      left.localeCompare(right),
+    );
+    const rootParentSetIds = Array.from(mergedGroup.rootParentSetIds).sort(
+      (left, right) => left.localeCompare(right),
+    );
+    const rootParentSetId = rootParentSetIds[0] || null;
+
+    if (mergedGroup.unionId) {
+      representedUnionIds.add(mergedGroup.unionId);
+    }
+
+    familyUnits.push({
+      id:
+        rootParentSetIds.length <= 1
+          ? `family:${rootParentSetId}`
+          : `family:merged:${treeId}:${buildSortedIdKey(rootParentSetIds)}`,
+      rootParentSetId,
+      adultIds,
+      childIds,
+      relationIds,
+      unionId: mergedGroup.unionId,
+      unionType: mergedGroup.unionType,
+      unionStatus: mergedGroup.unionStatus,
+      parentSetType: mergedGroup.parentSetType,
+      isPrimaryParentSet: mergedGroup.isPrimaryParentSet,
+      label: buildFamilyUnitLabel({adultIds, peopleById}),
+    });
+  }
+
+  for (const relation of displayRelations) {
+    if (!isUnionRelation(relation) || !relation.unionId) {
+      continue;
+    }
+    if (representedUnionIds.has(relation.unionId)) {
+      continue;
+    }
+    representedUnionIds.add(relation.unionId);
+    const adultIds = [relation.person1Id, relation.person2Id].sort((left, right) =>
+      left.localeCompare(right),
+    );
+    familyUnits.push({
+      id: `family:${relation.unionId}`,
+      rootParentSetId: null,
+      adultIds,
+      childIds: [],
+      relationIds: [relation.id],
+      unionId: relation.unionId,
+      unionType: relation.unionType,
+      unionStatus: relation.unionStatus,
+      parentSetType: null,
+      isPrimaryParentSet: false,
+      label: buildFamilyUnitLabel({adultIds, peopleById}),
+    });
+  }
+
+  const coveredPersonIds = new Set(
+    familyUnits.flatMap((unit) => [...unit.adultIds, ...unit.childIds]),
+  );
+  for (const person of normalizedGraph.people) {
+    if (coveredPersonIds.has(person.id)) {
+      continue;
+    }
+    familyUnits.push({
+      id: `family:solo:${person.id}`,
+      rootParentSetId: null,
+      adultIds: [person.id],
+      childIds: [],
+      relationIds: [],
+      unionId: null,
+      unionType: "single",
+      unionStatus: "current",
+      parentSetType: null,
+      isPrimaryParentSet: false,
+      label: buildFamilyUnitLabel({
+        adultIds: [person.id],
+        peopleById,
+      }),
+    });
+  }
+
+  return familyUnits;
+}
+
+function buildGenerationRows(persons, relations, familyUnits) {
+  const normalizedPersons = Array.isArray(persons) ? persons : [];
+  const normalizedRelations = Array.isArray(relations) ? relations : [];
+  const parentsByChild = new Map();
+  const siblingIdsByPerson = new Map();
+
+  for (const relation of normalizedRelations) {
+    if (
+      String(relation.relation1to2 || "").trim().toLowerCase() === "sibling" &&
+      String(relation.relation2to1 || "").trim().toLowerCase() === "sibling"
+    ) {
+      addMapSetValue(siblingIdsByPerson, relation.person1Id, relation.person2Id);
+      addMapSetValue(siblingIdsByPerson, relation.person2Id, relation.person1Id);
+    }
+
+    const parentId = parentIdFromRelation(relation);
+    const childId = childIdFromRelation(relation);
+    if (!parentId || !childId || relation.isPrimaryParentSet === false) {
+      continue;
+    }
+    if (!parentsByChild.has(childId)) {
+      parentsByChild.set(childId, new Set());
+    }
+    parentsByChild.get(childId).add(parentId);
+  }
+
+  const levels = new Map();
+  const visiting = new Set();
+  const resolveLevel = (personId) => {
+    if (levels.has(personId)) {
+      return levels.get(personId);
+    }
+    if (visiting.has(personId)) {
+      return 0;
+    }
+    visiting.add(personId);
+    const parents = Array.from(parentsByChild.get(personId) || []);
+    const level =
+      parents.length === 0
+        ? 0
+        : Math.max(...parents.map((parentId) => resolveLevel(parentId))) + 1;
+    visiting.delete(personId);
+    levels.set(personId, level);
+    return level;
+  };
+
+  for (const person of normalizedPersons) {
+    resolveLevel(person.id);
+  }
+
+  const normalizedFamilyUnits = Array.isArray(familyUnits) ? familyUnits : [];
+  const maxIterations = normalizedPersons.length + normalizedFamilyUnits.length + 8;
+  let changed = true;
+  let iteration = 0;
+  while (changed && iteration < maxIterations) {
+    changed = false;
+    iteration += 1;
+
+    for (const unit of normalizedFamilyUnits) {
+      const adultIds = (Array.isArray(unit?.adultIds) ? unit.adultIds : []).filter(Boolean);
+      const childIds = (Array.isArray(unit?.childIds) ? unit.childIds : []).filter(Boolean);
+      if (adultIds.length === 0 && childIds.length === 0) {
+        continue;
+      }
+
+      let desiredAdultLevel = null;
+      if (childIds.length > 0) {
+        desiredAdultLevel = Math.max(
+          0,
+          Math.min(...childIds.map((personId) => levels.get(personId) ?? 0)) - 1,
+        );
+      } else if (adultIds.length > 0) {
+        desiredAdultLevel = Math.max(
+          ...adultIds.map((personId) => levels.get(personId) ?? 0),
+        );
+      }
+
+      if (desiredAdultLevel !== null) {
+        for (const adultId of adultIds) {
+          if ((levels.get(adultId) ?? 0) !== desiredAdultLevel) {
+            levels.set(adultId, desiredAdultLevel);
+            changed = true;
+          }
+        }
+      }
+
+      if (desiredAdultLevel !== null && childIds.length > 0) {
+        const desiredChildLevel = desiredAdultLevel + 1;
+        for (const childId of childIds) {
+          if ((levels.get(childId) ?? 0) !== desiredChildLevel) {
+            levels.set(childId, desiredChildLevel);
+            changed = true;
+          }
+        }
+      }
+    }
+
+    for (const [personId, siblingIds] of siblingIdsByPerson.entries()) {
+      const targetLevel = Math.max(
+        levels.get(personId) ?? 0,
+        ...Array.from(siblingIds).map((siblingId) => levels.get(siblingId) ?? 0),
+      );
+      if ((levels.get(personId) ?? 0) !== targetLevel) {
+        levels.set(personId, targetLevel);
+        changed = true;
+      }
+      for (const siblingId of siblingIds) {
+        if ((levels.get(siblingId) ?? 0) !== targetLevel) {
+          levels.set(siblingId, targetLevel);
+          changed = true;
+        }
+      }
+    }
+  }
+
+  const minLevel = Math.min(0, ...Array.from(levels.values()));
+  if (minLevel < 0) {
+    for (const [personId, level] of levels.entries()) {
+      levels.set(personId, level - minLevel);
+    }
+  }
+
+  const maxLevel = Math.max(0, ...Array.from(levels.values()));
+  const rows = [];
+  for (let row = 0; row <= maxLevel; row += 1) {
+    const personIds = normalizedPersons
+      .filter((person) => levels.get(person.id) === row)
+      .map((person) => person.id);
+    const familyUnitIds = (Array.isArray(familyUnits) ? familyUnits : [])
+      .filter((unit) =>
+        unit.adultIds.some((personId) => personIds.includes(personId)) ||
+        unit.childIds.some((personId) => personIds.includes(personId)),
+      )
+      .map((unit) => unit.id);
+    let label = `Поколение ${row + 1}`;
+    if (maxLevel === 0) {
+      label = "Семья";
+    } else if (row === 0) {
+      label = "Старшее поколение";
+    } else if (row === maxLevel) {
+      label = "Младшее поколение";
+    }
+    rows.push({
+      row,
+      label,
+      personIds,
+      familyUnitIds: Array.from(new Set(familyUnitIds)),
+    });
+  }
+
+  return rows;
+}
+
+function describeParentSetTypeLabelRu(parentSetType) {
+  switch (normalizeParentSetType(parentSetType)) {
+    case "biological":
+      return "биологические родители";
+    case "adoptive":
+      return "усыновители";
+    case "foster":
+      return "приемная семья";
+    case "guardian":
+      return "опекуны";
+    case "step":
+      return "неродные родители";
+    case "unknown":
+      return "родители";
+    default:
+      return "родители";
+  }
+}
+
+function buildGraphWarnings({
+  persons = [],
+  relations = [],
+  familyUnits = [],
+}) {
+  const normalizedPersons = Array.isArray(persons) ? persons : [];
+  const normalizedRelations = Array.isArray(relations) ? relations : [];
+  const normalizedFamilyUnits = Array.isArray(familyUnits) ? familyUnits : [];
+  const peopleById = new Map(
+    normalizedPersons.map((person) => [String(person.id || "").trim(), person]),
+  );
+  const warnings = [];
+  const emittedWarningIds = new Set();
+  const pushWarning = (warning) => {
+    const warningId = String(warning?.id || "").trim();
+    if (!warningId || emittedWarningIds.has(warningId)) {
+      return;
+    }
+    emittedWarningIds.add(warningId);
+    warnings.push({
+      id: warningId,
+      code: String(warning.code || "").trim() || "graph_warning",
+      severity: String(warning.severity || "").trim() || "warning",
+      message: String(warning.message || "").trim() || "Дерево требует проверки.",
+      hint: normalizeNullableString(warning.hint),
+      personIds: Array.from(
+        new Set((Array.isArray(warning.personIds) ? warning.personIds : []).filter(Boolean)),
+      ),
+      familyUnitIds: Array.from(
+        new Set(
+          (Array.isArray(warning.familyUnitIds) ? warning.familyUnitIds : []).filter(Boolean),
+        ),
+      ),
+      relationIds: Array.from(
+        new Set((Array.isArray(warning.relationIds) ? warning.relationIds : []).filter(Boolean)),
+      ),
+    });
+  };
+
+  const primaryParentGroups = new Map();
+  for (const relation of normalizedRelations) {
+    const parentId = parentIdFromRelation(relation);
+    const childId = childIdFromRelation(relation);
+    if (!parentId || !childId || relation.isPrimaryParentSet === false) {
+      continue;
+    }
+    const normalizedParentSetType = normalizeParentSetType(relation.parentSetType) || "unknown";
+    const normalizedParentSetId =
+      normalizeNullableString(relation.parentSetId) ||
+      `implicit:${childId}:${normalizedParentSetType}`;
+    const groupKey = `${childId}:${normalizedParentSetType}`;
+    if (!primaryParentGroups.has(groupKey)) {
+      primaryParentGroups.set(groupKey, new Map());
+    }
+    const groupEntries = primaryParentGroups.get(groupKey);
+    if (!groupEntries.has(normalizedParentSetId)) {
+      groupEntries.set(normalizedParentSetId, {
+        parentIds: new Set(),
+        relationIds: new Set(),
+      });
+    }
+    const groupEntry = groupEntries.get(normalizedParentSetId);
+    groupEntry.parentIds.add(parentId);
+    groupEntry.relationIds.add(relation.id);
+  }
+
+  for (const [groupKey, groupEntries] of primaryParentGroups.entries()) {
+    if (groupEntries.size <= 1) {
+      continue;
+    }
+    const [childId, parentSetType] = groupKey.split(":");
+    const childName =
+      peopleById.get(childId)?.name || peopleById.get(childId)?.displayName || childId;
+    const allParentIds = [];
+    const allRelationIds = [];
+    const parentSetIds = new Set(groupEntries.keys());
+    for (const entry of groupEntries.values()) {
+      allParentIds.push(...Array.from(entry.parentIds));
+      allRelationIds.push(...Array.from(entry.relationIds));
+    }
+    const familyUnitIds = normalizedFamilyUnits
+      .filter((unit) => unit.rootParentSetId && parentSetIds.has(unit.rootParentSetId))
+      .map((unit) => unit.id);
+    pushWarning({
+      id: `warning:primary-parent-set:${groupKey}`,
+      code: "multiple_primary_parent_sets",
+      severity: "warning",
+      message: `У ${childName} несколько основных наборов родителей (${describeParentSetTypeLabelRu(
+        parentSetType,
+      )}).`,
+      hint: "Оставьте только один основной набор, а остальные связи переведите в дополнительные.",
+      personIds: [childId, ...allParentIds],
+      familyUnitIds,
+      relationIds: allRelationIds,
+    });
+  }
+
+  for (const relation of normalizedRelations) {
+    if (relation.inferredDisplayOnly !== true) {
+      continue;
+    }
+    const parentId = parentIdFromRelation(relation);
+    const childId = childIdFromRelation(relation);
+    if (!parentId || !childId) {
+      continue;
+    }
+    const parentName =
+      peopleById.get(parentId)?.name || peopleById.get(parentId)?.displayName || parentId;
+    const childName =
+      peopleById.get(childId)?.name || peopleById.get(childId)?.displayName || childId;
+    const familyUnitIds = normalizedFamilyUnits
+      .filter((unit) => Array.isArray(unit.relationIds) && unit.relationIds.includes(relation.id))
+      .map((unit) => unit.id);
+    pushWarning({
+      id: `warning:auto-parent-repair:${relation.id}`,
+      code: "auto_repaired_parent_link",
+      severity: "info",
+      message: `Связь ${parentName} -> ${childName} достроена автоматически по данным дерева.`,
+      hint: "Проверьте, что этот родитель относится к правильному набору родителей.",
+      personIds: [parentId, childId],
+      familyUnitIds,
+      relationIds: [relation.id],
+    });
+  }
+
+  const pairRelations = new Map();
+  for (const relation of normalizedRelations) {
+    const leftId = String(relation.person1Id || "").trim();
+    const rightId = String(relation.person2Id || "").trim();
+    if (!leftId || !rightId) {
+      continue;
+    }
+    const pairKey = buildSortedIdKey([leftId, rightId]);
+    if (!pairRelations.has(pairKey)) {
+      pairRelations.set(pairKey, []);
+    }
+    pairRelations.get(pairKey).push(relation);
+  }
+
+  const relationCategoryForWarning = (relation) => {
+    if (parentIdFromRelation(relation) && childIdFromRelation(relation)) {
+      return "parentChild";
+    }
+    if (isUnionRelation(relation)) {
+      return "union";
+    }
+    if (relation?.relation1to2 === "sibling" || relation?.relation2to1 === "sibling") {
+      return "sibling";
+    }
+    return null;
+  };
+
+  for (const [pairKey, pairEntries] of pairRelations.entries()) {
+    const categories = new Set(
+      pairEntries.map(relationCategoryForWarning).filter(Boolean),
+    );
+    if (categories.size <= 1) {
+      continue;
+    }
+    const [personAId, personBId] = pairKey.split(":");
+    const personAName =
+      peopleById.get(personAId)?.name || peopleById.get(personAId)?.displayName || personAId;
+    const personBName =
+      peopleById.get(personBId)?.name || peopleById.get(personBId)?.displayName || personBId;
+    pushWarning({
+      id: `warning:conflicting-direct-links:${pairKey}`,
+      code: "conflicting_direct_links",
+      severity: "warning",
+      message: `Между ${personAName} и ${personBName} есть конфликтующие прямые связи.`,
+      hint: "Для одной пары людей оставьте только один прямой тип связи: родитель, сиблинг или союз.",
+      personIds: [personAId, personBId],
+      relationIds: pairEntries.map((relation) => relation.id),
+      familyUnitIds: normalizedFamilyUnits
+        .filter((unit) =>
+          unit.adultIds.includes(personAId) ||
+          unit.adultIds.includes(personBId) ||
+          unit.childIds.includes(personAId) ||
+          unit.childIds.includes(personBId),
+        )
+        .map((unit) => unit.id),
+    });
+  }
+
+  return warnings;
+}
+
+function resolveBranchBlocks(treeId, persons = [], relations = [], familyUnits = null) {
+  const normalizedGraph = normalizeTreeGraph(treeId, persons, relations);
+  const resolvedFamilyUnits = Array.isArray(familyUnits)
+    ? familyUnits
+    : buildFamilyUnits(treeId, normalizedGraph.people, normalizedGraph.relations);
+  const peopleById = new Map(
+    normalizedGraph.people.map((person) => [String(person.id || "").trim(), person]),
+  );
+  const adultUnitsByPersonId = new Map();
+
+  for (const unit of resolvedFamilyUnits) {
+    for (const adultId of unit.adultIds) {
+      if (!adultUnitsByPersonId.has(adultId)) {
+        adultUnitsByPersonId.set(adultId, []);
+      }
+      adultUnitsByPersonId.get(adultId).push(unit.id);
+    }
+  }
+
+  return resolvedFamilyUnits.map((rootUnit) => {
+    const visitedUnitIds = new Set([rootUnit.id]);
+    const memberPersonIds = new Set([...rootUnit.adultIds, ...rootUnit.childIds]);
+    const queue = [rootUnit.id];
+
+    while (queue.length > 0) {
+      const currentUnitId = queue.shift();
+      const currentUnit = resolvedFamilyUnits.find((unit) => unit.id === currentUnitId);
+      if (!currentUnit) {
+        continue;
+      }
+      for (const childId of currentUnit.childIds) {
+        memberPersonIds.add(childId);
+        for (const descendantUnitId of adultUnitsByPersonId.get(childId) || []) {
+          if (visitedUnitIds.has(descendantUnitId)) {
+            continue;
+          }
+          visitedUnitIds.add(descendantUnitId);
+          queue.push(descendantUnitId);
+          const descendantUnit = resolvedFamilyUnits.find((unit) => unit.id === descendantUnitId);
+          for (const adultId of descendantUnit?.adultIds || []) {
+            memberPersonIds.add(adultId);
+          }
+          for (const descendantChildId of descendantUnit?.childIds || []) {
+            memberPersonIds.add(descendantChildId);
+          }
+        }
+      }
+    }
+
+    return {
+      id: `branch:${rootUnit.id}`,
+      rootUnitId: rootUnit.id,
+      label: buildBranchLabel({rootUnit, peopleById}),
+      memberPersonIds: Array.from(memberPersonIds).sort((left, right) =>
+        left.localeCompare(right),
+      ),
+    };
+  });
+}
+
+function chooseBranchBlockForPerson(snapshot, personId) {
+  if (!snapshot || !personId) {
+    return null;
+  }
+
+  const normalizedPersonId = String(personId || "").trim();
+  const familyUnits = Array.isArray(snapshot.familyUnits) ? snapshot.familyUnits : [];
+  const branchBlocks = Array.isArray(snapshot.branchBlocks) ? snapshot.branchBlocks : [];
+  const candidateUnit =
+    familyUnits.find((unit) => unit.adultIds.includes(normalizedPersonId)) ||
+    familyUnits.find(
+      (unit) =>
+        unit.childIds.includes(normalizedPersonId) && unit.isPrimaryParentSet === true,
+    ) ||
+    familyUnits.find((unit) => unit.childIds.includes(normalizedPersonId)) ||
+    familyUnits.find((unit) => unit.adultIds.includes(normalizedPersonId));
+  if (!candidateUnit) {
+    return null;
+  }
+  return (
+    branchBlocks.find((branchBlock) => branchBlock.rootUnitId === candidateUnit.id) ||
+    null
+  );
+}
+
+function computeViewerKinships(treeId, persons = [], relations = [], viewerPersonId = null) {
+  const normalizedViewerId = String(viewerPersonId || "").trim();
+  if (!normalizedViewerId) {
+    return [];
+  }
+
+  const normalizedGraph = normalizeTreeGraph(treeId, persons, relations);
+  const peopleById = new Map(
+    normalizedGraph.people.map((person) => [String(person.id || "").trim(), person]),
+  );
+  if (!peopleById.has(normalizedViewerId)) {
+    return [];
+  }
+
+  const traversal = buildTraversalGraph(normalizedGraph.relations);
+  const pathIndex = buildBestPathIndex(normalizedViewerId, traversal.adjacency);
+  const descriptors = [];
+
+  for (const person of normalizedGraph.people) {
+    const personId = String(person.id || "").trim();
+    if (!personId) {
+      continue;
+    }
+
+    if (personId === normalizedViewerId) {
+      descriptors.push({
+        personId,
+        primaryRelationLabel: "Это вы",
+        isBlood: true,
+        alternatePathCount: 0,
+        pathSummary: person.name || personId,
+        primaryPathPersonIds: [personId],
+      });
+      continue;
+    }
+
+    const directRelation =
+      traversal.directRelations.get(buildSortedIdKey([normalizedViewerId, personId])) || null;
+    const bloodDescriptor = computeBloodRelationshipDescriptor(
+      normalizedViewerId,
+      personId,
+      traversal.bloodParentsByChild,
+      peopleById,
+    );
+    const affinityDescriptor = computeAffinityRelationshipDescriptor({
+      viewerPersonId: normalizedViewerId,
+      targetPersonId: personId,
+      peopleById,
+      parentsByChild: traversal.parentsByChild,
+      childrenByParent: traversal.childrenByParent,
+      bloodParentsByChild: traversal.bloodParentsByChild,
+      bloodChildrenByParent: traversal.bloodChildrenByParent,
+      currentUnionPartnersByPerson: traversal.currentUnionPartnersByPerson,
+      siblingsByPerson: traversal.siblingsByPerson,
+    });
+    let primaryRelationLabel = null;
+    let isBlood = false;
+
+    if (directRelation) {
+      const customDirectLabel = relationCustomLabelForPerson(directRelation, personId);
+      const relationType = relationTypeForPerson(directRelation, personId);
+      if (customDirectLabel) {
+        primaryRelationLabel = customDirectLabel;
+        isBlood = false;
+      } else if (relationType && relationType !== "other") {
+        const shouldPreferAffinityLabel =
+          relationType === "parentInLaw" ||
+          relationType === "childInLaw" ||
+          relationType === "siblingInLaw" ||
+          relationType === "inlaw";
+        primaryRelationLabel = shouldPreferAffinityLabel
+          ? affinityDescriptor?.label || describeDirectRelationLabel({
+              relationType,
+              gender: person.gender,
+              parentSetType: directRelation.parentSetType,
+            })
+          : describeDirectRelationLabel({
+              relationType,
+              gender: person.gender,
+              parentSetType: directRelation.parentSetType,
+            });
+        isBlood = isBloodDirectRelationType(
+          relationType,
+          directRelation.parentSetType,
+        );
+      }
+    }
+
+    if (!primaryRelationLabel && bloodDescriptor?.label) {
+      primaryRelationLabel = bloodDescriptor.label;
+      isBlood = bloodDescriptor.isBlood;
+    }
+
+    if (!primaryRelationLabel && affinityDescriptor?.label) {
+      primaryRelationLabel = affinityDescriptor.label;
+      isBlood = false;
+    }
+
+    const bestCost = pathIndex.costs.get(personId) || null;
+    const primaryPathPersonIds = reconstructPersonPath(
+      personId,
+      pathIndex.predecessors,
+    );
+    const alternatePathCount = Math.max(
+      0,
+      (pathIndex.pathCounts.get(personId) || 1) - 1,
+    );
+    if (!primaryRelationLabel && primaryPathPersonIds.length > 1) {
+      const sparsePathDescriptor = buildSparsePathRelationshipDescriptor({
+        targetPersonId: personId,
+        primaryPathPersonIds,
+        directRelations: traversal.directRelations,
+        peopleById,
+      });
+      if (sparsePathDescriptor?.label) {
+        primaryRelationLabel = sparsePathDescriptor.label;
+        isBlood = sparsePathDescriptor.isBlood === true;
+      }
+    }
+    if (!primaryRelationLabel && bestCost) {
+      primaryRelationLabel =
+        bestCost.nonBlood === 0 ? "Кровный родственник" : "Родня по браку";
+      isBlood = bestCost.nonBlood === 0;
+    }
+
+    if (!primaryRelationLabel) {
+      continue;
+    }
+
+    descriptors.push({
+      personId,
+      primaryRelationLabel,
+      isBlood,
+      alternatePathCount,
+      pathSummary: buildPathSummary(primaryPathPersonIds, peopleById),
+      primaryPathPersonIds,
+    });
+  }
+
+  return descriptors;
+}
+
+function buildTreeGraphSnapshot({
+  treeId,
+  persons = [],
+  relations = [],
+  viewerPersonId = null,
+}) {
+  const normalizedGraph = normalizeTreeGraph(treeId, persons, relations);
+  const displayRelations = buildDisplayTreeRelations(
+    treeId,
+    normalizedGraph.relations,
+  );
+  const familyUnits = buildFamilyUnits(
+    treeId,
+    normalizedGraph.people,
+    displayRelations,
+  );
+  const branchBlocks = resolveBranchBlocks(
+    treeId,
+    normalizedGraph.people,
+    displayRelations,
+    familyUnits,
+  );
+  const generationRows = buildGenerationRows(
+    normalizedGraph.people,
+    displayRelations,
+    familyUnits,
+  );
+  const warnings = buildGraphWarnings({
+    persons: normalizedGraph.people,
+    relations: displayRelations,
+    familyUnits,
+  });
+
+  return {
+    treeId,
+    viewerPersonId: String(viewerPersonId || "").trim() || null,
+    people: normalizedGraph.people,
+    relations: displayRelations,
+    familyUnits,
+    viewerDescriptors: computeViewerKinships(
+      treeId,
+      normalizedGraph.people,
+      displayRelations,
+      viewerPersonId,
+    ),
+    branchBlocks,
+    generationRows,
+    warnings,
+  };
+}
+
 function fullNameFromPersonInput(person = {}) {
   const parts = [person.lastName, person.firstName, person.middleName]
     .map((value) => String(value || "").trim())
@@ -696,6 +3410,254 @@ function composeDisplayNameFromProfile(profile = {}) {
 function normalizeNullableString(value) {
   const normalized = String(value || "").trim();
   return normalized ? normalized : null;
+}
+
+function normalizeProfileContributionPolicy(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return PROFILE_CONTRIBUTION_POLICIES.has(normalized)
+    ? normalized
+    : "suggestions";
+}
+
+function normalizePrimaryTrustedChannel(value) {
+  const normalized = normalizeAuthProvider(value);
+  if (
+    normalized === "google" ||
+    normalized === "telegram" ||
+    normalized === "vk" ||
+    normalized === "max"
+  ) {
+    return normalized;
+  }
+  return null;
+}
+
+function resolvePersonFamilySummary(person = {}) {
+  return (
+    normalizeNullableString(person.familySummary) ||
+    normalizeNullableString(person.notes) ||
+    normalizeNullableString(person.bio)
+  );
+}
+
+function normalizeProfileContributionFields(fields = {}) {
+  if (!fields || typeof fields !== "object" || Array.isArray(fields)) {
+    return {};
+  }
+
+  const normalized = {};
+  for (const fieldName of PROFILE_SUGGESTION_FIELDS) {
+    if (!Object.prototype.hasOwnProperty.call(fields, fieldName)) {
+      continue;
+    }
+
+    switch (fieldName) {
+      case "birthDate":
+        normalized[fieldName] = normalizeIsoDate(fields[fieldName]);
+        break;
+      case "photoUrl":
+        normalized[fieldName] = normalizeNullableString(fields[fieldName]);
+        break;
+      default:
+        normalized[fieldName] = normalizeNullableString(fields[fieldName]) || "";
+        break;
+    }
+  }
+
+  return normalized;
+}
+
+function normalizeCountryDialCode(value) {
+  const digits = String(value || "").replace(/\D+/g, "");
+  return digits ? `+${digits}` : null;
+}
+
+function normalizePhoneNumber(value, countryCode = null) {
+  const rawValue = String(value || "").trim();
+  if (!rawValue) {
+    return null;
+  }
+
+  const hasLeadingPlus = rawValue.startsWith("+");
+  let digits = rawValue.replace(/\D+/g, "");
+  if (!digits) {
+    return null;
+  }
+
+  const normalizedCountryCode = normalizeCountryDialCode(countryCode);
+  const countryDigits = normalizedCountryCode
+    ? normalizedCountryCode.replace(/\D+/g, "")
+    : "";
+
+  if (hasLeadingPlus) {
+    return `+${digits}`;
+  }
+
+  if (digits.length === 11 && digits.startsWith("8")) {
+    digits = `7${digits.slice(1)}`;
+  }
+
+  if (digits.length === 10 && countryDigits) {
+    digits = `${countryDigits}${digits}`;
+  }
+
+  if (digits.length <= 6) {
+    return null;
+  }
+
+  return `+${digits}`;
+}
+
+const SUPPORTED_AUTH_PROVIDERS = new Set([
+  "password",
+  "google",
+  "telegram",
+  "vk",
+  "max",
+]);
+
+function normalizeAuthProvider(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return SUPPORTED_AUTH_PROVIDERS.has(normalized) ? normalized : null;
+}
+
+function createPasswordAuthIdentity(email, timestamp = nowIso()) {
+  const normalizedEmail = normalizeNullableString(email)?.toLowerCase();
+  if (!normalizedEmail) {
+    return null;
+  }
+
+  return {
+    provider: "password",
+    providerUserId: normalizedEmail,
+    linkedAt: timestamp,
+    lastUsedAt: timestamp,
+    email: normalizedEmail,
+    phoneNumber: null,
+    normalizedPhoneNumber: null,
+    displayName: null,
+    metadata: {},
+  };
+}
+
+function createAuthHandoffRecord({
+  type,
+  payload = {},
+  userId = null,
+  expiresAt = null,
+}) {
+  const createdAt = nowIso();
+  const normalizedExpiresAt =
+    normalizeOptionalIsoTimestamp(expiresAt) ||
+    new Date(Date.now() + 10 * 60 * 1000).toISOString();
+  return {
+    code: crypto.randomBytes(24).toString("hex"),
+    type: normalizeNullableString(type),
+    userId: normalizeNullableString(userId),
+    payload:
+      payload && typeof payload === "object" ? structuredClone(payload) : {},
+    createdAt,
+    expiresAt: normalizedExpiresAt,
+  };
+}
+
+function normalizeAuthIdentityRecord(identity) {
+  const provider = normalizeAuthProvider(identity?.provider);
+  const rawProviderUserId = String(identity?.providerUserId || "").trim();
+  if (!provider || !rawProviderUserId) {
+    return null;
+  }
+
+  const normalizedEmail = normalizeNullableString(identity?.email)?.toLowerCase();
+  const phoneNumber = normalizeNullableString(identity?.phoneNumber);
+  const normalizedPhoneNumber = normalizePhoneNumber(
+    identity?.normalizedPhoneNumber || phoneNumber,
+  );
+  const providerUserId =
+    provider === "password" && normalizedEmail
+      ? normalizedEmail
+      : rawProviderUserId;
+
+  return {
+    provider,
+    providerUserId,
+    linkedAt: normalizeOptionalIsoTimestamp(identity?.linkedAt) || nowIso(),
+    lastUsedAt: normalizeOptionalIsoTimestamp(identity?.lastUsedAt),
+    email: normalizedEmail,
+    phoneNumber,
+    normalizedPhoneNumber,
+    displayName: normalizeNullableString(identity?.displayName),
+    metadata:
+      identity?.metadata && typeof identity.metadata === "object"
+        ? structuredClone(identity.metadata)
+        : {},
+  };
+}
+
+function listAuthIdentitiesForUser(user) {
+  const identities = [];
+  const seenKeys = new Set();
+
+  const addIdentity = (identity) => {
+    const normalizedIdentity = normalizeAuthIdentityRecord(identity);
+    if (!normalizedIdentity) {
+      return;
+    }
+
+    const identityKey =
+      `${normalizedIdentity.provider}:${normalizedIdentity.providerUserId}`;
+    if (seenKeys.has(identityKey)) {
+      return;
+    }
+
+    seenKeys.add(identityKey);
+    identities.push(normalizedIdentity);
+  };
+
+  if (Array.isArray(user?.authIdentities)) {
+    for (const identity of user.authIdentities) {
+      addIdentity(identity);
+    }
+  }
+
+  if (user?.passwordHash && user?.email) {
+    addIdentity(createPasswordAuthIdentity(user.email, user.createdAt || nowIso()));
+  }
+
+  return identities.sort((left, right) => {
+    if (left.provider === "password" && right.provider !== "password") {
+      return -1;
+    }
+    if (right.provider === "password" && left.provider !== "password") {
+      return 1;
+    }
+    return String(left.linkedAt).localeCompare(String(right.linkedAt));
+  });
+}
+
+function deriveProviderIdsForUser(user) {
+  const providerIds = Array.isArray(user?.providerIds)
+    ? user.providerIds
+      .map((value) => normalizeAuthProvider(value))
+      .filter(Boolean)
+    : [];
+
+  for (const identity of listAuthIdentitiesForUser(user)) {
+    providerIds.push(identity.provider);
+  }
+
+  if (user?.passwordHash) {
+    providerIds.push("password");
+  }
+
+  return Array.from(new Set(providerIds));
+}
+
+function cloneUserWithAuthState(user) {
+  const clonedUser = structuredClone(user);
+  clonedUser.authIdentities = listAuthIdentitiesForUser(clonedUser);
+  clonedUser.providerIds = deriveProviderIdsForUser(clonedUser);
+  return clonedUser;
 }
 
 function normalizeIsoDate(value) {
@@ -886,6 +3848,7 @@ function buildPersonRecord({
   const createdAt = nowIso();
   const birthDate = normalizeIsoDate(personData.birthDate);
   const deathDate = normalizeIsoDate(personData.deathDate);
+  const familySummary = resolvePersonFamilySummary(personData);
   const photoState = normalizePersonPhotoGallery(personData.photoGallery, {
     photoUrl: personData.photoUrl,
     primaryPhotoUrl: personData.primaryPhotoUrl,
@@ -906,6 +3869,7 @@ function buildPersonRecord({
     birthPlace: normalizeNullableString(personData.birthPlace),
     deathDate,
     deathPlace: normalizeNullableString(personData.deathPlace),
+    familySummary,
     bio: normalizeNullableString(personData.bio),
     isAlive: deathDate === null,
     creatorId,
@@ -964,6 +3928,10 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString("hex")) {
 }
 
 function verifyPassword(password, user) {
+  if (!user?.passwordHash || !user?.passwordSalt) {
+    return false;
+  }
+
   const derivedKey = crypto
     .scryptSync(password, user.passwordSalt, 64)
     .toString("hex");
@@ -980,6 +3948,7 @@ class FileStore {
     this.storageMode = "file-store";
     this.storageTarget = dataPath;
     this._writeQueue = Promise.resolve();
+    this._sessionTouchCache = new Map();
   }
 
   async initialize() {
@@ -1357,7 +4326,13 @@ class FileStore {
     return preferredPerson;
   }
 
-  async createUser({email, password, displayName}) {
+  async createUser({
+    email,
+    password = null,
+    displayName,
+    authIdentity = null,
+    photoUrl = null,
+  }) {
     const db = await this._read();
     const normalizedEmail = String(email || "").trim().toLowerCase();
 
@@ -1366,21 +4341,38 @@ class FileStore {
     }
 
     const createdAt = nowIso();
-    const {salt, passwordHash} = hashPassword(password);
+    const hasPassword = typeof password === "string" && password.length > 0;
+    const passwordCredentials = hasPassword ? hashPassword(password) : null;
     const userId = crypto.randomUUID();
 
     const nameParts = String(displayName || "")
       .trim()
       .split(/\s+/)
       .filter(Boolean);
+    const authIdentities = [];
+    if (hasPassword) {
+      const passwordAuthIdentity = createPasswordAuthIdentity(
+        normalizedEmail,
+        createdAt,
+      );
+      if (passwordAuthIdentity) {
+        authIdentities.push(passwordAuthIdentity);
+      }
+    }
+
+    const normalizedAuthIdentity = normalizeAuthIdentityRecord(authIdentity);
+    if (normalizedAuthIdentity) {
+      authIdentities.push(normalizedAuthIdentity);
+    }
 
     const user = {
       id: userId,
       identityId: null,
       email: normalizedEmail,
-      passwordHash,
-      passwordSalt: salt,
-      providerIds: ["password"],
+      passwordHash: passwordCredentials?.passwordHash || null,
+      passwordSalt: passwordCredentials?.salt || null,
+      providerIds: [],
+      authIdentities,
       createdAt,
       updatedAt: createdAt,
       profile: {
@@ -1393,23 +4385,39 @@ class FileStore {
           nameParts.length > 2 ? nameParts.slice(1, -1).join(" ") : "",
         username: "",
         phoneNumber: "",
+        normalizedPhoneNumber: null,
         countryCode: null,
         countryName: null,
         city: "",
-        photoUrl: null,
-        isPhoneVerified: false,
+        photoUrl: String(photoUrl || "").trim() || null,
         gender: "unknown",
         maidenName: "",
         birthDate: null,
+        birthPlace: null,
+        bio: "",
+        familyStatus: "",
+        aboutFamily: "",
+        education: "",
+        work: "",
+        hometown: "",
+        languages: "",
+        values: "",
+        religion: "",
+        interests: "",
+        profileContributionPolicy: "suggestions",
+        primaryTrustedChannel: normalizePrimaryTrustedChannel(
+          normalizedAuthIdentity?.provider,
+        ),
         createdAt,
         updatedAt: createdAt,
       },
       profileNotes: [],
     };
+    user.providerIds = deriveProviderIdsForUser(user);
 
     db.users.push(user);
     await this._write(db);
-    return structuredClone(user);
+    return cloneUserWithAuthState(user);
   }
 
   async authenticate(email, password) {
@@ -1421,13 +4429,42 @@ class FileStore {
       return null;
     }
 
-    return structuredClone(user);
+    return cloneUserWithAuthState(user);
   }
 
   async findUserById(userId) {
     const db = await this._read();
     const user = db.users.find((entry) => entry.id === userId);
-    return user ? structuredClone(user) : null;
+    return user ? cloneUserWithAuthState(user) : null;
+  }
+
+  async findUserByEmail(email) {
+    const db = await this._read();
+    const normalizedEmail = String(email || "").trim().toLowerCase();
+    if (!normalizedEmail) {
+      return null;
+    }
+
+    const user = db.users.find((entry) => entry.email === normalizedEmail);
+    return user ? cloneUserWithAuthState(user) : null;
+  }
+
+  async findUserByAuthIdentity(provider, providerUserId) {
+    const db = await this._read();
+    const normalizedProvider = normalizeAuthProvider(provider);
+    const normalizedProviderUserId = String(providerUserId || "").trim();
+    if (!normalizedProvider || !normalizedProviderUserId) {
+      return null;
+    }
+
+    const user = db.users.find((entry) =>
+      listAuthIdentitiesForUser(entry).some(
+        (identity) =>
+          identity.provider === normalizedProvider &&
+          identity.providerUserId === normalizedProviderUserId,
+      ),
+    );
+    return user ? cloneUserWithAuthState(user) : null;
   }
 
   async createSession(userId) {
@@ -1467,6 +4504,53 @@ class FileStore {
     return session ? structuredClone(session) : null;
   }
 
+  _cleanupExpiredAuthHandoffs(db) {
+    const beforeLength = Array.isArray(db.authHandoffs) ? db.authHandoffs.length : 0;
+    db.authHandoffs = (Array.isArray(db.authHandoffs) ? db.authHandoffs : []).filter(
+      (entry) => !isExpiredAt(entry?.expiresAt),
+    );
+    return db.authHandoffs.length !== beforeLength;
+  }
+
+  async createAuthHandoff({type, payload = {}, userId = null, expiresAt = null}) {
+    const db = await this._read();
+    this._cleanupExpiredAuthHandoffs(db);
+    const handoff = createAuthHandoffRecord({
+      type,
+      payload,
+      userId,
+      expiresAt,
+    });
+    db.authHandoffs.push(handoff);
+    await this._write(db);
+    return structuredClone(handoff);
+  }
+
+  async consumeAuthHandoff(code, {type = null} = {}) {
+    const db = await this._read();
+    this._cleanupExpiredAuthHandoffs(db);
+    const normalizedCode = String(code || "").trim();
+    const index = db.authHandoffs.findIndex((entry) => {
+      if (entry.code !== normalizedCode) {
+        return false;
+      }
+      if (type && entry.type !== type) {
+        return false;
+      }
+      return true;
+    });
+    if (index < 0) {
+      if (this._cleanupExpiredAuthHandoffs(db)) {
+        await this._write(db);
+      }
+      return null;
+    }
+
+    const [handoff] = db.authHandoffs.splice(index, 1);
+    await this._write(db);
+    return structuredClone(handoff);
+  }
+
   async findSession(token) {
     const db = await this._read();
     const session = db.sessions.find((entry) => entry.token === token);
@@ -1474,27 +4558,175 @@ class FileStore {
   }
 
   async touchSession(token) {
-    const db = await this._read();
-    const session = db.sessions.find((entry) => entry.token === token);
-    if (!session) {
+    const normalizedToken = String(token || "").trim();
+    if (!normalizedToken) {
       return null;
     }
 
+    const nowMs = Date.now();
+    const cachedTouchedAt = this._sessionTouchCache.get(normalizedToken);
+    if (
+      Number.isFinite(cachedTouchedAt) &&
+      nowMs - cachedTouchedAt < SESSION_TOUCH_MIN_INTERVAL_MS
+    ) {
+      return null;
+    }
+
+    this._sessionTouchCache.set(normalizedToken, nowMs);
+    const db = await this._read();
+    const session = db.sessions.find((entry) => entry.token === normalizedToken);
+    if (!session) {
+      this._sessionTouchCache.delete(normalizedToken);
+      return null;
+    }
+
+    const lastSeenAtMs = new Date(session.lastSeenAt || 0).getTime();
+    if (
+      Number.isFinite(lastSeenAtMs) &&
+      nowMs - lastSeenAtMs < SESSION_TOUCH_MIN_INTERVAL_MS
+    ) {
+      this._sessionTouchCache.set(normalizedToken, lastSeenAtMs);
+      return structuredClone(session);
+    }
+
     session.lastSeenAt = nowIso();
-    await this._write(db);
+    try {
+      await this._write(db);
+    } catch (error) {
+      this._sessionTouchCache.delete(normalizedToken);
+      throw error;
+    }
     return structuredClone(session);
   }
 
   async deleteSession(token) {
     const db = await this._read();
     db.sessions = db.sessions.filter((entry) => entry.token !== token);
+    this._sessionTouchCache.delete(token);
     await this._write(db);
   }
 
   async deleteSessionsForUser(userId) {
     const db = await this._read();
+    const deletedTokens = db.sessions
+      .filter((entry) => entry.userId === userId)
+      .map((entry) => entry.token);
     db.sessions = db.sessions.filter((entry) => entry.userId !== userId);
+    for (const token of deletedTokens) {
+      this._sessionTouchCache.delete(token);
+    }
     await this._write(db);
+  }
+
+  async listUserAuthIdentities(userId) {
+    const db = await this._read();
+    const user = db.users.find((entry) => entry.id === userId);
+    if (!user) {
+      return null;
+    }
+
+    return listAuthIdentitiesForUser(user).map((identity) => structuredClone(identity));
+  }
+
+  async linkAuthIdentity(userId, identityPayload) {
+    const db = await this._read();
+    const user = db.users.find((entry) => entry.id === userId);
+    if (!user) {
+      return null;
+    }
+
+    const normalizedIdentity = normalizeAuthIdentityRecord(identityPayload);
+    if (!normalizedIdentity) {
+      throw new Error("INVALID_AUTH_IDENTITY");
+    }
+
+    const alreadyLinkedOwner = db.users.find((entry) => {
+      if (entry.id === userId) {
+        return false;
+      }
+
+      return listAuthIdentitiesForUser(entry).some(
+        (identity) =>
+          identity.provider === normalizedIdentity.provider &&
+          identity.providerUserId === normalizedIdentity.providerUserId,
+      );
+    });
+    if (alreadyLinkedOwner) {
+      throw new Error("AUTH_IDENTITY_ALREADY_LINKED");
+    }
+
+    const now = nowIso();
+    const nextAuthIdentities = listAuthIdentitiesForUser(user);
+    const existingIdentityIndex = nextAuthIdentities.findIndex(
+      (identity) =>
+        identity.provider === normalizedIdentity.provider &&
+        identity.providerUserId === normalizedIdentity.providerUserId,
+    );
+    const existingProviderIndex = nextAuthIdentities.findIndex(
+      (identity) => identity.provider === normalizedIdentity.provider,
+    );
+    if (
+      existingProviderIndex >= 0 &&
+      existingIdentityIndex < 0 &&
+      normalizedIdentity.provider !== "password"
+    ) {
+      throw new Error("AUTH_PROVIDER_ALREADY_LINKED_FOR_USER");
+    }
+    const nextIdentity = {
+      ...normalizedIdentity,
+      linkedAt:
+        existingIdentityIndex >= 0
+          ? nextAuthIdentities[existingIdentityIndex].linkedAt
+          : normalizedIdentity.linkedAt || now,
+      lastUsedAt: now,
+    };
+
+    if (existingIdentityIndex >= 0) {
+      nextAuthIdentities[existingIdentityIndex] = nextIdentity;
+    } else {
+      nextAuthIdentities.push(nextIdentity);
+    }
+
+    user.authIdentities = nextAuthIdentities;
+    user.providerIds = deriveProviderIdsForUser(user);
+    user.profile = {
+      ...user.profile,
+      primaryTrustedChannel:
+        normalizePrimaryTrustedChannel(user.profile?.primaryTrustedChannel) ||
+        normalizePrimaryTrustedChannel(normalizedIdentity.provider),
+    };
+    user.updatedAt = now;
+
+    await this._write(db);
+    return cloneUserWithAuthState(user);
+  }
+
+  async resolveAuthIdentityTarget({
+    provider,
+    providerUserId,
+    email = null,
+    phoneNumber = null,
+  }) {
+    const linkedUser = await this.findUserByAuthIdentity(provider, providerUserId);
+    if (linkedUser) {
+      return {
+        reason: "provider_identity",
+        user: linkedUser,
+      };
+    }
+
+    const emailMatchedUser = await this.findUserByEmail(email);
+    if (emailMatchedUser) {
+      return {
+        reason: "email",
+        user: emailMatchedUser,
+      };
+    }
+
+    return {
+      reason: "new_account",
+      user: null,
+    };
   }
 
   async updateProfile(userId, updater) {
@@ -1504,15 +4736,62 @@ class FileStore {
       return null;
     }
 
+    const previousProfile = user.profile || {};
     const nextProfile = updater(structuredClone(user.profile));
+    const nextPhoneNumber = String(nextProfile?.phoneNumber || "").trim();
+    const nextCountryCode = nextProfile?.countryCode ?? user.profile?.countryCode;
+    const normalizedPhoneNumber = normalizePhoneNumber(
+      nextPhoneNumber,
+      nextCountryCode,
+    );
     user.profile = {
       ...user.profile,
       ...nextProfile,
+      phoneNumber: nextPhoneNumber,
+      normalizedPhoneNumber,
+      birthPlace:
+        nextProfile && Object.prototype.hasOwnProperty.call(nextProfile, "birthPlace")
+          ? normalizeNullableString(nextProfile.birthPlace)
+          : normalizeNullableString(user.profile?.birthPlace),
+      profileContributionPolicy:
+        nextProfile &&
+        Object.prototype.hasOwnProperty.call(
+          nextProfile,
+          "profileContributionPolicy",
+        )
+          ? normalizeProfileContributionPolicy(nextProfile.profileContributionPolicy)
+          : normalizeProfileContributionPolicy(
+              user.profile?.profileContributionPolicy,
+            ),
+      primaryTrustedChannel:
+        nextProfile &&
+        Object.prototype.hasOwnProperty.call(
+          nextProfile,
+          "primaryTrustedChannel",
+        )
+          ? normalizePrimaryTrustedChannel(nextProfile.primaryTrustedChannel)
+          : normalizePrimaryTrustedChannel(user.profile?.primaryTrustedChannel),
       id: user.id,
       email: user.email,
       updatedAt: nowIso(),
     };
     user.updatedAt = nowIso();
+
+    const touchedTreeIds = new Set();
+    for (const person of db.persons) {
+      if (person.userId !== userId) {
+        continue;
+      }
+      applyCanonicalProfileToPerson(person, user.profile);
+      if (person.treeId) {
+        touchedTreeIds.add(person.treeId);
+      }
+    }
+    for (const tree of db.trees) {
+      if (touchedTreeIds.has(tree.id)) {
+        tree.updatedAt = nowIso();
+      }
+    }
 
     await this._write(db);
     return structuredClone(user);
@@ -1565,6 +4844,7 @@ class FileStore {
 
     db.users = db.users.filter((entry) => entry.id !== userId);
     db.sessions = db.sessions.filter((entry) => entry.userId !== userId);
+    db.authHandoffs = (db.authHandoffs || []).filter((entry) => entry.userId !== userId);
     db.persons = db.persons.filter((entry) => !removedPersonIds.has(entry.id));
     db.relations = db.relations.filter((entry) => {
       return (
@@ -2021,18 +5301,7 @@ class FileStore {
     }
 
     person.userId = userId;
-    if (!person.photoUrl && user.profile?.photoUrl) {
-      const photoState = normalizePersonPhotoGallery(person.photoGallery, {
-        photoUrl: user.profile.photoUrl,
-        primaryPhotoUrl: person.primaryPhotoUrl || user.profile.photoUrl,
-      });
-      person.photoUrl = photoState.photoUrl;
-      person.primaryPhotoUrl = photoState.primaryPhotoUrl;
-      person.photoGallery = photoState.photoGallery;
-    }
-    if (!person.name) {
-      person.name = composeDisplayNameFromProfile(user.profile);
-    }
+    applyCanonicalProfileToPerson(person, user.profile);
     if (!this._attachPersonToIdentity(db, person, canonicalIdentity, userId)) {
       return false;
     }
@@ -2068,6 +5337,8 @@ class FileStore {
       (entry) => entry.treeId === treeId && entry.userId === userId,
     );
     if (existingPerson) {
+      const user = db.users.find((entry) => entry.id === userId);
+      applyCanonicalProfileToPerson(existingPerson, user?.profile);
       this._attachPersonToIdentity(db, existingPerson, canonicalIdentity, userId);
       tree.memberIds = Array.isArray(tree.memberIds) ? tree.memberIds : [];
       tree.members = Array.isArray(tree.members) ? tree.members : [];
@@ -2090,7 +5361,9 @@ class FileStore {
         (!entry.userId || entry.userId === userId),
     );
     if (existingIdentityPerson) {
+      const user = db.users.find((entry) => entry.id === userId);
       existingIdentityPerson.userId = userId;
+      applyCanonicalProfileToPerson(existingIdentityPerson, user?.profile);
       this._attachPersonToIdentity(
         db,
         existingIdentityPerson,
@@ -2132,9 +5405,9 @@ class FileStore {
         gender: profile.gender,
         birthDate: profile.birthDate,
         birthPlace: profile.birthPlace,
-        notes: profile.bio,
       },
     });
+    applyCanonicalProfileToPerson(person, profile);
 
     db.persons.push(person);
     tree.memberIds = Array.isArray(tree.memberIds) ? tree.memberIds : [];
@@ -2158,7 +5431,7 @@ class FileStore {
     return db.persons
       .filter((person) => person.treeId === treeId)
       .sort((left, right) => String(left.name || "").localeCompare(String(right.name || "")))
-      .map((person) => structuredClone(person));
+      .map((person) => buildCanonicalPersonView(db, person));
   }
 
   async findPerson(treeId, personId) {
@@ -2166,7 +5439,7 @@ class FileStore {
     const person = db.persons.find(
       (entry) => entry.id === personId && entry.treeId === treeId,
     );
-    return person ? structuredClone(person) : null;
+    return person ? buildCanonicalPersonView(db, person) : null;
   }
 
   async findPersonByUserId(treeId, userId) {
@@ -2174,7 +5447,26 @@ class FileStore {
     const person = db.persons.find(
       (entry) => entry.treeId === treeId && entry.userId === userId,
     );
-    return person ? structuredClone(person) : null;
+    return person ? buildCanonicalPersonView(db, person) : null;
+  }
+
+  async getPersonDossier(treeId, personId) {
+    const db = await this._read();
+    const person = db.persons.find(
+      (entry) => entry.id === personId && entry.treeId === treeId,
+    );
+    if (!person) {
+      return null;
+    }
+
+    const linkedUser = person.userId
+      ? db.users.find((entry) => entry.id === person.userId) || null
+      : null;
+
+    return {
+      person: buildCanonicalPersonView(db, person),
+      linkedProfile: linkedUser?.profile ? structuredClone(linkedUser.profile) : null,
+    };
   }
 
   async createPerson({
@@ -2269,6 +5561,7 @@ class FileStore {
     nextPerson.maidenName = normalizeNullableString(nextPerson.maidenName);
     nextPerson.birthPlace = normalizeNullableString(nextPerson.birthPlace);
     nextPerson.deathPlace = normalizeNullableString(nextPerson.deathPlace);
+    nextPerson.familySummary = resolvePersonFamilySummary(nextPerson);
     nextPerson.bio = normalizeNullableString(nextPerson.bio);
     nextPerson.notes = normalizeNullableString(nextPerson.notes);
     nextPerson.birthDate = normalizeIsoDate(nextPerson.birthDate);
@@ -2281,6 +5574,14 @@ class FileStore {
     nextPerson.photoUrl = photoState.photoUrl;
     nextPerson.primaryPhotoUrl = photoState.primaryPhotoUrl;
     nextPerson.photoGallery = photoState.photoGallery;
+    if (person.userId) {
+      const linkedUser = db.users.find((entry) => entry.id === person.userId);
+      if (linkedUser?.profile) {
+        applyCanonicalProfileToPerson(nextPerson, linkedUser.profile, {
+          touchUpdatedAt: false,
+        });
+      }
+    }
     nextPerson.updatedAt = nowIso();
 
     Object.assign(person, nextPerson);
@@ -2572,9 +5873,31 @@ class FileStore {
 
   async listRelations(treeId) {
     const db = await this._read();
-    return db.relations
-      .filter((relation) => relation.treeId === treeId)
-      .map((relation) => structuredClone(relation));
+    const treePersons = db.persons.filter((person) => person.treeId === treeId);
+    return normalizeTreeGraph(treeId, treePersons, db.relations).relations;
+  }
+
+  async getTreeGraphSnapshot(treeId, {viewerUserId = null} = {}) {
+    const db = await this._read();
+    const treePersons = db.persons
+      .filter((person) => person.treeId === treeId)
+      .map((person) => buildCanonicalPersonView(db, person));
+    if (treePersons.length === 0 && !db.trees.some((tree) => tree.id === treeId)) {
+      return null;
+    }
+
+    const viewerPerson = viewerUserId
+      ? db.persons.find(
+          (person) => person.treeId === treeId && person.userId === viewerUserId,
+        )
+      : null;
+
+    return buildTreeGraphSnapshot({
+      treeId,
+      persons: treePersons,
+      relations: db.relations,
+      viewerPersonId: viewerPerson?.id || null,
+    });
   }
 
   async listTreeChangeRecords(treeId, {
@@ -2616,10 +5939,18 @@ class FileStore {
     person2Id,
     relation1to2,
     relation2to1,
+    customRelationLabel1to2 = undefined,
+    customRelationLabel2to1 = undefined,
     isConfirmed = true,
     marriageDate = undefined,
     divorceDate = undefined,
     createdBy = null,
+    parentSetId = undefined,
+    parentSetType = "biological",
+    isPrimaryParentSet = undefined,
+    unionId = undefined,
+    unionType = undefined,
+    unionStatus = undefined,
   }) {
     const db = await this._read();
     const person1Exists = db.persons.some(
@@ -2632,16 +5963,18 @@ class FileStore {
       return null;
     }
 
-    const existingRelation = db.relations.find((entry) => {
-      return (
-        entry.treeId === treeId &&
-        ((entry.person1Id === person1Id && entry.person2Id === person2Id) ||
-          (entry.person1Id === person2Id && entry.person2Id === person1Id))
-      );
-    });
-
     const resolvedRelation2to1 =
       relation2to1 || relationMirror(relation1to2);
+    const normalizedRelation1to2 = String(relation1to2 || "other");
+    const normalizedRelation2to1 = String(resolvedRelation2to1 || "other");
+    const normalizedCustomRelationLabel1to2 =
+      customRelationLabel1to2 === undefined
+        ? undefined
+        : normalizeNullableString(customRelationLabel1to2);
+    const normalizedCustomRelationLabel2to1 =
+      customRelationLabel2to1 === undefined
+        ? undefined
+        : normalizeNullableString(customRelationLabel2to1);
     const resolvedMarriageDate =
       marriageDate === undefined
         ? undefined
@@ -2650,77 +5983,322 @@ class FileStore {
       divorceDate === undefined
         ? undefined
         : normalizeOptionalIsoTimestamp(divorceDate);
-
-    if (existingRelation) {
-      const previousRelation = structuredClone(existingRelation);
-      if (
-        existingRelation.person1Id === person1Id &&
-        existingRelation.person2Id === person2Id
-      ) {
-        existingRelation.relation1to2 = String(relation1to2 || "other");
-        existingRelation.relation2to1 = String(resolvedRelation2to1 || "other");
-      } else {
-        existingRelation.relation1to2 = String(resolvedRelation2to1 || "other");
-        existingRelation.relation2to1 = String(relation1to2 || "other");
-      }
-      existingRelation.isConfirmed = isConfirmed === true;
-      if (resolvedMarriageDate !== undefined) {
-        existingRelation.marriageDate = resolvedMarriageDate;
-      }
-      if (resolvedDivorceDate !== undefined) {
-        existingRelation.divorceDate = resolvedDivorceDate;
-      }
-      existingRelation.updatedAt = nowIso();
-      const tree = db.trees.find((entry) => entry.id === treeId);
-      if (tree) {
-        tree.updatedAt = nowIso();
-      }
-      this._appendTreeChangeRecord(db, {
-        treeId,
-        actorId: createdBy,
-        type: "relation.updated",
-        personIds: [existingRelation.person1Id, existingRelation.person2Id],
-        relationId: existingRelation.id,
-        details: {
-          before: previousRelation,
-          after: structuredClone(existingRelation),
-        },
+    const treeRelations = db.relations.filter((entry) => entry.treeId === treeId);
+    const findRelationRecord = (leftId, rightId) => {
+      return db.relations.find((entry) => {
+        return (
+          entry.treeId === treeId &&
+          ((entry.person1Id === leftId && entry.person2Id === rightId) ||
+            (entry.person1Id === rightId && entry.person2Id === leftId))
+        );
       });
-      await this._write(db);
-      return structuredClone(existingRelation);
-    }
-
-    const timestamp = nowIso();
-    const relation = {
-      id: crypto.randomUUID(),
-      treeId,
-      person1Id,
-      person2Id,
-      relation1to2: String(relation1to2 || "other"),
-      relation2to1: String(resolvedRelation2to1 || "other"),
-      isConfirmed: isConfirmed === true,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      createdBy,
-      marriageDate: resolvedMarriageDate ?? null,
-      divorceDate: resolvedDivorceDate ?? null,
+    };
+    const getPrimaryParentRelations = (childId) => {
+      return treeRelations.filter((entry) => {
+        return (
+          childIdFromRelation(entry) === childId &&
+          entry.isPrimaryParentSet !== false
+        );
+      });
+    };
+    const getCurrentUnionPartners = (personId) => {
+      const partnerIds = new Set();
+      for (const relation of treeRelations) {
+        if (!isCurrentUnionRelation(relation)) {
+          continue;
+        }
+        if (relation.person1Id === personId) {
+          partnerIds.add(relation.person2Id);
+        } else if (relation.person2Id === personId) {
+          partnerIds.add(relation.person1Id);
+        }
+      }
+      return Array.from(partnerIds);
     };
 
-    db.relations.push(relation);
+    const normalizedParentId =
+      normalizedRelation1to2 === "parent" || normalizedRelation2to1 === "child"
+        ? person1Id
+        : normalizedRelation1to2 === "child" || normalizedRelation2to1 === "parent"
+          ? person2Id
+          : null;
+    const normalizedChildId =
+      normalizedRelation1to2 === "parent" || normalizedRelation2to1 === "child"
+        ? person2Id
+        : normalizedRelation1to2 === "child" || normalizedRelation2to1 === "parent"
+          ? person1Id
+          : null;
+    const resolvedParentSetType = normalizedParentId
+      ? normalizeParentSetType(parentSetType)
+      : null;
+    let resolvedParentSetId =
+      normalizeNullableString(parentSetId) || null;
+    let resolvedIsPrimaryParentSet =
+      normalizedParentId && isPrimaryParentSet !== false;
+
+    if (normalizedParentId && normalizedChildId && !resolvedParentSetId) {
+      const existingParentRelations = treeRelations.filter((entry) => {
+        return (
+          childIdFromRelation(entry) === normalizedChildId &&
+          normalizeParentSetType(entry.parentSetType) === resolvedParentSetType
+        );
+      });
+      const primaryGroupId =
+        existingParentRelations.find((entry) => entry.isPrimaryParentSet !== false)
+          ?.parentSetId || null;
+      const primaryParentIds = new Set(
+        existingParentRelations
+          .filter((entry) => entry.parentSetId === primaryGroupId)
+          .map((entry) => parentIdFromRelation(entry))
+          .filter(Boolean),
+      );
+      if (primaryGroupId && (primaryParentIds.has(normalizedParentId) || primaryParentIds.size < 2)) {
+        resolvedParentSetId = primaryGroupId;
+        resolvedIsPrimaryParentSet = true;
+      } else if (!primaryGroupId) {
+        resolvedParentSetId =
+          `ps:${treeId}:${normalizedChildId}:${resolvedParentSetType}:primary`;
+        resolvedIsPrimaryParentSet = true;
+      } else {
+        resolvedParentSetId =
+          `ps:${treeId}:${normalizedChildId}:${resolvedParentSetType}:${crypto.randomUUID()}`;
+        resolvedIsPrimaryParentSet = false;
+      }
+    }
+
+    const resolvedUnionType = isUnionRelationType(normalizedRelation1to2) ||
+        isUnionRelationType(normalizedRelation2to1)
+      ? normalizeUnionType(unionType, {
+          relationType: normalizedRelation1to2,
+        })
+      : null;
+    const resolvedUnionStatus = resolvedUnionType
+      ? normalizeUnionStatus(unionStatus, {
+          relationType: normalizedRelation1to2,
+          divorceDate: resolvedDivorceDate,
+        })
+      : null;
+    const resolvedUnionId = resolvedUnionType
+      ? normalizeNullableString(unionId) ||
+        `union:${treeId}:${buildSortedIdKey([person1Id, person2Id])}:${resolvedUnionType}:${resolvedUnionStatus}`
+      : null;
+
+    const upsertRawRelation = ({
+      leftId,
+      rightId,
+      leftToRight,
+      rightToLeft,
+      trackChange = true,
+      relationCreatedBy = createdBy,
+      rawParentSetId = resolvedParentSetId,
+      rawParentSetType = resolvedParentSetType,
+      rawIsPrimaryParentSet = resolvedIsPrimaryParentSet,
+      rawUnionId = resolvedUnionId,
+      rawUnionType = resolvedUnionType,
+      rawUnionStatus = resolvedUnionStatus,
+      rawMarriageDate = resolvedMarriageDate,
+      rawDivorceDate = resolvedDivorceDate,
+      rawCustomRelationLabel1to2 = normalizedCustomRelationLabel1to2,
+      rawCustomRelationLabel2to1 = normalizedCustomRelationLabel2to1,
+    }) => {
+      const existingRelation = findRelationRecord(leftId, rightId);
+      const timestamp = nowIso();
+      if (existingRelation) {
+        const previousRelation = structuredClone(existingRelation);
+        if (
+          existingRelation.person1Id === leftId &&
+          existingRelation.person2Id === rightId
+        ) {
+          existingRelation.relation1to2 = leftToRight;
+          existingRelation.relation2to1 = rightToLeft;
+          if (rawCustomRelationLabel1to2 !== undefined) {
+            existingRelation.customRelationLabel1to2 =
+              rawCustomRelationLabel1to2 || null;
+          }
+          if (rawCustomRelationLabel2to1 !== undefined) {
+            existingRelation.customRelationLabel2to1 =
+              rawCustomRelationLabel2to1 || null;
+          }
+        } else {
+          existingRelation.relation1to2 = rightToLeft;
+          existingRelation.relation2to1 = leftToRight;
+          if (rawCustomRelationLabel1to2 !== undefined) {
+            existingRelation.customRelationLabel2to1 =
+              rawCustomRelationLabel1to2 || null;
+          }
+          if (rawCustomRelationLabel2to1 !== undefined) {
+            existingRelation.customRelationLabel1to2 =
+              rawCustomRelationLabel2to1 || null;
+          }
+        }
+        existingRelation.isConfirmed = isConfirmed === true;
+        if (rawMarriageDate !== undefined) {
+          existingRelation.marriageDate = rawMarriageDate;
+        }
+        if (rawDivorceDate !== undefined) {
+          existingRelation.divorceDate = rawDivorceDate;
+        }
+        existingRelation.parentSetId = rawParentSetId || null;
+        existingRelation.parentSetType = rawParentSetType || null;
+        existingRelation.isPrimaryParentSet =
+          rawParentSetType ? rawIsPrimaryParentSet !== false : null;
+        existingRelation.unionId = rawUnionId || null;
+        existingRelation.unionType = rawUnionType || null;
+        existingRelation.unionStatus = rawUnionStatus || null;
+        existingRelation.updatedAt = timestamp;
+        if (trackChange) {
+          this._appendTreeChangeRecord(db, {
+            treeId,
+            actorId: relationCreatedBy,
+            type: "relation.updated",
+            personIds: [existingRelation.person1Id, existingRelation.person2Id],
+            relationId: existingRelation.id,
+            details: {
+              before: previousRelation,
+              after: structuredClone(existingRelation),
+            },
+          });
+        }
+        return existingRelation;
+      }
+
+      const relation = {
+        id: crypto.randomUUID(),
+        treeId,
+        person1Id: leftId,
+        person2Id: rightId,
+        relation1to2: leftToRight,
+        relation2to1: rightToLeft,
+        isConfirmed: isConfirmed === true,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        createdBy: relationCreatedBy,
+        marriageDate: rawMarriageDate ?? null,
+        divorceDate: rawDivorceDate ?? null,
+        customRelationLabel1to2: rawCustomRelationLabel1to2 || null,
+        customRelationLabel2to1: rawCustomRelationLabel2to1 || null,
+        parentSetId: rawParentSetId || null,
+        parentSetType: rawParentSetType || null,
+        isPrimaryParentSet:
+          rawParentSetType ? rawIsPrimaryParentSet !== false : null,
+        unionId: rawUnionId || null,
+        unionType: rawUnionType || null,
+        unionStatus: rawUnionStatus || null,
+      };
+      db.relations.push(relation);
+      treeRelations.push(relation);
+      if (trackChange) {
+        this._appendTreeChangeRecord(db, {
+          treeId,
+          actorId: relationCreatedBy,
+          type: "relation.created",
+          personIds: [leftId, rightId],
+          relationId: relation.id,
+          details: {
+            after: structuredClone(relation),
+          },
+        });
+      }
+      return relation;
+    };
+
+    const relation = upsertRawRelation({
+      leftId: person1Id,
+      rightId: person2Id,
+      leftToRight: normalizedRelation1to2,
+      rightToLeft: normalizedRelation2to1,
+    });
+
+    if (normalizedParentId && normalizedChildId && resolvedParentSetId) {
+      const groupParentIds = new Set(
+        treeRelations
+          .filter((entry) => entry.parentSetId === resolvedParentSetId)
+          .map((entry) => parentIdFromRelation(entry))
+          .filter(Boolean),
+      );
+      if (groupParentIds.size === 1) {
+        const soleParentId = Array.from(groupParentIds)[0];
+        const currentPartners = getCurrentUnionPartners(soleParentId);
+        if (currentPartners.length === 1) {
+          const partnerId = currentPartners[0];
+          if (!groupParentIds.has(partnerId)) {
+            upsertRawRelation({
+              leftId: partnerId,
+              rightId: normalizedChildId,
+              leftToRight: "parent",
+              rightToLeft: "child",
+              trackChange: false,
+              rawParentSetId: resolvedParentSetId,
+              rawParentSetType: resolvedParentSetType,
+              rawIsPrimaryParentSet: resolvedIsPrimaryParentSet,
+              rawUnionId: null,
+              rawUnionType: null,
+              rawUnionStatus: null,
+              rawMarriageDate: undefined,
+              rawDivorceDate: undefined,
+            });
+          }
+        }
+      }
+    }
+
+    if (
+      normalizedRelation1to2 === "sibling" &&
+      normalizedRelation2to1 === "sibling"
+    ) {
+      const person1Parents = getPrimaryParentRelations(person1Id);
+      const person2Parents = getPrimaryParentRelations(person2Id);
+      if (person1Parents.length === 0 && person2Parents.length > 0) {
+        for (const parentRelation of person2Parents) {
+          const sourceParentId = parentIdFromRelation(parentRelation);
+          if (!sourceParentId) {
+            continue;
+          }
+          upsertRawRelation({
+            leftId: sourceParentId,
+            rightId: person1Id,
+            leftToRight: "parent",
+            rightToLeft: "child",
+            trackChange: false,
+            rawParentSetId: parentRelation.parentSetId,
+            rawParentSetType: normalizeParentSetType(parentRelation.parentSetType),
+            rawIsPrimaryParentSet: parentRelation.isPrimaryParentSet !== false,
+            rawUnionId: null,
+            rawUnionType: null,
+            rawUnionStatus: null,
+            rawMarriageDate: undefined,
+            rawDivorceDate: undefined,
+          });
+        }
+      } else if (person2Parents.length === 0 && person1Parents.length > 0) {
+        for (const parentRelation of person1Parents) {
+          const sourceParentId = parentIdFromRelation(parentRelation);
+          if (!sourceParentId) {
+            continue;
+          }
+          upsertRawRelation({
+            leftId: sourceParentId,
+            rightId: person2Id,
+            leftToRight: "parent",
+            rightToLeft: "child",
+            trackChange: false,
+            rawParentSetId: parentRelation.parentSetId,
+            rawParentSetType: normalizeParentSetType(parentRelation.parentSetType),
+            rawIsPrimaryParentSet: parentRelation.isPrimaryParentSet !== false,
+            rawUnionId: null,
+            rawUnionType: null,
+            rawUnionStatus: null,
+            rawMarriageDate: undefined,
+            rawDivorceDate: undefined,
+          });
+        }
+      }
+    }
+
     const tree = db.trees.find((entry) => entry.id === treeId);
     if (tree) {
       tree.updatedAt = nowIso();
     }
-    this._appendTreeChangeRecord(db, {
-      treeId,
-      actorId: createdBy,
-      type: "relation.created",
-      personIds: [person1Id, person2Id],
-      relationId: relation.id,
-      details: {
-        after: structuredClone(relation),
-      },
-    });
     await this._write(db);
     return structuredClone(relation);
   }
@@ -3684,15 +7262,28 @@ class FileStore {
   }
 
   _resolveChat(db, chatId) {
-    const storedChat = this._findStoredChat(db, chatId);
+    const normalizedChatId = String(chatId || "").trim();
+    const storedChat = this._findStoredChat(db, normalizedChatId);
     if (storedChat) {
       return storedChat;
     }
 
-    const directParticipants = parseDirectParticipantsFromChatId(chatId);
+    const directParticipants = parseDirectParticipantsFromChatId(
+      normalizedChatId,
+    );
     if (directParticipants.length === 2) {
+      const canonicalChatId = directParticipants.join("_");
+      const storedCanonicalChat = this._findStoredChat(db, canonicalChatId);
+      if (storedCanonicalChat) {
+        return storedCanonicalChat;
+      }
       const relatedMessages = db.messages
-        .filter((entry) => entry.chatId === chatId)
+        .filter((entry) => {
+          return (
+            entry.chatId === normalizedChatId ||
+            entry.chatId === canonicalChatId
+          );
+        })
         .sort((left, right) =>
           String(left.timestamp || "").localeCompare(String(right.timestamp || "")),
         );
@@ -3700,7 +7291,7 @@ class FileStore {
       const lastTimestamp =
         relatedMessages[relatedMessages.length - 1]?.timestamp || firstTimestamp;
       return {
-        id: chatId,
+        id: canonicalChatId,
         type: "direct",
         participantIds: directParticipants,
         title: null,
@@ -3713,6 +7304,25 @@ class FileStore {
     }
 
     return null;
+  }
+
+  _resolveEquivalentChatIds(chatId, resolvedChat = null) {
+    const relatedChatIds = new Set();
+    const normalizedChatId = String(chatId || "").trim();
+    if (normalizedChatId) {
+      relatedChatIds.add(normalizedChatId);
+    }
+
+    const directParticipants = parseDirectParticipantsFromChatId(normalizedChatId);
+    if (directParticipants.length === 2) {
+      relatedChatIds.add(directParticipants.join("_"));
+    }
+
+    if (resolvedChat?.id) {
+      relatedChatIds.add(String(resolvedChat.id).trim());
+    }
+
+    return relatedChatIds;
   }
 
   async findChat(chatId) {
@@ -3951,46 +7561,17 @@ class FileStore {
     }
 
     const treeRelations = db.relations.filter((entry) => entry.treeId === treeId);
-    const childrenByParent = new Map();
-    const spousesByPerson = new Map();
-    for (const relation of treeRelations) {
-      const parentId = parentIdFromRelation(relation);
-      const childId = childIdFromRelation(relation);
-      if (parentId && childId) {
-        if (!childrenByParent.has(parentId)) {
-          childrenByParent.set(parentId, new Set());
-        }
-        childrenByParent.get(parentId).add(childId);
-      }
-      if (isSpouseLikeRelation(relation)) {
-        if (!spousesByPerson.has(relation.person1Id)) {
-          spousesByPerson.set(relation.person1Id, new Set());
-        }
-        if (!spousesByPerson.has(relation.person2Id)) {
-          spousesByPerson.set(relation.person2Id, new Set());
-        }
-        spousesByPerson.get(relation.person1Id).add(relation.person2Id);
-        spousesByPerson.get(relation.person2Id).add(relation.person1Id);
-      }
-    }
-
-    const visiblePersonIds = new Set(normalizedRoots);
-    const queue = [...normalizedRoots];
-    while (queue.length > 0) {
-      const currentId = queue.shift();
-      for (const spouseId of spousesByPerson.get(currentId) || []) {
-        if (!visiblePersonIds.has(spouseId)) {
-          visiblePersonIds.add(spouseId);
-          queue.push(spouseId);
-        }
-      }
-      for (const childId of childrenByParent.get(currentId) || []) {
-        if (!visiblePersonIds.has(childId)) {
-          visiblePersonIds.add(childId);
-          queue.push(childId);
-        }
-      }
-    }
+    const snapshot = buildTreeGraphSnapshot({
+      treeId,
+      persons: treePersons,
+      relations: treeRelations,
+      viewerPersonId: null,
+    });
+    const branchBlock =
+      chooseBranchBlockForPerson(snapshot, normalizedRoots[0]) || null;
+    const visiblePersonIds = new Set(
+      branchBlock?.memberPersonIds || normalizedRoots,
+    );
 
     const participantIds = normalizeParticipantIds([
       createdBy,
@@ -4035,7 +7616,8 @@ class FileStore {
       title: normalizedTitle,
       createdBy,
       treeId,
-      branchRootPersonIds: normalizedRoots,
+      branchRootPersonIds:
+        branchBlock?.rootUnitId ? normalizedRoots : normalizedRoots,
     });
     db.chats.push(chat);
     await this._write(db);
@@ -4049,8 +7631,13 @@ class FileStore {
       this._syncChatUpdatedAt(db, purgedChatIds);
       await this._write(db);
     }
+    const chat = this._resolveChat(db, chatId);
+    if (!chat) {
+      return [];
+    }
+    const relatedChatIds = this._resolveEquivalentChatIds(chatId, chat);
     return db.messages
-      .filter((message) => message.chatId === chatId)
+      .filter((message) => relatedChatIds.has(String(message.chatId || "").trim()))
       .sort((left, right) =>
         String(right.timestamp || "").localeCompare(String(left.timestamp || "")),
       )
@@ -4103,10 +7690,12 @@ class FileStore {
       return false;
     }
 
+    const relatedChatIds = this._resolveEquivalentChatIds(chatId, chat);
+
     if (normalizedClientMessageId) {
       const existingMessage = db.messages.find(
         (entry) =>
-          entry.chatId === chatId &&
+          relatedChatIds.has(String(entry.chatId || "").trim()) &&
           entry.senderId === senderId &&
           entry.clientMessageId === normalizedClientMessageId,
       );
@@ -4121,7 +7710,7 @@ class FileStore {
     const timestamp = nowIso();
     const message = {
       id: crypto.randomUUID(),
-      chatId,
+      chatId: chat.id,
       senderId,
       text: normalizedText,
       timestamp,
@@ -4162,9 +7751,12 @@ class FileStore {
     if (!chat || !chat.participantIds.includes(userId)) {
       return false;
     }
+    const relatedChatIds = this._resolveEquivalentChatIds(chatId, chat);
 
     const message = db.messages.find(
-      (entry) => entry.id === messageId && entry.chatId === chatId,
+      (entry) =>
+        entry.id === messageId &&
+        relatedChatIds.has(String(entry.chatId || "").trim()),
     );
     if (!message) {
       return null;
@@ -4204,9 +7796,12 @@ class FileStore {
     if (!chat || !chat.participantIds.includes(userId)) {
       return false;
     }
+    const relatedChatIds = this._resolveEquivalentChatIds(chatId, chat);
 
     const messageIndex = db.messages.findIndex(
-      (entry) => entry.id === messageId && entry.chatId === chatId,
+      (entry) =>
+        entry.id === messageId &&
+        relatedChatIds.has(String(entry.chatId || "").trim()),
     );
     if (messageIndex === -1) {
       return null;
@@ -4235,12 +7830,13 @@ class FileStore {
     if (!chat || !chat.participantIds.includes(userId)) {
       return false;
     }
+    const relatedChatIds = this._resolveEquivalentChatIds(chatId, chat);
 
     let changed = false;
 
     for (const message of db.messages) {
       if (
-        message.chatId === chatId &&
+        relatedChatIds.has(String(message.chatId || "").trim()) &&
         message.senderId !== userId &&
         message.isRead !== true
       ) {
@@ -4258,6 +7854,325 @@ class FileStore {
     }
 
     return changed;
+  }
+
+  async createCallInvite({
+    chatId,
+    initiatorId,
+    recipientId,
+    mediaMode,
+  }) {
+    const db = await this._read();
+    const chat = this._resolveChat(db, chatId);
+    if (!chat) {
+      return null;
+    }
+
+    const participantIds = normalizeParticipantIds(chat.participantIds || []);
+    if (
+      chat.type !== "direct" ||
+      participantIds.length !== 2 ||
+      !participantIds.includes(initiatorId) ||
+      !participantIds.includes(recipientId)
+    ) {
+      return false;
+    }
+
+    const hasBusyCall = db.calls
+      .map((entry) => normalizeStoredCall(entry))
+      .filter(Boolean)
+      .some((call) => {
+        if (!isCallBusyState(call.state)) {
+          return false;
+        }
+        return (
+          call.participantIds.includes(initiatorId) ||
+          call.participantIds.includes(recipientId)
+        );
+      });
+    if (hasBusyCall) {
+      return "BUSY";
+    }
+
+    const call = createCallRecord({
+      chatId,
+      initiatorId,
+      recipientId,
+      mediaMode,
+    });
+    db.calls.push(call);
+    await this._write(db);
+    return structuredClone(call);
+  }
+
+  async findCall(callId) {
+    const db = await this._read();
+    const call = db.calls
+      .map((entry) => normalizeStoredCall(entry))
+      .find((entry) => entry && entry.id === callId);
+    return call ? structuredClone(call) : null;
+  }
+
+  async findActiveCall({userId, chatId = null} = {}) {
+    const normalizedUserId = String(userId || "").trim();
+    const normalizedChatId = String(chatId || "").trim();
+    if (!normalizedUserId) {
+      return null;
+    }
+
+    const db = await this._read();
+    const statePriority = {
+      active: 0,
+      ringing: 1,
+    };
+    const activeCalls = db.calls
+      .map((entry) => normalizeStoredCall(entry))
+      .filter((call) => {
+        if (!call || !isCallBusyState(call.state)) {
+          return false;
+        }
+        if (!call.participantIds.includes(normalizedUserId)) {
+          return false;
+        }
+        if (normalizedChatId && call.chatId !== normalizedChatId) {
+          return false;
+        }
+        return true;
+      })
+      .sort((left, right) => {
+        const leftPriority = statePriority[left.state] ?? 99;
+        const rightPriority = statePriority[right.state] ?? 99;
+        if (leftPriority != rightPriority) {
+          return leftPriority - rightPriority;
+        }
+        return new Date(right.updatedAt) - new Date(left.updatedAt);
+      });
+
+    return activeCalls.length > 0 ? structuredClone(activeCalls[0]) : null;
+  }
+
+  async listRingingCalls() {
+    const db = await this._read();
+    return db.calls
+      .map((entry) => normalizeStoredCall(entry))
+      .filter((call) => call && call.state === "ringing")
+      .map((call) => structuredClone(call));
+  }
+
+  async acceptCall({
+    callId,
+    userId,
+    roomName,
+    sessionByUserId,
+  }) {
+    const db = await this._read();
+    const storedCall = db.calls.find((entry) => String(entry?.id || "") === callId);
+    const call = normalizeStoredCall(storedCall);
+    if (!storedCall || !call) {
+      return null;
+    }
+    if (call.recipientId !== userId) {
+      return false;
+    }
+    if (call.state !== "ringing") {
+      return undefined;
+    }
+
+    const timestamp = nowIso();
+    storedCall.metrics = normalizeCallMetrics(storedCall.metrics);
+    storedCall.state = "active";
+    storedCall.roomName = normalizeNullableString(roomName);
+    storedCall.sessionByUserId = normalizeCallSessionMap(sessionByUserId);
+    storedCall.acceptedAt = timestamp;
+    storedCall.updatedAt = timestamp;
+    storedCall.endedAt = null;
+    storedCall.endedReason = null;
+    storedCall.metrics.acceptLatencyMs = Math.max(
+      0,
+      new Date(timestamp).getTime() - new Date(call.createdAt).getTime(),
+    );
+    storedCall.metrics.connectedParticipantIds = [];
+    storedCall.metrics.lastWebhookEvent = null;
+    await this._write(db);
+    return structuredClone(normalizeStoredCall(storedCall));
+  }
+
+  async markCallRoomJoinFailure({callId, reason = null}) {
+    const db = await this._read();
+    const storedCall = db.calls.find((entry) => String(entry?.id || "") === callId);
+    const call = normalizeStoredCall(storedCall);
+    if (!storedCall || !call) {
+      return null;
+    }
+
+    storedCall.metrics = normalizeCallMetrics(storedCall.metrics);
+    storedCall.metrics.roomJoinFailureCount += 1;
+    storedCall.metrics.lastRoomJoinFailureReason = normalizeNullableString(reason);
+    storedCall.updatedAt = nowIso();
+    await this._write(db);
+    return structuredClone(normalizeStoredCall(storedCall));
+  }
+
+  async rejectCall({callId, userId}) {
+    const db = await this._read();
+    const storedCall = db.calls.find((entry) => String(entry?.id || "") === callId);
+    const call = normalizeStoredCall(storedCall);
+    if (!storedCall || !call) {
+      return null;
+    }
+    if (call.recipientId !== userId) {
+      return false;
+    }
+    if (call.state !== "ringing") {
+      return undefined;
+    }
+
+    const timestamp = nowIso();
+    storedCall.state = "rejected";
+    storedCall.updatedAt = timestamp;
+    storedCall.endedAt = timestamp;
+    storedCall.endedReason = "rejected";
+    await this._write(db);
+    return structuredClone(normalizeStoredCall(storedCall));
+  }
+
+  async cancelCall({callId, userId}) {
+    const db = await this._read();
+    const storedCall = db.calls.find((entry) => String(entry?.id || "") === callId);
+    const call = normalizeStoredCall(storedCall);
+    if (!storedCall || !call) {
+      return null;
+    }
+    if (call.initiatorId !== userId) {
+      return false;
+    }
+    if (call.state !== "ringing") {
+      return undefined;
+    }
+
+    const timestamp = nowIso();
+    storedCall.state = "cancelled";
+    storedCall.updatedAt = timestamp;
+    storedCall.endedAt = timestamp;
+    storedCall.endedReason = "cancelled";
+    await this._write(db);
+    return structuredClone(normalizeStoredCall(storedCall));
+  }
+
+  async markCallMissed({callId, reason = "missed"}) {
+    const db = await this._read();
+    const storedCall = db.calls.find((entry) => String(entry?.id || "") === callId);
+    const call = normalizeStoredCall(storedCall);
+    if (!storedCall || !call) {
+      return null;
+    }
+    if (call.state !== "ringing") {
+      return undefined;
+    }
+
+    const timestamp = nowIso();
+    storedCall.state = "missed";
+    storedCall.updatedAt = timestamp;
+    storedCall.endedAt = timestamp;
+    storedCall.endedReason = normalizeNullableString(reason) || "missed";
+    await this._write(db);
+    return structuredClone(normalizeStoredCall(storedCall));
+  }
+
+  async hangupCall({callId, userId}) {
+    const db = await this._read();
+    const storedCall = db.calls.find((entry) => String(entry?.id || "") === callId);
+    const call = normalizeStoredCall(storedCall);
+    if (!storedCall || !call) {
+      return null;
+    }
+    if (!call.participantIds.includes(userId)) {
+      return false;
+    }
+    if (call.state !== "active") {
+      return undefined;
+    }
+
+    const timestamp = nowIso();
+    storedCall.state = "ended";
+    storedCall.updatedAt = timestamp;
+    storedCall.endedAt = timestamp;
+    storedCall.endedReason = "hangup";
+    await this._write(db);
+    return structuredClone(normalizeStoredCall(storedCall));
+  }
+
+  async applyCallWebhook({roomName, event, participantIdentity = null}) {
+    const normalizedRoomName = String(roomName || "").trim();
+    if (!normalizedRoomName) {
+      return null;
+    }
+
+    const db = await this._read();
+    const storedCall = db.calls.find((entry) => {
+      return normalizeNullableString(entry?.roomName) === normalizedRoomName;
+    });
+    const call = normalizeStoredCall(storedCall);
+    if (!storedCall || !call || isCallTerminalState(call.state)) {
+      return call ? structuredClone(call) : null;
+    }
+
+    const normalizedEvent = String(event || "").trim();
+    const normalizedParticipantIdentity = String(participantIdentity || "").trim();
+    const timestamp = nowIso();
+    storedCall.metrics = normalizeCallMetrics(storedCall.metrics);
+    storedCall.metrics.lastWebhookEvent = normalizedEvent || null;
+
+    if (normalizedEvent === "participant_joined" && call.state === "active") {
+      if (normalizedParticipantIdentity) {
+        const wasConnected = storedCall.metrics.connectedParticipantIds.includes(
+          normalizedParticipantIdentity,
+        );
+        if (wasConnected) {
+          storedCall.metrics.reconnectCount += 1;
+        } else {
+          storedCall.metrics.connectedParticipantIds = normalizeParticipantIds([
+            ...storedCall.metrics.connectedParticipantIds,
+            normalizedParticipantIdentity,
+          ]);
+        }
+      }
+      storedCall.updatedAt = timestamp;
+      await this._write(db);
+      return structuredClone(normalizeStoredCall(storedCall));
+    }
+
+    if (normalizedEvent === "participant_connection_aborted" && call.state === "ringing") {
+      storedCall.state = "missed";
+      storedCall.updatedAt = timestamp;
+      storedCall.endedAt = timestamp;
+      storedCall.endedReason = normalizedParticipantIdentity || "missed";
+      await this._write(db);
+      return structuredClone(normalizeStoredCall(storedCall));
+    }
+
+    if (normalizedEvent === "participant_left" || normalizedEvent === "room_finished") {
+      if (normalizedParticipantIdentity) {
+        storedCall.metrics.connectedParticipantIds =
+          storedCall.metrics.connectedParticipantIds.filter(
+            (value) => value !== normalizedParticipantIdentity,
+          );
+      }
+      storedCall.state = "ended";
+      storedCall.updatedAt = timestamp;
+      storedCall.endedAt = timestamp;
+      storedCall.endedReason = normalizedParticipantIdentity || normalizedEvent;
+      await this._write(db);
+      return structuredClone(normalizeStoredCall(storedCall));
+    }
+
+    if (normalizedEvent) {
+      storedCall.updatedAt = timestamp;
+      await this._write(db);
+      return structuredClone(normalizeStoredCall(storedCall));
+    }
+
+    return structuredClone(call);
   }
 
   async listChatPreviews(userId) {
@@ -4395,15 +8310,148 @@ class FileStore {
       if (!chat) {
         continue;
       }
+      const relatedChatIds = this._resolveEquivalentChatIds(chatId, chat);
 
       const latestMessage = db.messages
-        .filter((entry) => entry.chatId === chatId)
+        .filter((entry) => relatedChatIds.has(String(entry.chatId || "").trim()))
         .sort((left, right) =>
           String(right.timestamp || "").localeCompare(String(left.timestamp || "")),
         )[0];
 
       chat.updatedAt = latestMessage?.timestamp || chat.createdAt || chat.updatedAt;
     }
+  }
+
+  async createProfileContribution({
+    treeId,
+    personId,
+    authorUserId,
+    message = null,
+    fields = {},
+  }) {
+    const db = await this._read();
+    db.profileContributions = Array.isArray(db.profileContributions)
+      ? db.profileContributions
+      : [];
+
+    const person = db.persons.find(
+      (entry) => entry.id === personId && entry.treeId === treeId,
+    );
+    if (!person || !person.userId) {
+      return null;
+    }
+
+    const targetUser = db.users.find((entry) => entry.id === person.userId);
+    if (!targetUser) {
+      return null;
+    }
+    if (
+      normalizeProfileContributionPolicy(
+        targetUser.profile?.profileContributionPolicy,
+      ) !== "suggestions"
+    ) {
+      return false;
+    }
+
+    const normalizedFields = normalizeProfileContributionFields(fields);
+    if (Object.keys(normalizedFields).length === 0) {
+      return undefined;
+    }
+
+    const contribution = {
+      id: crypto.randomUUID(),
+      treeId,
+      personId,
+      targetUserId: person.userId,
+      authorUserId: normalizeNullableString(authorUserId),
+      message: normalizeNullableString(message),
+      fields: normalizedFields,
+      status: "pending",
+      createdAt: nowIso(),
+      updatedAt: nowIso(),
+      respondedAt: null,
+      responderUserId: null,
+    };
+
+    db.profileContributions.unshift(contribution);
+    await this._write(db);
+    return structuredClone(contribution);
+  }
+
+  async listProfileContributions(targetUserId, {status = null} = {}) {
+    const db = await this._read();
+    db.profileContributions = Array.isArray(db.profileContributions)
+      ? db.profileContributions
+      : [];
+
+    return db.profileContributions
+      .filter((entry) => {
+        if (entry.targetUserId !== targetUserId) {
+          return false;
+        }
+        if (status && entry.status !== status) {
+          return false;
+        }
+        return true;
+      })
+      .sort((left, right) =>
+        String(right.createdAt || "").localeCompare(String(left.createdAt || "")),
+      )
+      .map((entry) => structuredClone(entry));
+  }
+
+  async respondToProfileContribution(targetUserId, contributionId, {
+    accept,
+  }) {
+    const db = await this._read();
+    db.profileContributions = Array.isArray(db.profileContributions)
+      ? db.profileContributions
+      : [];
+
+    const contribution = db.profileContributions.find(
+      (entry) =>
+        entry.id === contributionId &&
+        entry.targetUserId === targetUserId &&
+        entry.status === "pending",
+    );
+    if (!contribution) {
+      return null;
+    }
+
+    let updatedUser = null;
+    if (accept === true) {
+      updatedUser = await this.updateProfile(targetUserId, (profile) => {
+        const nextProfile = {
+          ...profile,
+          ...normalizeProfileContributionFields(contribution.fields),
+        };
+        nextProfile.displayName =
+          composeDisplayNameFromProfile(nextProfile) || profile.displayName || "";
+        return nextProfile;
+      });
+    }
+
+    const nextDb = accept === true ? await this._read() : db;
+    nextDb.profileContributions = Array.isArray(nextDb.profileContributions)
+      ? nextDb.profileContributions
+      : [];
+    const storedContribution = nextDb.profileContributions.find(
+      (entry) => entry.id === contributionId,
+    );
+    if (!storedContribution) {
+      return null;
+    }
+
+    storedContribution.status = accept === true ? "accepted" : "rejected";
+    storedContribution.respondedAt = nowIso();
+    storedContribution.updatedAt = storedContribution.respondedAt;
+    storedContribution.responderUserId = targetUserId;
+    await this._write(nextDb);
+
+    return {
+      contribution: structuredClone(storedContribution),
+      user: updatedUser,
+    };
   }
 
   async listProfileNotes(userId) {
@@ -4509,7 +8557,7 @@ class FileStore {
           String(profile.maidenName || "")
             .toLowerCase()
             .includes(normalizedQuery) ||
-          String(profile.phoneNumber || "")
+          String(profile.birthPlace || "")
             .toLowerCase()
             .includes(normalizedQuery)
         );
@@ -4538,10 +8586,15 @@ class FileStore {
       .slice(0, limit)
       .map((user) => structuredClone(user));
   }
+
 }
 
 module.exports = {
   EMPTY_DB,
   FileStore,
+  buildTreeGraphSnapshot,
+  buildGraphWarnings,
+  buildBranchVisiblePersonIds,
   normalizeDbState,
+  normalizePhoneNumber,
 };

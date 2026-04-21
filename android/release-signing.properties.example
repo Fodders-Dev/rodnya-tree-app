@@ -1,4 +1,4 @@
-storeFile=C:/path/to/lineage-release.keystore
+storeFile=C:/path/to/rodnya-release.keystore
 storePassword=change-me
-keyAlias=lineage
+keyAlias=rodnya
 keyPassword=change-me

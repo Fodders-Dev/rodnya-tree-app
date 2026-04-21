@@ -3,12 +3,12 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
-import 'package:lineage/backend/backend_runtime_config.dart';
-import 'package:lineage/models/family_relation.dart';
-import 'package:lineage/models/relation_request.dart';
-import 'package:lineage/services/custom_api_auth_service.dart';
-import 'package:lineage/services/custom_api_family_tree_service.dart';
-import 'package:lineage/services/invitation_service.dart';
+import 'package:rodnya/backend/backend_runtime_config.dart';
+import 'package:rodnya/models/family_relation.dart';
+import 'package:rodnya/models/relation_request.dart';
+import 'package:rodnya/services/custom_api_auth_service.dart';
+import 'package:rodnya/services/custom_api_family_tree_service.dart';
+import 'package:rodnya/services/invitation_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -37,7 +37,7 @@ void main() {
         'accessToken': 'access-token',
         'refreshToken': 'refresh-token',
         'userId': 'user-1',
-        'email': 'dev@lineage.app',
+        'email': 'dev@rodnya.app',
         'displayName': 'Dev User',
         'providerIds': ['password'],
         'isProfileComplete': true,
@@ -253,7 +253,7 @@ void main() {
         'accessToken': 'access-token',
         'refreshToken': 'refresh-token',
         'userId': 'user-1',
-        'email': 'dev@lineage.app',
+        'email': 'dev@rodnya.app',
         'displayName': 'Dev User',
         'providerIds': ['password'],
         'isProfileComplete': true,
@@ -348,6 +348,112 @@ void main() {
     expect(remainingRelatives, hasLength(1));
   });
 
+  test('CustomApiFamilyTreeService round-trips custom relation labels',
+      () async {
+    final client = MockClient((request) async {
+      if (request.url.path == '/v1/trees/tree-custom/persons' &&
+          request.method == 'GET') {
+        return http.Response(
+          jsonEncode({
+            'persons': [
+              {
+                'id': 'person-a',
+                'treeId': 'tree-custom',
+                'name': 'Артем Кузнецов',
+                'gender': 'male',
+                'isAlive': true,
+              },
+              {
+                'id': 'person-b',
+                'treeId': 'tree-custom',
+                'name': 'Павел Иванов',
+                'gender': 'male',
+                'isAlive': true,
+              },
+            ],
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+
+      if (request.url.path == '/v1/trees/tree-custom/relations' &&
+          request.method == 'POST') {
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        expect(body['customRelationLabel1to2'], 'Побратим');
+        expect(body['customRelationLabel2to1'], 'Побратим');
+        return http.Response(
+          jsonEncode({
+            'relation': {
+              'id': 'relation-custom',
+              'treeId': 'tree-custom',
+              'person1Id': body['person1Id'],
+              'person2Id': body['person2Id'],
+              'relation1to2': body['relation1to2'],
+              'relation2to1': body['relation2to1'],
+              'customRelationLabel1to2': body['customRelationLabel1to2'],
+              'customRelationLabel2to1': body['customRelationLabel2to1'],
+              'isConfirmed': true,
+              'createdAt': '2026-04-18T09:00:00.000Z',
+              'updatedAt': '2026-04-18T09:00:00.000Z',
+              'createdBy': 'user-1',
+            },
+          }),
+          201,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+
+      return http.Response('{"message":"not found"}', 404);
+    });
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'custom_api_session_v1',
+      jsonEncode({
+        'accessToken': 'access-token',
+        'refreshToken': 'refresh-token',
+        'userId': 'user-1',
+        'email': 'dev@rodnya.app',
+        'displayName': 'Dev User',
+        'providerIds': ['password'],
+        'isProfileComplete': true,
+        'missingFields': const [],
+      }),
+    );
+
+    final authService = await CustomApiAuthService.create(
+      httpClient: client,
+      preferences: prefs,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      invitationService: InvitationService(),
+    );
+
+    final treeService = CustomApiFamilyTreeService(
+      authService: authService,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      httpClient: client,
+    );
+
+    final relation = await treeService.createRelation(
+      treeId: 'tree-custom',
+      person1Id: 'person-a',
+      person2Id: 'person-b',
+      relation1to2: RelationType.other,
+      isConfirmed: true,
+      customRelationLabel1to2: 'Побратим',
+      customRelationLabel2to1: 'Побратим',
+    );
+
+    expect(relation.relation1to2, RelationType.other);
+    expect(relation.customRelationLabel1to2, 'Побратим');
+    expect(relation.customRelationLabel2to1, 'Побратим');
+  });
+
   test('CustomApiFamilyTreeService adds current user into existing tree',
       () async {
     final persons = <Map<String, dynamic>>[
@@ -438,7 +544,7 @@ void main() {
         'accessToken': 'access-token',
         'refreshToken': 'refresh-token',
         'userId': 'user-1',
-        'email': 'dev@lineage.app',
+        'email': 'dev@rodnya.app',
         'displayName': 'Dev User',
         'providerIds': ['password'],
         'isProfileComplete': true,
@@ -564,7 +670,7 @@ void main() {
         'accessToken': 'access-token',
         'refreshToken': 'refresh-token',
         'userId': 'user-1',
-        'email': 'dev@lineage.app',
+        'email': 'dev@rodnya.app',
         'displayName': 'Dev User',
         'providerIds': ['password'],
         'isProfileComplete': true,
@@ -707,7 +813,7 @@ void main() {
         'accessToken': 'access-token',
         'refreshToken': 'refresh-token',
         'userId': 'user-1',
-        'email': 'dev@lineage.app',
+        'email': 'dev@rodnya.app',
         'displayName': 'Dev User',
         'providerIds': ['password'],
         'isProfileComplete': true,
@@ -759,6 +865,329 @@ void main() {
       (lastPatchBody['photoGallery'] as List<dynamic>).first['updatedAt'],
       '2026-03-27T12:10:00.000Z',
     );
+  });
+
+  test(
+      'CustomApiFamilyTreeService maps extended viewer labels from graph snapshot to precise relation types',
+      () async {
+    final client = MockClient((request) async {
+      if (request.url.path == '/v1/trees/tree-graph/graph' &&
+          request.method == 'GET') {
+        return http.Response(
+          jsonEncode({
+            'snapshot': {
+              'treeId': 'tree-graph',
+              'viewerPersonId': 'viewer-person',
+              'people': [
+                {
+                  'id': 'viewer-person',
+                  'treeId': 'tree-graph',
+                  'userId': 'user-1',
+                  'name': 'Артем Кузнецов',
+                  'gender': 'male',
+                },
+                {
+                  'id': 'stepmother',
+                  'treeId': 'tree-graph',
+                  'name': 'Ольга Кузнецова',
+                  'gender': 'female',
+                },
+                {
+                  'id': 'stepson',
+                  'treeId': 'tree-graph',
+                  'name': 'Максим Кузнецов',
+                  'gender': 'male',
+                },
+                {
+                  'id': 'uncle-in-law',
+                  'treeId': 'tree-graph',
+                  'name': 'Сергей Кузнецов',
+                  'gender': 'male',
+                },
+                {
+                  'id': 'aunt-in-law',
+                  'treeId': 'tree-graph',
+                  'name': 'Ирина Кузнецова',
+                  'gender': 'female',
+                },
+                {
+                  'id': 'niece',
+                  'treeId': 'tree-graph',
+                  'name': 'Мария Кузнецова',
+                  'gender': 'female',
+                },
+                {
+                  'id': 'mother-in-law',
+                  'treeId': 'tree-graph',
+                  'name': 'Анна Смирнова',
+                  'gender': 'female',
+                },
+                {
+                  'id': 'sister-in-law',
+                  'treeId': 'tree-graph',
+                  'name': 'Елена Смирнова',
+                  'gender': 'female',
+                },
+              ],
+              'relations': const [],
+              'familyUnits': const [],
+              'branchBlocks': const [],
+              'generationRows': const [],
+              'viewerDescriptors': [
+                {
+                  'personId': 'stepmother',
+                  'primaryRelationLabel': 'Мачеха',
+                  'isBlood': false,
+                  'alternatePathCount': 0,
+                  'pathSummary': 'step',
+                  'primaryPathPersonIds': ['viewer-person', 'stepmother'],
+                },
+                {
+                  'personId': 'stepson',
+                  'primaryRelationLabel': 'Пасынок',
+                  'isBlood': false,
+                  'alternatePathCount': 0,
+                  'pathSummary': 'step',
+                  'primaryPathPersonIds': ['viewer-person', 'stepson'],
+                },
+                {
+                  'personId': 'uncle-in-law',
+                  'primaryRelationLabel': 'Дядя',
+                  'isBlood': false,
+                  'alternatePathCount': 0,
+                  'pathSummary': 'affinal',
+                  'primaryPathPersonIds': ['viewer-person', 'uncle-in-law'],
+                },
+                {
+                  'personId': 'aunt-in-law',
+                  'primaryRelationLabel': 'Тетя',
+                  'isBlood': false,
+                  'alternatePathCount': 0,
+                  'pathSummary': 'affinal',
+                  'primaryPathPersonIds': ['viewer-person', 'aunt-in-law'],
+                },
+                {
+                  'personId': 'niece',
+                  'primaryRelationLabel': 'Племянница',
+                  'isBlood': true,
+                  'alternatePathCount': 0,
+                  'pathSummary': 'blood',
+                  'primaryPathPersonIds': ['viewer-person', 'niece'],
+                },
+                {
+                  'personId': 'mother-in-law',
+                  'primaryRelationLabel': 'Свекровь',
+                  'isBlood': false,
+                  'alternatePathCount': 0,
+                  'pathSummary': 'in-law',
+                  'primaryPathPersonIds': ['viewer-person', 'mother-in-law'],
+                },
+                {
+                  'personId': 'sister-in-law',
+                  'primaryRelationLabel': 'Золовка',
+                  'isBlood': false,
+                  'alternatePathCount': 0,
+                  'pathSummary': 'in-law',
+                  'primaryPathPersonIds': ['viewer-person', 'sister-in-law'],
+                },
+              ],
+            },
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+
+      return http.Response('{"message":"not found"}', 404);
+    });
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'custom_api_session_v1',
+      jsonEncode({
+        'accessToken': 'access-token',
+        'refreshToken': 'refresh-token',
+        'userId': 'user-1',
+        'email': 'dev@rodnya.app',
+        'displayName': 'Dev User',
+        'providerIds': ['password'],
+        'isProfileComplete': true,
+        'missingFields': const [],
+      }),
+    );
+
+    final authService = await CustomApiAuthService.create(
+      httpClient: client,
+      preferences: prefs,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      invitationService: InvitationService(),
+    );
+
+    final treeService = CustomApiFamilyTreeService(
+      authService: authService,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      httpClient: client,
+    );
+
+    expect(
+      await treeService.getRelationToUser('tree-graph', 'stepmother'),
+      RelationType.stepparent,
+    );
+    expect(
+      await treeService.getRelationToUser('tree-graph', 'stepson'),
+      RelationType.stepchild,
+    );
+    expect(
+      await treeService.getRelationToUser('tree-graph', 'uncle-in-law'),
+      RelationType.uncle,
+    );
+    expect(
+      await treeService.getRelationToUser('tree-graph', 'aunt-in-law'),
+      RelationType.aunt,
+    );
+    expect(
+      await treeService.getRelationToUser('tree-graph', 'niece'),
+      RelationType.niece,
+    );
+    expect(
+      await treeService.getRelationToUser('tree-graph', 'mother-in-law'),
+      RelationType.parentInLaw,
+    );
+    expect(
+      await treeService.getRelationToUser('tree-graph', 'sister-in-law'),
+      RelationType.siblingInLaw,
+    );
+  });
+
+  test(
+      'CustomApiFamilyTreeService parses parent-set and union metadata from graph snapshot relations',
+      () async {
+    final client = MockClient((request) async {
+      if (request.url.path == '/v1/trees/tree-meta/graph' &&
+          request.method == 'GET') {
+        return http.Response(
+          jsonEncode({
+            'snapshot': {
+              'treeId': 'tree-meta',
+              'viewerPersonId': 'viewer-person',
+              'people': [
+                {
+                  'id': 'viewer-person',
+                  'treeId': 'tree-meta',
+                  'name': 'Артем Кузнецов',
+                  'gender': 'male',
+                },
+                {
+                  'id': 'child-person',
+                  'treeId': 'tree-meta',
+                  'name': 'Павел Кузнецов',
+                  'gender': 'male',
+                },
+              ],
+              'relations': [
+                {
+                  'id': 'relation-parent',
+                  'treeId': 'tree-meta',
+                  'person1Id': 'viewer-person',
+                  'person2Id': 'child-person',
+                  'relation1to2': 'parent',
+                  'relation2to1': 'child',
+                  'isConfirmed': true,
+                  'createdAt': '2026-04-18T10:00:00.000Z',
+                  'updatedAt': '2026-04-18T10:00:00.000Z',
+                  'parentSetId': 'ps-1',
+                  'parentSetType': 'guardian',
+                  'isPrimaryParentSet': false,
+                  'unionId': 'union-1',
+                  'unionType': 'partner',
+                  'unionStatus': 'past',
+                },
+              ],
+              'familyUnits': const [],
+              'branchBlocks': const [],
+              'generationRows': const [],
+              'warnings': [
+                {
+                  'id': 'warning-1',
+                  'code': 'auto_repaired_parent_link',
+                  'severity': 'info',
+                  'message':
+                      'Связь Артем Кузнецов -> Павел Кузнецов достроена автоматически по данным дерева.',
+                  'hint':
+                      'Проверьте, что этот родитель относится к правильному набору родителей.',
+                  'personIds': ['viewer-person', 'child-person'],
+                  'familyUnitIds': ['unit-meta'],
+                  'relationIds': ['relation-parent'],
+                },
+              ],
+              'viewerDescriptors': [
+                {
+                  'personId': 'child-person',
+                  'primaryRelationLabel': 'Пасынок',
+                  'isBlood': false,
+                  'alternatePathCount': 0,
+                  'pathSummary': 'viewer -> child',
+                  'primaryPathPersonIds': ['viewer-person', 'child-person'],
+                },
+              ],
+            },
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+
+      return http.Response('{"message":"not found"}', 404);
+    });
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'custom_api_session_v1',
+      jsonEncode({
+        'accessToken': 'access-token',
+        'refreshToken': 'refresh-token',
+        'userId': 'user-1',
+        'email': 'dev@rodnya.app',
+        'displayName': 'Dev User',
+        'providerIds': ['password'],
+        'isProfileComplete': true,
+        'missingFields': const [],
+      }),
+    );
+
+    final authService = await CustomApiAuthService.create(
+      httpClient: client,
+      preferences: prefs,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      invitationService: InvitationService(),
+    );
+
+    final treeService = CustomApiFamilyTreeService(
+      authService: authService,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      httpClient: client,
+    );
+
+    final snapshot = await treeService.getTreeGraphSnapshot('tree-meta');
+    final relation = snapshot.relations.single;
+
+    expect(relation.parentSetId, 'ps-1');
+    expect(relation.parentSetType, 'guardian');
+    expect(relation.isPrimaryParentSet, isFalse);
+    expect(relation.unionId, 'union-1');
+    expect(relation.unionType, 'partner');
+    expect(relation.unionStatus, 'past');
+    expect(snapshot.warnings, hasLength(1));
+    expect(snapshot.warnings.single.code, 'auto_repaired_parent_link');
+    expect(snapshot.warnings.single.relationIds, contains('relation-parent'));
   });
 
   test(
@@ -933,7 +1362,7 @@ void main() {
         'accessToken': 'access-token',
         'refreshToken': 'refresh-token',
         'userId': 'user-1',
-        'email': 'dev@lineage.app',
+        'email': 'dev@rodnya.app',
         'displayName': 'Dev User',
         'providerIds': ['password'],
         'isProfileComplete': true,
@@ -1169,7 +1598,7 @@ void main() {
         'accessToken': 'access-token',
         'refreshToken': 'refresh-token',
         'userId': 'user-1',
-        'email': 'dev@lineage.app',
+        'email': 'dev@rodnya.app',
         'displayName': 'Dev User',
         'providerIds': ['password'],
         'isProfileComplete': true,
@@ -1318,7 +1747,7 @@ void main() {
       if (request.url.path == '/v1/users/search/by-field' &&
           request.method == 'GET') {
         expect(request.url.queryParameters['field'], 'email');
-        expect(request.url.queryParameters['value'], 'invitee@lineage.app');
+        expect(request.url.queryParameters['value'], 'invitee@rodnya.app');
         return http.Response(
           jsonEncode({
             'users': [
@@ -1343,7 +1772,7 @@ void main() {
         'accessToken': 'access-token',
         'refreshToken': 'refresh-token',
         'userId': 'user-1',
-        'email': 'dev@lineage.app',
+        'email': 'dev@rodnya.app',
         'displayName': 'Dev User',
         'providerIds': ['password'],
         'isProfileComplete': true,
@@ -1405,7 +1834,7 @@ void main() {
 
     await treeService.sendOfflineRelationRequestByEmail(
       treeId: 'tree-1',
-      email: 'invitee@lineage.app',
+      email: 'invitee@rodnya.app',
       offlineRelativeId: 'person-offline',
       relationType: RelationType.child,
     );
@@ -1467,7 +1896,7 @@ void main() {
         'accessToken': 'access-token',
         'refreshToken': 'refresh-token',
         'userId': 'user-1',
-        'email': 'dev@lineage.app',
+        'email': 'dev@rodnya.app',
         'displayName': 'Dev User',
         'providerIds': ['password'],
         'isProfileComplete': true,
@@ -1546,7 +1975,7 @@ void main() {
         'accessToken': 'access-token',
         'refreshToken': 'refresh-token',
         'userId': 'user-1',
-        'email': 'dev@lineage.app',
+        'email': 'dev@rodnya.app',
         'displayName': 'Dev User',
         'providerIds': ['password'],
         'isProfileComplete': true,

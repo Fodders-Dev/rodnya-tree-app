@@ -2,10 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get_it/get_it.dart';
 import 'package:intl/date_symbol_data_local.dart';
-import 'package:lineage/backend/interfaces/auth_service_interface.dart';
-import 'package:lineage/backend/interfaces/post_service_interface.dart';
-import 'package:lineage/models/post.dart';
-import 'package:lineage/widgets/post_card.dart';
+import 'package:rodnya/backend/interfaces/auth_service_interface.dart';
+import 'package:rodnya/backend/interfaces/post_service_interface.dart';
+import 'package:rodnya/models/post.dart';
+import 'package:rodnya/widgets/post_card.dart';
 
 void main() {
   final getIt = GetIt.instance;

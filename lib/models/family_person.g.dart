@@ -45,13 +45,14 @@ class FamilyPersonAdapter extends TypeAdapter<FamilyPerson> {
           ?.whereType<Map>()
           .map((entry) => Map<String, dynamic>.from(entry))
           .toList(),
+      familySummary: fields[26] as String?,
     );
   }
 
   @override
   void write(BinaryWriter writer, FamilyPerson obj) {
     writer
-      ..writeByte(25)
+      ..writeByte(26)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -101,7 +102,9 @@ class FamilyPersonAdapter extends TypeAdapter<FamilyPerson> {
       ..writeByte(23)
       ..write(obj.details)
       ..writeByte(24)
-      ..write(obj.photoGallery);
+      ..write(obj.photoGallery)
+      ..writeByte(26)
+      ..write(obj.familySummary);
   }
 
   @override

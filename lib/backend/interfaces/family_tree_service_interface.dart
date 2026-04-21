@@ -2,6 +2,7 @@ import '../../models/family_person.dart';
 import '../../models/family_relation.dart';
 import '../../models/relation_request.dart';
 import '../../models/family_tree.dart';
+import '../../models/person_dossier.dart';
 import '../../models/tree_change_record.dart';
 import '../models/selectable_tree.dart';
 import '../models/tree_invitation.dart';
@@ -21,6 +22,13 @@ abstract class FamilyTreeServiceInterface {
   Future<String> addRelative(String treeId, Map<String, dynamic> personData);
   Future<void> updateRelative(String personId, Map<String, dynamic> personData);
   Future<FamilyPerson> getPersonById(String treeId, String personId);
+  Future<PersonDossier> getPersonDossier(String treeId, String personId);
+  Future<void> proposePersonProfileContribution({
+    required String treeId,
+    required String personId,
+    required Map<String, dynamic> fields,
+    String? message,
+  });
   Future<RelationType> getRelationToUser(String treeId, String relativeId);
   Future<void> addRelation(
     String treeId,
@@ -36,6 +44,8 @@ abstract class FamilyTreeServiceInterface {
     bool isConfirmed,
     DateTime? marriageDate,
     DateTime? divorceDate,
+    String? customRelationLabel1to2,
+    String? customRelationLabel2to1,
   });
   Future<List<FamilyPerson>> getOfflineProfilesByCreator(
     String treeId,

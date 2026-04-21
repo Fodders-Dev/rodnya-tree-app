@@ -3,9 +3,9 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
-import 'package:lineage/backend/backend_runtime_config.dart';
-import 'package:lineage/services/custom_api_auth_service.dart';
-import 'package:lineage/services/invitation_service.dart';
+import 'package:rodnya/backend/backend_runtime_config.dart';
+import 'package:rodnya/services/custom_api_auth_service.dart';
+import 'package:rodnya/services/invitation_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -18,7 +18,7 @@ void main() {
       if (request.url.path == '/v1/auth/login') {
         expect(request.method, 'POST');
         final body = jsonDecode(request.body) as Map<String, dynamic>;
-        expect(body['email'], 'dev@lineage.app');
+        expect(body['email'], 'dev@rodnya.app');
         expect(body['password'], 'secret123');
 
         return http.Response(
@@ -27,7 +27,7 @@ void main() {
             'refreshToken': 'refresh-token',
             'user': {
               'id': 'user-1',
-              'email': 'dev@lineage.app',
+              'email': 'dev@rodnya.app',
               'displayName': 'Dev User',
               'providerIds': ['password'],
             },
@@ -64,10 +64,10 @@ void main() {
       invitationService: InvitationService(),
     );
 
-    await service.loginWithEmail('dev@lineage.app', 'secret123');
+    await service.loginWithEmail('dev@rodnya.app', 'secret123');
 
     expect(service.currentUserId, 'user-1');
-    expect(service.currentUserEmail, 'dev@lineage.app');
+    expect(service.currentUserEmail, 'dev@rodnya.app');
     expect(service.currentUserDisplayName, 'Dev User');
     expect(service.currentProviderIds, ['password']);
 
@@ -101,7 +101,7 @@ void main() {
             'refreshToken': 'refresh-token',
             'user': {
               'id': 'user-1',
-              'email': 'dev@lineage.app',
+              'email': 'dev@rodnya.app',
               'displayName': 'Dev User',
               'providerIds': ['password'],
             },
@@ -147,7 +147,7 @@ void main() {
       invitationService: invitationService,
     );
 
-    await service.loginWithEmail('dev@lineage.app', 'secret123');
+    await service.loginWithEmail('dev@rodnya.app', 'secret123');
 
     expect(invitationService.hasPendingInvitation, isFalse);
     expect(service.currentUserId, 'user-1');
@@ -236,5 +236,116 @@ void main() {
       ),
       'Не удалось выполнить вход. Попробуйте ещё раз.',
     );
+  });
+
+  test('CustomApiAuthService exchangeVkAuthCode stores authenticated session',
+      () async {
+    final client = MockClient((request) async {
+      if (request.url.path == '/v1/auth/vk/exchange') {
+        expect(request.method, 'POST');
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        expect(body['code'], 'vk-auth-code');
+        return http.Response(
+          jsonEncode({
+            'status': 'authenticated',
+            'auth': {
+              'accessToken': 'vk-access-token',
+              'refreshToken': 'vk-refresh-token',
+              'user': {
+                'id': 'user-vk',
+                'email': 'vk-user@rodnya.app',
+                'displayName': 'VK User',
+                'providerIds': ['password', 'vk'],
+              },
+              'profileStatus': {
+                'isComplete': true,
+                'missingFields': <String>[],
+              },
+            },
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+
+      return http.Response('{"message":"not found"}', 404);
+    });
+
+    final service = await CustomApiAuthService.create(
+      httpClient: client,
+      preferences: await SharedPreferences.getInstance(),
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      invitationService: InvitationService(),
+    );
+
+    final completion = await service.exchangeVkAuthCode('vk-auth-code');
+
+    expect(completion.isAuthenticated, isTrue);
+    expect(service.currentUserId, 'user-vk');
+    expect(service.currentProviderIds, ['password', 'vk']);
+  });
+
+  test('CustomApiAuthService linkPendingVkIdentity updates cached provider ids',
+      () async {
+    final client = MockClient((request) async {
+      if (request.url.path == '/v1/auth/login') {
+        return http.Response(
+          jsonEncode({
+            'accessToken': 'access-token',
+            'refreshToken': 'refresh-token',
+            'user': {
+              'id': 'user-1',
+              'email': 'dev@rodnya.app',
+              'displayName': 'Dev User',
+              'providerIds': ['password'],
+            },
+            'profileStatus': {
+              'isComplete': true,
+              'missingFields': <String>[],
+            },
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+
+      if (request.url.path == '/v1/auth/vk/link') {
+        expect(request.method, 'POST');
+        expect(request.headers['authorization'], 'Bearer access-token');
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        expect(body['code'], 'vk-link-code');
+        return http.Response(
+          jsonEncode({
+            'ok': true,
+            'user': {
+              'id': 'user-1',
+              'providerIds': ['password', 'vk'],
+            },
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+
+      return http.Response('{"message":"not found"}', 404);
+    });
+
+    final service = await CustomApiAuthService.create(
+      httpClient: client,
+      preferences: await SharedPreferences.getInstance(),
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      invitationService: InvitationService(),
+    );
+
+    await service.loginWithEmail('dev@rodnya.app', 'secret123');
+    expect(service.currentProviderIds, ['password']);
+
+    await service.linkPendingVkIdentity('vk-link-code');
+
+    expect(service.currentProviderIds, ['password', 'vk']);
   });
 }

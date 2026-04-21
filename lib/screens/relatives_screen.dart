@@ -16,6 +16,8 @@ import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/chat_service_interface.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
 import '../backend/interfaces/invitation_link_service_interface.dart';
+import '../services/app_status_service.dart';
+import '../utils/user_facing_error.dart';
 
 class _ContactStatus {
   const _ContactStatus({
@@ -58,6 +60,7 @@ class _RelativesScreenState extends State<RelativesScreen> {
   final AuthServiceInterface _authService = GetIt.I<AuthServiceInterface>();
   final InvitationLinkServiceInterface _invitationLinkService =
       GetIt.I<InvitationLinkServiceInterface>();
+  final AppStatusService _appStatusService = GetIt.I<AppStatusService>();
 
   StreamSubscription? _relativesSubscription;
   StreamSubscription? _relationsSubscription;
@@ -73,6 +76,9 @@ class _RelativesScreenState extends State<RelativesScreen> {
   List<FamilyRelation> _relations = [];
   String? _currentUserPersonId;
   List<ChatPreview> _chatPreviews = [];
+  bool _isRelationsReady = false;
+  bool _isChatsReady = false;
+  bool _isPendingRequestsLoading = true;
 
   @override
   void initState() {
@@ -148,19 +154,28 @@ class _RelativesScreenState extends State<RelativesScreen> {
       _currentUserPersonId = null;
       _chatPreviews = [];
       _pendingRequestsCount = 0;
+      _isRelationsReady = false;
+      _isChatsReady = false;
+      _isPendingRequestsLoading = true;
     });
 
+    unawaited(_checkPendingRequests(treeId));
     try {
-      await Future.wait([
-        _checkPendingRequests(treeId),
-        _setupDataListeners(treeId, _currentUserId!),
-      ]);
+      await _setupDataListeners(treeId, _currentUserId!);
     } catch (e) {
       debugPrint('Ошибка при инициализации данных для дерева $treeId: $e');
+      _appStatusService.reportError(
+        e,
+        fallbackMessage: 'Не удалось загрузить список родных.',
+      );
       if (mounted) {
         setState(() {
           _isLoading = false;
-          _errorMessage = 'Ошибка загрузки данных дерева.';
+          if (_allRelatives.isEmpty) {
+            _errorMessage = _appStatusService.isOffline
+                ? 'Нет соединения. Родные появятся, когда интернет вернётся.'
+                : 'Ошибка загрузки данных дерева.';
+          }
         });
       }
     }
@@ -176,6 +191,16 @@ class _RelativesScreenState extends State<RelativesScreen> {
       }
     } catch (e) {
       debugPrint('Ошибка проверки запросов: $e');
+      _appStatusService.reportError(
+        e,
+        fallbackMessage: 'Не удалось обновить запросы по дереву.',
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isPendingRequestsLoading = false;
+        });
+      }
     }
   }
 
@@ -183,8 +208,6 @@ class _RelativesScreenState extends State<RelativesScreen> {
     _cancelSubscriptions();
 
     final completerRelatives = Completer<void>();
-    final completerRelations = Completer<void>();
-    final completerChats = Completer<void>();
 
     _relativesSubscription = _familyService.getRelativesStream(treeId).listen(
       (relatives) {
@@ -201,6 +224,7 @@ class _RelativesScreenState extends State<RelativesScreen> {
             _allRelatives = relatives;
             _currentUserPersonId = currentUserPersonId;
             _errorMessage = '';
+            _isLoading = false;
           });
           if (!completerRelatives.isCompleted) completerRelatives.complete();
         }
@@ -223,8 +247,8 @@ class _RelativesScreenState extends State<RelativesScreen> {
         if (mounted) {
           setState(() {
             _relations = relations;
+            _isRelationsReady = true;
           });
-          if (!completerRelations.isCompleted) completerRelations.complete();
         }
       },
       onError: (error, stackTrace) {
@@ -234,7 +258,7 @@ class _RelativesScreenState extends State<RelativesScreen> {
             error,
             stackTrace,
             'RelationsStreamError',
-            completerRelations,
+            null,
           );
         }
       },
@@ -246,8 +270,8 @@ class _RelativesScreenState extends State<RelativesScreen> {
         if (mounted) {
           setState(() {
             _chatPreviews = chatPreviews;
+            _isChatsReady = true;
           });
-          if (!completerChats.isCompleted) completerChats.complete();
         }
       },
       onError: (error, stackTrace) {
@@ -257,7 +281,7 @@ class _RelativesScreenState extends State<RelativesScreen> {
             error,
             stackTrace,
             'ChatsStreamError',
-            completerChats,
+            null,
           );
         }
       },
@@ -265,26 +289,16 @@ class _RelativesScreenState extends State<RelativesScreen> {
     );
 
     try {
-      await Future.wait([
-        completerRelatives.future,
-        completerRelations.future,
-        completerChats.future,
-      ]).timeout(const Duration(seconds: 20));
-      if (mounted && _isLoading) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
+      await completerRelatives.future.timeout(const Duration(seconds: 10));
     } catch (e, stackTrace) {
       debugPrint('Ошибка или таймаут при ожидании данных: $e');
       debugPrint('Error: $e\n$stackTrace');
       if (mounted && _isLoading) {
         setState(() {
           _isLoading = false;
-          if (_errorMessage.isEmpty) {
-            _errorMessage =
-                'Не удалось загрузить все данные. Проверьте соединение.';
-          }
+          _errorMessage = _appStatusService.isOffline
+              ? 'Нет соединения. Проверьте интернет и попробуйте ещё раз.'
+              : 'Не удалось загрузить список родных. Попробуйте ещё раз.';
         });
       }
     }
@@ -446,14 +460,9 @@ class _RelativesScreenState extends State<RelativesScreen> {
       body: selectedTreeId == null
           ? _buildNoTreeSelected()
           : _isLoading
-              ? const Center(child: CircularProgressIndicator())
-              : _errorMessage.isNotEmpty
-                  ? Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(16.0),
-                        child: Text(_errorMessage, textAlign: TextAlign.center),
-                      ),
-                    )
+              ? _buildLoadingState()
+              : _errorMessage.isNotEmpty && _allRelatives.isEmpty
+                  ? _buildErrorState(selectedTreeId)
                   : Center(
                       child: ConstrainedBox(
                         constraints: const BoxConstraints(maxWidth: 1420),
@@ -467,6 +476,10 @@ class _RelativesScreenState extends State<RelativesScreen> {
                                       isFriendsTree: isFriendsTree,
                                       relativesCount: visibleRelatives.length,
                                     ),
+                                    if (_showSecondaryLoadingStrip) ...[
+                                      const SizedBox(height: 12),
+                                      _buildSecondaryLoadingStrip(),
+                                    ],
                                     const SizedBox(height: 16),
                                     Expanded(
                                       child: Row(
@@ -507,6 +520,10 @@ class _RelativesScreenState extends State<RelativesScreen> {
                                       isFriendsTree: isFriendsTree,
                                       relativesCount: visibleRelatives.length,
                                     ),
+                                    if (_showSecondaryLoadingStrip) ...[
+                                      const SizedBox(height: 10),
+                                      _buildSecondaryLoadingStrip(),
+                                    ],
                                     const SizedBox(height: 12),
                                     Expanded(
                                       child: _buildRelativesList(
@@ -532,6 +549,132 @@ class _RelativesScreenState extends State<RelativesScreen> {
               tooltip: _graphAddLabel(treeProvider),
               child: Icon(Icons.add),
             ),
+    );
+  }
+
+  bool get _showSecondaryLoadingStrip =>
+      !_isRelationsReady || !_isChatsReady || _isPendingRequestsLoading;
+
+  Widget _buildLoadingState() {
+    final theme = Theme.of(context);
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: GlassPanel(
+          padding: const EdgeInsets.all(24),
+          borderRadius: BorderRadius.circular(30),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const CircularProgressIndicator(),
+              const SizedBox(height: 16),
+              Text(
+                'Загружаем родных',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Сначала подтянем список, остальное догрузим следом.',
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildErrorState(String selectedTreeId) {
+    final theme = Theme.of(context);
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 360),
+          child: GlassPanel(
+            padding: const EdgeInsets.all(24),
+            borderRadius: BorderRadius.circular(30),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  _appStatusService.isOffline
+                      ? Icons.cloud_off_outlined
+                      : Icons.people_outline_rounded,
+                  size: 40,
+                  color: theme.colorScheme.primary,
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  _appStatusService.isOffline
+                      ? 'Нет соединения'
+                      : 'Родные временно недоступны',
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  _errorMessage,
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 18),
+                FilledButton.icon(
+                  onPressed: () {
+                    _appStatusService.requestRetry();
+                    unawaited(_loadDataForSelectedTree(selectedTreeId));
+                  },
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Повторить'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSecondaryLoadingStrip() {
+    final theme = Theme.of(context);
+    final labels = <String>[
+      if (!_isRelationsReady) 'связи',
+      if (!_isChatsReady) 'чаты',
+      if (_isPendingRequestsLoading) 'запросы',
+    ];
+    return GlassPanel(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      borderRadius: BorderRadius.circular(22),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: theme.colorScheme.primary,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Догружаем: ${labels.join(', ')}.',
+              style: theme.textTheme.bodySmall?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1375,15 +1518,32 @@ class _RelativesScreenState extends State<RelativesScreen> {
     dynamic error,
     StackTrace stackTrace,
     String reason,
-    Completer completer,
+    Completer<void>? completer,
   ) {
     debugPrint('Ошибка при загрузке данных: $error\n$stackTrace');
-    if (_errorMessage.isEmpty && mounted) {
+    _appStatusService.reportError(
+      error,
+      fallbackMessage: 'Не удалось обновить данные на экране родных.',
+    );
+    if (mounted) {
       setState(() {
-        _errorMessage = 'Ошибка при загрузке данных ($reason).';
+        if (reason == 'RelationsStreamError') {
+          _isRelationsReady = true;
+        }
+        if (reason == 'ChatsStreamError') {
+          _isChatsReady = true;
+        }
+        if (_allRelatives.isNotEmpty) {
+          return;
+        }
+        _errorMessage = describeUserFacingError(
+          authService: _authService,
+          error: error,
+          fallbackMessage: 'Ошибка при загрузке данных ($reason).',
+        );
       });
     }
-    if (!completer.isCompleted) {
+    if (completer != null && !completer.isCompleted) {
       completer.completeError(error, stackTrace);
     }
   }

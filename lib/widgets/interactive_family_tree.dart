@@ -1,10 +1,14 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'dart:math'; // <--- Добавляем импорт для функции min
 import 'package:vector_math/vector_math_64.dart' as vector_math;
 import '../models/family_person.dart';
 import '../models/family_relation.dart';
+import '../models/tree_graph_snapshot.dart';
 import '../models/user_profile.dart';
+import 'family_tree_node_card.dart';
 
 // Структура для хранения информации о связях для отрисовки
 class FamilyConnection {
@@ -23,6 +27,7 @@ class InteractiveFamilyTree extends StatefulWidget {
   final List<Map<String, dynamic>>
       peopleData; // Теперь содержит {'person': FamilyPerson, 'userProfile': UserProfile?}
   final List<FamilyRelation> relations;
+  final TreeGraphSnapshot? graphSnapshot;
   final Function(FamilyPerson) onPersonTap; // Коллбэк при нажатии на узел
   final bool isEditMode; // Флаг режима редактирования
   final void Function(FamilyPerson person, RelationType type)
@@ -38,10 +43,12 @@ class InteractiveFamilyTree extends StatefulWidget {
   final String? selectedEditPersonId;
   final ValueChanged<FamilyPerson>? onEditPersonSelected;
   final ValueChanged<FamilyPerson>? onOpenPersonHistory;
+  final ValueChanged<FamilyPerson>? onShowRelationPath;
+  final ValueChanged<FamilyPerson>? onShowOtherParents;
+  final ValueChanged<FamilyPerson>? onFixPersonRelations;
   final Map<String, Offset>? manualNodePositions;
   final ValueChanged<Map<String, Offset>>? onNodePositionsChanged;
   final bool showGenerationGuides;
-  final bool enableClusterHighlights;
   final String graphLabel;
   final bool hasManualLayout;
   final VoidCallback? onResetLayout;
@@ -50,19 +57,20 @@ class InteractiveFamilyTree extends StatefulWidget {
   static const double nodeWidth = 132; // Примерная ширина карточки
   static const double nodeHeight = 112; // Примерная высота карточки
   static const double levelSeparation =
-      80; // Вертикальное расстояние между уровнями
+      64; // Вертикальное расстояние между уровнями
   static const double siblingSeparation =
       40; // Горизонтальное расстояние между братьями/сестрами
   static const double spouseSeparation =
       20; // Горизонтальное расстояние между супругами
   static const double contentInsetHorizontal = 72;
-  static const double contentInsetTop = 96;
-  static const double contentInsetBottom = 56;
+  static const double contentInsetTop = 80;
+  static const double contentInsetBottom = 40;
 
   const InteractiveFamilyTree({
     super.key,
     required this.peopleData,
     required this.relations,
+    this.graphSnapshot,
     required this.onPersonTap,
     this.isEditMode = false, // По умолчанию выключен
     required this.onAddRelativeTapWithType,
@@ -75,10 +83,12 @@ class InteractiveFamilyTree extends StatefulWidget {
     this.selectedEditPersonId,
     this.onEditPersonSelected,
     this.onOpenPersonHistory,
+    this.onShowRelationPath,
+    this.onShowOtherParents,
+    this.onFixPersonRelations,
     this.manualNodePositions,
     this.onNodePositionsChanged,
     this.showGenerationGuides = true,
-    this.enableClusterHighlights = true,
     this.graphLabel = 'дерева',
     this.hasManualLayout = false,
     this.onResetLayout,
@@ -94,6 +104,7 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
 
   // Данные для CustomPainter
   Map<String, Offset> nodePositions = {}; // ID человека -> его позиция (центр)
+  Map<String, Offset> _automaticNodePositions = {};
   List<FamilyConnection> connections = []; // Список связей для отрисовки линий
   Size treeSize = Size.zero; // Общий размер дерева для CustomPaint и Stack
   final TransformationController _transformationController =
@@ -101,9 +112,10 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
   Size? _viewportSize;
   bool _hasAppliedViewportFit = false;
   String? _selectedEditPersonId;
-  String? _hoveredBranchPersonId;
   double _currentScale = 1.0;
   String? _draggingPersonId;
+  String? _hoveredPersonId;
+  Offset? _dragStartNodePosition;
 
   @override
   void initState() {
@@ -118,6 +130,7 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.peopleData != widget.peopleData ||
         oldWidget.relations != widget.relations ||
+        oldWidget.graphSnapshot != widget.graphSnapshot ||
         oldWidget.currentUserId != widget.currentUserId ||
         oldWidget.branchRootPersonId != widget.branchRootPersonId ||
         oldWidget.manualNodePositions != widget.manualNodePositions) {
@@ -137,9 +150,6 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
     if (!widget.isEditMode && _selectedEditPersonId != null) {
       _selectedEditPersonId = null;
     }
-    if (widget.isEditMode && _hoveredBranchPersonId != null) {
-      _hoveredBranchPersonId = null;
-    }
   }
 
   @override
@@ -151,7 +161,7 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
 
   void _handleTransformChanged() {
     final scale = _transformationController.value.getMaxScaleOnAxis();
-    if ((scale - _currentScale).abs() < 0.01 || !mounted) {
+    if ((scale - _currentScale).abs() < 0.04 || !mounted) {
       return;
     }
     setState(() {
@@ -161,445 +171,32 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
 
   // Метод для расчета позиций узлов и связей
   void _calculateLayout() {
-    final modernLayout = _buildModernLayout();
-    if (modernLayout != null) {
-      final positions = _mergeManualNodePositions(modernLayout.nodePositions);
-      setState(() {
-        nodePositions = positions;
-        connections = modernLayout.connections;
-        treeSize = _calculateTreeSize(
-          positions,
-          minimumWidth: modernLayout.treeSize.width,
-          minimumHeight: modernLayout.treeSize.height,
-        );
-      });
-      _scheduleViewportFit();
-      return;
-    }
-
     if (widget.peopleData.isEmpty) {
       setState(() {
         nodePositions = {};
+        _automaticNodePositions = {};
         connections = [];
         treeSize = Size.zero;
       });
       return;
     }
-
-    // --- Шаг 1: Подготовка данных и определение поколений ---
-    final Map<String, List<String>> parentToChildrenMap = {};
-    final Map<String, List<String>> childToParentsMap = {};
-    final Map<String, List<String>> spouseMap =
-        {}; // Карта супругов (id -> список супругов)
-    final Set<String> personIds =
-        widget.peopleData.map((d) => (d['person'] as FamilyPerson).id).toSet();
-
-    for (var relation in widget.relations) {
-      final p1Id = relation.person1Id;
-      final p2Id = relation.person2Id;
-
-      // Убедимся, что оба ID существуют в peopleData
-      if (!personIds.contains(p1Id) || !personIds.contains(p2Id)) continue;
-
-      if (relation.relation1to2 == RelationType.parent) {
-        // p1 родитель p2
-        parentToChildrenMap.putIfAbsent(p1Id, () => []).add(p2Id);
-        childToParentsMap.putIfAbsent(p2Id, () => []).add(p1Id);
-      } else if (relation.relation1to2 == RelationType.child) {
-        // p1 ребенок p2
-        parentToChildrenMap.putIfAbsent(p2Id, () => []).add(p1Id);
-        childToParentsMap.putIfAbsent(p1Id, () => []).add(p2Id);
-      } else if (relation.relation1to2 == RelationType.spouse) {
-        // Супруги
-        spouseMap.putIfAbsent(p1Id, () => []).add(p2Id);
-        spouseMap.putIfAbsent(p2Id, () => []).add(p1Id);
-      }
-    }
-
-    // --- Улучшенная логика определения корней ---
-    final List<String> roots = [];
-    final Set<String> nonRoots = {};
-
-    for (final id in personIds) {
-      if (nonRoots.contains(id)) continue;
-
-      bool hasParents = childToParentsMap.containsKey(id) &&
-          childToParentsMap[id]!.isNotEmpty;
-      bool hasSpouseWithParents = false;
-      final spouses = spouseMap[id] ?? [];
-      for (final spouseId in spouses) {
-        if (childToParentsMap.containsKey(spouseId) &&
-            childToParentsMap[spouseId]!.isNotEmpty) {
-          hasSpouseWithParents = true;
-          nonRoots.add(spouseId);
-          break;
-        }
-      }
-
-      if (!hasParents && !hasSpouseWithParents) {
-        roots.add(id);
-      } else {
-        nonRoots.add(id);
-      }
-    }
-    // --- Конец улучшенной логики ---
-
-    final Map<String, int> nodeLevels = {}; // Объявляем здесь
-    final Set<String> visited = {};
-    final Map<String, int> queue = {};
-    final Set<String> processing = {};
-
-    // Начальная инициализация для корней
-    for (final rootId in roots) {
-      if (!processing.contains(rootId)) {
-        queue[rootId] = 0;
-        processing.add(rootId);
-      }
-    }
-
-    // Добавляем все остальные узлы с высоким уровнем
-    for (final personId in personIds) {
-      if (!processing.contains(personId)) {
-        queue[personId] = 10000;
-        processing.add(personId);
-      }
-    }
-
-    // BFS для определения уровней
-    while (queue.isNotEmpty) {
-      String currentId = '';
-      int minLevelInQueue = 1000000;
-      queue.forEach((id, level) {
-        if (level < minLevelInQueue) {
-          minLevelInQueue = level;
-          currentId = id;
-        }
-      });
-
-      if (currentId.isEmpty && queue.isNotEmpty) {
-        break;
-      }
-      if (currentId.isEmpty) break;
-
-      final currentLevel = queue.remove(currentId)!;
-      nodeLevels[currentId] = currentLevel;
-      visited.add(currentId);
-      processing.remove(currentId);
-
-      // --- Обрабатываем ДЕТЕЙ ---
-      final children = parentToChildrenMap[currentId] ?? [];
-      for (final childId in children) {
-        final newChildLevel = currentLevel + 1;
-        if (!visited.contains(childId)) {
-          if (processing.contains(childId)) {
-            if (newChildLevel < queue[childId]!) {
-              queue[childId] = newChildLevel;
-            }
-          } else {
-            queue[childId] = newChildLevel;
-            processing.add(childId);
-          }
-        }
-      }
-
-      // --- Обрабатываем СУПРУГОВ ---
-      final currentSpouses = spouseMap[currentId] ?? [];
-      for (final spouseId in currentSpouses) {
-        final newSpouseLevel = currentLevel;
-        if (!visited.contains(spouseId)) {
-          if (processing.contains(spouseId)) {
-            if (newSpouseLevel < queue[spouseId]!) {
-              queue[spouseId] = newSpouseLevel;
-            } else if (newSpouseLevel > queue[spouseId]!) {}
-          } else {
-            queue[spouseId] = newSpouseLevel;
-            processing.add(spouseId);
-          }
-        } else {}
-      }
-    }
-
-    // --- Шаг 2: Расчет X и Y координат ---
-    final Map<int, List<String>> nodesByLevel = {};
-    int maxLevel = 0;
-    nodeLevels.forEach((nodeId, level) {
-      if (level < 0) {
-        level = 0;
-        nodeLevels[nodeId] = 0;
-      }
-      nodesByLevel.putIfAbsent(level, () => []).add(nodeId);
-      if (level > maxLevel) {
-        maxLevel = level;
-      }
-    });
-
-    Map<String, Offset> currentPositions = _performInitialXLayout(
-      maxLevel,
-      nodesByLevel,
-      spouseMap,
-      nodeLevels,
-      childToParentsMap,
-    );
-
-    // --- Итеративная корректировка для центрирования детей ---
-    int iterations = 20; // Увеличиваем количество итераций
-    double adjustmentFactor = 0.5; // Ослабляем корректировку
-
-    for (int i = 0; i < iterations; i++) {
-      Map<String, Offset> nextPositions = Map.from(currentPositions);
-      for (int level = maxLevel - 1; level >= 0; level--) {
-        final levelNodes = nodesByLevel[level] ?? [];
-        for (final nodeId in levelNodes) {
-          final parentPos = currentPositions[nodeId];
-          if (parentPos == null) continue;
-
-          final children = parentToChildrenMap[nodeId] ?? [];
-          final childrenOnNextLevel = children
-              .where(
-                (childId) =>
-                    nodeLevels.containsKey(childId) &&
-                    nodeLevels[childId] == level + 1,
-              )
-              .toList();
-
-          if (childrenOnNextLevel.isEmpty) continue;
-
-          // --- Улучшенный расчет центра детей: среднее арифметическое ---
-          double childrenSumX = 0;
-          int validChildrenCount = 0;
-          for (final childId in childrenOnNextLevel) {
-            final childPos = currentPositions[childId];
-            if (childPos != null) {
-              childrenSumX += childPos.dx;
-              validChildrenCount++;
-            }
-          }
-
-          if (validChildrenCount > 0) {
-            final childrenCenterX = childrenSumX / validChildrenCount;
-            // --- Конец улучшенного расчета ---
-
-            final parentGroupIds = _getNodeGroup(
-              nodeId,
-              level,
-              currentPositions,
-              spouseMap,
-            );
-
-            double minParentX = double.infinity;
-            double maxParentX = double.negativeInfinity;
-            for (final pId in parentGroupIds) {
-              final pPos = currentPositions[pId];
-              if (pPos != null) {
-                minParentX = min(minParentX, pPos.dx);
-                maxParentX = max(maxParentX, pPos.dx);
-              }
-            }
-
-            if (minParentX.isFinite && maxParentX.isFinite) {
-              final parentGroupCenterX = (minParentX + maxParentX) / 2;
-              final targetShift = childrenCenterX - parentGroupCenterX;
-              final shiftAmount = targetShift * adjustmentFactor;
-
-              for (final pId in parentGroupIds) {
-                final currentPPos = nextPositions[pId];
-                if (currentPPos != null) {
-                  nextPositions[pId] = Offset(
-                    currentPPos.dx + shiftAmount,
-                    currentPPos.dy,
-                  );
-                }
-              }
-            }
-          }
-        }
-      }
-      currentPositions = _resolveCollisions(
-        maxLevel,
-        nodesByLevel,
-        nextPositions,
-        spouseMap,
-      );
-    }
-
-    // --- NEW: Add a second pass for centering children under parents ---
-    for (int i = 0; i < iterations; i++) {
-      // Используем то же кол-во итераций
-      Map<String, Offset> nextPositions = Map.from(currentPositions);
-      for (int level = 1; level <= maxLevel; level++) {
-        // Идем снизу вверх
-        final levelNodes = nodesByLevel[level] ?? [];
-        for (final childId in levelNodes) {
-          final childPos = currentPositions[childId];
-          if (childPos == null) continue;
-
-          final parents = childToParentsMap[childId] ?? [];
-          final parentsOnPrevLevel = parents
-              .where(
-                (parentId) =>
-                    nodeLevels.containsKey(parentId) &&
-                    nodeLevels[parentId] == level - 1,
-              )
-              .toList();
-
-          if (parentsOnPrevLevel.isEmpty) continue;
-
-          double parentSumX = 0;
-          int validParentCount = 0;
-          for (final parentId in parentsOnPrevLevel) {
-            final parentPos = currentPositions[parentId];
-            if (parentPos != null) {
-              parentSumX += parentPos.dx;
-              validParentCount++;
-            }
-          }
-
-          if (validParentCount > 0) {
-            final parentCenterX = parentSumX / validParentCount;
-
-            // Определяем группу ребенка (он сам + супруги на том же уровне)
-            final childGroupIds = _getNodeGroup(
-              childId,
-              level,
-              currentPositions,
-              spouseMap,
-            );
-
-            double minChildGroupX = double.infinity;
-            double maxChildGroupX = double.negativeInfinity;
-            for (final cId in childGroupIds) {
-              final cPos = currentPositions[cId];
-              if (cPos != null) {
-                minChildGroupX = min(minChildGroupX, cPos.dx);
-                maxChildGroupX = max(maxChildGroupX, cPos.dx);
-              }
-            }
-
-            if (minChildGroupX.isFinite && maxChildGroupX.isFinite) {
-              final childGroupCenterX = (minChildGroupX + maxChildGroupX) / 2;
-              final targetShift = parentCenterX - childGroupCenterX;
-              final shiftAmount = targetShift *
-                  adjustmentFactor; // Используем ослабленный adjustmentFactor
-
-              for (final cId in childGroupIds) {
-                final currentCPos = nextPositions[cId];
-                if (currentCPos != null) {
-                  nextPositions[cId] = Offset(
-                    currentCPos.dx + shiftAmount,
-                    currentCPos.dy,
-                  );
-                }
-              }
-            }
-          }
-        }
-      }
-      // Применяем разрешение коллизий после каждого шага центрирования детей
-      currentPositions = _resolveCollisions(
-        maxLevel,
-        nodesByLevel,
-        nextPositions,
-        spouseMap,
-      );
-    }
-    // --- END NEW PASS ---
-
-    Map<String, Offset> finalPositions = currentPositions;
-
-    double maxTreeWidth = 0;
-    if (finalPositions.isNotEmpty) {
-      double minX = double.infinity;
-      double maxX = double.negativeInfinity;
-      for (var pos in finalPositions.values) {
-        minX = min(minX, pos.dx);
-        maxX = max(maxX, pos.dx);
-      }
-      maxTreeWidth = (maxX + InteractiveFamilyTree.nodeWidth / 2) -
-          (minX - InteractiveFamilyTree.nodeWidth / 2);
-
-      double shiftX = 0;
-      if (minX <
-          InteractiveFamilyTree.nodeWidth / 2 +
-              InteractiveFamilyTree.siblingSeparation) {
-        shiftX = (InteractiveFamilyTree.nodeWidth / 2 +
-                InteractiveFamilyTree.siblingSeparation) -
-            minX;
-        Map<String, Offset> shiftedPositions = {};
-        finalPositions.forEach((key, value) {
-          shiftedPositions[key] = Offset(value.dx + shiftX, value.dy);
-        });
-        finalPositions = shiftedPositions;
-        maxTreeWidth += shiftX;
-      }
-    }
-
-    // --- Шаг 4: Формирование связей (connections) ---
-    final List<FamilyConnection> finalConnections = [];
-    final Set<String> addedSpousePairs = {};
-
-    for (var relation in widget.relations) {
-      final p1Id = relation.person1Id;
-      final p2Id = relation.person2Id;
-      final type1to2 = relation.relation1to2;
-
-      if (finalPositions.containsKey(p1Id) &&
-          finalPositions.containsKey(p2Id)) {
-        if (type1to2 == RelationType.parent || type1to2 == RelationType.child) {
-          final parentId = (type1to2 == RelationType.parent) ? p1Id : p2Id;
-          final childId = (type1to2 == RelationType.parent) ? p2Id : p1Id;
-          if (nodeLevels.containsKey(parentId) &&
-              nodeLevels.containsKey(childId) &&
-              nodeLevels[parentId]! + 1 == nodeLevels[childId]!) {
-            finalConnections.add(
-              FamilyConnection(
-                fromId: parentId,
-                toId: childId,
-                type: RelationType.parent,
-              ),
-            );
-          }
-        } else if (type1to2 == RelationType.spouse) {
-          if (nodeLevels.containsKey(p1Id) &&
-              nodeLevels.containsKey(p2Id) &&
-              nodeLevels[p1Id] == nodeLevels[p2Id]) {
-            final pairKey = [p1Id, p2Id]..sort();
-            final pairString = pairKey.join('-');
-            if (!addedSpousePairs.contains(pairString)) {
-              finalConnections.add(
-                FamilyConnection(
-                  fromId: p1Id,
-                  toId: p2Id,
-                  type: RelationType.spouse,
-                ),
-              );
-              addedSpousePairs.add(pairString);
-            }
-          }
-        }
-      }
-    }
-
-    // --- Шаг 5: Расчет общего размера (treeSize) ---
-    double finalMaxY = (maxLevel *
-            (InteractiveFamilyTree.nodeHeight +
-                InteractiveFamilyTree.levelSeparation)) +
-        InteractiveFamilyTree.nodeHeight;
-    final mergedPositions = _mergeManualNodePositions(finalPositions);
-    final Size finalTreeSize = _calculateTreeSize(
-      mergedPositions,
-      minimumWidth: max(maxTreeWidth, 300.0),
-      minimumHeight: max(finalMaxY, 300.0),
-    );
-
+    final modernLayout = _buildModernLayout();
+    final mergedPositions =
+        _mergeManualNodePositions(modernLayout.nodePositions);
     setState(() {
+      _automaticNodePositions = modernLayout.nodePositions;
       nodePositions = mergedPositions;
-      connections = finalConnections;
-      treeSize = finalTreeSize;
+      connections = modernLayout.connections;
+      treeSize = _calculateTreeSize(
+        mergedPositions,
+        minimumWidth: modernLayout.treeSize.width,
+        minimumHeight: modernLayout.treeSize.height,
+      );
     });
     _scheduleViewportFit();
   }
 
-  _TreeLayoutComputation? _buildModernLayout() {
+  _TreeLayoutComputation _buildModernLayout() {
     final visiblePeopleData = _buildVisiblePeopleData();
     if (visiblePeopleData.isEmpty) {
       return const _TreeLayoutComputation(
@@ -620,6 +217,7 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
     return _TreeLayoutEngine(
       peopleData: visiblePeopleData,
       relations: visibleRelations,
+      graphSnapshot: widget.graphSnapshot,
     ).compute();
   }
 
@@ -640,90 +238,21 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
     final personIds = widget.peopleData
         .map((entry) => (entry['person'] as FamilyPerson).id)
         .toSet();
-    if (!personIds.contains(branchRootPersonId)) {
-      return personIds;
-    }
-
-    final childrenByParent = <String, Set<String>>{};
-    final spousesByPerson = <String, Set<String>>{};
-    for (final relation in widget.relations) {
-      final parentId = _parentIdFromRelation(relation);
-      final childId = _childIdFromRelation(relation);
-      if (parentId != null && childId != null) {
-        childrenByParent.putIfAbsent(parentId, () => <String>{}).add(childId);
-      }
-      if (_isSpouseRelation(relation)) {
-        spousesByPerson
-            .putIfAbsent(relation.person1Id, () => <String>{})
-            .add(relation.person2Id);
-        spousesByPerson
-            .putIfAbsent(relation.person2Id, () => <String>{})
-            .add(relation.person1Id);
+    final graphSnapshot = widget.graphSnapshot;
+    if (graphSnapshot != null) {
+      final branchBlock =
+          graphSnapshot.findBranchBlockForPerson(branchRootPersonId);
+      if (branchBlock != null) {
+        return branchBlock.memberPersonIds.toSet();
       }
     }
-
-    final visibleIds = <String>{branchRootPersonId};
-    final queue = <String>[branchRootPersonId];
-    while (queue.isNotEmpty) {
-      final currentId = queue.removeAt(0);
-      for (final spouseId in spousesByPerson[currentId] ?? const <String>{}) {
-        if (visibleIds.add(spouseId)) {
-          queue.add(spouseId);
-        }
-      }
-      for (final childId in childrenByParent[currentId] ?? const <String>{}) {
-        if (visibleIds.add(childId)) {
-          queue.add(childId);
-        }
-      }
-    }
-
-    return visibleIds;
-  }
-
-  bool _isSpouseRelation(FamilyRelation relation) {
-    return relation.relation1to2 == RelationType.spouse ||
-        relation.relation2to1 == RelationType.spouse ||
-        relation.relation1to2 == RelationType.partner ||
-        relation.relation2to1 == RelationType.partner;
-  }
-
-  bool _isSiblingRelation(FamilyRelation relation) {
-    return relation.relation1to2 == RelationType.sibling ||
-        relation.relation2to1 == RelationType.sibling;
-  }
-
-  String? _parentIdFromRelation(FamilyRelation relation) {
-    if (relation.relation1to2 == RelationType.parent ||
-        relation.relation2to1 == RelationType.child) {
-      return relation.person1Id;
-    }
-    if (relation.relation2to1 == RelationType.parent ||
-        relation.relation1to2 == RelationType.child) {
-      return relation.person2Id;
-    }
-    return null;
-  }
-
-  String? _childIdFromRelation(FamilyRelation relation) {
-    if (relation.relation1to2 == RelationType.parent ||
-        relation.relation2to1 == RelationType.child) {
-      return relation.person2Id;
-    }
-    if (relation.relation2to1 == RelationType.parent ||
-        relation.relation1to2 == RelationType.child) {
-      return relation.person1Id;
-    }
-    return null;
+    return personIds;
   }
 
   @override
   Widget build(BuildContext context) {
     final stackWidth = treeSize.width;
     final stackHeight = treeSize.height;
-    final familyClusters = widget.enableClusterHighlights
-        ? _buildFamilyClusters()
-        : const <_FamilyClusterOverlay>[];
     final interactionBoundary = max(stackWidth, stackHeight) + 160;
 
     return DecoratedBox(
@@ -764,14 +293,6 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
                   autofocus: true,
                   child: GestureDetector(
                     behavior: HitTestBehavior.translucent,
-                    onTap: () {
-                      if (_hoveredBranchPersonId != null &&
-                          !widget.isEditMode) {
-                        setState(() {
-                          _hoveredBranchPersonId = null;
-                        });
-                      }
-                    },
                     onDoubleTap: _fitTreeToViewport,
                     child: InteractiveViewer(
                       transformationController: _transformationController,
@@ -794,17 +315,14 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
                               ..._buildGenerationGuideWidgets(
                                 stackWidth: stackWidth,
                               ),
-                            if (widget.enableClusterHighlights)
-                              IgnorePointer(
-                                child: Stack(
-                                  children: _buildFamilyClusterWidgets(
-                                      familyClusters),
-                                ),
-                              ),
                             CustomPaint(
                               size: Size(stackWidth, stackHeight),
-                              painter:
-                                  FamilyTreePainter(nodePositions, connections),
+                              painter: FamilyTreePainter(
+                                nodePositions,
+                                connections,
+                                graphSnapshot: widget.graphSnapshot,
+                                relations: widget.relations,
+                              ),
                             ),
                             ..._buildPersonWidgets(),
                             if (widget.isEditMode)
@@ -859,9 +377,56 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
       if (!merged.containsKey(entry.key)) {
         continue;
       }
-      merged[entry.key] = _normalizeNodePosition(entry.value);
+      merged[entry.key] = _mergeNodePosition(
+        personId: entry.key,
+        automaticPosition: automaticPositions[entry.key]!,
+        manualPosition: entry.value,
+      );
     }
     return merged;
+  }
+
+  Offset _mergeNodePosition({
+    required String personId,
+    required Offset automaticPosition,
+    required Offset manualPosition,
+  }) {
+    final normalizedManual = _normalizeNodePosition(manualPosition);
+    final rowHints = _generationRowHints();
+    final semanticRow = rowHints[personId];
+    final maxVerticalDrift = semanticRow == null
+        ? (InteractiveFamilyTree.nodeHeight +
+                InteractiveFamilyTree.levelSeparation) *
+            0.55
+        : (InteractiveFamilyTree.nodeHeight +
+                InteractiveFamilyTree.levelSeparation) *
+            0.38;
+    final mergedDy =
+        (normalizedManual.dy - automaticPosition.dy).abs() > maxVerticalDrift
+            ? automaticPosition.dy
+            : normalizedManual.dy;
+    return Offset(normalizedManual.dx, mergedDy);
+  }
+
+  Map<String, int> _generationRowHints() {
+    final snapshot = widget.graphSnapshot;
+    if (snapshot == null || snapshot.generationRows.isEmpty) {
+      return const <String, int>{};
+    }
+    final hints = <String, int>{};
+    final rowValues =
+        snapshot.generationRows.map((row) => row.row).toList(growable: false);
+    if (rowValues.isEmpty) {
+      return const <String, int>{};
+    }
+    final minRow =
+        rowValues.reduce((left, right) => left < right ? left : right);
+    for (final row in snapshot.generationRows) {
+      for (final personId in row.personIds) {
+        hints[personId] = row.row - minRow;
+      }
+    }
+    return hints;
   }
 
   Size _calculateTreeSize(
@@ -910,29 +475,45 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
     );
   }
 
-  void _handleNodePanStart(FamilyPerson person) {
+  void _handleNodeDragStart(FamilyPerson person) {
     if (!widget.isEditMode) {
+      return;
+    }
+    final currentPosition = nodePositions[person.id];
+    if (currentPosition == null) {
       return;
     }
     _selectEditPerson(person);
     setState(() {
       _draggingPersonId = person.id;
+      _dragStartNodePosition = currentPosition;
     });
   }
 
-  void _handleNodePanUpdate(FamilyPerson person, DragUpdateDetails details) {
+  void _handleNodeDragUpdate(
+    FamilyPerson person,
+    Offset offsetFromOrigin,
+  ) {
     if (!widget.isEditMode) {
       return;
     }
 
-    final currentPosition = nodePositions[person.id];
-    if (currentPosition == null) {
+    final dragStartPosition =
+        _dragStartNodePosition ?? nodePositions[person.id];
+    if (dragStartPosition == null) {
       return;
     }
 
     final effectiveScale = _currentScale <= 0 ? 1.0 : _currentScale;
-    final delta = details.delta / effectiveScale;
-    final nextPosition = _normalizeNodePosition(currentPosition + delta);
+    final automaticPosition =
+        _automaticNodePositions[person.id] ?? dragStartPosition;
+    final rawCandidate =
+        dragStartPosition + (offsetFromOrigin / effectiveScale);
+    final nextPosition = _snapNodePositionWithinGeneration(
+      personId: person.id,
+      candidatePosition: rawCandidate,
+      automaticPosition: automaticPosition,
+    );
     final updatedPositions = Map<String, Offset>.from(nodePositions)
       ..[person.id] = nextPosition;
 
@@ -942,7 +523,7 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
     });
   }
 
-  void _handleNodePanEnd() {
+  void _handleNodeDragEnd() {
     if (_draggingPersonId == null) {
       return;
     }
@@ -950,233 +531,78 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
     final updatedPositions = Map<String, Offset>.from(nodePositions);
     setState(() {
       _draggingPersonId = null;
+      _dragStartNodePosition = null;
     });
     widget.onNodePositionsChanged?.call(updatedPositions);
   }
 
-  List<_FamilyClusterOverlay> _buildFamilyClusters() {
-    if (nodePositions.isEmpty) {
-      return const <_FamilyClusterOverlay>[];
-    }
-
-    final peopleById = <String, FamilyPerson>{
-      for (final entry in widget.peopleData)
-        (entry['person'] as FamilyPerson).id: entry['person'] as FamilyPerson,
-    };
-    final parentToChildren = <String, Set<String>>{};
-    final spousesByPerson = <String, Set<String>>{};
-    final siblingsByPerson = <String, Set<String>>{};
-
-    for (final relation in widget.relations) {
-      final parentId = _parentIdFromRelation(relation);
-      final childId = _childIdFromRelation(relation);
-      if (parentId != null &&
-          childId != null &&
-          nodePositions.containsKey(parentId) &&
-          nodePositions.containsKey(childId)) {
-        parentToChildren.putIfAbsent(parentId, () => <String>{}).add(childId);
-      }
-      if (_isSpouseRelation(relation) &&
-          nodePositions.containsKey(relation.person1Id) &&
-          nodePositions.containsKey(relation.person2Id)) {
-        spousesByPerson
-            .putIfAbsent(relation.person1Id, () => <String>{})
-            .add(relation.person2Id);
-        spousesByPerson
-            .putIfAbsent(relation.person2Id, () => <String>{})
-            .add(relation.person1Id);
-      }
-      if (_isSiblingRelation(relation) &&
-          nodePositions.containsKey(relation.person1Id) &&
-          nodePositions.containsKey(relation.person2Id)) {
-        siblingsByPerson
-            .putIfAbsent(relation.person1Id, () => <String>{})
-            .add(relation.person2Id);
-        siblingsByPerson
-            .putIfAbsent(relation.person2Id, () => <String>{})
-            .add(relation.person1Id);
-      }
-    }
-
-    final palette = <Color>[
-      const Color(0xFF89C2D9),
-      const Color(0xFFF6BD60),
-      const Color(0xFF84A59D),
-      const Color(0xFFF28482),
-      const Color(0xFFA3C4BC),
-      const Color(0xFF90BE6D),
-    ];
-    final overlays = <_FamilyClusterOverlay>[];
-    final processedGroups = <String>{};
-    final ids = peopleById.keys.toList()..sort();
-
-    for (final personId in ids) {
-      if (!nodePositions.containsKey(personId)) {
-        continue;
-      }
-      final groupMembers = <String>{personId};
-      final queue = <String>[personId];
-      while (queue.isNotEmpty) {
-        final currentId = queue.removeAt(0);
-        for (final spouseId in spousesByPerson[currentId] ?? const <String>{}) {
-          if (groupMembers.add(spouseId)) {
-            queue.add(spouseId);
-          }
-        }
-        for (final siblingId
-            in siblingsByPerson[currentId] ?? const <String>{}) {
-          if (groupMembers.add(siblingId)) {
-            queue.add(siblingId);
-          }
-        }
-      }
-
-      final groupKey = groupMembers.toList()..sort();
-      final groupKeyString = groupKey.join('::');
-      if (!processedGroups.add(groupKeyString)) {
-        continue;
-      }
-
-      final childIds = <String>{};
-      for (final memberId in groupMembers) {
-        childIds.addAll(parentToChildren[memberId] ?? const <String>{});
-      }
-
-      final memberIds = <String>{...groupMembers, ...childIds}
-          .where(nodePositions.containsKey)
-          .toList();
-      if (memberIds.length < 2) {
-        continue;
-      }
-
-      final positions = memberIds.map((id) => nodePositions[id]!).toList();
-      final minX = positions
-          .map((pos) => pos.dx - InteractiveFamilyTree.nodeWidth / 2)
-          .reduce(min);
-      final maxX = positions
-          .map((pos) => pos.dx + InteractiveFamilyTree.nodeWidth / 2)
-          .reduce(max);
-      final minY = positions
-          .map((pos) => pos.dy - InteractiveFamilyTree.nodeHeight / 2)
-          .reduce(min);
-      final maxY = positions
-          .map((pos) => pos.dy + InteractiveFamilyTree.nodeHeight / 2)
-          .reduce(max);
-
-      final familyName = _buildFamilyClusterLabel(
-        parents: groupMembers
-            .map((id) => peopleById[id])
-            .whereType<FamilyPerson>()
-            .toList(),
-        children: childIds
-            .map((id) => peopleById[id])
-            .whereType<FamilyPerson>()
-            .toList(),
-      );
-      final color = palette[groupKeyString.hashCode.abs() % palette.length];
-      overlays.add(
-        _FamilyClusterOverlay(
-          rect: Rect.fromLTRB(minX - 18, minY - 34, maxX + 18, maxY + 18),
-          label: familyName,
-          color: color,
-        ),
-      );
-    }
-
-    return overlays;
-  }
-
-  String _buildFamilyClusterLabel({
-    required List<FamilyPerson> parents,
-    required List<FamilyPerson> children,
+  Offset _snapNodePositionWithinGeneration({
+    required String personId,
+    required Offset candidatePosition,
+    required Offset automaticPosition,
   }) {
-    final candidates = [...parents, ...children];
-    final surnameCounts = <String, int>{};
-    for (final person in candidates) {
-      final surname = _extractSurname(person.name);
-      if (surname.isEmpty) {
-        continue;
-      }
-      surnameCounts.update(surname, (value) => value + 1, ifAbsent: () => 1);
-    }
+    final normalized = _normalizeNodePosition(candidatePosition);
+    final rowHints = _generationRowHints();
+    final semanticRow = rowHints[personId];
+    final rowAutomaticPositions = _automaticNodePositions.entries
+        .where((entry) => rowHints[entry.key] == semanticRow)
+        .map((entry) => entry.value.dx)
+        .toList()
+      ..sort();
 
-    if (surnameCounts.isNotEmpty) {
-      final topSurname = surnameCounts.entries.toList()
-        ..sort((a, b) {
-          final countCompare = b.value.compareTo(a.value);
-          if (countCompare != 0) {
-            return countCompare;
-          }
-          return a.key.compareTo(b.key);
-        });
-      if (topSurname.length > 1 &&
-          topSurname[1].value == topSurname.first.value) {
-        return 'Ветка ${topSurname.first.key} / ${topSurname[1].key}';
-      }
-      return 'Ветка ${topSurname.first.key}';
-    }
-
-    final anchor =
-        parents.isNotEmpty ? parents.first.name : children.first.name;
-    return 'Ветка $anchor';
+    final rowMinDx = rowAutomaticPositions.isEmpty
+        ? automaticPosition.dx - InteractiveFamilyTree.nodeWidth
+        : rowAutomaticPositions.first -
+            (InteractiveFamilyTree.nodeWidth * 0.85);
+    final rowMaxDx = rowAutomaticPositions.isEmpty
+        ? automaticPosition.dx + InteractiveFamilyTree.nodeWidth
+        : rowAutomaticPositions.last + (InteractiveFamilyTree.nodeWidth * 0.85);
+    final clampedDx = normalized.dx.clamp(rowMinDx, rowMaxDx).toDouble();
+    final snappedDx = _snapNodeDxToGenerationLanes(
+      candidateDx: clampedDx,
+      automaticDx: automaticPosition.dx,
+      rowAutomaticPositions: rowAutomaticPositions,
+    );
+    return Offset(snappedDx, automaticPosition.dy);
   }
 
-  String _extractSurname(String fullName) {
-    final parts = fullName
-        .split(' ')
-        .map((part) => part.trim())
-        .where((part) => part.isNotEmpty)
-        .toList();
-    if (parts.isEmpty) {
-      return '';
+  double _snapNodeDxToGenerationLanes({
+    required double candidateDx,
+    required double automaticDx,
+    required List<double> rowAutomaticPositions,
+  }) {
+    final snapTargets = <double>{automaticDx};
+    for (final dx in rowAutomaticPositions) {
+      snapTargets.add(dx);
     }
-    return parts.first;
-  }
+    final sortedRowPositions = rowAutomaticPositions.toList()..sort();
+    for (var index = 0; index < sortedRowPositions.length - 1; index++) {
+      snapTargets.add(
+        (sortedRowPositions[index] + sortedRowPositions[index + 1]) / 2,
+      );
+    }
 
-  List<Widget> _buildFamilyClusterWidgets(
-    List<_FamilyClusterOverlay> familyClusters,
-  ) {
-    return familyClusters
-        .map(
-          (cluster) => Positioned(
-            left: cluster.rect.left,
-            top: cluster.rect.top,
-            width: cluster.rect.width,
-            height: cluster.rect.height,
-            child: IgnorePointer(
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: cluster.color.withValues(alpha: 0.05),
-                  borderRadius: BorderRadius.circular(28),
-                  border: Border.all(
-                    color: cluster.color.withValues(alpha: 0.35),
-                    width: 1.2,
-                  ),
-                ),
-                child: Align(
-                  alignment: Alignment.topLeft,
-                  child: Container(
-                    margin: const EdgeInsets.all(10),
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: cluster.color.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                    child: Text(
-                      cluster.label,
-                      style: const TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        )
-        .toList();
+    if (snapTargets.isNotEmpty) {
+      double? nearestTarget;
+      var nearestDistance = double.infinity;
+      for (final target in snapTargets) {
+        final distance = (target - candidateDx).abs();
+        if (distance < nearestDistance) {
+          nearestDistance = distance;
+          nearestTarget = target;
+        }
+      }
+      if (nearestTarget != null && nearestDistance <= 36) {
+        return nearestTarget;
+      }
+    }
+
+    const gridStep = 24.0;
+    final snappedGridDx = (candidateDx / gridStep).roundToDouble() * gridStep;
+    if ((snappedGridDx - candidateDx).abs() <= 12) {
+      return snappedGridDx;
+    }
+    return candidateDx;
   }
 
   List<Widget> _buildGenerationGuideWidgets({
@@ -1191,6 +617,16 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
         .toSet()
         .toList()
       ..sort();
+    final peopleById = {
+      for (final entry in widget.peopleData)
+        (entry['person'] as FamilyPerson).id: entry['person'] as FamilyPerson,
+    };
+    final contentLeft = nodePositions.values
+        .map((offset) => offset.dx - InteractiveFamilyTree.nodeWidth / 2)
+        .reduce(min);
+    final labelLeft = max(14.0, contentLeft - 118);
+    final dividerLeft = min(labelLeft + 44, stackWidth - 56);
+    final dividerWidth = max(0.0, stackWidth - dividerLeft - 32);
     final guides = <Widget>[];
 
     for (var index = 0; index < levels.length; index++) {
@@ -1201,7 +637,7 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
       );
       guides.add(
         Positioned(
-          left: 14,
+          left: labelLeft,
           top: labelTop,
           child: IgnorePointer(
             child: Container(
@@ -1216,11 +652,14 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
                   color: Theme.of(context).colorScheme.outlineVariant,
                 ),
               ),
-              child: Text(
-                _generationLabel(index, levels.length),
-                style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
+              child: _GenerationGuideBadge(
+                title: _generationLabel(index, levels.length),
+                subtitle: _generationCohortLabel(
+                  _peopleForGenerationLevel(
+                    levelY: levelY,
+                    peopleById: peopleById,
+                  ),
+                ),
               ),
             ),
           ),
@@ -1232,9 +671,9 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
         final dividerY = (levelY + nextLevelY) / 2;
         guides.add(
           Positioned(
-            left: 56,
+            left: dividerLeft,
             top: dividerY,
-            width: stackWidth - 88,
+            width: dividerWidth,
             child: IgnorePointer(
               child: Container(
                 height: 1,
@@ -1263,6 +702,91 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
       return 'Младшее поколение';
     }
     return 'Поколение ${index + 1}';
+  }
+
+  List<FamilyPerson> _peopleForGenerationLevel({
+    required double levelY,
+    required Map<String, FamilyPerson> peopleById,
+  }) {
+    return nodePositions.entries
+        .where((entry) => (entry.value.dy - levelY).abs() < 0.1)
+        .map((entry) => peopleById[entry.key])
+        .whereType<FamilyPerson>()
+        .toList(growable: false);
+  }
+
+  String? _generationCohortLabel(List<FamilyPerson> people) {
+    final cohortLabels = people
+        .map((person) => person.birthDate?.year)
+        .whereType<int>()
+        .map(_cohortLabelForBirthYear)
+        .whereType<String>()
+        .toSet()
+        .toList()
+      ..sort(_compareCohortLabels);
+
+    if (cohortLabels.isEmpty) {
+      return null;
+    }
+    if (cohortLabels.length <= 2) {
+      return cohortLabels.join(' / ');
+    }
+    return 'Смешанные поколения';
+  }
+
+  String? _cohortLabelForBirthYear(int year) {
+    if (year <= 1927) {
+      return 'Величайшее';
+    }
+    if (year <= 1945) {
+      return 'Молчаливое';
+    }
+    if (year <= 1964) {
+      return 'Бумеры';
+    }
+    if (year <= 1980) {
+      return 'Поколение X';
+    }
+    if (year <= 1996) {
+      return 'Миллениалы';
+    }
+    if (year <= 2012) {
+      return 'Зумеры';
+    }
+    if (year <= 2028) {
+      return 'Альфа';
+    }
+    return 'Бета';
+  }
+
+  int _compareCohortLabels(String left, String right) {
+    const order = <String, int>{
+      'Величайшее': 0,
+      'Молчаливое': 1,
+      'Бумеры': 2,
+      'Поколение X': 3,
+      'Миллениалы': 4,
+      'Зумеры': 5,
+      'Альфа': 6,
+      'Бета': 7,
+    };
+    return (order[left] ?? 999).compareTo(order[right] ?? 999);
+  }
+
+  bool _supportsHoverNodeActions() {
+    if (RendererBinding.instance.mouseTracker.mouseIsConnected) {
+      return true;
+    }
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.windows:
+      case TargetPlatform.linux:
+      case TargetPlatform.macOS:
+        return true;
+      case TargetPlatform.android:
+      case TargetPlatform.iOS:
+      case TargetPlatform.fuchsia:
+        return false;
+    }
   }
 
   Widget _buildInlineEditPanel({
@@ -1658,32 +1182,397 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
     );
   }
 
+  List<TreeGraphWarning> _sortedGraphWarnings(
+    Iterable<TreeGraphWarning> warnings,
+  ) {
+    final items = warnings.toList();
+    items.sort((left, right) {
+      final severityComparison = _graphWarningPriority(right.severity)
+          .compareTo(_graphWarningPriority(left.severity));
+      if (severityComparison != 0) {
+        return severityComparison;
+      }
+      return left.message.compareTo(right.message);
+    });
+    return items;
+  }
+
+  int _graphWarningPriority(String? severity) {
+    switch ((severity ?? '').trim().toLowerCase()) {
+      case 'error':
+        return 3;
+      case 'warning':
+        return 2;
+      case 'info':
+        return 1;
+      default:
+        return 0;
+    }
+  }
+
+  String _graphWarningTitle(TreeGraphWarning warning) {
+    switch (warning.code) {
+      case 'multiple_primary_parent_sets':
+        return 'Несколько основных родителей';
+      case 'auto_repaired_parent_link':
+        return 'Связь достроена автоматически';
+      case 'conflicting_direct_links':
+        return 'Конфликт прямых связей';
+      default:
+        return 'Нужна проверка дерева';
+    }
+  }
+
+  Color _graphWarningAccent(TreeGraphWarning warning) {
+    final colorScheme = Theme.of(context).colorScheme;
+    switch ((warning.severity).trim().toLowerCase()) {
+      case 'error':
+        return colorScheme.error;
+      case 'info':
+        return colorScheme.primary;
+      default:
+        return colorScheme.tertiary;
+    }
+  }
+
+  IconData _graphWarningIcon(TreeGraphWarning warning) {
+    switch ((warning.severity).trim().toLowerCase()) {
+      case 'error':
+        return Icons.error_outline_rounded;
+      case 'info':
+        return Icons.info_outline_rounded;
+      default:
+        return Icons.warning_amber_rounded;
+    }
+  }
+
+  Widget _buildGraphWarningCard(
+    TreeGraphWarning warning, {
+    bool compact = false,
+  }) {
+    final accent = _graphWarningAccent(warning);
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(compact ? 10 : 12),
+      decoration: BoxDecoration(
+        color: accent.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(compact ? 14 : 16),
+        border: Border.all(color: accent.withValues(alpha: 0.22)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            _graphWarningIcon(warning),
+            size: compact ? 18 : 20,
+            color: accent,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _graphWarningTitle(warning),
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        color: accent,
+                      ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  warning.message,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        height: 1.3,
+                        color: colorScheme.onSurface,
+                      ),
+                ),
+                if (warning.hint != null &&
+                    warning.hint!.trim().isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    warning.hint!.trim(),
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          height: 1.3,
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  bool _hasAdditionalParentSets(String personId) {
+    final snapshot = widget.graphSnapshot;
+    if (snapshot == null) {
+      return false;
+    }
+    return snapshot.parentFamilyUnitsForChild(personId).any(
+          (unit) => unit.isPrimaryParentSet == false,
+        );
+  }
+
+  void _showPersonInsightSheet(
+    BuildContext context,
+    FamilyPerson person, {
+    required List<TreeGraphWarning> warnings,
+    TreeGraphViewerDescriptor? viewerDescriptor,
+  }) {
+    final relationPathEnabled = widget.onShowRelationPath != null;
+    final otherParentsEnabled = widget.onShowOtherParents != null &&
+        _hasAdditionalParentSets(person.id);
+    final fixRelationsEnabled = widget.onFixPersonRelations != null;
+
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(sheetContext).size.height * 0.86,
+            ),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    person.name,
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    warnings.isEmpty
+                        ? 'Здесь собраны быстрые инструменты по этой ветке.'
+                        : 'Проверьте предупреждения и при необходимости откройте нужный инструмент.',
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                  const SizedBox(height: 14),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      if (viewerDescriptor?.primaryRelationLabel
+                              ?.trim()
+                              .isNotEmpty ==
+                          true)
+                        _buildInspectorStatusChip(
+                          icon: viewerDescriptor!.isBlood
+                              ? Icons.family_restroom
+                              : Icons.handshake_outlined,
+                          label: viewerDescriptor.primaryRelationLabel!.trim(),
+                        ),
+                      _buildInspectorStatusChip(
+                        icon: warnings.isEmpty
+                            ? Icons.task_alt_outlined
+                            : Icons.warning_amber_rounded,
+                        label: warnings.isEmpty
+                            ? 'Без конфликтов'
+                            : warnings.length == 1
+                                ? '1 предупреждение'
+                                : '${warnings.length} предупреждения',
+                      ),
+                    ],
+                  ),
+                  if (warnings.isNotEmpty) ...[
+                    const SizedBox(height: 18),
+                    Text(
+                      'Предупреждения',
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
+                    ),
+                    const SizedBox(height: 8),
+                    ...warnings.map(
+                      (warning) => Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: _buildGraphWarningCard(warning, compact: true),
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  Text(
+                    'Быстрые действия',
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                  ),
+                  const SizedBox(height: 8),
+                  _buildEditActionTile(
+                    sheetContext: sheetContext,
+                    icon: Icons.person_add_alt_1_outlined,
+                    title: 'Добавить родственника',
+                    semanticsLabel: 'tree-sheet-open-add-relative',
+                    subtitle: 'Сразу привязать нового человека к этой карточке',
+                    onTap: () => _showQuickAddRelativeSheet(context, person),
+                  ),
+                  if (relationPathEnabled)
+                    _buildEditActionTile(
+                      sheetContext: sheetContext,
+                      icon: Icons.route_outlined,
+                      title: 'Путь родства',
+                      semanticsLabel: 'tree-sheet-open-relation-path',
+                      subtitle: 'Показать цепочку людей между вами',
+                      onTap: () => widget.onShowRelationPath!(person),
+                    ),
+                  if (otherParentsEnabled)
+                    _buildEditActionTile(
+                      sheetContext: sheetContext,
+                      icon: Icons.account_tree_outlined,
+                      title: 'Другие родители',
+                      semanticsLabel: 'tree-sheet-open-other-parents',
+                      subtitle: 'Проверить альтернативные наборы родителей',
+                      onTap: () => widget.onShowOtherParents!(person),
+                    ),
+                  if (fixRelationsEnabled)
+                    _buildEditActionTile(
+                      sheetContext: sheetContext,
+                      icon: Icons.hub_outlined,
+                      title: 'Исправить связи',
+                      semanticsLabel: 'tree-sheet-open-fix-relations',
+                      subtitle: 'Открыть редактор прямых связей',
+                      onTap: () => widget.onFixPersonRelations!(person),
+                    ),
+                  _buildEditActionTile(
+                    sheetContext: sheetContext,
+                    icon: Icons.open_in_new,
+                    title: 'Открыть карточку',
+                    semanticsLabel: 'tree-sheet-open-card',
+                    subtitle: 'Полная карточка, заметки и история',
+                    onTap: () => widget.onPersonTap(person),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _showQuickAddRelativeSheet(BuildContext context, FamilyPerson person) {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Добавить к карточке',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Новый человек будет сразу привязан к ${person.name}.',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        height: 1.35,
+                      ),
+                ),
+                const SizedBox(height: 12),
+                _buildEditActionTile(
+                  sheetContext: sheetContext,
+                  icon: Icons.arrow_upward,
+                  title: 'Добавить родителя',
+                  semanticsLabel: 'tree-sheet-add-parent',
+                  onTap: () => widget.onAddRelativeTapWithType(
+                      person, RelationType.parent),
+                ),
+                _buildEditActionTile(
+                  sheetContext: sheetContext,
+                  icon: Icons.favorite_border,
+                  title: 'Добавить супруга или партнёра',
+                  semanticsLabel: 'tree-sheet-add-partner',
+                  onTap: () => widget.onAddRelativeTapWithType(
+                      person, RelationType.spouse),
+                ),
+                _buildEditActionTile(
+                  sheetContext: sheetContext,
+                  icon: Icons.arrow_downward,
+                  title: 'Добавить ребёнка',
+                  semanticsLabel: 'tree-sheet-add-child',
+                  onTap: () => widget.onAddRelativeTapWithType(
+                      person, RelationType.child),
+                ),
+                _buildEditActionTile(
+                  sheetContext: sheetContext,
+                  icon: Icons.people_outline,
+                  title: 'Добавить брата или сестру',
+                  semanticsLabel: 'tree-sheet-add-sibling',
+                  onTap: () => widget.onAddRelativeTapWithType(
+                    person,
+                    RelationType.sibling,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   List<Widget> _buildPersonWidgets() {
+    final nodeDataByPersonId = <String, Map<String, dynamic>>{
+      for (final data in widget.peopleData)
+        (data['person'] as FamilyPerson).id: data,
+    };
+    final warningCache = <String, List<TreeGraphWarning>>{};
+
     return nodePositions.entries.map((entry) {
       final personId = entry.key;
       final position = entry.value;
-      var nodeData = widget.peopleData.firstWhere(
-        (data) => (data['person'] as FamilyPerson).id == personId,
-        orElse: () => <String, dynamic>{},
-      );
+      final nodeData = nodeDataByPersonId[personId];
 
-      if (nodeData.isEmpty) return const SizedBox.shrink();
+      if (nodeData == null) return const SizedBox.shrink();
 
       final topLeftX = position.dx - InteractiveFamilyTree.nodeWidth / 2;
       final topLeftY = position.dy - InteractiveFamilyTree.nodeHeight / 2;
+      final personWarnings = warningCache.putIfAbsent(
+        personId,
+        () => _sortedGraphWarnings(
+          widget.graphSnapshot?.warningsForPerson(personId) ??
+              const <TreeGraphWarning>[],
+        ),
+      );
 
       return Positioned(
         left: topLeftX,
         top: topLeftY,
         width: InteractiveFamilyTree.nodeWidth,
-        child: _buildPersonNode(nodeData),
+        child: _buildPersonNode(
+          nodeData,
+          personWarnings: personWarnings,
+        ),
       );
     }).toList();
   }
 
-  Widget _buildPersonNode(Map<String, dynamic> nodeData) {
+  Widget _buildPersonNode(
+    Map<String, dynamic> nodeData, {
+    required List<TreeGraphWarning> personWarnings,
+  }) {
     final FamilyPerson person = nodeData['person'];
     final UserProfile? userProfile = nodeData['userProfile'];
+    final TreeGraphViewerDescriptor? viewerDescriptor =
+        nodeData['viewerDescriptor'] as TreeGraphViewerDescriptor?;
 
     final String displayName = userProfile != null
         ? '${userProfile.firstName} ${userProfile.lastName}'.trim()
@@ -1692,308 +1581,250 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
     final Gender displayGender = person.gender;
     final isCurrentUserNode =
         widget.currentUserId != null && person.userId == widget.currentUserId;
-    final isBranchRoot = widget.branchRootPersonId == person.id;
     final isSelectedInEditMode =
         widget.isEditMode && _selectedEditPersonId == person.id;
     final isDraggingNode = _draggingPersonId == person.id;
-    final showBranchChip = !widget.isEditMode &&
-        widget.onBranchFocusRequested != null &&
-        (isBranchRoot || _hoveredBranchPersonId == person.id);
+    final supportsHoverActions = _supportsHoverNodeActions();
+    final isHoveredNode = !widget.isEditMode && _hoveredPersonId == person.id;
+    final relationChipLabel = viewerDescriptor?.primaryRelationLabel == null ||
+            viewerDescriptor!.primaryRelationLabel!.trim().isEmpty ||
+            isCurrentUserNode
+        ? null
+        : viewerDescriptor.primaryRelationLabel!.trim() +
+            (viewerDescriptor.alternatePathCount > 0
+                ? ' +${viewerDescriptor.alternatePathCount}'
+                : '');
+    final prefersTouchQuickAdd = !supportsHoverActions && !widget.isEditMode;
+    final canUseLongPressQuickAdd = prefersTouchQuickAdd;
 
-    final cardContent = Container(
+    final cardContent = FamilyTreeNodeCard(
       key: ValueKey<String>('tree-node-${person.id}'),
-      padding: const EdgeInsets.fromLTRB(10, 10, 10, 8),
-      decoration: BoxDecoration(
-        color: isCurrentUserNode
-            ? Theme.of(context).colorScheme.primaryContainer
-            : Theme.of(context).cardColor,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: isDraggingNode
-                ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.32)
-                : isSelectedInEditMode
-                    ? Theme.of(context)
-                        .colorScheme
-                        .secondary
-                        .withValues(alpha: 0.28)
-                    : isCurrentUserNode
-                        ? Theme.of(context)
-                            .colorScheme
-                            .primary
-                            .withValues(alpha: 0.22)
-                        : Colors.black.withValues(alpha: 0.1),
-            blurRadius: isDraggingNode
-                ? 18
-                : isSelectedInEditMode
-                    ? 14
-                    : (isCurrentUserNode ? 10 : 6),
-            offset: Offset(0, isDraggingNode ? 5 : 2),
-          ),
-        ],
-        border: Border.all(
-          color: isDraggingNode
-              ? Theme.of(context).colorScheme.primary
-              : isSelectedInEditMode
-                  ? Theme.of(context).colorScheme.secondary
-                  : isCurrentUserNode
-                      ? Theme.of(context).colorScheme.primary
-                      : displayGender == Gender.male
-                          ? Colors.blue.shade300
-                          : Colors.pink.shade300,
-          width: isDraggingNode
-              ? 2.8
-              : isSelectedInEditMode
-                  ? 2.5
-                  : (isCurrentUserNode ? 2 : 1.5),
-        ),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
+      displayName: displayName,
+      lifeDates: _getLifeDates(person),
+      displayGender: displayGender,
+      displayPhotoUrl: displayPhotoUrl,
+      relationChipLabel: relationChipLabel,
+      isBloodRelation: viewerDescriptor?.isBlood == true,
+      isCurrentUserNode: isCurrentUserNode,
+      isSelectedInEditMode: isSelectedInEditMode,
+      isDraggingNode: isDraggingNode,
+      isHovered: isHoveredNode,
+    );
+
+    return MouseRegion(
+      onEnter: widget.isEditMode
+          ? null
+          : (_) => setState(() => _hoveredPersonId = person.id),
+      onExit: widget.isEditMode
+          ? null
+          : (_) {
+              if (_hoveredPersonId == person.id) {
+                setState(() => _hoveredPersonId = null);
+              }
+            },
+      child: Stack(
+        clipBehavior: Clip.none,
+        alignment: Alignment.center,
         children: [
-          CircleAvatar(
-            backgroundColor: displayGender == Gender.male
-                ? Colors.blue.shade100
-                : Colors.pink.shade100,
-            backgroundImage:
-                displayPhotoUrl != null && displayPhotoUrl.isNotEmpty
-                    ? NetworkImage(displayPhotoUrl)
-                    : null,
-            radius: 22,
-            child: displayPhotoUrl == null || displayPhotoUrl.isEmpty
-                ? Icon(
-                    displayGender == Gender.male
-                        ? Icons.person
-                        : Icons.person_outline,
-                    size: 20,
-                    color: displayGender == Gender.male
-                        ? Colors.blue.shade800
-                        : Colors.pink.shade800,
-                  )
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onLongPressStart: widget.isEditMode
+                ? (_) {
+                    HapticFeedback.mediumImpact();
+                    _handleNodeDragStart(person);
+                  }
                 : null,
+            onLongPressMoveUpdate: widget.isEditMode
+                ? (details) => _handleNodeDragUpdate(
+                      person,
+                      details.offsetFromOrigin,
+                    )
+                : null,
+            onLongPressEnd:
+                widget.isEditMode ? (_) => _handleNodeDragEnd() : null,
+            onTap: () {
+              if (widget.isEditMode) {
+                _selectEditPerson(person);
+                return;
+              }
+              widget.onPersonTap(person);
+            },
+            onLongPress: widget.isEditMode || !canUseLongPressQuickAdd
+                ? null
+                : () => _showQuickAddRelativeSheet(context, person),
+            child: cardContent,
           ),
-          const SizedBox(height: 6),
-          Text(
-            displayName,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              fontWeight: FontWeight.w700,
-              fontSize: 12,
-              height: 1.15,
-            ),
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-          ),
-          const SizedBox(height: 4),
-          Text(
-            _getLifeDates(person),
-            style: TextStyle(
-              fontSize: 9,
-              fontWeight: FontWeight.w500,
-              color: Colors.grey[700],
-            ),
-            textAlign: TextAlign.center,
-          ),
-          if (isCurrentUserNode) ...[
-            const SizedBox(height: 4),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.primary,
-                borderRadius: BorderRadius.circular(999),
-              ),
-              child: Text(
-                'Это вы',
-                style: TextStyle(
-                  fontSize: 8,
-                  fontWeight: FontWeight.w700,
-                  color: Theme.of(context).colorScheme.onPrimary,
+          if (!widget.isEditMode && isHoveredNode)
+            Positioned(
+              top: 8,
+              right: 8,
+              child: Tooltip(
+                message: 'Добавить родственника',
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    key:
+                        ValueKey<String>('tree-node-add-relative-${person.id}'),
+                    borderRadius: BorderRadius.circular(999),
+                    onTap: () => _showQuickAddRelativeSheet(context, person),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 140),
+                      curve: Curves.easeOut,
+                      width: 30,
+                      height: 30,
+                      decoration: BoxDecoration(
+                        color: Theme.of(context)
+                            .colorScheme
+                            .surface
+                            .withValues(alpha: 0.96),
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(
+                          color: Theme.of(context).colorScheme.outlineVariant,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Theme.of(context)
+                                .colorScheme
+                                .shadow
+                                .withValues(alpha: 0.12),
+                            blurRadius: 10,
+                            offset: const Offset(0, 3),
+                          ),
+                        ],
+                      ),
+                      child: Icon(
+                        Icons.add,
+                        size: 18,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                    ),
+                  ),
                 ),
               ),
             ),
-          ],
-        ],
-      ),
-    );
-
-    return Stack(
-      clipBehavior: Clip.none,
-      alignment: Alignment.center,
-      children: [
-        GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onPanStart:
-              widget.isEditMode ? (_) => _handleNodePanStart(person) : null,
-          onPanUpdate: widget.isEditMode
-              ? (details) => _handleNodePanUpdate(person, details)
-              : null,
-          onPanEnd: widget.isEditMode ? (_) => _handleNodePanEnd() : null,
-          onPanCancel: widget.isEditMode ? _handleNodePanEnd : null,
-          onTap: () {
-            if (widget.isEditMode) {
-              _selectEditPerson(person);
-              return;
-            }
-            widget.onPersonTap(person);
-          },
-          onLongPress: widget.isEditMode
-              ? () => _showEditActionsSheet(context, person)
-              : widget.onBranchFocusRequested != null
-                  ? () => widget.onBranchFocusRequested!(person)
-                  : null,
-          child: MouseRegion(
-            onEnter: (_) {
-              if (widget.isEditMode) {
-                return;
-              }
-              setState(() {
-                _hoveredBranchPersonId = person.id;
-              });
-            },
-            onExit: (_) {
-              if (widget.isEditMode ||
-                  _hoveredBranchPersonId != person.id ||
-                  isBranchRoot) {
-                return;
-              }
-              setState(() {
-                _hoveredBranchPersonId = null;
-              });
-            },
-            child: cardContent,
-          ),
-        ),
-        if (widget.isEditMode)
-          Positioned(
-            top: -8,
-            right: -8,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: isSelectedInEditMode
-                    ? Theme.of(context).colorScheme.secondary
-                    : Theme.of(context).colorScheme.primary,
-                borderRadius: BorderRadius.circular(999),
-                boxShadow: [
-                  BoxShadow(
-                    color: (isSelectedInEditMode
-                            ? Theme.of(context).colorScheme.secondary
-                            : Theme.of(context).colorScheme.primary)
-                        .withValues(alpha: 0.25),
-                    blurRadius: 8,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    isDraggingNode
-                        ? Icons.open_with
-                        : isSelectedInEditMode
-                            ? Icons.check
-                            : Icons.touch_app_outlined,
-                    size: 12,
-                    color: isDraggingNode
-                        ? Theme.of(context).colorScheme.onPrimary
-                        : isSelectedInEditMode
-                            ? Theme.of(context).colorScheme.onSecondary
-                            : Theme.of(context).colorScheme.onPrimary,
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    isDraggingNode
-                        ? 'Тяните'
-                        : isSelectedInEditMode
-                            ? 'Выбрано'
-                            : 'Нажмите',
-                    style: TextStyle(
-                      fontSize: 9,
-                      fontWeight: FontWeight.w700,
+          if (widget.isEditMode)
+            Positioned(
+              top: -8,
+              right: -8,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: isSelectedInEditMode
+                      ? Theme.of(context).colorScheme.secondary
+                      : Theme.of(context).colorScheme.primary,
+                  borderRadius: BorderRadius.circular(999),
+                  boxShadow: [
+                    BoxShadow(
+                      color: (isSelectedInEditMode
+                              ? Theme.of(context).colorScheme.secondary
+                              : Theme.of(context).colorScheme.primary)
+                          .withValues(alpha: 0.25),
+                      blurRadius: 8,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      isDraggingNode
+                          ? Icons.open_with
+                          : isSelectedInEditMode
+                              ? Icons.check
+                              : Icons.touch_app_outlined,
+                      size: 12,
                       color: isDraggingNode
                           ? Theme.of(context).colorScheme.onPrimary
                           : isSelectedInEditMode
                               ? Theme.of(context).colorScheme.onSecondary
                               : Theme.of(context).colorScheme.onPrimary,
                     ),
-                  ),
-                ],
+                    const SizedBox(width: 4),
+                    Text(
+                      isDraggingNode
+                          ? 'Тяните'
+                          : isSelectedInEditMode
+                              ? 'Выбрано'
+                              : 'Зажмите',
+                      style: TextStyle(
+                        fontSize: 9,
+                        fontWeight: FontWeight.w700,
+                        color: isDraggingNode
+                            ? Theme.of(context).colorScheme.onPrimary
+                            : isSelectedInEditMode
+                                ? Theme.of(context).colorScheme.onSecondary
+                                : Theme.of(context).colorScheme.onPrimary,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
-        if (showBranchChip)
-          Positioned(
-            top: -12,
-            left: 10,
-            child: Tooltip(
-              message: isBranchRoot
-                  ? 'Сейчас показана эта ветка'
-                  : 'Сфокусироваться на ветке этого человека',
-              child: Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(999),
-                  onTap: () => widget.onBranchFocusRequested!(person),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 5,
+          if (!widget.isEditMode && personWarnings.isNotEmpty)
+            Positioned(
+              top: -10,
+              right: -10,
+              child: Tooltip(
+                message: personWarnings.length == 1
+                    ? 'Есть предупреждение'
+                    : 'Есть предупреждения',
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    key: ValueKey<String>('tree-warning-badge-${person.id}'),
+                    borderRadius: BorderRadius.circular(999),
+                    onTap: () => _showPersonInsightSheet(
+                      context,
+                      person,
+                      warnings: personWarnings,
+                      viewerDescriptor: viewerDescriptor,
                     ),
-                    decoration: BoxDecoration(
-                      color: isBranchRoot
-                          ? Theme.of(context).colorScheme.primaryContainer
-                          : Theme.of(context)
-                              .colorScheme
-                              .surfaceContainerHighest
-                              .withValues(alpha: 0.96),
-                      borderRadius: BorderRadius.circular(999),
-                      border: Border.all(
-                        color: isBranchRoot
-                            ? Theme.of(context).colorScheme.primary
-                            : Theme.of(context).colorScheme.outlineVariant,
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.06),
-                          blurRadius: 8,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          isBranchRoot
-                              ? Icons.account_tree_outlined
-                              : Icons.alt_route_rounded,
-                          size: 14,
-                          color: isBranchRoot
-                              ? Theme.of(context).colorScheme.primary
-                              : Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          isBranchRoot ? 'Фокус' : 'Ветка',
-                          style: TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.w700,
-                            color: isBranchRoot
-                                ? Theme.of(context).colorScheme.primary
-                                : Theme.of(context)
-                                    .colorScheme
-                                    .onSurfaceVariant,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: _graphWarningAccent(personWarnings.first),
+                        borderRadius: BorderRadius.circular(999),
+                        boxShadow: [
+                          BoxShadow(
+                            color: _graphWarningAccent(personWarnings.first)
+                                .withValues(alpha: 0.22),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            _graphWarningIcon(personWarnings.first),
+                            size: 14,
+                            color: Colors.white,
+                          ),
+                          if (personWarnings.length > 1) ...[
+                            const SizedBox(width: 4),
+                            Text(
+                              '${personWarnings.length}',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .labelSmall
+                                  ?.copyWith(
+                                    fontWeight: FontWeight.w700,
+                                    color: Colors.white,
+                                  ),
+                            ),
+                          ],
+                        ],
+                      ),
                     ),
                   ),
                 ),
               ),
             ),
-          ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -2274,7 +2105,6 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
 
   Widget _buildViewportStatusBar() {
     final zoomPercent = (_currentScale * 100).round();
-    final branchRootPersonId = widget.branchRootPersonId;
     final chips = <Widget>[
       _buildOverlayChip(
         icon: widget.showGenerationGuides
@@ -2295,24 +2125,6 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
         icon: Icons.zoom_in_map_outlined,
         label: '$zoomPercent%',
       ),
-      if (widget.hasManualLayout)
-        _buildOverlayChip(
-          icon: Icons.open_with,
-          label: 'Ручной',
-          highlighted: true,
-        ),
-      if (branchRootPersonId != null && branchRootPersonId.isNotEmpty)
-        _buildOverlayChip(
-          icon: Icons.center_focus_strong_outlined,
-          label: widget.showGenerationGuides ? 'Фокус на ветке' : 'Фокус',
-          highlighted: true,
-        ),
-      if (_selectedEditPersonId != null && _selectedEditPersonId!.isNotEmpty)
-        _buildOverlayChip(
-          icon: Icons.ads_click_outlined,
-          label: 'Выбран узел',
-          highlighted: true,
-        ),
     ];
 
     return ConstrainedBox(
@@ -2529,8 +2341,7 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
     final verticalScale =
         (viewport.height - _viewportReservedTop - _viewportReservedBottom) /
             contentHeight;
-    final targetScale =
-        horizontalScale < verticalScale ? horizontalScale : verticalScale;
+    final targetScale = min(horizontalScale, verticalScale * 1.14);
     final safeScale = targetScale.clamp(0.2, _maxViewportFitScale(viewport));
 
     final translateX = (viewport.width - contentWidth * safeScale) / 2;
@@ -2573,9 +2384,12 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
         return 2.04;
       }
       if (peopleCount <= 6) {
-        return 1.62;
+        return 1.74;
       }
-      return 1.24;
+      if (peopleCount <= 12) {
+        return 1.46;
+      }
+      return 1.34;
     }
 
     if (viewport.width >= 1180) {
@@ -2583,12 +2397,21 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
         return 1.82;
       }
       if (peopleCount <= 6) {
-        return 1.48;
+        return 1.58;
       }
-      return 1.18;
+      if (peopleCount <= 12) {
+        return 1.34;
+      }
+      return 1.26;
     }
 
-    return 1.12;
+    if (peopleCount <= 6) {
+      return 1.2;
+    }
+    if (peopleCount <= 12) {
+      return 1.12;
+    }
+    return 1.08;
   }
 
   double _focusScaleForViewport(Size viewport) {
@@ -2625,230 +2448,6 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
       ..scaleByDouble(appliedMultiplier, appliedMultiplier, 1, 1)
       ..translateByDouble(-sceneFocalPoint.dx, -sceneFocalPoint.dy, 0, 1);
   }
-
-  Map<String, Offset> _performInitialXLayout(
-    int maxLevel,
-    Map<int, List<String>> nodesByLevel,
-    Map<String, List<String>> spouseMap,
-    Map<String, int> nodeLevels,
-    Map<String, List<String>> childToParentsMap,
-  ) {
-    final Map<String, Offset> initialPositions = {};
-    double layoutMaxX = 0;
-
-    for (int level = 0; level <= maxLevel; level++) {
-      final levelNodes = nodesByLevel[level] ?? [];
-      if (levelNodes.isEmpty) continue;
-
-      // --- NEW: Sort nodes based on average parent X position ---
-      Map<String, double> avgParentX =
-          {}; // Карта для хранения среднего X родителя
-      if (level > 0) {
-        // Сортировка имеет смысл только для уровней > 0
-        for (final nodeId in levelNodes) {
-          final parents = childToParentsMap[nodeId] ?? [];
-          double parentSumX = 0;
-          int parentCount = 0;
-          for (final parentId in parents) {
-            // Проверяем, что родитель на предыдущем уровне и имеет позицию
-            if (nodeLevels.containsKey(parentId) &&
-                nodeLevels[parentId] == level - 1 &&
-                initialPositions.containsKey(parentId)) {
-              parentSumX += initialPositions[parentId]!.dx;
-              parentCount++;
-            }
-          }
-          // Используем среднее X родителей или 0.0, если родителей нет/не найдены
-          avgParentX[nodeId] =
-              (parentCount > 0) ? parentSumX / parentCount : 0.0;
-        }
-        // Сортируем узлы уровня по вычисленному среднему X родителей
-        levelNodes.sort((a, b) => avgParentX[a]!.compareTo(avgParentX[b]!));
-      } else {
-        // Для уровня 0 оставляем простую сортировку (например, по ID)
-        levelNodes.sort();
-      }
-      // --- END NEW ---
-
-      double currentX = 0;
-      final Set<String> placedNodesInLevel = {};
-
-      // Используем отсортированный levelNodes
-      for (final nodeId in levelNodes) {
-        if (placedNodesInLevel.contains(nodeId)) continue;
-
-        final yPos = level *
-                (InteractiveFamilyTree.nodeHeight +
-                    InteractiveFamilyTree.levelSeparation) +
-            InteractiveFamilyTree.nodeHeight / 2;
-
-        final List<String> spousesOnLevel = (spouseMap[nodeId] ?? [])
-            // Снова используем where, т.к. nodeLevels теперь передается
-            .where(
-              (spouseId) =>
-                  nodeLevels.containsKey(spouseId) &&
-                  nodeLevels[spouseId] == level,
-            )
-            .toList();
-
-        // --- Определяем членов группы (узел + супруги) ---
-        final List<String> groupMembers = {
-          nodeId,
-          ...spousesOnLevel
-        } // Удаляем дубликаты, если spouseMap двунаправленный
-            .toList();
-
-        // --- Place the sorted group members (Original logic before revision) ---
-        double groupWidth = InteractiveFamilyTree.nodeWidth +
-            (groupMembers.length - 1) *
-                (InteractiveFamilyTree.spouseSeparation +
-                    InteractiveFamilyTree.nodeWidth);
-
-        double memberStartX = currentX;
-        for (final memberId in groupMembers) {
-          if (!placedNodesInLevel.contains(memberId)) {
-            initialPositions[memberId] = Offset(
-              memberStartX + InteractiveFamilyTree.nodeWidth / 2,
-              yPos,
-            );
-            placedNodesInLevel.add(memberId);
-          }
-          // We always advance memberStartX even if placed, assuming standard widths/separations for the group block
-          memberStartX += InteractiveFamilyTree.nodeWidth +
-              InteractiveFamilyTree.spouseSeparation;
-        }
-        // Update currentX for the next group/node
-        // The next node starts after the full block width + sibling separation
-        currentX += groupWidth + InteractiveFamilyTree.siblingSeparation;
-        // --- End Original Placement Logic ---
-      }
-      if (currentX > 0) {
-        layoutMaxX = max(
-          layoutMaxX,
-          (currentX - InteractiveFamilyTree.siblingSeparation),
-        );
-      }
-    }
-    return initialPositions;
-  }
-
-  Map<String, Offset> _resolveCollisions(
-    int maxLevel,
-    Map<int, List<String>> nodesByLevel,
-    Map<String, Offset> currentPositions,
-    Map<String, List<String>> spouseMap,
-  ) {
-    Map<String, Offset> resolvedPositions = Map.from(currentPositions);
-    final double minSeparation = InteractiveFamilyTree.siblingSeparation;
-    final double nodeWidth = InteractiveFamilyTree.nodeWidth;
-
-    for (int level = 0; level <= maxLevel; level++) {
-      final levelNodes = nodesByLevel[level] ?? [];
-      if (levelNodes.length < 2) continue;
-
-      bool shifted;
-      int maxPasses = levelNodes.length * levelNodes.length;
-      int passes = 0;
-      do {
-        shifted = false;
-        passes++;
-        List<String> sortedLevelNodeIds = levelNodes
-            .where((id) => resolvedPositions.containsKey(id))
-            .toList();
-        sortedLevelNodeIds.sort(
-          (a, b) => (resolvedPositions[a]!.dx - nodeWidth / 2).compareTo(
-            resolvedPositions[b]!.dx - nodeWidth / 2,
-          ),
-        );
-
-        for (int i = 0; i < sortedLevelNodeIds.length - 1; i++) {
-          final node1Id = sortedLevelNodeIds[i];
-          final pos1 = resolvedPositions[node1Id];
-          if (pos1 == null) continue;
-
-          final group1Ids = _getNodeGroup(
-            node1Id,
-            level,
-            resolvedPositions,
-            spouseMap,
-          );
-          double group1RightEdge = double.negativeInfinity;
-          for (final id in group1Ids) {
-            final pos = resolvedPositions[id];
-            if (pos != null) {
-              group1RightEdge = max(group1RightEdge, pos.dx + nodeWidth / 2);
-            }
-          }
-          if (group1RightEdge == double.negativeInfinity) continue;
-
-          String? node2Id;
-          int j = i + 1;
-          while (j < sortedLevelNodeIds.length) {
-            final potentialNode2Id = sortedLevelNodeIds[j];
-            if (!group1Ids.contains(potentialNode2Id)) {
-              node2Id = potentialNode2Id;
-              break;
-            }
-            j++;
-          }
-          if (node2Id == null) continue;
-
-          final pos2 = resolvedPositions[node2Id];
-          if (pos2 == null) continue;
-
-          final group2Ids = _getNodeGroup(
-            node2Id,
-            level,
-            resolvedPositions,
-            spouseMap,
-          );
-          double group2LeftEdge = double.infinity;
-          for (final id in group2Ids) {
-            final pos = resolvedPositions[id];
-            if (pos != null) {
-              group2LeftEdge = min(group2LeftEdge, pos.dx - nodeWidth / 2);
-            }
-          }
-          if (group2LeftEdge == double.infinity) continue;
-
-          final currentSeparation = group2LeftEdge - group1RightEdge;
-          if (currentSeparation < minSeparation) {
-            final shiftNeeded = minSeparation - currentSeparation;
-            for (final idToShift in group2Ids) {
-              final currentPos = resolvedPositions[idToShift];
-              if (currentPos != null) {
-                resolvedPositions[idToShift] = Offset(
-                  currentPos.dx + shiftNeeded,
-                  currentPos.dy,
-                );
-              }
-            }
-            shifted = true;
-            break;
-          }
-        }
-      } while (shifted && passes < maxPasses);
-    }
-    return resolvedPositions;
-  }
-
-  Set<String> _getNodeGroup(
-    String nodeId,
-    int level,
-    Map<String, Offset> positions,
-    Map<String, List<String>> spouseMap,
-  ) {
-    final group = {nodeId};
-    final potentialSpouses = spouseMap[nodeId] ?? [];
-    for (final spouseId in potentialSpouses) {
-      if (positions.containsKey(spouseId) &&
-          positions[spouseId]!.dy == positions[nodeId]!.dy &&
-          !group.contains(spouseId)) {
-        group.add(spouseId);
-      }
-    } // <- Добавляем недостающую скобку для закрытия цикла for
-    return group;
-  } // <- Конец функции _getNodeGroup
 } // <- Закрывающая скобка для класса _InteractiveFamilyTreeState
 
 class _TreeLayoutComputation {
@@ -2863,18 +2462,6 @@ class _TreeLayoutComputation {
   final Size treeSize;
 }
 
-class _FamilyClusterOverlay {
-  const _FamilyClusterOverlay({
-    required this.rect,
-    required this.label,
-    required this.color,
-  });
-
-  final Rect rect;
-  final String label;
-  final Color color;
-}
-
 class _SpouseGroup {
   const _SpouseGroup({required this.memberIds});
 
@@ -2885,10 +2472,12 @@ class _TreeLayoutEngine {
   _TreeLayoutEngine({
     required this.peopleData,
     required this.relations,
+    this.graphSnapshot,
   });
 
   final List<Map<String, dynamic>> peopleData;
   final List<FamilyRelation> relations;
+  final TreeGraphSnapshot? graphSnapshot;
 
   _TreeLayoutComputation compute() {
     final peopleById = <String, FamilyPerson>{
@@ -2961,13 +2550,58 @@ class _TreeLayoutEngine {
         levels: levels,
         spousesByPerson: spousesByPerson,
         siblingsByPerson: siblingsByPerson,
+        parentToChildren: parentToChildren,
         peopleById: peopleById,
       );
 
       final componentPositions = <String, Offset>{};
       final levelOrder = groupsByLevel.keys.toList()..sort();
       for (final level in levelOrder) {
-        final groups = groupsByLevel[level] ?? const <_SpouseGroup>[];
+        final groups = [...(groupsByLevel[level] ?? const <_SpouseGroup>[])]
+          ..sort((left, right) {
+            final leftDesired = _desiredCenterForGroup(
+              group: left,
+              positions: componentPositions,
+              childToParents: childToParents,
+              parentToChildren: parentToChildren,
+              siblingsByPerson: siblingsByPerson,
+            );
+            final rightDesired = _desiredCenterForGroup(
+              group: right,
+              positions: componentPositions,
+              childToParents: childToParents,
+              parentToChildren: parentToChildren,
+              siblingsByPerson: siblingsByPerson,
+            );
+            if (leftDesired != null && rightDesired != null) {
+              final centerCompare = leftDesired.compareTo(rightDesired);
+              if (centerCompare != 0) {
+                return centerCompare;
+              }
+            } else if (leftDesired != null) {
+              return -1;
+            } else if (rightDesired != null) {
+              return 1;
+            }
+
+            final leftWeight = _groupDescendantWeight(
+              left.memberIds,
+              parentToChildren,
+            );
+            final rightWeight = _groupDescendantWeight(
+              right.memberIds,
+              parentToChildren,
+            );
+            if (leftWeight != rightWeight) {
+              return rightWeight.compareTo(leftWeight);
+            }
+
+            return _comparePersons(
+              peopleById[left.memberIds.first]!,
+              peopleById[right.memberIds.first]!,
+            );
+          });
+        groupsByLevel[level] = groups;
         var currentLeft = offsetX;
         for (final group in groups) {
           final requestedCenter = _desiredCenterForGroup(
@@ -3005,10 +2639,29 @@ class _TreeLayoutEngine {
         }
       }
 
+      _normalizeGroups(
+        componentPositions,
+        groupsByLevel,
+        levels: levels,
+        childToParents: childToParents,
+        parentToChildren: parentToChildren,
+        siblingsByPerson: siblingsByPerson,
+        peopleById: peopleById,
+        componentStartX: offsetX,
+      );
       _centerParents(componentPositions, groupsByLevel, parentToChildren);
       _normalizeGroups(
         componentPositions,
         groupsByLevel,
+        levels: levels,
+        childToParents: childToParents,
+        parentToChildren: parentToChildren,
+        siblingsByPerson: siblingsByPerson,
+        peopleById: peopleById,
+        componentStartX: offsetX,
+      );
+      _anchorComponentToStart(
+        componentPositions,
         componentStartX: offsetX,
       );
       nodePositions.addAll(componentPositions);
@@ -3144,6 +2797,123 @@ class _TreeLayoutEngine {
       });
     }
 
+    final snapshot = graphSnapshot;
+    if (snapshot != null && snapshot.generationRows.isNotEmpty) {
+      final snapshotLevels = <String, int>{};
+      for (final row in snapshot.generationRows) {
+        for (final personId in row.personIds) {
+          if (component.contains(personId)) {
+            snapshotLevels[personId] = row.row;
+          }
+        }
+      }
+      if (snapshotLevels.isNotEmpty) {
+        final snapshotMinLevel = snapshotLevels.values.reduce(min);
+        for (final entry in snapshotLevels.entries) {
+          levels[entry.key] = entry.value - snapshotMinLevel;
+        }
+
+        final relevantUnits = snapshot.familyUnits.where((unit) {
+          return unit.adultIds.any(component.contains) ||
+              unit.childIds.any(component.contains);
+        }).toList(growable: false);
+        final maxIterations = component.length + relevantUnits.length + 4;
+        var changed = true;
+        var iteration = 0;
+        while (changed && iteration < maxIterations) {
+          changed = false;
+          iteration += 1;
+
+          for (final personId in component) {
+            final spouseIds = (spousesByPerson[personId] ?? const <String>{})
+                .where(component.contains)
+                .toList(growable: false);
+            if (spouseIds.isEmpty) {
+              continue;
+            }
+            final targetLevel = [
+              levels[personId] ?? 0,
+              ...spouseIds.map((spouseId) => levels[spouseId] ?? 0),
+            ].reduce(max);
+            if ((levels[personId] ?? 0) != targetLevel) {
+              levels[personId] = targetLevel;
+              changed = true;
+            }
+            for (final spouseId in spouseIds) {
+              if ((levels[spouseId] ?? 0) != targetLevel) {
+                levels[spouseId] = targetLevel;
+                changed = true;
+              }
+            }
+          }
+
+          for (final unit in relevantUnits) {
+            final adultIds =
+                unit.adultIds.where(component.contains).toList(growable: false);
+            final childIds =
+                unit.childIds.where(component.contains).toList(growable: false);
+            if (adultIds.isEmpty && childIds.isEmpty) {
+              continue;
+            }
+
+            int? desiredAdultLevel;
+            if (childIds.isNotEmpty) {
+              desiredAdultLevel = max(
+                0,
+                childIds.map((personId) => levels[personId] ?? 0).reduce(min) -
+                    1,
+              );
+            } else if (adultIds.isNotEmpty) {
+              desiredAdultLevel =
+                  adultIds.map((personId) => levels[personId] ?? 0).reduce(max);
+            }
+
+            if (desiredAdultLevel != null) {
+              for (final adultId in adultIds) {
+                if ((levels[adultId] ?? 0) != desiredAdultLevel) {
+                  levels[adultId] = desiredAdultLevel;
+                  changed = true;
+                }
+              }
+            }
+
+            if (desiredAdultLevel != null && childIds.isNotEmpty) {
+              final desiredChildLevel = desiredAdultLevel + 1;
+              for (final childId in childIds) {
+                if ((levels[childId] ?? 0) != desiredChildLevel) {
+                  levels[childId] = desiredChildLevel;
+                  changed = true;
+                }
+              }
+            }
+          }
+
+          for (final personId in component) {
+            final siblingIds = (siblingsByPerson[personId] ?? const <String>{})
+                .where(component.contains)
+                .toList(growable: false);
+            if (siblingIds.isEmpty) {
+              continue;
+            }
+            final targetLevel = [
+              levels[personId] ?? 0,
+              ...siblingIds.map((siblingId) => levels[siblingId] ?? 0),
+            ].reduce(max);
+            if ((levels[personId] ?? 0) != targetLevel) {
+              levels[personId] = targetLevel;
+              changed = true;
+            }
+            for (final siblingId in siblingIds) {
+              if ((levels[siblingId] ?? 0) != targetLevel) {
+                levels[siblingId] = targetLevel;
+                changed = true;
+              }
+            }
+          }
+        }
+      }
+    }
+
     final minLevel = levels.values.reduce(min);
     if (minLevel != 0) {
       for (final entry in levels.entries.toList()) {
@@ -3158,6 +2928,7 @@ class _TreeLayoutEngine {
     required Map<String, int> levels,
     required Map<String, Set<String>> spousesByPerson,
     required Map<String, Set<String>> siblingsByPerson,
+    required Map<String, Set<String>> parentToChildren,
     required Map<String, FamilyPerson> peopleById,
   }) {
     final groupsByLevel = <int, List<_SpouseGroup>>{};
@@ -3192,18 +2963,27 @@ class _TreeLayoutEngine {
         }
       }
       grouped.addAll(memberIds);
-      final orderedIds = memberIds.toList()
-        ..sort((a, b) => _comparePersons(peopleById[a]!, peopleById[b]!));
+      final orderedIds = _orderedPartnerMemberIds(
+        memberIds.toList(),
+        peopleById,
+      );
       groupsByLevel.putIfAbsent(level, () => <_SpouseGroup>[]).add(
             _SpouseGroup(memberIds: orderedIds),
           );
     }
 
     for (final groups in groupsByLevel.values) {
-      groups.sort((a, b) => _comparePersons(
-            peopleById[a.memberIds.first]!,
-            peopleById[b.memberIds.first]!,
-          ));
+      groups.sort((a, b) {
+        final aWeight = _groupDescendantWeight(a.memberIds, parentToChildren);
+        final bWeight = _groupDescendantWeight(b.memberIds, parentToChildren);
+        if (aWeight != bWeight) {
+          return bWeight.compareTo(aWeight);
+        }
+        return _comparePersons(
+          peopleById[a.memberIds.first]!,
+          peopleById[b.memberIds.first]!,
+        );
+      });
     }
     return groupsByLevel;
   }
@@ -3282,9 +3062,15 @@ class _TreeLayoutEngine {
   void _normalizeGroups(
     Map<String, Offset> positions,
     Map<int, List<_SpouseGroup>> groupsByLevel, {
+    required Map<String, int> levels,
+    required Map<String, Set<String>> childToParents,
+    required Map<String, Set<String>> parentToChildren,
+    required Map<String, Set<String>> siblingsByPerson,
+    required Map<String, FamilyPerson> peopleById,
     required double componentStartX,
   }) {
     for (final entry in groupsByLevel.entries) {
+      final level = entry.key;
       final groups = entry.value
         ..sort((a, b) {
           final aCenter = a.memberIds
@@ -3300,14 +3086,24 @@ class _TreeLayoutEngine {
 
       double currentLeft = componentStartX;
       for (final group in groups) {
-        final groupWidth = _groupWidth(group.memberIds.length);
-        final currentCenter = group.memberIds
+        final orderedMemberIds = _orientedMemberIds(
+          memberIds: group.memberIds,
+          level: level,
+          positions: positions,
+          levels: levels,
+          childToParents: childToParents,
+          parentToChildren: parentToChildren,
+          siblingsByPerson: siblingsByPerson,
+          peopleById: peopleById,
+        );
+        final groupWidth = _groupWidth(orderedMemberIds.length);
+        final currentCenter = orderedMemberIds
                 .map((memberId) => positions[memberId]!.dx)
                 .reduce((x, y) => x + y) /
-            group.memberIds.length;
+            orderedMemberIds.length;
         final left = max(currentLeft, currentCenter - groupWidth / 2);
-        for (var index = 0; index < group.memberIds.length; index++) {
-          final memberId = group.memberIds[index];
+        for (var index = 0; index < orderedMemberIds.length; index++) {
+          final memberId = orderedMemberIds[index];
           final current = positions[memberId]!;
           final x = left +
               InteractiveFamilyTree.nodeWidth / 2 +
@@ -3319,6 +3115,270 @@ class _TreeLayoutEngine {
         currentLeft =
             left + groupWidth + InteractiveFamilyTree.siblingSeparation;
       }
+    }
+  }
+
+  void _anchorComponentToStart(
+    Map<String, Offset> positions, {
+    required double componentStartX,
+  }) {
+    if (positions.isEmpty) {
+      return;
+    }
+    final currentLeft = positions.values
+        .map((position) => position.dx - InteractiveFamilyTree.nodeWidth / 2)
+        .reduce(min);
+    final shift = componentStartX - currentLeft;
+    if (shift.abs() < 0.1) {
+      return;
+    }
+    for (final entry in positions.entries.toList(growable: false)) {
+      positions[entry.key] = Offset(entry.value.dx + shift, entry.value.dy);
+    }
+  }
+
+  List<String> _orientedMemberIds({
+    required List<String> memberIds,
+    required int level,
+    required Map<String, Offset> positions,
+    required Map<String, int> levels,
+    required Map<String, Set<String>> childToParents,
+    required Map<String, Set<String>> parentToChildren,
+    required Map<String, Set<String>> siblingsByPerson,
+    required Map<String, FamilyPerson> peopleById,
+  }) {
+    final baseOrderedMemberIds = _orderedPartnerMemberIds(
+      memberIds,
+      peopleById,
+    );
+    if (baseOrderedMemberIds.length <= 1) {
+      return baseOrderedMemberIds;
+    }
+
+    int lineageScore(String memberId) {
+      final previousLevelParents =
+          (childToParents[memberId] ?? const <String>{})
+              .where((parentId) => levels[parentId] == level - 1)
+              .length;
+      final nextLevelChildren = (parentToChildren[memberId] ?? const <String>{})
+          .where((childId) => levels[childId] == level + 1)
+          .length;
+      final allChildren =
+          (parentToChildren[memberId] ?? const <String>{}).length;
+      return previousLevelParents * 100 + nextLevelChildren * 10 + allChildren;
+    }
+
+    final scores = <String, int>{
+      for (final memberId in baseOrderedMemberIds)
+        memberId: lineageScore(memberId),
+    };
+    final highestScore = scores.values.reduce(max);
+    final primaryMembers = baseOrderedMemberIds
+        .where((memberId) => scores[memberId] == highestScore)
+        .toList();
+    final familyReferenceCenters = <String, double?>{
+      for (final memberId in baseOrderedMemberIds)
+        memberId: _memberPreferredReferenceCenter(
+          memberId: memberId,
+          level: level,
+          positions: positions,
+          levels: levels,
+          childToParents: childToParents,
+          parentToChildren: parentToChildren,
+          siblingsByPerson: siblingsByPerson,
+        ),
+    };
+    final anchoredMembers = baseOrderedMemberIds
+        .where((memberId) => familyReferenceCenters[memberId] != null)
+        .toList();
+
+    if (anchoredMembers.length > 1) {
+      final baseIndexes = <String, int>{
+        for (var index = 0; index < baseOrderedMemberIds.length; index++)
+          baseOrderedMemberIds[index]: index,
+      };
+      final hasDistinctReferenceCenters = anchoredMembers
+              .map((memberId) => familyReferenceCenters[memberId]!)
+              .toSet()
+              .length >
+          1;
+      if (hasDistinctReferenceCenters) {
+        final orientedIds = [...baseOrderedMemberIds];
+        orientedIds.sort((left, right) {
+          final leftCenter = familyReferenceCenters[left];
+          final rightCenter = familyReferenceCenters[right];
+          if (leftCenter != null &&
+              rightCenter != null &&
+              (leftCenter - rightCenter).abs() > 0.1) {
+            return leftCenter.compareTo(rightCenter);
+          }
+          return (baseIndexes[left] ?? 0).compareTo(baseIndexes[right] ?? 0);
+        });
+        return orientedIds;
+      }
+    }
+
+    if (highestScore <= 0 || primaryMembers.length != 1) {
+      return baseOrderedMemberIds;
+    }
+
+    final primaryMemberId = primaryMembers.single;
+    final primaryReferenceCenter = familyReferenceCenters[primaryMemberId];
+    if (primaryReferenceCenter == null) {
+      return baseOrderedMemberIds;
+    }
+    final groupCenter = baseOrderedMemberIds
+            .map((memberId) => positions[memberId]?.dx)
+            .whereType<double>()
+            .fold<double>(0, (sum, value) => sum + value) /
+        baseOrderedMemberIds.length;
+    if ((primaryReferenceCenter - groupCenter).abs() <= 0.1) {
+      return baseOrderedMemberIds;
+    }
+    final otherMemberIds = baseOrderedMemberIds
+        .where((memberId) => memberId != primaryMemberId)
+        .toList();
+
+    if (primaryReferenceCenter < groupCenter) {
+      return <String>[primaryMemberId, ...otherMemberIds];
+    }
+    return <String>[...otherMemberIds, primaryMemberId];
+  }
+
+  double? _memberPreferredReferenceCenter({
+    required String memberId,
+    required int level,
+    required Map<String, Offset> positions,
+    required Map<String, int> levels,
+    required Map<String, Set<String>> childToParents,
+    required Map<String, Set<String>> parentToChildren,
+    required Map<String, Set<String>> siblingsByPerson,
+  }) {
+    final siblingCenter = _memberSiblingReferenceCenter(
+      memberId: memberId,
+      level: level,
+      positions: positions,
+      levels: levels,
+      siblingsByPerson: siblingsByPerson,
+    );
+    if (siblingCenter != null) {
+      return siblingCenter;
+    }
+    final parentCenter = _memberParentReferenceCenter(
+      memberId: memberId,
+      level: level,
+      positions: positions,
+      levels: levels,
+      childToParents: childToParents,
+    );
+    if (parentCenter != null) {
+      return parentCenter;
+    }
+    return _memberChildReferenceCenter(
+      memberId: memberId,
+      level: level,
+      positions: positions,
+      levels: levels,
+      parentToChildren: parentToChildren,
+    );
+  }
+
+  double? _memberParentReferenceCenter({
+    required String memberId,
+    required int level,
+    required Map<String, Offset> positions,
+    required Map<String, int> levels,
+    required Map<String, Set<String>> childToParents,
+  }) {
+    final referenceCenters = <double>[];
+    for (final parentId in childToParents[memberId] ?? const <String>{}) {
+      if (levels[parentId] != level - 1) {
+        continue;
+      }
+      final parentPosition = positions[parentId];
+      if (parentPosition != null) {
+        referenceCenters.add(parentPosition.dx);
+      }
+    }
+    if (referenceCenters.isEmpty) {
+      return null;
+    }
+    return referenceCenters.reduce((a, b) => a + b) / referenceCenters.length;
+  }
+
+  double? _memberSiblingReferenceCenter({
+    required String memberId,
+    required int level,
+    required Map<String, Offset> positions,
+    required Map<String, int> levels,
+    required Map<String, Set<String>> siblingsByPerson,
+  }) {
+    final referenceCenters = <double>[];
+    for (final siblingId in siblingsByPerson[memberId] ?? const <String>{}) {
+      if (levels[siblingId] != level) {
+        continue;
+      }
+      final siblingPosition = positions[siblingId];
+      if (siblingPosition != null) {
+        referenceCenters.add(siblingPosition.dx);
+      }
+    }
+    if (referenceCenters.isEmpty) {
+      return null;
+    }
+    return referenceCenters.reduce((a, b) => a + b) / referenceCenters.length;
+  }
+
+  double? _memberChildReferenceCenter({
+    required String memberId,
+    required int level,
+    required Map<String, Offset> positions,
+    required Map<String, int> levels,
+    required Map<String, Set<String>> parentToChildren,
+  }) {
+    final referenceCenters = <double>[];
+    for (final childId in parentToChildren[memberId] ?? const <String>{}) {
+      if (levels[childId] != level + 1) {
+        continue;
+      }
+      final childPosition = positions[childId];
+      if (childPosition != null) {
+        referenceCenters.add(childPosition.dx);
+      }
+    }
+    if (referenceCenters.isEmpty) {
+      return null;
+    }
+    return referenceCenters.reduce((a, b) => a + b) / referenceCenters.length;
+  }
+
+  List<String> _orderedPartnerMemberIds(
+    List<String> memberIds,
+    Map<String, FamilyPerson> peopleById,
+  ) {
+    final orderedIds = [...memberIds];
+    orderedIds.sort((left, right) {
+      final leftRank = _partnerGenderSortWeight(peopleById[left]?.gender);
+      final rightRank = _partnerGenderSortWeight(peopleById[right]?.gender);
+      if (leftRank != rightRank) {
+        return leftRank.compareTo(rightRank);
+      }
+      return _comparePersons(peopleById[left]!, peopleById[right]!);
+    });
+    return orderedIds;
+  }
+
+  int _partnerGenderSortWeight(Gender? gender) {
+    switch (gender) {
+      case Gender.male:
+        return 0;
+      case Gender.female:
+        return 1;
+      case Gender.other:
+        return 2;
+      case Gender.unknown:
+      case null:
+        return 3;
     }
   }
 
@@ -3412,20 +3472,90 @@ class _TreeLayoutEngine {
     return membersCount * InteractiveFamilyTree.nodeWidth +
         (membersCount - 1) * InteractiveFamilyTree.spouseSeparation;
   }
+
+  int _groupDescendantWeight(
+    List<String> memberIds,
+    Map<String, Set<String>> parentToChildren,
+  ) {
+    final visited = <String>{};
+    final queue = <String>[...memberIds];
+    while (queue.isNotEmpty) {
+      final currentId = queue.removeLast();
+      for (final childId in parentToChildren[currentId] ?? const <String>{}) {
+        if (visited.add(childId)) {
+          queue.add(childId);
+        }
+      }
+    }
+    return visited.length;
+  }
+}
+
+class _GenerationGuideBadge extends StatelessWidget {
+  const _GenerationGuideBadge({
+    required this.title,
+    this.subtitle,
+  });
+
+  final String title;
+  final String? subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    final titleStyle = Theme.of(context).textTheme.labelSmall?.copyWith(
+          fontWeight: FontWeight.w700,
+        );
+    final subtitleStyle = Theme.of(context).textTheme.labelSmall?.copyWith(
+          fontSize: 10,
+          height: 1.15,
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
+        );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(title, style: titleStyle),
+        if (subtitle != null && subtitle!.trim().isNotEmpty) ...[
+          const SizedBox(height: 2),
+          Text(
+            subtitle!,
+            style: subtitleStyle,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ],
+    );
+  }
 }
 
 // Класс для отрисовки линий связей - ВНЕ класса _InteractiveFamilyTreeState
 class FamilyTreePainter extends CustomPainter {
   final Map<String, Offset> nodePositions; // Центры узлов
   final List<FamilyConnection> connections;
+  final TreeGraphSnapshot? graphSnapshot;
+  final List<FamilyRelation> relations;
   final Paint spouseLinePaint;
+  final Paint spousePastLinePaint;
   final Paint familyLinePaint;
+  final Paint mutedFamilyLinePaint;
   final Paint junctionPaint;
+  final Paint mutedJunctionPaint;
 
-  FamilyTreePainter(this.nodePositions, this.connections)
-      : spouseLinePaint = Paint()
+  FamilyTreePainter(
+    this.nodePositions,
+    this.connections, {
+    this.graphSnapshot,
+    this.relations = const <FamilyRelation>[],
+  })  : spouseLinePaint = Paint()
           ..color = Colors.grey.shade500
           ..strokeWidth = 1.5
+          ..isAntiAlias = true
+          ..style = PaintingStyle.stroke,
+        spousePastLinePaint = Paint()
+          ..color = Colors.grey.shade400
+          ..strokeWidth = 1.2
           ..isAntiAlias = true
           ..style = PaintingStyle.stroke,
         familyLinePaint = Paint()
@@ -3434,13 +3564,31 @@ class FamilyTreePainter extends CustomPainter {
           ..strokeCap = StrokeCap.round
           ..isAntiAlias = true
           ..style = PaintingStyle.stroke,
+        mutedFamilyLinePaint = Paint()
+          ..color = Colors.grey.shade500
+          ..strokeWidth = 1.6
+          ..strokeCap = StrokeCap.round
+          ..isAntiAlias = true
+          ..style = PaintingStyle.stroke,
         junctionPaint = Paint()
           ..color = Colors.grey.shade500
+          ..isAntiAlias = true
+          ..style = PaintingStyle.fill,
+        mutedJunctionPaint = Paint()
+          ..color = Colors.grey.shade400
           ..isAntiAlias = true
           ..style = PaintingStyle.fill;
 
   @override
   void paint(Canvas canvas, Size size) {
+    final snapshot = graphSnapshot;
+    if (snapshot != null && snapshot.familyUnits.isNotEmpty) {
+      final didPaintFromSnapshot = _paintSnapshotUnits(canvas, snapshot);
+      if (didPaintFromSnapshot) {
+        return;
+      }
+    }
+
     final familyUnits = <String, _PaintFamilyUnit>{};
     final paintedFamilyKeys = <String>{};
 
@@ -3452,7 +3600,7 @@ class FamilyTreePainter extends CustomPainter {
       }
 
       if (connection.type == RelationType.spouse) {
-        _drawSpouseLine(canvas, startNodePos, endNodePos);
+        _drawSpouseLine(canvas, startNodePos, endNodePos, spouseLinePaint);
       } else if (connection.type == RelationType.parent) {
         final key = connection.toId;
         final unit = familyUnits.putIfAbsent(
@@ -3482,13 +3630,91 @@ class FamilyTreePainter extends CustomPainter {
         continue;
       }
       if (paintedFamilyKeys.add(groupedKey)) {
-        _drawFamilyUnit(canvas, parentIds: parentIds, childIds: childIds);
+        _drawFamilyUnit(
+          canvas,
+          parentIds: parentIds,
+          childIds: childIds,
+          linePaint: familyLinePaint,
+          pointPaint: junctionPaint,
+        );
       }
     }
   }
 
+  bool _paintSnapshotUnits(Canvas canvas, TreeGraphSnapshot snapshot) {
+    final visiblePersonIds = nodePositions.keys.toSet();
+    final paintedFamilyKeys = <String>{};
+    final paintedSpousePairs = <String>{};
+    var paintedAnything = false;
+
+    for (final unit in snapshot.familyUnits) {
+      final parentIds = unit.adultIds
+          .where(visiblePersonIds.contains)
+          .toList(growable: false)
+        ..sort((left, right) =>
+            nodePositions[left]!.dx.compareTo(nodePositions[right]!.dx));
+      final childIds = unit.childIds
+          .where(visiblePersonIds.contains)
+          .toList(growable: false)
+        ..sort((left, right) =>
+            nodePositions[left]!.dx.compareTo(nodePositions[right]!.dx));
+
+      if (parentIds.length > 1) {
+        final linePaint =
+            unit.unionStatus == 'past' ? spousePastLinePaint : spouseLinePaint;
+        for (var index = 0; index < parentIds.length - 1; index++) {
+          final pairIds = [parentIds[index], parentIds[index + 1]]..sort();
+          final pairKey = pairIds.join('::');
+          if (!paintedSpousePairs.add(pairKey)) {
+            continue;
+          }
+          final firstPosition = nodePositions[pairIds.first];
+          final secondPosition = nodePositions[pairIds.last];
+          if (firstPosition == null || secondPosition == null) {
+            continue;
+          }
+          _drawSpouseLine(canvas, firstPosition, secondPosition, linePaint);
+          paintedAnything = true;
+        }
+      }
+
+      if (parentIds.isEmpty || childIds.isEmpty) {
+        continue;
+      }
+      final groupedKey =
+          '${unit.id}::${parentIds.join('::')}::${childIds.join('::')}';
+      if (!paintedFamilyKeys.add(groupedKey)) {
+        continue;
+      }
+
+      final linePaint =
+          unit.unionStatus == 'past' ? mutedFamilyLinePaint : familyLinePaint;
+      final junctionPaintForUnit =
+          unit.unionStatus == 'past' ? mutedJunctionPaint : junctionPaint;
+      final dashed = (unit.parentSetType ?? '').trim().isNotEmpty &&
+          unit.parentSetType != 'biological' &&
+          unit.parentSetType != 'unknown';
+      _drawFamilyUnit(
+        canvas,
+        parentIds: parentIds,
+        childIds: childIds,
+        linePaint: linePaint,
+        pointPaint: junctionPaintForUnit,
+        dashed: dashed,
+      );
+      paintedAnything = true;
+    }
+
+    return paintedAnything;
+  }
+
   // Метод для рисования линии между супругами
-  void _drawSpouseLine(Canvas canvas, Offset pos1, Offset pos2) {
+  void _drawSpouseLine(
+    Canvas canvas,
+    Offset pos1,
+    Offset pos2,
+    Paint linePaint,
+  ) {
     // Просто рисуем горизонтальную линию между боковыми центрами
     final y = pos1.dy; // Супруги на одном уровне
     final x1 = pos1.dx +
@@ -3499,13 +3725,16 @@ class FamilyTreePainter extends CustomPainter {
         (pos1.dx < pos2.dx
             ? -InteractiveFamilyTree.nodeWidth / 2
             : InteractiveFamilyTree.nodeWidth / 2);
-    canvas.drawLine(Offset(x1, y), Offset(x2, y), spouseLinePaint);
+    canvas.drawLine(Offset(x1, y), Offset(x2, y), linePaint);
   }
 
   void _drawFamilyUnit(
     Canvas canvas, {
     required List<String> parentIds,
     required List<String> childIds,
+    required Paint linePaint,
+    required Paint pointPaint,
+    bool dashed = false,
   }) {
     final parentAnchors = parentIds
         .map((id) => nodePositions[id])
@@ -3542,25 +3771,31 @@ class FamilyTreePainter extends CustomPainter {
       final minParentX = parentAnchors.map((anchor) => anchor.dx).reduce(min);
       final maxParentX = parentAnchors.map((anchor) => anchor.dx).reduce(max);
       for (final anchor in parentAnchors) {
-        canvas.drawLine(
-          anchor,
-          Offset(anchor.dx, parentBarY),
-          familyLinePaint,
+        _drawSegment(
+          canvas: canvas,
+          start: anchor,
+          end: Offset(anchor.dx, parentBarY),
+          linePaint: linePaint,
+          dashed: dashed,
         );
       }
-      canvas.drawLine(
-        Offset(minParentX, parentBarY),
-        Offset(maxParentX, parentBarY),
-        familyLinePaint,
+      _drawSegment(
+        canvas: canvas,
+        start: Offset(minParentX, parentBarY),
+        end: Offset(maxParentX, parentBarY),
+        linePaint: linePaint,
+        dashed: dashed,
       );
-      _drawJunction(canvas, Offset(familyCenterX, parentBarY));
+      _drawJunction(canvas, Offset(familyCenterX, parentBarY), pointPaint);
     } else {
-      canvas.drawLine(
-        parentAnchors.first,
-        Offset(familyCenterX, parentBarY),
-        familyLinePaint,
+      _drawSegment(
+        canvas: canvas,
+        start: parentAnchors.first,
+        end: Offset(familyCenterX, parentBarY),
+        linePaint: linePaint,
+        dashed: dashed,
       );
-      _drawJunction(canvas, Offset(familyCenterX, parentBarY));
+      _drawJunction(canvas, Offset(familyCenterX, parentBarY), pointPaint);
     }
 
     final downwardChildren =
@@ -3575,6 +3810,9 @@ class FamilyTreePainter extends CustomPainter {
         parentBarY: parentBarY,
         anchors: downwardChildren,
         branchY: downwardChildren.map((anchor) => anchor.dy).reduce(min) - 18,
+        linePaint: linePaint,
+        pointPaint: pointPaint,
+        dashed: dashed,
       );
     }
 
@@ -3585,6 +3823,9 @@ class FamilyTreePainter extends CustomPainter {
         parentBarY: parentBarY,
         anchors: upwardChildren,
         branchY: upwardChildren.map((anchor) => anchor.dy).reduce(max) + 18,
+        linePaint: linePaint,
+        pointPaint: pointPaint,
+        dashed: dashed,
       );
     }
   }
@@ -3595,57 +3836,101 @@ class FamilyTreePainter extends CustomPainter {
     required double parentBarY,
     required List<Offset> anchors,
     required double branchY,
+    required Paint linePaint,
+    required Paint pointPaint,
+    required bool dashed,
   }) {
     if (anchors.isEmpty) {
       return;
     }
 
     if ((branchY - parentBarY).abs() > 0.1) {
-      canvas.drawLine(
-        Offset(familyCenterX, parentBarY),
-        Offset(familyCenterX, branchY),
-        familyLinePaint,
+      _drawSegment(
+        canvas: canvas,
+        start: Offset(familyCenterX, parentBarY),
+        end: Offset(familyCenterX, branchY),
+        linePaint: linePaint,
+        dashed: dashed,
       );
     }
 
     final minChildX = anchors.map((anchor) => anchor.dx).reduce(min);
     final maxChildX = anchors.map((anchor) => anchor.dx).reduce(max);
-    if ((maxChildX - minChildX).abs() > 0.1) {
-      canvas.drawLine(
-        Offset(minChildX, branchY),
-        Offset(maxChildX, branchY),
-        familyLinePaint,
+    final branchStartX = min(minChildX, familyCenterX);
+    final branchEndX = max(maxChildX, familyCenterX);
+    if ((branchEndX - branchStartX).abs() > 0.1) {
+      _drawSegment(
+        canvas: canvas,
+        start: Offset(branchStartX, branchY),
+        end: Offset(branchEndX, branchY),
+        linePaint: linePaint,
+        dashed: dashed,
       );
     }
-    _drawJunction(canvas, Offset(familyCenterX, branchY));
+    _drawJunction(canvas, Offset(familyCenterX, branchY), pointPaint);
 
     for (final anchor in anchors) {
       if ((anchor.dx - familyCenterX).abs() > 0.1) {
-        canvas.drawLine(
-          Offset(anchor.dx, branchY),
-          anchor,
-          familyLinePaint,
+        _drawSegment(
+          canvas: canvas,
+          start: Offset(anchor.dx, branchY),
+          end: anchor,
+          linePaint: linePaint,
+          dashed: dashed,
         );
       } else {
-        canvas.drawLine(
-          Offset(familyCenterX, branchY),
-          anchor,
-          familyLinePaint,
+        _drawSegment(
+          canvas: canvas,
+          start: Offset(familyCenterX, branchY),
+          end: anchor,
+          linePaint: linePaint,
+          dashed: dashed,
         );
       }
-      _drawJunction(canvas, Offset(anchor.dx, branchY));
+      _drawJunction(canvas, Offset(anchor.dx, branchY), pointPaint);
     }
   }
 
-  void _drawJunction(Canvas canvas, Offset center) {
-    canvas.drawCircle(center, 4.0, junctionPaint);
+  void _drawSegment({
+    required Canvas canvas,
+    required Offset start,
+    required Offset end,
+    required Paint linePaint,
+    required bool dashed,
+  }) {
+    if (!dashed) {
+      canvas.drawLine(start, end, linePaint);
+      return;
+    }
+
+    const dashLength = 6.0;
+    const gapLength = 4.0;
+    final delta = end - start;
+    final distance = delta.distance;
+    if (distance <= 0.1) {
+      return;
+    }
+    final direction = Offset(delta.dx / distance, delta.dy / distance);
+    double offset = 0;
+    while (offset < distance) {
+      final segmentStart = start + direction * offset;
+      final segmentEnd = start + direction * min(offset + dashLength, distance);
+      canvas.drawLine(segmentStart, segmentEnd, linePaint);
+      offset += dashLength + gapLength;
+    }
+  }
+
+  void _drawJunction(Canvas canvas, Offset center, Paint pointPaint) {
+    canvas.drawCircle(center, 4.0, pointPaint);
   }
 
   @override
   bool shouldRepaint(covariant FamilyTreePainter oldDelegate) {
     // Перерисовываем, если изменились позиции узлов или сами связи
     return oldDelegate.nodePositions != nodePositions ||
-        oldDelegate.connections != connections;
+        oldDelegate.connections != connections ||
+        oldDelegate.graphSnapshot != graphSnapshot ||
+        oldDelegate.relations != relations;
   }
 } // <- Скобка закрывает класс FamilyTreePainter
 

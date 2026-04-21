@@ -25,8 +25,6 @@ class UserProfile extends HiveObject {
   final String? _photoURL;
   @HiveField(8)
   final String phoneNumber;
-  @HiveField(9)
-  final bool isPhoneVerified;
   @HiveField(10)
   final Gender? gender;
   @HiveField(11)
@@ -49,6 +47,42 @@ class UserProfile extends HiveObject {
   final List<String>? accessibleTreeIds;
   @HiveField(20)
   final List<String>? fcmTokens;
+  @HiveField(21)
+  final String bio;
+  @HiveField(22)
+  final String familyStatus;
+  @HiveField(23)
+  final String education;
+  @HiveField(24)
+  final String work;
+  @HiveField(25)
+  final String values;
+  @HiveField(26)
+  final String religion;
+  @HiveField(27)
+  final Map<String, String>? profileVisibilityScopes;
+  @HiveField(28)
+  final List<String>? hiddenProfileSections;
+  @HiveField(29)
+  final Map<String, List<String>>? profileVisibilityTreeIds;
+  @HiveField(30)
+  final Map<String, List<String>>? profileVisibilityUserIds;
+  @HiveField(31)
+  final String hometown;
+  @HiveField(32)
+  final String languages;
+  @HiveField(33)
+  final String interests;
+  @HiveField(34)
+  final String aboutFamily;
+  @HiveField(35)
+  final Map<String, List<String>>? profileVisibilityBranchRootIds;
+  @HiveField(36)
+  final String? birthPlace;
+  @HiveField(37)
+  final String profileContributionPolicy;
+  @HiveField(38)
+  final String maidenName;
 
   String? get photoURL => _photoURL;
 
@@ -62,7 +96,6 @@ class UserProfile extends HiveObject {
     required this.username,
     String? photoURL,
     required this.phoneNumber,
-    this.isPhoneVerified = false,
     this.gender,
     this.birthDate,
     this.country,
@@ -74,6 +107,24 @@ class UserProfile extends HiveObject {
     this.creatorOfTreeIds,
     this.accessibleTreeIds,
     this.fcmTokens,
+    this.bio = '',
+    this.familyStatus = '',
+    this.aboutFamily = '',
+    this.education = '',
+    this.work = '',
+    this.hometown = '',
+    this.languages = '',
+    this.values = '',
+    this.religion = '',
+    this.interests = '',
+    this.profileVisibilityScopes,
+    this.hiddenProfileSections,
+    this.profileVisibilityTreeIds,
+    this.profileVisibilityUserIds,
+    this.profileVisibilityBranchRootIds,
+    this.birthPlace,
+    this.profileContributionPolicy = 'suggestions',
+    this.maidenName = '',
   }) : _photoURL = UrlUtils.normalizeImageUrl(photoURL);
 
   factory UserProfile.fromFirestore(dynamic doc) {
@@ -108,11 +159,12 @@ class UserProfile extends HiveObject {
       username: data['username'] ?? '',
       photoURL: data['photoURL'],
       phoneNumber: data['phoneNumber'] ?? '',
-      isPhoneVerified: data['isPhoneVerified'] ?? false,
       gender: userGender,
       birthDate: data['birthDate'] != null
           ? parseDateTimeRequired(data['birthDate'])
           : null,
+      maidenName: data['maidenName']?.toString() ?? '',
+      birthPlace: data['birthPlace'] as String?,
       country: data['country'] as String?,
       city: data['city'],
       createdAt: data['createdAt'] != null
@@ -134,6 +186,48 @@ class UserProfile extends HiveObject {
       fcmTokens: (data['fcmTokens'] as List<dynamic>? ?? [])
           .map((e) => e.toString())
           .toList(),
+      bio: data['bio'] ?? '',
+      familyStatus: data['familyStatus'] ?? '',
+      aboutFamily: data['aboutFamily'] ?? '',
+      education: data['education'] ?? '',
+      work: data['work'] ?? '',
+      hometown: data['hometown'] ?? '',
+      languages: data['languages'] ?? '',
+      values: data['values'] ?? '',
+      religion: data['religion'] ?? '',
+      interests: data['interests'] ?? '',
+      profileContributionPolicy:
+          data['profileContributionPolicy']?.toString() ?? 'suggestions',
+      profileVisibilityScopes:
+          (data['profileVisibility'] as Map?)?.map((key, value) => MapEntry(
+                    key.toString(),
+                    ((value as Map?)?['scope'] ?? value).toString(),
+                  )) ??
+              (data['profileVisibilityScopes'] as Map?)?.map(
+                (key, value) => MapEntry(key.toString(), value.toString()),
+              ),
+      hiddenProfileSections:
+          (data['hiddenProfileSections'] as List<dynamic>? ?? [])
+              .map((e) => e.toString())
+              .toList(),
+      profileVisibilityTreeIds: _mapStringListMap(
+        (data['profileVisibility'] as Map?)?.map(
+          (key, value) => MapEntry(key.toString(), (value as Map?)?['treeIds']),
+        ),
+      ),
+      profileVisibilityBranchRootIds: _mapStringListMap(
+        (data['profileVisibility'] as Map?)?.map(
+          (key, value) => MapEntry(
+            key.toString(),
+            (value as Map?)?['branchRootPersonIds'],
+          ),
+        ),
+      ),
+      profileVisibilityUserIds: _mapStringListMap(
+        (data['profileVisibility'] as Map?)?.map(
+          (key, value) => MapEntry(key.toString(), (value as Map?)?['userIds']),
+        ),
+      ),
     );
   }
 
@@ -147,9 +241,10 @@ class UserProfile extends HiveObject {
       'username': username,
       'photoURL': photoURL,
       'phoneNumber': phoneNumber,
-      'isPhoneVerified': isPhoneVerified,
       'gender': gender?.toString().split('.').last,
       'birthDate': birthDate?.toIso8601String(),
+      'maidenName': maidenName,
+      'birthPlace': birthPlace,
       'country': country,
       'city': city,
       'createdAt': createdAt.toIso8601String(),
@@ -159,6 +254,27 @@ class UserProfile extends HiveObject {
       if (creatorOfTreeIds != null) 'creatorOfTreeIds': creatorOfTreeIds,
       if (accessibleTreeIds != null) 'accessibleTreeIds': accessibleTreeIds,
       if (fcmTokens != null) 'fcmTokens': fcmTokens,
+      'bio': bio,
+      'familyStatus': familyStatus,
+      'aboutFamily': aboutFamily,
+      'education': education,
+      'work': work,
+      'hometown': hometown,
+      'languages': languages,
+      'values': values,
+      'religion': religion,
+      'interests': interests,
+      'profileContributionPolicy': profileContributionPolicy,
+      if (profileVisibilityScopes != null)
+        'profileVisibilityScopes': profileVisibilityScopes,
+      if (hiddenProfileSections != null)
+        'hiddenProfileSections': hiddenProfileSections,
+      if (profileVisibilityTreeIds != null)
+        'profileVisibilityTreeIds': profileVisibilityTreeIds,
+      if (profileVisibilityBranchRootIds != null)
+        'profileVisibilityBranchRootIds': profileVisibilityBranchRootIds,
+      if (profileVisibilityUserIds != null)
+        'profileVisibilityUserIds': profileVisibilityUserIds,
     };
   }
 
@@ -183,9 +299,10 @@ class UserProfile extends HiveObject {
     String? username,
     String? photoURL,
     String? phoneNumber,
-    bool? isPhoneVerified,
     Gender? gender,
     DateTime? birthDate,
+    String? maidenName,
+    String? birthPlace,
     String? country,
     String? city,
     DateTime? createdAt,
@@ -195,6 +312,22 @@ class UserProfile extends HiveObject {
     List<String>? creatorOfTreeIds,
     List<String>? accessibleTreeIds,
     List<String>? fcmTokens,
+    String? bio,
+    String? familyStatus,
+    String? aboutFamily,
+    String? education,
+    String? work,
+    String? hometown,
+    String? languages,
+    String? values,
+    String? religion,
+    String? interests,
+    String? profileContributionPolicy,
+    Map<String, String>? profileVisibilityScopes,
+    List<String>? hiddenProfileSections,
+    Map<String, List<String>>? profileVisibilityTreeIds,
+    Map<String, List<String>>? profileVisibilityBranchRootIds,
+    Map<String, List<String>>? profileVisibilityUserIds,
   }) {
     return UserProfile(
       id: id ?? this.id,
@@ -206,9 +339,10 @@ class UserProfile extends HiveObject {
       username: username ?? this.username,
       photoURL: photoURL ?? this.photoURL,
       phoneNumber: phoneNumber ?? this.phoneNumber,
-      isPhoneVerified: isPhoneVerified ?? this.isPhoneVerified,
       gender: gender ?? this.gender,
       birthDate: birthDate ?? this.birthDate,
+      maidenName: maidenName ?? this.maidenName,
+      birthPlace: birthPlace ?? this.birthPlace,
       country: country ?? this.country,
       city: city ?? this.city,
       createdAt: createdAt ?? this.createdAt,
@@ -218,6 +352,28 @@ class UserProfile extends HiveObject {
       creatorOfTreeIds: creatorOfTreeIds ?? this.creatorOfTreeIds,
       accessibleTreeIds: accessibleTreeIds ?? this.accessibleTreeIds,
       fcmTokens: fcmTokens ?? this.fcmTokens,
+      bio: bio ?? this.bio,
+      familyStatus: familyStatus ?? this.familyStatus,
+      aboutFamily: aboutFamily ?? this.aboutFamily,
+      education: education ?? this.education,
+      work: work ?? this.work,
+      hometown: hometown ?? this.hometown,
+      languages: languages ?? this.languages,
+      values: values ?? this.values,
+      religion: religion ?? this.religion,
+      interests: interests ?? this.interests,
+      profileContributionPolicy:
+          profileContributionPolicy ?? this.profileContributionPolicy,
+      profileVisibilityScopes:
+          profileVisibilityScopes ?? this.profileVisibilityScopes,
+      hiddenProfileSections:
+          hiddenProfileSections ?? this.hiddenProfileSections,
+      profileVisibilityTreeIds:
+          profileVisibilityTreeIds ?? this.profileVisibilityTreeIds,
+      profileVisibilityBranchRootIds:
+          profileVisibilityBranchRootIds ?? this.profileVisibilityBranchRootIds,
+      profileVisibilityUserIds:
+          profileVisibilityUserIds ?? this.profileVisibilityUserIds,
     );
   }
 
@@ -231,9 +387,10 @@ class UserProfile extends HiveObject {
     required String username,
     String? photoURL,
     required String phoneNumber,
-    bool isPhoneVerified = false,
     Gender? gender,
     DateTime? birthDate,
+    String maidenName = '',
+    String? birthPlace,
     String? country,
     String? city,
     DateTime? updatedAt,
@@ -242,6 +399,22 @@ class UserProfile extends HiveObject {
     List<String>? creatorOfTreeIds,
     List<String>? accessibleTreeIds,
     List<String>? fcmTokens,
+    String bio = '',
+    String familyStatus = '',
+    String aboutFamily = '',
+    String education = '',
+    String work = '',
+    String hometown = '',
+    String languages = '',
+    String values = '',
+    String religion = '',
+    String interests = '',
+    String profileContributionPolicy = 'suggestions',
+    Map<String, String>? profileVisibilityScopes,
+    List<String>? hiddenProfileSections,
+    Map<String, List<String>>? profileVisibilityTreeIds,
+    Map<String, List<String>>? profileVisibilityBranchRootIds,
+    Map<String, List<String>>? profileVisibilityUserIds,
   }) {
     return UserProfile(
       id: id,
@@ -253,9 +426,10 @@ class UserProfile extends HiveObject {
       username: username,
       photoURL: photoURL,
       phoneNumber: phoneNumber,
-      isPhoneVerified: isPhoneVerified,
       gender: gender,
       birthDate: birthDate,
+      maidenName: maidenName,
+      birthPlace: birthPlace,
       country: country,
       city: city,
       createdAt: DateTime.now(),
@@ -265,6 +439,22 @@ class UserProfile extends HiveObject {
       creatorOfTreeIds: creatorOfTreeIds,
       accessibleTreeIds: accessibleTreeIds,
       fcmTokens: fcmTokens,
+      bio: bio,
+      familyStatus: familyStatus,
+      aboutFamily: aboutFamily,
+      education: education,
+      work: work,
+      hometown: hometown,
+      languages: languages,
+      values: values,
+      religion: religion,
+      interests: interests,
+      profileContributionPolicy: profileContributionPolicy,
+      profileVisibilityScopes: profileVisibilityScopes,
+      hiddenProfileSections: hiddenProfileSections,
+      profileVisibilityTreeIds: profileVisibilityTreeIds,
+      profileVisibilityBranchRootIds: profileVisibilityBranchRootIds,
+      profileVisibilityUserIds: profileVisibilityUserIds,
     );
   }
 
@@ -298,6 +488,8 @@ class UserProfile extends HiveObject {
       birthDate: map['birthDate'] != null
           ? parseDateTimeRequired(map['birthDate'])
           : null,
+      maidenName: map['maidenName']?.toString() ?? '',
+      birthPlace: map['birthPlace'] as String?,
       gender: userGender,
       phoneNumber: map['phoneNumber'] ?? '',
       country: map['country'] as String?,
@@ -309,7 +501,6 @@ class UserProfile extends HiveObject {
           ? parseDateTimeRequired(map['updatedAt'])
           : DateTime.now(),
       username: map['username'] ?? '',
-      isPhoneVerified: map['isPhoneVerified'] ?? false,
       creatorOfTreeIds: (map['creatorOfTreeIds'] as List<dynamic>? ?? [])
           .map((e) => e.toString())
           .toList(),
@@ -319,6 +510,62 @@ class UserProfile extends HiveObject {
       fcmTokens: (map['fcmTokens'] as List<dynamic>? ?? [])
           .map((e) => e.toString())
           .toList(),
+      bio: map['bio'] ?? '',
+      familyStatus: map['familyStatus'] ?? '',
+      aboutFamily: map['aboutFamily'] ?? '',
+      education: map['education'] ?? '',
+      work: map['work'] ?? '',
+      hometown: map['hometown'] ?? '',
+      languages: map['languages'] ?? '',
+      values: map['values'] ?? '',
+      religion: map['religion'] ?? '',
+      interests: map['interests'] ?? '',
+      profileContributionPolicy:
+          map['profileContributionPolicy']?.toString() ?? 'suggestions',
+      profileVisibilityScopes:
+          (map['profileVisibility'] as Map?)?.map((key, value) => MapEntry(
+                    key.toString(),
+                    ((value as Map?)?['scope'] ?? value).toString(),
+                  )) ??
+              (map['profileVisibilityScopes'] as Map?)?.map(
+                (key, value) => MapEntry(key.toString(), value.toString()),
+              ),
+      hiddenProfileSections:
+          (map['hiddenProfileSections'] as List<dynamic>? ?? [])
+              .map((e) => e.toString())
+              .toList(),
+      profileVisibilityTreeIds:
+          _mapStringListMap(map['profileVisibilityTreeIds']) ??
+              _mapStringListMap(
+                (map['profileVisibility'] as Map?)?.map(
+                  (key, value) =>
+                      MapEntry(key.toString(), (value as Map?)?['treeIds']),
+                ),
+              ),
+      profileVisibilityUserIds:
+          _mapStringListMap(map['profileVisibilityUserIds']) ??
+              _mapStringListMap(
+                (map['profileVisibility'] as Map?)?.map(
+                  (key, value) =>
+                      MapEntry(key.toString(), (value as Map?)?['userIds']),
+                ),
+              ),
+    );
+  }
+
+  static Map<String, List<String>>? _mapStringListMap(dynamic value) {
+    if (value is! Map) {
+      return null;
+    }
+
+    return value.map(
+      (key, rawList) => MapEntry(
+        key.toString(),
+        (rawList is List ? rawList : const <dynamic>[])
+            .map((entry) => entry.toString())
+            .where((entry) => entry.trim().isNotEmpty)
+            .toList(),
+      ),
     );
   }
 }

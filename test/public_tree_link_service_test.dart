@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:lineage/services/public_tree_link_service.dart';
+import 'package:rodnya/services/public_tree_link_service.dart';
 
 void main() {
   test('builds hash-based public tree URL for Flutter web routing', () {

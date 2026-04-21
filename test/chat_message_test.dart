@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:lineage/models/chat_attachment.dart';
-import 'package:lineage/models/chat_message.dart';
+import 'package:rodnya/models/chat_attachment.dart';
+import 'package:rodnya/models/chat_message.dart';
 
 void main() {
   test('ChatMessage reads typed attachments from payload', () {

@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:lineage/backend/backend_provider_config.dart';
+import 'package:rodnya/backend/backend_provider_config.dart';
 
 void main() {
   test('BackendProviderConfig uses customApi by default', () {

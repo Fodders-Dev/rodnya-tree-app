@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:lineage/startup/startup_failure_policy.dart';
+import 'package:rodnya/startup/startup_failure_policy.dart';
 
 void main() {
   test('offers session reset copy for session-like startup failures', () {

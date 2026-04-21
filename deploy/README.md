@@ -195,6 +195,27 @@ Run this order on every production release:
 
 If any step fails, stop the rollout and keep the current live build.
 
+## Clean release sync flow
+
+When production already contains locally verified changes that have not been
+landed cleanly in `main`, use this order instead of deploying from a dirty
+worktree:
+
+1. collect only release files into a clean clone or release branch
+2. run `flutter analyze`, targeted `flutter test`, backend `node --test`, and
+   `flutter build web --release`
+3. run local smoke against `build/web`
+4. push the clean commit to `main`
+5. wait for `.github/workflows/flutter-web-deploy.yml` to finish green
+6. deploy the backend from the same clean commit if backend files changed
+7. verify the live route smoke, `/ready`, and `/v1/admin/runtime`
+8. confirm `last_build_id.txt` and backend `x-rodnya-release` reference the same
+   release wave
+
+The web deploy workflow should stay scoped only to real app/web paths, while
+`.github/workflows/production-watch.yml` remains the long-running readiness,
+runtime, smoke, and backup-precheck contour.
+
 ## Server-side activation script
 
 Install the activator once on the production server:

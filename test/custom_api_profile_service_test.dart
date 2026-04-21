@@ -5,13 +5,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:lineage/backend/backend_runtime_config.dart';
-import 'package:lineage/backend/interfaces/storage_service_interface.dart';
-import 'package:lineage/backend/models/profile_form_data.dart';
-import 'package:lineage/models/profile_note.dart';
-import 'package:lineage/services/custom_api_auth_service.dart';
-import 'package:lineage/services/custom_api_profile_service.dart';
-import 'package:lineage/services/invitation_service.dart';
+import 'package:rodnya/backend/backend_runtime_config.dart';
+import 'package:rodnya/backend/interfaces/storage_service_interface.dart';
+import 'package:rodnya/backend/models/profile_form_data.dart';
+import 'package:rodnya/models/profile_note.dart';
+import 'package:rodnya/services/custom_api_auth_service.dart';
+import 'package:rodnya/services/custom_api_profile_service.dart';
+import 'package:rodnya/services/invitation_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -28,7 +28,7 @@ void main() {
           jsonEncode({
             'profile': {
               'id': 'user-1',
-              'email': 'dev@lineage.app',
+              'email': 'dev@rodnya.app',
               'firstName': 'Иван',
               'lastName': 'Иванов',
               'middleName': 'Иванович',
@@ -39,6 +39,31 @@ void main() {
               'countryName': 'Россия',
               'city': 'Москва',
               'gender': 'male',
+              'bio': 'Люблю семейные архивы',
+              'familyStatus': 'Женат',
+              'aboutFamily': 'Собираю семейные истории для детей и внуков.',
+              'education': 'МГУ',
+              'work': 'Родня',
+              'hometown': 'Тула',
+              'languages': 'Русский, английский',
+              'values': 'Семья',
+              'religion': 'Православие',
+              'interests': 'Генеалогия, архивы, путешествия',
+              'profileVisibility': {
+                'about': {
+                  'scope': 'specific_trees',
+                  'treeIds': ['tree-family'],
+                },
+                'background': {'scope': 'public'},
+                'worldview': {
+                  'scope': 'specific_users',
+                  'userIds': ['user-2'],
+                },
+                'contacts': {
+                  'scope': 'specific_branches',
+                  'branchRootPersonIds': ['person-branch-1'],
+                },
+              },
             },
           }),
           200,
@@ -51,12 +76,36 @@ void main() {
         final body = jsonDecode(request.body) as Map<String, dynamic>;
         expect(body['firstName'], 'Пётр');
         expect(body['username'], 'petrov');
+        expect(body.containsKey('isPhoneVerified'), isFalse);
+        expect(body['bio'], 'Новый текст о себе');
+        expect(body['aboutFamily'], 'Хочу сохранить семейные истории.');
+        expect(body['hometown'], 'Казань');
+        expect(body['languages'], 'Русский, татарский');
+        expect(body['interests'], 'Семейные встречи и поездки');
+        expect(
+          body['profileVisibility'],
+          {
+            'contacts': {
+              'scope': 'specific_branches',
+              'branchRootPersonIds': ['person-1', 'person-2'],
+            },
+            'about': {
+              'scope': 'specific_trees',
+              'treeIds': ['tree-1', 'tree-2'],
+            },
+            'background': {'scope': 'shared_trees'},
+            'worldview': {
+              'scope': 'specific_users',
+              'userIds': ['user-9'],
+            },
+          },
+        );
 
         return http.Response(
           jsonEncode({
             'profile': {
               'id': 'user-1',
-              'email': 'dev@lineage.app',
+              'email': 'dev@rodnya.app',
               'firstName': body['firstName'],
               'lastName': body['lastName'],
               'middleName': body['middleName'],
@@ -67,6 +116,17 @@ void main() {
               'countryName': body['countryName'],
               'city': body['city'],
               'gender': body['gender'],
+              'bio': body['bio'],
+              'familyStatus': body['familyStatus'],
+              'aboutFamily': body['aboutFamily'],
+              'education': body['education'],
+              'work': body['work'],
+              'hometown': body['hometown'],
+              'languages': body['languages'],
+              'values': body['values'],
+              'religion': body['religion'],
+              'interests': body['interests'],
+              'profileVisibility': body['profileVisibility'],
             },
             'profileStatus': {
               'isComplete': true,
@@ -95,7 +155,7 @@ void main() {
         'accessToken': 'access-token',
         'refreshToken': 'refresh-token',
         'userId': 'user-1',
-        'email': 'dev@lineage.app',
+        'email': 'dev@rodnya.app',
         'displayName': 'Dev User',
         'providerIds': ['password'],
         'isProfileComplete': false,
@@ -120,11 +180,27 @@ void main() {
     expect(bootstrap.firstName, 'Иван');
     expect(bootstrap.username, 'ivanov');
     expect(bootstrap.countryName, 'Россия');
+    expect(bootstrap.bio, 'Люблю семейные архивы');
+    expect(
+        bootstrap.aboutFamily, 'Собираю семейные истории для детей и внуков.');
+    expect(bootstrap.hometown, 'Тула');
+    expect(bootstrap.languages, 'Русский, английский');
+    expect(bootstrap.interests, 'Генеалогия, архивы, путешествия');
+    expect(bootstrap.profileVisibilityScopes['background'], 'public');
+    expect(bootstrap.profileVisibilityScopes['about'], 'specific_trees');
+    expect(bootstrap.profileVisibilityTreeIds['about'], ['tree-family']);
+    expect(bootstrap.profileVisibilityScopes['contacts'], 'specific_branches');
+    expect(
+      bootstrap.profileVisibilityBranchRootIds['contacts'],
+      ['person-branch-1'],
+    );
+    expect(bootstrap.profileVisibilityScopes['worldview'], 'specific_users');
+    expect(bootstrap.profileVisibilityUserIds['worldview'], ['user-2']);
 
     await profileService.saveCurrentUserProfileFormData(
       const ProfileFormData(
         userId: 'user-1',
-        email: 'dev@lineage.app',
+        email: 'dev@rodnya.app',
         firstName: 'Пётр',
         lastName: 'Петров',
         middleName: '',
@@ -133,12 +209,61 @@ void main() {
         countryCode: '+7',
         countryName: 'Россия',
         city: 'Казань',
+        bio: 'Новый текст о себе',
+        familyStatus: 'Женат',
+        aboutFamily: 'Хочу сохранить семейные истории.',
+        education: 'МГУ',
+        work: 'Родня',
+        hometown: 'Казань',
+        languages: 'Русский, татарский',
+        values: 'Семья',
+        religion: 'Православие',
+        interests: 'Семейные встречи и поездки',
+        profileVisibilityScopes: {
+          'contacts': 'specific_branches',
+          'about': 'specific_trees',
+          'background': 'shared_trees',
+          'worldview': 'specific_users',
+        },
+        profileVisibilityTreeIds: {
+          'contacts': [],
+          'about': ['tree-1', 'tree-2'],
+          'background': [],
+          'worldview': [],
+        },
+        profileVisibilityBranchRootIds: {
+          'contacts': ['person-1', 'person-2'],
+          'about': [],
+          'background': [],
+          'worldview': [],
+        },
+        profileVisibilityUserIds: {
+          'contacts': [],
+          'about': [],
+          'background': [],
+          'worldview': ['user-9'],
+        },
       ),
     );
 
     final savedProfile = await profileService.getCurrentUserProfile();
     expect(savedProfile?.firstName, 'Пётр');
     expect(savedProfile?.username, 'petrov');
+    expect(savedProfile?.bio, 'Новый текст о себе');
+    expect(savedProfile?.aboutFamily, 'Хочу сохранить семейные истории.');
+    expect(savedProfile?.hometown, 'Казань');
+    expect(savedProfile?.languages, 'Русский, татарский');
+    expect(savedProfile?.interests, 'Семейные встречи и поездки');
+    expect(savedProfile?.profileVisibilityScopes?['about'], 'specific_trees');
+    expect(
+        savedProfile?.profileVisibilityTreeIds?['about'], ['tree-1', 'tree-2']);
+    expect(savedProfile?.profileVisibilityScopes?['contacts'],
+        'specific_branches');
+    expect(
+      savedProfile?.profileVisibilityBranchRootIds?['contacts'],
+      ['person-1', 'person-2'],
+    );
+    expect(savedProfile?.profileVisibilityUserIds?['worldview'], ['user-9']);
 
     final profileStatus = await authService.checkProfileCompleteness();
     expect(profileStatus['isComplete'], isTrue);
@@ -159,7 +284,7 @@ void main() {
           jsonEncode({
             'user': {
               'id': 'user-1',
-              'email': 'dev@lineage.app',
+              'email': 'dev@rodnya.app',
               'displayName': 'Dev User',
               'photoUrl': body['photoUrl'],
             },
@@ -246,7 +371,7 @@ void main() {
         'accessToken': 'access-token',
         'refreshToken': 'refresh-token',
         'userId': 'user-1',
-        'email': 'dev@lineage.app',
+        'email': 'dev@rodnya.app',
         'displayName': 'Dev User',
         'providerIds': ['password'],
         'isProfileComplete': false,
@@ -257,7 +382,7 @@ void main() {
       'custom_api_profile_form_v1',
       jsonEncode({
         'userId': 'user-1',
-        'email': 'dev@lineage.app',
+        'email': 'dev@rodnya.app',
         'firstName': 'Dev',
         'lastName': 'User',
         'middleName': '',
@@ -268,7 +393,6 @@ void main() {
         'countryName': 'Россия',
         'city': 'Москва',
         'photoUrl': null,
-        'isPhoneVerified': true,
         'gender': 'unknown',
       }),
     );
@@ -323,6 +447,174 @@ void main() {
       ),
     );
     await profileService.deleteProfileNote('user-1', 'note-1');
+  });
+
+  test('CustomApiProfileService ignores legacy cached profile of another user',
+      () async {
+    final client = MockClient((request) async {
+      if (request.url.path == '/v1/profile/me/bootstrap' &&
+          request.method == 'GET') {
+        return http.Response(
+          jsonEncode({
+            'profile': {
+              'id': 'user-1',
+              'email': 'dev@rodnya.app',
+              'firstName': 'Артем',
+              'lastName': 'Кузнецов',
+              'middleName': 'Андреевич',
+              'displayName': 'Артем Андреевич Кузнецов',
+              'username': 'artem',
+            },
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+
+      return http.Response('{"message":"not found"}', 404);
+    });
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'custom_api_session_v1',
+      jsonEncode({
+        'accessToken': 'access-token',
+        'refreshToken': 'refresh-token',
+        'userId': 'user-1',
+        'email': 'dev@rodnya.app',
+        'displayName': 'Dev User',
+        'providerIds': ['password'],
+        'isProfileComplete': true,
+        'missingFields': [],
+      }),
+    );
+    await prefs.setString(
+      'custom_api_profile_form_v1',
+      jsonEncode({
+        'userId': 'user-2',
+        'email': 'smoke@rodnya.app',
+        'firstName': 'Prod',
+        'lastName': 'UI Smoke',
+        'displayName': 'Prod UI Smoke',
+        'username': 'smoke',
+      }),
+    );
+
+    final authService = await CustomApiAuthService.create(
+      httpClient: client,
+      preferences: prefs,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      invitationService: InvitationService(),
+    );
+
+    final profileService = await CustomApiProfileService.create(
+      authService: authService,
+      httpClient: client,
+      preferences: prefs,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+    );
+
+    final profile = await profileService.getCurrentUserProfile();
+    expect(profile?.displayName, 'Артем Андреевич Кузнецов');
+    expect(profile?.username, 'artem');
+  });
+
+  test('CustomApiProfileService loads account linking status', () async {
+    final client = MockClient((request) async {
+      if (request.url.path == '/v1/profile/me/account-linking-status' &&
+          request.method == 'GET') {
+        return http.Response(
+          jsonEncode({
+            'linkedProviderIds': ['password', 'telegram'],
+            'trustedChannels': [
+              {
+                'provider': 'telegram',
+                'label': 'Telegram',
+                'description': 'Подтверждённый канал связи.',
+                'verificationLabel': 'Связь подтверждена через Telegram',
+                'isLinked': true,
+                'isTrustedChannel': true,
+                'isLoginMethod': true,
+                'isPrimary': true,
+              },
+            ],
+            'primaryTrustedChannel': {
+              'provider': 'telegram',
+              'label': 'Telegram',
+              'description': 'Подтверждённый канал связи.',
+              'verificationLabel': 'Связь подтверждена через Telegram',
+              'isLinked': true,
+              'isTrustedChannel': true,
+              'isLoginMethod': true,
+              'isPrimary': true,
+            },
+            'verificationSummary': {
+              'title': 'Аккаунт подтверждён через Telegram',
+              'detail': 'Основной канал: Telegram',
+            },
+            'discoveryModes': [
+              'username',
+              'profile_code',
+              'email',
+              'invite_link',
+              'claim_link',
+              'qr',
+            ],
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+
+      return http.Response('{"message":"not found"}', 404);
+    });
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'custom_api_session_v1',
+      jsonEncode({
+        'accessToken': 'access-token',
+        'refreshToken': 'refresh-token',
+        'userId': 'user-1',
+        'email': 'dev@rodnya.app',
+        'displayName': 'Dev User',
+        'providerIds': ['password'],
+        'isProfileComplete': true,
+        'missingFields': const <String>[],
+      }),
+    );
+
+    final authService = await CustomApiAuthService.create(
+      httpClient: client,
+      preferences: prefs,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      invitationService: InvitationService(),
+    );
+
+    final profileService = await CustomApiProfileService.create(
+      authService: authService,
+      httpClient: client,
+      preferences: prefs,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+    );
+
+    final status = await profileService.getCurrentAccountLinkingStatus();
+
+    expect(status.linkedProviderIds, containsAll(['password', 'telegram']));
+    expect(status.primaryTrustedChannelProvider, 'telegram');
+    expect(status.summaryTitle, 'Аккаунт подтверждён через Telegram');
+    expect(
+      status.discoveryModes,
+      containsAll(['username', 'profile_code', 'invite_link']),
+    );
   });
 }
 

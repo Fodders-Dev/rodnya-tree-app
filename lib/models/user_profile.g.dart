@@ -26,9 +26,10 @@ class UserProfileAdapter extends TypeAdapter<UserProfile> {
       username: fields[6] as String,
       photoURL: fields[7] as String?,
       phoneNumber: fields[8] as String,
-      isPhoneVerified: fields[9] as bool,
       gender: fields[10] as Gender?,
       birthDate: fields[11] as DateTime?,
+      maidenName: fields[38] as String? ?? '',
+      birthPlace: fields[36] as String?,
       country: fields[12] as String?,
       city: fields[13] as String?,
       createdAt: fields[14] as DateTime,
@@ -38,13 +39,44 @@ class UserProfileAdapter extends TypeAdapter<UserProfile> {
       creatorOfTreeIds: (fields[18] as List?)?.cast<String>(),
       accessibleTreeIds: (fields[19] as List?)?.cast<String>(),
       fcmTokens: (fields[20] as List?)?.cast<String>(),
+      bio: fields[21] as String? ?? '',
+      familyStatus: fields[22] as String? ?? '',
+      education: fields[23] as String? ?? '',
+      work: fields[24] as String? ?? '',
+      values: fields[25] as String? ?? '',
+      religion: fields[26] as String? ?? '',
+      profileVisibilityScopes: (fields[27] as Map?)?.cast<String, String>(),
+      hiddenProfileSections: (fields[28] as List?)?.cast<String>(),
+      profileVisibilityTreeIds: (fields[29] as Map?)?.map(
+        (key, value) => MapEntry(
+          key.toString(),
+          (value as List?)?.cast<String>() ?? const <String>[],
+        ),
+      ),
+      profileVisibilityUserIds: (fields[30] as Map?)?.map(
+        (key, value) => MapEntry(
+          key.toString(),
+          (value as List?)?.cast<String>() ?? const <String>[],
+        ),
+      ),
+      hometown: fields[31] as String? ?? '',
+      languages: fields[32] as String? ?? '',
+      interests: fields[33] as String? ?? '',
+      aboutFamily: fields[34] as String? ?? '',
+      profileVisibilityBranchRootIds: (fields[35] as Map?)?.map(
+        (key, value) => MapEntry(
+          key.toString(),
+          (value as List?)?.cast<String>() ?? const <String>[],
+        ),
+      ),
+      profileContributionPolicy: fields[37] as String? ?? 'suggestions',
     );
   }
 
   @override
   void write(BinaryWriter writer, UserProfile obj) {
     writer
-      ..writeByte(21)
+      ..writeByte(38)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -63,8 +95,6 @@ class UserProfileAdapter extends TypeAdapter<UserProfile> {
       ..write(obj.photoURL)
       ..writeByte(8)
       ..write(obj.phoneNumber)
-      ..writeByte(9)
-      ..write(obj.isPhoneVerified)
       ..writeByte(10)
       ..write(obj.gender)
       ..writeByte(11)
@@ -86,7 +116,43 @@ class UserProfileAdapter extends TypeAdapter<UserProfile> {
       ..writeByte(19)
       ..write(obj.accessibleTreeIds)
       ..writeByte(20)
-      ..write(obj.fcmTokens);
+      ..write(obj.fcmTokens)
+      ..writeByte(21)
+      ..write(obj.bio)
+      ..writeByte(22)
+      ..write(obj.familyStatus)
+      ..writeByte(23)
+      ..write(obj.education)
+      ..writeByte(24)
+      ..write(obj.work)
+      ..writeByte(25)
+      ..write(obj.values)
+      ..writeByte(26)
+      ..write(obj.religion)
+      ..writeByte(27)
+      ..write(obj.profileVisibilityScopes)
+      ..writeByte(28)
+      ..write(obj.hiddenProfileSections)
+      ..writeByte(29)
+      ..write(obj.profileVisibilityTreeIds)
+      ..writeByte(30)
+      ..write(obj.profileVisibilityUserIds)
+      ..writeByte(31)
+      ..write(obj.hometown)
+      ..writeByte(32)
+      ..write(obj.languages)
+      ..writeByte(33)
+      ..write(obj.interests)
+      ..writeByte(34)
+      ..write(obj.aboutFamily)
+      ..writeByte(35)
+      ..write(obj.profileVisibilityBranchRootIds)
+      ..writeByte(36)
+      ..write(obj.birthPlace)
+      ..writeByte(37)
+      ..write(obj.profileContributionPolicy)
+      ..writeByte(38)
+      ..write(obj.maidenName);
   }
 
   @override

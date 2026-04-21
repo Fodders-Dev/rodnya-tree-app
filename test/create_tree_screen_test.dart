@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
-import 'package:lineage/backend/interfaces/family_tree_service_interface.dart';
-import 'package:lineage/models/family_tree.dart';
-import 'package:lineage/screens/family_tree/create_tree_screen.dart';
+import 'package:rodnya/backend/interfaces/family_tree_service_interface.dart';
+import 'package:rodnya/models/family_tree.dart';
+import 'package:rodnya/screens/family_tree/create_tree_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class _FakeFamilyTreeService implements FamilyTreeServiceInterface {

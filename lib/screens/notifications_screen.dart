@@ -1,13 +1,18 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
+import '../backend/interfaces/auth_service_interface.dart';
 import '../models/app_notification_item.dart';
 import '../models/family_tree.dart';
 import '../providers/tree_provider.dart';
+import '../services/app_status_service.dart';
 import '../services/custom_api_notification_service.dart';
+import '../utils/user_facing_error.dart';
 
 IconData _notificationIconForType(String type) {
   switch (type) {
@@ -83,6 +88,8 @@ class NotificationsScreen extends StatefulWidget {
 }
 
 class _NotificationsScreenState extends State<NotificationsScreen> {
+  final AuthServiceInterface _authService = GetIt.I<AuthServiceInterface>();
+  final AppStatusService _appStatusService = GetIt.I<AppStatusService>();
   bool _isLoading = true;
   bool _isMutating = false;
   Object? _loadError;
@@ -129,6 +136,10 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         _isLoading = false;
       });
     } catch (error) {
+      _appStatusService.reportError(
+        error,
+        fallbackMessage: 'Не удалось загрузить уведомления.',
+      );
       if (!mounted) {
         return;
       }
@@ -165,6 +176,27 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
     try {
       await _markNotificationRead(item);
+      final customHandler = widget.onOpenNotification;
+      if (customHandler != null) {
+        customHandler(item);
+        return;
+      }
+
+      _notificationService?.openNotificationPayload(item.payload);
+    } catch (error) {
+      _appStatusService.reportError(
+        error,
+        fallbackMessage: 'Не удалось открыть уведомление.',
+      );
+      _showMessage(
+        describeUserFacingError(
+          authService: _authService,
+          error: error,
+          fallbackMessage: _appStatusService.isOffline
+              ? 'Нет соединения. Уведомление откроется, когда интернет вернётся.'
+              : 'Не удалось открыть уведомление. Попробуйте ещё раз.',
+        ),
+      );
     } finally {
       if (mounted) {
         setState(() {
@@ -172,14 +204,6 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         });
       }
     }
-
-    final customHandler = widget.onOpenNotification;
-    if (customHandler != null) {
-      customHandler(item);
-      return;
-    }
-
-    _notificationService?.openNotificationPayload(item.payload);
   }
 
   Future<void> _markAllAsRead() async {
@@ -208,6 +232,20 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       setState(() {
         _notifications = const <AppNotificationItem>[];
       });
+    } catch (error) {
+      _appStatusService.reportError(
+        error,
+        fallbackMessage: 'Не удалось обновить уведомления.',
+      );
+      _showMessage(
+        describeUserFacingError(
+          authService: _authService,
+          error: error,
+          fallbackMessage: _appStatusService.isOffline
+              ? 'Нет соединения. Отметьте уведомления прочитанными, когда интернет вернётся.'
+              : 'Не удалось отметить уведомления прочитанными. Попробуйте ещё раз.',
+        ),
+      );
     } finally {
       if (mounted) {
         setState(() {
@@ -226,6 +264,15 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       summary.update(item.type, (count) => count + 1, ifAbsent: () => 1);
     }
     return summary;
+  }
+
+  void _showMessage(String message) {
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
   }
 
   @override
@@ -270,17 +317,31 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     required String eventLabel,
   }) {
     if (_isLoading) {
-      return const Center(child: CircularProgressIndicator());
+      return _NotificationsMessageState(
+        icon: Icons.sync,
+        title: 'Собираем активность',
+        description:
+            'Подтягиваем новые сообщения, приглашения и семейные события.',
+        showProgress: true,
+      );
     }
 
     if (_loadError != null) {
       return _NotificationsMessageState(
-        icon: Icons.error_outline,
-        title: 'Не удалось загрузить активность',
-        description:
-            'Попробуйте обновить экран ещё раз. Новые сообщения и приглашения никуда не пропадут.',
+        icon: _appStatusService.isOffline
+            ? Icons.cloud_off_outlined
+            : Icons.error_outline,
+        title: _appStatusService.isOffline
+            ? 'Нет соединения'
+            : 'Не удалось загрузить активность',
+        description: _appStatusService.isOffline
+            ? 'Уведомления подтянутся автоматически, когда интернет вернётся.'
+            : 'Попробуйте обновить экран ещё раз. Новые сообщения и приглашения никуда не пропадут.',
         actionLabel: 'Повторить',
-        onPressed: _refresh,
+        onPressed: () {
+          _appStatusService.requestRetry();
+          unawaited(_refresh());
+        },
       );
     }
 
@@ -715,15 +776,17 @@ class _NotificationsMessageState extends StatelessWidget {
     required this.icon,
     required this.title,
     required this.description,
-    required this.actionLabel,
-    required this.onPressed,
+    this.actionLabel,
+    this.onPressed,
+    this.showProgress = false,
   });
 
   final IconData icon;
   final String title;
   final String description;
-  final String actionLabel;
-  final VoidCallback onPressed;
+  final String? actionLabel;
+  final VoidCallback? onPressed;
+  final bool showProgress;
 
   @override
   Widget build(BuildContext context) {
@@ -757,14 +820,27 @@ class _NotificationsMessageState extends StatelessWidget {
             height: 1.4,
           ),
         ),
-        const SizedBox(height: 20),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: FilledButton(
-            onPressed: onPressed,
-            child: Text(actionLabel),
+        if (showProgress) ...[
+          const SizedBox(height: 20),
+          const Align(
+            alignment: Alignment.centerLeft,
+            child: SizedBox(
+              width: 24,
+              height: 24,
+              child: CircularProgressIndicator(strokeWidth: 2.4),
+            ),
           ),
-        ),
+        ],
+        if (actionLabel != null && onPressed != null) ...[
+          const SizedBox(height: 20),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: FilledButton(
+              onPressed: onPressed,
+              child: Text(actionLabel!),
+            ),
+          ),
+        ],
       ],
     );
   }

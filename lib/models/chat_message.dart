@@ -108,6 +108,38 @@ class ChatMessage extends HiveObject {
     return timestamp;
   }
 
+  ChatMessage copyWith({
+    String? id,
+    String? chatId,
+    String? senderId,
+    String? text,
+    DateTime? timestamp,
+    bool? isRead,
+    List<String>? participants,
+    String? senderName,
+    List<ChatAttachment>? attachments,
+    ChatReplyReference? replyTo,
+    String? clientMessageId,
+    DateTime? expiresAt,
+    DateTime? updatedAt,
+  }) {
+    return ChatMessage(
+      id: id ?? this.id,
+      chatId: chatId ?? this.chatId,
+      senderId: senderId ?? this.senderId,
+      text: text ?? this.text,
+      timestamp: timestamp ?? this.timestamp,
+      isRead: isRead ?? this.isRead,
+      participants: participants ?? this.participants,
+      senderName: senderName ?? this.senderName,
+      attachments: attachments ?? this.attachments,
+      replyTo: replyTo ?? this.replyTo,
+      clientMessageId: clientMessageId ?? this.clientMessageId,
+      expiresAt: expiresAt ?? this.expiresAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+    );
+  }
+
   factory ChatMessage.fromMap(Map<String, dynamic> map) {
     final parsedTimestamp = parseDateTimeRequired(map['timestamp']);
 

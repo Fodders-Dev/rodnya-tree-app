@@ -11,7 +11,7 @@ const {
 } = require("../src/media-storage");
 
 test("local media storage saves, serves and deletes files", async () => {
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "lineage-media-"));
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "rodnya-media-"));
   const storage = new LocalMediaStorage({
     config: {
       mediaRootPath: tempDir,
@@ -63,7 +63,7 @@ test("s3 media storage uses object storage client and redirects reads", async ()
       s3Bucket: "rodnya-media",
       s3Region: "ru-msk",
       s3Endpoint: "https://s3.example.ru",
-      s3Prefix: "lineage",
+      s3Prefix: "rodnya",
       mediaPublicBaseUrl: "https://cdn.rodnya-tree.ru/media",
       s3ForcePathStyle: true,
     },
@@ -86,11 +86,11 @@ test("s3 media storage uses object storage client and redirects reads", async ()
   });
   assert.equal(
     saved.url,
-    "https://cdn.rodnya-tree.ru/media/lineage/chat/room-1/clip.mp4",
+    "https://cdn.rodnya-tree.ru/media/rodnya/chat/room-1/clip.mp4",
   );
   assert.equal(commands[0].name, "PutObjectCommand");
   assert.equal(commands[0].input.Bucket, "rodnya-media");
-  assert.equal(commands[0].input.Key, "lineage/chat/room-1/clip.mp4");
+  assert.equal(commands[0].input.Key, "rodnya/chat/room-1/clip.mp4");
 
   const redirects = [];
   await storage.handleGetRequest(
@@ -104,26 +104,13 @@ test("s3 media storage uses object storage client and redirects reads", async ()
   assert.deepEqual(redirects, [
     {
       statusCode: 302,
-      url: "https://cdn.rodnya-tree.ru/media/lineage/chat/room-1/clip.mp4",
+      url: "https://cdn.rodnya-tree.ru/media/rodnya/chat/room-1/clip.mp4",
     },
   ]);
 
-  await storage.handleGetRequest(
-    {params: {"0": "lineage/chat/room-1/clip.mp4"}},
-    {
-      redirect(statusCode, url) {
-        redirects.push({statusCode, url});
-      },
-    },
-  );
-  assert.deepEqual(redirects[1], {
-    statusCode: 302,
-    url: "https://cdn.rodnya-tree.ru/media/lineage/chat/room-1/clip.mp4",
-  });
-
   await storage.deleteObjectByUrl(saved.url);
   assert.equal(commands[1].name, "DeleteObjectCommand");
-  assert.equal(commands[1].input.Key, "lineage/chat/room-1/clip.mp4");
+  assert.equal(commands[1].input.Key, "rodnya/chat/room-1/clip.mp4");
 });
 
 test("s3 media storage streams public storage urls", async () => {
@@ -133,7 +120,7 @@ test("s3 media storage streams public storage urls", async () => {
       s3Bucket: "rodnya-media",
       s3Region: "ru-msk",
       s3Endpoint: "http://127.0.0.1:9000",
-      s3Prefix: "lineage",
+      s3Prefix: "rodnya",
       mediaPublicBaseUrl: "https://api.rodnya-tree.ru/storage/rodnya-media",
       s3ForcePathStyle: true,
     },
@@ -184,7 +171,7 @@ test("s3 media storage streams public storage urls", async () => {
   await storage.handlePublicGetRequest(
     {
       method: "GET",
-      params: {"0": "rodnya-media/lineage/posts/post-1.jpg"},
+      params: {"0": "rodnya-media/rodnya/posts/post-1.jpg"},
     },
     response,
   );
@@ -192,7 +179,7 @@ test("s3 media storage streams public storage urls", async () => {
   assert.equal(commands.length, 1);
   assert.equal(commands[0].name, "GetObjectCommand");
   assert.equal(commands[0].input.Bucket, "rodnya-media");
-  assert.equal(commands[0].input.Key, "lineage/posts/post-1.jpg");
+  assert.equal(commands[0].input.Key, "rodnya/posts/post-1.jpg");
   assert.equal(response.headers["content-type"], "image/jpeg");
   assert.equal(response.headers["content-length"], "5");
   assert.equal(Buffer.concat(response.bodyChunks).toString("utf8"), "photo");

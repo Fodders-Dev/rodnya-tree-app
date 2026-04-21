@@ -1,5 +1,11 @@
 {
+  "scripts": {
+    "smoke:prod": "node tool/prod_route_smoke.mjs"
+  },
   "dependencies": {
     "cline": "^2.13.0"
+  },
+  "devDependencies": {
+    "playwright": "^1.59.1"
   }
 }

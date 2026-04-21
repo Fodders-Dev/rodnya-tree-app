@@ -14,15 +14,19 @@ import '../widgets/tree_history_sheet.dart';
 import '../widgets/glass_panel.dart';
 import '../providers/tree_provider.dart'; // Импортируем TreeProvider
 import 'package:go_router/go_router.dart'; // Для навигации
-import '../models/user_profile.dart';
 import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/chat_service_interface.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
+import '../backend/interfaces/tree_graph_capable_family_tree_service.dart';
 
+import '../services/app_status_service.dart';
 import '../services/public_tree_link_service.dart';
 import '../services/local_storage_service.dart';
+import '../models/tree_graph_snapshot.dart';
 import '../utils/user_facing_error.dart';
 import '../utils/e2e_state_bridge.dart';
+
+part 'tree_view_screen_sections.dart';
 
 enum _TreeToolbarAction {
   refresh,
@@ -30,6 +34,7 @@ enum _TreeToolbarAction {
   openRelatives,
   openChats,
   createPost,
+  toggleEditMode,
   openBranchChat,
   openBranchDetails,
   copyPublicLink,
@@ -77,6 +82,7 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
       GetIt.I<FamilyTreeServiceInterface>();
   final AuthServiceInterface _authService = GetIt.I<AuthServiceInterface>();
   final ChatServiceInterface _chatService = GetIt.I<ChatServiceInterface>();
+  final AppStatusService _appStatusService = GetIt.I<AppStatusService>();
   final LocalStorageService _localStorageService =
       GetIt.I<LocalStorageService>();
 
@@ -90,10 +96,19 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
   String? _selectedEditPersonId;
   FamilyTree? _currentTreeMeta;
   Map<String, Offset> _manualNodePositions = <String, Offset>{};
+  TreeGraphSnapshot? _graphSnapshot;
   // <<< НОВОЕ СОСТОЯНИЕ: Флаг, добавлен ли текущий пользователь в дерево >>>
   bool _currentUserIsInTree = true; // Изначально true, пока не проверили
 
   bool get _isFriendsTree => _currentTreeMeta?.isFriendsTree == true;
+
+  TreeGraphCapableFamilyTreeService? get _graphTreeService {
+    final service = _familyService;
+    if (service is TreeGraphCapableFamilyTreeService) {
+      return service as TreeGraphCapableFamilyTreeService;
+    }
+    return null;
+  }
 
   String _describeTreeActionError(
     Object error, {
@@ -122,6 +137,10 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
       }
     }
     return null;
+  }
+
+  void _updateSectionState(VoidCallback update) {
+    setState(update);
   }
 
   void _publishTreeE2EState(String? selectedTreeId) {
@@ -244,11 +263,19 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
   Future<void> _loadData(String treeId) async {
     if (!mounted) return;
     debugPrint('TreeView: Загрузка данных для дерева $treeId');
+    final hasCachedTreeData = _currentTreeMeta?.id == treeId &&
+        (_relativesData.isNotEmpty || _relationsData.isNotEmpty);
+    final graphTreeService = _graphTreeService;
     setState(() {
-      _isLoading = true;
+      _isLoading = !hasCachedTreeData;
       _errorMessage = '';
-      // Сбрасываем флаг перед проверкой
       _currentUserIsInTree = true;
+      if (!hasCachedTreeData) {
+        _relativesData = [];
+        _relationsData = [];
+        _manualNodePositions = <String, Offset>{};
+        _graphSnapshot = null;
+      }
     });
 
     try {
@@ -256,13 +283,23 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
         context.go('/login');
         return;
       }
+      if (graphTreeService == null) {
+        throw StateError(
+          'Текущее подключение не поддерживает graph snapshot дерева.',
+        );
+      }
 
-      // Загружаем родственников и связи
-      List<FamilyPerson> relatives = await _familyService.getRelatives(treeId);
-      List<FamilyRelation> relations = await _familyService.getRelations(
-        treeId,
-      );
-      final treeMeta = await _loadCurrentTreeMeta(treeId);
+      late final List<FamilyPerson> relatives;
+      late final List<FamilyRelation> relations;
+      late final FamilyTree? treeMeta;
+      final loadResults = await Future.wait<Object?>([
+        graphTreeService.getTreeGraphSnapshot(treeId),
+        _loadCurrentTreeMeta(treeId),
+      ]);
+      final graphSnapshot = loadResults[0] as TreeGraphSnapshot;
+      relatives = graphSnapshot.people;
+      relations = graphSnapshot.relations;
+      treeMeta = loadResults[1] as FamilyTree?;
       debugPrint(
         'Загружено родственников: ${relatives.length}, связей: ${relations.length}',
       );
@@ -273,36 +310,24 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
         debugPrint('Дерево $treeId пустое.');
         setState(() {
           _isLoading = false;
-          _errorMessage = 'В этом дереве еще нет людей.';
+          _errorMessage = '';
+          _relativesData = [];
+          _relationsData = [];
+          _currentTreeMeta = treeMeta;
           _manualNodePositions = <String, Offset>{};
+          _graphSnapshot = graphSnapshot;
+          _currentUserIsInTree = graphSnapshot.viewerPersonId != null;
         });
         return;
       }
 
-      // <<< НОВАЯ ПРОВЕРКА: Есть ли текущий пользователь в дереве >>>
-      bool userInTree = await _familyService.isCurrentUserInTree(treeId);
-      if (!mounted) return;
-      setState(() {
-        _currentUserIsInTree = userInTree;
-        debugPrint(
-          'Текущий пользователь ${_authService.currentUserId} ${_currentUserIsInTree ? "" : "НЕ "}найден в дереве $treeId',
-        );
-      });
-      // <<< КОНЕЦ ПРОВЕРКИ >>>
-
-      // Собираем данные для peopleData (добавляем userProfile, если он есть)
-      // TODO: Оптимизировать загрузку профилей, если это будет тормозить
-      List<Map<String, dynamic>> peopleData = [];
+      final List<Map<String, dynamic>> peopleData = [];
+      final viewerDescriptors = graphSnapshot.viewerDescriptorByPersonId;
       for (var person in relatives) {
-        // Попытка загрузить UserProfile, если есть userId
-        UserProfile? userProfile;
-        if (person.userId != null) {
-          // Здесь нужен ProfileService, но чтобы не усложнять, пока пропустим
-          // userProfile = await _profileService.getUserProfile(person.userId!);
-        }
         peopleData.add({
           'person': person,
-          'userProfile': userProfile, // Будет null, если профиль не загружен
+          'userProfile': null,
+          'viewerDescriptor': viewerDescriptors[person.id],
         });
       }
 
@@ -329,7 +354,9 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
           _relationsData = relations;
           _currentTreeMeta = treeMeta;
           _manualNodePositions = filteredPositions;
+          _graphSnapshot = graphSnapshot;
           _isLoading = false;
+          _currentUserIsInTree = graphSnapshot.viewerPersonId != null;
           if (!branchRootStillExists) {
             _branchRootPersonId = null;
           }
@@ -340,10 +367,20 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
       }
     } catch (e, s) {
       debugPrint('Ошибка загрузки данных дерева $treeId: $e\\n$s');
+      _appStatusService.reportError(
+        e,
+        fallbackMessage: 'Не удалось загрузить дерево.',
+      );
       if (mounted) {
         setState(() {
           _isLoading = false;
-          _errorMessage = 'Не удалось загрузить данные дерева.';
+          if (!hasCachedTreeData) {
+            _errorMessage = e is StateError
+                ? 'Этот backend не поддерживает новый graph snapshot дерева.'
+                : _appStatusService.isOffline
+                    ? 'Нет соединения. Откройте дерево снова, когда интернет вернётся.'
+                    : 'Не удалось загрузить данные дерева.';
+          }
         });
       }
     }
@@ -417,23 +454,6 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
             tooltip: _isFriendsTree ? 'Добавить в круг' : 'Добавить человека',
             onPressed: () => _navigateToAddRelative(selectedTreeId),
           ),
-          IconButton(
-            icon: Icon(
-              _isEditMode ? Icons.edit_off_outlined : Icons.edit_outlined,
-            ),
-            tooltip: _isEditMode
-                ? 'Выйти из режима редактирования'
-                : 'Редактировать дерево',
-            onPressed: () {
-              if (!mounted) return;
-              setState(() {
-                _isEditMode = !_isEditMode;
-                if (!_isEditMode) {
-                  _selectedEditPersonId = null;
-                }
-              });
-            },
-          ),
           PopupMenuButton<_TreeToolbarAction>(
             tooltip: 'Действия дерева',
             onSelected: (action) =>
@@ -444,339 +464,6 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
       ),
       body: SafeArea(
         child: _buildTreeBody(selectedTreeId: selectedTreeId),
-      ),
-    );
-  }
-
-  Widget _buildTreeBody({required String selectedTreeId}) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final isCompact = constraints.maxWidth < 600;
-        final isWideDesktop = constraints.maxWidth >= 1180;
-
-        if (_isLoading) {
-          return _buildTreeState(
-            icon: Icons.sync,
-            title: 'Загружаем дерево',
-            message: 'Подтягиваем людей и связи.',
-            showProgress: true,
-          );
-        }
-
-        if (_errorMessage.isNotEmpty) {
-          final isEmptyTree = _relativesData.isEmpty && _relationsData.isEmpty;
-          return _buildTreeState(
-            icon: isEmptyTree ? Icons.account_tree : Icons.error_outline,
-            title: isEmptyTree ? 'Дерево пустое' : 'Не удалось загрузить',
-            message: isEmptyTree ? 'Добавьте первого человека.' : _errorMessage,
-            actions: [
-              if (isEmptyTree)
-                FilledButton.icon(
-                  onPressed: () => _navigateToAddRelative(selectedTreeId),
-                  icon: const Icon(Icons.person_add_alt_1),
-                  label: const Text('Добавить'),
-                ),
-              OutlinedButton.icon(
-                onPressed: () => _loadData(selectedTreeId),
-                icon: const Icon(Icons.refresh),
-                label: const Text('Повторить'),
-              ),
-            ],
-          );
-        }
-
-        final treeCanvas = _buildTreeCanvas();
-        final horizontalPadding =
-            isWideDesktop ? 10.0 : (isCompact ? 10.0 : 16.0);
-        final topPadding = isWideDesktop ? 10.0 : (isCompact ? 8.0 : 12.0);
-        final bottomPadding = isWideDesktop ? 14.0 : (isCompact ? 12.0 : 16.0);
-
-        Widget content = Padding(
-          padding: EdgeInsets.fromLTRB(
-            horizontalPadding,
-            topPadding,
-            horizontalPadding,
-            bottomPadding,
-          ),
-          child: treeCanvas,
-        );
-
-        if (isWideDesktop) {
-          content = Center(
-            child: SizedBox(
-              width: constraints.maxWidth > 1560 ? 1560 : constraints.maxWidth,
-              height: constraints.maxHeight,
-              child: content,
-            ),
-          );
-        }
-
-        return content;
-      },
-    );
-  }
-
-  Widget _buildTreeCanvas() {
-    final theme = Theme.of(context);
-    final canvasAccent =
-        _isFriendsTree ? const Color(0xFF0F9D8A) : theme.colorScheme.primary;
-    return GlassPanel(
-      padding: EdgeInsets.zero,
-      borderRadius: BorderRadius.circular(30),
-      blur: 14,
-      color: theme.colorScheme.surface.withValues(alpha: 0.72),
-      borderColor: canvasAccent.withValues(alpha: 0.18),
-      boxShadow: [
-        BoxShadow(
-          color: theme.colorScheme.shadow.withValues(alpha: 0.08),
-          blurRadius: 28,
-          offset: const Offset(0, 18),
-        ),
-      ],
-      child: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              theme.colorScheme.surface.withValues(alpha: 0.88),
-              canvasAccent.withValues(alpha: _isFriendsTree ? 0.05 : 0.03),
-            ],
-          ),
-          borderRadius: BorderRadius.circular(30),
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(30),
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              IgnorePointer(
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    gradient: RadialGradient(
-                      center: const Alignment(0, 0.04),
-                      radius: 0.72,
-                      colors: [
-                        canvasAccent.withValues(
-                          alpha: _isFriendsTree ? 0.14 : 0.10,
-                        ),
-                        theme.colorScheme.surface.withValues(alpha: 0),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-              IgnorePointer(
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        theme.colorScheme.surface.withValues(alpha: 0.16),
-                        theme.colorScheme.surface.withValues(alpha: 0),
-                        canvasAccent.withValues(alpha: 0.04),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-              InteractiveFamilyTree(
-                peopleData: _relativesData,
-                relations: _relationsData,
-                currentUserId: _authService.currentUserId,
-                branchRootPersonId: _branchRootPersonId,
-                onBranchFocusCleared: _resetBranchFocus,
-                onPersonTap: (person) {
-                  debugPrint('Нажатие на узел: ${person.name} (${person.id})');
-                  context.push('/relative/details/${person.id}');
-                },
-                onBranchFocusRequested: _focusBranch,
-                isEditMode: _isEditMode,
-                selectedEditPersonId: _selectedEditPersonId,
-                onEditPersonSelected: (person) {
-                  setState(() {
-                    _selectedEditPersonId = person.id;
-                  });
-                },
-                onOpenPersonHistory: _showPersonHistorySheet,
-                manualNodePositions: _manualNodePositions,
-                onNodePositionsChanged: (positions) {
-                  _handleNodePositionsChanged(positions);
-                },
-                showGenerationGuides: !_isFriendsTree,
-                enableClusterHighlights: !_isFriendsTree,
-                graphLabel: _isFriendsTree ? 'дружеского графа' : 'дерева',
-                hasManualLayout: _manualNodePositions.isNotEmpty,
-                onResetLayout:
-                    _manualNodePositions.isNotEmpty && _currentTreeId != null
-                        ? () => _resetManualTreeLayout(_currentTreeId!)
-                        : null,
-                onAddRelativeTapWithType: _handleAddRelativeFromTree,
-                currentUserIsInTree: _currentUserIsInTree,
-                onAddSelfTapWithType: _handleAddSelfFromTree,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTreeState({
-    required IconData icon,
-    required String title,
-    required String message,
-    List<Widget> actions = const [],
-    bool showProgress = false,
-  }) {
-    final theme = Theme.of(context);
-
-    return Center(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 420),
-          child: GlassPanel(
-            padding: const EdgeInsets.all(24),
-            borderRadius: BorderRadius.circular(30),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (showProgress)
-                  const Padding(
-                    padding: EdgeInsets.only(bottom: 20),
-                    child: CircularProgressIndicator(),
-                  )
-                else
-                  Icon(icon, size: 56, color: theme.colorScheme.primary),
-                Text(
-                  title,
-                  textAlign: TextAlign.center,
-                  style: theme.textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Text(
-                  message,
-                  textAlign: TextAlign.center,
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
-                  ),
-                ),
-                if (actions.isNotEmpty) ...[
-                  const SizedBox(height: 20),
-                  Wrap(
-                    alignment: WrapAlignment.center,
-                    spacing: 10,
-                    runSpacing: 10,
-                    children: actions,
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  List<PopupMenuEntry<_TreeToolbarAction>> _buildTreeToolbarMenuItems() {
-    final branchRootPerson = _findBranchRootPerson();
-    final items = <PopupMenuEntry<_TreeToolbarAction>>[
-      _buildTreeToolbarMenuItem(
-        value: _TreeToolbarAction.refresh,
-        icon: Icons.refresh,
-        label: 'Обновить дерево',
-      ),
-      _buildTreeToolbarMenuItem(
-        value: _TreeToolbarAction.openHistory,
-        icon: Icons.history_outlined,
-        label: 'История изменений',
-      ),
-      _buildTreeToolbarMenuItem(
-        value: _TreeToolbarAction.openRelatives,
-        icon: Icons.people_outline,
-        label: _isFriendsTree ? 'Открыть связи' : 'Открыть родных',
-      ),
-      _buildTreeToolbarMenuItem(
-        value: _TreeToolbarAction.openChats,
-        icon: Icons.forum_outlined,
-        label: 'Открыть чаты',
-      ),
-      _buildTreeToolbarMenuItem(
-        value: _TreeToolbarAction.createPost,
-        icon: Icons.post_add_outlined,
-        label: _isFriendsTree ? 'Пост в круг' : 'Новый пост',
-      ),
-    ];
-
-    if (branchRootPerson != null) {
-      items.add(
-        _buildTreeToolbarMenuItem(
-          value: _TreeToolbarAction.openBranchChat,
-          icon: Icons.alt_route_outlined,
-          label: _isFriendsTree ? 'Написать кругу' : 'Написать ветке',
-        ),
-      );
-      items.add(
-        _buildTreeToolbarMenuItem(
-          value: _TreeToolbarAction.openBranchDetails,
-          icon: Icons.open_in_new,
-          label: _isFriendsTree
-              ? 'Открыть карточку круга'
-              : 'Открыть карточку ветки',
-        ),
-      );
-    }
-
-    if (_branchRootPersonId != null) {
-      items.add(
-        _buildTreeToolbarMenuItem(
-          value: _TreeToolbarAction.resetBranchFocus,
-          icon: Icons.clear_all,
-          label: _isFriendsTree ? 'Показать весь граф' : 'Показать всё дерево',
-        ),
-      );
-    }
-
-    if (_currentTreeMeta?.isPublic == true) {
-      items.add(
-        _buildTreeToolbarMenuItem(
-          value: _TreeToolbarAction.copyPublicLink,
-          icon: Icons.link_outlined,
-          label: 'Скопировать публичную ссылку',
-        ),
-      );
-    }
-
-    if (_manualNodePositions.isNotEmpty) {
-      items.add(
-        _buildTreeToolbarMenuItem(
-          value: _TreeToolbarAction.resetLayout,
-          icon: Icons.restart_alt,
-          label: 'Сбросить layout',
-        ),
-      );
-    }
-
-    return items;
-  }
-
-  PopupMenuItem<_TreeToolbarAction> _buildTreeToolbarMenuItem({
-    required _TreeToolbarAction value,
-    required IconData icon,
-    required String label,
-  }) {
-    return PopupMenuItem<_TreeToolbarAction>(
-      value: value,
-      child: Row(
-        children: [
-          Icon(icon, size: 18),
-          const SizedBox(width: 10),
-          Expanded(child: Text(label)),
-        ],
       ),
     );
   }
@@ -803,12 +490,23 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
       case _TreeToolbarAction.createPost:
         context.push('/post/create');
         return;
+      case _TreeToolbarAction.toggleEditMode:
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          _isEditMode = !_isEditMode;
+          if (!_isEditMode) {
+            _selectedEditPersonId = null;
+          }
+        });
+        return;
       case _TreeToolbarAction.openBranchChat:
         await _openBranchChat(selectedTreeId, branchRootPerson);
         return;
       case _TreeToolbarAction.openBranchDetails:
         if (branchRootPerson != null) {
-          context.push('/relative/details/${branchRootPerson.id}');
+          _openPersonDetails(branchRootPerson);
         }
         return;
       case _TreeToolbarAction.copyPublicLink:
@@ -821,6 +519,16 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
         await _resetManualTreeLayout(selectedTreeId);
         return;
     }
+  }
+
+  void _openPersonDetails(FamilyPerson person, {String? action}) {
+    final normalizedAction = action?.trim();
+    if (normalizedAction == null || normalizedAction.isEmpty) {
+      context.push('/relative/details/${person.id}');
+      return;
+    }
+    final encodedAction = Uri.encodeQueryComponent(normalizedAction);
+    context.push('/relative/details/${person.id}?action=$encodedAction');
   }
 
   // === НОВЫЙ МЕТОД-КОЛЛБЭК для InteractiveFamilyTree ===
@@ -853,7 +561,9 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
     if (_currentTreeId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Ошибка: Не удается определить текущее дерево.'),
+          content: Text(
+            'Не удалось определить активное дерево. Откройте его заново и повторите действие.',
+          ),
         ),
       );
       return;
@@ -912,7 +622,9 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
     if (_currentTreeId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Ошибка: Не удается определить текущее дерево.'),
+          content: Text(
+            'Не удалось определить активное дерево. Откройте его заново и повторите действие.',
+          ),
         ),
       );
       return;
@@ -921,7 +633,7 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
     final currentUserId = _authService.currentUserId;
     if (currentUserId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Ошибка: Пользователь не авторизован.')),
+        SnackBar(content: Text('Сессия завершилась. Войдите снова.')),
       );
       context.go('/login'); // Перенаправляем на логин
       return;
@@ -1060,82 +772,21 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
     }
   }
 
-  bool _isSpouseRelation(FamilyRelation relation) {
-    return relation.relation1to2 == RelationType.spouse ||
-        relation.relation2to1 == RelationType.spouse ||
-        relation.relation1to2 == RelationType.partner ||
-        relation.relation2to1 == RelationType.partner;
-  }
-
-  String? _parentIdFromRelation(FamilyRelation relation) {
-    if (relation.relation1to2 == RelationType.parent ||
-        relation.relation2to1 == RelationType.child) {
-      return relation.person1Id;
-    }
-    if (relation.relation2to1 == RelationType.parent ||
-        relation.relation1to2 == RelationType.child) {
-      return relation.person2Id;
-    }
-    return null;
-  }
-
-  String? _childIdFromRelation(FamilyRelation relation) {
-    if (relation.relation1to2 == RelationType.parent ||
-        relation.relation2to1 == RelationType.child) {
-      return relation.person2Id;
-    }
-    if (relation.relation2to1 == RelationType.parent ||
-        relation.relation1to2 == RelationType.child) {
-      return relation.person1Id;
-    }
-    return null;
-  }
-
   Set<String> _buildBranchVisiblePersonIds(String branchRootPersonId) {
+    final graphSnapshot = _graphSnapshot;
     final personIds = _relativesData
         .map((entry) => entry['person'])
         .whereType<FamilyPerson>()
         .map((person) => person.id)
         .toSet();
-    if (!personIds.contains(branchRootPersonId)) {
-      return personIds;
-    }
-
-    final childrenByParent = <String, Set<String>>{};
-    final spousesByPerson = <String, Set<String>>{};
-    for (final relation in _relationsData) {
-      final parentId = _parentIdFromRelation(relation);
-      final childId = _childIdFromRelation(relation);
-      if (parentId != null && childId != null) {
-        childrenByParent.putIfAbsent(parentId, () => <String>{}).add(childId);
-      }
-      if (_isSpouseRelation(relation)) {
-        spousesByPerson
-            .putIfAbsent(relation.person1Id, () => <String>{})
-            .add(relation.person2Id);
-        spousesByPerson
-            .putIfAbsent(relation.person2Id, () => <String>{})
-            .add(relation.person1Id);
+    if (graphSnapshot != null) {
+      final branchBlock =
+          graphSnapshot.findBranchBlockForPerson(branchRootPersonId);
+      if (branchBlock != null) {
+        return branchBlock.memberPersonIds.toSet();
       }
     }
-
-    final visibleIds = <String>{branchRootPersonId};
-    final queue = <String>[branchRootPersonId];
-    while (queue.isNotEmpty) {
-      final currentId = queue.removeAt(0);
-      for (final spouseId in spousesByPerson[currentId] ?? const <String>{}) {
-        if (visibleIds.add(spouseId)) {
-          queue.add(spouseId);
-        }
-      }
-      for (final childId in childrenByParent[currentId] ?? const <String>{}) {
-        if (visibleIds.add(childId)) {
-          queue.add(childId);
-        }
-      }
-    }
-
-    return visibleIds;
+    return personIds;
   }
 
   List<String> _buildBranchChatParticipantIds(String branchRootPersonId) {
@@ -1225,7 +876,9 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
       return;
     }
 
-    final title = 'Ветка ${branchRootPerson.name}';
+    final graphBranchBlock =
+        _graphSnapshot?.findBranchBlockForPerson(branchRootPerson.id);
+    final title = graphBranchBlock?.label ?? 'Ветка ${branchRootPerson.name}';
     try {
       final chatId = await _chatService.createBranchChat(
         treeId: treeId,

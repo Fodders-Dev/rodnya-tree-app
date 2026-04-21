@@ -13,6 +13,15 @@ api.rodnya-tree.ru {
   reverse_proxy 127.0.0.1:8080
 }
 
+livekit.rodnya-tree.ru {
+  encode zstd gzip
+  reverse_proxy 127.0.0.1:7880
+}
+
+turn.rodnya-tree.ru {
+  respond 204
+}
+
 rodnya-tree.ru, www.rodnya-tree.ru {
   encode zstd gzip
   root * /var/www/rodnya-site

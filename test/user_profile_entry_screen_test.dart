@@ -2,18 +2,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get_it/get_it.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:lineage/backend/interfaces/auth_service_interface.dart';
-import 'package:lineage/backend/interfaces/chat_service_interface.dart';
-import 'package:lineage/backend/interfaces/family_tree_service_interface.dart';
-import 'package:lineage/backend/interfaces/profile_service_interface.dart';
-import 'package:lineage/models/chat_attachment.dart';
-import 'package:lineage/models/chat_details.dart';
-import 'package:lineage/models/chat_message.dart';
-import 'package:lineage/models/family_person.dart';
-import 'package:lineage/models/family_tree.dart';
-import 'package:lineage/models/chat_send_progress.dart';
-import 'package:lineage/models/user_profile.dart';
-import 'package:lineage/screens/user_profile_entry_screen.dart';
+import 'package:rodnya/backend/interfaces/auth_service_interface.dart';
+import 'package:rodnya/backend/interfaces/chat_service_interface.dart';
+import 'package:rodnya/backend/interfaces/family_tree_service_interface.dart';
+import 'package:rodnya/backend/interfaces/profile_service_interface.dart';
+import 'package:rodnya/models/chat_attachment.dart';
+import 'package:rodnya/models/chat_details.dart';
+import 'package:rodnya/models/chat_message.dart';
+import 'package:rodnya/models/family_person.dart';
+import 'package:rodnya/models/family_tree.dart';
+import 'package:rodnya/models/chat_send_progress.dart';
+import 'package:rodnya/models/user_profile.dart';
+import 'package:rodnya/models/person_dossier.dart';
+import 'package:rodnya/screens/user_profile_entry_screen.dart';
 
 class _FakeAuthService implements AuthServiceInterface {
   _FakeAuthService(this._currentUserId);
@@ -48,10 +49,12 @@ class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
   _FakeFamilyTreeService({
     required this.trees,
     required this.peopleByTree,
+    this.profiles = const {},
   });
 
   final List<FamilyTree> trees;
   final Map<String, List<FamilyPerson>> peopleByTree;
+  final Map<String, UserProfile> profiles;
 
   @override
   Future<List<FamilyTree>> getUserTrees() async => trees;
@@ -59,6 +62,17 @@ class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
   @override
   Future<List<FamilyPerson>> getRelatives(String treeId) async =>
       peopleByTree[treeId] ?? const <FamilyPerson>[];
+
+  @override
+  Future<PersonDossier> getPersonDossier(String treeId, String personId) async {
+    final person = (peopleByTree[treeId] ?? const <FamilyPerson>[])
+        .firstWhere((entry) => entry.id == personId);
+    final profile = person.userId != null ? profiles[person.userId!] : null;
+    if (profile != null) {
+      return PersonDossier.fromProfile(profile, treePerson: person);
+    }
+    return PersonDossier.fromPerson(person);
+  }
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -71,6 +85,9 @@ class _FakeChatService implements ChatServiceInterface {
   @override
   Future<String?> getOrCreateChat(String otherUserId) async =>
       'chat-user-1-$otherUserId';
+
+  @override
+  Future<void> refreshMessages(String chatId) async {}
 
   @override
   Future<void> sendMessageToChat({
@@ -159,6 +176,14 @@ void main() {
             phoneNumber: '',
             city: 'Москва',
             country: 'Россия',
+            bio: 'Собирает семейные фотоархивы.',
+            aboutFamily: 'Хранит дома большой семейный архив.',
+            education: 'СПбГУ',
+            work: 'Историк семьи',
+            hometown: 'Ярославль',
+            languages: 'Русский, французский',
+            interests: 'Архивы, старые фото, поездки по родным местам',
+            hiddenProfileSections: const ['contacts'],
           ),
         },
         currentUserId: 'user-2',
@@ -193,6 +218,25 @@ void main() {
             ),
           ],
         },
+        profiles: {
+          'user-2': UserProfile.create(
+            id: 'user-2',
+            email: 'user-2@example.com',
+            displayName: 'Мария Романова',
+            username: 'romanova',
+            phoneNumber: '',
+            city: 'Москва',
+            country: 'Россия',
+            bio: 'Собирает семейные фотоархивы.',
+            aboutFamily: 'Хранит дома большой семейный архив.',
+            education: 'СПбГУ',
+            work: 'Историк семьи',
+            hometown: 'Ярославль',
+            languages: 'Русский, французский',
+            interests: 'Архивы, старые фото, поездки по родным местам',
+            hiddenProfileSections: const ['contacts'],
+          ),
+        },
       ),
     );
     getIt.registerSingleton<ChatServiceInterface>(_FakeChatService());
@@ -209,6 +253,22 @@ void main() {
     expect(find.text('Написать'), findsOneWidget);
     expect(find.text('Карточка в дереве'), findsOneWidget);
     expect(find.text('Историческое дерево'), findsOneWidget);
+    expect(
+      find.text(
+          'Часть профиля скрыта настройками видимости этого пользователя.'),
+      findsOneWidget,
+    );
+    expect(find.text('Собирает семейные фотоархивы.'), findsOneWidget);
+    expect(find.text('Хранит дома большой семейный архив.'), findsOneWidget);
+    expect(find.text('СПбГУ'), findsOneWidget);
+    expect(find.text('Историк семьи'), findsOneWidget);
+    expect(find.text('Ярославль'), findsOneWidget);
+    expect(find.text('Русский, французский'), findsOneWidget);
+    expect(
+      find.text('Архивы, старые фото, поездки по родным местам'),
+      findsOneWidget,
+    );
+    expect(find.text('user-2@example.com'), findsNothing);
   });
 
   testWidgets('shows self-profile action for current user route',

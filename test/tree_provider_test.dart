@@ -1,9 +1,9 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get_it/get_it.dart';
-import 'package:lineage/backend/interfaces/family_tree_service_interface.dart';
-import 'package:lineage/models/family_tree.dart';
-import 'package:lineage/providers/tree_provider.dart';
-import 'package:lineage/services/local_storage_service.dart';
+import 'package:rodnya/backend/interfaces/family_tree_service_interface.dart';
+import 'package:rodnya/models/family_tree.dart';
+import 'package:rodnya/providers/tree_provider.dart';
+import 'package:rodnya/services/local_storage_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class _FakeLocalStorageService implements LocalStorageService {
@@ -26,9 +26,13 @@ class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
   _FakeFamilyTreeService(this._trees);
 
   final List<FamilyTree> _trees;
+  int getUserTreesCalls = 0;
 
   @override
-  Future<List<FamilyTree>> getUserTrees() async => _trees;
+  Future<List<FamilyTree>> getUserTrees() async {
+    getUserTreesCalls += 1;
+    return _trees;
+  }
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -105,5 +109,27 @@ void main() {
 
     expect(provider.selectedTreeId, fallbackTree.id);
     expect(provider.selectedTreeName, fallbackTree.name);
+  });
+
+  test('не перезагружает список деревьев без явного refresh', () async {
+    final firstTree = _buildTree(id: 'tree-1', name: 'Первое дерево');
+    final secondTree = _buildTree(id: 'tree-2', name: 'Второе дерево');
+    final treeService = _FakeFamilyTreeService([firstTree, secondTree]);
+
+    getIt.registerSingleton<LocalStorageService>(
+      _FakeLocalStorageService(const []),
+    );
+    getIt.registerSingleton<FamilyTreeServiceInterface>(treeService);
+
+    final provider = TreeProvider();
+    await provider.loadInitialTree();
+    expect(treeService.getUserTreesCalls, 1);
+
+    await provider.selectDefaultTreeIfNeeded();
+    await provider.selectTree(secondTree.id, secondTree.name);
+    expect(treeService.getUserTreesCalls, 1);
+
+    await provider.refreshAvailableTrees();
+    expect(treeService.getUserTreesCalls, 2);
   });
 }

@@ -123,8 +123,10 @@ class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
     });
 
     try {
-      final fullPhoneNumber =
-          '${_countryCode ?? '+7'}${_phoneController.text.trim()}';
+      final normalizedPhone = _phoneController.text.trim();
+      final fullPhoneNumber = normalizedPhone.isEmpty
+          ? ''
+          : '${_countryCode ?? '+7'}$normalizedPhone';
       final currentUserId = _authService.currentUserId;
       if (currentUserId == null) {
         throw Exception('Пользователь не авторизован');
@@ -278,7 +280,7 @@ class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Нужны основные данные.',
+                  'Нужны основные данные. Телефон можно добавить позже как контакт, но он больше не используется для подтверждения аккаунта.',
                   style: theme.textTheme.bodyMedium?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
@@ -362,13 +364,20 @@ class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _buildSectionTitle('Контакты'),
+          _buildSectionTitle('Как с вами связаться'),
           const SizedBox(height: 14),
           _buildActionTile(
             icon: Icons.flag_outlined,
             title: _selectedCountry ?? 'Страна',
             subtitle: _countryCode ?? '+7',
             onTap: _selectCountry,
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'Телефон здесь необязателен. Доверие и вход теперь строятся через привязанные каналы вроде Telegram, VK, Google или MAX.',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
           ),
           const SizedBox(height: 12),
           DecoratedBox(
@@ -398,12 +407,6 @@ class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
                       noBorder: true,
                     ),
                     keyboardType: TextInputType.phone,
-                    validator: (value) {
-                      if (value == null || value.trim().isEmpty) {
-                        return 'Введите телефон';
-                      }
-                      return null;
-                    },
                   ),
                 ),
               ],

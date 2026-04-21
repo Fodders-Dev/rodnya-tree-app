@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:lineage/models/app_event.dart';
+import 'package:rodnya/models/app_event.dart';
 
 void main() {
   test('AppEvent.status formats upcoming short ranges with Russian declension',

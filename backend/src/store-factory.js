@@ -29,7 +29,7 @@ async function createStore(config) {
     }
     default:
       throw new Error(
-        `Unsupported LINEAGE_BACKEND_STORAGE value: ${storageBackend}`,
+        `Unsupported RODNYA_BACKEND_STORAGE value: ${storageBackend}`,
       );
   }
 }

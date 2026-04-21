@@ -8,6 +8,24 @@ class RealtimeHub {
     this.wss = null;
   }
 
+  _scheduleSessionTouch(token, {userId = null} = {}) {
+    if (typeof this.store?.touchSession !== "function") {
+      return;
+    }
+
+    void Promise.resolve()
+      .then(() => this.store.touchSession(token))
+      .catch((error) => {
+        this.logger.warn?.(
+          "[rodnya-backend] realtime touch session failed",
+          JSON.stringify({
+            userId,
+            message: String(error?.message || error || "unknown_error"),
+          }),
+        );
+      });
+  }
+
   attach(server) {
     this.wss = new WebSocketServer({
       server,
@@ -38,9 +56,9 @@ class RealtimeHub {
           return;
         }
 
-        await this.store.touchSession(token);
         userId = user.id;
         this._registerSocket(userId, socket);
+        this._scheduleSessionTouch(token, {userId});
         const onlineUserIds = await this._collectOnlineParticipants(userId);
 
         socket.send(
@@ -59,7 +77,7 @@ class RealtimeHub {
         });
 
         socket.on("error", (error) => {
-          this.logger.warn?.("[lineage-backend] realtime socket error", error);
+          this.logger.warn?.("[rodnya-backend] realtime socket error", error);
           void this._handleSocketClose(userId, socket);
         });
 
@@ -67,7 +85,7 @@ class RealtimeHub {
           void this._handleSocketMessage(userId, rawMessage);
         });
       } catch (error) {
-        this.logger.warn?.("[lineage-backend] realtime connection failed", error);
+        this.logger.warn?.("[rodnya-backend] realtime connection failed", error);
         socket.close(1011, "Realtime initialization failed");
       }
     });
@@ -90,6 +108,19 @@ class RealtimeHub {
   isUserOnline(userId) {
     const sockets = this.userSockets.get(userId);
     return Boolean(sockets && sockets.size > 0);
+  }
+
+  describeRuntimeStats() {
+    let socketCount = 0;
+    for (const sockets of this.userSockets.values()) {
+      socketCount += sockets?.size || 0;
+    }
+
+    return {
+      onlineUsers: this.userSockets.size,
+      activeSockets: socketCount,
+      wsAttached: this.wss != null,
+    };
   }
 
   async _collectOnlineParticipants(userId) {

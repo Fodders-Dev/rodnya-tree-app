@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:lineage/backend/backend_provider_config.dart';
-import 'package:lineage/backend/backend_runtime_config.dart';
+import 'package:rodnya/backend/backend_provider_config.dart';
+import 'package:rodnya/backend/backend_runtime_config.dart';
 
 void main() {
   test('BackendRuntimeConfig uses legacy-compatible defaults', () {

@@ -1,5 +1,5 @@
 param(
-  [string]$PackageName = "com.ahjkuio.lineage_family_app",
+  [string]$PackageName = "com.ahjkuio.rodnya_family_app",
   [string]$ArtifactPath = "build/app/outputs/bundle/rustoreRelease/app-rustore-release.aab",
   [string]$AppName,
   [string]$AppType,

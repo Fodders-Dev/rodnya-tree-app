@@ -4,15 +4,17 @@ plugins {
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id "dev.flutter.flutter-gradle-plugin"
 }
-def hasGoogleServicesConfig = file("google-services.json").exists()
-if (hasGoogleServicesConfig) {
-    apply plugin: 'com.google.gms.google-services'
-} else {
-    println "Warning: android/app/google-services.json is missing. Firebase Android auto-config is disabled for this build."
-}
 
 def releaseSigningProperties = new Properties()
-def releaseSigningPropertiesPath = System.getenv("LINEAGE_RELEASE_SIGNING_PROPERTIES")
+def readEnv = { String key ->
+    def value = System.getenv(key)
+    if (value == null) {
+        return null
+    }
+    def normalized = value.toString().trim()
+    return normalized.isEmpty() ? null : normalized
+}
+def releaseSigningPropertiesPath = readEnv("RODNYA_RELEASE_SIGNING_PROPERTIES")
 def releaseSigningPropertiesFile = releaseSigningPropertiesPath
         ? file(releaseSigningPropertiesPath)
         : rootProject.file("release-signing.properties")
@@ -22,10 +24,10 @@ if (releaseSigningPropertiesFile.exists()) {
     releaseSigningProperties.load(new FileInputStream(releaseSigningPropertiesFile))
 }
 
-def releaseStoreFile = (releaseSigningProperties['storeFile'] ?: System.getenv("LINEAGE_KEYSTORE_FILE"))?.toString()
-def releaseStorePassword = (releaseSigningProperties['storePassword'] ?: System.getenv("LINEAGE_KEYSTORE_PASSWORD"))?.toString()
-def releaseKeyAlias = (releaseSigningProperties['keyAlias'] ?: System.getenv("LINEAGE_KEY_ALIAS"))?.toString()
-def releaseKeyPassword = (releaseSigningProperties['keyPassword'] ?: System.getenv("LINEAGE_KEY_PASSWORD"))?.toString()
+def releaseStoreFile = (releaseSigningProperties['storeFile'] ?: readEnv("RODNYA_KEYSTORE_FILE"))?.toString()
+def releaseStorePassword = (releaseSigningProperties['storePassword'] ?: readEnv("RODNYA_KEYSTORE_PASSWORD"))?.toString()
+def releaseKeyAlias = (releaseSigningProperties['keyAlias'] ?: readEnv("RODNYA_KEY_ALIAS"))?.toString()
+def releaseKeyPassword = (releaseSigningProperties['keyPassword'] ?: readEnv("RODNYA_KEY_PASSWORD"))?.toString()
 def resolveSigningFile = { String path ->
     if (path == null || path.trim().isEmpty()) {
         return null
@@ -41,15 +43,15 @@ def resolveSigningFile = { String path ->
 }
 def hasReleaseSigning = [releaseStoreFile, releaseStorePassword, releaseKeyAlias, releaseKeyPassword]
         .every { it != null && !it.trim().isEmpty() }
-def rustoreApplicationId = (System.getenv("LINEAGE_RUSTORE_APPLICATION_ID")
-        ?: findProperty("lineageRustoreApplicationId")
+def rustoreApplicationId = (readEnv("RODNYA_RUSTORE_APPLICATION_ID")
+        ?: findProperty("rodnyaRustoreApplicationId")
         ?: "ru.rustore.app.2063621085").toString()
-def rustorePushProjectId = (System.getenv("LINEAGE_RUSTORE_PUSH_PROJECT_ID")
-        ?: findProperty("lineageRustorePushProjectId")
+def rustorePushProjectId = (readEnv("RODNYA_RUSTORE_PUSH_PROJECT_ID")
+        ?: findProperty("rodnyaRustorePushProjectId")
         ?: "q9oXlaEo25nBYnMe2cn3BtGpaBVWH0Mb").toString()
 
 android {
-    namespace = "com.ahjkuio.lineage_family_app"
+    namespace = "com.ahjkuio.rodnya_family_app"
     compileSdk = Math.max(flutter.compileSdkVersion, 35)
     ndkVersion = flutter.ndkVersion
 
@@ -71,13 +73,13 @@ android {
                 keyAlias releaseKeyAlias
                 keyPassword releaseKeyPassword
             } else {
-                println "Warning: release signing config is missing. Set LINEAGE_RELEASE_SIGNING_PROPERTIES or LINEAGE_KEYSTORE_* env vars."
+                println "Warning: release signing config is missing. Set RODNYA_RELEASE_SIGNING_PROPERTIES or RODNYA_KEYSTORE_* env vars."
             }
         }
     }
 
     defaultConfig {
-        applicationId = "com.ahjkuio.lineage_family_app"
+        applicationId = "com.ahjkuio.rodnya_family_app"
         minSdkVersion = flutter.minSdkVersion
         targetSdk = Math.max(flutter.targetSdkVersion, 35)
         versionCode = flutter.versionCode
@@ -91,6 +93,10 @@ android {
             dimension "store"
             applicationIdSuffix ".dev"
             versionNameSuffix "-dev"
+            manifestPlaceholders += [
+                    rustoreApplicationId : rustoreApplicationId,
+                    rustorePushProjectId : rustorePushProjectId,
+            ]
         }
         rustore {
             dimension "store"

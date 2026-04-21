@@ -1,4 +1,3 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
@@ -9,7 +8,9 @@ import '../backend/interfaces/family_tree_service_interface.dart';
 import '../backend/interfaces/profile_service_interface.dart';
 import '../models/family_person.dart';
 import '../models/family_tree.dart';
+import '../models/person_dossier.dart';
 import '../models/user_profile.dart';
+import '../widgets/person_dossier_view.dart';
 
 class UserProfileEntryScreen extends StatefulWidget {
   const UserProfileEntryScreen({
@@ -37,6 +38,7 @@ class _UserProfileEntryScreenState extends State<UserProfileEntryScreen> {
   String? _relativeId;
   FamilyTree? _matchingTree;
   FamilyPerson? _relativePerson;
+  PersonDossier? _dossier;
 
   bool get _isCurrentUser => _authService.currentUserId == widget.userId;
 
@@ -57,6 +59,19 @@ class _UserProfileEntryScreenState extends State<UserProfileEntryScreen> {
           ? await _profileService.getCurrentUserProfile()
           : await _profileService.getUserProfile(widget.userId);
       final relationContext = await _resolveRelativeContext(widget.userId);
+      PersonDossier? dossier;
+      if (relationContext.tree != null &&
+          relationContext.relativeId != null &&
+          relationContext.relativeId!.isNotEmpty) {
+        try {
+          dossier = await _familyTreeService.getPersonDossier(
+            relationContext.tree!.id,
+            relationContext.relativeId!,
+          );
+        } catch (_) {
+          dossier = null;
+        }
+      }
       if (!mounted) {
         return;
       }
@@ -65,6 +80,7 @@ class _UserProfileEntryScreenState extends State<UserProfileEntryScreen> {
         _relativeId = relationContext.relativeId;
         _matchingTree = relationContext.tree;
         _relativePerson = relationContext.relativePerson;
+        _dossier = dossier;
         _isLoading = false;
       });
     } catch (_) {
@@ -161,246 +177,99 @@ class _UserProfileEntryScreenState extends State<UserProfileEntryScreen> {
       );
     }
 
-    final displayName =
-        profile.displayName.isNotEmpty ? profile.displayName : profile.fullName;
-    final username = profile.username.trim();
-    final location = [
-      if (profile.city?.trim().isNotEmpty == true) profile.city!.trim(),
-      if (profile.country?.trim().isNotEmpty == true) profile.country!.trim(),
-    ].join(', ');
+    final dossier = _dossier ??
+        PersonDossier.fromProfile(
+          profile,
+          treePerson: _relativePerson,
+          isSelf: _isCurrentUser,
+        );
+    final hiddenSections = dossier.hiddenSections;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surfaceContainerHighest,
-              borderRadius: BorderRadius.circular(20),
+      child: PersonDossierView(
+        dossier: dossier,
+        headerChips: [
+          if (_matchingTree != null)
+            _UserMetaChip(
+              icon: Icons.account_tree_outlined,
+              label: _matchingTree!.name,
+              highlighted: true,
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    CircleAvatar(
-                      radius: 36,
-                      backgroundImage: profile.photoURL != null &&
-                              profile.photoURL!.isNotEmpty
-                          ? CachedNetworkImageProvider(profile.photoURL!)
-                          : null,
-                      child:
-                          profile.photoURL == null || profile.photoURL!.isEmpty
-                              ? Text(
-                                  displayName.isNotEmpty ? displayName[0] : '?',
-                                  style: const TextStyle(fontSize: 24),
-                                )
-                              : null,
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            displayName,
-                            style: Theme.of(context)
-                                .textTheme
-                                .headlineSmall
-                                ?.copyWith(fontWeight: FontWeight.w700),
-                          ),
-                          if (username.isNotEmpty) ...[
-                            const SizedBox(height: 4),
-                            Text(
-                              '@$username',
-                              style: Theme.of(context).textTheme.bodyMedium,
-                            ),
-                          ],
-                          if (location.isNotEmpty) ...[
-                            const SizedBox(height: 6),
-                            Text(
-                              location,
-                              style: Theme.of(context).textTheme.bodySmall,
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    _UserMetaChip(
-                      icon: Icons.alternate_email,
-                      label: profile.email,
-                    ),
-                    if (_matchingTree != null)
-                      _UserMetaChip(
-                        icon: Icons.account_tree_outlined,
-                        label: _matchingTree!.name,
-                        highlighted: true,
-                      ),
-                    _UserMetaChip(
-                      icon: Icons.family_restroom,
-                      label: _relativeId == null
-                          ? 'Нет общего дерева'
-                          : 'Есть в вашем дереве',
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                Wrap(
-                  spacing: 10,
-                  runSpacing: 10,
-                  children: [
-                    if (_isCurrentUser)
-                      FilledButton.icon(
-                        onPressed: () => context.go('/profile'),
-                        icon: const Icon(Icons.person_outline),
-                        label: const Text('Открыть мой профиль'),
-                      )
-                    else if (_relativeId != null)
-                      FilledButton.icon(
-                        onPressed: _openChat,
-                        icon: const Icon(Icons.message_outlined),
-                        label: const Text('Написать'),
-                      ),
-                    if (_relativeId != null)
-                      OutlinedButton.icon(
-                        onPressed: () =>
-                            context.push('/relative/details/$_relativeId'),
-                        icon: const Icon(Icons.badge_outlined),
-                        label: const Text('Карточка в дереве'),
-                      ),
-                  ],
-                ),
-              ],
-            ),
+          _UserMetaChip(
+            icon: Icons.family_restroom,
+            label: _relativeId == null
+                ? 'Нет общего дерева'
+                : 'Есть в вашем дереве',
           ),
         ],
+        actionButtons: [
+          if (_isCurrentUser)
+            FilledButton.icon(
+              onPressed: () => context.go('/profile'),
+              icon: const Icon(Icons.person_outline),
+              label: const Text('Открыть мой профиль'),
+            )
+          else if (_relativeId != null)
+            FilledButton.icon(
+              onPressed: _openChat,
+              icon: const Icon(Icons.message_outlined),
+              label: const Text('Написать'),
+            ),
+          if (_relativeId != null)
+            OutlinedButton.icon(
+              onPressed: () => context.push('/relative/details/$_relativeId'),
+              icon: const Icon(Icons.badge_outlined),
+              label: const Text('Карточка в дереве'),
+            ),
+        ],
+        banner: hiddenSections.isNotEmpty
+            ? const _InfoBanner(
+                icon: Icons.visibility_off_outlined,
+                text:
+                    'Часть профиля скрыта настройками видимости этого пользователя.',
+              )
+            : null,
       ),
     );
   }
 
   Widget _buildRelativeFallback(FamilyPerson person) {
-    final displayName =
-        person.displayName.isNotEmpty ? person.displayName : 'Без имени';
-    final note = person.notes?.trim();
-    final bio = person.bio?.trim();
-
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surfaceContainerHighest,
-              borderRadius: BorderRadius.circular(20),
+      child: PersonDossierView(
+        dossier: PersonDossier.fromPerson(person),
+        headerChips: [
+          if (_matchingTree != null)
+            _UserMetaChip(
+              icon: Icons.account_tree_outlined,
+              label: _matchingTree!.name,
+              highlighted: true,
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    CircleAvatar(
-                      radius: 36,
-                      backgroundImage:
-                          person.photoUrl != null && person.photoUrl!.isNotEmpty
-                              ? CachedNetworkImageProvider(person.photoUrl!)
-                              : null,
-                      child: person.photoUrl == null || person.photoUrl!.isEmpty
-                          ? Text(
-                              displayName.isNotEmpty ? displayName[0] : '?',
-                              style: const TextStyle(fontSize: 24),
-                            )
-                          : null,
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            displayName,
-                            style: Theme.of(context)
-                                .textTheme
-                                .headlineSmall
-                                ?.copyWith(fontWeight: FontWeight.w700),
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            'Профиль в приложении ещё не заполнен. Открыта карточка человека из дерева.',
-                            style: Theme.of(context).textTheme.bodyMedium,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    if (_matchingTree != null)
-                      _UserMetaChip(
-                        icon: Icons.account_tree_outlined,
-                        label: _matchingTree!.name,
-                        highlighted: true,
-                      ),
-                    _UserMetaChip(
-                      icon: Icons.family_restroom,
-                      label: 'Есть в вашем дереве',
-                    ),
-                    _UserMetaChip(
-                      icon: person.isAlive
-                          ? Icons.favorite_border
-                          : Icons.history_toggle_off_outlined,
-                      label: person.isAlive ? 'Жив' : 'Умер',
-                    ),
-                  ],
-                ),
-                if ((note?.isNotEmpty ?? false) ||
-                    (bio?.isNotEmpty ?? false)) ...[
-                  const SizedBox(height: 16),
-                  Text(
-                    note?.isNotEmpty == true ? note! : bio!,
-                    style: Theme.of(context).textTheme.bodyMedium,
-                  ),
-                ],
-                const SizedBox(height: 16),
-                Wrap(
-                  spacing: 10,
-                  runSpacing: 10,
-                  children: [
-                    if (!_isCurrentUser && _relativeId != null)
-                      FilledButton.icon(
-                        onPressed: _openChat,
-                        icon: const Icon(Icons.message_outlined),
-                        label: const Text('Написать'),
-                      ),
-                    if (_relativeId != null)
-                      OutlinedButton.icon(
-                        onPressed: () =>
-                            context.push('/relative/details/$_relativeId'),
-                        icon: const Icon(Icons.badge_outlined),
-                        label: const Text('Карточка в дереве'),
-                      ),
-                  ],
-                ),
-              ],
-            ),
+          const _UserMetaChip(
+            icon: Icons.family_restroom,
+            label: 'Есть в вашем дереве',
           ),
         ],
+        actionButtons: [
+          if (!_isCurrentUser && _relativeId != null)
+            FilledButton.icon(
+              onPressed: _openChat,
+              icon: const Icon(Icons.message_outlined),
+              label: const Text('Написать'),
+            ),
+          if (_relativeId != null)
+            OutlinedButton.icon(
+              onPressed: () => context.push('/relative/details/$_relativeId'),
+              icon: const Icon(Icons.badge_outlined),
+              label: const Text('Карточка в дереве'),
+            ),
+        ],
+        banner: const _InfoBanner(
+          icon: Icons.info_outline,
+          text:
+              'Профиль в приложении ещё не заполнен. Открыта карточка человека из дерева.',
+        ),
       ),
     );
   }
@@ -463,6 +332,38 @@ class _InfoState extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _InfoBanner extends StatelessWidget {
+  const _InfoBanner({
+    required this.icon,
+    required this.text,
+  });
+
+  final IconData icon;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Theme.of(context)
+            .colorScheme
+            .surfaceContainerHighest
+            .withValues(alpha: 0.7),
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 18),
+          const SizedBox(width: 10),
+          Expanded(child: Text(text)),
+        ],
       ),
     );
   }

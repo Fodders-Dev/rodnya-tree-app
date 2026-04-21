@@ -2,6 +2,11 @@ const {Pool} = require("pg");
 
 const {FileStore, EMPTY_DB, normalizeDbState} = require("./store");
 
+const DEFAULT_POSTGRES_CONNECTION_TIMEOUT_MS = 5_000;
+const DEFAULT_POSTGRES_QUERY_TIMEOUT_MS = 15_000;
+const DEFAULT_POSTGRES_IDLE_TIMEOUT_MS = 30_000;
+const DEFAULT_WRITE_QUEUE_TIMEOUT_MS = 15_000;
+
 function quoteIdentifier(value) {
   const normalized = String(value || "").trim();
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(normalized)) {
@@ -14,27 +19,42 @@ class PostgresStore extends FileStore {
   constructor({
     connectionString,
     schema = "public",
-    table = "lineage_state",
+    table = "rodnya_state",
     rowId = "default",
     pool = null,
+    connectionTimeoutMillis = DEFAULT_POSTGRES_CONNECTION_TIMEOUT_MS,
+    queryTimeoutMs = DEFAULT_POSTGRES_QUERY_TIMEOUT_MS,
+    idleTimeoutMillis = DEFAULT_POSTGRES_IDLE_TIMEOUT_MS,
   }) {
     super(`postgres://${schema}.${table}/${rowId}`);
 
     if (!pool && !String(connectionString || "").trim()) {
       throw new Error(
-        "LINEAGE_POSTGRES_URL is required when LINEAGE_BACKEND_STORAGE=postgres",
+        "RODNYA_POSTGRES_URL is required when RODNYA_BACKEND_STORAGE=postgres",
       );
     }
 
-    this._pool = pool ?? new Pool({connectionString});
+    this._pool =
+      pool ??
+      new Pool({
+        connectionString,
+        connectionTimeoutMillis,
+        idleTimeoutMillis,
+        query_timeout: queryTimeoutMs,
+        statement_timeout: queryTimeoutMs,
+        keepAlive: true,
+      });
     this._ownsPool = pool == null;
     this._schema = String(schema || "public").trim() || "public";
-    this._table = String(table || "lineage_state").trim() || "lineage_state";
+    this._table = String(table || "rodnya_state").trim() || "rodnya_state";
     this._rowId = String(rowId || "default").trim() || "default";
     this._qualifiedTableName = `${quoteIdentifier(this._schema)}.${quoteIdentifier(this._table)}`;
     this._initializePromise = null;
     this.storageMode = "postgres";
     this.storageTarget = `${this._schema}.${this._table}:${this._rowId}`;
+    this._writeQueueTimeoutMs = queryTimeoutMs > 0
+      ? Math.max(queryTimeoutMs, DEFAULT_WRITE_QUEUE_TIMEOUT_MS)
+      : DEFAULT_WRITE_QUEUE_TIMEOUT_MS;
   }
 
   async initialize() {
@@ -48,6 +68,7 @@ class PostgresStore extends FileStore {
     await this._pool.query(
       `CREATE SCHEMA IF NOT EXISTS ${quoteIdentifier(this._schema)}`,
     );
+
     await this._pool.query(`
       CREATE TABLE IF NOT EXISTS ${this._qualifiedTableName} (
         id TEXT PRIMARY KEY,
@@ -67,7 +88,7 @@ class PostgresStore extends FileStore {
 
   async _read() {
     await this.initialize();
-    await this._writeQueue;
+    await this._awaitWriteQueue();
 
     const result = await this._pool.query(
       `SELECT data FROM ${this._qualifiedTableName} WHERE id = $1`,
@@ -78,7 +99,8 @@ class PostgresStore extends FileStore {
   }
 
   async _write(data) {
-    this._writeQueue = this._writeQueue.then(async () => {
+    const previousQueue = this._writeQueue.catch(() => {});
+    const nextWrite = previousQueue.then(async () => {
       await this.initialize();
       await this._pool.query(
         `
@@ -91,8 +113,48 @@ class PostgresStore extends FileStore {
         [this._rowId, JSON.stringify(data)],
       );
     });
+    this._writeQueue = nextWrite.catch((error) => {
+      console.error(
+        "[backend] postgres-store write failed",
+        JSON.stringify({
+          table: `${this._schema}.${this._table}`,
+          rowId: this._rowId,
+          message: String(error?.message || error || "unknown_error"),
+        }),
+      );
+      throw error;
+    });
 
-    return this._writeQueue;
+    return nextWrite;
+  }
+
+  async _awaitWriteQueue() {
+    const pendingWrite = this._writeQueue.catch(() => {});
+    if (this._writeQueueTimeoutMs <= 0) {
+      await pendingWrite;
+      return;
+    }
+
+    let timer = null;
+    try {
+      await Promise.race([
+        pendingWrite,
+        new Promise((_, reject) => {
+          timer = setTimeout(() => {
+            const error = new Error("Postgres write queue timed out");
+            error.code = "POSTGRES_WRITE_QUEUE_TIMEOUT";
+            reject(error);
+          }, this._writeQueueTimeoutMs);
+          if (typeof timer?.unref === "function") {
+            timer.unref();
+          }
+        }),
+      ]);
+    } finally {
+      if (timer) {
+        clearTimeout(timer);
+      }
+    }
   }
 
   async close() {

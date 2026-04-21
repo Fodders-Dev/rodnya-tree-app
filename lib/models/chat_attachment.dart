@@ -33,10 +33,39 @@ enum ChatAttachmentType {
   }
 }
 
+enum ChatAttachmentPresentation {
+  defaultPresentation,
+  voiceNote,
+  videoNote;
+
+  String get value {
+    switch (this) {
+      case ChatAttachmentPresentation.defaultPresentation:
+        return 'default';
+      case ChatAttachmentPresentation.voiceNote:
+        return 'voice_note';
+      case ChatAttachmentPresentation.videoNote:
+        return 'video_note';
+    }
+  }
+
+  static ChatAttachmentPresentation fromRaw(String? raw) {
+    switch ((raw ?? '').trim().toLowerCase()) {
+      case 'voice_note':
+        return ChatAttachmentPresentation.voiceNote;
+      case 'video_note':
+        return ChatAttachmentPresentation.videoNote;
+      default:
+        return ChatAttachmentPresentation.defaultPresentation;
+    }
+  }
+}
+
 class ChatAttachment {
   const ChatAttachment({
     required this.type,
     required this.url,
+    this.presentation = ChatAttachmentPresentation.defaultPresentation,
     this.mimeType,
     this.fileName,
     this.sizeBytes,
@@ -48,6 +77,7 @@ class ChatAttachment {
 
   final ChatAttachmentType type;
   final String url;
+  final ChatAttachmentPresentation presentation;
   final String? mimeType;
   final String? fileName;
   final int? sizeBytes;
@@ -58,11 +88,19 @@ class ChatAttachment {
 
   bool get isVisual =>
       type == ChatAttachmentType.image || type == ChatAttachmentType.video;
+  bool get isVoiceNote =>
+      type == ChatAttachmentType.audio &&
+      presentation == ChatAttachmentPresentation.voiceNote;
+  bool get isVideoNote =>
+      type == ChatAttachmentType.video &&
+      presentation == ChatAttachmentPresentation.videoNote;
 
   Map<String, dynamic> toMap() {
     return {
       'type': type.value,
       'url': url,
+      if (presentation != ChatAttachmentPresentation.defaultPresentation)
+        'presentation': presentation.value,
       if (mimeType != null && mimeType!.isNotEmpty) 'mimeType': mimeType,
       if (fileName != null && fileName!.isNotEmpty) 'fileName': fileName,
       if (sizeBytes != null) 'sizeBytes': sizeBytes,
@@ -78,6 +116,9 @@ class ChatAttachment {
     return ChatAttachment(
       type: ChatAttachmentType.fromRaw(map['type']?.toString()),
       url: UrlUtils.normalizeImageUrl(map['url']?.toString()) ?? '',
+      presentation: ChatAttachmentPresentation.fromRaw(
+        map['presentation']?.toString(),
+      ),
       mimeType: map['mimeType']?.toString(),
       fileName: map['fileName']?.toString(),
       sizeBytes: _asInt(map['sizeBytes']),

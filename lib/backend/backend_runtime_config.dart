@@ -5,6 +5,7 @@ class BackendRuntimeConfig {
     this.publicAppUrl = 'https://rodnya-tree.ru',
     this.apiBaseUrl = 'https://api.rodnya-tree.ru',
     this.webSocketBaseUrl = 'wss://api.rodnya-tree.ru',
+    this.googleWebClientId = '',
     this.supabaseUrl = _defaultSupabaseUrl,
     this.supabaseAnonKey = _defaultSupabaseAnonKey,
     this.enableLegacyDynamicLinks = true,
@@ -18,41 +19,46 @@ class BackendRuntimeConfig {
       'eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFsZHVneXNibm9kcmZ1Z2hjYXd1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDM0MjM3OTQsImV4cCI6MjA1ODk5OTc5NH0.'
       'e_IyhyA5pv2tbi2wdCgdw5a2K0BaYxQsrxQdE459Prg';
   static const String _publicAppUrlEnv = String.fromEnvironment(
-    'LINEAGE_PUBLIC_APP_URL',
+    'RODNYA_PUBLIC_APP_URL',
     defaultValue: '',
   );
   static const String _apiBaseUrlEnv = String.fromEnvironment(
-    'LINEAGE_API_BASE_URL',
+    'RODNYA_API_BASE_URL',
     defaultValue: '',
   );
   static const String _webSocketBaseUrlEnv = String.fromEnvironment(
-    'LINEAGE_WS_BASE_URL',
+    'RODNYA_WS_BASE_URL',
+    defaultValue: '',
+  );
+  static const String _googleWebClientIdEnv = String.fromEnvironment(
+    'RODNYA_GOOGLE_WEB_CLIENT_ID',
     defaultValue: '',
   );
   static const String _supabaseUrlEnv = String.fromEnvironment(
-    'LINEAGE_SUPABASE_URL',
+    'RODNYA_SUPABASE_URL',
     defaultValue: '',
   );
   static const String _supabaseAnonKeyEnv = String.fromEnvironment(
-    'LINEAGE_SUPABASE_ANON_KEY',
+    'RODNYA_SUPABASE_ANON_KEY',
     defaultValue: '',
   );
   static const String _legacyDynamicLinksEnv = String.fromEnvironment(
-    'LINEAGE_ENABLE_LEGACY_DYNAMIC_LINKS',
+    'RODNYA_ENABLE_LEGACY_DYNAMIC_LINKS',
     defaultValue: '',
   );
   static const String _runtimePresetEnv = String.fromEnvironment(
-    'LINEAGE_RUNTIME_PRESET',
+    'RODNYA_RUNTIME_PRESET',
     defaultValue: '',
   );
   static const String _e2eEnv = String.fromEnvironment(
-    'LINEAGE_E2E',
+    'RODNYA_E2E',
     defaultValue: '',
   );
 
   final String publicAppUrl;
   final String apiBaseUrl;
   final String webSocketBaseUrl;
+  final String googleWebClientId;
   final String supabaseUrl;
   final String supabaseAnonKey;
   final bool enableLegacyDynamicLinks;
@@ -66,6 +72,7 @@ class BackendRuntimeConfig {
       publicAppUrlRaw: _publicAppUrlEnv,
       apiBaseUrlRaw: _apiBaseUrlEnv,
       webSocketBaseUrlRaw: _webSocketBaseUrlEnv,
+      googleWebClientIdRaw: _googleWebClientIdEnv,
       supabaseUrlRaw: _supabaseUrlEnv,
       supabaseAnonKeyRaw: _supabaseAnonKeyEnv,
       legacyDynamicLinksRaw: _legacyDynamicLinksEnv,
@@ -80,6 +87,7 @@ class BackendRuntimeConfig {
     String publicAppUrlRaw = '',
     String apiBaseUrlRaw = '',
     String webSocketBaseUrlRaw = '',
+    String googleWebClientIdRaw = '',
     String supabaseUrlRaw = '',
     String supabaseAnonKeyRaw = '',
     String legacyDynamicLinksRaw = '',
@@ -105,6 +113,7 @@ class BackendRuntimeConfig {
       webSocketBaseUrlRaw,
       defaultWebSocketBaseUrl(resolvedApiBaseUrl),
     );
+    final resolvedGoogleWebClientId = _stringFromRaw(googleWebClientIdRaw, '');
     final resolvedSupabaseUrl = _stringFromRaw(
       supabaseUrlRaw,
       _defaultSupabaseUrl,
@@ -126,6 +135,7 @@ class BackendRuntimeConfig {
       publicAppUrl: resolvedPublicAppUrl,
       apiBaseUrl: resolvedApiBaseUrl,
       webSocketBaseUrl: resolvedWebSocketBaseUrl,
+      googleWebClientId: resolvedGoogleWebClientId,
       supabaseUrl: resolvedSupabaseUrl,
       supabaseAnonKey: resolvedSupabaseAnonKey,
       enableLegacyDynamicLinks: resolvedLegacyDynamicLinks,

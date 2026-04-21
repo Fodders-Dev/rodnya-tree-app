@@ -1,7 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:lineage/services/rustore_service.dart';
+import 'package:rodnya/services/rustore_service.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();

@@ -13,31 +13,32 @@ if (-not (Test-Path $flutterSafe)) {
 }
 
 if (
-  -not $env:LINEAGE_RELEASE_SIGNING_PROPERTIES -and
-  -not $env:LINEAGE_KEYSTORE_FILE -and
+  -not $env:RODNYA_RELEASE_SIGNING_PROPERTIES -and
+  -not $env:RODNYA_KEYSTORE_FILE -and
   -not (Test-Path (Join-Path $repoRoot "android\\release-signing.properties"))
 ) {
-  Write-Warning "Release signing is not configured. Set LINEAGE_RELEASE_SIGNING_PROPERTIES or LINEAGE_KEYSTORE_* env vars before building."
+  Write-Warning "Release signing is not configured. Set RODNYA_RELEASE_SIGNING_PROPERTIES or RODNYA_KEYSTORE_* env vars before building."
 }
 
 $defines = @(
-  "--dart-define=LINEAGE_RUNTIME_PRESET=prod_custom_api",
-  "--dart-define=LINEAGE_ENABLE_LEGACY_DYNAMIC_LINKS=false",
-  "--dart-define=LINEAGE_APP_STORE=rustore",
-  "--dart-define=LINEAGE_ENABLE_RUSTORE_BILLING=false",
-  "--dart-define=LINEAGE_ENABLE_RUSTORE_REVIEW=true",
-  "--dart-define=LINEAGE_ENABLE_RUSTORE_UPDATES=true"
+  "--dart-define=RODNYA_RUNTIME_PRESET=prod_custom_api",
+  "--dart-define=RODNYA_ENABLE_LEGACY_DYNAMIC_LINKS=false",
+  "--dart-define=RODNYA_GOOGLE_WEB_CLIENT_ID=676171184233-hl6gauj8c1trtn25a8me7pvm4m4clndv.apps.googleusercontent.com",
+  "--dart-define=RODNYA_APP_STORE=rustore",
+  "--dart-define=RODNYA_ENABLE_RUSTORE_BILLING=false",
+  "--dart-define=RODNYA_ENABLE_RUSTORE_REVIEW=true",
+  "--dart-define=RODNYA_ENABLE_RUSTORE_UPDATES=true"
 )
 
 function Invoke-RustoreBuild([string]$artifactType) {
   $buildArgs = @("build", $artifactType, "--flavor", "rustore", "--release") + $defines
 
-  if ($env:LINEAGE_BUILD_NAME) {
-    $buildArgs += "--build-name=$($env:LINEAGE_BUILD_NAME)"
+  if ($env:RODNYA_BUILD_NAME) {
+    $buildArgs += "--build-name=$($env:RODNYA_BUILD_NAME)"
   }
 
-  if ($env:LINEAGE_BUILD_NUMBER) {
-    $buildArgs += "--build-number=$($env:LINEAGE_BUILD_NUMBER)"
+  if ($env:RODNYA_BUILD_NUMBER) {
+    $buildArgs += "--build-number=$($env:RODNYA_BUILD_NUMBER)"
   }
 
   powershell -ExecutionPolicy Bypass -File $flutterSafe @buildArgs

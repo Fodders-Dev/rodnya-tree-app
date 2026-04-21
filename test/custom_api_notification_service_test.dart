@@ -1,14 +1,20 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:get_it/get_it.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
-import 'package:flutter_local_notifications_platform_interface/flutter_local_notifications_platform_interface.dart';
-import 'package:lineage/backend/backend_runtime_config.dart';
-import 'package:lineage/services/custom_api_auth_service.dart';
-import 'package:lineage/services/chat_notification_settings_store.dart';
-import 'package:lineage/services/custom_api_notification_service.dart';
-import 'package:lineage/services/invitation_service.dart';
+import 'package:rodnya/backend/backend_runtime_config.dart';
+import 'package:rodnya/backend/interfaces/call_service_interface.dart';
+import 'package:rodnya/models/call_event.dart';
+import 'package:rodnya/models/call_invite.dart';
+import 'package:rodnya/models/call_media_mode.dart';
+import 'package:rodnya/services/custom_api_auth_service.dart';
+import 'package:rodnya/services/call_coordinator_service.dart';
+import 'package:rodnya/services/chat_notification_settings_store.dart';
+import 'package:rodnya/services/custom_api_notification_service.dart';
+import 'package:rodnya/services/invitation_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -19,6 +25,102 @@ void main() {
     FlutterLocalNotificationsPlatform.instance =
         _FakeFlutterLocalNotificationsPlatform();
   });
+
+  tearDown(() async {
+    await GetIt.I.reset();
+  });
+
+  test(
+    'CustomApiNotificationService treats call_invite as incoming call signal',
+    () async {
+      final client = MockClient((request) async {
+        if (request.url.path == '/v1/notifications' &&
+            request.method == 'GET') {
+          return http.Response(
+            jsonEncode({
+              'notifications': [
+                {
+                  'id': 'notification-call-1',
+                  'type': 'call_invite',
+                  'title': 'Собеседник',
+                  'body': 'Входящий видеозвонок',
+                  'createdAt': '2026-04-20T12:00:00.000Z',
+                  'data': {
+                    'chatId': 'chat-1',
+                    'callId': 'call-1',
+                    'mediaMode': 'video',
+                  },
+                },
+              ],
+            }),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+        return http.Response('{"message":"not found"}', 404);
+      });
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        'custom_api_session_v1',
+        jsonEncode({
+          'accessToken': 'access-token',
+          'refreshToken': 'refresh-token',
+          'userId': 'user-1',
+          'email': 'dev@rodnya.app',
+          'displayName': 'Dev User',
+          'providerIds': ['password'],
+          'isProfileComplete': true,
+          'missingFields': const [],
+        }),
+      );
+
+      final authService = await CustomApiAuthService.create(
+        httpClient: client,
+        preferences: prefs,
+        runtimeConfig: const BackendRuntimeConfig(
+          apiBaseUrl: 'https://api.example.ru',
+        ),
+        invitationService: InvitationService(),
+      );
+
+      final coordinator = _FakeNotificationCallCoordinator();
+      GetIt.I.registerSingleton<CallCoordinatorService>(coordinator);
+
+      final shownGenericNotifications = <Map<String, dynamic>>[];
+      final service = await CustomApiNotificationService.create(
+        preferences: prefs,
+        authService: authService,
+        runtimeConfig: const BackendRuntimeConfig(
+          apiBaseUrl: 'https://api.example.ru',
+        ),
+        httpClient: client,
+        onGenericNotification: ({
+          required String title,
+          required String body,
+          required int notificationId,
+          String? payload,
+        }) async {
+          shownGenericNotifications.add({
+            'title': title,
+            'body': body,
+            'notificationId': notificationId,
+            'payload': payload,
+          });
+        },
+      );
+
+      await service.initialize();
+      await service.syncPendingNotifications();
+
+      expect(coordinator.ensureRuntimeReadyCalls, greaterThanOrEqualTo(1));
+      expect(coordinator.hydratedCallIds, ['call-1']);
+      expect(coordinator.hydratedChatIds, ['chat-1']);
+      expect(shownGenericNotifications, isEmpty);
+
+      await service.dispose();
+    },
+  );
 
   test(
     'CustomApiNotificationService polls unread notifications and deduplicates delivered ids',
@@ -72,7 +174,7 @@ void main() {
           'accessToken': 'access-token',
           'refreshToken': 'refresh-token',
           'userId': 'user-1',
-          'email': 'dev@lineage.app',
+          'email': 'dev@rodnya.app',
           'displayName': 'Dev User',
           'providerIds': ['password'],
           'isProfileComplete': true,
@@ -236,7 +338,7 @@ void main() {
           'accessToken': 'access-token',
           'refreshToken': 'refresh-token',
           'userId': 'user-1',
-          'email': 'dev@lineage.app',
+          'email': 'dev@rodnya.app',
           'displayName': 'Dev User',
           'providerIds': ['password'],
           'isProfileComplete': true,
@@ -343,7 +445,7 @@ void main() {
           'accessToken': 'access-token',
           'refreshToken': 'refresh-token',
           'userId': 'user-1',
-          'email': 'dev@lineage.app',
+          'email': 'dev@rodnya.app',
           'displayName': 'Dev User',
           'providerIds': ['password'],
           'isProfileComplete': true,
@@ -455,7 +557,7 @@ void main() {
           'accessToken': 'access-token',
           'refreshToken': 'refresh-token',
           'userId': 'user-1',
-          'email': 'dev@lineage.app',
+          'email': 'dev@rodnya.app',
           'displayName': 'Dev User',
           'providerIds': ['password'],
           'isProfileComplete': true,
@@ -548,7 +650,7 @@ void main() {
           'accessToken': 'access-token',
           'refreshToken': 'refresh-token',
           'userId': 'user-1',
-          'email': 'dev@lineage.app',
+          'email': 'dev@rodnya.app',
           'displayName': 'Dev User',
           'providerIds': ['password'],
           'isProfileComplete': true,
@@ -633,7 +735,7 @@ void main() {
           'accessToken': 'access-token',
           'refreshToken': 'refresh-token',
           'userId': 'user-1',
-          'email': 'dev@lineage.app',
+          'email': 'dev@rodnya.app',
           'displayName': 'Dev User',
           'providerIds': ['password'],
           'isProfileComplete': true,
@@ -700,7 +802,7 @@ void main() {
           'accessToken': 'access-token',
           'refreshToken': 'refresh-token',
           'userId': 'user-1',
-          'email': 'dev@lineage.app',
+          'email': 'dev@rodnya.app',
           'displayName': 'Dev User',
           'providerIds': ['password'],
           'isProfileComplete': true,
@@ -745,9 +847,114 @@ void main() {
 
 class _FakeFlutterLocalNotificationsPlatform
     extends FlutterLocalNotificationsPlatform {
+  final List<Map<String, Object?>> shownNotifications =
+      <Map<String, Object?>>[];
+
   @override
   Future<NotificationAppLaunchDetails?>
       getNotificationAppLaunchDetails() async {
     return const NotificationAppLaunchDetails(false);
   }
+
+  Future<bool?> initialize(
+    InitializationSettings initializationSettings, {
+    DidReceiveNotificationResponseCallback? onDidReceiveNotificationResponse,
+    DidReceiveBackgroundNotificationResponseCallback?
+        onDidReceiveBackgroundNotificationResponse,
+  }) async {
+    return true;
+  }
+
+  @override
+  Future<void> show(
+    int id,
+    String? title,
+    String? body, {
+    AndroidNotificationDetails? notificationDetails,
+    String? payload,
+  }) async {
+    shownNotifications.add({
+      'id': id,
+      'title': title,
+      'body': body,
+      'payload': payload,
+    });
+  }
+
+  @override
+  Future<void> cancel(int id, {String? tag}) async {}
+}
+
+class _FakeNotificationCallCoordinator extends CallCoordinatorService {
+  _FakeNotificationCallCoordinator()
+      : super(
+          callService: _FakeNotificationCallService(),
+        );
+
+  int ensureRuntimeReadyCalls = 0;
+  final List<String> hydratedCallIds = <String>[];
+  final List<String> hydratedChatIds = <String>[];
+
+  @override
+  Future<void> ensureRuntimeReady() async {
+    ensureRuntimeReadyCalls += 1;
+  }
+
+  @override
+  Future<CallInvite?> hydrateIncomingCall({
+    String? callId,
+    String? chatId,
+  }) async {
+    hydratedCallIds.add(callId ?? '');
+    hydratedChatIds.add(chatId ?? '');
+    return null;
+  }
+}
+
+class _FakeNotificationCallService implements CallServiceInterface {
+  @override
+  String? get currentUserId => 'user-1';
+
+  @override
+  Stream<CallEvent> get events => const Stream<CallEvent>.empty();
+
+  @override
+  Future<CallInvite> acceptCall(String callId) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<CallInvite> cancelCall(String callId) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<CallInvite?> getActiveCall({String? chatId}) async => null;
+
+  @override
+  Future<CallInvite?> getCall(String callId) async => null;
+
+  @override
+  Future<CallInvite> hangUp(String callId) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<CallInvite> rejectCall(String callId) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<void> startRealtimeBridge() async {}
+
+  @override
+  Future<CallInvite> startCall({
+    required String chatId,
+    required CallMediaMode mediaMode,
+  }) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<void> stopRealtimeBridge() async {}
 }

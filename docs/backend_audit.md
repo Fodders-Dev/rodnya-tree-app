@@ -15,12 +15,9 @@
 - `pubspec.yaml`
 - `lib/main.dart`
 - `lib/firebase_options.dart`
-- `firebase.json`
-- `.firebaserc`
 - `android/build.gradle`
 - `android/settings.gradle`
 - `android/app/build.gradle`
-- `android/app/google-services.json`
 - `web/index.html`
 
 ### Firebase Auth
@@ -272,7 +269,7 @@
 ### P2
 
 - Убрать `Firebase Crashlytics` / `Firebase Analytics` или заменить на self-hosted / neutral observability.
-- Удалить `functions/`, `firebase_options.dart`, `google-services.json`, Firebase scripts из `web/index.html`, `firebase_*` packages.
+- Дочистить оставшиеся Firebase-упоминания в исторической документации после полного перехода на собственный backend.
 - Удалить `supabase_flutter` после завершения storage/auth transition.
 
 ## Single Best Next Implementation Task

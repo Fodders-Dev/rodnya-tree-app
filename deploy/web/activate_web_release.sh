@@ -3,8 +3,9 @@ set -euo pipefail
 
 ARCHIVE_PATH="${1:-}"
 TARGET_DIR="${2:-/var/www/rodnya-site}"
+BUILD_LABEL_ARG="${3:-}"
 BACKUP_ROOT="${BACKUP_ROOT:-/opt/rodnya/backups}"
-BUILD_LABEL="${BUILD_LABEL:-}"
+BUILD_LABEL="${BUILD_LABEL:-$BUILD_LABEL_ARG}"
 WEB_OWNER="${WEB_OWNER:-www-data}"
 WEB_GROUP="${WEB_GROUP:-www-data}"
 TIMESTAMP="${DEPLOY_TIMESTAMP:-$(date +%Y%m%d-%H%M%S)}"
@@ -19,7 +20,7 @@ fail() {
 }
 
 if [[ -z "$ARCHIVE_PATH" ]]; then
-  fail "usage: $0 <archive-path> [target-dir]"
+  fail "usage: $0 <archive-path> [target-dir] [build-label]"
 fi
 
 if [[ ! -f "$ARCHIVE_PATH" ]]; then

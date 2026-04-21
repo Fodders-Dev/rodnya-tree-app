@@ -8,8 +8,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../backend/backend_runtime_config.dart';
 import '../backend/interfaces/profile_service_interface.dart';
 import '../backend/interfaces/storage_service_interface.dart';
+import '../models/account_linking_status.dart';
 import '../backend/models/profile_form_data.dart';
 import '../models/family_person.dart';
+import '../models/profile_contribution.dart';
 import '../models/profile_note.dart';
 import '../models/user_profile.dart';
 import 'custom_api_auth_service.dart';
@@ -30,6 +32,18 @@ class CustomApiProfileService implements ProfileServiceInterface {
   static const _profileStorageKey = 'custom_api_profile_form_v1';
   static const _maxPhotoSizeBytes = 5 * 1024 * 1024;
   static const _allowedExtensions = ['.jpg', '.jpeg', '.png', '.webp'];
+  static const Map<String, String> _defaultProfileVisibilityScopes = {
+    'contacts': 'private',
+    'about': 'shared_trees',
+    'background': 'shared_trees',
+    'worldview': 'shared_trees',
+  };
+  static const Map<String, List<String>> _emptyProfileVisibilityTargets = {
+    'contacts': <String>[],
+    'about': <String>[],
+    'background': <String>[],
+    'worldview': <String>[],
+  };
 
   final CustomApiAuthService _authService;
   final http.Client _httpClient;
@@ -87,7 +101,8 @@ class CustomApiProfileService implements ProfileServiceInterface {
 
   @override
   Future<ProfileFormData> getCurrentUserProfileFormData() async {
-    if (_authService.currentUserId == null) {
+    final currentUserId = _authService.currentUserId;
+    if (currentUserId == null) {
       throw const CustomApiException('Пользователь не авторизован');
     }
 
@@ -100,12 +115,21 @@ class CustomApiProfileService implements ProfileServiceInterface {
       await _cacheProfileForm(formData);
       return formData;
     } catch (_) {
-      final cached = _getCachedProfileForm();
+      final cached = _getCachedProfileForm(userId: currentUserId);
       if (cached != null) {
         return cached;
       }
       rethrow;
     }
+  }
+
+  @override
+  Future<AccountLinkingStatus> getCurrentAccountLinkingStatus() async {
+    final response = await _requestJson(
+      method: 'GET',
+      path: '/v1/profile/me/account-linking-status',
+    );
+    return AccountLinkingStatus.fromJson(response);
   }
 
   @override
@@ -134,32 +158,6 @@ class CustomApiProfileService implements ProfileServiceInterface {
               .map((value) => value.toString())
               .toList(),
     );
-  }
-
-  @override
-  Future<void> verifyCurrentUserPhone({
-    required String phoneNumber,
-    required String countryCode,
-  }) async {
-    await _requestJson(
-      method: 'POST',
-      path: '/v1/profile/me/verify-phone',
-      body: {
-        'phoneNumber': phoneNumber,
-        'countryCode': countryCode,
-      },
-    );
-
-    final cached = _getCachedProfileForm();
-    if (cached != null) {
-      await _cacheProfileForm(
-        cached.copyWith(
-          phoneNumber: phoneNumber,
-          countryCode: countryCode,
-          isPhoneVerified: true,
-        ),
-      );
-    }
   }
 
   @override
@@ -235,11 +233,69 @@ class CustomApiProfileService implements ProfileServiceInterface {
           countryName: profile.country,
           city: profile.city ?? '',
           photoUrl: profile.photoURL,
-          isPhoneVerified: profile.isPhoneVerified,
           gender: profile.gender ?? Gender.unknown,
           birthDate: profile.birthDate,
+          birthPlace: profile.birthPlace ?? '',
+          bio: profile.bio,
+          familyStatus: profile.familyStatus,
+          aboutFamily: profile.aboutFamily,
+          education: profile.education,
+          work: profile.work,
+          hometown: profile.hometown,
+          languages: profile.languages,
+          values: profile.values,
+          religion: profile.religion,
+          interests: profile.interests,
+          profileContributionPolicy: profile.profileContributionPolicy,
+          primaryTrustedChannel: null,
+          profileVisibilityScopes: profile.profileVisibilityScopes ??
+              _defaultProfileVisibilityScopes,
+          profileVisibilityTreeIds: profile.profileVisibilityTreeIds ??
+              _emptyProfileVisibilityTargets,
+          profileVisibilityBranchRootIds:
+              profile.profileVisibilityBranchRootIds ??
+                  _emptyProfileVisibilityTargets,
+          profileVisibilityUserIds: profile.profileVisibilityUserIds ??
+              _emptyProfileVisibilityTargets,
         ),
       ),
+    );
+  }
+
+  @override
+  Future<List<ProfileContribution>> getPendingProfileContributions() async {
+    final response = await _requestJson(
+      method: 'GET',
+      path: '/v1/profile/me/contributions?status=pending',
+    );
+    final items = response['contributions'];
+    if (items is! List<dynamic>) {
+      return const <ProfileContribution>[];
+    }
+    return items
+        .whereType<Map<String, dynamic>>()
+        .map(ProfileContribution.fromJson)
+        .where((item) => item.id.isNotEmpty)
+        .toList();
+  }
+
+  @override
+  Future<void> acceptProfileContribution(String contributionId) async {
+    final response = await _requestJson(
+      method: 'POST',
+      path: '/v1/profile/me/contributions/$contributionId/accept',
+    );
+    final profile = response['profile'];
+    if (profile is Map<String, dynamic>) {
+      await _cacheProfileForm(_profileFormDataFromJson(profile));
+    }
+  }
+
+  @override
+  Future<void> rejectProfileContribution(String contributionId) async {
+    await _requestJson(
+      method: 'POST',
+      path: '/v1/profile/me/contributions/$contributionId/reject',
     );
   }
 
@@ -444,8 +500,9 @@ class CustomApiProfileService implements ProfileServiceInterface {
   }
 
   Future<void> _cacheProfileForm(ProfileFormData data) async {
+    final storageKey = _profileStorageKeyForUser(data.userId);
     await _preferences.setString(
-      _profileStorageKey,
+      storageKey,
       jsonEncode({
         'userId': data.userId,
         'email': data.email,
@@ -459,24 +516,79 @@ class CustomApiProfileService implements ProfileServiceInterface {
         'countryName': data.countryName,
         'city': data.city,
         'photoUrl': data.photoUrl,
-        'isPhoneVerified': data.isPhoneVerified,
         'gender': data.gender.name,
         'maidenName': data.maidenName,
         'birthDate': data.birthDate?.toIso8601String(),
+        'birthPlace': data.birthPlace,
+        'bio': data.bio,
+        'familyStatus': data.familyStatus,
+        'aboutFamily': data.aboutFamily,
+        'education': data.education,
+        'work': data.work,
+        'hometown': data.hometown,
+        'languages': data.languages,
+        'values': data.values,
+        'religion': data.religion,
+        'interests': data.interests,
+        'profileContributionPolicy': data.profileContributionPolicy,
+        'primaryTrustedChannel': data.primaryTrustedChannel,
+        'profileVisibility': _encodeProfileVisibility(
+          data.profileVisibilityScopes,
+          treeIdsBySection: data.profileVisibilityTreeIds,
+          branchRootIdsBySection: data.profileVisibilityBranchRootIds,
+          userIdsBySection: data.profileVisibilityUserIds,
+        ),
       }),
     );
+    await _preferences.remove(_profileStorageKey);
   }
 
-  ProfileFormData? _getCachedProfileForm() {
+  ProfileFormData? _getCachedProfileForm({String? userId}) {
+    final currentUserId = userId ?? _authService.currentUserId;
+    if (currentUserId == null || currentUserId.isEmpty) {
+      return null;
+    }
+
+    final scopedValue = _preferences.getString(
+      _profileStorageKeyForUser(currentUserId),
+    );
+    if (scopedValue != null && scopedValue.isNotEmpty) {
+      return _decodeCachedProfileForm(scopedValue,
+          expectedUserId: currentUserId);
+    }
+
     final rawValue = _preferences.getString(_profileStorageKey);
     if (rawValue == null || rawValue.isEmpty) {
       return null;
     }
 
+    final legacyProfile = _decodeCachedProfileForm(
+      rawValue,
+      expectedUserId: currentUserId,
+    );
+    if (legacyProfile != null) {
+      unawaited(_cacheProfileForm(legacyProfile));
+      return legacyProfile;
+    }
+
+    unawaited(_preferences.remove(_profileStorageKey));
+    return null;
+  }
+
+  String _profileStorageKeyForUser(String userId) =>
+      '${_profileStorageKey}_$userId';
+
+  ProfileFormData? _decodeCachedProfileForm(
+    String rawValue, {
+    required String expectedUserId,
+  }) {
     try {
       final decoded = jsonDecode(rawValue);
       if (decoded is Map<String, dynamic>) {
-        return _profileFormDataFromJson(decoded);
+        final profileForm = _profileFormDataFromJson(decoded);
+        if (profileForm.userId == expectedUserId) {
+          return profileForm;
+        }
       }
     } catch (_) {}
     return null;
@@ -517,12 +629,40 @@ class CustomApiProfileService implements ProfileServiceInterface {
           json['countryName']?.toString() ?? json['country']?.toString(),
       city: json['city']?.toString() ?? '',
       photoUrl: json['photoUrl']?.toString() ?? json['photoURL']?.toString(),
-      isPhoneVerified: json['isPhoneVerified'] == true,
       gender: gender,
       maidenName: json['maidenName']?.toString() ?? '',
       birthDate: birthDateValue != null && birthDateValue.isNotEmpty
           ? DateTime.tryParse(birthDateValue)
           : null,
+      birthPlace: json['birthPlace']?.toString() ?? '',
+      bio: json['bio']?.toString() ?? '',
+      familyStatus: json['familyStatus']?.toString() ?? '',
+      aboutFamily: json['aboutFamily']?.toString() ?? '',
+      education: json['education']?.toString() ?? '',
+      work: json['work']?.toString() ?? '',
+      hometown: json['hometown']?.toString() ?? '',
+      languages: json['languages']?.toString() ?? '',
+      values: json['values']?.toString() ?? '',
+      religion: json['religion']?.toString() ?? '',
+      interests: json['interests']?.toString() ?? '',
+      profileContributionPolicy:
+          json['profileContributionPolicy']?.toString() ?? 'suggestions',
+      primaryTrustedChannel: json['primaryTrustedChannel']?.toString(),
+      profileVisibilityScopes: _decodeProfileVisibility(
+        json['profileVisibility'],
+      ),
+      profileVisibilityTreeIds: _decodeProfileVisibilityTargets(
+        json['profileVisibility'],
+        targetKey: 'treeIds',
+      ),
+      profileVisibilityBranchRootIds: _decodeProfileVisibilityTargets(
+        json['profileVisibility'],
+        targetKey: 'branchRootPersonIds',
+      ),
+      profileVisibilityUserIds: _decodeProfileVisibilityTargets(
+        json['profileVisibility'],
+        targetKey: 'userIds',
+      ),
     );
   }
 
@@ -556,10 +696,28 @@ class CustomApiProfileService implements ProfileServiceInterface {
       'countryName': data.countryName,
       'city': data.city.trim(),
       'photoUrl': data.photoUrl,
-      'isPhoneVerified': data.isPhoneVerified,
       'gender': data.gender.name,
       'maidenName': data.maidenName.trim(),
       'birthDate': data.birthDate?.toIso8601String(),
+      'birthPlace': data.birthPlace.trim(),
+      'bio': data.bio.trim(),
+      'familyStatus': data.familyStatus.trim(),
+      'aboutFamily': data.aboutFamily.trim(),
+      'education': data.education.trim(),
+      'work': data.work.trim(),
+      'hometown': data.hometown.trim(),
+      'languages': data.languages.trim(),
+      'values': data.values.trim(),
+      'religion': data.religion.trim(),
+      'interests': data.interests.trim(),
+      'profileContributionPolicy': data.profileContributionPolicy,
+      'primaryTrustedChannel': data.primaryTrustedChannel,
+      'profileVisibility': _encodeProfileVisibility(
+        data.profileVisibilityScopes,
+        treeIdsBySection: data.profileVisibilityTreeIds,
+        branchRootIdsBySection: data.profileVisibilityBranchRootIds,
+        userIdsBySection: data.profileVisibilityUserIds,
+      ),
     };
   }
 
@@ -584,14 +742,30 @@ class CustomApiProfileService implements ProfileServiceInterface {
       username: data.username,
       photoURL: data.photoUrl,
       phoneNumber: data.phoneNumber,
-      isPhoneVerified: data.isPhoneVerified,
       gender: data.gender,
       birthDate: data.birthDate,
+      maidenName: data.maidenName,
+      birthPlace: data.birthPlace.isEmpty ? null : data.birthPlace,
       country: data.countryName,
       city: data.city,
       countryCode: data.countryCode,
       createdAt: DateTime.now(),
       updatedAt: DateTime.now(),
+      bio: data.bio,
+      familyStatus: data.familyStatus,
+      aboutFamily: data.aboutFamily,
+      education: data.education,
+      work: data.work,
+      hometown: data.hometown,
+      languages: data.languages,
+      values: data.values,
+      religion: data.religion,
+      interests: data.interests,
+      profileContributionPolicy: data.profileContributionPolicy,
+      profileVisibilityScopes: data.profileVisibilityScopes,
+      profileVisibilityTreeIds: data.profileVisibilityTreeIds,
+      profileVisibilityBranchRootIds: data.profileVisibilityBranchRootIds,
+      profileVisibilityUserIds: data.profileVisibilityUserIds,
     );
   }
 
@@ -603,7 +777,28 @@ class CustomApiProfileService implements ProfileServiceInterface {
       'id': payload['id'] ?? fallbackId,
       ...payload,
     });
-    return _toUserProfile(formData).copyWith(id: fallbackId);
+    return _toUserProfile(formData).copyWith(
+      id: fallbackId,
+      hiddenProfileSections:
+          (payload['hiddenProfileSections'] as List<dynamic>? ?? const [])
+              .map((value) => value.toString())
+              .toList(),
+      profileVisibilityScopes: _decodeProfileVisibility(
+        payload['profileVisibility'],
+      ),
+      profileVisibilityTreeIds: _decodeProfileVisibilityTargets(
+        payload['profileVisibility'],
+        targetKey: 'treeIds',
+      ),
+      profileVisibilityBranchRootIds: _decodeProfileVisibilityTargets(
+        payload['profileVisibility'],
+        targetKey: 'branchRootPersonIds',
+      ),
+      profileVisibilityUserIds: _decodeProfileVisibilityTargets(
+        payload['profileVisibility'],
+        targetKey: 'userIds',
+      ),
+    );
   }
 
   List<UserProfile> _userProfileListFromResponse(
@@ -620,6 +815,104 @@ class CustomApiProfileService implements ProfileServiceInterface {
         })
         .where((profile) => profile.id.isNotEmpty)
         .toList();
+  }
+
+  Map<String, String> _decodeProfileVisibility(dynamic value) {
+    final decoded = <String, String>{..._defaultProfileVisibilityScopes};
+    if (value is! Map) {
+      return decoded;
+    }
+
+    for (final entry in value.entries) {
+      final sectionKey = entry.key.toString();
+      final sectionValue = entry.value;
+      final scope = sectionValue is Map
+          ? sectionValue['scope']?.toString()
+          : sectionValue?.toString();
+      if (scope != null && scope.isNotEmpty) {
+        decoded[sectionKey] = scope;
+      }
+    }
+    return decoded;
+  }
+
+  Map<String, List<String>> _decodeProfileVisibilityTargets(
+    dynamic value, {
+    required String targetKey,
+  }) {
+    final decoded = _defaultProfileVisibilityScopes.map(
+      (sectionKey, _) => MapEntry(sectionKey, <String>[]),
+    );
+    if (value is! Map) {
+      return decoded;
+    }
+
+    for (final entry in value.entries) {
+      final sectionKey = entry.key.toString();
+      final sectionValue = entry.value;
+      if (sectionValue is! Map) {
+        continue;
+      }
+      decoded[sectionKey] = _normalizeVisibilityTargetList(
+        sectionValue[targetKey],
+      );
+    }
+    return decoded;
+  }
+
+  Map<String, dynamic> _encodeProfileVisibility(
+    Map<String, String> scopes, {
+    Map<String, List<String>> treeIdsBySection = const {},
+    Map<String, List<String>> branchRootIdsBySection = const {},
+    Map<String, List<String>> userIdsBySection = const {},
+  }) {
+    final resolvedScopes = <String, String>{
+      ..._defaultProfileVisibilityScopes,
+      ...scopes,
+    };
+    final resolvedTreeIds = _resolveProfileVisibilityTargets(treeIdsBySection);
+    final resolvedBranchRootIds =
+        _resolveProfileVisibilityTargets(branchRootIdsBySection);
+    final resolvedUserIds = _resolveProfileVisibilityTargets(userIdsBySection);
+
+    return resolvedScopes.map(
+      (sectionKey, scope) => MapEntry(sectionKey, {
+        'scope': scope,
+        if ((resolvedTreeIds[sectionKey] ?? const <String>[]).isNotEmpty)
+          'treeIds': resolvedTreeIds[sectionKey],
+        if ((resolvedBranchRootIds[sectionKey] ?? const <String>[]).isNotEmpty)
+          'branchRootPersonIds': resolvedBranchRootIds[sectionKey],
+        if ((resolvedUserIds[sectionKey] ?? const <String>[]).isNotEmpty)
+          'userIds': resolvedUserIds[sectionKey],
+      }),
+    );
+  }
+
+  Map<String, List<String>> _resolveProfileVisibilityTargets(
+    Map<String, List<String>> rawTargets,
+  ) {
+    return _defaultProfileVisibilityScopes.map(
+      (sectionKey, _) => MapEntry(
+        sectionKey,
+        _normalizeVisibilityTargetList(rawTargets[sectionKey]),
+      ),
+    );
+  }
+
+  List<String> _normalizeVisibilityTargetList(dynamic rawTargets) {
+    if (rawTargets is! List) {
+      return const [];
+    }
+    final seen = <String>{};
+    final normalized = <String>[];
+    for (final entry in rawTargets) {
+      final value = entry.toString().trim();
+      if (value.isEmpty || !seen.add(value)) {
+        continue;
+      }
+      normalized.add(value);
+    }
+    return normalized;
   }
 
   String _composeDisplayName(ProfileFormData data) {

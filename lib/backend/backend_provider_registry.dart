@@ -2,6 +2,7 @@ import 'package:get_it/get_it.dart';
 
 import 'backend_provider_config.dart';
 import 'interfaces/auth_service_interface.dart';
+import 'interfaces/call_service_interface.dart';
 import 'interfaces/chat_service_interface.dart';
 import 'interfaces/family_tree_service_interface.dart';
 import 'interfaces/notification_service_interface.dart';
@@ -41,6 +42,12 @@ class BackendProviderRegistry {
     if (!getIt.isRegistered<ChatServiceInterface>()) {
       getIt.registerSingleton<ChatServiceInterface>(
         const PendingBackendChatService(),
+      );
+    }
+
+    if (!getIt.isRegistered<CallServiceInterface>()) {
+      getIt.registerSingleton<CallServiceInterface>(
+        const PendingBackendCallService(),
       );
     }
 

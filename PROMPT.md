@@ -12,8 +12,8 @@ Follow these rules:
 - Keep screens thin and move logic into services, repositories, providers, or backend interfaces.
 - Preserve strong Russian UX copy.
 - Treat `Родня` as the public product brand.
-- Keep the current Android `applicationId` and store-compatible release identifiers unchanged unless the task explicitly targets release packaging.
-- Do not attempt a big-bang `lineage` -> `rodnya` rename across code/package identifiers; use phased renames and compatibility aliases.
+- Keep active package identifiers, env names, and release identifiers aligned with `rodnya` whenever the task touches branding or packaging.
+- Prefer coordinated `rodnya` naming across code/package identifiers instead of leaving mixed legacy names in active paths.
 - Treat Firebase-hosted paths as legacy unless the task explicitly requires them.
 - Prefer custom API, PostgreSQL, object storage, and self-controlled realtime/push-compatible architecture.
 - Never stop at analysis when a safe implementation is possible.

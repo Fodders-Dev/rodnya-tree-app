@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get_it/get_it.dart';
-import 'package:lineage/backend/interfaces/story_service_interface.dart';
-import 'package:lineage/models/story.dart';
-import 'package:lineage/screens/story_viewer_screen.dart';
+import 'package:rodnya/backend/interfaces/story_service_interface.dart';
+import 'package:rodnya/models/story.dart';
+import 'package:rodnya/screens/story_viewer_screen.dart';
 
 class _FakeStoryService implements StoryServiceInterface {
   final List<String> markedStoryIds = <String>[];
