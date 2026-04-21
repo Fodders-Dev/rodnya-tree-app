@@ -3,11 +3,14 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
+import {setTimeout as delay} from "node:timers/promises";
 
 import {chromium} from "playwright";
 
 const SESSION_STORAGE_KEY = "custom_api_session_v1";
 const LEGACY_SHARED_PREFERENCES_PREFIX = "flutter.";
+const TRANSIENT_FETCH_RETRY_LIMIT = 3;
+const TRANSIENT_FETCH_RETRY_DELAY_MS = 1_000;
 
 function parseArgs(argv) {
   const options = {
@@ -233,8 +236,40 @@ function derivePartnerCredentials({email, password}) {
   };
 }
 
+function isTransientFetchError(error) {
+  if (!error) {
+    return false;
+  }
+  const message = String(error.message || "").toLowerCase();
+  return (
+    error.name === "TypeError" ||
+    message.includes("fetch failed") ||
+    message.includes("networkerror") ||
+    message.includes("socket") ||
+    message.includes("timed out") ||
+    message.includes("econnreset") ||
+    message.includes("econnrefused")
+  );
+}
+
+async function smokeFetch(input, init, {retries = TRANSIENT_FETCH_RETRY_LIMIT} = {}) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= retries; attempt += 1) {
+    try {
+      return await fetch(input, init);
+    } catch (error) {
+      lastError = error;
+      if (attempt >= retries || !isTransientFetchError(error)) {
+        throw error;
+      }
+      await delay(TRANSIENT_FETCH_RETRY_DELAY_MS * attempt);
+    }
+  }
+  throw lastError;
+}
+
 async function loginViaApi({apiUrl, email, password}) {
-  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/v1/auth/login`, {
+  const response = await smokeFetch(`${apiUrl.replace(/\/+$/, "")}/v1/auth/login`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -259,7 +294,7 @@ async function loginViaApi({apiUrl, email, password}) {
 }
 
 async function registerViaApi({apiUrl, email, password, displayName}) {
-  const response = await fetch(
+  const response = await smokeFetch(
     `${apiUrl.replace(/\/+$/, "")}/v1/auth/register`,
     {
       method: "POST",
@@ -350,7 +385,7 @@ async function completeProfileViaApi({
   displayName,
 }) {
   const bootstrap = deriveSmokeProfileBootstrap({email, displayName});
-  const response = await fetch(
+  const response = await smokeFetch(
     `${apiUrl.replace(/\/+$/, "")}/v1/profile/me/bootstrap`,
     {
       method: "PUT",
@@ -377,7 +412,7 @@ async function completeProfileViaApi({
 }
 
 async function fetchPrimaryTree({apiUrl, accessToken}) {
-  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/v1/trees`, {
+  const response = await smokeFetch(`${apiUrl.replace(/\/+$/, "")}/v1/trees`, {
     headers: {
       authorization: `Bearer ${accessToken}`,
       accept: "application/json",
@@ -404,7 +439,7 @@ async function createTreeViaApi({
   name,
   description = "Disposable smoke tree.",
 }) {
-  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/v1/trees`, {
+  const response = await smokeFetch(`${apiUrl.replace(/\/+$/, "")}/v1/trees`, {
     method: "POST",
     headers: {
       authorization: `Bearer ${accessToken}`,
@@ -470,7 +505,7 @@ async function createPersonFixture({
   label,
   familySummary = "Auto-created disposable smoke fixture.",
 }) {
-  const response = await fetch(
+  const response = await smokeFetch(
     `${apiUrl.replace(/\/+$/, "")}/v1/trees/${encodeURIComponent(treeId)}/persons`,
     {
       method: "POST",
@@ -503,7 +538,7 @@ async function createPersonFixture({
 }
 
 async function fetchTreePersons({apiUrl, accessToken, treeId}) {
-  const response = await fetch(
+  const response = await smokeFetch(
     `${apiUrl.replace(/\/+$/, "")}/v1/trees/${encodeURIComponent(treeId)}/persons`,
     {
       headers: {
@@ -524,7 +559,7 @@ async function createDirectChatFixture({
   accessToken,
   otherUserId,
 }) {
-  const response = await fetch(
+  const response = await smokeFetch(
     `${apiUrl.replace(/\/+$/, "")}/v1/chats/direct`,
     {
       method: "POST",
@@ -551,7 +586,7 @@ async function createDirectChatFixture({
 }
 
 async function deletePersonFixture({apiUrl, accessToken, treeId, personId}) {
-  const response = await fetch(
+  const response = await smokeFetch(
     `${apiUrl.replace(/\/+$/, "")}/v1/trees/${encodeURIComponent(
       treeId,
     )}/persons/${encodeURIComponent(personId)}`,
