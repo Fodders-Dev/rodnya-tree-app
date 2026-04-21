@@ -1,6 +1,15 @@
+const crypto = require("node:crypto");
 const {Pool} = require("pg");
 
-const {FileStore, EMPTY_DB, normalizeDbState} = require("./store");
+const {
+  FileStore,
+  EMPTY_DB,
+  cloneUserWithAuthState,
+  normalizeDbState,
+  nowIso,
+  SESSION_TOUCH_MIN_INTERVAL_MS,
+  verifyPassword,
+} = require("./store");
 
 const DEFAULT_POSTGRES_CONNECTION_TIMEOUT_MS = 5_000;
 const DEFAULT_POSTGRES_QUERY_TIMEOUT_MS = 15_000;
@@ -176,6 +185,347 @@ class PostgresStore extends FileStore {
       `,
       [this._rowId, JSON.stringify(EMPTY_DB)],
     );
+  }
+
+  async _selectUserBySql(sql, params) {
+    await this.initialize();
+    await this._awaitWriteQueue();
+    const result = await this._pool.query(sql, params);
+    return result.rows[0]?.user_data ?? null;
+  }
+
+  async _selectSessionBySql(sql, params) {
+    await this.initialize();
+    await this._awaitWriteQueue();
+    const result = await this._pool.query(sql, params);
+    return result.rows[0]?.session_data ?? null;
+  }
+
+  async _selectSessionsArray() {
+    const result = await this._pool.query(
+      `SELECT COALESCE(data->'sessions', '[]'::jsonb) AS sessions
+         FROM ${this._qualifiedTableName}
+        WHERE id = $1`,
+      [this._rowId],
+    );
+    return Array.isArray(result.rows[0]?.sessions) ? result.rows[0].sessions : [];
+  }
+
+  async _updateSessionsArray(sessions) {
+    await this._pool.query(
+      `UPDATE ${this._qualifiedTableName}
+          SET data = jsonb_set(data, '{sessions}', $2::jsonb, true),
+              updated_at = NOW()
+        WHERE id = $1`,
+      [this._rowId, JSON.stringify(Array.isArray(sessions) ? sessions : [])],
+    );
+  }
+
+  async authenticate(email, password) {
+    const normalizedEmail = String(email || "").trim().toLowerCase();
+    if (!normalizedEmail) {
+      return null;
+    }
+    const user = await this._selectUserBySql(
+      `SELECT user_entry AS user_data
+         FROM ${this._qualifiedTableName} AS state_row,
+              LATERAL jsonb_array_elements(COALESCE(state_row.data->'users', '[]'::jsonb)) AS user_entry
+        WHERE state_row.id = $1
+          AND lower(COALESCE(user_entry->>'email', '')) = $2
+        LIMIT 1`,
+      [this._rowId, normalizedEmail],
+    );
+
+    if (!user || !verifyPassword(password, user)) {
+      return null;
+    }
+
+    this._rememberUser(user);
+    return cloneUserWithAuthState(user);
+  }
+
+  async findUserById(userId) {
+    const normalizedUserId = String(userId || "").trim();
+    if (!normalizedUserId) {
+      return null;
+    }
+    const cachedUser = this._userCache.get(normalizedUserId);
+    if (cachedUser) {
+      return cloneUserWithAuthState(cachedUser);
+    }
+
+    const user = await this._selectUserBySql(
+      `SELECT user_entry AS user_data
+         FROM ${this._qualifiedTableName} AS state_row,
+              LATERAL jsonb_array_elements(COALESCE(state_row.data->'users', '[]'::jsonb)) AS user_entry
+        WHERE state_row.id = $1
+          AND COALESCE(user_entry->>'id', '') = $2
+        LIMIT 1`,
+      [this._rowId, normalizedUserId],
+    );
+    if (user) {
+      this._rememberUser(user);
+    }
+    return user ? cloneUserWithAuthState(user) : null;
+  }
+
+  async findUserByEmail(email) {
+    const normalizedEmail = String(email || "").trim().toLowerCase();
+    if (!normalizedEmail) {
+      return null;
+    }
+
+    const user = await this._selectUserBySql(
+      `SELECT user_entry AS user_data
+         FROM ${this._qualifiedTableName} AS state_row,
+              LATERAL jsonb_array_elements(COALESCE(state_row.data->'users', '[]'::jsonb)) AS user_entry
+        WHERE state_row.id = $1
+          AND lower(COALESCE(user_entry->>'email', '')) = $2
+        LIMIT 1`,
+      [this._rowId, normalizedEmail],
+    );
+    if (user) {
+      this._rememberUser(user);
+    }
+    return user ? cloneUserWithAuthState(user) : null;
+  }
+
+  async createSession(userId) {
+    const createdAt = nowIso();
+    const token = crypto.randomBytes(32).toString("hex");
+    const refreshToken = crypto.randomBytes(32).toString("hex");
+
+    const previousQueue = this._writeQueue.catch(() => {});
+    const nextWrite = previousQueue.then(async () => {
+      await this.initialize();
+      const sessions = await this._selectSessionsArray();
+      const userSessions = sessions.filter((entry) => entry.userId === userId);
+      const otherSessions = sessions.filter((entry) => entry.userId !== userId);
+      const sessionsToKeep = userSessions.slice(-4);
+      const evictedSessions = userSessions.slice(
+        0,
+        Math.max(0, userSessions.length - sessionsToKeep.length),
+      );
+      const createdSession = {
+        token,
+        refreshToken,
+        userId,
+        createdAt,
+        lastSeenAt: createdAt,
+      };
+      const nextSessions = [
+        ...otherSessions,
+        ...sessionsToKeep,
+        createdSession,
+      ];
+      await this._updateSessionsArray(nextSessions);
+      return {createdSession, evictedSessions};
+    });
+
+    this._writeQueue = nextWrite.catch((error) => {
+      console.error(
+        "[backend] postgres-store write failed",
+        JSON.stringify({
+          table: `${this._schema}.${this._table}`,
+          rowId: this._rowId,
+          message: String(error?.message || error || "unknown_error"),
+        }),
+      );
+      throw error;
+    });
+
+    const {createdSession, evictedSessions} = await nextWrite;
+    for (const session of evictedSessions) {
+      this._forgetSession(session?.token);
+    }
+    this._rememberSession(createdSession);
+    return {token, refreshToken};
+  }
+
+  async findSession(token) {
+    const normalizedToken = String(token || "").trim();
+    if (!normalizedToken) {
+      return null;
+    }
+    const cachedSession = this._sessionCache.get(normalizedToken);
+    if (cachedSession) {
+      return structuredClone(cachedSession);
+    }
+
+    const session = await this._selectSessionBySql(
+      `SELECT session_entry AS session_data
+         FROM ${this._qualifiedTableName} AS state_row,
+              LATERAL jsonb_array_elements(COALESCE(state_row.data->'sessions', '[]'::jsonb)) AS session_entry
+        WHERE state_row.id = $1
+          AND COALESCE(session_entry->>'token', '') = $2
+        LIMIT 1`,
+      [this._rowId, normalizedToken],
+    );
+    if (session) {
+      this._rememberSession(session);
+    }
+    return session ? structuredClone(session) : null;
+  }
+
+  async findSessionByRefreshToken(refreshToken) {
+    const normalizedRefreshToken = String(refreshToken || "").trim();
+    if (!normalizedRefreshToken) {
+      return null;
+    }
+
+    const session = await this._selectSessionBySql(
+      `SELECT session_entry AS session_data
+         FROM ${this._qualifiedTableName} AS state_row,
+              LATERAL jsonb_array_elements(COALESCE(state_row.data->'sessions', '[]'::jsonb)) AS session_entry
+        WHERE state_row.id = $1
+          AND COALESCE(session_entry->>'refreshToken', '') = $2
+        LIMIT 1`,
+      [this._rowId, normalizedRefreshToken],
+    );
+    if (session) {
+      this._rememberSession(session);
+    }
+    return session ? structuredClone(session) : null;
+  }
+
+  async touchSession(token) {
+    const normalizedToken = String(token || "").trim();
+    if (!normalizedToken) {
+      return null;
+    }
+
+    const nowMs = Date.now();
+    const cachedTouchedAt = this._sessionTouchCache.get(normalizedToken);
+    if (
+      Number.isFinite(cachedTouchedAt) &&
+      nowMs - cachedTouchedAt < SESSION_TOUCH_MIN_INTERVAL_MS
+    ) {
+      return null;
+    }
+
+    this._sessionTouchCache.set(normalizedToken, nowMs);
+    const previousQueue = this._writeQueue.catch(() => {});
+    const nextWrite = previousQueue.then(async () => {
+      await this.initialize();
+      const sessions = await this._selectSessionsArray();
+      const sessionIndex = sessions.findIndex(
+        (entry) => entry.token === normalizedToken,
+      );
+      if (sessionIndex < 0) {
+        this._forgetSession(normalizedToken);
+        return null;
+      }
+
+      const session = structuredClone(sessions[sessionIndex]);
+      const lastSeenAtMs = new Date(session.lastSeenAt || 0).getTime();
+      if (
+        Number.isFinite(lastSeenAtMs) &&
+        nowMs - lastSeenAtMs < SESSION_TOUCH_MIN_INTERVAL_MS
+      ) {
+        this._sessionTouchCache.set(normalizedToken, lastSeenAtMs);
+        this._rememberSession(session);
+        return session;
+      }
+
+      session.lastSeenAt = nowIso();
+      sessions[sessionIndex] = session;
+      await this._updateSessionsArray(sessions);
+      return session;
+    });
+
+    this._writeQueue = nextWrite.catch((error) => {
+      console.error(
+        "[backend] postgres-store write failed",
+        JSON.stringify({
+          table: `${this._schema}.${this._table}`,
+          rowId: this._rowId,
+          message: String(error?.message || error || "unknown_error"),
+        }),
+      );
+      throw error;
+    });
+
+    const touchedSession = await nextWrite;
+    if (!touchedSession) {
+      return null;
+    }
+    this._rememberSession(touchedSession);
+    return structuredClone(touchedSession);
+  }
+
+  async deleteSession(token) {
+    const normalizedToken = String(token || "").trim();
+    if (!normalizedToken) {
+      return;
+    }
+
+    const previousQueue = this._writeQueue.catch(() => {});
+    const nextWrite = previousQueue.then(async () => {
+      await this.initialize();
+      const sessions = await this._selectSessionsArray();
+      const nextSessions = sessions.filter(
+        (entry) => entry.token !== normalizedToken,
+      );
+      if (nextSessions.length === sessions.length) {
+        return;
+      }
+      await this._updateSessionsArray(nextSessions);
+    });
+
+    this._writeQueue = nextWrite.catch((error) => {
+      console.error(
+        "[backend] postgres-store write failed",
+        JSON.stringify({
+          table: `${this._schema}.${this._table}`,
+          rowId: this._rowId,
+          message: String(error?.message || error || "unknown_error"),
+        }),
+      );
+      throw error;
+    });
+
+    this._forgetSession(normalizedToken);
+    await nextWrite;
+  }
+
+  async deleteSessionsForUser(userId) {
+    const normalizedUserId = String(userId || "").trim();
+    if (!normalizedUserId) {
+      return;
+    }
+
+    const previousQueue = this._writeQueue.catch(() => {});
+    const nextWrite = previousQueue.then(async () => {
+      await this.initialize();
+      const sessions = await this._selectSessionsArray();
+      const deletedTokens = sessions
+        .filter((entry) => entry.userId === normalizedUserId)
+        .map((entry) => entry.token);
+      const nextSessions = sessions.filter(
+        (entry) => entry.userId !== normalizedUserId,
+      );
+      if (nextSessions.length !== sessions.length) {
+        await this._updateSessionsArray(nextSessions);
+      }
+      return deletedTokens;
+    });
+
+    this._writeQueue = nextWrite.catch((error) => {
+      console.error(
+        "[backend] postgres-store write failed",
+        JSON.stringify({
+          table: `${this._schema}.${this._table}`,
+          rowId: this._rowId,
+          message: String(error?.message || error || "unknown_error"),
+        }),
+      );
+      throw error;
+    });
+
+    const deletedTokens = (await nextWrite) || [];
+    for (const token of deletedTokens) {
+      this._forgetSession(token);
+    }
   }
 
   async _read() {

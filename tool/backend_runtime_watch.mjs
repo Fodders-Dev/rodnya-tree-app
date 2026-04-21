@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import process from "node:process";
+import {fetchWithHttpFallback} from "./http_request_with_fallback.mjs";
 
 function parseArgs(argv) {
   const options = {
@@ -58,7 +59,7 @@ async function notifyWebhook(webhookUrl, payload) {
     return;
   }
 
-  const response = await fetch(normalizedUrl, {
+  const response = await fetchWithHttpFallback(normalizedUrl, {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -75,14 +76,17 @@ async function notifyWebhook(webhookUrl, payload) {
 }
 
 async function login({apiUrl, email, password}) {
-  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/v1/auth/login`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      accept: "application/json",
+  const response = await fetchWithHttpFallback(
+    `${apiUrl.replace(/\/+$/, "")}/v1/auth/login`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json",
+      },
+      body: JSON.stringify({email, password}),
     },
-    body: JSON.stringify({email, password}),
-  });
+  );
   if (!response.ok) {
     throw new Error(
       `Runtime login failed with ${response.status}: ${await response.text()}`,
@@ -114,7 +118,7 @@ async function main() {
   }
 
   const accessToken = await login(options);
-  const response = await fetch(
+  const response = await fetchWithHttpFallback(
     `${options.apiUrl.replace(/\/+$/, "")}/v1/admin/runtime`,
     {
       headers: {

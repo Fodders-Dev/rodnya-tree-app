@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import process from "node:process";
+import {fetchWithHttpFallback} from "./http_request_with_fallback.mjs";
 
 function parseArgs(argv) {
   const options = {
@@ -39,7 +40,7 @@ async function notifyWebhook(webhookUrl, payload) {
     return;
   }
 
-  const response = await fetch(normalizedUrl, {
+  const response = await fetchWithHttpFallback(normalizedUrl, {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -57,7 +58,7 @@ async function notifyWebhook(webhookUrl, payload) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
-  const response = await fetch(options.url, {
+  const response = await fetchWithHttpFallback(options.url, {
     headers: {accept: "application/json"},
   });
   const payload = await response.json().catch(() => ({}));

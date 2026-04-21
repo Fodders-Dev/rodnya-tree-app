@@ -6,6 +6,7 @@ import process from "node:process";
 import {setTimeout as delay} from "node:timers/promises";
 
 import {chromium} from "playwright";
+import {fetchWithHttpFallback} from "./http_request_with_fallback.mjs";
 
 const SESSION_STORAGE_KEY = "custom_api_session_v1";
 const LEGACY_SHARED_PREFERENCES_PREFIX = "flutter.";
@@ -256,7 +257,7 @@ async function smokeFetch(input, init, {retries = TRANSIENT_FETCH_RETRY_LIMIT} =
   let lastError = null;
   for (let attempt = 1; attempt <= retries; attempt += 1) {
     try {
-      return await fetch(input, init);
+      return await fetchWithHttpFallback(input, init, {retries: 1});
     } catch (error) {
       lastError = error;
       if (attempt >= retries || !isTransientFetchError(error)) {

@@ -1,5 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const crypto = require("node:crypto");
 
 const {PostgresStore} = require("../src/postgres-store");
 
@@ -132,4 +133,114 @@ test("PostgresStore reuses one shared pool for identical config", async () => {
 
   await secondStore.close();
   assert.equal(endCount, 1);
+});
+
+test("PostgresStore auth hot paths avoid full state reads", async () => {
+  const passwordSalt = "salt-1";
+  const passwordHash = crypto
+    .scryptSync("secret123", passwordSalt, 64)
+    .toString("hex");
+  const userRecord = {
+    id: "user-1",
+    email: "smoke@rodnya-tree.ru",
+    passwordSalt,
+    passwordHash,
+    profile: {displayName: "Smoke User"},
+  };
+  let sessions = [
+    {
+      token: "token-1",
+      refreshToken: "refresh-1",
+      userId: "user-1",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      lastSeenAt: "2020-01-01T00:00:00.000Z",
+    },
+  ];
+  const queries = [];
+  const pool = {
+    async query(sql, params = []) {
+      queries.push(sql);
+      if (
+        sql.includes("CREATE SCHEMA") ||
+        sql.includes("CREATE TABLE") ||
+        sql.includes("ON CONFLICT (id) DO NOTHING")
+      ) {
+        return {rows: []};
+      }
+      if (sql.includes("SELECT user_entry AS user_data")) {
+        const userParam = params[1];
+        if (String(userParam) === "user-1") {
+          return {rows: [{user_data: userRecord}]};
+        }
+        if (String(userParam) === "smoke@rodnya-tree.ru") {
+          return {rows: [{user_data: userRecord}]};
+        }
+        return {rows: []};
+      }
+      if (sql.includes("SELECT session_entry AS session_data")) {
+        const sessionParam = params[1];
+        const match = sessions.find(
+          (entry) =>
+            entry.token === sessionParam || entry.refreshToken === sessionParam,
+        );
+        return {rows: match ? [{session_data: match}] : []};
+      }
+      if (sql.includes("SELECT COALESCE(data->'sessions'")) {
+        return {rows: [{sessions}]};
+      }
+      if (sql.includes("jsonb_set(data, '{sessions}'")) {
+        sessions = JSON.parse(params[1]);
+        return {rows: []};
+      }
+      if (sql.includes("SELECT data")) {
+        throw new Error("full_state_read_not_allowed");
+      }
+      throw new Error(`Unexpected query: ${sql}`);
+    },
+  };
+
+  const store = new PostgresStore({
+    connectionString: "postgresql://unused/rodnya",
+    pool,
+  });
+
+  await store.initialize();
+
+  const authenticatedUser = await store.authenticate(
+    "smoke@rodnya-tree.ru",
+    "secret123",
+  );
+  assert.equal(authenticatedUser?.id, "user-1");
+
+  const userById = await store.findUserById("user-1");
+  assert.equal(userById?.email, "smoke@rodnya-tree.ru");
+
+  const userByEmail = await store.findUserByEmail("smoke@rodnya-tree.ru");
+  assert.equal(userByEmail?.id, "user-1");
+
+  const sessionByToken = await store.findSession("token-1");
+  assert.equal(sessionByToken?.userId, "user-1");
+
+  const sessionByRefreshToken = await store.findSessionByRefreshToken("refresh-1");
+  assert.equal(sessionByRefreshToken?.token, "token-1");
+
+  store._sessionTouchCache.clear();
+  const touchedSession = await store.touchSession("token-1");
+  assert.equal(touchedSession?.token, "token-1");
+  assert.notEqual(touchedSession?.lastSeenAt, "2020-01-01T00:00:00.000Z");
+
+  const createdSession = await store.createSession("user-1");
+  assert.ok(createdSession?.token);
+  assert.ok(createdSession?.refreshToken);
+  assert.equal(sessions.filter((entry) => entry.userId === "user-1").length, 2);
+
+  await store.deleteSession("token-1");
+  assert.equal(sessions.some((entry) => entry.token === "token-1"), false);
+
+  await store.deleteSessionsForUser("user-1");
+  assert.equal(sessions.length, 0);
+  assert.equal(
+    queries.some((sql) => sql.includes("SELECT data FROM")),
+    false,
+  );
 });

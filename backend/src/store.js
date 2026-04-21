@@ -8693,6 +8693,10 @@ module.exports = {
   buildTreeGraphSnapshot,
   buildGraphWarnings,
   buildBranchVisiblePersonIds,
+  cloneUserWithAuthState,
   normalizeDbState,
   normalizePhoneNumber,
+  nowIso,
+  SESSION_TOUCH_MIN_INTERVAL_MS,
+  verifyPassword,
 };
