@@ -3,6 +3,12 @@ name: Deploy Rodnya Web
 on:
   push:
     branches: ["main"]
+    paths:
+      - "lib/**"
+      - "web/**"
+      - "assets/**"
+      - "pubspec.yaml"
+      - "pubspec.lock"
 
 jobs:
   deploy:
