@@ -911,6 +911,75 @@ class PostgresStore extends FileStore {
     return nextWrite;
   }
 
+  async deletePerson(treeId, personId, actorId = null) {
+    const normalizedTreeId = String(treeId || "").trim();
+    const normalizedPersonId = String(personId || "").trim();
+    if (!normalizedTreeId || !normalizedPersonId) {
+      return null;
+    }
+
+    const previousQueue = this._stateWriteQueue.catch(() => {});
+    const nextWrite = previousQueue.then(async () => {
+      await this.initialize();
+      const result = await this._pool.query(
+        `UPDATE ${this._qualifiedTableName}
+            SET data = jsonb_set(
+                  data,
+                  '{persons}',
+                  COALESCE(
+                    (
+                      SELECT jsonb_agg(person_entry)
+                        FROM jsonb_array_elements(COALESCE(data->'persons', '[]'::jsonb)) AS person_entry
+                       WHERE COALESCE(person_entry->>'id', '') <> $2
+                    ),
+                    '[]'::jsonb
+                  ),
+                  true
+                ),
+                updated_at = NOW()
+          WHERE id = $1
+            AND EXISTS (
+              SELECT 1
+                FROM jsonb_array_elements(COALESCE(data->'persons', '[]'::jsonb)) AS person_entry
+               WHERE COALESCE(person_entry->>'id', '') = $2
+                 AND COALESCE(person_entry->>'treeId', '') = $3
+                 AND COALESCE(person_entry->>'userId', '') = ''
+                 AND COALESCE(person_entry->>'identityId', '') = ''
+            )
+            AND NOT EXISTS (
+              SELECT 1
+                FROM jsonb_array_elements(COALESCE(data->'relations', '[]'::jsonb)) AS relation_entry
+               WHERE COALESCE(relation_entry->>'treeId', '') = $3
+                 AND (
+                   COALESCE(relation_entry->>'person1Id', '') = $2
+                   OR COALESCE(relation_entry->>'person2Id', '') = $2
+                 )
+            )
+          RETURNING updated_at`,
+        [this._rowId, normalizedPersonId, normalizedTreeId],
+      );
+      if (result.rowCount > 0) {
+        return true;
+      }
+      return super.deletePerson(normalizedTreeId, normalizedPersonId, actorId);
+    });
+
+    this._stateWriteQueue = nextWrite.catch((error) => {
+      console.error(
+        "[backend] postgres-store write failed",
+        JSON.stringify({
+          table: `${this._schema}.${this._table}`,
+          rowId: this._rowId,
+          message: String(error?.message || error || "unknown_error"),
+        }),
+      );
+      throw error;
+    });
+    this._writeQueue = this._stateWriteQueue;
+
+    return nextWrite;
+  }
+
   async _selectStoredTreeInvitationsForUser(userId) {
     const normalizedUserId = String(userId || "").trim();
     if (!normalizedUserId) {

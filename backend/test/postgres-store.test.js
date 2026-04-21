@@ -608,6 +608,115 @@ test("PostgresStore createPerson fast path skips auth projection rewrites", asyn
   );
 });
 
+test("PostgresStore deletePerson fast path skips full state rewrites for offline standalone people", async () => {
+  let state = {
+    users: [],
+    sessions: [],
+    trees: [
+      {
+        id: "tree-1",
+        creatorId: "user-1",
+        memberIds: [],
+        members: [],
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        name: "Smoke Tree",
+      },
+    ],
+    persons: [
+      {
+        id: "person-1",
+        treeId: "tree-1",
+        userId: null,
+        identityId: null,
+        name: "Smoke Relative",
+        creatorId: "user-1",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+    ],
+    relations: [],
+    treeChangeRecords: [],
+    personIdentities: [],
+  };
+  let projectedSessions = [];
+  const queries = [];
+  const pool = {
+    async query(sql, params = []) {
+      queries.push(sql);
+      if (
+        sql.includes("CREATE SCHEMA") ||
+        sql.includes("CREATE TABLE") ||
+        sql.includes("CREATE INDEX") ||
+        sql.includes("ON CONFLICT (id) DO NOTHING")
+      ) {
+        return {rows: []};
+      }
+      if (
+        sql.includes("DELETE FROM \"public\".\"rodnya_state_auth_users\"") ||
+        sql.includes("DELETE FROM \"public\".\"rodnya_state_auth_sessions\"") ||
+        sql.includes("INSERT INTO \"public\".\"rodnya_state_auth_users\"") ||
+        sql.includes("INSERT INTO \"public\".\"rodnya_state_auth_sessions\"")
+      ) {
+        return {rows: []};
+      }
+      if (sql.includes("SELECT session_data")) {
+        return {
+          rows: projectedSessions.map((entry) => ({session_data: entry})),
+        };
+      }
+      if (
+        sql.includes("UPDATE \"public\".\"rodnya_state\"") &&
+        sql.includes("'{persons}'") &&
+        sql.includes("data->'relations'")
+      ) {
+        const personId = params[1];
+        const treeId = params[2];
+        const person = state.persons.find(
+          (entry) => entry.id === personId && entry.treeId === treeId,
+        );
+        if (!person) {
+          return {rowCount: 0, rows: []};
+        }
+        state = {
+          ...state,
+          persons: state.persons.filter((entry) => entry.id !== personId),
+        };
+        return {rowCount: 1, rows: [{updated_at: "2026-01-02T00:00:00.000Z"}]};
+      }
+      if (sql.includes("SELECT data")) {
+        throw new Error("full_state_read_not_allowed");
+      }
+      if (sql.includes("ON CONFLICT (id) DO UPDATE")) {
+        state = JSON.parse(params[1]);
+        return {rows: []};
+      }
+      throw new Error(`Unexpected query: ${sql}`);
+    },
+  };
+
+  const store = new PostgresStore({
+    connectionString: "postgresql://unused/rodnya",
+    pool,
+  });
+
+  await store.initialize();
+  queries.length = 0;
+
+  const deleted = await store.deletePerson("tree-1", "person-1", "user-1");
+
+  assert.equal(deleted, true);
+  assert.equal(state.persons.length, 0);
+  assert.equal(
+    queries.some((sql) => sql.includes("SELECT data FROM")),
+    false,
+  );
+  assert.equal(
+    queries.some((sql) => sql.includes("'{treeChangeRecords}'")),
+    false,
+  );
+});
+
 test("PostgresStore communication hot paths avoid full state reads", async () => {
   const invitations = [
     {
