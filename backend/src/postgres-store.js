@@ -19,6 +19,16 @@ const DEFAULT_POSTGRES_POOL_MAX = 8;
 const DEFAULT_POSTGRES_APPLICATION_NAME = "rodnya_backend";
 const SHARED_POOL_REGISTRY = new Map();
 
+function isProjectionHydrationFallbackError(error) {
+  const message = String(error?.message || "").toLowerCase();
+  return message.includes('column "data" does not exist');
+}
+
+function isProjectionArrayInsertFallbackError(error) {
+  const message = String(error?.message || "").toLowerCase();
+  return message.includes("jsonb_array_elements(jsonb) does not exist");
+}
+
 function quoteIdentifier(value) {
   const normalized = String(value || "").trim();
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(normalized)) {
@@ -145,6 +155,10 @@ class PostgresStore extends FileStore {
     this._table = String(table || "rodnya_state").trim() || "rodnya_state";
     this._rowId = String(rowId || "default").trim() || "default";
     this._qualifiedTableName = `${quoteIdentifier(this._schema)}.${quoteIdentifier(this._table)}`;
+    this._authUsersTable = `${this._table}_auth_users`;
+    this._authSessionsTable = `${this._table}_auth_sessions`;
+    this._qualifiedAuthUsersTableName = `${quoteIdentifier(this._schema)}.${quoteIdentifier(this._authUsersTable)}`;
+    this._qualifiedAuthSessionsTableName = `${quoteIdentifier(this._schema)}.${quoteIdentifier(this._authSessionsTable)}`;
     this._initializePromise = null;
     this.storageMode = "postgres";
     this.storageTarget = `${this._schema}.${this._table}:${this._rowId}`;
@@ -185,40 +199,248 @@ class PostgresStore extends FileStore {
       `,
       [this._rowId, JSON.stringify(EMPTY_DB)],
     );
+    await this._pool.query(`
+      CREATE TABLE IF NOT EXISTS ${this._qualifiedAuthUsersTableName} (
+        id TEXT PRIMARY KEY,
+        email TEXT,
+        user_data JSONB NOT NULL
+      )
+    `);
+    await this._pool.query(`
+      CREATE INDEX IF NOT EXISTS ${quoteIdentifier(`${this._authUsersTable}_email_idx`)}
+        ON ${this._qualifiedAuthUsersTableName} (email)
+    `);
+    await this._pool.query(`
+      CREATE TABLE IF NOT EXISTS ${this._qualifiedAuthSessionsTableName} (
+        token TEXT PRIMARY KEY,
+        refresh_token TEXT,
+        user_id TEXT NOT NULL,
+        created_at TEXT,
+        session_data JSONB NOT NULL
+      )
+    `);
+    await this._pool.query(`
+      CREATE INDEX IF NOT EXISTS ${quoteIdentifier(`${this._authSessionsTable}_refresh_idx`)}
+        ON ${this._qualifiedAuthSessionsTableName} (refresh_token)
+    `);
+    await this._pool.query(`
+      CREATE INDEX IF NOT EXISTS ${quoteIdentifier(`${this._authSessionsTable}_user_idx`)}
+        ON ${this._qualifiedAuthSessionsTableName} (user_id)
+    `);
+    await this._hydrateAuthProjectionTablesFromStateRow();
   }
 
-  async _selectUserBySql(sql, params) {
-    await this.initialize();
-    await this._awaitWriteQueue();
-    const result = await this._pool.query(sql, params);
-    return result.rows[0]?.user_data ?? null;
+  async _withProjectionClient(work) {
+    if (typeof this._pool.connect !== "function") {
+      return work(this._pool, false);
+    }
+
+    const client = await this._pool.connect();
+    try {
+      return await work(client, true);
+    } finally {
+      client.release();
+    }
   }
 
-  async _selectSessionBySql(sql, params) {
-    await this.initialize();
-    await this._awaitWriteQueue();
-    const result = await this._pool.query(sql, params);
-    return result.rows[0]?.session_data ?? null;
+  async _hydrateAuthProjectionTablesFromStateRow() {
+    await this._withProjectionClient(async (client, useTransaction) => {
+      try {
+        if (useTransaction) {
+          await client.query("BEGIN");
+          await client.query("SET LOCAL statement_timeout = 0");
+        }
+        await client.query(`DELETE FROM ${this._qualifiedAuthUsersTableName}`);
+        await client.query(
+          `INSERT INTO ${this._qualifiedAuthUsersTableName} (id, email, user_data)
+           SELECT
+             user_entry->>'id',
+             NULLIF(lower(COALESCE(user_entry->>'email', '')), ''),
+             user_entry
+             FROM ${this._qualifiedTableName},
+                  LATERAL jsonb_array_elements(COALESCE(data->'users', '[]'::jsonb)) AS user_entry
+            WHERE id = $1
+              AND COALESCE(user_entry->>'id', '') <> ''`,
+          [this._rowId],
+        );
+        await client.query(`DELETE FROM ${this._qualifiedAuthSessionsTableName}`);
+        await client.query(
+          `INSERT INTO ${this._qualifiedAuthSessionsTableName} (
+             token,
+             refresh_token,
+             user_id,
+             created_at,
+             session_data
+           )
+           SELECT
+             session_entry->>'token',
+             NULLIF(COALESCE(session_entry->>'refreshToken', ''), ''),
+             COALESCE(session_entry->>'userId', ''),
+             NULLIF(COALESCE(session_entry->>'createdAt', ''), ''),
+             session_entry
+             FROM ${this._qualifiedTableName},
+                  LATERAL jsonb_array_elements(COALESCE(data->'sessions', '[]'::jsonb)) AS session_entry
+            WHERE id = $1
+              AND COALESCE(session_entry->>'token', '') <> ''`,
+          [this._rowId],
+        );
+        if (useTransaction) {
+          await client.query("COMMIT");
+        }
+      } catch (error) {
+        if (isProjectionHydrationFallbackError(error)) {
+          if (useTransaction) {
+            try {
+              await client.query("ROLLBACK");
+            } catch (_) {
+              // ignore rollback failures for fallback path
+            }
+          }
+          const result = await this._pool.query(
+            `SELECT data FROM ${this._qualifiedTableName} WHERE id = $1`,
+            [this._rowId],
+          );
+          const rawData = result.rows[0]?.data ?? EMPTY_DB;
+          await this._replaceProjectedUsers(rawData.users);
+          await this._replaceProjectedSessions(rawData.sessions);
+          return;
+        }
+        if (useTransaction) {
+          try {
+            await client.query("ROLLBACK");
+          } catch (_) {
+            // ignore rollback failures, the original error is more useful
+          }
+        }
+        throw error;
+      }
+    });
   }
 
-  async _selectSessionsArray() {
-    const result = await this._pool.query(
-      `SELECT COALESCE(data->'sessions', '[]'::jsonb) AS sessions
-         FROM ${this._qualifiedTableName}
+  async _replaceProjectedUsers(users) {
+    const normalizedUsers = Array.isArray(users) ? users : [];
+    await this._pool.query(`DELETE FROM ${this._qualifiedAuthUsersTableName}`);
+    try {
+      await this._pool.query(
+        `INSERT INTO ${this._qualifiedAuthUsersTableName} (id, email, user_data)
+         SELECT
+           user_entry->>'id',
+           NULLIF(lower(COALESCE(user_entry->>'email', '')), ''),
+           user_entry
+           FROM jsonb_array_elements($1::jsonb) AS user_entry
+          WHERE COALESCE(user_entry->>'id', '') <> ''`,
+        [JSON.stringify(normalizedUsers)],
+      );
+    } catch (error) {
+      if (!isProjectionArrayInsertFallbackError(error)) {
+        throw error;
+      }
+      for (const user of normalizedUsers) {
+        const userId = String(user?.id || "").trim();
+        if (!userId) {
+          continue;
+        }
+        const email = String(user?.email || "").trim().toLowerCase() || null;
+        await this._pool.query(
+          `INSERT INTO ${this._qualifiedAuthUsersTableName} (id, email, user_data)
+           VALUES ($1, $2, $3::jsonb)`,
+          [userId, email, JSON.stringify(user)],
+        );
+      }
+    }
+  }
+
+  async _replaceProjectedSessions(sessions) {
+    const normalizedSessions = Array.isArray(sessions) ? sessions : [];
+    await this._pool.query(`DELETE FROM ${this._qualifiedAuthSessionsTableName}`);
+    try {
+      await this._pool.query(
+        `INSERT INTO ${this._qualifiedAuthSessionsTableName} (
+           token,
+           refresh_token,
+           user_id,
+           created_at,
+           session_data
+         )
+         SELECT
+           session_entry->>'token',
+           NULLIF(COALESCE(session_entry->>'refreshToken', ''), ''),
+           COALESCE(session_entry->>'userId', ''),
+           NULLIF(COALESCE(session_entry->>'createdAt', ''), ''),
+           session_entry
+           FROM jsonb_array_elements($1::jsonb) AS session_entry
+          WHERE COALESCE(session_entry->>'token', '') <> ''`,
+        [JSON.stringify(normalizedSessions)],
+      );
+    } catch (error) {
+      if (!isProjectionArrayInsertFallbackError(error)) {
+        throw error;
+      }
+      for (const session of normalizedSessions) {
+        const token = String(session?.token || "").trim();
+        if (!token) {
+          continue;
+        }
+        await this._pool.query(
+          `INSERT INTO ${this._qualifiedAuthSessionsTableName} (
+             token,
+             refresh_token,
+             user_id,
+             created_at,
+             session_data
+           )
+           VALUES ($1, $2, $3, $4, $5::jsonb)`,
+          [
+            token,
+            String(session?.refreshToken || "").trim() || null,
+            String(session?.userId || "").trim(),
+            String(session?.createdAt || "").trim() || null,
+            JSON.stringify(session),
+          ],
+        );
+      }
+    }
+  }
+
+  async _syncSessionsPathFromProjection() {
+    await this._pool.query(
+      `UPDATE ${this._qualifiedTableName}
+          SET data = jsonb_set(
+                data,
+                '{sessions}',
+                COALESCE(
+                  (
+                    SELECT jsonb_agg(session_data ORDER BY created_at NULLS FIRST, token)
+                      FROM ${this._qualifiedAuthSessionsTableName}
+                  ),
+                  '[]'::jsonb
+                ),
+                true
+              ),
+              updated_at = NOW()
         WHERE id = $1`,
       [this._rowId],
     );
-    return Array.isArray(result.rows[0]?.sessions) ? result.rows[0].sessions : [];
+  }
+
+  async _selectSessionsArray() {
+    await this.initialize();
+    await this._awaitWriteQueue();
+    return this._selectProjectedSessionsArray();
+  }
+
+  async _selectProjectedSessionsArray() {
+    const result = await this._pool.query(
+      `SELECT session_data
+         FROM ${this._qualifiedAuthSessionsTableName}
+        ORDER BY created_at NULLS FIRST, token`,
+    );
+    return result.rows.map((row) => row.session_data).filter(Boolean);
   }
 
   async _updateSessionsArray(sessions) {
-    await this._pool.query(
-      `UPDATE ${this._qualifiedTableName}
-          SET data = jsonb_set(data, '{sessions}', $2::jsonb, true),
-              updated_at = NOW()
-        WHERE id = $1`,
-      [this._rowId, JSON.stringify(Array.isArray(sessions) ? sessions : [])],
-    );
+    await this._replaceProjectedSessions(sessions);
+    await this._syncSessionsPathFromProjection();
   }
 
   async authenticate(email, password) {
@@ -226,15 +448,16 @@ class PostgresStore extends FileStore {
     if (!normalizedEmail) {
       return null;
     }
-    const user = await this._selectUserBySql(
-      `SELECT user_entry AS user_data
-         FROM ${this._qualifiedTableName} AS state_row,
-              LATERAL jsonb_array_elements(COALESCE(state_row.data->'users', '[]'::jsonb)) AS user_entry
-        WHERE state_row.id = $1
-          AND lower(COALESCE(user_entry->>'email', '')) = $2
+    await this.initialize();
+    await this._awaitWriteQueue();
+    const result = await this._pool.query(
+      `SELECT user_data
+         FROM ${this._qualifiedAuthUsersTableName}
+        WHERE email = $1
         LIMIT 1`,
-      [this._rowId, normalizedEmail],
+      [normalizedEmail],
     );
+    const user = result.rows[0]?.user_data ?? null;
 
     if (!user || !verifyPassword(password, user)) {
       return null;
@@ -254,15 +477,16 @@ class PostgresStore extends FileStore {
       return cloneUserWithAuthState(cachedUser);
     }
 
-    const user = await this._selectUserBySql(
-      `SELECT user_entry AS user_data
-         FROM ${this._qualifiedTableName} AS state_row,
-              LATERAL jsonb_array_elements(COALESCE(state_row.data->'users', '[]'::jsonb)) AS user_entry
-        WHERE state_row.id = $1
-          AND COALESCE(user_entry->>'id', '') = $2
+    await this.initialize();
+    await this._awaitWriteQueue();
+    const result = await this._pool.query(
+      `SELECT user_data
+         FROM ${this._qualifiedAuthUsersTableName}
+        WHERE id = $1
         LIMIT 1`,
-      [this._rowId, normalizedUserId],
+      [normalizedUserId],
     );
+    const user = result.rows[0]?.user_data ?? null;
     if (user) {
       this._rememberUser(user);
     }
@@ -275,15 +499,16 @@ class PostgresStore extends FileStore {
       return null;
     }
 
-    const user = await this._selectUserBySql(
-      `SELECT user_entry AS user_data
-         FROM ${this._qualifiedTableName} AS state_row,
-              LATERAL jsonb_array_elements(COALESCE(state_row.data->'users', '[]'::jsonb)) AS user_entry
-        WHERE state_row.id = $1
-          AND lower(COALESCE(user_entry->>'email', '')) = $2
+    await this.initialize();
+    await this._awaitWriteQueue();
+    const result = await this._pool.query(
+      `SELECT user_data
+         FROM ${this._qualifiedAuthUsersTableName}
+        WHERE email = $1
         LIMIT 1`,
-      [this._rowId, normalizedEmail],
+      [normalizedEmail],
     );
+    const user = result.rows[0]?.user_data ?? null;
     if (user) {
       this._rememberUser(user);
     }
@@ -298,7 +523,7 @@ class PostgresStore extends FileStore {
     const previousQueue = this._writeQueue.catch(() => {});
     const nextWrite = previousQueue.then(async () => {
       await this.initialize();
-      const sessions = await this._selectSessionsArray();
+      const sessions = await this._selectProjectedSessionsArray();
       const userSessions = sessions.filter((entry) => entry.userId === userId);
       const otherSessions = sessions.filter((entry) => entry.userId !== userId);
       const sessionsToKeep = userSessions.slice(-4);
@@ -352,15 +577,16 @@ class PostgresStore extends FileStore {
       return structuredClone(cachedSession);
     }
 
-    const session = await this._selectSessionBySql(
-      `SELECT session_entry AS session_data
-         FROM ${this._qualifiedTableName} AS state_row,
-              LATERAL jsonb_array_elements(COALESCE(state_row.data->'sessions', '[]'::jsonb)) AS session_entry
-        WHERE state_row.id = $1
-          AND COALESCE(session_entry->>'token', '') = $2
+    await this.initialize();
+    await this._awaitWriteQueue();
+    const result = await this._pool.query(
+      `SELECT session_data
+         FROM ${this._qualifiedAuthSessionsTableName}
+        WHERE token = $1
         LIMIT 1`,
-      [this._rowId, normalizedToken],
+      [normalizedToken],
     );
+    const session = result.rows[0]?.session_data ?? null;
     if (session) {
       this._rememberSession(session);
     }
@@ -373,15 +599,16 @@ class PostgresStore extends FileStore {
       return null;
     }
 
-    const session = await this._selectSessionBySql(
-      `SELECT session_entry AS session_data
-         FROM ${this._qualifiedTableName} AS state_row,
-              LATERAL jsonb_array_elements(COALESCE(state_row.data->'sessions', '[]'::jsonb)) AS session_entry
-        WHERE state_row.id = $1
-          AND COALESCE(session_entry->>'refreshToken', '') = $2
+    await this.initialize();
+    await this._awaitWriteQueue();
+    const result = await this._pool.query(
+      `SELECT session_data
+         FROM ${this._qualifiedAuthSessionsTableName}
+        WHERE refresh_token = $1
         LIMIT 1`,
-      [this._rowId, normalizedRefreshToken],
+      [normalizedRefreshToken],
     );
+    const session = result.rows[0]?.session_data ?? null;
     if (session) {
       this._rememberSession(session);
     }
@@ -407,7 +634,7 @@ class PostgresStore extends FileStore {
     const previousQueue = this._writeQueue.catch(() => {});
     const nextWrite = previousQueue.then(async () => {
       await this.initialize();
-      const sessions = await this._selectSessionsArray();
+      const sessions = await this._selectProjectedSessionsArray();
       const sessionIndex = sessions.findIndex(
         (entry) => entry.token === normalizedToken,
       );
@@ -462,7 +689,7 @@ class PostgresStore extends FileStore {
     const previousQueue = this._writeQueue.catch(() => {});
     const nextWrite = previousQueue.then(async () => {
       await this.initialize();
-      const sessions = await this._selectSessionsArray();
+      const sessions = await this._selectProjectedSessionsArray();
       const nextSessions = sessions.filter(
         (entry) => entry.token !== normalizedToken,
       );
@@ -497,7 +724,7 @@ class PostgresStore extends FileStore {
     const previousQueue = this._writeQueue.catch(() => {});
     const nextWrite = previousQueue.then(async () => {
       await this.initialize();
-      const sessions = await this._selectSessionsArray();
+      const sessions = await this._selectProjectedSessionsArray();
       const deletedTokens = sessions
         .filter((entry) => entry.userId === normalizedUserId)
         .map((entry) => entry.token);
@@ -554,6 +781,8 @@ class PostgresStore extends FileStore {
         `,
         [this._rowId, JSON.stringify(data)],
       );
+      await this._replaceProjectedUsers(data.users);
+      await this._replaceProjectedSessions(data.sessions);
     });
     this._writeQueue = nextWrite.catch((error) => {
       console.error(

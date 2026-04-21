@@ -12,10 +12,18 @@ test("PostgresStore recovers from a failed write without poisoning the queue", a
       if (sql.includes("CREATE SCHEMA")) {
         return {rows: []};
       }
-      if (sql.includes("CREATE TABLE")) {
+      if (sql.includes("CREATE TABLE") || sql.includes("CREATE INDEX")) {
         return {rows: []};
       }
       if (sql.includes("ON CONFLICT (id) DO NOTHING")) {
+        return {rows: []};
+      }
+      if (
+        sql.includes("DELETE FROM \"public\".\"rodnya_state_auth_users\"") ||
+        sql.includes("DELETE FROM \"public\".\"rodnya_state_auth_sessions\"") ||
+        sql.includes("INSERT INTO \"public\".\"rodnya_state_auth_users\"") ||
+        sql.includes("INSERT INTO \"public\".\"rodnya_state_auth_sessions\"")
+      ) {
         return {rows: []};
       }
       if (sql.includes("SELECT data")) {
@@ -57,7 +65,16 @@ test("PostgresStore read fails fast when the write queue is stuck", async () => 
       if (
         sql.includes("CREATE SCHEMA") ||
         sql.includes("CREATE TABLE") ||
+        sql.includes("CREATE INDEX") ||
         sql.includes("ON CONFLICT (id) DO NOTHING")
+      ) {
+        return {rows: []};
+      }
+      if (
+        sql.includes("DELETE FROM \"public\".\"rodnya_state_auth_users\"") ||
+        sql.includes("DELETE FROM \"public\".\"rodnya_state_auth_sessions\"") ||
+        sql.includes("INSERT INTO \"public\".\"rodnya_state_auth_users\"") ||
+        sql.includes("INSERT INTO \"public\".\"rodnya_state_auth_sessions\"")
       ) {
         return {rows: []};
       }
@@ -94,7 +111,16 @@ test("PostgresStore reuses one shared pool for identical config", async () => {
         if (
           sql.includes("CREATE SCHEMA") ||
           sql.includes("CREATE TABLE") ||
+          sql.includes("CREATE INDEX") ||
           sql.includes("ON CONFLICT (id) DO NOTHING")
+        ) {
+          return {rows: []};
+        }
+        if (
+          sql.includes("DELETE FROM \"public\".\"rodnya_state_auth_users\"") ||
+          sql.includes("DELETE FROM \"public\".\"rodnya_state_auth_sessions\"") ||
+          sql.includes("INSERT INTO \"public\".\"rodnya_state_auth_users\"") ||
+          sql.includes("INSERT INTO \"public\".\"rodnya_state_auth_sessions\"")
         ) {
           return {rows: []};
         }
@@ -156,6 +182,8 @@ test("PostgresStore auth hot paths avoid full state reads", async () => {
       lastSeenAt: "2020-01-01T00:00:00.000Z",
     },
   ];
+  let projectedUsers = [userRecord];
+  let projectedSessions = [...sessions];
   const queries = [];
   const pool = {
     async query(sql, params = []) {
@@ -163,33 +191,70 @@ test("PostgresStore auth hot paths avoid full state reads", async () => {
       if (
         sql.includes("CREATE SCHEMA") ||
         sql.includes("CREATE TABLE") ||
+        sql.includes("CREATE INDEX") ||
         sql.includes("ON CONFLICT (id) DO NOTHING")
       ) {
         return {rows: []};
       }
-      if (sql.includes("SELECT user_entry AS user_data")) {
-        const userParam = params[1];
-        if (String(userParam) === "user-1") {
-          return {rows: [{user_data: userRecord}]};
-        }
-        if (String(userParam) === "smoke@rodnya-tree.ru") {
-          return {rows: [{user_data: userRecord}]};
-        }
+      if (sql.includes("DELETE FROM \"public\".\"rodnya_state_auth_users\"")) {
+        projectedUsers = [];
         return {rows: []};
       }
-      if (sql.includes("SELECT session_entry AS session_data")) {
-        const sessionParam = params[1];
-        const match = sessions.find(
+      if (sql.includes("DELETE FROM \"public\".\"rodnya_state_auth_sessions\"")) {
+        projectedSessions = [];
+        return {rows: []};
+      }
+      if (
+        sql.includes("INSERT INTO \"public\".\"rodnya_state_auth_users\"") &&
+        sql.includes("FROM \"public\".\"rodnya_state\",")
+      ) {
+        projectedUsers = [userRecord];
+        return {rows: []};
+      }
+      if (
+        sql.includes("INSERT INTO \"public\".\"rodnya_state_auth_sessions\"") &&
+        sql.includes("FROM \"public\".\"rodnya_state\",")
+      ) {
+        projectedSessions = [...sessions];
+        return {rows: []};
+      }
+      if (
+        sql.includes("INSERT INTO \"public\".\"rodnya_state_auth_users\"") &&
+        sql.includes("jsonb_array_elements($1::jsonb)")
+      ) {
+        projectedUsers = JSON.parse(params[0]);
+        return {rows: []};
+      }
+      if (
+        sql.includes("INSERT INTO \"public\".\"rodnya_state_auth_sessions\"") &&
+        sql.includes("jsonb_array_elements($1::jsonb)")
+      ) {
+        projectedSessions = JSON.parse(params[0]);
+        sessions = projectedSessions;
+        return {rows: []};
+      }
+      if (sql.includes("SELECT user_data")) {
+        const userParam = params[0];
+        const match = projectedUsers.find(
+          (entry) => entry.id === userParam || entry.email === userParam,
+        );
+        return {rows: match ? [{user_data: match}] : []};
+      }
+      if (sql.includes("SELECT session_data")) {
+        const sessionParam = params[0];
+        if (sql.includes("ORDER BY created_at NULLS FIRST, token")) {
+          return {
+            rows: projectedSessions.map((entry) => ({session_data: entry})),
+          };
+        }
+        const match = projectedSessions.find(
           (entry) =>
             entry.token === sessionParam || entry.refreshToken === sessionParam,
         );
         return {rows: match ? [{session_data: match}] : []};
       }
-      if (sql.includes("SELECT COALESCE(data->'sessions'")) {
-        return {rows: [{sessions}]};
-      }
-      if (sql.includes("jsonb_set(data, '{sessions}'")) {
-        sessions = JSON.parse(params[1]);
+      if (sql.includes("jsonb_set(") && sql.includes("'{sessions}'")) {
+        sessions = projectedSessions;
         return {rows: []};
       }
       if (sql.includes("SELECT data")) {
