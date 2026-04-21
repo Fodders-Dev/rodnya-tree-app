@@ -55,17 +55,30 @@ jobs:
         run: node tool/prod_route_smoke.mjs --suite all --output-json output/playwright/prod-route-smoke.watch.json
 
       - name: Setup SSH key
-        if: ${{ secrets.SERVER_SSH_KEY != '' && secrets.SERVER_HOST != '' && secrets.SERVER_USERNAME != '' }}
+        env:
+          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USERNAME: ${{ secrets.SERVER_USERNAME }}
         run: |
+          if [ -z "$SERVER_SSH_KEY" ] || [ -z "$SERVER_HOST" ] || [ -z "$SERVER_USERNAME" ]; then
+            echo "Skipping SSH setup: server secrets are not configured."
+            exit 0
+          fi
           mkdir -p ~/.ssh
-          echo "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/id_ed25519
+          echo "$SERVER_SSH_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -H "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts
+          ssh-keyscan -H "$SERVER_HOST" >> ~/.ssh/known_hosts
 
       - name: Backup restore precheck
-        if: ${{ secrets.SERVER_SSH_KEY != '' && secrets.SERVER_HOST != '' && secrets.SERVER_USERNAME != '' }}
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USERNAME: ${{ secrets.SERVER_USERNAME }}
         run: |
-          ssh -i ~/.ssh/id_ed25519 "${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_HOST }}" \
+          if [ -z "$SERVER_HOST" ] || [ -z "$SERVER_USERNAME" ] || [ ! -f ~/.ssh/id_ed25519 ]; then
+            echo "Skipping backup restore precheck: SSH context is not configured."
+            exit 0
+          fi
+          ssh -i ~/.ssh/id_ed25519 "${SERVER_USERNAME}@${SERVER_HOST}" \
             'bash -s -- /opt/rodnya/backups /tmp/rodnya-backup-watch' \
             < deploy/backend/verify_backup_restore_drill.sh
 
