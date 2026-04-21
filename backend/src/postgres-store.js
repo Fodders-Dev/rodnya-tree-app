@@ -34,6 +34,10 @@ function isProjectionArrayTextFallbackError(error) {
   return message.includes("jsonb_array_elements_text(jsonb) does not exist");
 }
 
+function computeProjectionHash(value) {
+  return JSON.stringify(Array.isArray(value) ? value : []);
+}
+
 function quoteIdentifier(value) {
   const normalized = String(value || "").trim();
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(normalized)) {
@@ -168,6 +172,8 @@ class PostgresStore extends FileStore {
     this._writeQueueTimeoutMs = queryTimeoutMs > 0
       ? Math.max(queryTimeoutMs, DEFAULT_WRITE_QUEUE_TIMEOUT_MS)
       : DEFAULT_WRITE_QUEUE_TIMEOUT_MS;
+    this._lastUsersProjectionHash = null;
+    this._lastSessionsProjectionHash = null;
   }
 
   async initialize() {
@@ -351,6 +357,7 @@ class PostgresStore extends FileStore {
         );
       }
     }
+    this._lastUsersProjectionHash = computeProjectionHash(normalizedUsers);
   }
 
   async _replaceProjectedSessions(sessions) {
@@ -403,6 +410,7 @@ class PostgresStore extends FileStore {
         );
       }
     }
+    this._lastSessionsProjectionHash = computeProjectionHash(normalizedSessions);
   }
 
   async _syncSessionsPathFromProjection() {
@@ -895,6 +903,8 @@ class PostgresStore extends FileStore {
     const rawData = result.rows[0]?.data ?? EMPTY_DB;
     const normalizedState = normalizeDbState(rawData);
     normalizedState.sessions = await this._selectProjectedSessionsArray();
+    this._lastUsersProjectionHash = computeProjectionHash(normalizedState.users);
+    this._lastSessionsProjectionHash = computeProjectionHash(normalizedState.sessions);
     return normalizedState;
   }
 
@@ -902,6 +912,8 @@ class PostgresStore extends FileStore {
     const previousQueue = this._writeQueue.catch(() => {});
     const nextWrite = previousQueue.then(async () => {
       await this.initialize();
+      const nextUsersHash = computeProjectionHash(data?.users);
+      const nextSessionsHash = computeProjectionHash(data?.sessions);
       await this._pool.query(
         `
           INSERT INTO ${this._qualifiedTableName} (id, data, updated_at)
@@ -912,8 +924,16 @@ class PostgresStore extends FileStore {
         `,
         [this._rowId, JSON.stringify(data)],
       );
-      await this._replaceProjectedUsers(data.users);
-      await this._replaceProjectedSessions(data.sessions);
+      if (this._lastUsersProjectionHash !== nextUsersHash) {
+        await this._replaceProjectedUsers(data.users);
+      } else {
+        this._lastUsersProjectionHash = nextUsersHash;
+      }
+      if (this._lastSessionsProjectionHash !== nextSessionsHash) {
+        await this._replaceProjectedSessions(data.sessions);
+      } else {
+        this._lastSessionsProjectionHash = nextSessionsHash;
+      }
     });
     this._writeQueue = nextWrite.catch((error) => {
       console.error(

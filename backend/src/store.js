@@ -4119,6 +4119,7 @@ class FileStore {
     for (const user of db.users) {
       const normalizedIdentityId = normalizeNullableString(user.identityId);
       const ownedIdentityId = identitiesByUserId.get(user.id) || null;
+      const currentIdentityValue = user.identityId;
       if (
         normalizedIdentityId &&
         db.personIdentities.some(
@@ -4126,11 +4127,22 @@ class FileStore {
             entry.id === normalizedIdentityId && entry.userId === user.id,
         )
       ) {
-        user.identityId = normalizedIdentityId;
+        if (currentIdentityValue !== normalizedIdentityId) {
+          user.identityId = normalizedIdentityId;
+        }
         continue;
       }
 
-      user.identityId = ownedIdentityId;
+      if (ownedIdentityId) {
+        if (currentIdentityValue !== ownedIdentityId) {
+          user.identityId = ownedIdentityId;
+        }
+        continue;
+      }
+
+      if (normalizedIdentityId !== null) {
+        user.identityId = null;
+      }
     }
   }
 

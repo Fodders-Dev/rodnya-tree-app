@@ -461,3 +461,116 @@ test("PostgresStore tree hot paths avoid full state reads", async () => {
     false,
   );
 });
+
+test("PostgresStore createPerson skips auth projection rewrites when auth state is unchanged", async () => {
+  const userRecord = {
+    id: "user-1",
+    email: "smoke@rodnya-tree.ru",
+    profile: {displayName: "Smoke User"},
+  };
+  let state = {
+    users: [userRecord],
+    sessions: [
+      {
+        token: "token-1",
+        refreshToken: "refresh-1",
+        userId: "user-1",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        lastSeenAt: "2026-01-01T00:00:00.000Z",
+      },
+    ],
+    trees: [
+      {
+        id: "tree-1",
+        creatorId: "user-1",
+        memberIds: [],
+        members: [],
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        name: "Smoke Tree",
+      },
+    ],
+    persons: [],
+    relations: [],
+    treeChangeRecords: [],
+    personIdentities: [],
+  };
+  let projectedSessions = [...state.sessions];
+  const queries = [];
+  let allowProjectionHydration = true;
+  const pool = {
+    async query(sql, params = []) {
+      queries.push(sql);
+      if (
+        sql.includes("CREATE SCHEMA") ||
+        sql.includes("CREATE TABLE") ||
+        sql.includes("CREATE INDEX") ||
+        sql.includes("ON CONFLICT (id) DO NOTHING")
+      ) {
+        return {rows: []};
+      }
+      if (
+        sql.includes("DELETE FROM \"public\".\"rodnya_state_auth_users\"") ||
+        sql.includes("DELETE FROM \"public\".\"rodnya_state_auth_sessions\"") ||
+        sql.includes("INSERT INTO \"public\".\"rodnya_state_auth_users\"") ||
+        sql.includes("INSERT INTO \"public\".\"rodnya_state_auth_sessions\"")
+      ) {
+        if (allowProjectionHydration) {
+          return {rows: []};
+        }
+        throw new Error(`auth_projection_rewrite_not_allowed:${sql}`);
+      }
+      if (sql.includes("SELECT session_data")) {
+        return {
+          rows: projectedSessions.map((entry) => ({session_data: entry})),
+        };
+      }
+      if (sql.includes("SELECT data")) {
+        return {rows: [{data: state}]};
+      }
+      if (sql.includes("ON CONFLICT (id) DO UPDATE")) {
+        state = JSON.parse(params[1]);
+        return {rows: []};
+      }
+      throw new Error(`Unexpected query: ${sql}`);
+    },
+  };
+
+  const store = new PostgresStore({
+    connectionString: "postgresql://unused/rodnya",
+    pool,
+  });
+
+  await store.initialize();
+  allowProjectionHydration = false;
+  queries.length = 0;
+
+  const person = await store.createPerson({
+    treeId: "tree-1",
+    creatorId: "user-1",
+    personData: {
+      firstName: "Иван",
+      lastName: "Петров",
+      gender: "male",
+    },
+  });
+
+  assert.equal(person?.treeId, "tree-1");
+  assert.equal(state.persons.length, 1);
+  assert.equal(
+    queries.some(
+      (sql) =>
+        sql.includes("DELETE FROM \"public\".\"rodnya_state_auth_users\"") ||
+        sql.includes("INSERT INTO \"public\".\"rodnya_state_auth_users\""),
+    ),
+    false,
+  );
+  assert.equal(
+    queries.some(
+      (sql) =>
+        sql.includes("DELETE FROM \"public\".\"rodnya_state_auth_sessions\"") ||
+        sql.includes("INSERT INTO \"public\".\"rodnya_state_auth_sessions\""),
+    ),
+    false,
+  );
+});
