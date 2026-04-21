@@ -29,6 +29,11 @@ function isProjectionArrayInsertFallbackError(error) {
   return message.includes("jsonb_array_elements(jsonb) does not exist");
 }
 
+function isProjectionArrayTextFallbackError(error) {
+  const message = String(error?.message || "").toLowerCase();
+  return message.includes("jsonb_array_elements_text(jsonb) does not exist");
+}
+
 function quoteIdentifier(value) {
   const normalized = String(value || "").trim();
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(normalized)) {
@@ -819,6 +824,64 @@ class PostgresStore extends FileStore {
     for (const token of deletedTokens) {
       this._forgetSession(token);
     }
+  }
+
+  async listUserTrees(userId) {
+    const normalizedUserId = String(userId || "").trim();
+    if (!normalizedUserId) {
+      return [];
+    }
+
+    await this.initialize();
+    await this._awaitReadConsistency();
+    try {
+      const result = await this._pool.query(
+        `SELECT tree_entry AS tree_data
+           FROM ${this._qualifiedTableName},
+                LATERAL jsonb_array_elements(COALESCE(data->'trees', '[]'::jsonb)) AS tree_entry
+          WHERE id = $1
+            AND (
+              COALESCE(tree_entry->>'creatorId', '') = $2
+              OR EXISTS (
+                SELECT 1
+                  FROM jsonb_array_elements_text(COALESCE(tree_entry->'memberIds', '[]'::jsonb)) AS member_id(value)
+                 WHERE member_id.value = $2
+              )
+            )
+          ORDER BY COALESCE(tree_entry->>'updatedAt', '') DESC`,
+        [this._rowId, normalizedUserId],
+      );
+      return result.rows
+        .map((row) => row.tree_data)
+        .filter(Boolean)
+        .map((tree) => structuredClone(tree));
+    } catch (error) {
+      if (!isProjectionArrayTextFallbackError(error)) {
+        throw error;
+      }
+      return super.listUserTrees(normalizedUserId);
+    }
+  }
+
+  async findTree(treeId) {
+    const normalizedTreeId = String(treeId || "").trim();
+    if (!normalizedTreeId) {
+      return null;
+    }
+
+    await this.initialize();
+    await this._awaitReadConsistency();
+    const result = await this._pool.query(
+      `SELECT tree_entry AS tree_data
+         FROM ${this._qualifiedTableName},
+              LATERAL jsonb_array_elements(COALESCE(data->'trees', '[]'::jsonb)) AS tree_entry
+        WHERE id = $1
+          AND COALESCE(tree_entry->>'id', '') = $2
+        LIMIT 1`,
+      [this._rowId, normalizedTreeId],
+    );
+    const tree = result.rows[0]?.tree_data ?? null;
+    return tree ? structuredClone(tree) : null;
   }
 
   async _read() {

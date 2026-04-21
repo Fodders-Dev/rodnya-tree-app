@@ -384,7 +384,12 @@ async function completeProfileViaApi({
   accessToken,
   email,
   displayName,
+  force = false,
+  isProfileComplete = false,
 }) {
+  if (!force && isProfileComplete) {
+    return null;
+  }
   const bootstrap = deriveSmokeProfileBootstrap({email, displayName});
   const response = await smokeFetch(
     `${apiUrl.replace(/\/+$/, "")}/v1/profile/me/bootstrap`,
@@ -679,6 +684,7 @@ async function createRouteFixtures({
     accessToken: partnerSessionResult.session.accessToken,
     email: resolvedPartnerCredentials.email,
     displayName: "Rodnya Smoke Partner",
+    isProfileComplete: partnerSessionResult.session.isProfileComplete === true,
   });
 
   let chatFixture = null;
@@ -940,6 +946,7 @@ async function main() {
         accessToken: authenticatedSession.accessToken,
         email: config.email,
         displayName: config.displayName,
+        isProfileComplete: authenticatedSession.isProfileComplete === true,
       });
       const ensuredTree = await ensurePrimaryTree({
         apiUrl: config.apiUrl,

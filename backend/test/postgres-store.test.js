@@ -365,3 +365,99 @@ test("PostgresStore auth hot paths avoid full state reads", async () => {
     false,
   );
 });
+
+test("PostgresStore tree hot paths avoid full state reads", async () => {
+  const ownerTree = {
+    id: "tree-owner",
+    creatorId: "user-1",
+    memberIds: ["user-2"],
+    updatedAt: "2026-04-21T12:00:00.000Z",
+    title: "Owner Tree",
+  };
+  const memberTree = {
+    id: "tree-member",
+    creatorId: "user-3",
+    memberIds: ["user-1"],
+    updatedAt: "2026-04-21T13:00:00.000Z",
+    title: "Member Tree",
+  };
+  const otherTree = {
+    id: "tree-other",
+    creatorId: "user-9",
+    memberIds: [],
+    updatedAt: "2026-04-21T11:00:00.000Z",
+    title: "Other Tree",
+  };
+  const trees = [ownerTree, memberTree, otherTree];
+  const queries = [];
+  const pool = {
+    async query(sql, params = []) {
+      queries.push(sql);
+      if (
+        sql.includes("CREATE SCHEMA") ||
+        sql.includes("CREATE TABLE") ||
+        sql.includes("CREATE INDEX") ||
+        sql.includes("ON CONFLICT (id) DO NOTHING")
+      ) {
+        return {rows: []};
+      }
+      if (
+        sql.includes("DELETE FROM \"public\".\"rodnya_state_auth_users\"") ||
+        sql.includes("DELETE FROM \"public\".\"rodnya_state_auth_sessions\"") ||
+        sql.includes("INSERT INTO \"public\".\"rodnya_state_auth_users\"") ||
+        sql.includes("INSERT INTO \"public\".\"rodnya_state_auth_sessions\"")
+      ) {
+        return {rows: []};
+      }
+      if (
+        sql.includes("SELECT tree_entry AS tree_data") &&
+        sql.includes("jsonb_array_elements_text")
+      ) {
+        const userId = params[1];
+        const rows = trees
+          .filter((tree) => {
+            return (
+              tree.creatorId === userId ||
+              (Array.isArray(tree.memberIds) && tree.memberIds.includes(userId))
+            );
+          })
+          .sort((left, right) =>
+            String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")),
+          )
+          .map((tree) => ({tree_data: tree}));
+        return {rows};
+      }
+      if (sql.includes("SELECT tree_entry AS tree_data")) {
+        const treeId = params[1];
+        const tree = trees.find((entry) => entry.id === treeId) || null;
+        return {rows: tree ? [{tree_data: tree}] : []};
+      }
+      if (sql.includes("SELECT data")) {
+        throw new Error("full_state_read_not_allowed");
+      }
+      throw new Error(`Unexpected query: ${sql}`);
+    },
+  };
+
+  const store = new PostgresStore({
+    connectionString: "postgresql://unused/rodnya",
+    pool,
+  });
+
+  await store.initialize();
+  queries.length = 0;
+
+  const userTrees = await store.listUserTrees("user-1");
+  assert.deepEqual(
+    userTrees.map((tree) => tree.id),
+    ["tree-member", "tree-owner"],
+  );
+
+  const foundTree = await store.findTree("tree-owner");
+  assert.equal(foundTree?.title, "Owner Tree");
+
+  assert.equal(
+    queries.some((sql) => sql.includes("SELECT data FROM")),
+    false,
+  );
+});
