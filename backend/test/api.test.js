@@ -4338,6 +4338,82 @@ test("chat preview list applies the limit query parameter", async () => {
   }
 });
 
+test("chat preview list applies the emergency response cap", async () => {
+  const ctx = await startTestServer();
+
+  try {
+    const registerAliceResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "alice-chat-cap@rodnya.app",
+        password: "secret123",
+        displayName: "Alice Chat Cap",
+      }),
+    });
+    assert.equal(registerAliceResponse.status, 201);
+    const alice = await registerAliceResponse.json();
+
+    const peers = [];
+    for (const [index, name] of [
+      "Bob Cap",
+      "Cara Cap",
+      "Dan Cap",
+      "Egor Cap",
+    ].entries()) {
+      const registerPeerResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+        method: "POST",
+        headers: {"content-type": "application/json"},
+        body: JSON.stringify({
+          email: `peer-chat-cap-${index}@rodnya.app`,
+          password: "secret123",
+          displayName: name,
+        }),
+      });
+      assert.equal(registerPeerResponse.status, 201);
+      peers.push(await registerPeerResponse.json());
+    }
+
+    for (const [index, peer] of peers.entries()) {
+      const createChatResponse = await fetch(`${ctx.baseUrl}/v1/chats/direct`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${alice.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({otherUserId: peer.user.id}),
+      });
+      assert.equal(createChatResponse.status, 200);
+      const chatPayload = await createChatResponse.json();
+
+      const sendMessageResponse = await fetch(
+        `${ctx.baseUrl}/v1/chats/${chatPayload.chatId}/messages`,
+        {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${alice.accessToken}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({text: `Cap preview ${index}`}),
+        },
+      );
+      assert.equal(sendMessageResponse.status, 201);
+    }
+
+    const chatsResponse = await fetch(`${ctx.baseUrl}/v1/chats?limit=10`, {
+      headers: {authorization: `Bearer ${alice.accessToken}`},
+    });
+    assert.equal(chatsResponse.status, 200);
+    const chatsPayload = await chatsResponse.json();
+    assert.equal(chatsPayload.chats.length, 3);
+    assert.equal(chatsPayload.hasMore, true);
+    assert.equal(chatsPayload.requestedLimit, 10);
+    assert.equal(chatsPayload.appliedLimit, 3);
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
 test("chat preview list caps bulky group participant ids in preview payload", async () => {
   const ctx = await startTestServer();
 
@@ -4442,21 +4518,24 @@ test("chat preview list safely truncates oversized message previews", async () =
             "content-type": "application/json",
           },
           body: JSON.stringify({
-            text: index === 0 ? oversizedMessageText : `Обычное превью ${index}`,
+            text:
+              index === peers.length - 1
+                ? oversizedMessageText
+                : `Обычное превью ${index}`,
           }),
         },
       );
       assert.equal(sendMessageResponse.status, 201);
     }
 
-    const chatsResponse = await fetch(`${ctx.baseUrl}/v1/chats?limit=4`, {
+    const chatsResponse = await fetch(`${ctx.baseUrl}/v1/chats?limit=1`, {
       headers: {authorization: `Bearer ${alice.accessToken}`},
     });
     assert.equal(chatsResponse.status, 200);
     const chatsPayload = await chatsResponse.json();
-    assert.equal(chatsPayload.chats.length, 4);
-    assert.ok(chatsPayload.chats[3].lastMessage.length <= 280);
-    assert.ok(chatsPayload.chats[3].lastMessage.endsWith("…"));
+    assert.equal(chatsPayload.chats.length, 1);
+    assert.ok(chatsPayload.chats[0].lastMessage.length <= 280);
+    assert.ok(chatsPayload.chats[0].lastMessage.endsWith("…"));
   } finally {
     await stopTestServer(ctx);
   }

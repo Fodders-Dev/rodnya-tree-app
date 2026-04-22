@@ -27,6 +27,7 @@ const {createLiveKitService} = require("./livekit-service");
 const {buildBranchVisiblePersonIds} = require("./store");
 
 const DEFAULT_CALL_INVITE_TIMEOUT_MS = 30_000;
+const EMERGENCY_CHAT_PREVIEW_RESPONSE_CAP = 3;
 
 function createApp({
   store,
@@ -4691,13 +4692,20 @@ function createApp({
   );
 
   app.get("/v1/chats", requireAuth, async (req, res) => {
-    const limit = Math.min(
+    const requestedLimit = Math.min(
       Math.max(1, Number.parseInt(String(req.query.limit || "100"), 10) || 100),
       200,
+    );
+    const limit = Math.min(
+      requestedLimit,
+      EMERGENCY_CHAT_PREVIEW_RESPONSE_CAP,
     );
     const previews = await store.listChatPreviews(req.auth.user.id);
     res.json({
       chats: previews.slice(0, limit).map(mapChatPreview),
+      hasMore: previews.length > limit,
+      requestedLimit,
+      appliedLimit: limit,
     });
   });
 
