@@ -22,8 +22,9 @@ async function createStore(config) {
         schema: config.postgresSchema,
         table: config.postgresStateTable,
         rowId: config.postgresStateRowId,
-        pool: config.postgresPool || config._pool || null,
         poolMax: config.postgresPoolMax,
+        snapshotCachePath: config.postgresSnapshotCachePath,
+        pool: config.postgresPool || config._pool || null,
         applicationName: config.postgresApplicationName,
       });
       await store.initialize();

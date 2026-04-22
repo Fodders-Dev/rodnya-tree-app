@@ -40,6 +40,9 @@ function readEnvNumber(fallback, ...keys) {
 }
 
 function createConfig() {
+  const dataPath =
+    readEnvAlias("RODNYA_BACKEND_DATA_PATH") ||
+    path.join(__dirname, "..", "data", "dev-db.json");
   const webPushPublicKey = readEnvAlias("RODNYA_WEB_PUSH_PUBLIC_KEY");
   const webPushPrivateKey = readEnvAlias("RODNYA_WEB_PUSH_PRIVATE_KEY");
   const webPushSubject = String(
@@ -133,9 +136,7 @@ function createConfig() {
   return {
     port: Number(process.env.PORT || 8080),
     corsOrigin: readEnvAlias("RODNYA_BACKEND_CORS_ORIGIN") || "*",
-    dataPath:
-      readEnvAlias("RODNYA_BACKEND_DATA_PATH") ||
-      path.join(__dirname, "..", "data", "dev-db.json"),
+    dataPath,
     mediaRootPath:
       readEnvAlias("RODNYA_BACKEND_MEDIA_ROOT") ||
       path.join(__dirname, "..", "data", "uploads"),
@@ -157,6 +158,9 @@ function createConfig() {
       readEnvAlias("RODNYA_POSTGRES_STATE_TABLE") || "rodnya_state",
     postgresStateRowId:
       readEnvAlias("RODNYA_POSTGRES_STATE_ROW_ID") || "default",
+    postgresSnapshotCachePath:
+      readEnvAlias("RODNYA_POSTGRES_SNAPSHOT_CACHE_PATH") ||
+      path.join(path.dirname(dataPath), "postgres-state-cache.json"),
     postgresPoolMax: readEnvNumber(
       8,
       "RODNYA_POSTGRES_POOL_MAX",
