@@ -43,7 +43,7 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -H "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts
+          ssh-keyscan -T 5 -H "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts || true
           if [ -n "$BACKEND_SERVER_PASSWORD" ]; then
             sudo apt-get update
             sudo apt-get install -y sshpass
@@ -57,7 +57,10 @@ jobs:
         run: |
           backend_user="${BACKEND_SERVER_USERNAME:-${{ secrets.SERVER_USERNAME }}}"
           if [ -n "$BACKEND_SERVER_PASSWORD" ]; then
-            sshpass -p "$BACKEND_SERVER_PASSWORD" scp rodnya-backend.tgz \
+            sshpass -p "$BACKEND_SERVER_PASSWORD" scp \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              rodnya-backend.tgz \
               "${backend_user}@${{ secrets.SERVER_HOST }}:${REMOTE_ARCHIVE}"
           else
             scp -i ~/.ssh/id_ed25519 rodnya-backend.tgz \
@@ -74,7 +77,12 @@ jobs:
           backend_user="${BACKEND_SERVER_USERNAME:-${{ secrets.SERVER_USERNAME }}}"
           ssh_cmd=(ssh -i ~/.ssh/id_ed25519 "${backend_user}@${{ secrets.SERVER_HOST }}")
           if [ -n "$BACKEND_SERVER_PASSWORD" ]; then
-            ssh_cmd=(sshpass -p "$BACKEND_SERVER_PASSWORD" ssh "${backend_user}@${{ secrets.SERVER_HOST }}")
+            ssh_cmd=(
+              sshpass -p "$BACKEND_SERVER_PASSWORD" ssh
+              -o StrictHostKeyChecking=no
+              -o UserKnownHostsFile=/dev/null
+              "${backend_user}@${{ secrets.SERVER_HOST }}"
+            )
           fi
           "${ssh_cmd[@]}" bash -s -- "${REMOTE_ARCHIVE}" "/opt/rodnya/backend" "rodnya-backend.service" "${DEPLOY_LABEL}" <<'EOF'
           set -euo pipefail
