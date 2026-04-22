@@ -30,7 +30,10 @@ test("createConfig derives postgres snapshot cache path from the backend data pa
     const config = createConfig();
     assert.equal(
       config.postgresSnapshotCachePath,
-      path.join("\\srv\\rodnya\\state", "postgres-state-cache.json"),
+      path.join(
+        path.dirname(process.env.RODNYA_BACKEND_DATA_PATH),
+        "postgres-state-cache.json",
+      ),
     );
   } finally {
     if (previousDataPath == null) {
