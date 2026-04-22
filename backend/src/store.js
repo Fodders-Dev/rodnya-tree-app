@@ -3942,6 +3942,28 @@ function verifyPassword(password, user) {
   );
 }
 
+function insertDescendingLimited(items, entry, compareEntries, limit) {
+  if (!Number.isFinite(limit) || limit <= 0) {
+    return;
+  }
+
+  let insertIndex = items.findIndex(
+    (existingEntry) => compareEntries(entry, existingEntry) < 0,
+  );
+  if (insertIndex < 0) {
+    insertIndex = items.length;
+  }
+
+  if (insertIndex >= limit && items.length >= limit) {
+    return;
+  }
+
+  items.splice(insertIndex, 0, entry);
+  if (items.length > limit) {
+    items.length = limit;
+  }
+}
+
 class FileStore {
   constructor(dataPath) {
     this.dataPath = dataPath;
@@ -6860,24 +6882,35 @@ class FileStore {
 
   async listNotifications(userId, {status = null, limit = 50} = {}) {
     const db = await this._read();
-    return db.notifications
-      .filter((entry) => {
-        if (entry.userId !== userId) {
-          return false;
-        }
-        if (status === "unread" && entry.readAt) {
-          return false;
-        }
-        if (status === "read" && !entry.readAt) {
-          return false;
-        }
-        return true;
-      })
-      .sort((left, right) =>
-        String(right.createdAt || "").localeCompare(String(left.createdAt || "")),
-      )
-      .slice(0, limit)
-      .map((entry) => structuredClone(entry));
+    const normalizedLimit = Number.isFinite(Number(limit))
+      ? Math.max(0, Number(limit))
+      : 50;
+    if (normalizedLimit === 0) {
+      return [];
+    }
+
+    const notifications = [];
+    for (const entry of db.notifications) {
+      if (entry.userId !== userId) {
+        continue;
+      }
+      if (status === "unread" && entry.readAt) {
+        continue;
+      }
+      if (status === "read" && !entry.readAt) {
+        continue;
+      }
+
+      insertDescendingLimited(
+        notifications,
+        entry,
+        (left, right) =>
+          String(right.createdAt || "").localeCompare(String(left.createdAt || "")),
+        normalizedLimit,
+      );
+    }
+
+    return notifications.map((entry) => structuredClone(entry));
   }
 
   async countUnreadNotifications(userId) {

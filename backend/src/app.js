@@ -4593,9 +4593,13 @@ function createApp({
   );
 
   app.get("/v1/chats", requireAuth, async (req, res) => {
+    const limit = Math.min(
+      Math.max(1, Number.parseInt(String(req.query.limit || "100"), 10) || 100),
+      200,
+    );
     const previews = await store.listChatPreviews(req.auth.user.id);
     res.json({
-      chats: previews.map(mapChatPreview),
+      chats: previews.slice(0, limit).map(mapChatPreview),
     });
   });
 
@@ -5670,7 +5674,10 @@ function createApp({
 
   app.get("/v1/notifications", requireAuth, async (req, res) => {
     const status = req.query.status ? String(req.query.status) : null;
-    const limit = Number(req.query.limit || 50);
+    const limit = Math.min(
+      Math.max(1, Number.parseInt(String(req.query.limit || "50"), 10) || 50),
+      200,
+    );
     const notifications = await store.listNotifications(req.auth.user.id, {
       status,
       limit,
