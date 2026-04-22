@@ -6890,7 +6890,8 @@ class FileStore {
     }
 
     const notifications = [];
-    for (const entry of db.notifications) {
+    for (let index = db.notifications.length - 1; index >= 0; index -= 1) {
+      const entry = db.notifications[index];
       if (entry.userId !== userId) {
         continue;
       }
@@ -6901,13 +6902,10 @@ class FileStore {
         continue;
       }
 
-      insertDescendingLimited(
-        notifications,
-        entry,
-        (left, right) =>
-          String(right.createdAt || "").localeCompare(String(left.createdAt || "")),
-        normalizedLimit,
-      );
+      notifications.push(entry);
+      if (notifications.length >= normalizedLimit) {
+        break;
+      }
     }
 
     return notifications.map((entry) => structuredClone(entry));
@@ -8313,8 +8311,9 @@ class FileStore {
       this._syncChatUpdatedAt(db, purgedChatIds);
       await this._write(db);
     }
-    const previews = new Map();
     const relatedChats = new Map();
+    const userById = new Map();
+    const previews = new Map();
 
     for (const chat of db.chats) {
       if (Array.isArray(chat.participantIds) && chat.participantIds.includes(userId)) {
@@ -8323,11 +8322,13 @@ class FileStore {
     }
 
     for (const message of db.messages) {
-      const resolvedChat = this._resolveChat(db, message.chatId);
-      if (!resolvedChat || !resolvedChat.participantIds.includes(userId)) {
+      if (relatedChats.has(message.chatId)) {
         continue;
       }
-      relatedChats.set(resolvedChat.id, resolvedChat);
+      const resolvedChat = this._resolveChat(db, message.chatId);
+      if (resolvedChat && resolvedChat.participantIds.includes(userId)) {
+        relatedChats.set(resolvedChat.id, resolvedChat);
+      }
     }
 
     for (const chat of relatedChats.values()) {
@@ -8352,27 +8353,17 @@ class FileStore {
         lastMessageSenderId: "",
       };
 
-      const relevantMessages = db.messages
-        .filter((message) => message.chatId === chat.id)
-        .sort((left, right) =>
-          String(right.timestamp || "").localeCompare(String(left.timestamp || "")),
-        );
-      const lastMessage = relevantMessages[0] || null;
-      if (lastMessage) {
-        preview.lastMessage = describeMessagePreview(lastMessage);
-        preview.lastMessageTime = lastMessage.timestamp;
-        preview.lastMessageSenderId = lastMessage.senderId;
-      }
-
-      preview.unreadCount = relevantMessages.filter((message) => {
-        return message.senderId !== userId && message.isRead !== true;
-      }).length;
-
       if (isGroup) {
         const otherParticipantNames = participants
           .filter((participantId) => participantId !== userId)
           .map((participantId) => {
-            const participant = db.users.find((entry) => entry.id === participantId);
+            let participant = userById.get(participantId);
+            if (!participant) {
+              participant = db.users.find((entry) => entry.id === participantId) || null;
+              if (participant) {
+                userById.set(participantId, participant);
+              }
+            }
             return participant?.profile?.displayName || participant?.email || "";
           })
           .filter(Boolean);
@@ -8382,7 +8373,13 @@ class FileStore {
             ? otherParticipantNames.slice(0, 3).join(", ")
             : "Групповой чат");
       } else {
-        const otherUser = db.users.find((entry) => entry.id === otherUserId);
+        let otherUser = userById.get(otherUserId);
+        if (!otherUser) {
+          otherUser = db.users.find((entry) => entry.id === otherUserId) || null;
+          if (otherUser) {
+            userById.set(otherUserId, otherUser);
+          }
+        }
         if (otherUser) {
           preview.otherUserName =
             otherUser.profile?.displayName || otherUser.email || "Пользователь";
@@ -8391,6 +8388,40 @@ class FileStore {
       }
 
       previews.set(chat.id, preview);
+    }
+
+    for (const message of db.messages) {
+      let resolvedChatId = String(message.chatId || "").trim();
+      let preview = previews.get(resolvedChatId) || null;
+
+      if (!preview) {
+        const resolvedChat = this._resolveChat(db, message.chatId);
+        if (!resolvedChat || !previews.has(resolvedChat.id)) {
+          continue;
+        }
+        resolvedChatId = resolvedChat.id;
+        preview = previews.get(resolvedChatId) || null;
+      }
+
+      if (!preview) {
+        continue;
+      }
+
+      const messageTimestamp = String(message.timestamp || "").trim();
+      const lastMessageTimestamp = String(preview.lastMessageTime || "").trim();
+      if (
+        !preview.lastMessage ||
+        !lastMessageTimestamp ||
+        messageTimestamp.localeCompare(lastMessageTimestamp) >= 0
+      ) {
+        preview.lastMessage = describeMessagePreview(message);
+        preview.lastMessageTime = messageTimestamp;
+        preview.lastMessageSenderId = message.senderId;
+      }
+
+      if (message.senderId !== userId && message.isRead !== true) {
+        preview.unreadCount += 1;
+      }
     }
 
     return Array.from(previews.values())
