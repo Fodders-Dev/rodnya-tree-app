@@ -285,6 +285,37 @@ test("PostgresStore applies write timeout per query instead of relying on pool d
   }
 });
 
+test("PostgresStore exposes a lightweight health check", async () => {
+  const queryCalls = [];
+  const pool = {
+    async query(sql) {
+      queryCalls.push(sql);
+      if (
+        sql.includes("CREATE SCHEMA") ||
+        sql.includes("CREATE TABLE") ||
+        sql.includes("ON CONFLICT (id) DO NOTHING") ||
+        sql === "SELECT 1"
+      ) {
+        return {rows: []};
+      }
+      throw new Error(`Unexpected query: ${sql}`);
+    },
+  };
+
+  const store = new PostgresStore({
+    connectionString: "postgresql://unused/rodnya",
+    pool,
+  });
+
+  await store.healthCheck();
+
+  assert.ok(queryCalls.includes("SELECT 1"));
+  assert.equal(
+    queryCalls.filter((sql) => sql.includes("SELECT data")).length,
+    0,
+  );
+});
+
 test("PostgresStore persists snapshot cache after successful write", async () => {
   const cacheDir = await fs.mkdtemp(path.join(os.tmpdir(), "rodnya-pg-cache-"));
   const snapshotCachePath = path.join(cacheDir, "state-cache.json");
