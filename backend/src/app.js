@@ -931,7 +931,23 @@ function createApp({
   }
 
   function truncateText(value, maxLength = 280) {
-    const text = String(value || "").trim();
+    if (value === null || value === undefined) {
+      return null;
+    }
+    const rawText =
+      typeof value === "string"
+        ? value
+        : typeof value === "number" || typeof value === "boolean"
+          ? String(value)
+          : "";
+    if (!rawText) {
+      return null;
+    }
+    const sampledText =
+      rawText.length > maxLength * 4
+        ? rawText.slice(0, maxLength * 4)
+        : rawText;
+    const text = sampledText.trim();
     if (!text) {
       return null;
     }
@@ -942,11 +958,18 @@ function createApp({
   }
 
   function normalizeSmallPublicUrl(value) {
-    const rawValue = String(value || "").trim();
-    if (!rawValue || rawValue.length > 2048) {
+    if (value === null || value === undefined) {
       return null;
     }
-    return normalizePublicUrl(rawValue);
+    const rawValue = typeof value === "string" ? value : "";
+    if (!rawValue || rawValue.length > 4096) {
+      return null;
+    }
+    const normalizedValue = rawValue.trim();
+    if (!normalizedValue || normalizedValue.length > 2048) {
+      return null;
+    }
+    return normalizePublicUrl(normalizedValue);
   }
 
   function sanitizeNotificationData(data) {

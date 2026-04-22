@@ -452,8 +452,35 @@ function parseDirectParticipantsFromChatId(chatId) {
   return participants.length === 2 ? normalizeParticipantIds(participants) : [];
 }
 
+function buildSafePreviewText(value, maxLength = 280) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  const rawText =
+    typeof value === "string"
+      ? value
+      : typeof value === "number" || typeof value === "boolean"
+        ? String(value)
+        : "";
+  if (!rawText) {
+    return "";
+  }
+  const sampledText =
+    rawText.length > maxLength * 4
+      ? rawText.slice(0, maxLength * 4)
+      : rawText;
+  const normalizedText = sampledText.trim();
+  if (!normalizedText) {
+    return "";
+  }
+  if (normalizedText.length <= maxLength) {
+    return normalizedText;
+  }
+  return `${normalizedText.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+}
+
 function describeMessagePreview(message) {
-  const text = String(message?.text || "").trim();
+  const text = buildSafePreviewText(message?.text, 280);
   if (text) {
     return text;
   }

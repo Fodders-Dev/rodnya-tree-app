@@ -4383,6 +4383,85 @@ test("chat preview list caps bulky group participant ids in preview payload", as
   }
 });
 
+test("chat preview list safely truncates oversized message previews", async () => {
+  const ctx = await startTestServer();
+
+  try {
+    const registerAliceResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "alice-chat-preview-text@rodnya.app",
+        password: "secret123",
+        displayName: "Alice Preview Text",
+      }),
+    });
+    assert.equal(registerAliceResponse.status, 201);
+    const alice = await registerAliceResponse.json();
+
+    const peers = [];
+    for (const [index, name] of [
+      "Bob Preview Text",
+      "Cara Preview Text",
+      "Dan Preview Text",
+      "Egor Preview Text",
+    ].entries()) {
+      const registerPeerResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+        method: "POST",
+        headers: {"content-type": "application/json"},
+        body: JSON.stringify({
+          email: `peer-chat-preview-text-${index}@rodnya.app`,
+          password: "secret123",
+          displayName: name,
+        }),
+      });
+      assert.equal(registerPeerResponse.status, 201);
+      peers.push(await registerPeerResponse.json());
+    }
+
+    const oversizedMessageText = "Ж".repeat(200_000);
+
+    for (const [index, peer] of peers.entries()) {
+      const createChatResponse = await fetch(`${ctx.baseUrl}/v1/chats/direct`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${alice.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({otherUserId: peer.user.id}),
+      });
+      assert.equal(createChatResponse.status, 200);
+      const chatPayload = await createChatResponse.json();
+
+      const sendMessageResponse = await fetch(
+        `${ctx.baseUrl}/v1/chats/${chatPayload.chatId}/messages`,
+        {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${alice.accessToken}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            text: index === 0 ? oversizedMessageText : `Обычное превью ${index}`,
+          }),
+        },
+      );
+      assert.equal(sendMessageResponse.status, 201);
+    }
+
+    const chatsResponse = await fetch(`${ctx.baseUrl}/v1/chats?limit=4`, {
+      headers: {authorization: `Bearer ${alice.accessToken}`},
+    });
+    assert.equal(chatsResponse.status, 200);
+    const chatsPayload = await chatsResponse.json();
+    assert.equal(chatsPayload.chats.length, 4);
+    assert.ok(chatsPayload.chats[3].lastMessage.length <= 280);
+    assert.ok(chatsPayload.chats[3].lastMessage.endsWith("…"));
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
 test("group chat endpoints create previews before first message and keep media payload", async () => {
   const ctx = await startTestServer();
 
