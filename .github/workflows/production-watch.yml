@@ -68,6 +68,8 @@ jobs:
           fi
 
       - name: Activate backend release on server
+        id: activate_backend_release
+        continue-on-error: true
         env:
           REMOTE_ARCHIVE: /tmp/rodnya-backend-${{ github.sha }}.tgz
           BACKEND_SERVER_USERNAME: ${{ secrets.BACKEND_SERVER_USERNAME }}
@@ -93,6 +95,36 @@ jobs:
           BUILD_LABEL="$label" /usr/local/bin/rodnya-activate-backend-release "$archive" "$target" "$service"
           rm -f "$archive"
           EOF
+
+      - name: Capture backend diagnostics after failed activation
+        if: steps.activate_backend_release.outcome != 'success'
+        env:
+          BACKEND_SERVER_USERNAME: ${{ secrets.BACKEND_SERVER_USERNAME }}
+          BACKEND_SERVER_PASSWORD: ${{ secrets.BACKEND_SERVER_PASSWORD }}
+        run: |
+          backend_user="${BACKEND_SERVER_USERNAME:-${{ secrets.SERVER_USERNAME }}}"
+          ssh_cmd=(ssh -i ~/.ssh/id_ed25519 "${backend_user}@${{ secrets.SERVER_HOST }}")
+          if [ -n "$BACKEND_SERVER_PASSWORD" ]; then
+            ssh_cmd=(
+              sshpass -p "$BACKEND_SERVER_PASSWORD" ssh
+              -o StrictHostKeyChecking=no
+              -o UserKnownHostsFile=/dev/null
+              "${backend_user}@${{ secrets.SERVER_HOST }}"
+            )
+          fi
+          "${ssh_cmd[@]}" bash -s <<'EOF'
+          set -euo pipefail
+          echo "=== systemctl status ==="
+          systemctl status rodnya-backend.service --no-pager --full || true
+          echo "=== journalctl ==="
+          journalctl -u rodnya-backend.service -n 200 --no-pager || true
+          echo "=== ready ==="
+          curl -sS -D - http://127.0.0.1:8080/ready || true
+          EOF
+
+      - name: Fail when backend activation did not succeed
+        if: steps.activate_backend_release.outcome != 'success'
+        run: exit 1
 
       - name: Backend readiness check
         env:
