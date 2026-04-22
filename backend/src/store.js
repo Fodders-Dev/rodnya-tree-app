@@ -8312,7 +8312,9 @@ class FileStore {
       await this._write(db);
     }
     const relatedChats = new Map();
-    const userById = new Map();
+    const userById = new Map(
+      db.users.map((entry) => [String(entry.id || "").trim(), entry]),
+    );
     const previews = new Map();
 
     for (const chat of db.chats) {
@@ -8354,32 +8356,29 @@ class FileStore {
       };
 
       if (isGroup) {
-        const otherParticipantNames = participants
-          .filter((participantId) => participantId !== userId)
-          .map((participantId) => {
-            let participant = userById.get(participantId);
-            if (!participant) {
-              participant = db.users.find((entry) => entry.id === participantId) || null;
-              if (participant) {
-                userById.set(participantId, participant);
-              }
-            }
-            return participant?.profile?.displayName || participant?.email || "";
-          })
-          .filter(Boolean);
+        const otherParticipantNames = [];
+        for (const participantId of participants) {
+          if (participantId === userId) {
+            continue;
+          }
+          const participant = userById.get(participantId) || null;
+          const participantName =
+            participant?.profile?.displayName || participant?.email || "";
+          if (!participantName) {
+            continue;
+          }
+          otherParticipantNames.push(participantName);
+          if (otherParticipantNames.length >= 3) {
+            break;
+          }
+        }
         preview.otherUserName =
           chat.title ||
           (otherParticipantNames.length > 0
-            ? otherParticipantNames.slice(0, 3).join(", ")
+            ? otherParticipantNames.join(", ")
             : "Групповой чат");
       } else {
-        let otherUser = userById.get(otherUserId);
-        if (!otherUser) {
-          otherUser = db.users.find((entry) => entry.id === otherUserId) || null;
-          if (otherUser) {
-            userById.set(otherUserId, otherUser);
-          }
-        }
+        const otherUser = userById.get(otherUserId) || null;
         if (otherUser) {
           preview.otherUserName =
             otherUser.profile?.displayName || otherUser.email || "Пользователь";
