@@ -4338,6 +4338,51 @@ test("chat preview list applies the limit query parameter", async () => {
   }
 });
 
+test("chat preview list caps bulky group participant ids in preview payload", async () => {
+  const ctx = await startTestServer();
+
+  try {
+    const registerAliceResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "alice-chat-preview-cap@rodnya.app",
+        password: "secret123",
+        displayName: "Alice Preview Cap",
+      }),
+    });
+    assert.equal(registerAliceResponse.status, 201);
+    const alice = await registerAliceResponse.json();
+
+    const db = await ctx.store._read();
+    const oversizedParticipantIds = [
+      alice.user.id,
+      ...Array.from({length: 256}, (_, index) => `bulk-user-${index}`),
+    ];
+    db.chats.push({
+      id: "bulk-group-chat",
+      type: "group",
+      title: "Большой семейный чат",
+      participantIds: oversizedParticipantIds,
+      createdAt: new Date("2026-04-22T12:00:00.000Z").toISOString(),
+      updatedAt: new Date("2026-04-22T12:05:00.000Z").toISOString(),
+    });
+    await ctx.store._write(db);
+
+    const chatsResponse = await fetch(`${ctx.baseUrl}/v1/chats?limit=1`, {
+      headers: {authorization: `Bearer ${alice.accessToken}`},
+    });
+    assert.equal(chatsResponse.status, 200);
+    const chatsPayload = await chatsResponse.json();
+    assert.equal(chatsPayload.chats.length, 1);
+    assert.equal(chatsPayload.chats[0].chatId, "bulk-group-chat");
+    assert.equal(chatsPayload.chats[0].participantCount, oversizedParticipantIds.length);
+    assert.equal(chatsPayload.chats[0].participantIds.length, 12);
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
 test("group chat endpoints create previews before first message and keep media payload", async () => {
   const ctx = await startTestServer();
 

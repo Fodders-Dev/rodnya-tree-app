@@ -1332,6 +1332,15 @@ function createApp({
   }
 
   function mapChatPreview(preview) {
+    const isGroupPreview =
+      String(preview?.type || "").trim() === "group" ||
+      String(preview?.type || "").trim() === "branch";
+    const normalizedParticipantIds = Array.isArray(preview?.participantIds)
+      ? preview.participantIds
+      : [];
+    const previewParticipantIds = isGroupPreview
+      ? normalizedParticipantIds.slice(0, 12)
+      : normalizedParticipantIds;
     return {
       id: `${preview.chatId}_${preview.userId}`,
       chatId: preview.chatId,
@@ -1339,9 +1348,8 @@ function createApp({
       type: preview.type || "direct",
       title: truncateText(preview.title, 160),
       photoUrl: normalizeSmallPublicUrl(preview.photoUrl || null),
-      participantIds: Array.isArray(preview.participantIds)
-        ? preview.participantIds
-        : [],
+      participantIds: previewParticipantIds,
+      participantCount: normalizedParticipantIds.length,
       otherUserId: preview.otherUserId,
       otherUserName: truncateText(preview.otherUserName || "Пользователь", 120),
       otherUserPhotoUrl: normalizeSmallPublicUrl(preview.otherUserPhotoUrl || null),
