@@ -715,4 +715,277 @@ extension _ProfileScreenSections on _ProfileScreenState {
       ),
     );
   }
+
+  // ── New helper widgets called from the redesigned build() ─────────────────
+
+  /// Stats row widget passed to PersonDossierView (posts / relatives / trees).
+  Widget _buildStatsRow(BuildContext context) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+      children: [
+        _StatBadge(
+          value: _postCount.toString(),
+          label: 'Постов',
+          onTap: null,
+        ),
+        _StatDivider(),
+        _StatBadge(
+          value: _relativeCount.toString(),
+          label: _graphStatLabel(context),
+          onTap: () => context.go('/relatives'),
+        ),
+        _StatDivider(),
+        _StatBadge(
+          value: _treeCount.toString(),
+          label: 'Деревья',
+          onTap: () => context.go('/tree?selector=1'),
+        ),
+      ],
+    );
+  }
+
+  /// Compact tree context chip for the PersonDossierView headerChips list.
+  Widget _buildTreeChip(
+    BuildContext context, {
+    required String label,
+    required bool isFriends,
+    required VoidCallback onTap,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+        decoration: BoxDecoration(
+          color: scheme.primaryContainer.withValues(alpha: 0.55),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(
+            color: scheme.primary.withValues(alpha: 0.22),
+            width: 0.8,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              isFriends
+                  ? Icons.diversity_3_outlined
+                  : Icons.account_tree_outlined,
+              size: 14,
+              color: scheme.primary,
+            ),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    color: scheme.primary,
+                    fontWeight: FontWeight.w700,
+                  ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Compact "tree card" row — replaces the old big GraphContextBanner.
+  Widget _buildTreeCardCompact(
+    BuildContext context, {
+    required FamilyPerson person,
+    required bool isFriendsTree,
+  }) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final photoCount = person.photoGallery.length;
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: GlassPanel(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
+        borderRadius: BorderRadius.circular(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                CircleAvatar(
+                  radius: 20,
+                  backgroundImage: person.primaryPhotoUrl != null
+                      ? NetworkImage(person.primaryPhotoUrl!)
+                      : null,
+                  backgroundColor: scheme.primary.withValues(alpha: 0.12),
+                  foregroundColor: scheme.primary,
+                  child: person.primaryPhotoUrl == null
+                      ? Text(
+                          person.initials,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 14,
+                          ),
+                        )
+                      : null,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Карточка в дереве',
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                          letterSpacing: 0.3,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        person.displayName,
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.open_in_new_rounded, size: 18),
+                  tooltip: 'Открыть карточку',
+                  onPressed: () =>
+                      context.push('/relative/details/${person.id}'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: photoCount == 0
+                      ? null
+                      : () => _showSelectedTreePersonGallery(person),
+                  icon: const Icon(Icons.photo_library_outlined, size: 16),
+                  label: Text(
+                    photoCount == 0 ? 'Фото' : 'Фото ($photoCount)',
+                  ),
+                ),
+                OutlinedButton.icon(
+                  onPressed: () => _showSelectedTreePersonHistory(person),
+                  icon: const Icon(Icons.history_outlined, size: 16),
+                  label: const Text('История'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Small "Account settings" card that replaces the full trust-summary panel.
+  Widget _buildAccountSettingsLink(ColorScheme scheme, ThemeData theme) {
+    final status = _accountLinkingStatus;
+    final hasLinkedChannel =
+        status?.primaryTrustedChannel?.label.isNotEmpty == true;
+
+    return GlassPanel(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      borderRadius: BorderRadius.circular(20),
+      child: Row(
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: scheme.primary.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(Icons.shield_outlined, size: 20, color: scheme.primary),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  hasLinkedChannel ? 'Аккаунт защищён' : 'Настройки аккаунта',
+                  style: theme.textTheme.titleSmall
+                      ?.copyWith(fontWeight: FontWeight.w800),
+                ),
+                if (hasLinkedChannel)
+                  Text(
+                    'Основной канал: ${status!.primaryTrustedChannel?.label}',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          TextButton(
+            onPressed: () => context.push('/profile/settings'),
+            child: const Text('Настройки'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Stat badge widget ─────────────────────────────────────────────────────────
+
+class _StatBadge extends StatelessWidget {
+  const _StatBadge({
+    required this.value,
+    required this.label,
+    required this.onTap,
+  });
+
+  final String value;
+  final String label;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              value,
+              style: theme.textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              label,
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _StatDivider extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 32,
+      child: VerticalDivider(
+        color:
+            Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.6),
+        width: 1,
+      ),
+    );
+  }
 }

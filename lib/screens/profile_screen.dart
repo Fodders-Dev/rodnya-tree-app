@@ -691,12 +691,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final selectedTreeKind = treeProvider.selectedTreeKind;
     final selectedTreeName = treeProvider.selectedTreeName;
     final isFriendsTree = selectedTreeKind == TreeKind.friends;
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
 
     return Scaffold(
+      backgroundColor: Colors.transparent,
       appBar: AppBar(
         title: Text(_appBarTitle),
+        backgroundColor: Colors.transparent,
+        surfaceTintColor: Colors.transparent,
         leading: IconButton(
-          icon: Icon(Icons.arrow_back),
+          icon: const Icon(Icons.arrow_back),
           onPressed: () {
             if (context.canPop()) {
               context.pop();
@@ -706,29 +711,30 @@ class _ProfileScreenState extends State<ProfileScreen> {
           },
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.edit_outlined),
+            tooltip: 'Редактировать профиль',
+            onPressed: () => context.push('/profile/edit'),
+          ),
           PopupMenuButton<String>(
             onSelected: (value) {
-              if (value == 'settings') {
-                context.push('/profile/settings');
-              } else if (value == 'about') {
-                context.push('/profile/about');
-              } else if (value == 'logout') {
-                _signOut();
+              switch (value) {
+                case 'settings':
+                  context.push('/profile/settings');
+                  break;
+                case 'about':
+                  context.push('/profile/about');
+                  break;
+                case 'logout':
+                  _signOut();
+                  break;
               }
             },
-            itemBuilder: (BuildContext context) {
-              return [
-                PopupMenuItem<String>(
-                  value: 'settings',
-                  child: Text('Настройки'),
-                ),
-                PopupMenuItem<String>(
-                  value: 'about',
-                  child: Text('О приложении'),
-                ),
-                PopupMenuItem<String>(value: 'logout', child: Text('Выйти')),
-              ];
-            },
+            itemBuilder: (_) => [
+              const PopupMenuItem(value: 'settings', child: Text('Настройки')),
+              const PopupMenuItem(value: 'about', child: Text('О приложении')),
+              const PopupMenuItem(value: 'logout', child: Text('Выйти')),
+            ],
           ),
         ],
       ),
@@ -784,410 +790,101 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         slivers: [
                           SliverToBoxAdapter(
                             child: Padding(
-                              padding: const EdgeInsets.all(16.0),
+                              padding: const EdgeInsets.all(16),
                               child: ConstrainedBox(
                                 constraints:
-                                    const BoxConstraints(maxWidth: 1180),
-                                child: GlassPanel(
-                                  padding: const EdgeInsets.all(24),
-                                  borderRadius: BorderRadius.circular(32),
-                                  child: _isWideLayout(context)
-                                      ? Row(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            Expanded(
-                                              flex: 2,
-                                              child: Column(
-                                                children: [
-                                                  CircleAvatar(
-                                                    radius: 52,
-                                                    backgroundImage:
-                                                        _userProfile!
-                                                                    .photoURL !=
-                                                                null
-                                                            ? NetworkImage(
-                                                                _userProfile!
-                                                                    .photoURL!,
-                                                              )
-                                                            : null,
-                                                    child: _userProfile!
-                                                                .photoURL ==
-                                                            null
-                                                        ? Icon(
-                                                            Icons.person,
-                                                            size: 52,
-                                                          )
-                                                        : null,
-                                                  ),
-                                                  const SizedBox(height: 16),
-                                                  Text(
-                                                    _getSafeDisplayName(
-                                                      _userProfile!,
-                                                    ),
-                                                    textAlign: TextAlign.center,
-                                                    style: Theme.of(context)
-                                                        .textTheme
-                                                        .headlineSmall
-                                                        ?.copyWith(
-                                                          fontWeight:
-                                                              FontWeight.w800,
-                                                        ),
-                                                  ),
-                                                  const SizedBox(height: 10),
-                                                  Text(
-                                                    _buildProfileHeroSummary(
-                                                      selectedTreeName:
-                                                          selectedTreeName,
-                                                    ),
-                                                    textAlign: TextAlign.center,
-                                                    style: Theme.of(context)
-                                                        .textTheme
-                                                        .bodyMedium
-                                                        ?.copyWith(
-                                                          color: Theme.of(
-                                                            context,
-                                                          )
-                                                              .colorScheme
-                                                              .onSurfaceVariant,
-                                                          height: 1.35,
-                                                        ),
-                                                  ),
-                                                ],
+                                    const BoxConstraints(maxWidth: 680),
+                                child: PersonDossierView(
+                                  dossier: PersonDossier.fromProfile(
+                                    _userProfile!,
+                                    treePerson: _selectedTreePerson,
+                                    isSelf: true,
+                                  ),
+                                  statsRow: _buildStatsRow(context),
+                                  headerChips: [
+                                    if (selectedTreeName != null)
+                                      _buildTreeChip(
+                                        context,
+                                        label: selectedTreeName,
+                                        isFriends: isFriendsTree,
+                                        onTap: () => context.go('/tree'),
+                                      ),
+                                  ],
+                                  actionButtons: [
+                                    FilledButton.icon(
+                                      onPressed: () =>
+                                          context.push('/profile/edit'),
+                                      icon: const Icon(
+                                        Icons.edit_outlined,
+                                        size: 18,
+                                      ),
+                                      label: const Text('Редактировать'),
+                                    ),
+                                    OutlinedButton.icon(
+                                      onPressed: () {
+                                        if (selectedTreeId == null) {
+                                          ScaffoldMessenger.of(
+                                            context,
+                                          ).showSnackBar(
+                                            SnackBar(
+                                              content: Text(
+                                                _graphSelectionHint(context),
+                                              ),
+                                              action: SnackBarAction(
+                                                label: 'Выбрать',
+                                                onPressed: () =>
+                                                    context.go('/tree'),
                                               ),
                                             ),
-                                            const SizedBox(width: 24),
-                                            Expanded(
-                                              flex: 5,
-                                              child: Column(
-                                                crossAxisAlignment:
-                                                    CrossAxisAlignment.start,
-                                                children: [
-                                                  if (selectedTreeName !=
-                                                      null) ...[
-                                                    _buildGraphContextBanner(
-                                                      context,
-                                                      isFriendsTree:
-                                                          isFriendsTree,
-                                                      selectedTreeName:
-                                                          selectedTreeName,
-                                                      selectedTreePerson:
-                                                          _selectedTreePerson,
-                                                    ),
-                                                    const SizedBox(height: 16),
-                                                  ],
-                                                  if ((_userProfile!.city !=
-                                                              null &&
-                                                          _userProfile!.city!
-                                                              .isNotEmpty) ||
-                                                      (_userProfile!.country !=
-                                                              null &&
-                                                          _userProfile!.country!
-                                                              .isNotEmpty))
-                                                    Row(
-                                                      children: [
-                                                        Icon(
-                                                          Icons.location_on,
-                                                          size: 16,
-                                                          color: Theme.of(
-                                                            context,
-                                                          )
-                                                              .colorScheme
-                                                              .onSurfaceVariant,
-                                                        ),
-                                                        const SizedBox(
-                                                            width: 4),
-                                                        Text(
-                                                          '${_userProfile!.city ?? ''}${(_userProfile!.city != null && _userProfile!.city!.isNotEmpty && _userProfile!.country != null && _userProfile!.country!.isNotEmpty) ? ', ' : ''}${_userProfile!.country ?? ''}',
-                                                          style: Theme.of(
-                                                            context,
-                                                          )
-                                                              .textTheme
-                                                              .bodyMedium
-                                                              ?.copyWith(
-                                                                color: Theme.of(
-                                                                  context,
-                                                                )
-                                                                    .colorScheme
-                                                                    .onSurfaceVariant,
-                                                              ),
-                                                        ),
-                                                      ],
-                                                    ),
-                                                  const SizedBox(height: 20),
-                                                  Row(
-                                                    mainAxisAlignment:
-                                                        MainAxisAlignment
-                                                            .spaceBetween,
-                                                    children: [
-                                                      _ProfileStatItem(
-                                                        label: 'Постов',
-                                                        value: _postCount
-                                                            .toString(),
-                                                      ),
-                                                      _ProfileStatItem(
-                                                        label: _graphStatLabel(
-                                                          context,
-                                                        ),
-                                                        value: _relativeCount
-                                                            .toString(),
-                                                      ),
-                                                      _ProfileStatItem(
-                                                        label: 'Деревья',
-                                                        value: _treeCount
-                                                            .toString(),
-                                                      ),
-                                                    ],
-                                                  ),
-                                                  const SizedBox(height: 24),
-                                                  Row(
-                                                    children: [
-                                                      Expanded(
-                                                        child:
-                                                            _ProfileActionButton(
-                                                          label:
-                                                              _graphProfilesLabel(
-                                                            context,
-                                                          ),
-                                                          onPressed: () {
-                                                            final currentSelectedTreeId =
-                                                                treeProvider
-                                                                    .selectedTreeId;
-                                                            if (currentSelectedTreeId ==
-                                                                null) {
-                                                              ScaffoldMessenger
-                                                                  .of(
-                                                                context,
-                                                              ).showSnackBar(
-                                                                SnackBar(
-                                                                  content: Text(
-                                                                    _graphSelectionHint(
-                                                                      context,
-                                                                    ),
-                                                                  ),
-                                                                  action:
-                                                                      SnackBarAction(
-                                                                    label:
-                                                                        'Выбрать',
-                                                                    onPressed: () =>
-                                                                        context
-                                                                            .go(
-                                                                      '/tree',
-                                                                    ),
-                                                                  ),
-                                                                ),
-                                                              );
-                                                            } else {
-                                                              context.push(
-                                                                '/profile/offline_profiles',
-                                                              );
-                                                            }
-                                                          },
-                                                        ),
-                                                      ),
-                                                      const SizedBox(width: 16),
-                                                      Expanded(
-                                                        child:
-                                                            _ProfileActionButton(
-                                                          label:
-                                                              'Редактировать',
-                                                          filled: true,
-                                                          onPressed: () =>
-                                                              context.push(
-                                                            '/profile/edit',
-                                                          ),
-                                                        ),
-                                                      ),
-                                                    ],
-                                                  ),
-                                                ],
-                                              ),
-                                            ),
-                                          ],
-                                        )
-                                      : Column(
-                                          children: [
-                                            if (selectedTreeName != null) ...[
-                                              _buildGraphContextBanner(
-                                                context,
-                                                isFriendsTree: isFriendsTree,
-                                                selectedTreeName:
-                                                    selectedTreeName,
-                                                selectedTreePerson:
-                                                    _selectedTreePerson,
-                                              ),
-                                              const SizedBox(height: 16),
-                                            ],
-                                            CircleAvatar(
-                                              radius: 50,
-                                              backgroundImage:
-                                                  _userProfile!.photoURL != null
-                                                      ? NetworkImage(
-                                                          _userProfile!
-                                                              .photoURL!,
-                                                        )
-                                                      : null,
-                                              child:
-                                                  _userProfile!.photoURL == null
-                                                      ? Icon(
-                                                          Icons.person,
-                                                          size: 50,
-                                                        )
-                                                      : null,
-                                            ),
-                                            const SizedBox(height: 16),
-                                            Text(
-                                              _getSafeDisplayName(
-                                                  _userProfile!),
-                                              style: Theme.of(context)
-                                                  .textTheme
-                                                  .headlineSmall
-                                                  ?.copyWith(
-                                                    fontWeight: FontWeight.w800,
-                                                  ),
-                                            ),
-                                            const SizedBox(height: 10),
-                                            Text(
-                                              _buildProfileHeroSummary(
-                                                selectedTreeName:
-                                                    selectedTreeName,
-                                              ),
-                                              textAlign: TextAlign.center,
-                                              style: Theme.of(context)
-                                                  .textTheme
-                                                  .bodyMedium
-                                                  ?.copyWith(
-                                                    color: Theme.of(context)
-                                                        .colorScheme
-                                                        .onSurfaceVariant,
-                                                    height: 1.35,
-                                                  ),
-                                            ),
-                                            const SizedBox(height: 4),
-                                            if ((_userProfile!.city != null &&
-                                                    _userProfile!
-                                                        .city!.isNotEmpty) ||
-                                                (_userProfile!.country !=
-                                                        null &&
-                                                    _userProfile!
-                                                        .country!.isNotEmpty))
-                                              Row(
-                                                mainAxisAlignment:
-                                                    MainAxisAlignment.center,
-                                                children: [
-                                                  Icon(
-                                                    Icons.location_on,
-                                                    size: 16,
-                                                    color: Theme.of(context)
-                                                        .colorScheme
-                                                        .onSurfaceVariant,
-                                                  ),
-                                                  const SizedBox(width: 4),
-                                                  Text(
-                                                    '${_userProfile!.city ?? ''}${(_userProfile!.city != null && _userProfile!.city!.isNotEmpty && _userProfile!.country != null && _userProfile!.country!.isNotEmpty) ? ', ' : ''}${_userProfile!.country ?? ''}',
-                                                    style: Theme.of(context)
-                                                        .textTheme
-                                                        .bodyMedium
-                                                        ?.copyWith(
-                                                          color: Theme.of(
-                                                            context,
-                                                          )
-                                                              .colorScheme
-                                                              .onSurfaceVariant,
-                                                        ),
-                                                  ),
-                                                ],
-                                              ),
-                                            const SizedBox(height: 16),
-                                            Row(
-                                              mainAxisAlignment:
-                                                  MainAxisAlignment.spaceEvenly,
-                                              children: [
-                                                _ProfileStatItem(
-                                                  label: 'Постов',
-                                                  value: _postCount.toString(),
-                                                ),
-                                                _ProfileStatItem(
-                                                  label: _graphStatLabel(
-                                                    context,
-                                                  ),
-                                                  value:
-                                                      _relativeCount.toString(),
-                                                ),
-                                                _ProfileStatItem(
-                                                  label: 'Деревья',
-                                                  value: _treeCount.toString(),
-                                                ),
-                                              ],
-                                            ),
-                                            const SizedBox(height: 24),
-                                            Row(
-                                              children: [
-                                                Expanded(
-                                                  child: _ProfileActionButton(
-                                                    label: _graphProfilesLabel(
-                                                      context,
-                                                    ),
-                                                    onPressed: () {
-                                                      final currentSelectedTreeId =
-                                                          treeProvider
-                                                              .selectedTreeId;
-                                                      if (currentSelectedTreeId ==
-                                                          null) {
-                                                        ScaffoldMessenger.of(
-                                                          context,
-                                                        ).showSnackBar(
-                                                          SnackBar(
-                                                            content: Text(
-                                                              _graphSelectionHint(
-                                                                context,
-                                                              ),
-                                                            ),
-                                                            action:
-                                                                SnackBarAction(
-                                                              label: 'Выбрать',
-                                                              onPressed: () =>
-                                                                  context.go(
-                                                                '/tree',
-                                                              ),
-                                                            ),
-                                                          ),
-                                                        );
-                                                      } else {
-                                                        context.push(
-                                                          '/profile/offline_profiles',
-                                                        );
-                                                      }
-                                                    },
-                                                  ),
-                                                ),
-                                                const SizedBox(width: 16),
-                                                Expanded(
-                                                  child: _ProfileActionButton(
-                                                    label: 'Редактировать',
-                                                    filled: true,
-                                                    onPressed: () => context
-                                                        .push('/profile/edit'),
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ],
-                                        ),
+                                          );
+                                        } else {
+                                          context.push(
+                                            '/profile/offline_profiles',
+                                          );
+                                        }
+                                      },
+                                      icon: const Icon(
+                                        Icons.people_outline,
+                                        size: 18,
+                                      ),
+                                      label: Text(
+                                        _graphProfilesLabel(context),
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
                             ),
                           ),
+                          // Tree card — compact, only when linked to a node.
+                          if (_selectedTreePerson != null)
+                            SliverToBoxAdapter(
+                              child: Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  16,
+                                  0,
+                                  16,
+                                  0,
+                                ),
+                                child: _buildTreeCardCompact(
+                                  context,
+                                  person: _selectedTreePerson!,
+                                  isFriendsTree: isFriendsTree,
+                                ),
+                              ),
+                            ),
+                          // Auth/trust section → moved to Settings.
+                          // Small shortcut card shown here instead.
                           if (_accountLinkingStatus != null)
                             SliverToBoxAdapter(
                               child: Padding(
                                 padding: const EdgeInsets.fromLTRB(
-                                  16.0,
-                                  16.0,
-                                  16.0,
+                                  16,
+                                  12,
+                                  16,
                                   0,
                                 ),
-                                child: _buildTrustSummarySection(),
+                                child: _buildAccountSettingsLink(scheme, theme),
                               ),
                             ),
                           SliverToBoxAdapter(
@@ -1216,34 +913,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 ),
                               ),
                             ),
-                          SliverToBoxAdapter(
-                            child: Padding(
-                              padding: const EdgeInsets.fromLTRB(
-                                16.0,
-                                16.0,
-                                16.0,
-                                0,
-                              ),
-                              child: PersonDossierView(
-                                dossier: PersonDossier.fromProfile(
-                                  _userProfile!,
-                                  treePerson: _selectedTreePerson,
-                                  isSelf: true,
-                                ),
-                                headerChips: [
-                                  if (selectedTreeName != null)
-                                    Chip(
-                                      avatar: const Icon(
-                                        Icons.account_tree_outlined,
-                                        size: 18,
-                                      ),
-                                      label: Text(selectedTreeName),
-                                      visualDensity: VisualDensity.compact,
-                                    ),
-                                ],
-                              ),
-                            ),
-                          ),
+                          // PersonDossierView is now at the top (hero section).
+                          // This duplicate is removed.
                           SliverPadding(
                             padding: const EdgeInsets.fromLTRB(
                               16.0,
