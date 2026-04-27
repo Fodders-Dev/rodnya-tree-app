@@ -1224,6 +1224,11 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _stopAndSendRecording() async {
     await _recordingController.stopToPreview();
+    // Auto-send immediately — no preview panel, Telegram-style.
+    if (!mounted) return;
+    if (_recordingController.state == ChatRecordingState.preview) {
+      await _sendCurrentMessage();
+    }
   }
 
   Future<void> _cancelRecording() async {
@@ -2984,14 +2989,16 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  Widget _buildRecordingArea() {
+  /// Compact inline recording bar shown while the user is holding the mic.
+  /// Replaces the entire input area — no popups, no panels — pure Telegram style.
+  Widget _buildActiveRecordingInputBar() {
     final theme = Theme.of(context);
-    final isFriendsTree =
-        context.read<TreeProvider>().selectedTreeKind == TreeKind.friends;
+    final scheme = theme.colorScheme;
     final minutes =
         (_recordingController.durationSeconds ~/ 60).toString().padLeft(2, '0');
     final seconds =
         (_recordingController.durationSeconds % 60).toString().padLeft(2, '0');
+    final recColor = scheme.error;
 
     return Padding(
       padding: EdgeInsets.fromLTRB(
@@ -3001,42 +3008,105 @@ class _ChatScreenState extends State<ChatScreen> {
         MediaQuery.of(context).padding.bottom + 8,
       ),
       child: GlassPanel(
-        padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
         borderRadius: BorderRadius.circular(28),
         child: Row(
           children: [
-            const Icon(Icons.mic, color: Colors.red),
-            const SizedBox(width: 12),
-            Text(
-              '$minutes:$seconds',
-              style: theme.textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w700,
-                color: Colors.red,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                isFriendsTree
-                    ? 'Запись для круга зафиксирована'
-                    : 'Запись аудио',
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ),
+            // Cancel swipe hint (left side)
             IconButton(
               onPressed: _cancelRecording,
-              icon: const Icon(Icons.delete_outline),
-              tooltip: 'Отмена',
+              tooltip: 'Отменить',
+              icon: Icon(Icons.close_rounded, color: recColor),
             ),
-            IconButton(
-              onPressed: _stopAndSendRecording,
-              icon: Icon(
-                Icons.stop_rounded,
-                color: theme.colorScheme.primary,
+            // Pulsing dot
+            _PulsingDot(color: recColor),
+            const SizedBox(width: 8),
+            // Timer
+            Text(
+              '$minutes:$seconds',
+              style: theme.textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.w800,
+                color: recColor,
+                fontFeatures: const [FontFeature.tabularFigures()],
               ),
-              tooltip: 'Остановить и прослушать',
+            ),
+            const SizedBox(width: 10),
+            // Hint
+            Expanded(
+              child: Text(
+                '← отмена  ↑ фиксация',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            // Mic button — same gesture recogniser keeps recording alive.
+            GestureDetector(
+              onLongPressMoveUpdate: _handleRecordingLongPressMoveUpdate,
+              onLongPressEnd: _handleRecordingLongPressEnd,
+              child: _PulsingMicButton(color: recColor),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Locked-state recording bar (user swiped up to lock).
+  /// Compact single row — cancel on left, timer + label in centre, send on right.
+  Widget _buildRecordingArea() {
+    final theme = Theme.of(context);
+    final minutes =
+        (_recordingController.durationSeconds ~/ 60).toString().padLeft(2, '0');
+    final seconds =
+        (_recordingController.durationSeconds % 60).toString().padLeft(2, '0');
+    final errorColor = theme.colorScheme.error;
+
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        8,
+        4,
+        8,
+        MediaQuery.of(context).padding.bottom + 8,
+      ),
+      child: GlassPanel(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+        borderRadius: BorderRadius.circular(28),
+        child: Row(
+          children: [
+            // Cancel
+            IconButton(
+              onPressed: _cancelRecording,
+              tooltip: 'Отменить запись',
+              icon: Icon(Icons.delete_outline_rounded, color: errorColor),
+            ),
+            // Pulsing dot + timer
+            _PulsingDot(color: errorColor),
+            const SizedBox(width: 8),
+            Text(
+              '$minutes:$seconds',
+              style: theme.textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.w800,
+                color: errorColor,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Зафиксировано',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            // Send button
+            IconButton.filled(
+              onPressed: _stopAndSendRecording,
+              tooltip: 'Отправить',
+              icon: const Icon(Icons.send_rounded, size: 20),
             ),
           ],
         ),
@@ -3544,6 +3614,13 @@ class _ChatScreenState extends State<ChatScreen> {
         _selectedForwardBatch != null ||
         _selectedEdit != null;
 
+    // ── Compact Telegram-style recording UI ──
+    // While the user is actively holding the mic, replace the whole input
+    // area content with a minimal timer row so no big panel pops up.
+    if (recordingState == ChatRecordingState.recording) {
+      return _buildActiveRecordingInputBar();
+    }
+
     return Padding(
       padding: EdgeInsets.fromLTRB(
         8,
@@ -3557,16 +3634,16 @@ class _ChatScreenState extends State<ChatScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            // Show mic permission / error notices (not the "recording" state —
+            // that is now handled by _buildActiveRecordingInputBar above).
             if (recordingState == ChatRecordingState.denied ||
-                recordingState == ChatRecordingState.failed ||
-                recordingState == ChatRecordingState.recording)
+                recordingState == ChatRecordingState.failed)
               _buildRecordingNotice(
                 Theme.of(context),
                 recordingState: recordingState,
               ),
             if (recordingState == ChatRecordingState.denied ||
-                recordingState == ChatRecordingState.failed ||
-                recordingState == ChatRecordingState.recording)
+                recordingState == ChatRecordingState.failed)
               const SizedBox(height: 8),
             if (_selectedEdit != null)
               _buildEditComposerBar(Theme.of(context), _selectedEdit!),
@@ -3597,7 +3674,10 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
                 ),
               ),
-            if (_selectedAttachments.isNotEmpty)
+            // Only show the voice preview panel if NOT auto-sending
+            // (i.e. it's a non-voice attachment or an edited voice).
+            if (_selectedAttachments.isNotEmpty &&
+                !_selectedAttachments.any(_isRecordedVoiceAttachment))
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
@@ -3738,7 +3818,9 @@ class _ChatScreenState extends State<ChatScreen> {
                   ],
                 ),
               ),
-            if (_selectedAttachments.isNotEmpty) const SizedBox(height: 8),
+            if (_selectedAttachments.isNotEmpty &&
+                !_selectedAttachments.any(_isRecordedVoiceAttachment))
+              const SizedBox(height: 8),
             Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
@@ -6788,6 +6870,138 @@ String _formatAttachmentDuration(Duration duration) {
   final seconds = duration.inSeconds % 60;
   return '$minutes:${seconds.toString().padLeft(2, '0')}';
 }
+
+// ── Recording animation widgets ─────────────────────────────────────────────
+
+/// A small red dot that pulses (opacity + scale) on a 900 ms loop.
+/// Self-contained — no parent TickerProvider needed.
+class _PulsingDot extends StatefulWidget {
+  const _PulsingDot({required this.color});
+
+  final Color color;
+
+  @override
+  State<_PulsingDot> createState() => _PulsingDotState();
+}
+
+class _PulsingDotState extends State<_PulsingDot>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+  late final Animation<double> _scale;
+  late final Animation<double> _opacity;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    )..repeat(reverse: true);
+
+    _scale = Tween<double>(begin: 0.6, end: 1.0).animate(
+      CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut),
+    );
+    _opacity = Tween<double>(begin: 0.45, end: 1.0).animate(
+      CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _ctrl,
+      builder: (_, __) => Opacity(
+        opacity: _opacity.value,
+        child: Transform.scale(
+          scale: _scale.value,
+          child: Container(
+            width: 10,
+            height: 10,
+            decoration: BoxDecoration(
+              color: widget.color,
+              shape: BoxShape.circle,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Mic icon wrapped in a pulsing red ring glow — shown while recording.
+class _PulsingMicButton extends StatefulWidget {
+  const _PulsingMicButton({required this.color});
+
+  final Color color;
+
+  @override
+  State<_PulsingMicButton> createState() => _PulsingMicButtonState();
+}
+
+class _PulsingMicButtonState extends State<_PulsingMicButton>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+  late final Animation<double> _ring;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 800),
+    )..repeat(reverse: true);
+    _ring = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _ctrl, curve: Curves.easeOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _ctrl,
+      builder: (_, child) => Stack(
+        alignment: Alignment.center,
+        children: [
+          // Expanding ring
+          Container(
+            width: 44 + _ring.value * 16,
+            height: 44 + _ring.value * 16,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: widget.color.withValues(
+                alpha: (1.0 - _ring.value) * 0.28,
+              ),
+            ),
+          ),
+          child!,
+        ],
+      ),
+      child: Container(
+        width: 44,
+        height: 44,
+        decoration: BoxDecoration(
+          color: widget.color,
+          shape: BoxShape.circle,
+        ),
+        child: const Icon(Icons.mic_rounded, color: Colors.white, size: 22),
+      ),
+    );
+  }
+}
+
+// ── Chat bubbles ─────────────────────────────────────────────────────────────
 
 class _ChatBubble extends StatelessWidget {
   const _ChatBubble({

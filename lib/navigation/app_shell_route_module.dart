@@ -112,6 +112,9 @@ class AppShellRouteModule {
 
             return Scaffold(
               backgroundColor: Colors.transparent,
+              // extendBody lets the AppBackdrop paint behind the floating
+              // glass nav bar so content scrolls through it seamlessly.
+              extendBody: true,
               body: Stack(
                 fit: StackFit.expand,
                 children: [
