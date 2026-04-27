@@ -271,6 +271,7 @@ class PendingBackendFamilyTreeService implements FamilyTreeServiceInterface {
     required String treeId,
     required String personId,
     required String mediaId,
+    String? fallbackUrl,
   }) {
     throw UnsupportedError(_pendingProviderMessage('tree'));
   }
