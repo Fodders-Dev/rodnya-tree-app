@@ -1429,6 +1429,8 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
         treeId: _currentTreeId!,
         personId: _person!.id,
         mediaId: mediaId,
+        // Send URL as fallback for clients that cached synthetic IDs (photo-1, etc.)
+        fallbackUrl: media['url']?.toString(),
       );
 
       final deletedUrl = media['url']?.toString();

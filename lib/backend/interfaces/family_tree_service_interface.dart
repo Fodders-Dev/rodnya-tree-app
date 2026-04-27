@@ -99,6 +99,7 @@ abstract class FamilyTreeServiceInterface {
     required String treeId,
     required String personId,
     required String mediaId,
+    String? fallbackUrl,
   });
   Future<List<TreeChangeRecord>> getTreeHistory({
     required String treeId,

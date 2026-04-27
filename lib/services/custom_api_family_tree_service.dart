@@ -860,6 +860,7 @@ class CustomApiFamilyTreeService
     required String treeId,
     required String personId,
     required String mediaId,
+    String? fallbackUrl,
   }) async {
     final resolvedPersonId = await _resolvePersonIdForTree(treeId, personId);
     if (resolvedPersonId == null) {
@@ -868,9 +869,15 @@ class CustomApiFamilyTreeService
       );
     }
 
+    final body = <String, dynamic>{};
+    if (fallbackUrl != null && fallbackUrl.isNotEmpty) {
+      body['url'] = fallbackUrl;
+    }
+
     final response = await _requestJson(
       method: 'DELETE',
       path: '/v1/trees/$treeId/persons/$resolvedPersonId/media/$mediaId',
+      body: body.isEmpty ? null : body,
     );
 
     final updatedPerson = _personFromResponse(response, fallbackTreeId: treeId);

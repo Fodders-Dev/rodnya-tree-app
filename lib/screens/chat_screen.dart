@@ -161,6 +161,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   final TextEditingController _messageController = TextEditingController();
   final TextEditingController _searchController = TextEditingController();
+  final FocusNode _messageFocusNode = FocusNode();
   final CallCoordinatorService _callCoordinator =
       GetIt.I<CallCoordinatorService>();
   final ChatServiceInterface _chatService = GetIt.I<ChatServiceInterface>();
@@ -265,6 +266,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _messagesScrollController.dispose();
     _messageController.dispose();
     _searchController.dispose();
+    _messageFocusNode.dispose();
     _typingHeartbeatTimer?.cancel();
     _typingDecayTimer?.cancel();
     unawaited(_setTypingActive(false, force: true));
@@ -1197,6 +1199,97 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     await _pickGenericFile();
+  }
+
+  /// Keyboard shortcut handler for the message composer text field.
+  ///
+  /// Supported shortcuts (web/desktop):
+  ///   Ctrl+Enter  — send message
+  ///   Escape      — cancel reply / edit / forward / exit search
+  ///   ↑           — edit last own message (when field is empty)
+  ///   Ctrl+F      — open in-chat search
+  KeyEventResult _handleMessageKeyEvent(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+
+    final isCtrl = HardwareKeyboard.instance.isControlPressed ||
+        HardwareKeyboard.instance.isMetaPressed;
+
+    // Ctrl+Enter → send
+    if (isCtrl && event.logicalKey == LogicalKeyboardKey.enter) {
+      final canSend = _messageController.text.trim().isNotEmpty ||
+          _selectedAttachments.isNotEmpty ||
+          _selectedForward != null ||
+          _selectedForwardBatch != null ||
+          _selectedEdit != null;
+      if (canSend) {
+        if (_selectedEdit != null) {
+          _saveEditedMessage();
+        } else {
+          _sendCurrentMessage();
+        }
+        return KeyEventResult.handled;
+      }
+    }
+
+    // Escape → clear context or exit search/selection
+    if (event.logicalKey == LogicalKeyboardKey.escape) {
+      if (_isSelectionMode) {
+        _exitSelectionMode();
+        return KeyEventResult.handled;
+      }
+      if (_isSearchMode) {
+        _closeSearch();
+        return KeyEventResult.handled;
+      }
+      if (_selectedEdit != null) {
+        setState(() => _selectedEdit = null);
+        _messageController.clear();
+        return KeyEventResult.handled;
+      }
+      if (_selectedReply != null) {
+        setState(() => _selectedReply = null);
+        return KeyEventResult.handled;
+      }
+      if (_selectedForward != null || _selectedForwardBatch != null) {
+        setState(() {
+          _selectedForward = null;
+          _selectedForwardBatch = null;
+        });
+        return KeyEventResult.handled;
+      }
+    }
+
+    // ↑ when field is empty → edit last own message (Telegram behaviour)
+    if (!isCtrl && event.logicalKey == LogicalKeyboardKey.arrowUp) {
+      if (_messageController.text.isEmpty && _selectedEdit == null) {
+        _startEditingLastOwnMessage();
+        return KeyEventResult.handled;
+      }
+    }
+
+    // Ctrl+F → open search
+    if (isCtrl && event.logicalKey == LogicalKeyboardKey.keyF) {
+      if (!_isSearchMode) {
+        _openSearch();
+        return KeyEventResult.handled;
+      }
+    }
+
+    return KeyEventResult.ignored;
+  }
+
+  /// Edit the most recent message sent by the current user (↑ shortcut).
+  void _startEditingLastOwnMessage() {
+    final messages = _latestRemoteMessages;
+    final myId = _currentUserId;
+    if (messages.isEmpty || myId == null) return;
+
+    for (final msg in messages) {
+      if (msg.senderId == myId && msg.text.isNotEmpty) {
+        _selectEditMessage(msg);
+        return;
+      }
+    }
   }
 
   Future<void> _startRecording() async {
@@ -3845,16 +3938,21 @@ class _ChatScreenState extends State<ChatScreen> {
                           .withValues(alpha: 0.78),
                       borderRadius: BorderRadius.circular(24),
                     ),
-                    child: TextField(
-                      controller: _messageController,
-                      onChanged: (_) => setState(() {}),
-                      decoration: const InputDecoration.collapsed(
-                        hintText: 'Сообщение...',
+                    child: Focus(
+                      focusNode: _messageFocusNode,
+                      onKeyEvent: _handleMessageKeyEvent,
+                      child: TextField(
+                        controller: _messageController,
+                        focusNode: _messageFocusNode,
+                        onChanged: (_) => setState(() {}),
+                        decoration: const InputDecoration.collapsed(
+                          hintText: 'Сообщение...',
+                        ),
+                        textCapitalization: TextCapitalization.sentences,
+                        keyboardType: TextInputType.multiline,
+                        minLines: 1,
+                        maxLines: 5,
                       ),
-                      textCapitalization: TextCapitalization.sentences,
-                      keyboardType: TextInputType.multiline,
-                      minLines: 1,
-                      maxLines: 5,
                     ),
                   ),
                 ),

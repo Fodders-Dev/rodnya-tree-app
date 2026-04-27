@@ -4037,10 +4037,14 @@ function createApp({
         return;
       }
 
+      // Clients that cached person data before real UUIDs were added may send
+      // a synthetic ID like "photo-1". Fall back to URL-based lookup in that case.
+      const fallbackUrl = String(req.body?.url || req.query?.url || "").trim();
       const result = await store.deletePersonMedia({
         treeId: tree.id,
         personId: req.params.personId,
         mediaId: req.params.mediaId,
+        fallbackUrl: fallbackUrl || null,
         actorId: req.auth.user.id,
       });
       if (result === null) {

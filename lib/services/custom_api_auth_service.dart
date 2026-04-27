@@ -1094,25 +1094,6 @@ class CustomApiAuthService implements AuthServiceInterface {
       final normalizedMessage = error.message.trim();
       final lowerMessage = normalizedMessage.toLowerCase();
 
-      if (error.statusCode == 401 || error.statusCode == 403) {
-        if (lowerMessage.contains('email') || lowerMessage.contains('парол')) {
-          return 'Не удалось войти. Проверьте email и пароль.';
-        }
-        return _sanitizeErrorMessage(normalizedMessage);
-      }
-      if (error.statusCode == 409) {
-        if (lowerMessage.contains('email') &&
-            lowerMessage.contains('существ')) {
-          return 'Аккаунт с таким email уже существует.';
-        }
-        return _sanitizeErrorMessage(normalizedMessage);
-      }
-      if (error.statusCode == 429) {
-        return 'Слишком много попыток. Попробуйте чуть позже.';
-      }
-      if ((error.statusCode ?? 0) >= 500) {
-        return 'Сервис временно недоступен. Попробуйте чуть позже.';
-      }
       if (lowerMessage.contains('socketexception') ||
           lowerMessage.contains('failed host lookup') ||
           lowerMessage.contains('connection refused') ||
@@ -1122,6 +1103,30 @@ class CustomApiAuthService implements AuthServiceInterface {
         return 'Не удалось подключиться к серверу. Проверьте интернет и попробуйте ещё раз.';
       }
 
+      if (error.statusCode == 401 || error.statusCode == 403) {
+        if (lowerMessage.contains('email') || lowerMessage.contains('парол')) {
+          return 'Не удалось войти. Проверьте email и пароль.';
+        }
+        final sanitized = _sanitizeErrorMessage(normalizedMessage);
+        return sanitized.isEmpty ? _loginFallback : sanitized;
+      }
+      if (error.statusCode == 409) {
+        if (lowerMessage.contains('email') &&
+            lowerMessage.contains('существ')) {
+          return 'Аккаунт с таким email уже существует.';
+        }
+        final sanitized = _sanitizeErrorMessage(normalizedMessage);
+        return sanitized.isEmpty ? _loginFallback : sanitized;
+      }
+      if (error.statusCode == 429) {
+        return 'Слишком много попыток. Попробуйте чуть позже.';
+      }
+      if ((error.statusCode ?? 0) >= 500) {
+        return 'Сервис временно недоступен. Попробуйте чуть позже.';
+      }
+
+      // For other status codes return the sanitized message or empty string
+      // so the caller's context-specific fallback is used.
       return _sanitizeErrorMessage(normalizedMessage);
     }
 
@@ -1132,12 +1137,16 @@ class CustomApiAuthService implements AuthServiceInterface {
     return _sanitizeErrorMessage(rawMessage);
   }
 
+  /// Returns `''` for empty or clearly-technical messages so the **caller** can
+  /// substitute a context-appropriate fallback (e.g. photo, chat, etc.).
+  /// Auth-specific callers that need the login string should handle the `''`
+  /// case themselves — see [describeError].
   String _sanitizeErrorMessage(String message) {
     final trimmed = message.trim();
     final lowerMessage = trimmed.toLowerCase();
 
     if (trimmed.isEmpty) {
-      return 'Не удалось выполнить вход. Попробуйте ещё раз.';
+      return '';
     }
     if (lowerMessage.startsWith('error:') ||
         lowerMessage.contains('typeerror') ||
@@ -1145,9 +1154,12 @@ class CustomApiAuthService implements AuthServiceInterface {
         lowerMessage.contains('exception:') ||
         lowerMessage.contains('status code') ||
         lowerMessage.contains('backend (')) {
-      return 'Не удалось выполнить вход. Попробуйте ещё раз.';
+      return '';
     }
 
     return trimmed;
   }
+
+  static const _loginFallback =
+      'Не удалось выполнить вход. Попробуйте ещё раз.';
 }

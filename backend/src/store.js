@@ -5927,6 +5927,7 @@ class FileStore {
     treeId,
     personId,
     mediaId,
+    fallbackUrl = null,
     actorId = null,
   }) {
     const db = await this._read();
@@ -5940,7 +5941,15 @@ class FileStore {
     const currentGallery = Array.isArray(person.photoGallery)
       ? person.photoGallery.map((entry) => structuredClone(entry))
       : [];
-    const removedMedia = currentGallery.find((entry) => entry.id === mediaId);
+
+    // Primary lookup by ID; fall back to URL for clients with stale synthetic IDs.
+    let removedMedia = currentGallery.find((entry) => entry.id === mediaId);
+    if (!removedMedia && fallbackUrl) {
+      const normalizedFallback = String(fallbackUrl).trim().toLowerCase();
+      removedMedia = currentGallery.find(
+        (entry) => String(entry.url || "").trim().toLowerCase() === normalizedFallback,
+      );
+    }
     if (!removedMedia) {
       return false;
     }
