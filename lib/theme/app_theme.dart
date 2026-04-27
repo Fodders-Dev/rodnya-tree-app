@@ -158,13 +158,17 @@ class AppTheme {
       floatingActionButtonTheme: FloatingActionButtonThemeData(
         backgroundColor: scheme.primary,
         foregroundColor: scheme.onPrimary,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        elevation: 6,
+        focusElevation: 8,
+        hoverElevation: 8,
+        highlightElevation: 10,
+        shape: const CircleBorder(),
       ),
       chipTheme: base.chipTheme.copyWith(
         backgroundColor: scheme.surface.withValues(alpha: 0.72),
-        selectedColor: scheme.primary.withValues(alpha: 0.14),
+        selectedColor: scheme.primary.withValues(alpha: 0.18),
         disabledColor: scheme.surfaceContainerHighest,
-        side: BorderSide(color: scheme.outlineVariant),
+        side: BorderSide(color: scheme.outlineVariant.withValues(alpha: 0.7)),
         labelStyle: textTheme.labelLarge?.copyWith(color: scheme.onSurface),
         secondaryLabelStyle:
             textTheme.labelLarge?.copyWith(color: scheme.primary),
@@ -175,29 +179,31 @@ class AppTheme {
         iconTheme: IconThemeData(size: 18, color: scheme.onSurfaceVariant),
       ),
       dividerTheme: DividerThemeData(
-        color: scheme.outlineVariant.withValues(alpha: 0.8),
-        thickness: 0.8,
+        color: scheme.outlineVariant.withValues(alpha: 0.55),
+        thickness: 0.7,
         space: 1,
       ),
       iconTheme: IconThemeData(color: scheme.onSurface, size: 22),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: scheme.surface.withValues(alpha: 0.78),
+        fillColor: scheme.surface.withValues(alpha: 0.62),
         hintStyle:
             textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
         contentPadding:
             const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(22),
-          borderSide: BorderSide(color: scheme.outlineVariant),
+          borderSide:
+              BorderSide(color: scheme.outlineVariant.withValues(alpha: 0.5)),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(22),
-          borderSide: BorderSide(color: scheme.outlineVariant),
+          borderSide:
+              BorderSide(color: scheme.outlineVariant.withValues(alpha: 0.5)),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(22),
-          borderSide: BorderSide(color: scheme.primary, width: 1.2),
+          borderSide: BorderSide(color: scheme.primary, width: 1.4),
         ),
         errorBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(22),
@@ -350,7 +356,8 @@ class AppTheme {
       floatingActionButtonTheme: FloatingActionButtonThemeData(
         backgroundColor: scheme.primary,
         foregroundColor: scheme.onPrimary,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        elevation: 6,
+        shape: const CircleBorder(),
       ),
       chipTheme: base.chipTheme.copyWith(
         backgroundColor: scheme.surfaceContainerHigh.withValues(alpha: 0.92),

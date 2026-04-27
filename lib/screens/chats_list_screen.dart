@@ -702,16 +702,19 @@ class _ChatsListScreenState extends State<ChatsListScreen>
     required String? selectedTreeName,
     required bool showLoadingPulse,
   }) {
+    // Slim overview: just the active context pill plus a single unread/all
+    // status chip. Detailed counts live further down inside individual list
+    // entries — this header should help orient at a glance, not enumerate.
     final unreadCount = _chatPreviews.fold<int>(
       0,
       (sum, chat) => sum + chat.unreadCount,
     );
-    final archivedCount = _archivedPreviewCount();
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
       child: Wrap(
-        spacing: 10,
-        runSpacing: 10,
+        spacing: 8,
+        runSpacing: 8,
+        crossAxisAlignment: WrapCrossAlignment.center,
         children: [
           _buildContextPill(
             theme,
@@ -721,18 +724,9 @@ class _ChatsListScreenState extends State<ChatsListScreen>
           ),
           _buildChatStatChip(
             theme,
-            icon: Icons.forum_outlined,
-            label: _countLabel(
-              _chatPreviews.length,
-              one: 'чат',
-              few: 'чата',
-              many: 'чатов',
-            ),
-            highlighted: showLoadingPulse,
-          ),
-          _buildChatStatChip(
-            theme,
-            icon: Icons.mark_chat_unread_outlined,
+            icon: unreadCount > 0
+                ? Icons.mark_chat_unread_outlined
+                : Icons.mark_chat_read_outlined,
             label: unreadCount > 0
                 ? _countLabel(
                     unreadCount,
@@ -741,58 +735,8 @@ class _ChatsListScreenState extends State<ChatsListScreen>
                     many: 'непрочитанных',
                   )
                 : 'Все прочитано',
+            highlighted: unreadCount > 0,
           ),
-          _buildChatStatChip(
-            theme,
-            icon: isFriendsTree
-                ? Icons.diversity_3_outlined
-                : Icons.people_outline,
-            label: '${_countLabel(
-              _relatives.length,
-              one: isFriendsTree ? 'человек' : 'родной',
-              few: isFriendsTree ? 'человека' : 'родных',
-              many: isFriendsTree ? 'человек' : 'родных',
-            )} в поиске',
-          ),
-          if (_drafts.isNotEmpty)
-            _buildChatStatChip(
-              theme,
-              icon: Icons.edit_note_outlined,
-              label: _countLabel(
-                _drafts.length,
-                one: 'черновик',
-                few: 'черновика',
-                many: 'черновиков',
-              ),
-            ),
-          if (archivedCount > 0)
-            _buildChatStatChip(
-              theme,
-              icon: Icons.archive_outlined,
-              label: _countLabel(
-                archivedCount,
-                one: 'чат в архиве',
-                few: 'чата в архиве',
-                many: 'чатов в архиве',
-              ),
-            ),
-          if (_notificationSettings.values.any(
-            (item) => item.level == ChatNotificationLevel.muted,
-          ))
-            _buildChatStatChip(
-              theme,
-              icon: Icons.notifications_off_outlined,
-              label: _countLabel(
-                _notificationSettings.values
-                    .where(
-                      (item) => item.level == ChatNotificationLevel.muted,
-                    )
-                    .length,
-                one: 'чат без уведомлений',
-                few: 'чата без уведомлений',
-                many: 'чатов без уведомлений',
-              ),
-            ),
         ],
       ),
     );

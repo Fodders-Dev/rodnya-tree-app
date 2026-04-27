@@ -674,37 +674,39 @@ class _ReactionPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     final textColor =
-        isMe ? Colors.white.withValues(alpha: 0.95) : Colors.black87;
+        isMe ? scheme.onPrimary.withValues(alpha: 0.95) : scheme.onSurface;
     final selectedColor = isMe
-        ? Colors.white.withValues(alpha: 0.18)
-        : Colors.blue.withValues(alpha: 0.14);
+        ? Colors.white.withValues(alpha: 0.22)
+        : scheme.primary.withValues(alpha: 0.18);
     final defaultColor = isMe
-        ? Colors.white.withValues(alpha: 0.10)
-        : Colors.white.withValues(alpha: 0.72);
+        ? Colors.white.withValues(alpha: 0.12)
+        : scheme.surface.withValues(alpha: 0.78);
+    final borderColor = reaction.isMine
+        ? (isMe
+            ? Colors.white.withValues(alpha: 0.5)
+            : scheme.primary.withValues(alpha: 0.32))
+        : (isMe
+            ? Colors.white.withValues(alpha: 0.18)
+            : scheme.outlineVariant.withValues(alpha: 0.6));
 
     return InkWell(
       borderRadius: BorderRadius.circular(999),
       onTap: onTap,
       child: Ink(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
         decoration: BoxDecoration(
           color: reaction.isMine ? selectedColor : defaultColor,
           borderRadius: BorderRadius.circular(999),
-          border: Border.all(
-            color: reaction.isMine
-                ? (isMe
-                    ? Colors.white.withValues(alpha: 0.45)
-                    : Colors.blue.withValues(alpha: 0.28))
-                : Colors.transparent,
-          ),
+          border: Border.all(color: borderColor, width: 0.7),
         ),
         child: Text(
           '${reaction.emoji} ${reaction.count}',
-          style: TextStyle(
+          style: theme.textTheme.labelSmall?.copyWith(
             color: textColor,
-            fontSize: 12,
-            fontWeight: reaction.isMine ? FontWeight.w700 : FontWeight.w600,
+            fontWeight: reaction.isMine ? FontWeight.w800 : FontWeight.w600,
           ),
         ),
       ),

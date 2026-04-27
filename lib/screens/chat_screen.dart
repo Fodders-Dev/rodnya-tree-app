@@ -6834,8 +6834,72 @@ class _ChatBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+
+    // WhatsApp/Telegram-inspired bubble palette tuned to the warm teal brand.
+    final Color bubbleColor;
+    final Color onBubbleColor;
+    final Color metaColor;
+    final List<BoxShadow> bubbleShadow;
+    final BoxBorder? bubbleBorder;
+
+    if (isMe) {
+      // Outgoing: solid accent gradient — confident, on-brand.
+      bubbleColor = scheme.primary;
+      onBubbleColor = scheme.onPrimary;
+      metaColor = scheme.onPrimary.withValues(alpha: 0.78);
+      bubbleShadow = [
+        BoxShadow(
+          color: scheme.primary.withValues(alpha: isDark ? 0.32 : 0.22),
+          blurRadius: 18,
+          offset: const Offset(0, 8),
+        ),
+      ];
+      bubbleBorder = null;
+    } else {
+      // Incoming: glassy surface tile with hairline border + soft drop shadow.
+      bubbleColor = isDark
+          ? scheme.surfaceContainerHigh.withValues(alpha: 0.92)
+          : scheme.surface.withValues(alpha: 0.94);
+      onBubbleColor = scheme.onSurface;
+      metaColor = scheme.onSurfaceVariant;
+      bubbleShadow = [
+        BoxShadow(
+          color: scheme.shadow.withValues(alpha: isDark ? 0.32 : 0.06),
+          blurRadius: 14,
+          offset: const Offset(0, 6),
+        ),
+      ];
+      bubbleBorder = Border.all(
+        color: scheme.outlineVariant.withValues(alpha: isDark ? 0.4 : 0.55),
+        width: 0.7,
+      );
+    }
+
+    final highlightBorder = isHighlighted
+        ? Border.all(color: scheme.tertiary, width: 1.6)
+        : isSelected
+            ? Border.all(color: scheme.primary, width: 1.4)
+            : bubbleBorder;
+
+    final outgoingGradient = isMe
+        ? LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              scheme.primary,
+              Color.alphaBlend(
+                Colors.black.withValues(alpha: 0.08),
+                scheme.primary,
+              ),
+            ],
+          )
+        : null;
+
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 8),
+      padding: const EdgeInsets.symmetric(vertical: 3, horizontal: 10),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
@@ -6846,16 +6910,11 @@ class _ChatBubble extends StatelessWidget {
               height: 24,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: isSelected
-                    ? Theme.of(context).colorScheme.primary
-                    : Colors.transparent,
+                color: isSelected ? scheme.primary : Colors.transparent,
                 border: Border.all(
                   color: isSelected
-                      ? Theme.of(context).colorScheme.primary
-                      : Theme.of(context)
-                          .colorScheme
-                          .outline
-                          .withValues(alpha: 0.72),
+                      ? scheme.primary
+                      : scheme.outline.withValues(alpha: 0.72),
                   width: 2,
                 ),
               ),
@@ -6863,7 +6922,7 @@ class _ChatBubble extends StatelessWidget {
                   ? Icon(
                       Icons.check_rounded,
                       size: 16,
-                      color: Theme.of(context).colorScheme.onPrimary,
+                      color: scheme.onPrimary,
                     )
                   : null,
             ),
@@ -6872,166 +6931,145 @@ class _ChatBubble extends StatelessWidget {
           Expanded(
             child: Align(
               alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              child: ConstrainedBox(
                 constraints: BoxConstraints(
                   maxWidth: MediaQuery.of(context).size.width * 0.78,
                 ),
-                decoration: BoxDecoration(
-                  color: isSelected
-                      ? (isMe ? Colors.blue[700] : Colors.blue[50])
-                      : (isMe ? Colors.blue[600] : Colors.grey[300]),
-                  border: isPinned || isHighlighted || isSelected
-                      ? Border.all(
-                          color: isHighlighted
-                              ? Colors.amber.shade700
-                              : (isSelected
-                                  ? Theme.of(context).colorScheme.primary
-                                  : (isMe
-                                      ? Colors.white70
-                                      : Colors.blue.shade300)),
-                          width: isHighlighted ? 2 : 1.25,
-                        )
-                      : null,
-                  borderRadius: BorderRadius.only(
-                    topLeft: const Radius.circular(16),
-                    topRight: const Radius.circular(16),
-                    bottomLeft: Radius.circular(isMe ? 16 : 0),
-                    bottomRight: Radius.circular(isMe ? 0 : 16),
+                child: Container(
+                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+                  decoration: BoxDecoration(
+                    color: outgoingGradient == null ? bubbleColor : null,
+                    gradient: outgoingGradient,
+                    border: highlightBorder,
+                    borderRadius: BorderRadius.only(
+                      topLeft: const Radius.circular(20),
+                      topRight: const Radius.circular(20),
+                      bottomLeft: Radius.circular(isMe ? 20 : 6),
+                      bottomRight: Radius.circular(isMe ? 6 : 20),
+                    ),
+                    boxShadow: bubbleShadow,
                   ),
-                ),
-                child: Column(
-                  crossAxisAlignment:
-                      isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-                  children: [
-                    if (senderLabel != null && senderLabel!.isNotEmpty) ...[
-                      Text(
-                        senderLabel!,
-                        style: TextStyle(
-                          color: isMe
-                              ? Colors.white.withValues(alpha: 0.92)
-                              : Colors.black54,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
+                  child: Column(
+                    crossAxisAlignment: isMe
+                        ? CrossAxisAlignment.end
+                        : CrossAxisAlignment.start,
+                    children: [
+                      if (senderLabel != null && senderLabel!.isNotEmpty) ...[
+                        Text(
+                          senderLabel!,
+                          style: theme.textTheme.labelMedium?.copyWith(
+                            color: isMe
+                                ? scheme.onPrimary.withValues(alpha: 0.92)
+                                : scheme.primary,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: -0.1,
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 6),
-                    ],
-                    if (isPinned) ...[
+                        const SizedBox(height: 4),
+                      ],
+                      if (isPinned) ...[
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.push_pin,
+                              size: 12,
+                              color: metaColor,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              'Закреплено',
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: metaColor,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                      ],
+                      if (replyTo != null) ...[
+                        _ReplyQuoteCard(
+                          reply: replyTo!,
+                          isMe: isMe,
+                        ),
+                        const SizedBox(height: 8),
+                      ],
+                      if (remoteAttachments.isNotEmpty) ...[
+                        _buildRemoteAttachments(context),
+                        const SizedBox(height: 8),
+                      ],
+                      if (localAttachments.isNotEmpty) ...[
+                        _buildLocalAttachments(context),
+                        const SizedBox(height: 8),
+                      ],
+                      if (text.isNotEmpty)
+                        _HighlightedMessageText(
+                          text: text,
+                          query: highlightQuery,
+                          color: onBubbleColor,
+                        ),
+                      if (text.isEmpty &&
+                          remoteAttachments.isEmpty &&
+                          localAttachments.isEmpty)
+                        Text(
+                          'Сообщение',
+                          style: theme.textTheme.bodyLarge?.copyWith(
+                            color: onBubbleColor,
+                          ),
+                        ),
+                      if (reactionGroups.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          children: reactionGroups
+                              .map(
+                                (reaction) => _ReactionPill(
+                                  reaction: reaction,
+                                  isMe: isMe,
+                                  onTap: onReactionTap == null
+                                      ? null
+                                      : () => onReactionTap!(reaction.emoji),
+                                ),
+                              )
+                              .toList(),
+                        ),
+                      ],
+                      const SizedBox(height: 4),
                       Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(
-                            Icons.push_pin,
-                            size: 13,
-                            color: isMe
-                                ? Colors.white.withValues(alpha: 0.9)
-                                : Colors.blueGrey[700],
-                          ),
-                          const SizedBox(width: 4),
                           Text(
-                            'Закреплено',
-                            style: TextStyle(
-                              color: isMe
-                                  ? Colors.white.withValues(alpha: 0.9)
-                                  : Colors.blueGrey[700],
-                              fontSize: 11,
-                              fontWeight: FontWeight.w700,
+                            timeLabel,
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: metaColor,
+                              fontWeight: FontWeight.w500,
                             ),
                           ),
+                          if (isMe) ...[
+                            const SizedBox(width: 4),
+                            Icon(
+                              isRead ? Icons.done_all : Icons.done,
+                              size: 14,
+                              color: isRead
+                                  ? scheme.tertiary
+                                  : scheme.onPrimary.withValues(alpha: 0.78),
+                            ),
+                          ],
                         ],
                       ),
-                      const SizedBox(height: 6),
-                    ],
-                    if (replyTo != null) ...[
-                      _ReplyQuoteCard(
-                        reply: replyTo!,
-                        isMe: isMe,
-                      ),
-                      const SizedBox(height: 8),
-                    ],
-                    if (remoteAttachments.isNotEmpty) ...[
-                      _buildRemoteAttachments(context),
-                      const SizedBox(height: 8),
-                    ],
-                    if (localAttachments.isNotEmpty) ...[
-                      _buildLocalAttachments(context),
-                      const SizedBox(height: 8),
-                    ],
-                    if (text.isNotEmpty)
-                      _HighlightedMessageText(
-                        text: text,
-                        query: highlightQuery,
-                        color: isMe ? Colors.white : Colors.black87,
-                      ),
-                    if (text.isEmpty &&
-                        remoteAttachments.isEmpty &&
-                        localAttachments.isEmpty)
-                      Text(
-                        'Сообщение',
-                        style: TextStyle(
-                          color: isMe ? Colors.white : Colors.black87,
-                          fontSize: 16,
-                        ),
-                      ),
-                    if (reactionGroups.isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 6,
-                        runSpacing: 6,
-                        children: reactionGroups
-                            .map(
-                              (reaction) => _ReactionPill(
-                                reaction: reaction,
-                                isMe: isMe,
-                                onTap: onReactionTap == null
-                                    ? null
-                                    : () => onReactionTap!(reaction.emoji),
-                              ),
-                            )
-                            .toList(),
-                      ),
-                    ],
-                    const SizedBox(height: 4),
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
+                      if (footerLabel != null && footerLabel!.isNotEmpty) ...[
+                        const SizedBox(height: 2),
                         Text(
-                          timeLabel,
-                          style: TextStyle(
-                            color: isMe
-                                ? Colors.white.withValues(alpha: 0.7)
-                                : Colors.black54,
-                            fontSize: 11,
+                          footerLabel!,
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: metaColor,
                           ),
                         ),
-                        if (isMe) ...[
-                          const SizedBox(width: 5),
-                          Icon(
-                            isRead ? Icons.done_all : Icons.done,
-                            size: 14,
-                            color: isRead
-                                ? Colors.lightBlueAccent[100]
-                                : Colors.white.withValues(alpha: 0.7),
-                          ),
-                        ],
                       ],
-                    ),
-                    if (footerLabel != null && footerLabel!.isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        footerLabel!,
-                        style: TextStyle(
-                          color: isMe
-                              ? Colors.white.withValues(alpha: 0.78)
-                              : Colors.black54,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
                     ],
-                  ],
+                  ),
                 ),
               ),
             ),
@@ -7174,17 +7212,21 @@ class _ReplyQuoteCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final titleColor = isMe ? Colors.white : Colors.black87;
-    final bodyColor =
-        isMe ? Colors.white.withValues(alpha: 0.78) : Colors.black54;
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final titleColor = isMe ? scheme.onPrimary : scheme.primary;
+    final bodyColor = isMe
+        ? scheme.onPrimary.withValues(alpha: 0.84)
+        : scheme.onSurfaceVariant;
+    final accentColor = isMe ? scheme.onPrimary : scheme.primary;
 
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
       decoration: BoxDecoration(
         color: isMe
-            ? Colors.white.withValues(alpha: 0.14)
-            : Colors.black.withValues(alpha: 0.06),
+            ? Colors.white.withValues(alpha: 0.16)
+            : scheme.primary.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Row(
@@ -7194,7 +7236,7 @@ class _ReplyQuoteCard extends StatelessWidget {
             width: 3,
             height: 32,
             decoration: BoxDecoration(
-              color: isMe ? Colors.white : Colors.blue[600],
+              color: accentColor,
               borderRadius: BorderRadius.circular(999),
             ),
           ),
@@ -7208,10 +7250,9 @@ class _ReplyQuoteCard extends StatelessWidget {
                   reply.senderName,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
+                  style: theme.textTheme.labelMedium?.copyWith(
                     color: titleColor,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
+                    fontWeight: FontWeight.w800,
                   ),
                 ),
                 const SizedBox(height: 2),
@@ -7221,10 +7262,9 @@ class _ReplyQuoteCard extends StatelessWidget {
                       : 'Сообщение без текста',
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
+                  style: theme.textTheme.bodySmall?.copyWith(
                     color: bodyColor,
-                    fontSize: 12,
-                    height: 1.2,
+                    height: 1.25,
                   ),
                 ),
               ],

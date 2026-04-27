@@ -69,6 +69,7 @@ class MainNavigationBar extends StatelessWidget {
 
                 final theme = Theme.of(context);
                 final scheme = theme.colorScheme;
+                final isDark = theme.brightness == Brightness.dark;
 
                 return SafeArea(
                   minimum: const EdgeInsets.fromLTRB(12, 0, 12, 12),
@@ -77,45 +78,94 @@ class MainNavigationBar extends StatelessWidget {
                       final showLabels = constraints.maxWidth >= 480;
                       final itemBorderRadius = showLabels ? 22.0 : 20.0;
 
-                      return ClipRRect(
-                        borderRadius: BorderRadius.circular(30),
-                        child: BackdropFilter(
-                          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-                          child: Container(
-                            padding: EdgeInsets.symmetric(
-                              horizontal: showLabels ? 8 : 6,
-                              vertical: showLabels ? 8 : 6,
-                            ),
-                            decoration: BoxDecoration(
-                              color: scheme.surface.withValues(alpha: 0.84),
-                              borderRadius: BorderRadius.circular(30),
-                              border: Border.all(
-                                color: scheme.outlineVariant.withValues(
-                                  alpha: 0.9,
-                                ),
+                      return DecoratedBox(
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(34),
+                          boxShadow: [
+                            BoxShadow(
+                              color: scheme.shadow.withValues(
+                                alpha: isDark ? 0.36 : 0.10,
                               ),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: scheme.shadow.withValues(alpha: 0.1),
-                                  blurRadius: 28,
-                                  offset: const Offset(0, 14),
-                                ),
-                              ],
+                              blurRadius: 28,
+                              offset: const Offset(0, 14),
                             ),
-                            child: Row(
+                          ],
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(34),
+                          child: BackdropFilter(
+                            filter: ImageFilter.blur(sigmaX: 26, sigmaY: 26),
+                            child: Stack(
                               children: [
-                                for (var index = 0;
-                                    index < items.length;
-                                    index++)
-                                  Expanded(
-                                    child: _NavItem(
-                                      data: items[index],
-                                      selected: currentIndex == index,
-                                      showLabel: showLabels,
-                                      itemBorderRadius: itemBorderRadius,
-                                      onTap: () => onTap(index),
+                                Positioned.fill(
+                                  child: DecoratedBox(
+                                    decoration: BoxDecoration(
+                                      color: scheme.surface.withValues(
+                                        alpha: isDark ? 0.62 : 0.7,
+                                      ),
                                     ),
                                   ),
+                                ),
+                                // Specular highlight along the top edge.
+                                Positioned.fill(
+                                  child: IgnorePointer(
+                                    child: DecoratedBox(
+                                      decoration: BoxDecoration(
+                                        gradient: LinearGradient(
+                                          begin: Alignment.topCenter,
+                                          end: Alignment.bottomCenter,
+                                          colors: [
+                                            Colors.white.withValues(
+                                              alpha: isDark ? 0.08 : 0.36,
+                                            ),
+                                            Colors.white.withValues(alpha: 0),
+                                          ],
+                                          stops: const [0, 0.55],
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                Padding(
+                                  padding: EdgeInsets.symmetric(
+                                    horizontal: showLabels ? 8 : 6,
+                                    vertical: showLabels ? 8 : 6,
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      for (var index = 0;
+                                          index < items.length;
+                                          index++)
+                                        Expanded(
+                                          child: _NavItem(
+                                            data: items[index],
+                                            selected: currentIndex == index,
+                                            showLabel: showLabels,
+                                            itemBorderRadius: itemBorderRadius,
+                                            onTap: () => onTap(index),
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                                // Hairline border for the glass edge.
+                                Positioned.fill(
+                                  child: IgnorePointer(
+                                    child: DecoratedBox(
+                                      decoration: BoxDecoration(
+                                        borderRadius: BorderRadius.circular(34),
+                                        border: Border.all(
+                                          color: isDark
+                                              ? Colors.white
+                                                  .withValues(alpha: 0.08)
+                                              : Colors.white
+                                                  .withValues(alpha: 0.6),
+                                          width: 1,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
                               ],
                             ),
                           ),
@@ -166,10 +216,12 @@ class _NavItem extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+
+    final iconColor = selected ? scheme.primary : scheme.onSurfaceVariant;
     final icon = Icon(
       selected ? data.filledIcon : data.outlinedIcon,
       size: 22,
-      color: selected ? scheme.primary : scheme.onSurfaceVariant,
+      color: iconColor,
     );
 
     final iconWithBadge = data.count <= 0
@@ -189,17 +241,30 @@ class _NavItem extends StatelessWidget {
           borderRadius: BorderRadius.circular(itemBorderRadius),
           onTap: onTap,
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 180),
+            duration: const Duration(milliseconds: 220),
             curve: Curves.easeOutCubic,
             padding: EdgeInsets.symmetric(
               horizontal: showLabel ? 8 : 4,
               vertical: showLabel ? 8 : 10,
             ),
             decoration: BoxDecoration(
-              color: selected
-                  ? scheme.primary.withValues(alpha: 0.14)
-                  : Colors.transparent,
+              gradient: selected
+                  ? LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        scheme.primary.withValues(alpha: 0.22),
+                        scheme.primary.withValues(alpha: 0.10),
+                      ],
+                    )
+                  : null,
               borderRadius: BorderRadius.circular(itemBorderRadius),
+              border: selected
+                  ? Border.all(
+                      color: scheme.primary.withValues(alpha: 0.28),
+                      width: 0.8,
+                    )
+                  : null,
             ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -214,7 +279,7 @@ class _NavItem extends StatelessWidget {
                     style: theme.textTheme.labelSmall?.copyWith(
                       color:
                           selected ? scheme.primary : scheme.onSurfaceVariant,
-                      fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+                      fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
                     ),
                   ),
                 ],

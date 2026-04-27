@@ -201,8 +201,8 @@ class _PostCardState extends State<PostCard>
   Widget build(BuildContext context) {
     return GlassPanel(
       padding: EdgeInsets.zero,
-      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-      borderRadius: BorderRadius.circular(26),
+      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+      borderRadius: BorderRadius.circular(28),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -228,6 +228,7 @@ class _PostCardState extends State<PostCard>
 
   Widget _buildPostHeader() {
     final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
       child: Row(
@@ -241,10 +242,11 @@ class _PostCardState extends State<PostCard>
                       widget.post.authorPhotoUrl!.isNotEmpty
                   ? CachedNetworkImageProvider(widget.post.authorPhotoUrl!)
                   : null,
-              backgroundColor: Colors.grey.shade200,
+              backgroundColor: scheme.primary.withValues(alpha: 0.12),
+              foregroundColor: scheme.primary,
               child: widget.post.authorPhotoUrl == null ||
                       widget.post.authorPhotoUrl!.isEmpty
-                  ? const Icon(Icons.person, size: 20, color: Colors.grey)
+                  ? const Icon(Icons.person_rounded, size: 22)
                   : null,
             ),
           ),
@@ -294,7 +296,10 @@ class _PostCardState extends State<PostCard>
           ),
           if (_currentUserId == widget.post.authorId)
             PopupMenuButton<String>(
-              icon: Icon(Icons.more_vert, color: Colors.grey.shade600),
+              icon: Icon(
+                Icons.more_vert,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
               onSelected: (value) {
                 if (value == 'delete') {
                   _deletePost();
@@ -332,12 +337,21 @@ class _PostCardState extends State<PostCard>
               imageUrl: images.first,
               fit: BoxFit.cover,
               placeholder: (_, __) => Container(
-                color: Colors.grey.shade300,
+                color: Theme.of(context)
+                    .colorScheme
+                    .surfaceContainerHighest
+                    .withValues(alpha: 0.55),
                 child: const Center(child: CircularProgressIndicator()),
               ),
               errorWidget: (_, __, ___) => Container(
-                color: Colors.grey.shade300,
-                child: const Center(child: Icon(Icons.error)),
+                color: Theme.of(context)
+                    .colorScheme
+                    .surfaceContainerHighest
+                    .withValues(alpha: 0.55),
+                child: Icon(
+                  Icons.broken_image_outlined,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
               ),
             ),
           ),
@@ -358,12 +372,21 @@ class _PostCardState extends State<PostCard>
                   Image(image: imageProvider, fit: BoxFit.cover),
               fit: BoxFit.cover,
               placeholder: (_, __) => Container(
-                color: Colors.grey.shade300,
+                color: Theme.of(context)
+                    .colorScheme
+                    .surfaceContainerHighest
+                    .withValues(alpha: 0.55),
                 child: const Center(child: CircularProgressIndicator()),
               ),
               errorWidget: (_, __, ___) => Container(
-                color: Colors.grey.shade300,
-                child: const Center(child: Icon(Icons.error)),
+                color: Theme.of(context)
+                    .colorScheme
+                    .surfaceContainerHighest
+                    .withValues(alpha: 0.55),
+                child: Icon(
+                  Icons.broken_image_outlined,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
               ),
               width: MediaQuery.of(context).size.width,
             ),

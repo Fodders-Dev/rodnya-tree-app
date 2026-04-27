@@ -607,37 +607,22 @@ class _HomeScreenState extends State<HomeScreen> {
     required String? selectedTreeName,
   }) {
     final theme = Theme.of(context);
-    final title = !hasSelectedTree
-        ? 'С чего начнём'
-        : isFriendsTree
-            ? 'Круг под рукой'
-            : 'Семья под рукой';
-    final subtitle = !hasSelectedTree
-        ? 'Выберите активное дерево, чтобы сразу открыть ленту, карточки, события и чаты.'
-        : selectedTreeName?.trim().isNotEmpty == true
-            ? 'Сейчас вы в “$selectedTreeName”. Здесь главное действие всегда сверху: пост, люди, дерево и приглашения.'
-            : 'Главные действия уже готовы: публикации, люди, дерево и семейная активность.';
-    final statusChips = <Widget>[];
-    if (!hasSelectedTree) {
-      statusChips.add(
-        _buildHeaderChip(
-          icon: Icons.account_tree_outlined,
-          label: 'Нет активного дерева',
-          highlighted: true,
-        ),
-      );
-    } else if (selectedTreeName != null && selectedTreeName.trim().isNotEmpty) {
-      statusChips.add(
-        _buildHeaderChip(
-          icon: isFriendsTree
-              ? Icons.diversity_3_outlined
-              : Icons.account_tree_outlined,
-          label: selectedTreeName,
-          highlighted: true,
-        ),
-      );
-    }
 
+    // Action-first: tight glass strip with the active tree pill on the left and
+    // the most useful one or two actions on the right. No prose subtitle.
+    final treeLabel = !hasSelectedTree
+        ? 'Выберите дерево'
+        : (selectedTreeName?.trim().isNotEmpty == true
+            ? selectedTreeName!.trim()
+            : (isFriendsTree ? 'Круг друзей' : 'Семейное дерево'));
+
+    final treeIcon = !hasSelectedTree
+        ? Icons.account_tree_outlined
+        : (isFriendsTree
+            ? Icons.diversity_3_outlined
+            : Icons.account_tree_outlined);
+
+    final statusChips = <Widget>[];
     if (hasSelectedTree && _postsUnavailable) {
       statusChips.add(
         _buildHeaderChip(
@@ -646,7 +631,6 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       );
     }
-
     if (hasSelectedTree && _storiesUnavailable) {
       statusChips.add(
         _buildHeaderChip(
@@ -656,78 +640,105 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
 
-    final actions = hasSelectedTree
-        ? [
-            _buildQuickActionButton(
-              icon: Icons.post_add_outlined,
-              label: 'Новый пост',
-              onTap: () => context.push('/post/create'),
-              primary: true,
-            ),
-            _buildQuickActionButton(
-              icon: isFriendsTree ? Icons.hub_outlined : Icons.people_outline,
-              label: isFriendsTree ? 'Люди круга' : 'Открыть родных',
-              onTap: () => context.go('/relatives'),
-            ),
-            _buildQuickActionButton(
-              icon: Icons.account_tree_outlined,
-              label: isFriendsTree ? 'Открыть круг' : 'Открыть дерево',
-              onTap: () => context.go('/tree?selector=1'),
-            ),
-          ]
-        : [
-            _buildQuickActionButton(
-              icon: Icons.account_tree_outlined,
-              label: 'Выбрать дерево',
-              onTap: () => context.go('/tree?selector=1'),
-              primary: true,
-            ),
-            _buildQuickActionButton(
-              icon: Icons.add_circle_outline,
-              label: 'Создать граф',
-              onTap: () => context.push('/trees/create'),
-            ),
-          ];
+    final primaryAction = hasSelectedTree
+        ? _buildQuickActionButton(
+            icon: Icons.post_add_outlined,
+            label: 'Новый пост',
+            onTap: () => context.push('/post/create'),
+            primary: true,
+          )
+        : _buildQuickActionButton(
+            icon: Icons.account_tree_outlined,
+            label: 'Выбрать дерево',
+            onTap: () => context.go('/tree?selector=1'),
+            primary: true,
+          );
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
       child: GlassPanel(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
         borderRadius: BorderRadius.circular(28),
-        color: theme.colorScheme.surface.withValues(
-          alpha: theme.brightness == Brightness.dark ? 0.86 : 0.78,
-        ),
-        borderColor: theme.colorScheme.outlineVariant.withValues(alpha: 0.82),
-        child: Align(
-          alignment: Alignment.centerLeft,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                style: theme.textTheme.titleLarge?.copyWith(
-                  fontWeight: FontWeight.w800,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(999),
+                    onTap: () => context.go('/tree?selector=1'),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 4,
+                        vertical: 4,
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 36,
+                            height: 36,
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.primary
+                                  .withValues(alpha: 0.14),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Icon(
+                              treeIcon,
+                              size: 20,
+                              color: theme.colorScheme.primary,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  hasSelectedTree
+                                      ? 'Активное дерево'
+                                      : 'Нет активного дерева',
+                                  style: theme.textTheme.labelSmall?.copyWith(
+                                    color: theme.colorScheme.onSurfaceVariant,
+                                    fontWeight: FontWeight.w600,
+                                    letterSpacing: 0.2,
+                                  ),
+                                ),
+                                Text(
+                                  treeLabel,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: theme.textTheme.titleMedium?.copyWith(
+                                    fontWeight: FontWeight.w800,
+                                    letterSpacing: -0.2,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Icon(
+                            Icons.unfold_more_rounded,
+                            size: 18,
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                 ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                subtitle,
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-              ),
-              const SizedBox(height: 12),
+                const SizedBox(width: 8),
+                primaryAction,
+              ],
+            ),
+            if (statusChips.isNotEmpty) ...[
+              const SizedBox(height: 10),
               Wrap(
                 spacing: 8,
                 runSpacing: 8,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  ...statusChips,
-                  ...actions,
-                ],
+                children: statusChips,
               ),
             ],
-          ),
+          ],
         ),
       ),
     );
