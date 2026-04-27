@@ -1399,7 +1399,11 @@ class _ChatScreenState extends State<ChatScreen> {
       forwardedText: _selectedForward?.text ?? '',
     );
     final replyTo = _selectedReply;
-    final localMessageId = 'local-${_localMessageCounter++}';
+    // Include millisecond epoch so IDs are unique across widget re-creations.
+    // Previously 'local-0' was reused when navigating away and back, causing
+    // the backend to deduplicate (200) and silently return old message content.
+    final localMessageId =
+        'local-${DateTime.now().millisecondsSinceEpoch}-${_localMessageCounter++}';
     if (messageText.isEmpty &&
         attachments.isEmpty &&
         forwardedAttachments.isEmpty) {
@@ -1522,7 +1526,11 @@ class _ChatScreenState extends State<ChatScreen> {
     List<ChatAttachment> forwardedAttachments = const <ChatAttachment>[],
     ChatReplyReference? replyTo,
   }) async {
-    final localMessageId = 'local-${_localMessageCounter++}';
+    // Include millisecond epoch so IDs are unique across widget re-creations.
+    // Previously 'local-0' was reused when navigating away and back, causing
+    // the backend to deduplicate (200) and silently return old message content.
+    final localMessageId =
+        'local-${DateTime.now().millisecondsSinceEpoch}-${_localMessageCounter++}';
     final pendingMessage = _OutgoingMessage(
       localId: localMessageId,
       senderId: senderId,
