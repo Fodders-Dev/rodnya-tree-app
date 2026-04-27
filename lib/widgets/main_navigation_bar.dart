@@ -1,5 +1,6 @@
 import 'dart:ui';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
 class MainNavigationBar extends StatelessWidget {
@@ -78,9 +79,94 @@ class MainNavigationBar extends StatelessWidget {
                       final showLabels = constraints.maxWidth >= 480;
                       final itemBorderRadius = showLabels ? 22.0 : 20.0;
 
+                      // On web skip BackdropFilter — too expensive.
+                      final navFill = scheme.surface.withValues(
+                        alpha: kIsWeb
+                            ? (isDark ? 0.95 : 0.97)
+                            : (isDark ? 0.62 : 0.70),
+                      );
+                      final borderColor = isDark
+                          ? Colors.white.withValues(alpha: 0.08)
+                          : Colors.white.withValues(alpha: 0.6);
+                      final navRadius = BorderRadius.circular(34);
+
+                      Widget navInner = ClipRRect(
+                        borderRadius: navRadius,
+                        child: Stack(
+                          children: [
+                            Positioned.fill(
+                              child: DecoratedBox(
+                                decoration: BoxDecoration(color: navFill),
+                              ),
+                            ),
+                            Positioned.fill(
+                              child: IgnorePointer(
+                                child: DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    gradient: LinearGradient(
+                                      begin: Alignment.topCenter,
+                                      end: Alignment.bottomCenter,
+                                      colors: [
+                                        Colors.white.withValues(
+                                          alpha: isDark ? 0.08 : 0.32,
+                                        ),
+                                        Colors.white.withValues(alpha: 0),
+                                      ],
+                                      stops: const [0, 0.5],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            Padding(
+                              padding: EdgeInsets.symmetric(
+                                horizontal: showLabels ? 8 : 6,
+                                vertical: showLabels ? 8 : 6,
+                              ),
+                              child: Row(
+                                children: [
+                                  for (var index = 0;
+                                      index < items.length;
+                                      index++)
+                                    Expanded(
+                                      child: _NavItem(
+                                        data: items[index],
+                                        selected: currentIndex == index,
+                                        showLabel: showLabels,
+                                        itemBorderRadius: itemBorderRadius,
+                                        onTap: () => onTap(index),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                            Positioned.fill(
+                              child: IgnorePointer(
+                                child: DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    borderRadius: navRadius,
+                                    border: Border.all(
+                                      color: borderColor,
+                                      width: 1,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+
+                      if (!kIsWeb) {
+                        navInner = BackdropFilter(
+                          filter: ImageFilter.blur(sigmaX: 26, sigmaY: 26),
+                          child: navInner,
+                        );
+                      }
+
                       return DecoratedBox(
                         decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(34),
+                          borderRadius: navRadius,
                           boxShadow: [
                             BoxShadow(
                               color: scheme.shadow.withValues(
@@ -91,85 +177,7 @@ class MainNavigationBar extends StatelessWidget {
                             ),
                           ],
                         ),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(34),
-                          child: BackdropFilter(
-                            filter: ImageFilter.blur(sigmaX: 26, sigmaY: 26),
-                            child: Stack(
-                              children: [
-                                Positioned.fill(
-                                  child: DecoratedBox(
-                                    decoration: BoxDecoration(
-                                      color: scheme.surface.withValues(
-                                        alpha: isDark ? 0.62 : 0.7,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                // Specular highlight along the top edge.
-                                Positioned.fill(
-                                  child: IgnorePointer(
-                                    child: DecoratedBox(
-                                      decoration: BoxDecoration(
-                                        gradient: LinearGradient(
-                                          begin: Alignment.topCenter,
-                                          end: Alignment.bottomCenter,
-                                          colors: [
-                                            Colors.white.withValues(
-                                              alpha: isDark ? 0.08 : 0.36,
-                                            ),
-                                            Colors.white.withValues(alpha: 0),
-                                          ],
-                                          stops: const [0, 0.55],
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                Padding(
-                                  padding: EdgeInsets.symmetric(
-                                    horizontal: showLabels ? 8 : 6,
-                                    vertical: showLabels ? 8 : 6,
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      for (var index = 0;
-                                          index < items.length;
-                                          index++)
-                                        Expanded(
-                                          child: _NavItem(
-                                            data: items[index],
-                                            selected: currentIndex == index,
-                                            showLabel: showLabels,
-                                            itemBorderRadius: itemBorderRadius,
-                                            onTap: () => onTap(index),
-                                          ),
-                                        ),
-                                    ],
-                                  ),
-                                ),
-                                // Hairline border for the glass edge.
-                                Positioned.fill(
-                                  child: IgnorePointer(
-                                    child: DecoratedBox(
-                                      decoration: BoxDecoration(
-                                        borderRadius: BorderRadius.circular(34),
-                                        border: Border.all(
-                                          color: isDark
-                                              ? Colors.white
-                                                  .withValues(alpha: 0.08)
-                                              : Colors.white
-                                                  .withValues(alpha: 0.6),
-                                          width: 1,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
+                        child: navInner,
                       );
                     },
                   ),

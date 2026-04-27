@@ -1,7 +1,19 @@
 import 'dart:ui';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
+/// Frosted-glass panel.
+///
+/// On **native** (Android / iOS) this uses [BackdropFilter] + blur so surfaces
+/// genuinely refract what's behind them.
+///
+/// On **web** (Flutter CanvasKit) [BackdropFilter] is extremely expensive —
+/// each instance forces the GPU compositor to create a separate layer and run
+/// a pixel-shader blur over everything behind it.  With 10+ panels visible at
+/// once the page grinds to a halt and some panels render as gray rectangles
+/// (the compositor gives up).  On web we skip the blur entirely and compensate
+/// with a slightly higher-opacity solid fill that still reads as "glassy".
 class GlassPanel extends StatelessWidget {
   const GlassPanel({
     super.key,
@@ -30,6 +42,74 @@ class GlassPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    return kIsWeb ? _buildWebPanel(context) : _buildNativePanel(context);
+  }
+
+  // ── Web: no BackdropFilter, higher-opacity fill ───────────────────────────
+
+  Widget _buildWebPanel(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
+    // Higher opacity so the panel reads clearly without blur.
+    final panelColor = color ??
+        theme.colorScheme.surface.withValues(alpha: isDark ? 0.88 : 0.92);
+    final outlineColor = borderColor ??
+        (isDark
+            ? Colors.white.withValues(alpha: 0.10)
+            : Colors.white.withValues(alpha: 0.65));
+
+    final defaultShadow = <BoxShadow>[
+      BoxShadow(
+        color: theme.colorScheme.shadow.withValues(alpha: isDark ? 0.28 : 0.07),
+        blurRadius: 24,
+        offset: const Offset(0, 10),
+      ),
+    ];
+
+    return Container(
+      margin: margin,
+      decoration: BoxDecoration(
+        borderRadius: borderRadius,
+        color: panelColor,
+        border: Border.all(color: outlineColor, width: 1),
+        boxShadow: boxShadow ?? defaultShadow,
+      ),
+      child: ClipRRect(
+        borderRadius: borderRadius,
+        child: Stack(
+          children: [
+            // Subtle specular sheen — pure CSS-level gradient, zero GPU cost.
+            if (showSpecular)
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Colors.white.withValues(
+                            alpha: isDark ? 0.06 : 0.22,
+                          ),
+                          Colors.white.withValues(alpha: 0),
+                        ],
+                        stops: const [0, 0.55],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            Padding(padding: padding, child: child),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── Native: full BackdropFilter + blur ────────────────────────────────────
+
+  Widget _buildNativePanel(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final panelColor = color ??
@@ -65,13 +145,11 @@ class GlassPanel extends StatelessWidget {
           filter: ImageFilter.blur(sigmaX: blur, sigmaY: blur),
           child: Stack(
             children: [
-              // Base tinted glass fill.
               Positioned.fill(
                 child: DecoratedBox(
                   decoration: BoxDecoration(color: panelColor),
                 ),
               ),
-              // Subtle vertical sheen — brighter near the top, fades downward.
               if (showSpecular)
                 Positioned.fill(
                   child: IgnorePointer(
@@ -96,7 +174,6 @@ class GlassPanel extends StatelessWidget {
                   ),
                 ),
               Padding(padding: padding, child: child),
-              // Hairline border that fakes the inner edge of glass.
               Positioned.fill(
                 child: IgnorePointer(
                   child: DecoratedBox(

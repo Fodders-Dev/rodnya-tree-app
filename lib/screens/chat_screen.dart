@@ -3938,8 +3938,10 @@ class _ChatScreenState extends State<ChatScreen> {
                           .withValues(alpha: 0.78),
                       borderRadius: BorderRadius.circular(24),
                     ),
+                    // Focus wrapper owns the key event interception;
+                    // TextField gets its own internal FocusNode.
+                    // We keep _messageFocusNode for programmatic focus only.
                     child: Focus(
-                      focusNode: _messageFocusNode,
                       onKeyEvent: _handleMessageKeyEvent,
                       child: TextField(
                         controller: _messageController,
