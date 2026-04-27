@@ -228,7 +228,7 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
               ],
             ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
           Text(
             treeName,
             style: (compact
@@ -239,17 +239,7 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
               letterSpacing: -0.5,
             ),
           ),
-          const SizedBox(height: 8),
-          Text(
-            _isFriendsTree
-                ? 'Живой центр круга: видно, кто рядом, кому написать сейчас и как быстро собрать нужных людей.'
-                : 'Главное полотно семьи: поколения, ветки, память и быстрые действия собраны в одном месте.',
-            style: theme.textTheme.bodyMedium?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-              height: 1.4,
-            ),
-          ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 12),
           Wrap(
             spacing: 8,
             runSpacing: 8,
@@ -283,41 +273,26 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
             ],
           ),
           if (!_currentUserIsInTree) ...[
-            const SizedBox(height: 14),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: theme.colorScheme.secondaryContainer.withValues(
-                  alpha: 0.46,
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Icon(
+                  Icons.person_search_outlined,
+                  size: 15,
+                  color: theme.colorScheme.onSurfaceVariant,
                 ),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                  color: theme.colorScheme.secondary.withValues(alpha: 0.18),
-                ),
-              ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(
-                    Icons.person_search_outlined,
-                    color: theme.colorScheme.onSecondaryContainer,
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      _isFriendsTree
-                          ? 'В этом круге ещё нет вашей карточки. Откройте нужного человека и добавьте себя через связь.'
-                          : 'В этом дереве ещё нет вашей карточки. Откройте родственника и привяжите себя через связь.',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSecondaryContainer,
-                        height: 1.35,
-                        fontWeight: FontWeight.w600,
-                      ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    _isFriendsTree
+                        ? 'Вашей карточки нет в круге — добавьте себя через связь.'
+                        : 'Вашей карточки нет в дереве — добавьте себя через связь.',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
                     ),
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
           ],
         ],
@@ -338,28 +313,18 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
         onPressed: () => _navigateToAddRelative(selectedTreeId),
       ),
       _buildTreeActionButton(
-        icon: Icons.history_outlined,
-        label: 'Изменения',
-        onPressed: _showTreeHistorySheet,
-      ),
-      _buildTreeActionButton(
-        icon: Icons.people_outline,
-        label: _isFriendsTree ? 'Люди круга' : 'Карточки семьи',
-        onPressed: () => context.go('/relatives'),
-      ),
-      _buildTreeActionButton(
         icon: Icons.forum_outlined,
-        label: 'Открыть чаты',
+        label: 'Чаты',
         onPressed: () => context.go('/chats'),
       ),
       _buildTreeActionButton(
         icon: Icons.post_add_outlined,
-        label: _isFriendsTree ? 'Написать в круг' : 'Новый пост',
+        label: _isFriendsTree ? 'Пост' : 'Пост',
         onPressed: () => context.push('/post/create'),
       ),
       _buildTreeActionButton(
         icon: _isEditMode ? Icons.edit_off_outlined : Icons.open_with_rounded,
-        label: _isEditMode ? 'Закончить расстановку' : 'Расставить карточки',
+        label: _isEditMode ? 'Готово' : 'Расставить',
         onPressed: () {
           _updateSectionState(() {
             _isEditMode = !_isEditMode;

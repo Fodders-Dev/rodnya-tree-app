@@ -846,7 +846,6 @@ class _RelativesScreenState extends State<RelativesScreen> {
     required bool isFriendsTree,
     required int relativesCount,
   }) {
-    final theme = Theme.of(context);
     final peopleLabel = isFriendsTree
         ? _countLabel(
             relativesCount,
@@ -860,78 +859,28 @@ class _RelativesScreenState extends State<RelativesScreen> {
             few: 'родственника',
             many: 'родственников',
           );
-    return GlassPanel(
-      padding: const EdgeInsets.all(14),
-      color: theme.colorScheme.secondaryContainer.withValues(alpha: 0.42),
-      borderRadius: BorderRadius.circular(28),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    // Compact strip: tree pill + count chip + tree button — no verbose heading.
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        crossAxisAlignment: WrapCrossAlignment.center,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.onSecondaryContainer.withValues(
-                    alpha: 0.08,
-                  ),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Icon(
-                  isFriendsTree
-                      ? Icons.diversity_3_outlined
-                      : Icons.account_tree_outlined,
-                  color: theme.colorScheme.onSecondaryContainer,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      isFriendsTree ? 'Активен круг' : 'Активно дерево',
-                      style: theme.textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w800,
-                        color: theme.colorScheme.onSecondaryContainer,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      treeName,
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: theme.colorScheme.onSecondaryContainer,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
+          _buildSideStatChip(
+            icon: isFriendsTree
+                ? Icons.diversity_3_outlined
+                : Icons.account_tree_outlined,
+            label: treeName,
           ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              _buildSideStatChip(
-                icon: isFriendsTree
-                    ? Icons.diversity_3_outlined
-                    : Icons.account_tree_outlined,
-                label: treeName,
-              ),
-              _buildSideStatChip(
-                icon: Icons.people_outline,
-                label: '$relativesCount $peopleLabel',
-              ),
-              FilledButton.tonalIcon(
-                onPressed: () => context.go('/tree'),
-                icon: const Icon(Icons.arrow_forward),
-                label: const Text('Дерево'),
-              ),
-            ],
+          _buildSideStatChip(
+            icon: Icons.people_outline,
+            label: peopleLabel,
+          ),
+          FilledButton.tonalIcon(
+            onPressed: () => context.go('/tree'),
+            icon: const Icon(Icons.arrow_forward, size: 18),
+            label: const Text('Дерево'),
           ),
         ],
       ),

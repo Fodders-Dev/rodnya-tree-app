@@ -304,11 +304,6 @@ class _TreeSelectorScreenState extends State<TreeSelectorScreen> {
                       icon: const Icon(Icons.diversity_3_outlined),
                       label: const Text('Круг'),
                     ),
-                    OutlinedButton.icon(
-                      onPressed: _loadUserTrees,
-                      icon: const Icon(Icons.refresh),
-                      label: const Text('Обновить'),
-                    ),
                   ],
                 ),
               ],
@@ -428,18 +423,18 @@ class _TreeSelectorScreenState extends State<TreeSelectorScreen> {
                         spacing: 6,
                         runSpacing: 6,
                         children: [
-                          _SelectorChip(
-                            icon: tree.isPrivate
-                                ? Icons.lock_outline
-                                : Icons.public,
-                            label: tree.isPrivate ? 'Приватное' : 'Публичное',
-                          ),
-                          _SelectorChip(
-                            icon: tree.isFriendsTree
-                                ? Icons.diversity_3_outlined
-                                : Icons.family_restroom,
-                            label: tree.kindLabel,
-                          ),
+                          if (isSelected)
+                            const _SelectorChip(
+                              icon: Icons.check_circle_outline,
+                              label: 'Активное',
+                              highlighted: true,
+                            ),
+                          if (tree.isCertified)
+                            const _SelectorChip(
+                              icon: Icons.verified_outlined,
+                              label: 'Проверено',
+                              highlighted: true,
+                            ),
                           _SelectorChip(
                             icon: _isOwnedByCurrentUser(tree)
                                 ? Icons.star_outline
@@ -448,24 +443,22 @@ class _TreeSelectorScreenState extends State<TreeSelectorScreen> {
                                 ? 'Создатель'
                                 : 'Участник',
                           ),
-                          if (tree.isCertified)
-                            const _SelectorChip(
-                              icon: Icons.verified_outlined,
-                              label: 'Проверено',
-                              highlighted: true,
-                            ),
-                          if (isSelected)
-                            const _SelectorChip(
-                              icon: Icons.check_circle_outline,
-                              label: 'Сейчас',
-                              highlighted: true,
-                            ),
+                          _SelectorChip(
+                            icon: tree.isPrivate
+                                ? Icons.lock_outline
+                                : Icons.public,
+                            label: tree.isPrivate ? 'Приватное' : 'Публичное',
+                          ),
                         ],
                       ),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 6),
                       Text(
                         _formatDate(createdAt),
-                        style: TextStyle(color: Colors.grey[700]),
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSurfaceVariant,
+                            ),
                       ),
                       if (certificationNote != null &&
                           certificationNote.isNotEmpty) ...[

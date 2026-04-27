@@ -1015,18 +1015,7 @@ class _AuthScreenState extends State<AuthScreen> {
               height: 1.35,
             ),
           ),
-          const SizedBox(height: 16),
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: const [
-              _HeroChip(label: 'Дерево'),
-              _HeroChip(label: 'Чаты'),
-              _HeroChip(label: 'Stories'),
-              _HeroChip(label: 'Профиль'),
-            ],
-          ),
-          SizedBox(height: compact ? 18 : 22),
+          const SizedBox(height: 18),
           Wrap(
             spacing: 12,
             runSpacing: 12,
@@ -1513,32 +1502,6 @@ class _AuthScreenState extends State<AuthScreen> {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _HeroChip extends StatelessWidget {
-  const _HeroChip({required this.label});
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: Colors.white24),
-      ),
-      child: Text(
-        label,
-        style: const TextStyle(
-          color: Colors.white,
-          fontSize: 12,
-          fontWeight: FontWeight.w600,
-        ),
       ),
     );
   }
