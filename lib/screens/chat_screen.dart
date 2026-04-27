@@ -1383,40 +1383,52 @@ class _ChatScreenState extends State<ChatScreen> {
       _recordingController.markSending();
     }
     _messageController.clear();
-    await _setTypingActive(false, force: true);
-    await _clearActiveDraft();
+
+    // ── Show the optimistic message IMMEDIATELY before any network I/O ──────
+    // Placing setState before _setTypingActive / _clearActiveDraft prevents
+    // a silent message loss: if either side-effect throws (e.g. WebSocket not
+    // yet ready), the user still sees their message and it will be retried.
+    final pendingMessage = _OutgoingMessage(
+      localId: localMessageId,
+      senderId: currentUserId,
+      text: messageText,
+      timestamp: DateTime.now(),
+      attachments: attachments,
+      forwardedAttachments: forwardedAttachments,
+      status: _OutgoingMessageStatus.pending,
+      replyTo: replyTo,
+      progress: attachments.isNotEmpty
+          ? const ChatSendProgress(
+              stage: ChatSendProgressStage.preparing,
+              completed: 0,
+              total: 1,
+            )
+          : const ChatSendProgress(
+              stage: ChatSendProgressStage.sending,
+              completed: 1,
+              total: 1,
+            ),
+    );
     setState(() {
       _selectedAttachments.clear();
       _selectedEdit = null;
       _selectedReply = null;
       _selectedForward = null;
-      _optimisticMessages.insert(
-        0,
-        _OutgoingMessage(
-          localId: localMessageId,
-          senderId: currentUserId,
-          text: messageText,
-          timestamp: DateTime.now(),
-          attachments: attachments,
-          forwardedAttachments: forwardedAttachments,
-          status: _OutgoingMessageStatus.pending,
-          replyTo: replyTo,
-          progress: attachments.isNotEmpty
-              ? const ChatSendProgress(
-                  stage: ChatSendProgressStage.preparing,
-                  completed: 0,
-                  total: 1,
-                )
-              : const ChatSendProgress(
-                  stage: ChatSendProgressStage.sending,
-                  completed: 1,
-                  total: 1,
-                ),
-        ),
-      );
+      _optimisticMessages.insert(0, pendingMessage);
     });
 
-    final pendingMessage = _optimisticMessages.first;
+    // Side-effects: fire-and-forget so they can't block or kill the send.
+    unawaited(
+      _setTypingActive(false, force: true).catchError(
+        (e) => debugPrint('[chat] typing-clear error: $e'),
+      ),
+    );
+    unawaited(
+      _clearActiveDraft().catchError(
+        (e) => debugPrint('[chat] draft-clear error: $e'),
+      ),
+    );
+
     await _sendOptimisticMessage(pendingMessage);
   }
 
@@ -1436,8 +1448,6 @@ class _ChatScreenState extends State<ChatScreen> {
 
     final comment = commentText.trim();
     _messageController.clear();
-    await _setTypingActive(false, force: true);
-    await _clearActiveDraft();
     setState(() {
       _selectedAttachments.clear();
       _selectedEdit = null;
@@ -1445,6 +1455,16 @@ class _ChatScreenState extends State<ChatScreen> {
       _selectedForward = null;
       _selectedForwardBatch = null;
     });
+    unawaited(
+      _setTypingActive(false, force: true).catchError(
+        (e) => debugPrint('[chat] typing-clear error: $e'),
+      ),
+    );
+    unawaited(
+      _clearActiveDraft().catchError(
+        (e) => debugPrint('[chat] draft-clear error: $e'),
+      ),
+    );
 
     if (comment.isNotEmpty) {
       await _enqueueOutgoingMessageAndSend(
@@ -1518,14 +1538,22 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     try {
-      await _setTypingActive(false, force: true);
+      unawaited(
+        _setTypingActive(false, force: true).catchError(
+          (e) => debugPrint('[chat] typing-clear error: $e'),
+        ),
+      );
       await _chatService.editChatMessage(
         chatId: chatId,
         messageId: edit.messageId,
         text: nextText,
       );
       _messageController.clear();
-      await _clearActiveDraft();
+      unawaited(
+        _clearActiveDraft().catchError(
+          (e) => debugPrint('[chat] draft-clear error: $e'),
+        ),
+      );
       if (!mounted) {
         return;
       }
