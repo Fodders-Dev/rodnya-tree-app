@@ -162,6 +162,8 @@ class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _messageController = TextEditingController();
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _messageFocusNode = FocusNode();
+  // Prevents double-send while an outgoing request is in flight.
+  bool _isSendingMessage = false;
   final CallCoordinatorService _callCoordinator =
       GetIt.I<CallCoordinatorService>();
   final ChatServiceInterface _chatService = GetIt.I<ChatServiceInterface>();
@@ -250,6 +252,8 @@ class _ChatScreenState extends State<ChatScreen> {
     _resolvedTitle = widget.initialChatDetails?.displayTitle ?? widget.title;
     _messageController.addListener(_handleDraftChanged);
     _searchController.addListener(_handleSearchChanged);
+    // Global key handler — more reliable than Focus.onKeyEvent on Flutter web.
+    HardwareKeyboard.instance.addHandler(_handleGlobalKeyEvent);
     _messagesScrollController.addListener(_handleMessagesScroll);
     _recordingController.addListener(_handleRecordingControllerChanged);
     _configureBrowserContextMenu();
@@ -262,6 +266,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _pinnedMessageHighlightTimer?.cancel();
     _messageController.removeListener(_handleDraftChanged);
     _searchController.removeListener(_handleSearchChanged);
+    HardwareKeyboard.instance.removeHandler(_handleGlobalKeyEvent);
     _messagesScrollController.removeListener(_handleMessagesScroll);
     _messagesScrollController.dispose();
     _messageController.dispose();
@@ -1201,61 +1206,67 @@ class _ChatScreenState extends State<ChatScreen> {
     await _pickGenericFile();
   }
 
-  /// Keyboard shortcut handler for the message composer text field.
+  /// Global hardware keyboard handler — registered on HardwareKeyboard directly.
   ///
-  /// Supported shortcuts (web/desktop):
-  ///   Ctrl+Enter  — send message
-  ///   Escape      — cancel reply / edit / forward / exit search
-  ///   ↑           — edit last own message (when field is empty)
-  ///   Ctrl+F      — open in-chat search
-  KeyEventResult _handleMessageKeyEvent(FocusNode node, KeyEvent event) {
-    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+  /// This is more reliable than [Focus.onKeyEvent] on Flutter web (CanvasKit)
+  /// where key-event bubbling can be intercepted by the browser text layer.
+  ///
+  /// Returns true (consumes event) only when the message field has focus and
+  /// we actually handle the shortcut.
+  bool _handleGlobalKeyEvent(KeyEvent event) {
+    if (!mounted || event is! KeyDownEvent) return false;
+    // Only fire when the composer text field (or this screen) has focus.
+    final bool composerFocused = _messageFocusNode.hasFocus ||
+        FocusScope.of(context).focusedChild == _messageFocusNode;
 
     final isCtrl = HardwareKeyboard.instance.isControlPressed ||
         HardwareKeyboard.instance.isMetaPressed;
 
-    // Ctrl+Enter → send
+    // Ctrl+Enter → send (regardless of composer focus so tooltip users can send)
     if (isCtrl && event.logicalKey == LogicalKeyboardKey.enter) {
       final canSend = _messageController.text.trim().isNotEmpty ||
           _selectedAttachments.isNotEmpty ||
           _selectedForward != null ||
           _selectedForwardBatch != null ||
           _selectedEdit != null;
-      if (canSend) {
+      if (canSend && !_isSendingMessage) {
         if (_selectedEdit != null) {
           _saveEditedMessage();
         } else {
           _sendCurrentMessage();
         }
-        return KeyEventResult.handled;
+        return true;
       }
     }
+
+    // The rest only when composer is focused.
+    if (!composerFocused) return false;
 
     // Escape → clear context or exit search/selection
     if (event.logicalKey == LogicalKeyboardKey.escape) {
       if (_isSelectionMode) {
         _exitSelectionMode();
-        return KeyEventResult.handled;
+        return true;
       }
       if (_isSearchMode) {
         _closeSearch();
-        return KeyEventResult.handled;
+        return true;
       }
       if (_selectedEdit != null) {
         setState(() => _selectedEdit = null);
         _messageController.clear();
-        return KeyEventResult.handled;
+        return true;
       }
       if (_selectedReply != null) {
         setState(() => _selectedReply = null);
-        return KeyEventResult.handled;
+        return true;
       }
       if (_selectedForward != null || _selectedForwardBatch != null) {
         setState(() {
           _selectedForward = null;
           _selectedForwardBatch = null;
         });
-        return KeyEventResult.handled;
+        return true;
       }
     }
 
@@ -1263,7 +1274,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (!isCtrl && event.logicalKey == LogicalKeyboardKey.arrowUp) {
       if (_messageController.text.isEmpty && _selectedEdit == null) {
         _startEditingLastOwnMessage();
-        return KeyEventResult.handled;
+        return true;
       }
     }
 
@@ -1271,11 +1282,16 @@ class _ChatScreenState extends State<ChatScreen> {
     if (isCtrl && event.logicalKey == LogicalKeyboardKey.keyF) {
       if (!_isSearchMode) {
         _openSearch();
-        return KeyEventResult.handled;
+        return true;
       }
     }
 
-    return KeyEventResult.ignored;
+    return false;
+  }
+
+  // Legacy Focus.onKeyEvent — kept as secondary handler.
+  KeyEventResult _handleMessageKeyEvent(FocusNode node, KeyEvent event) {
+    return KeyEventResult.ignored; // Global handler takes precedence.
   }
 
   /// Edit the most recent message sent by the current user (↑ shortcut).
@@ -1353,8 +1369,19 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _sendCurrentMessage() async {
+    if (_isSendingMessage) return; // Prevent double-send.
+
     final currentUserId = _currentUserId;
     if (currentUserId == null || currentUserId.isEmpty) {
+      // Bootstrap still running — give the user visible feedback.
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Чат ещё загружается, подождите секунду.'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
       return;
     }
 
@@ -1429,7 +1456,12 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
     );
 
-    await _sendOptimisticMessage(pendingMessage);
+    setState(() => _isSendingMessage = true);
+    try {
+      await _sendOptimisticMessage(pendingMessage);
+    } finally {
+      if (mounted) setState(() => _isSendingMessage = false);
+    }
   }
 
   Future<void> _sendForwardBatch(
@@ -4095,10 +4127,20 @@ class _ChatScreenState extends State<ChatScreen> {
   }) {
     if (canSend) {
       return IconButton.filled(
-        onPressed:
-            _selectedEdit != null ? _saveEditedMessage : _sendCurrentMessage,
+        // Disabled while a send is in flight to prevent double-send.
+        onPressed: _isSendingMessage
+            ? null
+            : (_selectedEdit != null
+                ? _saveEditedMessage
+                : _sendCurrentMessage),
         tooltip: _selectedEdit != null ? 'Сохранить изменения' : 'Отправить',
-        icon: Icon(_selectedEdit != null ? Icons.check : Icons.send),
+        icon: _isSendingMessage
+            ? const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : Icon(_selectedEdit != null ? Icons.check : Icons.send),
       );
     }
 
