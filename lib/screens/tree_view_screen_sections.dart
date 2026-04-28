@@ -389,6 +389,13 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
     required Color accent,
     required bool compact,
   }) {
+    // No branch selected → don't waste screen space with a description panel;
+    // the canvas itself already shows the full tree.  Show the panel only when
+    // a branch is in focus or a person is being repositioned (edit mode).
+    final hasFocusContent =
+        branchRootPerson != null || selectedEditPerson != null;
+    if (!hasFocusContent) return const SizedBox.shrink();
+
     final theme = Theme.of(context);
     final branchVisibleCount = branchRootPerson == null
         ? _relativesData.length
@@ -402,9 +409,7 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
         children: [
           Text(
             branchRootPerson == null
-                ? (_isFriendsTree
-                    ? 'В фокусе весь круг'
-                    : 'В фокусе всё дерево')
+                ? (_isFriendsTree ? 'Расстановка' : 'Расстановка')
                 : (_isFriendsTree ? 'Фокус на круге' : 'Фокус на ветке'),
             style: theme.textTheme.titleMedium?.copyWith(
               fontWeight: FontWeight.w800,
@@ -417,16 +422,6 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
               eyebrow: _isFriendsTree ? 'Корень круга' : 'Корень ветки',
               accent: accent,
               trailing: _buildMiniCountBadge('$branchVisibleCount узлов'),
-            )
-          else
-            Text(
-              _isFriendsTree
-                  ? 'Сейчас виден весь граф общения. Выберите человека на canvas, чтобы сузить круг, открыть чат или быстро перейти к карточке.'
-                  : 'Сейчас виден весь род. Выберите человека на canvas, чтобы выделить ветку, открыть её чат или перейти к карточке без лишних шагов.',
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-                height: 1.38,
-              ),
             ),
           if (selectedEditPerson != null) ...[
             const SizedBox(height: 14),
