@@ -714,7 +714,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
           IconButton(
             icon: const Icon(Icons.edit_outlined),
             tooltip: 'Редактировать профиль',
-            onPressed: () => context.push('/profile/edit'),
+            onPressed: () async {
+              await context.push('/profile/edit');
+              if (mounted) unawaited(_loadUserData());
+            },
           ),
           PopupMenuButton<String>(
             onSelected: (value) {
@@ -812,8 +815,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                   ],
                                   actionButtons: [
                                     FilledButton.icon(
-                                      onPressed: () =>
-                                          context.push('/profile/edit'),
+                                      onPressed: () async {
+                                        await context.push('/profile/edit');
+                                        if (mounted) {
+                                          unawaited(_loadUserData());
+                                        }
+                                      },
                                       icon: const Icon(
                                         Icons.edit_outlined,
                                         size: 18,

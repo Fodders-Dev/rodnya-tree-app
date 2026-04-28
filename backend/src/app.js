@@ -3114,6 +3114,16 @@ function createApp({
     }));
     const sanitizedProfile = sanitizeProfile(updatedUser.profile);
 
+    // When the user updates their profile photo, propagate it to all of their
+    // linked tree-person cards so the same photo appears in the tree, in chat
+    // avatars, and everywhere else we display the person's image.
+    const newPhotoUrl = sanitizedProfile.photoUrl;
+    if (newPhotoUrl && req.body?.photoUrl) {
+      await store.syncUserPhotoToTreePersons(req.auth.user.id, newPhotoUrl).catch(
+        (err) => console.warn("[profile] could not sync photo to tree persons:", err),
+      );
+    }
+
     res.json({
       user: {
         id: updatedUser.id,

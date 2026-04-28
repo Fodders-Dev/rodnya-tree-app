@@ -6474,6 +6474,57 @@ class FileStore {
     return structuredClone(relation);
   }
 
+  /**
+   * When a user updates their profile photo, propagate the new URL to every
+   * tree-person card that is linked to their userId.  This keeps the tree node
+   * avatar, chat avatar fallback, and profile photo in sync.
+   */
+  async syncUserPhotoToTreePersons(userId, photoUrl) {
+    if (!userId || !photoUrl) return;
+    const db = await this._read();
+    let changed = false;
+    const timestamp = nowIso();
+    for (const person of db.persons) {
+      if (String(person.userId || "").trim() !== userId) continue;
+      // Only update if the person's primary photo differs.
+      if (String(person.primaryPhotoUrl || "").trim() === String(photoUrl).trim()) continue;
+      person.photoUrl = photoUrl;
+      person.primaryPhotoUrl = photoUrl;
+      // If the gallery doesn't include this URL yet, add it.
+      const gallery = Array.isArray(person.photoGallery) ? person.photoGallery : [];
+      const alreadyInGallery = gallery.some(
+        (entry) => String(entry.url || "").trim() === String(photoUrl).trim(),
+      );
+      if (!alreadyInGallery) {
+        const existing = gallery.map((e) => ({...e, isPrimary: false}));
+        person.photoGallery = [
+          {
+            id: `profile-sync:${userId}:${timestamp}`,
+            url: photoUrl,
+            thumbnailUrl: null,
+            type: "image",
+            contentType: null,
+            caption: null,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+            isPrimary: true,
+          },
+          ...existing,
+        ];
+      } else {
+        // Mark this entry as primary.
+        person.photoGallery = gallery.map((e) => ({
+          ...e,
+          isPrimary: String(e.url || "").trim() === String(photoUrl).trim(),
+          updatedAt: timestamp,
+        }));
+      }
+      person.updatedAt = timestamp;
+      changed = true;
+    }
+    if (changed) await this._write(db);
+  }
+
   async deleteRelation(treeId, relationId, actorId = null) {
     const db = await this._read();
     const relation = db.relations.find(
@@ -8427,6 +8478,23 @@ class FileStore {
           preview.otherUserName =
             otherUser.profile?.displayName || otherUser.email || "Пользователь";
           preview.otherUserPhotoUrl = otherUser.profile?.photoUrl || null;
+        }
+
+        // Fallback: if the other user has no profile photo (or no account at all),
+        // find their tree-person card and use its primaryPhotoUrl instead.
+        // This covers offline-profile chats where the person has a tree photo
+        // but hasn't registered an account yet.
+        if (!preview.otherUserPhotoUrl && otherUserId) {
+          const linkedPerson = db.persons.find((p) => {
+            const personUserId = String(p.userId || "").trim();
+            return (
+              personUserId === otherUserId &&
+              String(p.primaryPhotoUrl || "").trim()
+            );
+          });
+          if (linkedPerson?.primaryPhotoUrl) {
+            preview.otherUserPhotoUrl = String(linkedPerson.primaryPhotoUrl).trim();
+          }
         }
       }
 
