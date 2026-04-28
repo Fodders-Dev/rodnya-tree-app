@@ -477,7 +477,14 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
 
   Future<void> _pickImage() async {
     final ImagePicker picker = ImagePicker();
-    final XFile? image = await picker.pickImage(source: ImageSource.gallery);
+    // Compress on pick so the base64 JSON body stays well under 50 MB.
+    // imageQuality 88 + 1280 max side gives ~300-500 KB for typical photos.
+    final XFile? image = await picker.pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 88,
+      maxWidth: 1280,
+      maxHeight: 1280,
+    );
 
     if (image != null) {
       setState(() {
