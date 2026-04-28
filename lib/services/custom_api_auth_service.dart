@@ -425,9 +425,22 @@ class CustomApiAuthService implements AuthServiceInterface {
   Future<GoogleSignInAccount> _resolveGoogleAccountForTokenExchange({
     required String interactiveCancelledMessage,
   }) async {
-    final currentAccount = _googleClient.currentUser;
-    if (currentAccount != null) {
-      return currentAccount;
+    // On web, the cached currentUser may not have a valid idToken (the token
+    // is short-lived and tied to the sign-in session).  Always force a fresh
+    // interactive sign-in so that authentication.idToken is guaranteed to be
+    // populated.  This also avoids silent failures where the cached account's
+    // token expired or was never set in the first place.
+    if (kIsWeb) {
+      try {
+        await _googleClient.signOut();
+      } catch (_) {
+        // Best-effort sign-out; continue even if it fails.
+      }
+    } else {
+      final currentAccount = _googleClient.currentUser;
+      if (currentAccount != null) {
+        return currentAccount;
+      }
     }
 
     final account = await _googleClient.signIn();
@@ -451,8 +464,11 @@ class CustomApiAuthService implements AuthServiceInterface {
   GoogleSignIn get _googleClient {
     return _googleSignIn ??= GoogleSignIn(
       scopes: const ['email'],
+      // clientId: web-side client that the GIS library authenticates with.
+      // serverClientId: enables the server auth-code / ID-token flow on web.
+      //   Without it, authentication.idToken may be null on web.
       clientId: kIsWeb ? _runtimeConfig.googleWebClientId : null,
-      serverClientId: kIsWeb ? null : _runtimeConfig.googleWebClientId,
+      serverClientId: _runtimeConfig.googleWebClientId,
     );
   }
 
