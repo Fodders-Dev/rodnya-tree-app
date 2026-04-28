@@ -13,6 +13,11 @@ const {Readable} = require("node:stream");
 
 function sanitizeRelativePath(inputValue) {
   const rawValue = String(inputValue || "").trim().replace(/\\/g, "/");
+  const rawParts = rawValue.split("/").filter(Boolean);
+  if (rawParts.some((part) => part === "." || part === "..")) {
+    throw new Error("INVALID_MEDIA_PATH");
+  }
+
   const normalized = path.posix.normalize(`/${rawValue}`).replace(/^\/+/, "");
 
   if (!normalized || normalized === "." || normalized.startsWith("..")) {
@@ -176,6 +181,10 @@ class S3MediaStorage {
     return value.startsWith(`${this.prefix}/`);
   }
 
+  isLegacyPublicBucket(value) {
+    return ["avatars", "posts", "stories", "chat"].includes(value);
+  }
+
   buildPublicUrl(bucket, relativePath) {
     const {objectKey} = this.buildObjectKey(
       bucket,
@@ -287,6 +296,12 @@ class S3MediaStorage {
 
     const objectKey = pathParts.join("/");
     if (!objectKey || !this.hasAllowedPrefix(objectKey)) {
+      if (
+        pathParts.length > 1 &&
+        this.isLegacyPublicBucket(pathParts[0])
+      ) {
+        return `${this.prefix}/${objectKey}`;
+      }
       throw new Error("UNSUPPORTED_MEDIA_URL");
     }
 

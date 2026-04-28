@@ -306,10 +306,9 @@ void main() {
 
     expect(find.text('Карточка в дереве'), findsOneWidget);
     expect(find.text('Алексей Петров'), findsWidgets);
-    expect(find.text('Без фото'), findsOneWidget);
-    expect(find.text('Открыть'), findsOneWidget);
-    expect(find.text('Фото'), findsOneWidget);
-    expect(find.text('История'), findsOneWidget);
+    expect(find.byTooltip('Фото пока нет'), findsOneWidget);
+    expect(find.byTooltip('Открыть карточку'), findsOneWidget);
+    expect(find.byTooltip('История'), findsOneWidget);
   });
 
   testWidgets('ProfileScreen показывает доверенные каналы и профильный код',
@@ -327,19 +326,19 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.scrollUntilVisible(
-      find.text('Доверенные каналы'),
+      find.text('Настройки аккаунта'),
       300,
       scrollable: find.byType(Scrollable).first,
     );
 
-    expect(find.text('Доверенные каналы'), findsOneWidget);
-    expect(find.text('Аккаунт подтверждён через Telegram'), findsOneWidget);
+    expect(find.text('Настройки аккаунта'), findsOneWidget);
+    expect(find.text('Настройки'), findsWidgets);
     await tester.scrollUntilVisible(
-      find.text('Профильный код и QR'),
+      find.text('Профильный код'),
       300,
       scrollable: find.byType(Scrollable).first,
     );
-    expect(find.text('Профильный код и QR'), findsOneWidget);
+    expect(find.text('Профильный код'), findsOneWidget);
     expect(find.textContaining('@petrov'), findsWidgets);
   });
 
@@ -358,7 +357,7 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('История'));
+    await tester.tap(find.byTooltip('История'));
     await tester.pump();
     await tester.pumpAndSettle();
 

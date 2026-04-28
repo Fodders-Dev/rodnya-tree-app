@@ -184,3 +184,57 @@ test("s3 media storage streams public storage urls", async () => {
   assert.equal(response.headers["content-length"], "5");
   assert.equal(Buffer.concat(response.bodyChunks).toString("utf8"), "photo");
 });
+
+test("s3 media storage resolves legacy public media paths with prefix", () => {
+  const storage = new S3MediaStorage({
+    config: {
+      s3Bucket: "rodnya-media",
+      s3Region: "ru-msk",
+      s3Endpoint: "http://127.0.0.1:9000",
+      s3Prefix: "lineage",
+      mediaPublicBaseUrl: "https://api.rodnya-tree.ru/media",
+      s3ForcePathStyle: true,
+    },
+    client: {
+      async send() {
+        return {};
+      },
+    },
+  });
+
+  assert.equal(
+    storage.resolvePublicObjectKey("lineage/posts/post-1.jpg"),
+    "lineage/posts/post-1.jpg",
+  );
+  assert.equal(
+    storage.resolvePublicObjectKey(
+      "rodnya-media/lineage/posts/post-1.jpg",
+    ),
+    "lineage/posts/post-1.jpg",
+  );
+  assert.equal(
+    storage.resolvePublicObjectKey("posts/post-1.jpg"),
+    "lineage/posts/post-1.jpg",
+  );
+  assert.equal(
+    storage.resolvePublicObjectKey("avatars/user-1/photo.jpg"),
+    "lineage/avatars/user-1/photo.jpg",
+  );
+  assert.equal(
+    storage.resolvePublicObjectKey("stories/story-1.jpg"),
+    "lineage/stories/story-1.jpg",
+  );
+  assert.equal(
+    storage.resolvePublicObjectKey("chat/room-1/image.jpg"),
+    "lineage/chat/room-1/image.jpg",
+  );
+
+  assert.throws(
+    () => storage.resolvePublicObjectKey("foreign/posts/post-1.jpg"),
+    /UNSUPPORTED_MEDIA_URL/,
+  );
+  assert.throws(
+    () => storage.resolvePublicObjectKey("posts/../post-1.jpg"),
+    /INVALID_MEDIA_PATH/,
+  );
+});

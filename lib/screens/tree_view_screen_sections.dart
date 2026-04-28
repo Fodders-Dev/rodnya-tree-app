@@ -95,10 +95,10 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
         }
 
         final compactContextHeight = constraints.maxHeight.isFinite
-            ? (constraints.maxHeight * (isCompact ? 0.4 : 0.32))
-                .clamp(220.0, isCompact ? 360.0 : 300.0)
+            ? (constraints.maxHeight * (isCompact ? 0.22 : 0.28))
+                .clamp(150.0, isCompact ? 230.0 : 280.0)
                 .toDouble()
-            : (isCompact ? 320.0 : 260.0);
+            : (isCompact ? 210.0 : 260.0);
 
         return Padding(
           padding: EdgeInsets.fromLTRB(
@@ -151,24 +151,31 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
           accent: accent,
           compact: compact,
         ),
-        const SizedBox(height: 12),
+        SizedBox(height: compact ? 8 : 12),
         _buildTreeQuickActionsPanel(
           selectedTreeId: selectedTreeId,
           branchRootPerson: branchRootPerson,
           compact: compact,
         ),
-        const SizedBox(height: 12),
-        _buildTreeFocusPanel(
-          branchRootPerson: branchRootPerson,
-          selectedEditPerson: selectedEditPerson,
-          accent: accent,
-          compact: compact,
-        ),
-        const SizedBox(height: 12),
-        _buildTreeHealthPanel(
-          warnings: warnings,
-          compact: compact,
-        ),
+        if (branchRootPerson != null || selectedEditPerson != null) ...[
+          SizedBox(height: compact ? 8 : 12),
+          _buildTreeFocusPanel(
+            branchRootPerson: branchRootPerson,
+            selectedEditPerson: selectedEditPerson,
+            accent: accent,
+            compact: compact,
+          ),
+        ],
+        if (!compact ||
+            warnings.isNotEmpty ||
+            _appStatusService.hasVisibleStatus ||
+            _errorMessage.isNotEmpty) ...[
+          SizedBox(height: compact ? 8 : 12),
+          _buildTreeHealthPanel(
+            warnings: warnings,
+            compact: compact,
+          ),
+        ],
       ],
     );
 
@@ -192,6 +199,69 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
     final relationCount = _relationsData.length;
     final generationCount = graphSnapshot?.generationRows.length ?? 0;
     final branchCount = graphSnapshot?.branchBlocks.length ?? 0;
+
+    if (compact) {
+      final stats = <String>[
+        personCount == 1 ? '1 человек' : '$personCount людей',
+        relationCount == 1 ? '1 связь' : '$relationCount связей',
+        if (generationCount > 0)
+          generationCount == 1 ? '1 поколение' : '$generationCount поколений',
+        if (branchCount > 0)
+          branchCount == 1 ? '1 ветка' : '$branchCount веток',
+      ].join(' · ');
+
+      return GlassPanel(
+        padding: const EdgeInsets.all(12),
+        borderRadius: BorderRadius.circular(22),
+        color: theme.colorScheme.surface.withValues(alpha: 0.82),
+        borderColor: accent.withValues(alpha: 0.14),
+        child: Row(
+          children: [
+            Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                color: accent.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(13),
+              ),
+              child: Icon(
+                _isFriendsTree
+                    ? Icons.diversity_3_outlined
+                    : Icons.account_tree_outlined,
+                size: 20,
+                color: accent,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    treeName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    stats,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
 
     return GlassPanel(
       padding: EdgeInsets.all(compact ? 16 : 20),
@@ -308,23 +378,29 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
     final actions = <Widget>[
       _buildTreeActionButton(
         icon: Icons.person_add_alt_1_outlined,
-        label: _isFriendsTree ? 'Добавить в круг' : 'Добавить человека',
+        label: compact
+            ? 'Добавить'
+            : (_isFriendsTree ? 'Добавить в круг' : 'Добавить человека'),
         emphasized: true,
+        compact: compact,
         onPressed: () => _navigateToAddRelative(selectedTreeId),
       ),
       _buildTreeActionButton(
         icon: Icons.forum_outlined,
         label: 'Чаты',
+        compact: compact,
         onPressed: () => context.go('/chats'),
       ),
       _buildTreeActionButton(
         icon: Icons.post_add_outlined,
-        label: _isFriendsTree ? 'Пост' : 'Пост',
+        label: 'Пост',
+        compact: compact,
         onPressed: () => context.push('/post/create'),
       ),
       _buildTreeActionButton(
         icon: _isEditMode ? Icons.edit_off_outlined : Icons.open_with_rounded,
         label: _isEditMode ? 'Готово' : 'Расставить',
+        compact: compact,
         onPressed: () {
           _updateSectionState(() {
             _isEditMode = !_isEditMode;
@@ -338,45 +414,60 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
         _buildTreeActionButton(
           icon: Icons.alt_route_outlined,
           label: _isFriendsTree ? 'Чат круга' : 'Чат ветки',
+          compact: compact,
           onPressed: () => _openBranchChat(selectedTreeId, branchRootPerson),
         ),
       if (_branchRootPersonId != null)
         _buildTreeActionButton(
           icon: Icons.clear_all,
-          label: _isFriendsTree ? 'Показать весь граф' : 'Показать всё дерево',
+          label: compact
+              ? 'Всё'
+              : (_isFriendsTree ? 'Показать весь граф' : 'Показать всё дерево'),
+          compact: compact,
           onPressed: _resetBranchFocus,
         ),
       if (_manualNodePositions.isNotEmpty)
         _buildTreeActionButton(
           icon: Icons.restart_alt,
-          label: 'Сбросить раскладку',
+          label: compact ? 'Сброс' : 'Сбросить раскладку',
+          compact: compact,
           onPressed: () => _resetManualTreeLayout(selectedTreeId),
         ),
       if (_currentTreeMeta?.isPublic == true)
         _buildTreeActionButton(
           icon: Icons.link_outlined,
-          label: 'Публичная ссылка',
+          label: compact ? 'Ссылка' : 'Публичная ссылка',
+          compact: compact,
           onPressed: _copyPublicTreeLink,
         ),
     ];
 
     return GlassPanel(
-      padding: EdgeInsets.all(compact ? 14 : 16),
-      borderRadius: BorderRadius.circular(26),
+      padding: EdgeInsets.all(compact ? 8 : 16),
+      borderRadius: BorderRadius.circular(compact ? 22 : 26),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            compact ? 'Быстрые действия' : 'Сразу к делу',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w800,
-                ),
-          ),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: actions,
+          if (!compact) ...[
+            Text(
+              'Сразу к делу',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+            ),
+            const SizedBox(height: 10),
+          ],
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                for (var index = 0; index < actions.length; index++) ...[
+                  actions[index],
+                  if (index != actions.length - 1)
+                    SizedBox(width: compact ? 8 : 10),
+                ],
+              ],
+            ),
           ),
         ],
       ),
@@ -773,16 +864,34 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
     required String label,
     required VoidCallback onPressed,
     bool emphasized = false,
+    bool compact = false,
   }) {
+    final minimumSize = compact ? const Size(0, 38) : null;
+    final padding = EdgeInsets.symmetric(
+      horizontal: compact ? 12 : 16,
+      vertical: compact ? 9 : 12,
+    );
     if (emphasized) {
       return FilledButton.icon(
         onPressed: onPressed,
+        style: FilledButton.styleFrom(
+          minimumSize: minimumSize,
+          padding: padding,
+          visualDensity: compact ? VisualDensity.compact : null,
+          tapTargetSize: compact ? MaterialTapTargetSize.shrinkWrap : null,
+        ),
         icon: Icon(icon, size: 18),
         label: Text(label),
       );
     }
     return OutlinedButton.icon(
       onPressed: onPressed,
+      style: OutlinedButton.styleFrom(
+        minimumSize: minimumSize,
+        padding: padding,
+        visualDensity: compact ? VisualDensity.compact : null,
+        tapTargetSize: compact ? MaterialTapTargetSize.shrinkWrap : null,
+      ),
       icon: Icon(icon, size: 18),
       label: Text(label),
     );

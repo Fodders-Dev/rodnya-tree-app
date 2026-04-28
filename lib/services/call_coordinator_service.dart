@@ -160,9 +160,11 @@ class CallCoordinatorService extends ChangeNotifier
         await _callService.startRealtimeBridge();
         await resync();
         completer.complete();
-      } catch (error, stackTrace) {
+      } catch (_) {
         _runtimeReadyFuture = null;
-        completer.completeError(error, stackTrace);
+        if (!completer.isCompleted) {
+          completer.complete();
+        }
       }
     }());
     return completer.future;
@@ -177,16 +179,28 @@ class CallCoordinatorService extends ChangeNotifier
   }
 
   Future<CallInvite?> resync({String? chatId}) async {
-    final activeCall = await _callService.getActiveCall(chatId: chatId);
-    if (activeCall == null) {
+    final currentUser = currentUserId?.trim();
+    if (currentUser == null || currentUser.isEmpty) {
       if (chatId == null || _currentCall?.chatId == chatId) {
         await _applyCall(null);
       }
       return null;
     }
 
-    await _applyCall(activeCall);
-    return activeCall;
+    try {
+      final activeCall = await _callService.getActiveCall(chatId: chatId);
+      if (activeCall == null) {
+        if (chatId == null || _currentCall?.chatId == chatId) {
+          await _applyCall(null);
+        }
+        return null;
+      }
+
+      await _applyCall(activeCall);
+      return activeCall;
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<CallInvite?> refreshCurrentCall() async {

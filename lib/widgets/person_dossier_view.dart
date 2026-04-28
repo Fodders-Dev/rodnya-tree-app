@@ -206,96 +206,164 @@ class _HeroCard extends StatelessWidget {
         : scheme.primary;
 
     final allChips = <Widget>[
-      _StatusChip(
-        icon: dossier.isMemorial
-            ? Icons.history_toggle_off_outlined
-            : Icons.favorite_border_rounded,
-        label: dossier.isMemorial ? 'Память' : 'Живой профиль',
-        color: ringColor,
-        filled: true,
-      ),
+      if (dossier.isMemorial)
+        _StatusChip(
+          icon: Icons.history_toggle_off_outlined,
+          label: 'Память',
+          color: ringColor,
+          filled: true,
+        ),
       ...headerChips,
     ];
 
-    return GlassPanel(
-      padding: const EdgeInsets.fromLTRB(20, 24, 20, 20),
-      borderRadius: BorderRadius.circular(32),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          // ── Avatar with gradient ring ──────────────────────────────────────
-          _GradientAvatarRing(
-            photoUrl: dossier.photoUrl,
-            displayName: dossier.displayName,
-            radius: 46,
-            ringColor: ringColor,
-          ),
-          const SizedBox(height: 16),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 520;
 
-          // ── Name ──────────────────────────────────────────────────────────
-          Text(
-            dossier.displayName,
-            textAlign: TextAlign.center,
-            style: theme.textTheme.headlineSmall?.copyWith(
-              fontWeight: FontWeight.w800,
-              letterSpacing: -0.5,
-            ),
-          ),
-
-          // ── Location ──────────────────────────────────────────────────────
-          if (location.isNotEmpty) ...[
-            const SizedBox(height: 6),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              mainAxisSize: MainAxisSize.min,
+        if (compact) {
+          final controls = <Widget>[...allChips, ...actionButtons];
+          return GlassPanel(
+            padding: const EdgeInsets.all(12),
+            borderRadius: BorderRadius.circular(22),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Icon(
-                  Icons.location_on_rounded,
-                  size: 15,
-                  color: scheme.onSurfaceVariant,
+                Row(
+                  children: [
+                    _GradientAvatarRing(
+                      photoUrl: dossier.photoUrl,
+                      displayName: dossier.displayName,
+                      radius: 30,
+                      ringColor: ringColor,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            dossier.displayName,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          if (location.isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.location_on_rounded,
+                                  size: 15,
+                                  color: scheme.onSurfaceVariant,
+                                ),
+                                const SizedBox(width: 4),
+                                Expanded(
+                                  child: Text(
+                                    location,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: theme.textTheme.bodySmall?.copyWith(
+                                      color: scheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 4),
-                Text(
-                  location,
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: scheme.onSurfaceVariant,
+                if (statsRow != null) ...[
+                  const SizedBox(height: 10),
+                  statsRow!,
+                ],
+                if (controls.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: controls,
                   ),
-                ),
+                ],
               ],
             ),
-          ],
+          );
+        }
 
-          // ── Stats row (optional — personal profile only) ───────────────
-          if (statsRow != null) ...[
-            const SizedBox(height: 18),
-            const Divider(height: 1),
-            const SizedBox(height: 16),
-            statsRow!,
-          ],
-
-          // ── Status chips ───────────────────────────────────────────────
-          if (allChips.isNotEmpty) ...[
-            const SizedBox(height: 18),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              alignment: WrapAlignment.center,
-              children: allChips,
-            ),
-          ],
-
-          // ── Action buttons ─────────────────────────────────────────────
-          if (actionButtons.isNotEmpty) ...[
-            const SizedBox(height: 16),
-            Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              alignment: WrapAlignment.center,
-              children: actionButtons,
-            ),
-          ],
-        ],
-      ),
+        return GlassPanel(
+          padding: const EdgeInsets.fromLTRB(18, 20, 18, 18),
+          borderRadius: BorderRadius.circular(26),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              _GradientAvatarRing(
+                photoUrl: dossier.photoUrl,
+                displayName: dossier.displayName,
+                radius: 42,
+                ringColor: ringColor,
+              ),
+              const SizedBox(height: 14),
+              Text(
+                dossier.displayName,
+                textAlign: TextAlign.center,
+                style: theme.textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: -0.5,
+                ),
+              ),
+              if (location.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.location_on_rounded,
+                      size: 15,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      location,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+              if (statsRow != null) ...[
+                const SizedBox(height: 16),
+                const Divider(height: 1),
+                const SizedBox(height: 14),
+                statsRow!,
+              ],
+              if (allChips.isNotEmpty) ...[
+                const SizedBox(height: 16),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  alignment: WrapAlignment.center,
+                  children: allChips,
+                ),
+              ],
+              if (actionButtons.isNotEmpty) ...[
+                const SizedBox(height: 14),
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  alignment: WrapAlignment.center,
+                  children: actionButtons,
+                ),
+              ],
+            ],
+          ),
+        );
+      },
     );
   }
 }

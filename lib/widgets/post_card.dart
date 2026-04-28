@@ -133,10 +133,11 @@ class _PostCardState extends State<PostCard>
         ..writeln(widget.post.content.trim());
     }
 
-    if (widget.post.imageUrls != null && widget.post.imageUrls!.isNotEmpty) {
+    final imageUrls = widget.post.renderableImageUrls;
+    if (imageUrls.isNotEmpty) {
       buffer
         ..writeln()
-        ..writeln('Фото: ${widget.post.imageUrls!.join('\n')}');
+        ..writeln('Фото: ${imageUrls.join('\n')}');
     }
 
     await Share.share(buffer.toString().trim());
@@ -199,6 +200,10 @@ class _PostCardState extends State<PostCard>
 
   @override
   Widget build(BuildContext context) {
+    final renderableImageUrls = widget.post.renderableImageUrls;
+    final hasInvalidOnlyImages = renderableImageUrls.isEmpty &&
+        (widget.post.imageUrls?.isNotEmpty ?? false);
+
     return GlassPanel(
       padding: EdgeInsets.zero,
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
@@ -217,9 +222,10 @@ class _PostCardState extends State<PostCard>
                     ),
               ),
             ),
-          if (widget.post.imageUrls != null &&
-              widget.post.imageUrls!.isNotEmpty)
-            _buildPostImages(),
+          if (renderableImageUrls.isNotEmpty)
+            _buildPostImages(renderableImageUrls)
+          else if (hasInvalidOnlyImages)
+            _buildInvalidPostImageFallback(),
           _buildPostActions(),
         ],
       ),
@@ -229,6 +235,7 @@ class _PostCardState extends State<PostCard>
   Widget _buildPostHeader() {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final authorPhotoUrl = widget.post.renderableAuthorPhotoUrl;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
       child: Row(
@@ -238,14 +245,12 @@ class _PostCardState extends State<PostCard>
             onTap: _openAuthorProfile,
             child: CircleAvatar(
               radius: 20,
-              backgroundImage: widget.post.authorPhotoUrl != null &&
-                      widget.post.authorPhotoUrl!.isNotEmpty
-                  ? CachedNetworkImageProvider(widget.post.authorPhotoUrl!)
+              backgroundImage: authorPhotoUrl != null
+                  ? CachedNetworkImageProvider(authorPhotoUrl)
                   : null,
               backgroundColor: scheme.primary.withValues(alpha: 0.12),
               foregroundColor: scheme.primary,
-              child: widget.post.authorPhotoUrl == null ||
-                      widget.post.authorPhotoUrl!.isEmpty
+              child: authorPhotoUrl == null
                   ? const Icon(Icons.person_rounded, size: 22)
                   : null,
             ),
@@ -323,9 +328,8 @@ class _PostCardState extends State<PostCard>
     );
   }
 
-  Widget _buildPostImages() {
+  Widget _buildPostImages(List<String> images) {
     final borderRadius = BorderRadius.circular(20);
-    final images = widget.post.imageUrls!;
     if (images.length == 1) {
       return Padding(
         padding: const EdgeInsets.fromLTRB(14, 0, 14, 8),
@@ -336,23 +340,8 @@ class _PostCardState extends State<PostCard>
             child: CachedNetworkImage(
               imageUrl: images.first,
               fit: BoxFit.cover,
-              placeholder: (_, __) => Container(
-                color: Theme.of(context)
-                    .colorScheme
-                    .surfaceContainerHighest
-                    .withValues(alpha: 0.55),
-                child: const Center(child: CircularProgressIndicator()),
-              ),
-              errorWidget: (_, __, ___) => Container(
-                color: Theme.of(context)
-                    .colorScheme
-                    .surfaceContainerHighest
-                    .withValues(alpha: 0.55),
-                child: Icon(
-                  Icons.broken_image_outlined,
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-              ),
+              placeholder: (_, __) => _buildPostImagePlaceholder(),
+              errorWidget: (_, __, ___) => _buildPostImageFallback(),
             ),
           ),
         ),
@@ -371,23 +360,8 @@ class _PostCardState extends State<PostCard>
               imageBuilder: (_, imageProvider) =>
                   Image(image: imageProvider, fit: BoxFit.cover),
               fit: BoxFit.cover,
-              placeholder: (_, __) => Container(
-                color: Theme.of(context)
-                    .colorScheme
-                    .surfaceContainerHighest
-                    .withValues(alpha: 0.55),
-                child: const Center(child: CircularProgressIndicator()),
-              ),
-              errorWidget: (_, __, ___) => Container(
-                color: Theme.of(context)
-                    .colorScheme
-                    .surfaceContainerHighest
-                    .withValues(alpha: 0.55),
-                child: Icon(
-                  Icons.broken_image_outlined,
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-              ),
+              placeholder: (_, __) => _buildPostImagePlaceholder(),
+              errorWidget: (_, __, ___) => _buildPostImageFallback(),
               width: MediaQuery.of(context).size.width,
             ),
           );
@@ -398,6 +372,42 @@ class _PostCardState extends State<PostCard>
           enableInfiniteScroll: false,
           autoPlay: false,
           enlargeCenterPage: false,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInvalidPostImageFallback() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 0, 14, 8),
+      child: AspectRatio(
+        aspectRatio: 16 / 9,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(20),
+          child: _buildPostImageFallback(),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPostImagePlaceholder() {
+    return Container(
+      color: Theme.of(context)
+          .colorScheme
+          .surfaceContainerHighest
+          .withValues(alpha: 0.55),
+      child: const Center(child: CircularProgressIndicator()),
+    );
+  }
+
+  Widget _buildPostImageFallback() {
+    final theme = Theme.of(context);
+    return Container(
+      color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.55),
+      child: Center(
+        child: Icon(
+          Icons.broken_image_outlined,
+          color: theme.colorScheme.onSurfaceVariant,
         ),
       ),
     );

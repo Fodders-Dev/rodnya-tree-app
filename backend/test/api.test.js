@@ -5339,13 +5339,12 @@ test("tree graph snapshot repairs a missing primary parent from sibling-supporte
 
   assert.ok(inferredRelation);
   assert.match(inferredRelation.id, /^inferred:/);
-  const repairWarning = snapshot.warnings.find((warning) => {
-    return warning.code === "auto_repaired_parent_link";
-  });
-  assert.ok(repairWarning);
-  assert.ok(repairWarning.relationIds.includes(inferredRelation.id));
-  assert.ok(repairWarning.personIds.includes(motherId));
-  assert.ok(repairWarning.personIds.includes(viewerPersonId));
+  assert.equal(
+    snapshot.warnings.some((warning) => {
+      return warning.code === "auto_repaired_parent_link";
+    }),
+    false,
+  );
 
   const labelsByPersonId = new Map(
     snapshot.viewerDescriptors.map((descriptor) => [

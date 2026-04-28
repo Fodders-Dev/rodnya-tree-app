@@ -21,12 +21,13 @@ import '../models/story.dart';
 import '../services/app_status_service.dart';
 import '../widgets/post_card.dart';
 import '../widgets/post_card_shimmer.dart';
-import '../widgets/empty_state_widget.dart';
 import '../widgets/story_rail.dart';
 import '../widgets/glass_panel.dart';
 import '../services/custom_api_notification_service.dart';
 import '../utils/e2e_state_bridge.dart';
 import '../utils/web_wheel_listener.dart';
+
+part 'home_screen_sections.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -420,18 +421,6 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
       ),
-      floatingActionButton: _currentTreeId == null
-          ? null
-          : FloatingActionButton(
-              onPressed: () async {
-                final result = await context.push('/post/create');
-                if (result == true && _currentTreeId != null) {
-                  _loadPosts(_currentTreeId!);
-                }
-              },
-              tooltip: 'Разместить публикацию',
-              child: const Icon(Icons.add_comment_outlined),
-            ),
     );
   }
 
@@ -655,10 +644,10 @@ class _HomeScreenState extends State<HomeScreen> {
           );
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
       child: GlassPanel(
-        padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
-        borderRadius: BorderRadius.circular(28),
+        padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
+        borderRadius: BorderRadius.circular(22),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -676,8 +665,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       child: Row(
                         children: [
                           Container(
-                            width: 36,
-                            height: 36,
+                            width: 32,
+                            height: 32,
                             decoration: BoxDecoration(
                               color: theme.colorScheme.primary
                                   .withValues(alpha: 0.14),
@@ -685,7 +674,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                             child: Icon(
                               treeIcon,
-                              size: 20,
+                              size: 18,
                               color: theme.colorScheme.primary,
                             ),
                           ),
@@ -750,7 +739,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }) {
     return GlassPanel(
       padding: padding,
-      borderRadius: BorderRadius.circular(30),
+      borderRadius: BorderRadius.circular(22),
       child: child,
     );
   }
@@ -868,34 +857,58 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildFeedEmptyState({required bool wideLayout}) {
-    Future<void> handleAction() async {
-      if (_postsUnavailable) {
-        if (_currentTreeId != null) {
-          _loadPosts(_currentTreeId!);
-        }
-        return;
-      }
-      final result = await context.push('/post/create');
-      if (result == true && _currentTreeId != null) {
-        _loadPosts(_currentTreeId!);
-      }
-    }
-
-    final title = _postsUnavailable ? 'Лента недоступна' : 'Лента пуста';
-    final message = _postsUnavailable
-        ? 'Обновите позже.'
-        : _treeProviderInstance?.selectedTreeKind == TreeKind.friends
-            ? 'Начните с короткого поста.'
-            : 'Начните с первой публикации.';
-    final actionLabel = _postsUnavailable ? 'Обновить' : 'Создать';
+    final state = _feedEmptyViewState;
 
     if (!wideLayout) {
-      return EmptyStateWidget(
-        icon: Icons.post_add_outlined,
-        title: title,
-        message: message,
-        actionLabel: actionLabel,
-        onAction: handleAction,
+      final theme = Theme.of(context);
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+        child: GlassPanel(
+          padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
+          borderRadius: BorderRadius.circular(20),
+          child: Row(
+            children: [
+              Icon(
+                state.icon,
+                color: theme.colorScheme.primary,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      state.title,
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      state.message,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (state.actionLabel != null) ...[
+                const SizedBox(width: 8),
+                TextButton(
+                  onPressed: _handleFeedEmptyAction,
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  child: Text(state.actionLabel!),
+                ),
+              ],
+            ],
+          ),
+        ),
       );
     }
 
@@ -912,9 +925,7 @@ class _HomeScreenState extends State<HomeScreen> {
               borderRadius: BorderRadius.circular(20),
             ),
             child: Icon(
-              _postsUnavailable
-                  ? Icons.wifi_tethering_error_rounded
-                  : Icons.auto_awesome_mosaic_outlined,
+              state.icon,
               size: 28,
               color: theme.colorScheme.primary,
             ),
@@ -933,14 +944,14 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 const SizedBox(height: 12),
                 Text(
-                  title,
+                  state.title,
                   style: theme.textTheme.titleLarge?.copyWith(
                     fontWeight: FontWeight.w800,
                   ),
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  message,
+                  state.message,
                   style: theme.textTheme.bodyMedium?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
@@ -948,16 +959,14 @@ class _HomeScreenState extends State<HomeScreen> {
               ],
             ),
           ),
-          const SizedBox(width: 16),
-          FilledButton.icon(
-            onPressed: handleAction,
-            icon: Icon(
-              _postsUnavailable
-                  ? Icons.refresh_rounded
-                  : Icons.post_add_outlined,
+          if (state.actionLabel != null) ...[
+            const SizedBox(width: 16),
+            FilledButton.icon(
+              onPressed: _handleFeedEmptyAction,
+              icon: const Icon(Icons.refresh_rounded),
+              label: Text(state.actionLabel!),
             ),
-            label: Text(actionLabel),
-          ),
+          ],
         ],
       ),
     );
@@ -970,7 +979,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }) {
     final theme = Theme.of(context);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
         color: highlighted
             ? theme.colorScheme.primary.withValues(alpha: 0.10)
@@ -987,12 +996,12 @@ class _HomeScreenState extends State<HomeScreen> {
         children: [
           Icon(
             icon,
-            size: 16,
+            size: 15,
             color: highlighted
                 ? theme.colorScheme.primary
                 : theme.colorScheme.onSurfaceVariant,
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
           Text(
             label,
             style: theme.textTheme.labelLarge?.copyWith(
@@ -1013,15 +1022,22 @@ class _HomeScreenState extends State<HomeScreen> {
     required VoidCallback onTap,
     bool primary = false,
   }) {
+    final style = FilledButton.styleFrom(
+      visualDensity: VisualDensity.compact,
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+    );
     if (primary) {
       return FilledButton.icon(
         onPressed: onTap,
+        style: style,
         icon: Icon(icon),
         label: Text(label),
       );
     }
     return FilledButton.tonalIcon(
       onPressed: onTap,
+      style: style,
       icon: Icon(icon),
       label: Text(label),
     );
@@ -1100,7 +1116,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final showRailControls = MediaQuery.of(context).size.width >= 760;
     final canScrollRail = showRailControls && visibleEvents.length > 1;
     return _buildDesktopSideCard(
-      padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1141,7 +1157,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
             ],
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 8),
           if (!_isLoadingEvents && _upcomingEvents.isNotEmpty) ...[
             SizedBox(
               height: 34,
@@ -1175,7 +1191,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
               ),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 8),
           ],
           if (_isLoadingEvents)
             _buildEventStatePanel(
@@ -1221,16 +1237,24 @@ class _HomeScreenState extends State<HomeScreen> {
                   behavior: HitTestBehavior.translucent,
                   onPointerSignal:
                       showRailControls ? _handleEventRailPointerSignal : null,
-                  child: SizedBox(
-                    height: 126,
-                    child: ListView.builder(
-                      controller: _eventRailController,
-                      scrollDirection: Axis.horizontal,
-                      itemCount: visibleEvents.length,
-                      itemBuilder: (context, index) {
-                        return EventCard(event: visibleEvents[index]);
-                      },
-                    ),
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final cardWidth = _eventCardWidthFor(constraints);
+                      return SizedBox(
+                        height: 132,
+                        child: ListView.builder(
+                          controller: _eventRailController,
+                          scrollDirection: Axis.horizontal,
+                          itemCount: visibleEvents.length,
+                          itemBuilder: (context, index) {
+                            return EventCard(
+                              event: visibleEvents[index],
+                              width: cardWidth,
+                            );
+                          },
+                        ),
+                      );
+                    },
                   ),
                 ),
               ),

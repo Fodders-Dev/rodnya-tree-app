@@ -20,13 +20,14 @@ class GlassPanel extends StatelessWidget {
     required this.child,
     this.padding = const EdgeInsets.all(16),
     this.margin,
-    this.borderRadius = const BorderRadius.all(Radius.circular(28)),
-    this.blur = 22,
+    this.borderRadius = const BorderRadius.all(Radius.circular(22)),
+    this.blur = 14,
     this.color,
     this.borderColor,
     this.boxShadow,
     this.clipBehavior = Clip.antiAlias,
     this.showSpecular = true,
+    this.plain = false,
   });
 
   final Widget child;
@@ -39,10 +40,45 @@ class GlassPanel extends StatelessWidget {
   final List<BoxShadow>? boxShadow;
   final Clip clipBehavior;
   final bool showSpecular;
+  final bool plain;
 
   @override
   Widget build(BuildContext context) {
+    if (plain) {
+      return _buildPlainPanel(context);
+    }
     return kIsWeb ? _buildWebPanel(context) : _buildNativePanel(context);
+  }
+
+  Widget _buildPlainPanel(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final panelColor = color ??
+        theme.colorScheme.surface.withValues(alpha: isDark ? 0.84 : 0.94);
+    final outlineColor = borderColor ??
+        theme.colorScheme.outlineVariant.withValues(alpha: isDark ? 0.38 : 0.7);
+    final defaultShadow = <BoxShadow>[
+      BoxShadow(
+        color: theme.colorScheme.shadow.withValues(alpha: isDark ? 0.16 : 0.04),
+        blurRadius: 10,
+        offset: const Offset(0, 4),
+      ),
+    ];
+
+    return Container(
+      margin: margin,
+      decoration: BoxDecoration(
+        borderRadius: borderRadius,
+        color: panelColor,
+        border: Border.all(color: outlineColor, width: 1),
+        boxShadow: boxShadow ?? defaultShadow,
+      ),
+      child: ClipRRect(
+        borderRadius: borderRadius,
+        clipBehavior: clipBehavior,
+        child: Padding(padding: padding, child: child),
+      ),
+    );
   }
 
   // ── Web: no BackdropFilter, higher-opacity fill ───────────────────────────
@@ -62,8 +98,8 @@ class GlassPanel extends StatelessWidget {
     final defaultShadow = <BoxShadow>[
       BoxShadow(
         color: theme.colorScheme.shadow.withValues(alpha: isDark ? 0.28 : 0.07),
-        blurRadius: 24,
-        offset: const Offset(0, 10),
+        blurRadius: 18,
+        offset: const Offset(0, 8),
       ),
     ];
 
@@ -122,8 +158,8 @@ class GlassPanel extends StatelessWidget {
     final defaultShadow = <BoxShadow>[
       BoxShadow(
         color: theme.colorScheme.shadow.withValues(alpha: isDark ? 0.32 : 0.07),
-        blurRadius: 30,
-        offset: const Offset(0, 14),
+        blurRadius: 22,
+        offset: const Offset(0, 10),
       ),
       BoxShadow(
         color: theme.colorScheme.shadow.withValues(alpha: isDark ? 0.18 : 0.04),

@@ -244,14 +244,14 @@ void main() {
       expect(find.text('Тестовое дерево'), findsWidgets);
       expect(find.text('События'), findsOneWidget);
       expect(find.text('Дерево активно'), findsNothing);
-      expect(find.bySemanticsLabel('story-rail-add'), findsOneWidget);
+      expect(find.text('Истории семьи'), findsOneWidget);
+      expect(find.text('Создать'), findsOneWidget);
       expect(find.text('Обновите позже.'), findsOneWidget);
       expect(find.text('Лента недоступна'), findsWidgets);
       expect(find.text('Новый пост'), findsOneWidget);
-      expect(find.text('Открыть родных'), findsOneWidget);
-      expect(find.text('Открыть дерево'), findsOneWidget);
+      expect(find.widgetWithText(FilledButton, 'Новый пост'), findsOneWidget);
       expect(find.text('День рождения'), findsOneWidget);
-      expect(find.byType(FloatingActionButton), findsOneWidget);
+      expect(find.byType(FloatingActionButton), findsNothing);
     },
   );
 
@@ -272,7 +272,7 @@ void main() {
       expect(find.text('Главная'), findsOneWidget);
       expect(find.text('Нет активного дерева'), findsOneWidget);
       expect(find.text('Выбрать дерево'), findsOneWidget);
-      expect(find.text('Создать граф'), findsOneWidget);
+      expect(find.text('Создать граф'), findsNothing);
       expect(find.text('События'), findsNothing);
       expect(find.text('Лента новостей'), findsNothing);
       expect(find.byType(FloatingActionButton), findsNothing);

@@ -73,6 +73,25 @@ void main() {
   );
 
   test(
+    'CallCoordinatorService skips background resync when session is missing',
+    () async {
+      final service = _CountingCallService(
+        activeCall: _buildCall(state: CallState.ringing),
+        currentUserId: null,
+      );
+      final coordinator = CallCoordinatorService(callService: service);
+
+      await coordinator.ensureRuntimeReady();
+      final activeCall = await coordinator.resync();
+
+      expect(activeCall, isNull);
+      expect(service.activeCallRequests, 0);
+
+      coordinator.dispose();
+    },
+  );
+
+  test(
     'CallCoordinatorService hydrates incoming call from RuStore push payload',
     () async {
       final pushMessages = StreamController<RustorePushMessage>.broadcast();
@@ -260,24 +279,29 @@ class _CountingCallService implements CallServiceInterface {
   CallInvite? activeCall;
   CallInvite? callById;
   final Stream<CallEvent> _events;
+  final String? _currentUserId;
   int activeCallRequests = 0;
   int callByIdRequests = 0;
 
   _CountingCallService._internal({
     required this.activeCall,
     required Stream<CallEvent> events,
+    required String? currentUserId,
     this.callById,
-  }) : _events = events;
+  })  : _events = events,
+        _currentUserId = currentUserId;
 
   factory _CountingCallService({
     required CallInvite? activeCall,
     CallInvite? callById,
     Stream<CallEvent>? events,
+    String? currentUserId = 'user-1',
   }) {
     return _CountingCallService._internal(
       activeCall: activeCall,
       callById: callById,
       events: events ?? const Stream<CallEvent>.empty(),
+      currentUserId: currentUserId,
     );
   }
 
@@ -287,7 +311,7 @@ class _CountingCallService implements CallServiceInterface {
   }
 
   @override
-  String? get currentUserId => 'user-1';
+  String? get currentUserId => _currentUserId;
 
   @override
   Stream<CallEvent> get events => _events;

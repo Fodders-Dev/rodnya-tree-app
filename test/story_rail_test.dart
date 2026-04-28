@@ -43,9 +43,8 @@ void main() {
     );
 
     expect(find.text('Stories'), findsOneWidget);
-    expect(find.text('Добавьте первую историю.'), findsOneWidget);
     expect(find.text('Создать'), findsOneWidget);
-    expect(find.bySemanticsLabel('story-rail-add'), findsOneWidget);
+    expect(find.byIcon(Icons.add_rounded), findsOneWidget);
   });
 
   testWidgets('StoryRail groups stories into compact visual tiles', (

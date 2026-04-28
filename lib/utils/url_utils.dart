@@ -21,4 +21,18 @@ class UrlUtils {
 
     return trimmed;
   }
+
+  static bool isRenderableNetworkImageUrl(String? url) {
+    final normalized = normalizeImageUrl(url);
+    if (normalized == null) {
+      return false;
+    }
+
+    final uri = Uri.tryParse(normalized);
+    if (uri == null || uri.host.isEmpty) {
+      return false;
+    }
+
+    return uri.scheme == 'https' || uri.scheme == 'http';
+  }
 }

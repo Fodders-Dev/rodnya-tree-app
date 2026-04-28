@@ -25,28 +25,28 @@ class EmptyStateWidget extends StatelessWidget {
 
     return Center(
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 360),
+          constraints: const BoxConstraints(maxWidth: 320),
           child: GlassPanel(
-            padding: const EdgeInsets.all(20),
-            borderRadius: BorderRadius.circular(28),
+            padding: const EdgeInsets.all(16),
+            borderRadius: BorderRadius.circular(22),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 Container(
-                  padding: const EdgeInsets.all(14),
+                  padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
                     color: colorScheme.primary.withValues(alpha: 0.12),
                     shape: BoxShape.circle,
                   ),
                   child: Icon(
                     icon,
-                    size: 28,
+                    size: 24,
                     color: colorScheme.primary,
                   ),
                 ),
-                const SizedBox(height: 14),
+                const SizedBox(height: 10),
                 Text(
                   title,
                   textAlign: TextAlign.center,
@@ -55,7 +55,7 @@ class EmptyStateWidget extends StatelessWidget {
                     color: colorScheme.onSurface,
                   ),
                 ),
-                const SizedBox(height: 6),
+                const SizedBox(height: 4),
                 Text(
                   message,
                   textAlign: TextAlign.center,
@@ -65,9 +65,13 @@ class EmptyStateWidget extends StatelessWidget {
                   ),
                 ),
                 if (actionLabel != null && onAction != null) ...[
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 12),
                   FilledButton.icon(
                     onPressed: onAction,
+                    style: FilledButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
                     icon: const Icon(Icons.arrow_forward_rounded),
                     label: Text(actionLabel!),
                   ),

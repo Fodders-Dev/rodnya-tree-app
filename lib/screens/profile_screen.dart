@@ -2,7 +2,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart'; // Импортируем Provider
-import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
 import '../models/family_person.dart';
 import '../models/family_tree.dart';
@@ -27,70 +26,12 @@ import '../widgets/empty_state_widget.dart';
 import '../widgets/story_rail.dart';
 import '../widgets/tree_history_sheet.dart';
 import '../widgets/glass_panel.dart';
-import '../widgets/account_trust_summary_card.dart';
 import '../backend/backend_runtime_config.dart';
 import '../services/app_status_service.dart';
 import '../services/custom_api_post_service.dart';
 import '../utils/user_facing_error.dart';
 
-// Примерный виджет для отображения статистики (можно вынести в отдельный файл)
-
 part 'profile_screen_sections.dart';
-
-class _ProfileStatItem extends StatelessWidget {
-  final String label;
-  final String value;
-
-  const _ProfileStatItem({required this.label, required this.value});
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          value,
-          style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.w800,
-              ),
-        ),
-        const SizedBox(height: 2),
-        Text(
-          label,
-          style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
-        ),
-      ],
-    );
-  }
-}
-
-class _ProfileActionButton extends StatelessWidget {
-  const _ProfileActionButton({
-    required this.label,
-    required this.onPressed,
-    this.filled = false,
-  });
-
-  final String label;
-  final VoidCallback onPressed;
-  final bool filled;
-
-  @override
-  Widget build(BuildContext context) {
-    if (filled) {
-      return FilledButton(
-        onPressed: onPressed,
-        child: Text(label),
-      );
-    }
-    return OutlinedButton(
-      onPressed: onPressed,
-      child: Text(label),
-    );
-  }
-}
 
 String _getSafeDisplayName(UserProfile profile) {
   final rawDisplayName = profile.displayName.trim();
@@ -185,9 +126,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
   bool _isLoadingStories = false;
   bool _storiesUnavailable = false;
   String? _lastStoriesTreeId;
-
-  bool _isWideLayout(BuildContext context) =>
-      MediaQuery.of(context).size.width >= 1600;
 
   TreeKind? _selectedTreeKind(BuildContext context) =>
       context.select<TreeProvider, TreeKind?>(
@@ -398,30 +336,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
       fragment:
           '/relatives/find/$normalizedTreeId?profileCode=${Uri.encodeQueryComponent(normalizedProfileCode)}',
     );
-  }
-
-  String _buildProfileHeroSummary({required String? selectedTreeName}) {
-    final treeName = selectedTreeName?.trim();
-    if (_selectedTreePerson != null &&
-        treeName != null &&
-        treeName.isNotEmpty) {
-      return 'Эта карточка видна семье в “$treeName”. Здесь вы управляете тем, кто вы на дереве, как с вами связаться и что семье видно о вас.';
-    }
-
-    final status = _accountLinkingStatus;
-    final summaryTitle = status?.summaryTitle?.trim() ?? '';
-    final summaryDetail = status?.summaryDetail?.trim() ?? '';
-    if (summaryTitle.isNotEmpty && summaryDetail.isNotEmpty) {
-      return '$summaryTitle. $summaryDetail.';
-    }
-    if (summaryTitle.isNotEmpty) {
-      return summaryTitle;
-    }
-    if (summaryDetail.isNotEmpty) {
-      return summaryDetail;
-    }
-
-    return 'Заполните досье, чтобы семье было проще узнать вас, связаться с вами и связать ваш профиль с нужной карточкой на дереве.';
   }
 
   Future<int> _loadRelativeCount({
@@ -814,20 +728,25 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                       ),
                                   ],
                                   actionButtons: [
-                                    FilledButton.icon(
+                                    IconButton.filled(
                                       onPressed: () async {
                                         await context.push('/profile/edit');
                                         if (mounted) {
                                           unawaited(_loadUserData());
                                         }
                                       },
+                                      tooltip: 'Редактировать профиль',
                                       icon: const Icon(
                                         Icons.edit_outlined,
                                         size: 18,
                                       ),
-                                      label: const Text('Редактировать'),
                                     ),
-                                    OutlinedButton.icon(
+                                    IconButton.outlined(
+                                      style: IconButton.styleFrom(
+                                        visualDensity: VisualDensity.compact,
+                                        tapTargetSize:
+                                            MaterialTapTargetSize.shrinkWrap,
+                                      ),
                                       onPressed: () {
                                         if (selectedTreeId == null) {
                                           ScaffoldMessenger.of(
@@ -850,12 +769,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                           );
                                         }
                                       },
+                                      tooltip: _graphProfilesLabel(context),
                                       icon: const Icon(
                                         Icons.people_outline,
                                         size: 18,
-                                      ),
-                                      label: Text(
-                                        _graphProfilesLabel(context),
                                       ),
                                     ),
                                   ],

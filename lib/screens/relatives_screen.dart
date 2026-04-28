@@ -900,10 +900,10 @@ class _RelativesScreenState extends State<RelativesScreen> {
       final treeProvider = Provider.of<TreeProvider>(context, listen: false);
       return Center(
         child: Padding(
-          padding: const EdgeInsets.all(24.0),
+          padding: const EdgeInsets.all(16),
           child: GlassPanel(
-            padding: const EdgeInsets.all(24),
-            borderRadius: BorderRadius.circular(30),
+            padding: const EdgeInsets.all(16),
+            borderRadius: BorderRadius.circular(22),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -911,10 +911,10 @@ class _RelativesScreenState extends State<RelativesScreen> {
                   isOnlineTab
                       ? Icons.chat_bubble_outline
                       : Icons.people_outline,
-                  size: 42,
+                  size: 32,
                   color: Theme.of(context).colorScheme.primary,
                 ),
-                const SizedBox(height: 14),
+                const SizedBox(height: 10),
                 Text(
                   isOnlineTab
                       ? 'Чатов нет'
@@ -929,7 +929,7 @@ class _RelativesScreenState extends State<RelativesScreen> {
                       ),
                 ),
                 if (!isOnlineTab) ...[
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 6),
                   Text(
                     'Добавьте первого человека.',
                     textAlign: TextAlign.center,
@@ -937,12 +937,16 @@ class _RelativesScreenState extends State<RelativesScreen> {
                           color: Theme.of(context).colorScheme.onSurfaceVariant,
                         ),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 12),
                   FilledButton.icon(
                     onPressed: _currentTreeId == null
                         ? null
                         : () =>
                             context.push('/relatives/add/${_currentTreeId!}'),
+                    style: FilledButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
                     icon: const Icon(Icons.person_add_alt_1_outlined),
                     label: Text(_graphAddLabel(treeProvider)),
                   ),

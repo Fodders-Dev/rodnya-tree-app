@@ -33,9 +33,39 @@ class StoryRail extends StatelessWidget {
     final groups = _groupStories();
     final theme = Theme.of(context);
 
+    if (!isLoading && !unavailable && groups.isEmpty) {
+      return GlassPanel(
+        padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
+        borderRadius: BorderRadius.circular(20),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+            TextButton.icon(
+              onPressed: onCreateStory,
+              style: TextButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              icon: const Icon(Icons.add_rounded, size: 18),
+              label: const Text('Создать'),
+            ),
+          ],
+        ),
+      );
+    }
+
     return GlassPanel(
-      padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
-      borderRadius: BorderRadius.circular(28),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+      borderRadius: BorderRadius.circular(22),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -56,7 +86,7 @@ class StoryRail extends StatelessWidget {
                 ),
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
           if (isLoading && groups.isEmpty)
             const _StoryLoadingRail()
           else if (unavailable)
@@ -71,11 +101,11 @@ class StoryRail extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 SizedBox(
-                  height: 106,
+                  height: 82,
                   child: ListView.separated(
                     scrollDirection: Axis.horizontal,
                     itemCount: groups.length + 1,
-                    separatorBuilder: (_, __) => const SizedBox(width: 12),
+                    separatorBuilder: (_, __) => const SizedBox(width: 8),
                     itemBuilder: (context, index) {
                       if (index == 0) {
                         return _StoryAvatarTile.add(
@@ -103,7 +133,7 @@ class StoryRail extends StatelessWidget {
                   ),
                 ),
                 if (groups.isEmpty) ...[
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 6),
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 2),
                     child: Text(
@@ -264,26 +294,26 @@ class _StoryAvatarTile extends StatelessWidget {
       label: semanticLabel,
       onTap: onTap,
       child: SizedBox(
-        width: 82,
+        width: 66,
         child: InkWell(
-          borderRadius: BorderRadius.circular(28),
+          borderRadius: BorderRadius.circular(22),
           onTap: onTap,
           child: Column(
             children: [
               Container(
-                width: 74,
-                height: 74,
+                width: 58,
+                height: 58,
                 padding: const EdgeInsets.all(3),
                 decoration: BoxDecoration(
                   color: Colors.white.withValues(alpha: 0.28),
-                  borderRadius: BorderRadius.circular(28),
+                  borderRadius: BorderRadius.circular(21),
                   border: Border.all(
                     color: ringColor,
                     width: hasUnseen ? 2.6 : 1.15,
                   ),
                 ),
                 child: ClipRRect(
-                  borderRadius: BorderRadius.circular(24),
+                  borderRadius: BorderRadius.circular(18),
                   child: Stack(
                     fit: StackFit.expand,
                     children: [
@@ -311,8 +341,8 @@ class _StoryAvatarTile extends StatelessWidget {
                       if (isAddTile)
                         Center(
                           child: Container(
-                            width: 34,
-                            height: 34,
+                            width: 28,
+                            height: 28,
                             decoration: BoxDecoration(
                               color: Colors.white.withValues(alpha: 0.18),
                               shape: BoxShape.circle,
@@ -323,7 +353,7 @@ class _StoryAvatarTile extends StatelessWidget {
                             child: const Icon(
                               Icons.add_rounded,
                               color: Colors.white,
-                              size: 20,
+                              size: 18,
                             ),
                           ),
                         )
@@ -331,7 +361,7 @@ class _StoryAvatarTile extends StatelessWidget {
                         Align(
                           alignment: Alignment.center,
                           child: CircleAvatar(
-                            radius: 16,
+                            radius: 13,
                             backgroundColor:
                                 Colors.black.withValues(alpha: 0.24),
                             child: Text(
@@ -345,28 +375,28 @@ class _StoryAvatarTile extends StatelessWidget {
                         ),
                         if (storyType != null)
                           Positioned(
-                            right: 6,
-                            bottom: 6,
+                            right: 4,
+                            bottom: 4,
                             child: _StoryTypeBadge(storyType: storyType!),
                           ),
                       ],
                       if (!isAddTile && badgeCount != null && badgeCount! > 1)
                         Positioned(
-                          right: 6,
-                          top: 6,
+                          right: 4,
+                          top: 4,
                           child: _StoryCountBadge(count: badgeCount!),
                         ),
                     ],
                   ),
                 ),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 6),
               Text(
                 label,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 textAlign: TextAlign.center,
-                style: theme.textTheme.labelLarge?.copyWith(
+                style: theme.textTheme.labelMedium?.copyWith(
                   fontWeight: FontWeight.w700,
                 ),
               ),
@@ -391,7 +421,7 @@ class _StoryMetaChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
       decoration: BoxDecoration(
         color:
             theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.72),
@@ -401,7 +431,7 @@ class _StoryMetaChip extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(icon, size: 15, color: theme.colorScheme.onSurfaceVariant),
-          const SizedBox(width: 6),
+          const SizedBox(width: 5),
           Text(
             label,
             style: theme.textTheme.labelMedium?.copyWith(
@@ -480,26 +510,26 @@ class _StoryLoadingRail extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return SizedBox(
-      height: 106,
+      height: 82,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         itemCount: 5,
-        separatorBuilder: (_, __) => const SizedBox(width: 12),
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
         itemBuilder: (context, index) {
           return SizedBox(
-            width: 82,
+            width: 66,
             child: Column(
               children: [
                 Container(
-                  width: 74,
-                  height: 74,
+                  width: 58,
+                  height: 58,
                   decoration: BoxDecoration(
                     color: theme.colorScheme.surfaceContainerHighest
                         .withValues(alpha: 0.7),
-                    borderRadius: BorderRadius.circular(28),
+                    borderRadius: BorderRadius.circular(21),
                   ),
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 6),
                 Container(
                   width: 56,
                   height: 10,

@@ -158,9 +158,12 @@ class MainNavigationBar extends StatelessWidget {
                       );
 
                       if (!kIsWeb) {
-                        navInner = BackdropFilter(
-                          filter: ImageFilter.blur(sigmaX: 26, sigmaY: 26),
-                          child: navInner,
+                        navInner = ClipRRect(
+                          borderRadius: navRadius,
+                          child: BackdropFilter(
+                            filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+                            child: navInner,
+                          ),
                         );
                       }
 

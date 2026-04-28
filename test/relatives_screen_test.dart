@@ -174,6 +174,19 @@ class _FakeChatService implements ChatServiceInterface {
 }
 
 class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
+  final _tree = FamilyTree(
+    id: 'tree-1',
+    name: 'Семья Кузнецовых',
+    description: '',
+    creatorId: 'user-1',
+    memberIds: const ['user-1'],
+    createdAt: DateTime(2024, 1, 1),
+    updatedAt: DateTime(2024, 1, 1),
+    isPrivate: true,
+    members: const ['user-1'],
+    kind: TreeKind.family,
+  );
+
   final _me = FamilyPerson(
     id: 'me',
     treeId: 'tree-1',
@@ -301,10 +314,33 @@ class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
   Future<List<FamilyRelation>> getRelations(String treeId) async => _relations;
 
   @override
+  Future<List<FamilyTree>> getUserTrees() async => [_tree];
+
+  @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 class _FakeLocalStorageService implements LocalStorageService {
+  final _tree = FamilyTree(
+    id: 'tree-1',
+    name: 'Семья Кузнецовых',
+    description: '',
+    creatorId: 'user-1',
+    memberIds: const ['user-1'],
+    createdAt: DateTime(2024, 1, 1),
+    updatedAt: DateTime(2024, 1, 1),
+    isPrivate: true,
+    members: const ['user-1'],
+    kind: TreeKind.family,
+  );
+
+  @override
+  Future<List<FamilyTree>> getAllTrees() async => [_tree];
+
+  @override
+  Future<FamilyTree?> getTree(String treeId) async =>
+      treeId == _tree.id ? _tree : null;
+
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

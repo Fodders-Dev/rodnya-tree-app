@@ -456,10 +456,10 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    expect(find.text('Пока нет чатов'), findsOneWidget);
+    expect(find.text('Чатов нет'), findsOneWidget);
     expect(find.text('Создать чат'), findsOneWidget);
-    expect(find.text('Открыть родных'), findsOneWidget);
-    expect(find.text('Открыть дерево'), findsOneWidget);
+    expect(find.text('Родные'), findsOneWidget);
+    expect(find.text('Дерево'), findsOneWidget);
   });
 
   testWidgets(
@@ -514,7 +514,7 @@ void main() {
     controller.add(const <ChatPreview>[]);
     await tester.pumpAndSettle();
 
-    expect(find.text('Пока нет чатов'), findsOneWidget);
+    expect(find.text('Чатов нет'), findsOneWidget);
   });
 
   testWidgets('Пустое состояние чатов ведет в родных и дерево', (tester) async {
@@ -522,16 +522,16 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    await tester.ensureVisible(find.text('Открыть родных'));
-    await tester.tap(find.text('Открыть родных'));
+    await tester.ensureVisible(find.text('Родные'));
+    await tester.tap(find.text('Родные'));
     await tester.pumpAndSettle();
     expect(find.text('relatives-screen'), findsOneWidget);
 
     await tester.pumpWidget(buildApp());
     await tester.pumpAndSettle();
 
-    await tester.ensureVisible(find.text('Открыть дерево'));
-    await tester.tap(find.text('Открыть дерево'));
+    await tester.ensureVisible(find.text('Дерево'));
+    await tester.tap(find.text('Дерево'));
     await tester.pumpAndSettle();
     expect(find.text('tree-screen'), findsOneWidget);
   });
@@ -591,8 +591,7 @@ void main() {
     await tester.pumpWidget(buildApp());
     await tester.pumpAndSettle();
 
-    expect(find.text('0 чатов'), findsOneWidget);
-    expect(find.text('4 родных в поиске'), findsOneWidget);
+    expect(find.text('Семья Кузнецовых'), findsAtLeastNWidgets(1));
     expect(find.text('Все прочитано'), findsOneWidget);
   });
 
@@ -621,7 +620,6 @@ void main() {
     await tester.pumpWidget(buildApp(draftStore: draftStore));
     await tester.pumpAndSettle();
 
-    expect(find.text('1 черновик'), findsOneWidget);
     expect(
       find.text('Черновик: Нужно обсудить встречу в воскресенье'),
       findsOneWidget,
@@ -658,7 +656,6 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('1 чат без уведомлений'), findsOneWidget);
     expect(find.byIcon(Icons.notifications_off_outlined), findsWidgets);
   });
 

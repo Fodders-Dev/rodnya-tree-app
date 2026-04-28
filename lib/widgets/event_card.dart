@@ -5,8 +5,9 @@ import 'glass_panel.dart';
 
 class EventCard extends StatelessWidget {
   final AppEvent event;
+  final double? width;
 
-  const EventCard({required this.event, super.key});
+  const EventCard({required this.event, this.width, super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -14,12 +15,15 @@ class EventCard extends StatelessWidget {
     final colorScheme = theme.colorScheme;
     final canOpenProfile = event.isLinkedToPerson;
 
+    final personName = canOpenProfile ? event.personName.trim() : '';
+
     return SizedBox(
-      width: 178,
+      width: width ?? 220,
       child: GlassPanel(
-        margin: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+        margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
         padding: EdgeInsets.zero,
         borderRadius: BorderRadius.circular(20),
+        plain: true,
         child: InkWell(
           borderRadius: BorderRadius.circular(20),
           onTap: canOpenProfile
@@ -32,7 +36,7 @@ class EventCard extends StatelessWidget {
               children: [
                 Row(
                   children: [
-                    Expanded(
+                    Flexible(
                       child: Align(
                         alignment: Alignment.centerLeft,
                         child: Container(
@@ -59,9 +63,10 @@ class EventCard extends StatelessWidget {
                         ),
                       ),
                     ),
+                    const SizedBox(width: 8),
                     Container(
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 7,
+                        horizontal: 8,
                         vertical: 4,
                       ),
                       decoration: BoxDecoration(
@@ -89,15 +94,15 @@ class EventCard extends StatelessWidget {
                       height: 34,
                       decoration: BoxDecoration(
                         color: colorScheme.primary.withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(11),
+                        borderRadius: BorderRadius.circular(12),
                       ),
                       child: Icon(
                         event.icon,
-                        size: 17,
+                        size: 18,
                         color: colorScheme.primary,
                       ),
                     ),
-                    const SizedBox(width: 9),
+                    const SizedBox(width: 10),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -106,15 +111,15 @@ class EventCard extends StatelessWidget {
                             event.title,
                             style: theme.textTheme.titleSmall?.copyWith(
                               fontWeight: FontWeight.w800,
-                              height: 1.12,
+                              height: 1.15,
                             ),
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                           ),
-                          if (event.personName.trim().isNotEmpty) ...[
+                          if (personName.isNotEmpty) ...[
                             const SizedBox(height: 4),
                             Text(
-                              event.personName,
+                              personName,
                               style: theme.textTheme.bodySmall?.copyWith(
                                 color: colorScheme.onSurfaceVariant,
                                 fontWeight: FontWeight.w600,

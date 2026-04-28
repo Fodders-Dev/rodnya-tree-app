@@ -103,6 +103,41 @@ void main() {
     expect(find.text('0'), findsWidgets);
     expect(find.textContaining('Не удалось обновить реакцию'), findsOneWidget);
   });
+
+  testWidgets('PostCard keeps post visible when image URL is not renderable',
+      (tester) async {
+    getIt.registerSingleton<PostServiceInterface>(
+      _FakePostService(onToggleLike: (_) async => throw Exception('unused')),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: PostCard(
+              post: Post(
+                id: 'post-1',
+                treeId: 'tree-1',
+                authorId: 'author-1',
+                authorName: 'Анна',
+                content: 'Семейная новость',
+                imageUrls: const ['/media/posts/broken.jpeg'],
+                createdAt: DateTime(2026, 4, 13, 10),
+                likedBy: const [],
+                commentCount: 0,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pump();
+
+    expect(find.text('Семейная новость'), findsOneWidget);
+    expect(find.byIcon(Icons.broken_image_outlined), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }
 
 class _FakeAuthService implements AuthServiceInterface {

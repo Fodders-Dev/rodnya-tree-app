@@ -660,8 +660,8 @@ void main() {
     expect(find.text('Карта рода'), findsOneWidget);
     expect(find.text('Сразу к делу'), findsOneWidget);
     expect(find.text('Состояние дерева'), findsOneWidget);
-    expect(find.text('Изменения'), findsOneWidget);
-    expect(find.text('Новый пост'), findsOneWidget);
+    expect(find.text('Чаты'), findsOneWidget);
+    expect(find.text('Пост'), findsOneWidget);
   });
 
   testWidgets('после фокуса на ветке можно открыть общий чат ветки',

@@ -80,40 +80,41 @@ extension _ProfileScreenSections on _ProfileScreenState {
     final theme = Theme.of(context);
 
     return GlassPanel(
-      padding: const EdgeInsets.all(18),
-      borderRadius: BorderRadius.circular(26),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      borderRadius: BorderRadius.circular(20),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            width: 52,
-            height: 52,
+            width: 38,
+            height: 38,
             decoration: BoxDecoration(
               color: theme.colorScheme.primary.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(18),
+              borderRadius: BorderRadius.circular(13),
             ),
             child: Icon(
               Icons.mark_email_read_outlined,
               color: theme.colorScheme.primary,
+              size: 21,
             ),
           ),
-          const SizedBox(width: 14),
+          const SizedBox(width: 10),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Предложения под контролем',
-                  style: theme.textTheme.titleMedium?.copyWith(
+                  'Предложений нет',
+                  style: theme.textTheme.titleSmall?.copyWith(
                     fontWeight: FontWeight.w800,
                   ),
                 ),
-                const SizedBox(height: 6),
+                const SizedBox(height: 2),
                 Text(
-                  'Сейчас новых семейных правок нет. Когда кто-то предложит обновление вашего профиля, оно появится здесь.',
-                  style: theme.textTheme.bodyMedium?.copyWith(
+                  'Новые правки появятся здесь.',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodySmall?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
-                    height: 1.35,
                   ),
                 ),
               ],
@@ -136,18 +137,6 @@ extension _ProfileScreenSections on _ProfileScreenState {
     return null;
   }
 
-  Widget _buildTrustSummarySection() {
-    final status = _accountLinkingStatus;
-    if (status == null) {
-      return const SizedBox.shrink();
-    }
-
-    return AccountTrustSummaryCard(
-      status: status,
-      onManage: () => context.push('/profile/edit'),
-    );
-  }
-
   Widget _buildProfileConnectionSection({
     required String? selectedTreeId,
     required String? selectedTreeName,
@@ -162,144 +151,68 @@ extension _ProfileScreenSections on _ProfileScreenState {
     final theme = Theme.of(context);
 
     return GlassPanel(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
+      borderRadius: BorderRadius.circular(20),
+      child: Row(
         children: [
-          Row(
-            children: [
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.secondary.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Icon(
-                  Icons.qr_code_2_rounded,
-                  color: theme.colorScheme.secondary,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Профильный код и QR',
-                      style: theme.textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '@$profileCode',
-                      style: theme.textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Text(
-            connectionLink == null
-                ? 'Выберите активное дерево, и мы соберём QR для быстрого поиска, связи и привязки родственника именно к этому дереву.'
-                : selectedTreeName?.trim().isNotEmpty == true
-                    ? 'Ссылка и QR ведут сразу в сценарий поиска и связи для дерева “$selectedTreeName”.'
-                    : 'Ссылка и QR ведут прямо в сценарий поиска по профильному коду внутри выбранного дерева.',
-            style: theme.textTheme.bodyMedium?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-              height: 1.35,
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: theme.colorScheme.secondary.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(13),
+            ),
+            child: Icon(
+              Icons.qr_code_2_rounded,
+              color: theme.colorScheme.secondary,
+              size: 21,
             ),
           ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              Chip(
-                avatar: const Icon(Icons.alternate_email_outlined, size: 18),
-                label: Text('Код: @$profileCode'),
-                visualDensity: VisualDensity.compact,
-              ),
-              if (selectedTreeName?.trim().isNotEmpty == true)
-                Chip(
-                  avatar: const Icon(Icons.account_tree_outlined, size: 18),
-                  label: Text(selectedTreeName!),
-                  visualDensity: VisualDensity.compact,
-                ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          if (connectionLink == null)
-            OutlinedButton.icon(
-              onPressed: () => context.go('/tree?selector=1'),
-              icon: const Icon(Icons.account_tree_outlined),
-              label: const Text('Выбрать дерево'),
-            )
-          else ...[
-            Row(
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Container(
-                  width: 144,
-                  height: 144,
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: QrImageView(
-                    data: connectionLink.toString(),
-                    version: QrVersions.auto,
-                    padding: EdgeInsets.zero,
-                    eyeStyle: const QrEyeStyle(
-                      color: Colors.black,
-                      eyeShape: QrEyeShape.square,
-                    ),
-                    dataModuleStyle: const QrDataModuleStyle(
-                      color: Colors.black,
-                      dataModuleShape: QrDataModuleShape.square,
-                    ),
+                Text(
+                  'Профильный код',
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w800,
                   ),
                 ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      SelectableText(
-                        connectionLink.toString(),
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
-                          height: 1.35,
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          FilledButton.tonalIcon(
-                            onPressed: () =>
-                                _copyProfileConnectionLink(connectionLink),
-                            icon: const Icon(Icons.copy_outlined, size: 18),
-                            label: const Text('Скопировать'),
-                          ),
-                          FilledButton.icon(
-                            onPressed: () =>
-                                _shareProfileConnectionLink(connectionLink),
-                            icon: const Icon(Icons.share_outlined, size: 18),
-                            label: const Text('Поделиться'),
-                          ),
-                        ],
-                      ),
-                    ],
+                const SizedBox(height: 2),
+                Text(
+                  '@$profileCode',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
               ],
+            ),
+          ),
+          if (connectionLink == null)
+            OutlinedButton(
+              onPressed: () => context.go('/tree?selector=1'),
+              style: OutlinedButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              child: const Text('Дерево'),
+            )
+          else ...[
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              tooltip: 'Скопировать ссылку',
+              onPressed: () => _copyProfileConnectionLink(connectionLink),
+              icon: const Icon(Icons.copy_outlined, size: 20),
+            ),
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              tooltip: 'Поделиться',
+              onPressed: () => _shareProfileConnectionLink(connectionLink),
+              icon: const Icon(Icons.share_outlined, size: 20),
             ),
           ],
         ],
@@ -422,6 +335,7 @@ extension _ProfileScreenSections on _ProfileScreenState {
         .join('\n');
 
     return GlassPanel(
+      plain: true,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -507,238 +421,35 @@ extension _ProfileScreenSections on _ProfileScreenState {
     }
   }
 
-  Widget _buildContextBadge({
-    required BuildContext context,
-    required IconData icon,
-    required String label,
-  }) {
-    final theme = Theme.of(context);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.onSecondaryContainer.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            icon,
-            size: 16,
-            color: theme.colorScheme.onSecondaryContainer,
-          ),
-          const SizedBox(width: 8),
-          Text(
-            label,
-            style: theme.textTheme.labelLarge?.copyWith(
-              color: theme.colorScheme.onSecondaryContainer,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildGraphContextBanner(
-    BuildContext context, {
-    required bool isFriendsTree,
-    required String selectedTreeName,
-    FamilyPerson? selectedTreePerson,
-  }) {
-    final theme = Theme.of(context);
-    final personPhotoUrl = selectedTreePerson?.primaryPhotoUrl;
-    final photoCount = selectedTreePerson?.photoGallery.length ?? 0;
-    return GlassPanel(
-      padding: const EdgeInsets.all(14),
-      color: theme.colorScheme.secondaryContainer.withValues(alpha: 0.42),
-      borderRadius: BorderRadius.circular(24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(
-                isFriendsTree
-                    ? Icons.diversity_3_outlined
-                    : Icons.account_tree_outlined,
-                color: theme.colorScheme.onSecondaryContainer,
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  isFriendsTree ? 'Активен круг' : 'Активно дерево',
-                  style: theme.textTheme.titleSmall?.copyWith(
-                    color: theme.colorScheme.onSecondaryContainer,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              _buildContextBadge(
-                context: context,
-                icon: isFriendsTree
-                    ? Icons.diversity_3_outlined
-                    : Icons.account_tree_outlined,
-                label: selectedTreeName,
-              ),
-              _buildContextBadge(
-                context: context,
-                icon: Icons.person_outline,
-                label: 'Мой профиль',
-              ),
-              FilledButton.tonalIcon(
-                onPressed: () => context.go('/tree'),
-                icon: const Icon(Icons.arrow_forward),
-                label: const Text('Дерево'),
-              ),
-            ],
-          ),
-          if (selectedTreePerson != null) ...[
-            const SizedBox(height: 12),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: theme.colorScheme.onSecondaryContainer
-                    .withValues(alpha: 0.08),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                  color: theme.colorScheme.onSecondaryContainer
-                      .withValues(alpha: 0.12),
-                ),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      CircleAvatar(
-                        radius: 22,
-                        backgroundImage: personPhotoUrl != null
-                            ? NetworkImage(personPhotoUrl)
-                            : null,
-                        child: personPhotoUrl == null
-                            ? Text(
-                                selectedTreePerson.initials,
-                                style: const TextStyle(fontSize: 14),
-                              )
-                            : null,
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Карточка в дереве',
-                              style: theme.textTheme.labelLarge?.copyWith(
-                                color: theme.colorScheme.onSecondaryContainer,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              selectedTreePerson.displayName,
-                              style: theme.textTheme.bodyMedium?.copyWith(
-                                color: theme.colorScheme.onSecondaryContainer,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            Wrap(
-                              spacing: 8,
-                              runSpacing: 8,
-                              children: [
-                                _buildContextBadge(
-                                  context: context,
-                                  icon: Icons.photo_library_outlined,
-                                  label: photoCount == 0
-                                      ? 'Без фото'
-                                      : photoCount == 1
-                                          ? '1 фото'
-                                          : '$photoCount фото',
-                                ),
-                                if (selectedTreePerson.primaryPhotoUrl != null)
-                                  _buildContextBadge(
-                                    context: context,
-                                    icon: Icons.star_outline,
-                                    label: 'Основное фото',
-                                  ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      FilledButton.tonalIcon(
-                        onPressed: () => context
-                            .push('/relative/details/${selectedTreePerson.id}'),
-                        icon: const Icon(Icons.open_in_new),
-                        label: const Text('Открыть'),
-                      ),
-                      OutlinedButton.icon(
-                        onPressed: photoCount == 0
-                            ? null
-                            : () => _showSelectedTreePersonGallery(
-                                selectedTreePerson),
-                        icon: const Icon(Icons.photo_library_outlined),
-                        label: Text(
-                          photoCount == 0 ? 'Фото' : 'Фото ($photoCount)',
-                        ),
-                      ),
-                      OutlinedButton.icon(
-                        onPressed: () =>
-                            _showSelectedTreePersonHistory(selectedTreePerson),
-                        icon: const Icon(Icons.history_outlined),
-                        label: const Text('История'),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
   // ── New helper widgets called from the redesigned build() ─────────────────
 
   /// Stats row widget passed to PersonDossierView (posts / relatives / trees).
   Widget _buildStatsRow(BuildContext context) {
     return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        _StatBadge(
-          value: _postCount.toString(),
-          label: 'Постов',
-          onTap: null,
+        Flexible(
+          child: _StatBadge(
+            value: _postCount.toString(),
+            label: 'Постов',
+            onTap: null,
+          ),
         ),
         _StatDivider(),
-        _StatBadge(
-          value: _relativeCount.toString(),
-          label: _graphStatLabel(context),
-          onTap: () => context.go('/relatives'),
+        Flexible(
+          child: _StatBadge(
+            value: _relativeCount.toString(),
+            label: _graphStatLabel(context),
+            onTap: () => context.go('/relatives'),
+          ),
         ),
         _StatDivider(),
-        _StatBadge(
-          value: _treeCount.toString(),
-          label: 'Деревья',
-          onTap: () => context.go('/tree?selector=1'),
+        Flexible(
+          child: _StatBadge(
+            value: _treeCount.toString(),
+            label: 'Деревья',
+            onTap: () => context.go('/tree?selector=1'),
+          ),
         ),
       ],
     );
@@ -755,7 +466,7 @@ extension _ProfileScreenSections on _ProfileScreenState {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
           color: scheme.primaryContainer.withValues(alpha: 0.55),
           borderRadius: BorderRadius.circular(999),
@@ -775,12 +486,16 @@ extension _ProfileScreenSections on _ProfileScreenState {
               color: scheme.primary,
             ),
             const SizedBox(width: 6),
-            Text(
-              label,
-              style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                    color: scheme.primary,
-                    fontWeight: FontWeight.w700,
-                  ),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 150),
+              child: Text(
+                label,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                      color: scheme.primary,
+                      fontWeight: FontWeight.w700,
+                    ),
+              ),
             ),
           ],
         ),
@@ -799,82 +514,72 @@ extension _ProfileScreenSections on _ProfileScreenState {
     final photoCount = person.photoGallery.length;
 
     return Padding(
-      padding: const EdgeInsets.only(top: 12),
+      padding: const EdgeInsets.only(top: 10),
       child: GlassPanel(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
-        borderRadius: BorderRadius.circular(24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
+        borderRadius: BorderRadius.circular(20),
+        plain: true,
+        child: Row(
           children: [
-            Row(
-              children: [
-                CircleAvatar(
-                  radius: 20,
-                  backgroundImage: person.primaryPhotoUrl != null
-                      ? NetworkImage(person.primaryPhotoUrl!)
-                      : null,
-                  backgroundColor: scheme.primary.withValues(alpha: 0.12),
-                  foregroundColor: scheme.primary,
-                  child: person.primaryPhotoUrl == null
-                      ? Text(
-                          person.initials,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w800,
-                            fontSize: 14,
-                          ),
-                        )
-                      : null,
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Карточка в дереве',
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          color: scheme.onSurfaceVariant,
-                          letterSpacing: 0.3,
-                        ),
+            CircleAvatar(
+              radius: 18,
+              backgroundImage: person.primaryPhotoUrl != null
+                  ? NetworkImage(person.primaryPhotoUrl!)
+                  : null,
+              backgroundColor: scheme.primary.withValues(alpha: 0.12),
+              foregroundColor: scheme.primary,
+              child: person.primaryPhotoUrl == null
+                  ? Text(
+                      person.initials,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 13,
                       ),
-                      const SizedBox(height: 2),
-                      Text(
-                        person.displayName,
-                        style: theme.textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.open_in_new_rounded, size: 18),
-                  tooltip: 'Открыть карточку',
-                  onPressed: () =>
-                      context.push('/relative/details/${person.id}'),
-                ),
-              ],
+                    )
+                  : null,
             ),
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 8,
-              runSpacing: 6,
-              children: [
-                OutlinedButton.icon(
-                  onPressed: photoCount == 0
-                      ? null
-                      : () => _showSelectedTreePersonGallery(person),
-                  icon: const Icon(Icons.photo_library_outlined, size: 16),
-                  label: Text(
-                    photoCount == 0 ? 'Фото' : 'Фото ($photoCount)',
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Карточка в дереве',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
                   ),
-                ),
-                OutlinedButton.icon(
-                  onPressed: () => _showSelectedTreePersonHistory(person),
-                  icon: const Icon(Icons.history_outlined, size: 16),
-                  label: const Text('История'),
-                ),
-              ],
+                  const SizedBox(height: 1),
+                  Text(
+                    person.displayName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              tooltip: photoCount == 0 ? 'Фото пока нет' : 'Фото ($photoCount)',
+              icon: const Icon(Icons.photo_library_outlined, size: 19),
+              onPressed: photoCount == 0
+                  ? null
+                  : () => _showSelectedTreePersonGallery(person),
+            ),
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              tooltip: 'История',
+              icon: const Icon(Icons.history_outlined, size: 19),
+              onPressed: () => _showSelectedTreePersonHistory(person),
+            ),
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              tooltip: 'Открыть карточку',
+              icon: const Icon(Icons.open_in_new_rounded, size: 19),
+              onPressed: () => context.push('/relative/details/${person.id}'),
             ),
           ],
         ),
@@ -952,21 +657,26 @@ class _StatBadge extends StatelessWidget {
       borderRadius: BorderRadius.circular(12),
       onTap: onTap,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-        child: Column(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+        child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
               value,
-              style: theme.textTheme.titleLarge?.copyWith(
+              style: theme.textTheme.labelLarge?.copyWith(
                 fontWeight: FontWeight.w800,
               ),
             ),
-            const SizedBox(height: 2),
-            Text(
-              label,
-              style: theme.textTheme.labelSmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
+            const SizedBox(width: 4),
+            Flexible(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ),
           ],
@@ -980,7 +690,7 @@ class _StatDivider extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: 32,
+      height: 18,
       child: VerticalDivider(
         color:
             Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.6),

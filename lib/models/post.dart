@@ -20,6 +20,13 @@ class Post {
   // Геттеры для нормализованных URL
   String? get authorPhotoUrl => _authorPhotoUrl;
   List<String>? get imageUrls => _imageUrls;
+  List<String> get renderableImageUrls => (_imageUrls ?? const <String>[])
+      .where(UrlUtils.isRenderableNetworkImageUrl)
+      .toList(growable: false);
+  String? get renderableAuthorPhotoUrl =>
+      UrlUtils.isRenderableNetworkImageUrl(_authorPhotoUrl)
+          ? _authorPhotoUrl
+          : null;
   int get likeCount => likedBy.length;
 
   Post({

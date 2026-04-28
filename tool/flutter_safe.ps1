@@ -20,7 +20,12 @@ function Resolve-FlutterBinary {
 }
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$safeRoot = Join-Path $env:TEMP 'rodnya_safe_workspace'
+$sha256 = [System.Security.Cryptography.SHA256]::Create()
+$repoHashBytes = $sha256.ComputeHash(
+  [System.Text.Encoding]::UTF8.GetBytes($repoRoot.ToLowerInvariant())
+)
+$repoHash = -join ($repoHashBytes[0..5] | ForEach-Object { $_.ToString('x2') })
+$safeRoot = Join-Path $env:TEMP "rodnya_safe_workspace_$repoHash"
 $safeWorkspace = Join-Path $safeRoot 'repo'
 $flutterBinary = Resolve-FlutterBinary
 
@@ -28,9 +33,12 @@ New-Item -ItemType Directory -Path $safeRoot -Force | Out-Null
 
 if (Test-Path $safeWorkspace) {
   $existingItem = Get-Item -LiteralPath $safeWorkspace -Force
-  $existingTarget = @($existingItem.Target)[0]
+  $existingTarget = $existingItem.LinkTarget
+  if (-not $existingTarget) {
+    $existingTarget = @($existingItem.Target)[0]
+  }
   if ($existingTarget -ne $repoRoot) {
-    Remove-Item -LiteralPath $safeWorkspace -Force
+    Remove-Item -LiteralPath $safeWorkspace -Force -Recurse
   }
 }
 
