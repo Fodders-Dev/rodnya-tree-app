@@ -397,99 +397,112 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
 
     return Scaffold(
       backgroundColor: Colors.black,
+      // extendBodyBehindAppBar + no SafeArea = true full-bleed immersive viewer
+      // matching Instagram / Telegram Stories behaviour.
+      extendBodyBehindAppBar: true,
+      extendBody: true,
       body: Semantics(
         label: 'story-viewer',
         child: GestureDetector(
           onLongPressStart: (_) => _pausePlayback(),
           onLongPressEnd: (_) => _resumePlayback(),
-          child: SafeArea(
-            child: Stack(
-              children: [
-                const Positioned.fill(
-                  child: ColoredBox(color: Colors.black),
-                ),
-                Positioned.fill(
-                  child: _buildStoryContent(story),
-                ),
-                Positioned.fill(
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [
-                          Colors.black.withValues(alpha: 0.36),
-                          Colors.transparent,
-                          Colors.black.withValues(alpha: 0.38),
-                        ],
-                        stops: const [0, 0.35, 1],
-                      ),
+          child: Stack(
+            children: [
+              const Positioned.fill(
+                child: ColoredBox(color: Colors.black),
+              ),
+              Positioned.fill(
+                child: _buildStoryContent(story),
+              ),
+              Positioned.fill(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Colors.black.withValues(alpha: 0.36),
+                        Colors.transparent,
+                        Colors.black.withValues(alpha: 0.38),
+                      ],
+                      stops: const [0, 0.35, 1],
                     ),
                   ),
                 ),
-                Positioned.fill(
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: GestureDetector(
-                          behavior: HitTestBehavior.translucent,
-                          onTap: _goPrevious,
-                        ),
+              ),
+              Positioned.fill(
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.translucent,
+                        onTap: _goPrevious,
                       ),
-                      Expanded(
-                        child: GestureDetector(
-                          behavior: HitTestBehavior.translucent,
-                          onTap: _goNext,
-                        ),
+                    ),
+                    Expanded(
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.translucent,
+                        onTap: _goNext,
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
-                Positioned(
-                  top: 12,
-                  left: 16,
-                  right: 16,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: List.generate(
-                          _stories.length,
-                          (index) => Expanded(
-                            child: Padding(
-                              padding: EdgeInsets.only(
-                                right: index == _stories.length - 1 ? 0 : 4,
-                              ),
-                              child: _StoryProgressSegment(
-                                isCurrent: index == _currentIndex,
-                                isCompleted: index < _currentIndex,
-                                animation: _progressController,
+              ),
+              // Top overlay: progress bars + author — offset by status-bar height
+              // so content bleeds behind the system status bar.
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: Builder(
+                  builder: (context) {
+                    final topPad = MediaQuery.of(context).viewPadding.top + 10;
+                    return Padding(
+                      padding: EdgeInsets.fromLTRB(16, topPad, 16, 0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: List.generate(
+                              _stories.length,
+                              (index) => Expanded(
+                                child: Padding(
+                                  padding: EdgeInsets.only(
+                                    right: index == _stories.length - 1 ? 0 : 4,
+                                  ),
+                                  child: _StoryProgressSegment(
+                                    isCurrent: index == _currentIndex,
+                                    isCompleted: index < _currentIndex,
+                                    animation: _progressController,
+                                  ),
+                                ),
                               ),
                             ),
                           ),
-                        ),
+                          const SizedBox(height: 12),
+                          _buildHeader(story),
+                        ],
                       ),
-                      const SizedBox(height: 14),
-                      _buildHeader(story),
-                    ],
-                  ),
+                    );
+                  },
                 ),
+              ),
+              // Bottom tray — offset by bottom safe area
+              Positioned(
+                left: 16,
+                right: 16,
+                bottom: MediaQuery.of(context).viewPadding.bottom + 20,
+                child: _buildBottomTray(story),
+              ),
+              if (BackendRuntimeConfig.current.enableE2e)
                 Positioned(
-                  left: 16,
                   right: 16,
-                  bottom: 20,
-                  child: _buildBottomTray(story),
-                ),
-                if (BackendRuntimeConfig.current.enableE2e)
-                  Positioned(
-                    right: 16,
-                    bottom: 92,
-                    child: IgnorePointer(
-                      child: _buildE2EViewerOverlay(story),
-                    ),
+                  bottom: 92,
+                  child: IgnorePointer(
+                    child: _buildE2EViewerOverlay(story),
                   ),
-              ],
-            ),
+                ),
+            ],
           ),
         ),
       ),
