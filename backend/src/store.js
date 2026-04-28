@@ -452,8 +452,35 @@ function parseDirectParticipantsFromChatId(chatId) {
   return participants.length === 2 ? normalizeParticipantIds(participants) : [];
 }
 
+function buildSafePreviewText(value, maxLength = 280) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  const rawText =
+    typeof value === "string"
+      ? value
+      : typeof value === "number" || typeof value === "boolean"
+        ? String(value)
+        : "";
+  if (!rawText) {
+    return "";
+  }
+  const sampledText =
+    rawText.length > maxLength * 4
+      ? rawText.slice(0, maxLength * 4)
+      : rawText;
+  const normalizedText = sampledText.trim();
+  if (!normalizedText) {
+    return "";
+  }
+  if (normalizedText.length <= maxLength) {
+    return normalizedText;
+  }
+  return `${normalizedText.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+}
+
 function describeMessagePreview(message) {
-  const text = String(message?.text || "").trim();
+  const text = buildSafePreviewText(message?.text, 280);
   if (text) {
     return text;
   }
@@ -3988,6 +4015,28 @@ function _materializeInferredParentLinks(db, treeId) {
   }
 }
 
+function insertDescendingLimited(items, entry, compareEntries, limit) {
+  if (!Number.isFinite(limit) || limit <= 0) {
+    return;
+  }
+
+  let insertIndex = items.findIndex(
+    (existingEntry) => compareEntries(entry, existingEntry) < 0,
+  );
+  if (insertIndex < 0) {
+    insertIndex = items.length;
+  }
+
+  if (insertIndex >= limit && items.length >= limit) {
+    return;
+  }
+
+  items.splice(insertIndex, 0, entry);
+  if (items.length > limit) {
+    items.length = limit;
+  }
+}
+
 class FileStore {
   constructor(dataPath) {
     this.dataPath = dataPath;
@@ -6984,24 +7033,33 @@ class FileStore {
 
   async listNotifications(userId, {status = null, limit = 50} = {}) {
     const db = await this._read();
-    return db.notifications
-      .filter((entry) => {
-        if (entry.userId !== userId) {
-          return false;
-        }
-        if (status === "unread" && entry.readAt) {
-          return false;
-        }
-        if (status === "read" && !entry.readAt) {
-          return false;
-        }
-        return true;
-      })
-      .sort((left, right) =>
-        String(right.createdAt || "").localeCompare(String(left.createdAt || "")),
-      )
-      .slice(0, limit)
-      .map((entry) => structuredClone(entry));
+    const normalizedLimit = Number.isFinite(Number(limit))
+      ? Math.max(0, Number(limit))
+      : 50;
+    if (normalizedLimit === 0) {
+      return [];
+    }
+
+    const notifications = [];
+    for (let index = db.notifications.length - 1; index >= 0; index -= 1) {
+      const entry = db.notifications[index];
+      if (entry.userId !== userId) {
+        continue;
+      }
+      if (status === "unread" && entry.readAt) {
+        continue;
+      }
+      if (status === "read" && !entry.readAt) {
+        continue;
+      }
+
+      notifications.push(entry);
+      if (notifications.length >= normalizedLimit) {
+        break;
+      }
+    }
+
+    return notifications.map((entry) => structuredClone(entry));
   }
 
   async countUnreadNotifications(userId) {
@@ -8404,8 +8462,11 @@ class FileStore {
       this._syncChatUpdatedAt(db, purgedChatIds);
       await this._write(db);
     }
-    const previews = new Map();
     const relatedChats = new Map();
+    const userById = new Map(
+      db.users.map((entry) => [String(entry.id || "").trim(), entry]),
+    );
+    const previews = new Map();
 
     for (const chat of db.chats) {
       if (Array.isArray(chat.participantIds) && chat.participantIds.includes(userId)) {
@@ -8414,11 +8475,13 @@ class FileStore {
     }
 
     for (const message of db.messages) {
-      const resolvedChat = this._resolveChat(db, message.chatId);
-      if (!resolvedChat || !resolvedChat.participantIds.includes(userId)) {
+      if (relatedChats.has(message.chatId)) {
         continue;
       }
-      relatedChats.set(resolvedChat.id, resolvedChat);
+      const resolvedChat = this._resolveChat(db, message.chatId);
+      if (resolvedChat && resolvedChat.participantIds.includes(userId)) {
+        relatedChats.set(resolvedChat.id, resolvedChat);
+      }
     }
 
     for (const chat of relatedChats.values()) {
@@ -8443,37 +8506,30 @@ class FileStore {
         lastMessageSenderId: "",
       };
 
-      const relevantMessages = db.messages
-        .filter((message) => message.chatId === chat.id)
-        .sort((left, right) =>
-          String(right.timestamp || "").localeCompare(String(left.timestamp || "")),
-        );
-      const lastMessage = relevantMessages[0] || null;
-      if (lastMessage) {
-        preview.lastMessage = describeMessagePreview(lastMessage);
-        preview.lastMessageTime = lastMessage.timestamp;
-        preview.lastMessageSenderId = lastMessage.senderId;
-      }
-
-      preview.unreadCount = relevantMessages.filter((message) => {
-        return message.senderId !== userId && message.isRead !== true;
-      }).length;
-
       if (isGroup) {
-        const otherParticipantNames = participants
-          .filter((participantId) => participantId !== userId)
-          .map((participantId) => {
-            const participant = db.users.find((entry) => entry.id === participantId);
-            return participant?.profile?.displayName || participant?.email || "";
-          })
-          .filter(Boolean);
+        const otherParticipantNames = [];
+        for (const participantId of participants) {
+          if (participantId === userId) {
+            continue;
+          }
+          const participant = userById.get(participantId) || null;
+          const participantName =
+            participant?.profile?.displayName || participant?.email || "";
+          if (!participantName) {
+            continue;
+          }
+          otherParticipantNames.push(participantName);
+          if (otherParticipantNames.length >= 3) {
+            break;
+          }
+        }
         preview.otherUserName =
           chat.title ||
           (otherParticipantNames.length > 0
-            ? otherParticipantNames.slice(0, 3).join(", ")
+            ? otherParticipantNames.join(", ")
             : "Групповой чат");
       } else {
-        const otherUser = db.users.find((entry) => entry.id === otherUserId);
+        const otherUser = userById.get(otherUserId) || null;
         if (otherUser) {
           preview.otherUserName =
             otherUser.profile?.displayName || otherUser.email || "Пользователь";
@@ -8499,6 +8555,40 @@ class FileStore {
       }
 
       previews.set(chat.id, preview);
+    }
+
+    for (const message of db.messages) {
+      let resolvedChatId = String(message.chatId || "").trim();
+      let preview = previews.get(resolvedChatId) || null;
+
+      if (!preview) {
+        const resolvedChat = this._resolveChat(db, message.chatId);
+        if (!resolvedChat || !previews.has(resolvedChat.id)) {
+          continue;
+        }
+        resolvedChatId = resolvedChat.id;
+        preview = previews.get(resolvedChatId) || null;
+      }
+
+      if (!preview) {
+        continue;
+      }
+
+      const messageTimestamp = String(message.timestamp || "").trim();
+      const lastMessageTimestamp = String(preview.lastMessageTime || "").trim();
+      if (
+        !preview.lastMessage ||
+        !lastMessageTimestamp ||
+        messageTimestamp.localeCompare(lastMessageTimestamp) >= 0
+      ) {
+        preview.lastMessage = describeMessagePreview(message);
+        preview.lastMessageTime = messageTimestamp;
+        preview.lastMessageSenderId = message.senderId;
+      }
+
+      if (message.senderId !== userId && message.isRead !== true) {
+        preview.unreadCount += 1;
+      }
     }
 
     return Array.from(previews.values())

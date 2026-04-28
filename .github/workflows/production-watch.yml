@@ -18,6 +18,125 @@ jobs:
         with:
           node-version: 24
 
+      - name: Install backend dependencies
+        run: npm --prefix backend ci
+
+      - name: Run backend tests
+        run: |
+          node --test backend/test/config-env.test.js backend/test/postgres-store.test.js
+          node --test backend/test/api.test.js
+
+      - name: Create backend release archive
+        run: |
+          cd backend
+          tar \
+            --exclude=node_modules \
+            --exclude=data \
+            --exclude=test \
+            --exclude=.gitignore \
+            -czf ../rodnya-backend.tgz .
+
+      - name: Setup server auth
+        env:
+          BACKEND_SERVER_PASSWORD: ${{ secrets.BACKEND_SERVER_PASSWORD }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -T 5 -H "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts || true
+          if [ -n "$BACKEND_SERVER_PASSWORD" ]; then
+            sudo apt-get update
+            sudo apt-get install -y sshpass
+          fi
+
+      - name: Upload backend archive
+        env:
+          REMOTE_ARCHIVE: /tmp/rodnya-backend-${{ github.sha }}.tgz
+          REMOTE_SCRIPT: /tmp/rodnya-activate-backend-release-${{ github.sha }}.sh
+          BACKEND_SERVER_USERNAME: ${{ secrets.BACKEND_SERVER_USERNAME }}
+          BACKEND_SERVER_PASSWORD: ${{ secrets.BACKEND_SERVER_PASSWORD }}
+        run: |
+          backend_user="${BACKEND_SERVER_USERNAME:-${{ secrets.SERVER_USERNAME }}}"
+          if [ -n "$BACKEND_SERVER_PASSWORD" ]; then
+            sshpass -p "$BACKEND_SERVER_PASSWORD" scp \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              rodnya-backend.tgz \
+              "${backend_user}@${{ secrets.SERVER_HOST }}:${REMOTE_ARCHIVE}"
+            sshpass -p "$BACKEND_SERVER_PASSWORD" scp \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              deploy/backend/activate_backend_release.sh \
+              "${backend_user}@${{ secrets.SERVER_HOST }}:${REMOTE_SCRIPT}"
+          else
+            scp -i ~/.ssh/id_ed25519 rodnya-backend.tgz \
+              "${backend_user}@${{ secrets.SERVER_HOST }}:${REMOTE_ARCHIVE}"
+            scp -i ~/.ssh/id_ed25519 deploy/backend/activate_backend_release.sh \
+              "${backend_user}@${{ secrets.SERVER_HOST }}:${REMOTE_SCRIPT}"
+          fi
+
+      - name: Activate backend release on server
+        id: activate_backend_release
+        continue-on-error: true
+        env:
+          REMOTE_ARCHIVE: /tmp/rodnya-backend-${{ github.sha }}.tgz
+          REMOTE_SCRIPT: /tmp/rodnya-activate-backend-release-${{ github.sha }}.sh
+          BACKEND_SERVER_USERNAME: ${{ secrets.BACKEND_SERVER_USERNAME }}
+          BACKEND_SERVER_PASSWORD: ${{ secrets.BACKEND_SERVER_PASSWORD }}
+        run: |
+          DEPLOY_LABEL="deploy ${GITHUB_SHA::7} / github-actions-backend / $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          backend_user="${BACKEND_SERVER_USERNAME:-${{ secrets.SERVER_USERNAME }}}"
+          ssh_cmd=(ssh -i ~/.ssh/id_ed25519 "${backend_user}@${{ secrets.SERVER_HOST }}")
+          if [ -n "$BACKEND_SERVER_PASSWORD" ]; then
+            ssh_cmd=(
+              sshpass -p "$BACKEND_SERVER_PASSWORD" ssh
+              -o StrictHostKeyChecking=no
+              -o UserKnownHostsFile=/dev/null
+              "${backend_user}@${{ secrets.SERVER_HOST }}"
+            )
+          fi
+          "${ssh_cmd[@]}" bash -s -- "${REMOTE_ARCHIVE}" "${REMOTE_SCRIPT}" "/opt/rodnya/backend" "rodnya-backend.service" "${DEPLOY_LABEL}" <<'EOF'
+          set -euo pipefail
+          archive="$1"
+          script="$2"
+          target="$3"
+          service="$4"
+          label="$5"
+          chmod +x "$script"
+          BUILD_LABEL="$label" "$script" "$archive" "$target" "$service"
+          rm -f "$archive" "$script"
+          EOF
+
+      - name: Capture backend diagnostics after failed activation
+        if: steps.activate_backend_release.outcome != 'success'
+        env:
+          BACKEND_SERVER_USERNAME: ${{ secrets.BACKEND_SERVER_USERNAME }}
+          BACKEND_SERVER_PASSWORD: ${{ secrets.BACKEND_SERVER_PASSWORD }}
+        run: |
+          backend_user="${BACKEND_SERVER_USERNAME:-${{ secrets.SERVER_USERNAME }}}"
+          ssh_cmd=(ssh -i ~/.ssh/id_ed25519 "${backend_user}@${{ secrets.SERVER_HOST }}")
+          if [ -n "$BACKEND_SERVER_PASSWORD" ]; then
+            ssh_cmd=(
+              sshpass -p "$BACKEND_SERVER_PASSWORD" ssh
+              -o StrictHostKeyChecking=no
+              -o UserKnownHostsFile=/dev/null
+              "${backend_user}@${{ secrets.SERVER_HOST }}"
+            )
+          fi
+          "${ssh_cmd[@]}" bash -s <<'EOF'
+          set -euo pipefail
+          echo "=== systemctl status ==="
+          systemctl status rodnya-backend.service --no-pager --full || true
+          echo "=== journalctl ==="
+          journalctl -u rodnya-backend.service -n 200 --no-pager || true
+          echo "=== ready ==="
+          curl -sS -D - http://127.0.0.1:8080/ready || true
+          EOF
+
+      - name: Fail when backend activation did not succeed
+        if: steps.activate_backend_release.outcome != 'success'
+        run: exit 1
+
       - name: Backend readiness check
         env:
           RODNYA_READY_ALERT_WEBHOOK_URL: ${{ secrets.RODNYA_READY_ALERT_WEBHOOK_URL }}
@@ -55,21 +174,6 @@ jobs:
           RODNYA_SMOKE_CLAIM_URL: ${{ secrets.RODNYA_SMOKE_CLAIM_URL }}
           RODNYA_SMOKE_INVITE_URL: ${{ secrets.RODNYA_SMOKE_INVITE_URL }}
         run: node tool/prod_route_smoke.mjs --suite all --output-json output/playwright/prod-route-smoke.watch.json
-
-      - name: Setup SSH key
-        env:
-          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
-          SERVER_HOST: ${{ secrets.SERVER_HOST }}
-          SERVER_USERNAME: ${{ secrets.SERVER_USERNAME }}
-        run: |
-          if [ -z "$SERVER_SSH_KEY" ] || [ -z "$SERVER_HOST" ] || [ -z "$SERVER_USERNAME" ]; then
-            echo "Skipping SSH setup: server secrets are not configured."
-            exit 0
-          fi
-          mkdir -p ~/.ssh
-          echo "$SERVER_SSH_KEY" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -H "$SERVER_HOST" >> ~/.ssh/known_hosts
 
       - name: Backup restore precheck
         env:

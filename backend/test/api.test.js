@@ -4266,6 +4266,281 @@ test("chat endpoints cover preview list, history, send and mark as read", async 
   }
 });
 
+test("chat preview list applies the limit query parameter", async () => {
+  const ctx = await startTestServer();
+
+  try {
+    const registerAliceResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "alice-chat-limit@rodnya.app",
+        password: "secret123",
+        displayName: "Alice Limit",
+      }),
+    });
+    assert.equal(registerAliceResponse.status, 201);
+    const alice = await registerAliceResponse.json();
+
+    const peers = [];
+    for (const [index, name] of ["Bob Limit", "Charlie Limit", "Dana Limit"].entries()) {
+      const registerPeerResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+        method: "POST",
+        headers: {"content-type": "application/json"},
+        body: JSON.stringify({
+          email: `peer-chat-limit-${index}@rodnya.app`,
+          password: "secret123",
+          displayName: name,
+        }),
+      });
+      assert.equal(registerPeerResponse.status, 201);
+      peers.push(await registerPeerResponse.json());
+    }
+
+    for (const [index, peer] of peers.entries()) {
+      const createChatResponse = await fetch(`${ctx.baseUrl}/v1/chats/direct`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${alice.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({otherUserId: peer.user.id}),
+      });
+      assert.equal(createChatResponse.status, 200);
+      const chatPayload = await createChatResponse.json();
+
+      const sendMessageResponse = await fetch(
+        `${ctx.baseUrl}/v1/chats/${chatPayload.chatId}/messages`,
+        {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${alice.accessToken}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({text: `Превью ${index}`}),
+        },
+      );
+      assert.equal(sendMessageResponse.status, 201);
+    }
+
+    const limitedChatsResponse = await fetch(`${ctx.baseUrl}/v1/chats?limit=2`, {
+      headers: {authorization: `Bearer ${alice.accessToken}`},
+    });
+    assert.equal(limitedChatsResponse.status, 200);
+    const limitedChatsPayload = await limitedChatsResponse.json();
+    assert.equal(limitedChatsPayload.chats.length, 2);
+    assert.deepEqual(
+      limitedChatsPayload.chats.map((entry) => entry.lastMessage),
+      ["Превью 2", "Превью 1"],
+    );
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("chat preview list applies the emergency response cap", async () => {
+  const ctx = await startTestServer();
+
+  try {
+    const registerAliceResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "alice-chat-cap@rodnya.app",
+        password: "secret123",
+        displayName: "Alice Chat Cap",
+      }),
+    });
+    assert.equal(registerAliceResponse.status, 201);
+    const alice = await registerAliceResponse.json();
+
+    const peers = [];
+    for (const [index, name] of [
+      "Bob Cap",
+      "Cara Cap",
+      "Dan Cap",
+      "Egor Cap",
+    ].entries()) {
+      const registerPeerResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+        method: "POST",
+        headers: {"content-type": "application/json"},
+        body: JSON.stringify({
+          email: `peer-chat-cap-${index}@rodnya.app`,
+          password: "secret123",
+          displayName: name,
+        }),
+      });
+      assert.equal(registerPeerResponse.status, 201);
+      peers.push(await registerPeerResponse.json());
+    }
+
+    for (const [index, peer] of peers.entries()) {
+      const createChatResponse = await fetch(`${ctx.baseUrl}/v1/chats/direct`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${alice.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({otherUserId: peer.user.id}),
+      });
+      assert.equal(createChatResponse.status, 200);
+      const chatPayload = await createChatResponse.json();
+
+      const sendMessageResponse = await fetch(
+        `${ctx.baseUrl}/v1/chats/${chatPayload.chatId}/messages`,
+        {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${alice.accessToken}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({text: `Cap preview ${index}`}),
+        },
+      );
+      assert.equal(sendMessageResponse.status, 201);
+    }
+
+    const chatsResponse = await fetch(`${ctx.baseUrl}/v1/chats?limit=10`, {
+      headers: {authorization: `Bearer ${alice.accessToken}`},
+    });
+    assert.equal(chatsResponse.status, 200);
+    const chatsPayload = await chatsResponse.json();
+    assert.equal(chatsPayload.chats.length, 3);
+    assert.equal(chatsPayload.hasMore, true);
+    assert.equal(chatsPayload.requestedLimit, 10);
+    assert.equal(chatsPayload.appliedLimit, 3);
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("chat preview list caps bulky group participant ids in preview payload", async () => {
+  const ctx = await startTestServer();
+
+  try {
+    const registerAliceResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "alice-chat-preview-cap@rodnya.app",
+        password: "secret123",
+        displayName: "Alice Preview Cap",
+      }),
+    });
+    assert.equal(registerAliceResponse.status, 201);
+    const alice = await registerAliceResponse.json();
+
+    const db = await ctx.store._read();
+    const oversizedParticipantIds = [
+      alice.user.id,
+      ...Array.from({length: 256}, (_, index) => `bulk-user-${index}`),
+    ];
+    db.chats.push({
+      id: "bulk-group-chat",
+      type: "group",
+      title: "Большой семейный чат",
+      participantIds: oversizedParticipantIds,
+      createdAt: new Date("2026-04-22T12:00:00.000Z").toISOString(),
+      updatedAt: new Date("2026-04-22T12:05:00.000Z").toISOString(),
+    });
+    await ctx.store._write(db);
+
+    const chatsResponse = await fetch(`${ctx.baseUrl}/v1/chats?limit=1`, {
+      headers: {authorization: `Bearer ${alice.accessToken}`},
+    });
+    assert.equal(chatsResponse.status, 200);
+    const chatsPayload = await chatsResponse.json();
+    assert.equal(chatsPayload.chats.length, 1);
+    assert.equal(chatsPayload.chats[0].chatId, "bulk-group-chat");
+    assert.equal(chatsPayload.chats[0].participantCount, oversizedParticipantIds.length);
+    assert.equal(chatsPayload.chats[0].participantIds.length, 12);
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("chat preview list safely truncates oversized message previews", async () => {
+  const ctx = await startTestServer();
+
+  try {
+    const registerAliceResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "alice-chat-preview-text@rodnya.app",
+        password: "secret123",
+        displayName: "Alice Preview Text",
+      }),
+    });
+    assert.equal(registerAliceResponse.status, 201);
+    const alice = await registerAliceResponse.json();
+
+    const peers = [];
+    for (const [index, name] of [
+      "Bob Preview Text",
+      "Cara Preview Text",
+      "Dan Preview Text",
+      "Egor Preview Text",
+    ].entries()) {
+      const registerPeerResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+        method: "POST",
+        headers: {"content-type": "application/json"},
+        body: JSON.stringify({
+          email: `peer-chat-preview-text-${index}@rodnya.app`,
+          password: "secret123",
+          displayName: name,
+        }),
+      });
+      assert.equal(registerPeerResponse.status, 201);
+      peers.push(await registerPeerResponse.json());
+    }
+
+    const oversizedMessageText = "Ж".repeat(200_000);
+
+    for (const [index, peer] of peers.entries()) {
+      const createChatResponse = await fetch(`${ctx.baseUrl}/v1/chats/direct`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${alice.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({otherUserId: peer.user.id}),
+      });
+      assert.equal(createChatResponse.status, 200);
+      const chatPayload = await createChatResponse.json();
+
+      const sendMessageResponse = await fetch(
+        `${ctx.baseUrl}/v1/chats/${chatPayload.chatId}/messages`,
+        {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${alice.accessToken}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            text:
+              index === peers.length - 1
+                ? oversizedMessageText
+                : `Обычное превью ${index}`,
+          }),
+        },
+      );
+      assert.equal(sendMessageResponse.status, 201);
+    }
+
+    const chatsResponse = await fetch(`${ctx.baseUrl}/v1/chats?limit=1`, {
+      headers: {authorization: `Bearer ${alice.accessToken}`},
+    });
+    assert.equal(chatsResponse.status, 200);
+    const chatsPayload = await chatsResponse.json();
+    assert.equal(chatsPayload.chats.length, 1);
+    assert.ok(chatsPayload.chats[0].lastMessage.length <= 280);
+    assert.ok(chatsPayload.chats[0].lastMessage.endsWith("…"));
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
 test("group chat endpoints create previews before first message and keep media payload", async () => {
   const ctx = await startTestServer();
 
@@ -7073,6 +7348,20 @@ test("notification feed tracks unread events from chat, relation requests and tr
       notificationsPayload.notifications.some(
         (notification) => notification.type === "tree_invitation",
       ),
+    );
+
+    const limitedNotificationsResponse = await fetch(
+      `${ctx.baseUrl}/v1/notifications?status=unread&limit=2`,
+      {
+        headers: {authorization: `Bearer ${bob.accessToken}`},
+      },
+    );
+    assert.equal(limitedNotificationsResponse.status, 200);
+    const limitedNotificationsPayload = await limitedNotificationsResponse.json();
+    assert.equal(limitedNotificationsPayload.notifications.length, 2);
+    assert.deepEqual(
+      limitedNotificationsPayload.notifications.map((notification) => notification.type),
+      ["chat_message", "tree_invitation"],
     );
 
     const readResponse = await fetch(

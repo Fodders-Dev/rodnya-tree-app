@@ -100,11 +100,25 @@ rm -rf "$next_dir"
 mkdir -p "$next_dir"
 rsync -a --delete "$scratch_dir"/ "$next_dir"/
 
-log "installing production dependencies"
-(
-  cd "$next_dir"
-  NODE_ENV=production "$NPM_BIN" ci --omit=dev
-)
+reused_node_modules="false"
+if [[ -d "$TARGET_DIR/node_modules" ]] && \
+  [[ -f "$TARGET_DIR/package.json" ]] && \
+  [[ -f "$TARGET_DIR/package-lock.json" ]] && \
+  cmp -s "$TARGET_DIR/package.json" "$next_dir/package.json" && \
+  cmp -s "$TARGET_DIR/package-lock.json" "$next_dir/package-lock.json"; then
+  log "reusing existing production node_modules"
+  mkdir -p "$next_dir/node_modules"
+  rsync -a "$TARGET_DIR/node_modules"/ "$next_dir/node_modules"/
+  reused_node_modules="true"
+fi
+
+if [[ "$reused_node_modules" != "true" ]]; then
+  log "installing production dependencies"
+  (
+    cd "$next_dir"
+    NODE_ENV=production "$NPM_BIN" ci --omit=dev --no-audit --progress=false
+  )
+fi
 
 if [[ -n "$BUILD_LABEL" ]]; then
   printf '%s\n' "$BUILD_LABEL" > "$next_dir/.last_release_id"

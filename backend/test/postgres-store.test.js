@@ -1,6 +1,9 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
+const fs = require("node:fs/promises");
+const os = require("node:os");
+const path = require("node:path");
 
 const {PostgresStore} = require("../src/postgres-store");
 
@@ -368,6 +371,118 @@ test("PostgresStore auth hot paths avoid full state reads", async () => {
     queries.some((sql) => sql.includes("jsonb_set(") && sql.includes("'{sessions}'")),
     false,
   );
+});
+
+test("PostgresStore persists snapshot cache after successful write", async () => {
+  const cacheDir = await fs.mkdtemp(path.join(os.tmpdir(), "rodnya-pg-cache-"));
+  const snapshotCachePath = path.join(cacheDir, "state-cache.json");
+  let state = {users: []};
+  const pool = {
+    async query(sql, params = []) {
+      if (
+        sql.includes("CREATE SCHEMA") ||
+        sql.includes("CREATE TABLE") ||
+        sql.includes("CREATE INDEX") ||
+        sql.includes("ON CONFLICT (id) DO NOTHING")
+      ) {
+        return {rows: []};
+      }
+      if (
+        sql.includes("DELETE FROM \"public\".\"rodnya_state_auth_users\"") ||
+        sql.includes("DELETE FROM \"public\".\"rodnya_state_auth_sessions\"") ||
+        sql.includes("INSERT INTO \"public\".\"rodnya_state_auth_users\"") ||
+        sql.includes("INSERT INTO \"public\".\"rodnya_state_auth_sessions\"")
+      ) {
+        return {rows: []};
+      }
+      if (sql.includes("SELECT session_data")) {
+        return {rows: []};
+      }
+      if (sql.includes("SELECT data")) {
+        return {rows: [{data: state}]};
+      }
+      if (sql.includes("ON CONFLICT (id) DO UPDATE")) {
+        state = JSON.parse(params[1]);
+        return {rows: []};
+      }
+      throw new Error(`Unexpected query: ${sql}`);
+    },
+  };
+
+  try {
+    const store = new PostgresStore({
+      connectionString: "postgresql://unused/rodnya",
+      pool,
+      snapshotCachePath,
+    });
+
+    await store.initialize();
+    await store._write({users: [{id: "u-7"}]});
+
+    const persistedSnapshot = JSON.parse(
+      await fs.readFile(snapshotCachePath, "utf8"),
+    );
+    assert.deepEqual(persistedSnapshot.users, [{id: "u-7"}]);
+  } finally {
+    await fs.rm(cacheDir, {recursive: true, force: true});
+  }
+});
+
+test("PostgresStore hydrates cached snapshot from the sidecar file after restart", async () => {
+  const cacheDir = await fs.mkdtemp(path.join(os.tmpdir(), "rodnya-pg-cache-"));
+  const snapshotCachePath = path.join(cacheDir, "state-cache.json");
+  const persistedSnapshot = {
+    chats: [{id: "chat-1"}],
+    messages: [{id: "msg-1", chatId: "chat-1"}],
+  };
+
+  const pool = {
+    async query(sql) {
+      if (
+        sql.includes("CREATE SCHEMA") ||
+        sql.includes("CREATE TABLE") ||
+        sql.includes("CREATE INDEX") ||
+        sql.includes("ON CONFLICT (id) DO NOTHING")
+      ) {
+        return {rows: []};
+      }
+      if (
+        sql.includes("DELETE FROM \"public\".\"rodnya_state_auth_users\"") ||
+        sql.includes("DELETE FROM \"public\".\"rodnya_state_auth_sessions\"") ||
+        sql.includes("INSERT INTO \"public\".\"rodnya_state_auth_users\"") ||
+        sql.includes("INSERT INTO \"public\".\"rodnya_state_auth_sessions\"")
+      ) {
+        return {rows: []};
+      }
+      if (sql.includes("SELECT data")) {
+        throw new Error("Connection terminated due to connection timeout");
+      }
+      throw new Error(`Unexpected query: ${sql}`);
+    },
+  };
+
+  try {
+    await fs.writeFile(
+      snapshotCachePath,
+      JSON.stringify(persistedSnapshot),
+      "utf8",
+    );
+
+    const store = new PostgresStore({
+      connectionString: "postgresql://unused/rodnya",
+      pool,
+      readRetryDelayMs: 0,
+      snapshotCachePath,
+    });
+
+    await store.initialize();
+
+    const snapshot = await store._read();
+    assert.deepEqual(snapshot.chats, [{id: "chat-1"}]);
+    assert.deepEqual(snapshot.messages, [{id: "msg-1", chatId: "chat-1"}]);
+  } finally {
+    await fs.rm(cacheDir, {recursive: true, force: true});
+  }
 });
 
 test("PostgresStore tree hot paths avoid full state reads", async () => {

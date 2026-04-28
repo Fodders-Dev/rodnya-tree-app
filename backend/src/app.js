@@ -27,6 +27,7 @@ const {createLiveKitService} = require("./livekit-service");
 const {buildBranchVisiblePersonIds} = require("./store");
 
 const DEFAULT_CALL_INVITE_TIMEOUT_MS = 30_000;
+const EMERGENCY_CHAT_PREVIEW_RESPONSE_CAP = 3;
 
 function createApp({
   store,
@@ -939,14 +940,104 @@ function createApp({
     };
   }
 
+  function truncateText(value, maxLength = 280) {
+    if (value === null || value === undefined) {
+      return null;
+    }
+    const rawText =
+      typeof value === "string"
+        ? value
+        : typeof value === "number" || typeof value === "boolean"
+          ? String(value)
+          : "";
+    if (!rawText) {
+      return null;
+    }
+    const sampledText =
+      rawText.length > maxLength * 4
+        ? rawText.slice(0, maxLength * 4)
+        : rawText;
+    const text = sampledText.trim();
+    if (!text) {
+      return null;
+    }
+    if (text.length <= maxLength) {
+      return text;
+    }
+    return `${text.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+  }
+
+  function normalizeSmallPublicUrl(value) {
+    if (value === null || value === undefined) {
+      return null;
+    }
+    const rawValue = typeof value === "string" ? value : "";
+    if (!rawValue || rawValue.length > 4096) {
+      return null;
+    }
+    const normalizedValue = rawValue.trim();
+    if (!normalizedValue || normalizedValue.length > 2048) {
+      return null;
+    }
+    return normalizePublicUrl(normalizedValue);
+  }
+
+  function sanitizeNotificationData(data) {
+    if (!data || typeof data !== "object" || Array.isArray(data)) {
+      return {};
+    }
+
+    const allowedKeys = [
+      "invitationId",
+      "treeId",
+      "treeName",
+      "invitedBy",
+      "memberUserId",
+      "requestId",
+      "senderId",
+      "recipientId",
+      "relationType",
+      "status",
+      "chatId",
+      "chatType",
+      "chatTitle",
+      "senderName",
+      "messageId",
+      "callId",
+      "mediaMode",
+    ];
+
+    const sanitized = {};
+    for (const key of allowedKeys) {
+      if (!(key in data)) {
+        continue;
+      }
+      const value = data[key];
+      if (value == null) {
+        sanitized[key] = null;
+        continue;
+      }
+      if (
+        typeof value === "string" ||
+        typeof value === "number" ||
+        typeof value === "boolean"
+      ) {
+        sanitized[key] =
+          typeof value === "string" ? truncateText(value, 280) || "" : value;
+      }
+    }
+
+    return sanitized;
+  }
+
   function mapNotification(notification) {
     return {
       id: notification.id,
       userId: notification.userId,
       type: notification.type,
-      title: notification.title,
-      body: notification.body,
-      data: notification.data || {},
+      title: truncateText(notification.title, 160),
+      body: truncateText(notification.body, 280),
+      data: sanitizeNotificationData(notification.data),
       createdAt: notification.createdAt,
       readAt: notification.readAt || null,
       isRead: Boolean(notification.readAt),
@@ -1274,20 +1365,28 @@ function createApp({
   }
 
   function mapChatPreview(preview) {
+    const isGroupPreview =
+      String(preview?.type || "").trim() === "group" ||
+      String(preview?.type || "").trim() === "branch";
+    const normalizedParticipantIds = Array.isArray(preview?.participantIds)
+      ? preview.participantIds
+      : [];
+    const previewParticipantIds = isGroupPreview
+      ? normalizedParticipantIds.slice(0, 12)
+      : normalizedParticipantIds;
     return {
       id: `${preview.chatId}_${preview.userId}`,
       chatId: preview.chatId,
       userId: preview.userId,
       type: preview.type || "direct",
-      title: preview.title || null,
-      photoUrl: normalizePublicUrl(preview.photoUrl || null),
-      participantIds: Array.isArray(preview.participantIds)
-        ? preview.participantIds
-        : [],
+      title: truncateText(preview.title, 160),
+      photoUrl: normalizeSmallPublicUrl(preview.photoUrl || null),
+      participantIds: previewParticipantIds,
+      participantCount: normalizedParticipantIds.length,
       otherUserId: preview.otherUserId,
-      otherUserName: preview.otherUserName || "Пользователь",
-      otherUserPhotoUrl: normalizePublicUrl(preview.otherUserPhotoUrl || null),
-      lastMessage: preview.lastMessage || "",
+      otherUserName: truncateText(preview.otherUserName || "Пользователь", 120),
+      otherUserPhotoUrl: normalizeSmallPublicUrl(preview.otherUserPhotoUrl || null),
+      lastMessage: truncateText(preview.lastMessage || "", 280) || "",
       lastMessageTime: preview.lastMessageTime,
       unreadCount: Number(preview.unreadCount || 0),
       lastMessageSenderId: preview.lastMessageSenderId || "",
@@ -4621,9 +4720,20 @@ function createApp({
   );
 
   app.get("/v1/chats", requireAuth, async (req, res) => {
+    const requestedLimit = Math.min(
+      Math.max(1, Number.parseInt(String(req.query.limit || "100"), 10) || 100),
+      200,
+    );
+    const limit = Math.min(
+      requestedLimit,
+      EMERGENCY_CHAT_PREVIEW_RESPONSE_CAP,
+    );
     const previews = await store.listChatPreviews(req.auth.user.id);
     res.json({
-      chats: previews.map(mapChatPreview),
+      chats: previews.slice(0, limit).map(mapChatPreview),
+      hasMore: previews.length > limit,
+      requestedLimit,
+      appliedLimit: limit,
     });
   });
 
@@ -5699,7 +5809,10 @@ function createApp({
 
   app.get("/v1/notifications", requireAuth, async (req, res) => {
     const status = req.query.status ? String(req.query.status) : null;
-    const limit = Number(req.query.limit || 50);
+    const limit = Math.min(
+      Math.max(1, Number.parseInt(String(req.query.limit || "50"), 10) || 50),
+      200,
+    );
     const notifications = await store.listNotifications(req.auth.user.id, {
       status,
       limit,

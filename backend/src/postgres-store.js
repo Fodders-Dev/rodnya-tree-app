@@ -1,4 +1,6 @@
 const crypto = require("node:crypto");
+const fs = require("node:fs/promises");
+const path = require("node:path");
 const {Pool} = require("pg");
 
 const {
@@ -18,6 +20,9 @@ const {
 
 const DEFAULT_POSTGRES_CONNECTION_TIMEOUT_MS = 5_000;
 const DEFAULT_POSTGRES_QUERY_TIMEOUT_MS = 15_000;
+const DEFAULT_POSTGRES_READ_QUERY_TIMEOUT_MS = 60_000;
+const DEFAULT_POSTGRES_READ_RETRY_COUNT = 1;
+const DEFAULT_POSTGRES_READ_RETRY_DELAY_MS = 250;
 const DEFAULT_POSTGRES_IDLE_TIMEOUT_MS = 30_000;
 const DEFAULT_WRITE_QUEUE_TIMEOUT_MS = 15_000;
 const DEFAULT_POSTGRES_POOL_MAX = 64;
@@ -133,9 +138,13 @@ class PostgresStore extends FileStore {
     poolFactory = (options) => new Pool(options),
     connectionTimeoutMillis = DEFAULT_POSTGRES_CONNECTION_TIMEOUT_MS,
     queryTimeoutMs = DEFAULT_POSTGRES_QUERY_TIMEOUT_MS,
+    readQueryTimeoutMs = DEFAULT_POSTGRES_READ_QUERY_TIMEOUT_MS,
+    readRetryCount = DEFAULT_POSTGRES_READ_RETRY_COUNT,
+    readRetryDelayMs = DEFAULT_POSTGRES_READ_RETRY_DELAY_MS,
     idleTimeoutMillis = DEFAULT_POSTGRES_IDLE_TIMEOUT_MS,
     poolMax = DEFAULT_POSTGRES_POOL_MAX,
     applicationName = DEFAULT_POSTGRES_APPLICATION_NAME,
+    snapshotCachePath = null,
   }) {
     super(`postgres://${schema}.${table}/${rowId}`);
 
@@ -172,11 +181,27 @@ class PostgresStore extends FileStore {
     this._qualifiedAuthUsersTableName = `${quoteIdentifier(this._schema)}.${quoteIdentifier(this._authUsersTable)}`;
     this._qualifiedAuthSessionsTableName = `${quoteIdentifier(this._schema)}.${quoteIdentifier(this._authSessionsTable)}`;
     this._initializePromise = null;
+    this._cachedState = null;
+    this._snapshotLoadPromise = null;
     this.storageMode = "postgres";
     this.storageTarget = `${this._schema}.${this._table}:${this._rowId}`;
     this._writeQueueTimeoutMs = queryTimeoutMs > 0
       ? Math.max(queryTimeoutMs, DEFAULT_WRITE_QUEUE_TIMEOUT_MS)
       : DEFAULT_WRITE_QUEUE_TIMEOUT_MS;
+    this._readQueryTimeoutMs =
+      Number.isFinite(Number(readQueryTimeoutMs)) && Number(readQueryTimeoutMs) > 0
+        ? Math.floor(Number(readQueryTimeoutMs))
+        : 0;
+    this._readRetryCount =
+      Number.isFinite(Number(readRetryCount)) && Number(readRetryCount) >= 0
+        ? Math.floor(Number(readRetryCount))
+        : DEFAULT_POSTGRES_READ_RETRY_COUNT;
+    this._readRetryDelayMs =
+      Number.isFinite(Number(readRetryDelayMs)) && Number(readRetryDelayMs) >= 0
+        ? Math.floor(Number(readRetryDelayMs))
+        : DEFAULT_POSTGRES_READ_RETRY_DELAY_MS;
+    this._snapshotCachePath = String(snapshotCachePath || "").trim() || null;
+    this._snapshotCacheHydrationPromise = null;
     this._stateWriteQueue = Promise.resolve();
     this._sessionWriteQueue = Promise.resolve();
     this._writeQueue = this._stateWriteQueue;
@@ -1406,18 +1431,20 @@ class PostgresStore extends FileStore {
 
   async _read() {
     await this.initialize();
-    await this._awaitReadConsistency();
+    await this._hydrateCachedStateFromSnapshotCache();
 
-    const result = await this._pool.query(
-      `SELECT data FROM ${this._qualifiedTableName} WHERE id = $1`,
-      [this._rowId],
-    );
-    const rawData = result.rows[0]?.data ?? EMPTY_DB;
-    const normalizedState = normalizeDbState(rawData);
-    normalizedState.sessions = await this._selectProjectedSessionsArray();
-    this._lastUsersProjectionHash = computeProjectionHash(normalizedState.users);
-    this._lastSessionsProjectionHash = computeProjectionHash(normalizedState.sessions);
-    return normalizedState;
+    try {
+      await this._awaitReadConsistency();
+      const normalizedState = await this._loadSnapshot();
+      normalizedState.sessions = await this._selectProjectedSessionsArray();
+      this._lastUsersProjectionHash = computeProjectionHash(normalizedState.users);
+      this._lastSessionsProjectionHash = computeProjectionHash(normalizedState.sessions);
+      this._cachedState = structuredClone(normalizedState);
+      await this._persistSnapshotCache(this._cachedState);
+      return normalizedState;
+    } catch (error) {
+      return this._serveCachedSnapshotFallback(error, {phase: "read"});
+    }
   }
 
   async _write(data) {
@@ -1446,6 +1473,8 @@ class PostgresStore extends FileStore {
       } else {
         this._lastSessionsProjectionHash = nextSessionsHash;
       }
+      this._cachedState = normalizeDbState(data);
+      await this._persistSnapshotCache(this._cachedState);
     });
     this._stateWriteQueue = nextWrite.catch((error) => {
       console.error(
@@ -1461,6 +1490,170 @@ class PostgresStore extends FileStore {
     this._writeQueue = this._stateWriteQueue;
 
     return nextWrite;
+  }
+
+  async _loadSnapshot() {
+    if (this._snapshotLoadPromise) {
+      return this._snapshotLoadPromise;
+    }
+
+    this._snapshotLoadPromise = this._readSnapshotWithRetry()
+      .then((snapshot) => normalizeDbState(snapshot))
+      .finally(() => {
+        this._snapshotLoadPromise = null;
+      });
+
+    return this._snapshotLoadPromise;
+  }
+
+  async _readSnapshotWithRetry() {
+    let lastError = null;
+    const attempts = Math.max(1, this._readRetryCount + 1);
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        return await this._readSnapshotFromDatabase();
+      } catch (error) {
+        lastError = error;
+        if (!this._isRetriableReadError(error) || attempt >= attempts - 1) {
+          break;
+        }
+        if (this._readRetryDelayMs > 0) {
+          await new Promise((resolve) => setTimeout(resolve, this._readRetryDelayMs));
+        }
+      }
+    }
+    throw lastError;
+  }
+
+  async _readSnapshotFromDatabase() {
+    const queryText = `SELECT data FROM ${this._qualifiedTableName} WHERE id = $1`;
+    const queryValues = [this._rowId];
+
+    if (typeof this._pool.connect !== "function") {
+      const result = await this._pool.query(queryText, queryValues);
+      return result.rows[0]?.data ?? EMPTY_DB;
+    }
+
+    const client = await this._pool.connect();
+    try {
+      if (this._readQueryTimeoutMs > 0) {
+        await client.query("BEGIN");
+        await client.query(
+          `SET LOCAL statement_timeout = ${this._readQueryTimeoutMs}`,
+        );
+      }
+      const result = await client.query({
+        text: queryText,
+        values: queryValues,
+        query_timeout: this._readQueryTimeoutMs > 0
+          ? this._readQueryTimeoutMs
+          : undefined,
+      });
+      if (this._readQueryTimeoutMs > 0) {
+        await client.query("COMMIT");
+      }
+      return result.rows[0]?.data ?? EMPTY_DB;
+    } catch (error) {
+      if (this._readQueryTimeoutMs > 0) {
+        try {
+          await client.query("ROLLBACK");
+        } catch (_) {
+          // Ignore rollback failures after read timeout.
+        }
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  _isRetriableReadError(error) {
+    const message = String(error?.message || "").toLowerCase();
+    const code = String(error?.code || "").trim().toUpperCase();
+    return (
+      code === "POSTGRES_WRITE_QUEUE_TIMEOUT" ||
+      message.includes("query read timeout") ||
+      message.includes("statement timeout") ||
+      message.includes("write queue timed out") ||
+      message.includes("connection timeout") ||
+      code === "57014" ||
+      code === "ETIMEDOUT"
+    );
+  }
+
+  _serveCachedSnapshotFallback(error, {phase} = {}) {
+    if (!this._cachedState || !this._isRetriableReadError(error)) {
+      throw error;
+    }
+
+    console.warn(
+      "[backend] postgres-store serving cached snapshot",
+      JSON.stringify({
+        table: `${this._schema}.${this._table}`,
+        rowId: this._rowId,
+        phase: String(phase || "read"),
+        message: String(error?.message || error || "unknown_error"),
+      }),
+    );
+    return structuredClone(this._cachedState);
+  }
+
+  async _hydrateCachedStateFromSnapshotCache() {
+    if (this._cachedState || !this._snapshotCachePath) {
+      return;
+    }
+    if (!this._snapshotCacheHydrationPromise) {
+      this._snapshotCacheHydrationPromise = fs.readFile(
+        this._snapshotCachePath,
+        "utf8",
+      )
+        .then((rawSnapshot) => {
+          const parsedSnapshot = JSON.parse(rawSnapshot);
+          this._cachedState = normalizeDbState(parsedSnapshot);
+        })
+        .catch((error) => {
+          if (error?.code === "ENOENT") {
+            return;
+          }
+          console.warn(
+            "[backend] postgres-store snapshot cache hydrate failed",
+            JSON.stringify({
+              table: `${this._schema}.${this._table}`,
+              rowId: this._rowId,
+              path: this._snapshotCachePath,
+              message: String(error?.message || error || "unknown_error"),
+            }),
+          );
+        })
+        .finally(() => {
+          this._snapshotCacheHydrationPromise = null;
+        });
+    }
+    await this._snapshotCacheHydrationPromise;
+  }
+
+  async _persistSnapshotCache(snapshot) {
+    if (!this._snapshotCachePath || !snapshot) {
+      return;
+    }
+    try {
+      await fs.mkdir(path.dirname(this._snapshotCachePath), {recursive: true});
+      await fs.writeFile(
+        this._snapshotCachePath,
+        JSON.stringify(snapshot),
+        "utf8",
+      );
+    } catch (error) {
+      console.warn(
+        "[backend] postgres-store snapshot cache persist failed",
+        JSON.stringify({
+          table: `${this._schema}.${this._table}`,
+          rowId: this._rowId,
+          path: this._snapshotCachePath,
+          message: String(error?.message || error || "unknown_error"),
+        }),
+      );
+    }
   }
 
   async _awaitWriteQueue(queuePromise = this._stateWriteQueue) {
