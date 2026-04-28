@@ -475,7 +475,16 @@ function createApp({
   app.use(express.json({limit: "50mb", strict: false}));
   app.get(/^\/media\/(.+)$/, async (req, res) => {
     try {
-      await resolvedMediaStorage.handleGetRequest(req, res);
+      // Use handlePublicGetRequest (direct S3 proxy) instead of handleGetRequest
+      // (redirect).  When LINEAGE_MEDIA_PUBLIC_BASE_URL points to the API itself
+      // (api.rodnya-tree.ru/media), handleGetRequest creates a circular 302
+      // redirect loop because the redirect URL resolves back to this same handler.
+      // Proxying the S3 object directly avoids the loop and works regardless of
+      // whether the S3/MinIO server is publicly reachable.
+      const handler = resolvedMediaStorage.handlePublicGetRequest
+        ? resolvedMediaStorage.handlePublicGetRequest.bind(resolvedMediaStorage)
+        : resolvedMediaStorage.handleGetRequest.bind(resolvedMediaStorage);
+      await handler(req, res);
     } catch (error) {
       if (
         error?.message === "INVALID_MEDIA_PATH" ||
