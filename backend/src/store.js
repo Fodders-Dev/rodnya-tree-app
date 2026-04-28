@@ -3019,33 +3019,12 @@ function buildGraphWarnings({
     });
   }
 
-  for (const relation of normalizedRelations) {
-    if (relation.inferredDisplayOnly !== true) {
-      continue;
-    }
-    const parentId = parentIdFromRelation(relation);
-    const childId = childIdFromRelation(relation);
-    if (!parentId || !childId) {
-      continue;
-    }
-    const parentName =
-      peopleById.get(parentId)?.name || peopleById.get(parentId)?.displayName || parentId;
-    const childName =
-      peopleById.get(childId)?.name || peopleById.get(childId)?.displayName || childId;
-    const familyUnitIds = normalizedFamilyUnits
-      .filter((unit) => Array.isArray(unit.relationIds) && unit.relationIds.includes(relation.id))
-      .map((unit) => unit.id);
-    pushWarning({
-      id: `warning:auto-parent-repair:${relation.id}`,
-      code: "auto_repaired_parent_link",
-      severity: "info",
-      message: `Связь ${parentName} -> ${childName} достроена автоматически по данным дерева.`,
-      hint: "Проверьте, что этот родитель относится к правильному набору родителей.",
-      personIds: [parentId, childId],
-      familyUnitIds,
-      relationIds: [relation.id],
-    });
-  }
+  // auto_repaired_parent_link was previously generated for every inferred
+  // parent-child link.  The inference itself is correct (we deduce the missing
+  // second parent from sibling evidence), so surfacing it as a warning is
+  // confusing and actionable only in edge cases.  Users who want to review or
+  // override auto-inferred links can do so in the tree editor where all
+  // relations are visible.  The warning block is intentionally removed here.
 
   const pairRelations = new Map();
   for (const relation of normalizedRelations) {
@@ -3940,6 +3919,73 @@ function verifyPassword(password, user) {
     Buffer.from(derivedKey, "hex"),
     Buffer.from(user.passwordHash, "hex"),
   );
+}
+
+/**
+ * Walk the in-memory DB and persist any parent-child links that
+ * buildDisplayTreeRelations() would infer at display time.
+ *
+ * This is called synchronously inside upsertRelation(), before _write(), so
+ * every time a relation is saved the inferred sibling-parent corrections are
+ * also stored as real records.  The result: the display layer no longer needs
+ * to infer anything, and no warnings are emitted.
+ *
+ * @param {object} db  — live db object (mutated in place)
+ * @param {string} treeId
+ */
+function _materializeInferredParentLinks(db, treeId) {
+  const treeRelations = db.relations.filter((r) => r.treeId === treeId);
+
+  // Run the same inference logic used at display time.
+  const displayRelations = buildDisplayTreeRelations(treeId, treeRelations);
+  const newlyInferred = displayRelations.filter(
+    (r) => r.inferredDisplayOnly === true,
+  );
+
+  if (newlyInferred.length === 0) return;
+
+  // Build a quick lookup for existing relations in this tree.
+  const existingPairs = new Set(
+    treeRelations.map((r) =>
+      [String(r.person1Id || ""), String(r.person2Id || "")].sort().join(":"),
+    ),
+  );
+
+  const timestamp = nowIso();
+  for (const inferred of newlyInferred) {
+    const p1 = String(inferred.person1Id || "").trim();
+    const p2 = String(inferred.person2Id || "").trim();
+    if (!p1 || !p2) continue;
+
+    const pairKey = [p1, p2].sort().join(":");
+    if (existingPairs.has(pairKey)) continue; // already stored
+
+    const newRelation = {
+      id: crypto.randomUUID(),
+      treeId,
+      person1Id: p1,
+      person2Id: p2,
+      relation1to2: inferred.relation1to2 || "parent",
+      relation2to1: inferred.relation2to1 || "child",
+      isConfirmed: true,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      createdBy: null,            // auto-inferred, no actor
+      parentSetId: inferred.parentSetId || null,
+      parentSetType: inferred.parentSetType || "biological",
+      isPrimaryParentSet: inferred.isPrimaryParentSet !== false,
+      unionId: null,
+      unionType: null,
+      unionStatus: null,
+      marriageDate: null,
+      divorceDate: null,
+      customRelationLabel1to2: null,
+      customRelationLabel2to1: null,
+    };
+
+    db.relations.push(newRelation);
+    existingPairs.add(pairKey); // prevent duplicates within this batch
+  }
 }
 
 class FileStore {
@@ -6413,6 +6459,12 @@ class FileStore {
         }
       }
     }
+
+    // Materialise any sibling-inferred parent links that aren't yet in the DB.
+    // buildDisplayTreeRelations() computes these at display time; we persist
+    // them here so they become permanent, searchable relations and so the
+    // warning block (removed above) is never needed in the first place.
+    _materializeInferredParentLinks(db, treeId);
 
     const tree = db.trees.find((entry) => entry.id === treeId);
     if (tree) {
