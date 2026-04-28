@@ -124,12 +124,16 @@ class RealtimeHub {
   }
 
   async _collectOnlineParticipants(userId) {
-    const participantIds = await this.store.listRelatedChatParticipantIds(userId);
+    const participantIds = await this._safeListRelatedChatParticipantIds(userId, {
+      context: "collect_online_participants",
+    });
     return participantIds.filter((participantId) => this.isUserOnline(participantId));
   }
 
   async _broadcastPresenceUpdate(userId, isOnline) {
-    const participantIds = await this.store.listRelatedChatParticipantIds(userId);
+    const participantIds = await this._safeListRelatedChatParticipantIds(userId, {
+      context: "broadcast_presence_update",
+    });
     const payload = {
       type: "presence.updated",
       userId,
@@ -139,6 +143,26 @@ class RealtimeHub {
 
     for (const participantId of participantIds) {
       this.publishToUser(participantId, payload);
+    }
+  }
+
+  async _safeListRelatedChatParticipantIds(userId, {context = "realtime_presence"} = {}) {
+    if (!userId || typeof this.store?.listRelatedChatParticipantIds !== "function") {
+      return [];
+    }
+
+    try {
+      return await this.store.listRelatedChatParticipantIds(userId);
+    } catch (error) {
+      this.logger.warn?.(
+        "[rodnya-backend] realtime participant lookup failed",
+        JSON.stringify({
+          context,
+          userId,
+          message: String(error?.message || error || "unknown_error"),
+        }),
+      );
+      return [];
     }
   }
 

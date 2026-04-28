@@ -1,8 +1,6 @@
 const express = require("express");
 const cors = require("cors");
 const crypto = require("node:crypto");
-const fs = require("node:fs/promises");
-const path = require("node:path");
 
 const {
   computeProfileStatus,
@@ -25,6 +23,7 @@ const {
 const {createMaxAuthClient, parseMaxStartParam} = require("./max-auth");
 const {createLiveKitService} = require("./livekit-service");
 const {buildBranchVisiblePersonIds} = require("./store");
+const {createOperationalStatus} = require("./operational-status");
 
 const DEFAULT_CALL_INVITE_TIMEOUT_MS = 30_000;
 const EMERGENCY_CHAT_PREVIEW_RESPONSE_CAP = 3;
@@ -51,31 +50,18 @@ function createApp({
   const resolvedMaxAuthClient = maxAuthClient ?? createMaxAuthClient(config);
   const resolvedLiveKitService = liveKitService ?? createLiveKitService(config);
   const rateLimitState = new Map();
-  const configuredStorageBackend = String(config?.storageBackend || "")
-    .trim()
-    .toLowerCase();
-  const storageMode = String(
-    store?.storageMode ||
-      (configuredStorageBackend === "file" ? "file-store" : "") ||
-      configuredStorageBackend ||
-      "unknown",
-  ).trim() || "unknown";
-  const mediaMode = String(
-    resolvedMediaStorage?.mediaMode ||
-      config?.mediaBackend ||
-      "unknown",
-  ).trim() || "unknown";
-  const normalizedRuntimeInfo = {
-    startedAt:
-      String(runtimeInfo?.startedAt || "").trim() || new Date().toISOString(),
-    releaseLabel: String(runtimeInfo?.releaseLabel || "").trim() || null,
-    pid:
-      Number.isFinite(runtimeInfo?.pid) && runtimeInfo.pid > 0
-        ? runtimeInfo.pid
-        : process.pid,
-    nodeVersion:
-      String(runtimeInfo?.nodeVersion || "").trim() || process.version,
-  };
+  const operationalStatus = createOperationalStatus({
+    store,
+    config,
+    realtimeHub,
+    mediaStorage: resolvedMediaStorage,
+    liveKitService: resolvedLiveKitService,
+    vkAuthClient: resolvedVkAuthClient,
+    maxAuthClient: resolvedMaxAuthClient,
+    runtimeInfo,
+  });
+  const {normalizedRuntimeInfo, buildStatusPayload, ensureReady} =
+    operationalStatus;
   const ringTimeoutTimers = new Map();
   const configuredCallInviteTimeoutMs = Number(config?.callInviteTimeoutMs);
   const callInviteTimeoutMs =
@@ -281,81 +267,6 @@ function createApp({
   }
 
   void restoreRingingCallTimeouts();
-
-  function buildRuntimeSnapshot() {
-    const startedAtDate = new Date(normalizedRuntimeInfo.startedAt);
-    const startedAtMs = Number.isNaN(startedAtDate.getTime())
-      ? Date.now()
-      : startedAtDate.getTime();
-    const uptimeSeconds = Math.max(
-      0,
-      Math.round((Date.now() - startedAtMs) / 1000),
-    );
-    return {
-      startedAt: new Date(startedAtMs).toISOString(),
-      uptimeSeconds,
-      pid: normalizedRuntimeInfo.pid,
-      nodeVersion: normalizedRuntimeInfo.nodeVersion,
-      releaseLabel: normalizedRuntimeInfo.releaseLabel,
-      recentErrors:
-        typeof runtimeInfo?.listRecentErrors === "function"
-          ? runtimeInfo.listRecentErrors()
-          : [],
-      realtime:
-        typeof realtimeHub?.describeRuntimeStats === "function"
-          ? realtimeHub.describeRuntimeStats()
-          : {
-              onlineUsers: 0,
-              activeSockets: 0,
-              wsAttached: false,
-            },
-    };
-  }
-
-  function buildOperationalWarnings() {
-    const warnings = [];
-    if (storageMode === "file-store") {
-      warnings.push(
-        "file-store backend is acceptable for dev and smoke, but not the final production target",
-      );
-    }
-    if (mediaMode === "local-filesystem") {
-      warnings.push(
-        "local filesystem media storage is acceptable for dev and smoke, but not the final production target",
-      );
-    }
-    if (!Array.isArray(config.adminEmails) || config.adminEmails.length === 0) {
-      warnings.push(
-        "admin emails are not configured; moderator-only runtime/admin views stay unavailable",
-      );
-    }
-    return warnings;
-  }
-
-  function buildStatusPayload(status, {requestId, ready = true, message = null} = {}) {
-    const warnings = buildOperationalWarnings();
-    return {
-      status,
-      service: "rodnya-minimal-backend",
-      ready,
-      message,
-      storage: storageMode,
-      media: mediaMode,
-      publicApiUrl: config.publicApiUrl || null,
-      publicAppUrl: config.publicAppUrl || null,
-      rustorePushEnabled: config.rustorePushEnabled === true,
-      webPushEnabled: config.webPushEnabled === true,
-      liveKitEnabled: resolvedLiveKitService.isConfigured === true,
-      vkAuthEnabled: resolvedVkAuthClient.isEnabled === true,
-      maxAuthEnabled: resolvedMaxAuthClient.isEnabled === true,
-      adminEmailsConfigured: Array.isArray(config.adminEmails)
-        ? config.adminEmails.length
-        : 0,
-      warnings,
-      runtime: buildRuntimeSnapshot(),
-      requestId,
-    };
-  }
 
   function scheduleSessionTouch(res, token, {requestId, userId} = {}) {
     if (typeof store?.touchSession !== "function") {
@@ -617,22 +528,7 @@ function createApp({
 
   app.get("/ready", async (req, res) => {
     try {
-      if (typeof store?.healthCheck === "function") {
-        await store.healthCheck();
-      } else {
-        if (storageMode === "file-store") {
-          const dataDir = path.dirname(config.dataPath);
-          await fs.mkdir(dataDir, {recursive: true});
-          await fs.access(dataDir);
-        }
-        if (typeof store?.initialize === "function") {
-          await store.initialize();
-        }
-        if (typeof store?._read === "function") {
-          await store._read();
-        }
-      }
-      await resolvedMediaStorage.ensureReady();
+      await ensureReady();
       res.json(
         buildStatusPayload("ready", {
           requestId: req.requestId,
