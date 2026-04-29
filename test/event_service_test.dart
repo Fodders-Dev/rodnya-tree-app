@@ -173,6 +173,53 @@ void main() {
       containsAll(<String>['Родня', 'Семья', 'Память', 'Повод']),
     );
   });
+
+  test(
+    'EventService repeats custom family events when marked annual',
+    () async {
+      final service = EventService(
+        familyTreeService: _FakeFamilyTreeService(
+          relatives: [
+            FamilyPerson(
+              id: 'person-custom',
+              treeId: 'tree-1',
+              name: 'Ольга Петрова',
+              gender: Gender.female,
+              isAlive: true,
+              createdAt: DateTime(2024, 1, 1),
+              updatedAt: DateTime(2024, 1, 1),
+              details: FamilyPersonDetails(
+                importantEvents: [
+                  Event(
+                    title: 'День семьи',
+                    date: DateTime(2020, 4, 10),
+                    repeatsAnnually: true,
+                  ),
+                  Event(
+                    title: 'Разовая встреча',
+                    date: DateTime(2020, 4, 11),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        nowProvider: () => DateTime(2026, 4, 1, 10),
+      );
+
+      final events = await service.getUpcomingEvents('tree-1', limit: 10);
+
+      expect(events.map((event) => event.title), contains('День семьи'));
+      expect(
+        events.map((event) => event.title),
+        isNot(contains('Разовая встреча')),
+      );
+      expect(
+        events.singleWhere((event) => event.title == 'День семьи').date,
+        DateTime(2026, 4, 10),
+      );
+    },
+  );
 }
 
 class _FakeFamilyTreeService implements FamilyTreeServiceInterface {

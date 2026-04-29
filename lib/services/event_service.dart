@@ -194,18 +194,25 @@ class EventService {
     }
 
     return events
-        .where((event) => _isUpcoming(event.date, today))
-        .map(
-          (event) => AppEvent(
+        .map((event) {
+          final eventDate = event.repeatsAnnually
+              ? _nextAnnualOccurrence(event.date, today)
+              : DateTime(event.date.year, event.date.month, event.date.day);
+          if (!_isUpcoming(eventDate, today)) {
+            return null;
+          }
+
+          return AppEvent(
             id: '${person.id}_custom_${event.title}_${event.date.toIso8601String()}',
             type: AppEventType.customFamilyEvent,
-            date: DateTime(event.date.year, event.date.month, event.date.day),
+            date: eventDate,
             title: event.title,
             personName: person.name,
             personId: person.id,
             icon: Icons.event_outlined,
-          ),
-        )
+          );
+        })
+        .whereType<AppEvent>()
         .toList();
   }
 

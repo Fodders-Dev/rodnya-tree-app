@@ -656,12 +656,14 @@ class Event {
   final String? description;
   final DateTime date;
   final String? location;
+  final bool repeatsAnnually;
 
   Event({
     required this.title,
     this.description,
     required this.date,
     this.location,
+    this.repeatsAnnually = false,
   });
 
   factory Event.fromMap(Map<String, dynamic> data) {
@@ -672,6 +674,8 @@ class Event {
           ? parseDateTimeRequired(data['date'])
           : DateTime.now(),
       location: data['location'],
+      repeatsAnnually:
+          data['repeatsAnnually'] == true || data['isAnnual'] == true,
     );
   }
 
@@ -681,6 +685,7 @@ class Event {
       'description': description,
       'date': date.toIso8601String(),
       'location': location,
+      'repeatsAnnually': repeatsAnnually,
     };
   }
 }
