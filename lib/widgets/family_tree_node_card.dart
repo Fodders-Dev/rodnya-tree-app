@@ -1,7 +1,8 @@
-import 'package:flutter/foundation.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../models/family_person.dart';
+import '../utils/photo_url.dart';
 
 class FamilyTreeNodeCard extends StatelessWidget {
   const FamilyTreeNodeCard({
@@ -162,7 +163,8 @@ class _FamilyTreeNodeAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final hasPhoto = displayPhotoUrl != null && displayPhotoUrl!.isNotEmpty;
+    final photoUrl = normalizePhotoUrl(displayPhotoUrl);
+    final hasPhoto = photoUrl != null;
     final fallbackBackground = displayGender == Gender.male
         ? Colors.blue.shade100
         : Colors.pink.shade100;
@@ -191,14 +193,17 @@ class _FamilyTreeNodeAvatar extends StatelessWidget {
         color: fallbackBackground,
       ),
       clipBehavior: Clip.antiAlias,
-      child: Image.network(
-        displayPhotoUrl!,
+      child: CachedNetworkImage(
+        imageUrl: photoUrl,
         fit: BoxFit.cover,
         filterQuality: FilterQuality.medium,
-        webHtmlElementStrategy: kIsWeb
-            ? WebHtmlElementStrategy.prefer
-            : WebHtmlElementStrategy.never,
-        errorBuilder: (_, __, ___) {
+        placeholder: (_, __) {
+          return ColoredBox(
+            color: fallbackBackground,
+            child: Center(child: fallbackIcon),
+          );
+        },
+        errorWidget: (_, __, ___) {
           return ColoredBox(
             color: fallbackBackground,
             child: Center(child: fallbackIcon),

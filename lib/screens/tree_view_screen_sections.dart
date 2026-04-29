@@ -736,6 +736,7 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
   }) {
     final theme = Theme.of(context);
     final photoUrl = person.primaryPhotoUrl;
+    final avatarImage = buildAvatarImageProvider(photoUrl);
     final subtitleParts = <String>[
       if ((person.birthDate?.year ?? 0) > 0) 'р. ${person.birthDate!.year}',
       if (person.isAlive == false && (person.deathDate?.year ?? 0) > 0)
@@ -758,8 +759,8 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
           CircleAvatar(
             radius: 24,
             backgroundColor: accent.withValues(alpha: 0.14),
-            backgroundImage: photoUrl != null ? NetworkImage(photoUrl) : null,
-            child: photoUrl == null
+            backgroundImage: avatarImage,
+            child: avatarImage == null
                 ? Text(
                     person.initials,
                     style: theme.textTheme.labelLarge?.copyWith(

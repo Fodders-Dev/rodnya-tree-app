@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
 import 'package:video_player/video_player.dart';
@@ -8,6 +9,7 @@ import '../backend/interfaces/story_service_interface.dart';
 import '../backend/backend_runtime_config.dart';
 import '../models/story.dart';
 import '../utils/e2e_state_bridge.dart';
+import '../utils/photo_url.dart';
 import '../widgets/story_visuals.dart';
 
 class StoryViewerEntryScreen extends StatefulWidget {
@@ -511,6 +513,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
 
   Widget _buildHeader(Story story) {
     final theme = Theme.of(context);
+    final authorAvatarImage = buildAvatarImageProvider(story.authorPhotoUrl);
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -524,11 +527,8 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
           CircleAvatar(
             radius: 22,
             backgroundColor: Colors.white12,
-            backgroundImage:
-                story.authorPhotoUrl != null && story.authorPhotoUrl!.isNotEmpty
-                    ? NetworkImage(story.authorPhotoUrl!)
-                    : null,
-            child: story.authorPhotoUrl == null || story.authorPhotoUrl!.isEmpty
+            backgroundImage: authorAvatarImage,
+            child: authorAvatarImage == null
                 ? Text(
                     storyInitialsFor(story.authorName),
                     style: theme.textTheme.titleMedium?.copyWith(
@@ -738,7 +738,8 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
   }
 
   Widget _buildImageStory(Story story) {
-    if (story.mediaUrl == null || story.mediaUrl!.isEmpty) {
+    final mediaUrl = normalizePhotoUrl(story.mediaUrl);
+    if (mediaUrl == null) {
       return _buildUnavailableStory();
     }
     return Stack(
@@ -746,19 +747,15 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
       children: [
         StoryPosterBackground(
           palette: _palette,
-          imageUrl: story.mediaUrl,
+          imageUrl: mediaUrl,
           dimmed: true,
         ),
-        Image.network(
-          story.mediaUrl!,
+        CachedNetworkImage(
+          imageUrl: mediaUrl,
           fit: BoxFit.cover,
-          loadingBuilder: (context, child, progress) {
-            if (progress == null) {
-              return child;
-            }
-            return const Center(child: CircularProgressIndicator());
-          },
-          errorBuilder: (_, __, ___) => _buildUnavailableStory(),
+          placeholder: (context, url) =>
+              const Center(child: CircularProgressIndicator()),
+          errorWidget: (_, __, ___) => _buildUnavailableStory(),
         ),
       ],
     );

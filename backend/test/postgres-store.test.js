@@ -6,6 +6,22 @@ const os = require("node:os");
 const path = require("node:path");
 
 const {PostgresStore} = require("../src/postgres-store");
+const {FileStore} = require("../src/store");
+
+test("PostgresStore keeps state reads and writes on postgres paths", async () => {
+  assert.notEqual(PostgresStore.prototype._read, FileStore.prototype._read);
+  assert.notEqual(PostgresStore.prototype._write, FileStore.prototype._write);
+
+  const source = await fs.readFile(
+    path.join(__dirname, "../src/postgres-store.js"),
+    "utf8",
+  );
+  assert.doesNotMatch(source, /super\._(?:read|write)\s*\(/);
+  assert.doesNotMatch(
+    source,
+    /FileStore\.prototype\._(?:read|write)\.(?:call|apply)\s*\(/,
+  );
+});
 
 test("PostgresStore recovers from a failed write without poisoning the queue", async () => {
   let state = {users: []};

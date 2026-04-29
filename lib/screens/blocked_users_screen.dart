@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 
 import '../backend/interfaces/safety_service_interface.dart';
 import '../models/user_block_record.dart';
+import '../utils/photo_url.dart';
 
 class BlockedUsersScreen extends StatefulWidget {
   const BlockedUsersScreen({super.key});
@@ -125,6 +126,8 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
                 final block = blocks[index];
                 final formattedDate = DateFormat('d MMM yyyy, HH:mm', 'ru')
                     .format(block.createdAt);
+                final avatarImage =
+                    buildAvatarImageProvider(block.blockedUserPhotoUrl);
                 return ListTile(
                   contentPadding: const EdgeInsets.symmetric(
                     horizontal: 12,
@@ -135,12 +138,8 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
                     borderRadius: BorderRadius.circular(16),
                   ),
                   leading: CircleAvatar(
-                    backgroundImage: block.blockedUserPhotoUrl != null &&
-                            block.blockedUserPhotoUrl!.trim().isNotEmpty
-                        ? NetworkImage(block.blockedUserPhotoUrl!.trim())
-                        : null,
-                    child: block.blockedUserPhotoUrl == null ||
-                            block.blockedUserPhotoUrl!.trim().isEmpty
+                    backgroundImage: avatarImage,
+                    child: avatarImage == null
                         ? Text(
                             block.blockedUserDisplayName.isNotEmpty
                                 ? block.blockedUserDisplayName[0].toUpperCase()

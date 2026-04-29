@@ -144,8 +144,7 @@ export RODNYA_BUILD_NUMBER=10
   - shim перенёс relation target обратно на offline card, удержал дерево на `2` persons и отдал стабильный `identityId` на accept/claim/person endpoints
   - повторный live smoke на втором дереве подтвердил reuse того же `identityId` для того же пользователя
   - это снимает user-facing duplicate blocker и внешний identity parity blocker, но не заменяет полноценный backend rollout
-- `2026-04-16`: следующий profile/privacy rollout formalized in repo:
-  - [docs/profile_visibility_and_identity_plan_2026-04-16.md](./profile_visibility_and_identity_plan_2026-04-16.md) фиксирует phases для rich profiles, visibility scopes, native identity parity, phone dedupe и final delete-account cleanup
+- `2026-04-16`: следующий profile/privacy rollout был formalized in repo; текущий рабочий порядок теперь ведётся в [docs/active_execution_plan.md](./active_execution_plan.md)
 - `2026-04-17`: production profile/privacy slice реально выкачен:
   - активный web build marker: `https://rodnya-tree.ru/last_build_id.txt -> 20260417-profile-visibility-native`
   - live `/#/profile/edit` рендерит расширенные rich-profile секции и visibility chips для `specific_trees` и `specific_users`

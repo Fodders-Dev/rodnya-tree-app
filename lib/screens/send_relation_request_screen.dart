@@ -6,6 +6,7 @@ import '../models/user_profile.dart';
 import 'package:get_it/get_it.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
 import '../backend/interfaces/profile_service_interface.dart';
+import '../utils/photo_url.dart';
 
 class SendRelationRequestScreen extends StatefulWidget {
   final String treeId;
@@ -104,6 +105,14 @@ class _SendRelationRequestScreenState extends State<SendRelationRequestScreen> {
     }
   }
 
+  Widget _buildUserAvatar(UserProfile user) {
+    final avatarImage = buildAvatarImageProvider(user.photoURL);
+    return CircleAvatar(
+      backgroundImage: avatarImage,
+      child: avatarImage == null ? Text(user.displayName[0]) : null,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -174,14 +183,7 @@ class _SendRelationRequestScreenState extends State<SendRelationRequestScreen> {
                             final isSelected = _selectedUser?.id == user.id;
 
                             return ListTile(
-                              leading: CircleAvatar(
-                                backgroundImage: user.photoURL != null
-                                    ? NetworkImage(user.photoURL!)
-                                    : null,
-                                child: user.photoURL == null
-                                    ? Text(user.displayName[0])
-                                    : null,
-                              ),
+                              leading: _buildUserAvatar(user),
                               title: Text(user.displayName),
                               subtitle: Text(user.email ?? 'Email не указан'),
                               trailing: isSelected
@@ -209,14 +211,7 @@ class _SendRelationRequestScreenState extends State<SendRelationRequestScreen> {
                     ),
                     SizedBox(height: 8),
                     ListTile(
-                      leading: CircleAvatar(
-                        backgroundImage: _selectedUser!.photoURL != null
-                            ? NetworkImage(_selectedUser!.photoURL!)
-                            : null,
-                        child: _selectedUser!.photoURL == null
-                            ? Text(_selectedUser!.displayName[0])
-                            : null,
-                      ),
+                      leading: _buildUserAvatar(_selectedUser!),
                       title: Text(_selectedUser!.displayName),
                       subtitle: Text(_selectedUser!.email ?? 'Email не указан'),
                       trailing: IconButton(

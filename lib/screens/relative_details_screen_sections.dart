@@ -303,10 +303,11 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
             itemBuilder: (context, index) {
               final media = galleryEntries[index];
               final mediaUrl = media['url']?.toString() ?? '';
+              final normalizedMediaUrl = normalizePhotoUrl(mediaUrl);
               final isPrimary = media['isPrimary'] == true;
 
               return InkWell(
-                onTap: mediaUrl.isEmpty
+                onTap: normalizedMediaUrl == null
                     ? null
                     : () => _openGalleryViewer(
                           galleryEntries,
@@ -337,20 +338,19 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
                                     .surfaceContainerLowest,
                               ),
                               clipBehavior: Clip.antiAlias,
-                              child: mediaUrl.isEmpty
+                              child: normalizedMediaUrl == null
                                   ? Center(
                                       child: Icon(
                                         Icons.broken_image_outlined,
                                         color: Colors.grey[600],
                                       ),
                                     )
-                                  : Image.network(
-                                      mediaUrl,
+                                  : CachedNetworkImage(
+                                      imageUrl: normalizedMediaUrl,
                                       fit: BoxFit.cover,
                                       width: double.infinity,
-                                      errorBuilder:
-                                          (context, error, stackTrace) =>
-                                              Center(
+                                      errorWidget: (context, url, error) =>
+                                          Center(
                                         child: Icon(
                                           Icons.broken_image_outlined,
                                           color: Colors.grey[600],

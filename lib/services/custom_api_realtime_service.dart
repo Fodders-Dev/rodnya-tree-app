@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:web_socket_channel/web_socket_channel.dart';
 
@@ -7,6 +8,11 @@ import '../backend/backend_runtime_config.dart';
 import 'custom_api_auth_service.dart';
 
 typedef WebSocketChannelFactory = WebSocketChannel Function(Uri uri);
+typedef ReconnectJitterFactor = double Function();
+typedef ReconnectTimerFactory = Timer Function(
+  Duration delay,
+  void Function() callback,
+);
 
 class CustomApiRealtimeEvent {
   const CustomApiRealtimeEvent({
@@ -86,15 +92,26 @@ class CustomApiRealtimeService {
     required BackendRuntimeConfig runtimeConfig,
     WebSocketChannelFactory? channelFactory,
     Duration? reconnectDelay,
+    Duration? maxReconnectDelay,
+    ReconnectJitterFactor? reconnectJitterFactor,
+    ReconnectTimerFactory? reconnectTimerFactory,
   })  : _authService = authService,
         _runtimeConfig = runtimeConfig,
         _channelFactory = channelFactory ?? WebSocketChannel.connect,
-        _reconnectDelay = reconnectDelay ?? const Duration(seconds: 3);
+        _baseReconnectDelay = reconnectDelay ?? const Duration(seconds: 1),
+        _maxReconnectDelay = maxReconnectDelay ?? const Duration(seconds: 30),
+        _reconnectJitterFactor =
+            reconnectJitterFactor ?? _createReconnectJitterFactor(Random()),
+        _reconnectTimerFactory = reconnectTimerFactory ??
+            ((delay, callback) => Timer(delay, callback));
 
   final CustomApiAuthService _authService;
   final BackendRuntimeConfig _runtimeConfig;
   final WebSocketChannelFactory _channelFactory;
-  final Duration _reconnectDelay;
+  final Duration _baseReconnectDelay;
+  final Duration _maxReconnectDelay;
+  final ReconnectJitterFactor _reconnectJitterFactor;
+  final ReconnectTimerFactory _reconnectTimerFactory;
   final StreamController<CustomApiRealtimeEvent> _eventsController =
       StreamController<CustomApiRealtimeEvent>.broadcast();
 
@@ -103,6 +120,7 @@ class CustomApiRealtimeService {
   Timer? _reconnectTimer;
   bool _isConnecting = false;
   bool _disposed = false;
+  int _consecutiveFailures = 0;
 
   Stream<CustomApiRealtimeEvent> get events => _eventsController.stream;
 
@@ -116,11 +134,14 @@ class CustomApiRealtimeService {
       return;
     }
 
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
     _isConnecting = true;
     try {
       final uri = _buildUri(accessToken);
       final channel = _channelFactory(uri);
       await channel.ready;
+      _consecutiveFailures = 0;
       _channel = channel;
       _channelSubscription = channel.stream.listen(
         _handleEvent,
@@ -128,6 +149,8 @@ class CustomApiRealtimeService {
         onDone: _scheduleReconnect,
         cancelOnError: true,
       );
+    } catch (_) {
+      _scheduleReconnect();
     } finally {
       _isConnecting = false;
     }
@@ -136,6 +159,7 @@ class CustomApiRealtimeService {
   Future<void> disconnect() async {
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
+    _consecutiveFailures = 0;
     await _channelSubscription?.cancel();
     _channelSubscription = null;
     await _channel?.sink.close();
@@ -204,9 +228,37 @@ class CustomApiRealtimeService {
       return;
     }
 
+    _consecutiveFailures += 1;
+    final delay = _nextBackoffDelay(_consecutiveFailures);
     _reconnectTimer?.cancel();
-    _reconnectTimer = Timer(_reconnectDelay, () {
+    _reconnectTimer = _reconnectTimerFactory(delay, () {
+      _reconnectTimer = null;
       unawaited(connect());
     });
+  }
+
+  Duration debugBackoffDelayForFailureCount(int failures) {
+    return _nextBackoffDelay(failures);
+  }
+
+  Duration _nextBackoffDelay(int failures) {
+    final normalizedFailures = max(1, failures);
+    final multiplier = 1 << min(normalizedFailures - 1, 5);
+    final baseMilliseconds = _baseReconnectDelay.inMilliseconds * multiplier;
+    final cappedMilliseconds = min(
+      baseMilliseconds,
+      _maxReconnectDelay.inMilliseconds,
+    );
+    final jitterFactor = _reconnectJitterFactor().clamp(0.75, 1.25);
+    final jitteredMilliseconds = max(
+      1,
+      (cappedMilliseconds * jitterFactor).round(),
+    );
+
+    return Duration(milliseconds: jitteredMilliseconds);
+  }
+
+  static ReconnectJitterFactor _createReconnectJitterFactor(Random random) {
+    return () => 0.75 + random.nextDouble() * 0.5;
   }
 }

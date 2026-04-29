@@ -3,6 +3,7 @@ part of 'profile_edit_screen.dart';
 extension _ProfileEditScreenSections on _ProfileEditScreenState {
   Widget _buildAvatarCard() {
     final theme = Theme.of(context);
+    final avatarImage = buildAvatarImageProvider(_profileImageUrl);
     return GlassPanel(
       child: Row(
         children: [
@@ -13,10 +14,8 @@ extension _ProfileEditScreenSections on _ProfileEditScreenState {
               children: [
                 CircleAvatar(
                   radius: 42,
-                  backgroundImage: _profileImageUrl != null
-                      ? NetworkImage(_profileImageUrl!)
-                      : null,
-                  child: _profileImageUrl == null
+                  backgroundImage: avatarImage,
+                  child: avatarImage == null
                       ? const Icon(Icons.person, size: 42)
                       : null,
                 ),

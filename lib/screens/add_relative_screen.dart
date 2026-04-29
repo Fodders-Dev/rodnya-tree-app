@@ -1388,7 +1388,6 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
       if (!mounted) return;
       setState(() {
         _isLoadingContext = false;
-        // TODO: Показать ошибку пользователю?
       });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(

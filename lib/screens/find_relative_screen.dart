@@ -12,6 +12,7 @@ import '../backend/interfaces/profile_service_interface.dart';
 import '../models/family_relation.dart';
 import '../models/user_profile.dart';
 import '../services/app_status_service.dart';
+import '../utils/photo_url.dart';
 import '../utils/user_facing_error.dart';
 import '../widgets/glass_panel.dart';
 
@@ -755,14 +756,14 @@ class _FindRelativeScreenState extends State<FindRelativeScreen>
         : (user.firstName.isNotEmpty
             ? '${user.firstName} ${user.lastName}'.trim()
             : 'Пользователь');
+    final avatarImage = buildAvatarImageProvider(user.photoURL);
 
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 8),
       child: ListTile(
         leading: CircleAvatar(
-          backgroundImage:
-              user.photoURL != null ? NetworkImage(user.photoURL!) : null,
-          child: user.photoURL == null
+          backgroundImage: avatarImage,
+          child: avatarImage == null
               ? Text(
                   displayName.isNotEmpty ? displayName[0].toUpperCase() : '?',
                 )

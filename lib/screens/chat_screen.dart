@@ -1,6 +1,7 @@
 // ignore_for_file: unused_field
 import 'dart:async';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -22,6 +23,8 @@ import '../backend/interfaces/chat_service_interface.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
 import '../backend/interfaces/safety_service_interface.dart';
 import '../controllers/chat_recording_controller.dart';
+import '../controllers/chat_search_controller.dart';
+import '../controllers/chat_selection_controller.dart';
 import '../controllers/chat_timeline_controller.dart';
 import '../models/call_media_mode.dart';
 import '../models/chat_attachment.dart';
@@ -40,6 +43,9 @@ import '../services/chat_reaction_store.dart';
 import '../services/custom_api_auth_service.dart';
 import '../services/custom_api_realtime_service.dart';
 import '../utils/chat_attachment_download.dart';
+import '../utils/photo_url.dart';
+import '../utils/snackbar.dart';
+import '../utils/url_utils.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/offline_indicator.dart';
 
@@ -103,7 +109,6 @@ class _ChatScreenState extends State<ChatScreen> {
   ];
 
   final TextEditingController _messageController = TextEditingController();
-  final TextEditingController _searchController = TextEditingController();
   final FocusNode _messageFocusNode = FocusNode();
   // Prevents double-send while an outgoing request is in flight.
   bool _isSendingMessage = false;
@@ -144,9 +149,9 @@ class _ChatScreenState extends State<ChatScreen> {
   _ForwardDraft? _selectedForward;
   _ForwardBatchDraft? _selectedForwardBatch;
   _EditDraft? _selectedEdit;
-  bool _isSearchMode = false;
-  final Set<String> _selectedRemoteMessageIds = <String>{};
-  final Set<String> _selectedOutgoingMessageIds = <String>{};
+  final ChatSearchController _searchController = ChatSearchController();
+  final ChatSelectionController _selectionController =
+      ChatSelectionController();
   bool _browserContextMenuWasEnabled = false;
   bool _isDirectChatBlocked = false;
   String? _directChatBlockedLabel;
@@ -226,16 +231,16 @@ class _ChatScreenState extends State<ChatScreen> {
     _restoreBrowserContextMenu();
     _recordingController.removeListener(_handleRecordingControllerChanged);
     _recordingController.dispose();
+    _selectionController.dispose();
     _timelineController?.dispose();
     super.dispose();
   }
 
-  bool get _isSelectionMode =>
-      _selectedRemoteMessageIds.isNotEmpty ||
-      _selectedOutgoingMessageIds.isNotEmpty;
+  bool get _isSelectionMode => _selectionController.isSelectionMode;
 
-  int get _selectedMessageCount =>
-      _selectedRemoteMessageIds.length + _selectedOutgoingMessageIds.length;
+  bool get _isSearchMode => _searchController.isSearchMode;
+
+  int get _selectedMessageCount => _selectionController.selectedMessageCount;
 
   void _configureBrowserContextMenu() {
     if (!kIsWeb) {
@@ -314,9 +319,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _showEmptyAttachmentCategorySnackBar(String text) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(text)),
-    );
+    showAppSnackBar(context, text);
   }
 
   Future<void> _openChatMediaGallery() async {
@@ -433,20 +436,12 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.toString())),
-      );
+      showAppSnackBar(context, error.toString(), isError: true);
     }
   }
 
   void _exitSelectionMode() {
-    if (!_isSelectionMode) {
-      return;
-    }
-    setState(() {
-      _selectedRemoteMessageIds.clear();
-      _selectedOutgoingMessageIds.clear();
-    });
+    _selectionController.clear();
   }
 
   void _selectRemoteMessage(ChatMessage message) {
@@ -458,8 +453,8 @@ class _ChatScreenState extends State<ChatScreen> {
       _selectedReply = null;
       _selectedForward = null;
       _selectedForwardBatch = null;
-      _selectedRemoteMessageIds.add(message.id);
     });
+    _selectionController.selectRemote(message.id);
   }
 
   void _selectOutgoingMessage(_OutgoingMessage message) {
@@ -471,34 +466,22 @@ class _ChatScreenState extends State<ChatScreen> {
       _selectedReply = null;
       _selectedForward = null;
       _selectedForwardBatch = null;
-      _selectedOutgoingMessageIds.add(message.localId);
     });
+    _selectionController.selectOutgoing(message.localId);
   }
 
   void _toggleRemoteMessageSelection(ChatMessage message) {
-    setState(() {
-      if (_selectedRemoteMessageIds.contains(message.id)) {
-        _selectedRemoteMessageIds.remove(message.id);
-      } else {
-        _selectedRemoteMessageIds.add(message.id);
-      }
-    });
+    _selectionController.toggleRemote(message.id);
   }
 
   void _toggleOutgoingMessageSelection(_OutgoingMessage message) {
-    setState(() {
-      if (_selectedOutgoingMessageIds.contains(message.localId)) {
-        _selectedOutgoingMessageIds.remove(message.localId);
-      } else {
-        _selectedOutgoingMessageIds.add(message.localId);
-      }
-    });
+    _selectionController.toggleOutgoing(message.localId);
   }
 
   List<_SelectedMessageEntry> _selectedMessagesSnapshot() {
     final selectedMessages = <_SelectedMessageEntry>[
       ..._latestRemoteMessages
-          .where((message) => _selectedRemoteMessageIds.contains(message.id))
+          .where((message) => _selectionController.isRemoteSelected(message.id))
           .map(
             (message) => _SelectedMessageEntry.remote(
               message: message,
@@ -510,7 +493,7 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
       ..._optimisticMessages
           .where((message) =>
-              _selectedOutgoingMessageIds.contains(message.localId))
+              _selectionController.isOutgoingSelected(message.localId))
           .map(
             (message) => _SelectedMessageEntry.outgoing(
               message: message,
@@ -605,14 +588,11 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
     _exitSelectionMode();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          selectedMessages.length == 1
-              ? 'Сообщение скопировано'
-              : 'Скопировано ${selectedMessages.length} сообщений',
-        ),
-      ),
+    showAppSnackBar(
+      context,
+      selectedMessages.length == 1
+          ? 'Сообщение скопировано'
+          : 'Скопировано ${selectedMessages.length} сообщений',
     );
   }
 
@@ -637,9 +617,8 @@ class _ChatScreenState extends State<ChatScreen> {
             )
             .toList(),
       );
-      _selectedRemoteMessageIds.clear();
-      _selectedOutgoingMessageIds.clear();
     });
+    _selectionController.clear();
   }
 
   Future<void> _deleteSelectedMessages() async {
@@ -655,11 +634,10 @@ class _ChatScreenState extends State<ChatScreen> {
       (message) => !message.canDelete(currentUserId),
     );
     if (hasForbiddenMessages) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-              'Пока можно удалять только свои сообщения и локальную очередь.'),
-        ),
+      showAppSnackBar(
+        context,
+        'Пока можно удалять только свои сообщения и локальную очередь.',
+        isError: true,
       );
       return;
     }
@@ -717,9 +695,8 @@ class _ChatScreenState extends State<ChatScreen> {
           (message) => outgoingIdsToRemove.contains(message.localId),
         );
       }
-      _selectedRemoteMessageIds.clear();
-      _selectedOutgoingMessageIds.clear();
     });
+    _selectionController.clear();
   }
 
   Future<void> _bootstrapChat() async {
@@ -903,10 +880,10 @@ class _ChatScreenState extends State<ChatScreen> {
       });
     }
     if (_selectedAttachments.length >= _maxAttachments) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Можно прикрепить не более 6 вложений.'),
-        ),
+      showAppSnackBar(
+        context,
+        'Можно прикрепить не более 6 вложений.',
+        isError: true,
       );
       return;
     }
@@ -935,8 +912,10 @@ class _ChatScreenState extends State<ChatScreen> {
         final remaining = 6 - _selectedAttachments.length;
         if (picked.length > remaining) {
           _selectedAttachments.addAll(picked.take(remaining));
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Можно добавить не более 6 фото.')),
+          showAppSnackBar(
+            context,
+            'Можно добавить не более 6 фото.',
+            isError: true,
           );
         } else {
           _selectedAttachments.addAll(picked);
@@ -946,8 +925,10 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Не удалось выбрать фотографии.')),
+      showAppSnackBar(
+        context,
+        'Не удалось выбрать фотографии.',
+        isError: true,
       );
     }
   }
@@ -988,9 +969,10 @@ class _ChatScreenState extends State<ChatScreen> {
       if (size > 50 * 1024 * 1024) {
         // 50MB limit
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-                content: Text('Видео слишком большое (макс. 50 МБ).')),
+          showAppSnackBar(
+            context,
+            'Видео слишком большое (макс. 50 МБ).',
+            isError: true,
           );
         }
         return;
@@ -1004,14 +986,12 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            asVideoNote
-                ? 'Не удалось подготовить кружок.'
-                : 'Не удалось выбрать видео.',
-          ),
-        ),
+      showAppSnackBar(
+        context,
+        asVideoNote
+            ? 'Не удалось подготовить кружок.'
+            : 'Не удалось выбрать видео.',
+        isError: true,
       );
     }
   }
@@ -1058,9 +1038,7 @@ class _ChatScreenState extends State<ChatScreen> {
         final remaining = _maxAttachments - _selectedAttachments.length;
         if (pickedFiles.length > remaining) {
           _selectedAttachments.addAll(pickedFiles.take(remaining));
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Можно добавить не более 6 файлов.')),
-          );
+          showAppSnackBar(context, 'Можно добавить не более 6 файлов.');
         } else {
           _selectedAttachments.addAll(pickedFiles);
         }
@@ -1068,9 +1046,7 @@ class _ChatScreenState extends State<ChatScreen> {
     } catch (e) {
       debugPrint('Error picking file: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Не удалось выбрать файл.')),
-        );
+        showAppSnackBar(context, 'Не удалось выбрать файл.', isError: true);
       }
     }
   }
@@ -1267,9 +1243,7 @@ class _ChatScreenState extends State<ChatScreen> {
     } catch (error) {
       debugPrint('Error starting recording: $error');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Не удалось начать запись.')),
-        );
+        showAppSnackBar(context, 'Не удалось начать запись.', isError: true);
       }
     }
   }
@@ -1318,11 +1292,10 @@ class _ChatScreenState extends State<ChatScreen> {
     if (currentUserId == null || currentUserId.isEmpty) {
       // Bootstrap still running — give the user visible feedback.
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Чат ещё загружается, подождите секунду.'),
-            duration: Duration(seconds: 2),
-          ),
+        showAppSnackBar(
+          context,
+          'Чат ещё загружается, подождите секунду.',
+          duration: const Duration(seconds: 2),
         );
       }
       return;
@@ -1514,9 +1487,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
     final nextText = _messageController.text.trim();
     if (nextText.isEmpty && !edit.hasAttachments) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Сообщение не должно быть пустым.')),
-      );
+      showAppSnackBar(context, 'Сообщение не должно быть пустым.');
       return;
     }
 
@@ -1549,9 +1520,8 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Не удалось сохранить изменения.')),
-      );
+      showAppSnackBar(context, 'Не удалось сохранить изменения.',
+          isError: true);
     }
   }
 
@@ -2029,9 +1999,7 @@ class _ChatScreenState extends State<ChatScreen> {
         message = 'Уведомления этого чата отключены';
         break;
     }
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    showAppSnackBar(context, message);
   }
 
   String _currentReactionEmoji(String messageId) {
@@ -2262,9 +2230,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (!mounted) {
       return;
     }
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Сообщение закреплено')),
-    );
+    showAppSnackBar(context, 'Сообщение закреплено');
   }
 
   void _schedulePinnedSync(List<ChatMessage> remoteMessages) {
@@ -2551,31 +2517,22 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _openSearch() {
-    setState(() {
-      _isSearchMode = true;
-    });
+    _searchController.open();
   }
 
   void _closeSearch() {
-    _searchController.clear();
-    setState(() {
-      _isSearchMode = false;
-    });
+    _searchController.close();
   }
 
   bool _messageMatchesSearch(String text) {
-    final query = _searchController.text.trim().toLowerCase();
-    if (query.isEmpty) {
-      return true;
-    }
-    return text.toLowerCase().contains(query);
+    return _searchController.matches(text);
   }
 
   int _searchMatchCount(
     List<ChatMessage> remoteMessages,
     List<_OutgoingMessage> optimisticMessages,
   ) {
-    if (_searchController.text.trim().isEmpty) {
+    if (!_searchController.hasQuery) {
       return 0;
     }
     return remoteMessages
@@ -2718,9 +2675,7 @@ class _ChatScreenState extends State<ChatScreen> {
               _participantLabelForUserId(_currentDirectPeerUserId ?? '');
         }
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(failureMessage)),
-      );
+      showAppSnackBar(context, failureMessage, isError: true);
     }
   }
 
@@ -2943,9 +2898,12 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: _buildChatAppBar(context),
-      body: _buildChatBody(context),
+    return ListenableBuilder(
+      listenable: _selectionController,
+      builder: (context, _) => Scaffold(
+        appBar: _buildChatAppBar(context),
+        body: _buildChatBody(context),
+      ),
     );
   }
 
@@ -3273,7 +3231,7 @@ class _ChatScreenState extends State<ChatScreen> {
         final optimisticMessages = _optimisticMessages
             .where((message) => !_matchesRemoteMessage(message, remoteMessages))
             .toList();
-        final hasActiveSearch = _searchController.text.trim().isNotEmpty;
+        final hasActiveSearch = _searchController.hasQuery;
         final filteredRemoteMessages = hasActiveSearch
             ? remoteMessages
                 .where((message) => _messageMatchesSearch(message.text))
@@ -3305,7 +3263,7 @@ class _ChatScreenState extends State<ChatScreen> {
               child: GlassPanel(
                 borderRadius: BorderRadius.circular(24),
                 child: Text(
-                  'Ничего не найдено по запросу "${_searchController.text.trim()}"',
+                  'Ничего не найдено по запросу "${_searchController.query}"',
                   textAlign: TextAlign.center,
                 ),
               ),
@@ -3968,12 +3926,9 @@ class _ChatScreenState extends State<ChatScreen> {
         onPressed: recordingState == ChatRecordingState.recording
             ? null
             : () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text(
-                      'Зажмите кнопку, чтобы записать голосовое.',
-                    ),
-                  ),
+                showAppSnackBar(
+                  context,
+                  'Зажмите кнопку, чтобы записать голосовое.',
                 );
               },
         tooltip: 'Зажмите для голосового сообщения',
@@ -4066,7 +4021,7 @@ class _ChatScreenState extends State<ChatScreen> {
             ? _groupSenderLabel(message.senderName, message.senderId)
             : null,
         text: message.text,
-        highlightQuery: _searchController.text.trim(),
+        highlightQuery: _searchController.query,
         timeLabel: DateFormat.Hm('ru').format(message.timestamp),
         isRead: message.isRead,
         remoteAttachments: message.attachments,
@@ -4077,7 +4032,7 @@ class _ChatScreenState extends State<ChatScreen> {
         reactionGroups: _reactionGroupsForMessage(message.id),
         onReactionTap: (emoji) => _toggleReactionForMessage(message, emoji),
         showSelectionMarker: _isSelectionMode,
-        isSelected: _selectedRemoteMessageIds.contains(message.id),
+        isSelected: _selectionController.isRemoteSelected(message.id),
         onOpenRemoteAttachment: (attachments, attachment) =>
             _openRemoteAttachmentPreview(message, attachments, attachment),
       ),
@@ -4128,7 +4083,7 @@ class _ChatScreenState extends State<ChatScreen> {
               child: _ChatBubble(
                 isMe: true,
                 text: message.text,
-                highlightQuery: _searchController.text.trim(),
+                highlightQuery: _searchController.query,
                 timeLabel: timeLabel,
                 isRead: false,
                 remoteAttachments: message.forwardedAttachments,
@@ -4139,7 +4094,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 reactionGroups: const <_ReactionGroup>[],
                 showSelectionMarker: _isSelectionMode,
                 isSelected:
-                    _selectedOutgoingMessageIds.contains(message.localId),
+                    _selectionController.isOutgoingSelected(message.localId),
                 onOpenLocalAttachment: (files, file) =>
                     _openLocalAttachmentPreview(files, file),
                 footerLabel:
@@ -4365,9 +4320,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (!mounted) {
       return;
     }
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Текст сообщения скопирован')),
-    );
+    showAppSnackBar(context, 'Текст сообщения скопирован');
   }
 
   bool get _isCurrentDirectChat =>
@@ -4532,21 +4485,15 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Жалоба на сообщение $senderLabel отправлена.'),
-        ),
-      );
+      showAppSnackBar(context, 'Жалоба на сообщение $senderLabel отправлена.');
     } catch (error) {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            _messageActionErrorText(error, 'Не удалось отправить жалобу.'),
-          ),
-        ),
+      showAppSnackBar(
+        context,
+        _messageActionErrorText(error, 'Не удалось отправить жалобу.'),
+        isError: true,
       );
     }
   }
@@ -4599,28 +4546,23 @@ class _ChatScreenState extends State<ChatScreen> {
         _isDirectChatBlocked = _isCurrentDirectChat;
         _directChatBlockedLabel = senderLabel;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            '$senderLabel заблокирован. Отправка в этом личном чате отключена.',
-          ),
-          action: SnackBarAction(
-            label: 'Блокировки',
-            onPressed: () => context.push('/profile/blocks'),
-          ),
+      showAppSnackBar(
+        context,
+        '$senderLabel заблокирован. Отправка в этом личном чате отключена.',
+        action: SnackBarAction(
+          label: 'Блокировки',
+          onPressed: () => context.push('/profile/blocks'),
         ),
       );
     } catch (error) {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            _messageActionErrorText(
-                error, 'Не удалось заблокировать пользователя.'),
-          ),
-        ),
+      showAppSnackBar(
+        context,
+        _messageActionErrorText(
+            error, 'Не удалось заблокировать пользователя.'),
+        isError: true,
       );
     }
   }
@@ -5430,9 +5372,7 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Не удалось открыть вложение.')),
-      );
+      showAppSnackBar(context, 'Не удалось открыть вложение.', isError: true);
     }
   }
 
@@ -5450,8 +5390,10 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Не удалось открыть локальный файл.')),
+      showAppSnackBar(
+        context,
+        'Не удалось открыть локальный файл.',
+        isError: true,
       );
     }
   }
@@ -5475,22 +5417,17 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            supportsChatAttachmentDownload
-                ? 'Скачивание запущено'
-                : 'Вложение открыто во внешнем приложении',
-          ),
-        ),
+      showAppSnackBar(
+        context,
+        supportsChatAttachmentDownload
+            ? 'Скачивание запущено'
+            : 'Вложение открыто во внешнем приложении',
       );
     } catch (_) {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Не удалось сохранить вложение.')),
-      );
+      showAppSnackBar(context, 'Не удалось сохранить вложение.', isError: true);
     }
   }
 
@@ -5538,9 +5475,7 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Не удалось удалить сообщение.')),
-      );
+      showAppSnackBar(context, 'Не удалось удалить сообщение.', isError: true);
     }
   }
 
@@ -6261,18 +6196,16 @@ class _ChatInfoSheetState extends State<_ChatInfoSheet> {
                     final participant = entry.value;
                     final isCurrentUser =
                         participant.userId == widget.currentUserId;
+                    final avatarImage =
+                        buildAvatarImageProvider(participant.photoUrl);
                     return Column(
                       children: [
                         if (index > 0) const Divider(height: 1),
                         ListTile(
                           contentPadding: EdgeInsets.zero,
                           leading: CircleAvatar(
-                            backgroundImage: participant.photoUrl != null &&
-                                    participant.photoUrl!.isNotEmpty
-                                ? NetworkImage(participant.photoUrl!)
-                                : null,
-                            child: participant.photoUrl == null ||
-                                    participant.photoUrl!.isEmpty
+                            backgroundImage: avatarImage,
+                            child: avatarImage == null
                                 ? Text(
                                     participant.displayName.isNotEmpty
                                         ? participant.displayName[0]
@@ -6324,10 +6257,10 @@ class _ChatInfoSheetState extends State<_ChatInfoSheet> {
       setState(() {
         _notificationLevel = previousLevel;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Не удалось обновить настройки уведомлений.'),
-        ),
+      showAppSnackBar(
+        context,
+        'Не удалось обновить настройки уведомлений.',
+        isError: true,
       );
     } finally {
       if (mounted) {
@@ -6356,10 +6289,10 @@ class _ChatInfoSheetState extends State<_ChatInfoSheet> {
       setState(() {
         _autoDeleteOption = previousOption;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Не удалось обновить автоудаление сообщений.'),
-        ),
+      showAppSnackBar(
+        context,
+        'Не удалось обновить автоудаление сообщений.',
+        isError: true,
       );
     } finally {
       if (mounted) {
@@ -6418,9 +6351,7 @@ class _ChatInfoSheetState extends State<_ChatInfoSheet> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Не удалось переименовать чат.')),
-      );
+      showAppSnackBar(context, 'Не удалось переименовать чат.', isError: true);
     } finally {
       if (mounted) {
         setState(() {
@@ -6433,14 +6364,15 @@ class _ChatInfoSheetState extends State<_ChatInfoSheet> {
   Future<void> _addParticipants() async {
     final treeId = _details.treeId;
     if (treeId == null || treeId.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Для этого чата не найдено дерево.')),
-      );
+      showAppSnackBar(context, 'Для этого чата не найдено дерево.',
+          isError: true);
       return;
     }
     if (!GetIt.I.isRegistered<FamilyTreeServiceInterface>()) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Список родных временно недоступен.')),
+      showAppSnackBar(
+        context,
+        'Список родных временно недоступен.',
+        isError: true,
       );
       return;
     }
@@ -6475,9 +6407,7 @@ class _ChatInfoSheetState extends State<_ChatInfoSheet> {
       ..sort((left, right) => left.displayName.compareTo(right.displayName));
 
     if (candidates.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('В этом дереве больше некого добавить.')),
-      );
+      showAppSnackBar(context, 'В этом дереве больше некого добавить.');
       return;
     }
 
@@ -6507,9 +6437,8 @@ class _ChatInfoSheetState extends State<_ChatInfoSheet> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Не удалось добавить участников.')),
-      );
+      showAppSnackBar(context, 'Не удалось добавить участников.',
+          isError: true);
     } finally {
       if (mounted) {
         setState(() {
@@ -6560,8 +6489,10 @@ class _ChatInfoSheetState extends State<_ChatInfoSheet> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Не удалось обновить состав чата.')),
+      showAppSnackBar(
+        context,
+        'Не удалось обновить состав чата.',
+        isError: true,
       );
     } finally {
       if (mounted) {
@@ -6758,6 +6689,8 @@ class _AddParticipantsSheetState extends State<_AddParticipantsSheet> {
                   itemBuilder: (context, index) {
                     final candidate = filteredCandidates[index];
                     final isSelected = _selectedIds.contains(candidate.userId);
+                    final avatarImage =
+                        buildAvatarImageProvider(candidate.photoUrl);
                     return GlassPanel(
                       padding: EdgeInsets.zero,
                       child: CheckboxListTile(
@@ -6772,12 +6705,8 @@ class _AddParticipantsSheetState extends State<_AddParticipantsSheet> {
                           });
                         },
                         secondary: CircleAvatar(
-                          backgroundImage: candidate.photoUrl != null &&
-                                  candidate.photoUrl!.isNotEmpty
-                              ? NetworkImage(candidate.photoUrl!)
-                              : null,
-                          child: candidate.photoUrl == null ||
-                                  candidate.photoUrl!.isEmpty
+                          backgroundImage: avatarImage,
+                          child: avatarImage == null
                               ? Text(
                                   candidate.displayName.isNotEmpty
                                       ? candidate.displayName[0]

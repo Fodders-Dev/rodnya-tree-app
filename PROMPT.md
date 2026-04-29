@@ -25,7 +25,7 @@ While working:
 - Watch for web-specific failures first: route `404`, CORS, broken router redirects, missing semantics, oversized whitespace on desktop, and screens that degrade into empty states.
 - When you find a user-visible issue, decide whether it is a backend contract gap, web-only bug, or UI polish problem.
 - Record important findings in `docs/mvp_web_audit_YYYY-MM-DD.md`.
-- Use `docs/rodnya_release_plan_2026-04-13.md` as the current product roadmap unless a newer dated plan supersedes it.
+- Use `docs/active_execution_plan.md` as the single current execution plan. Update that file when priorities or wave status change.
 
 Definition of done:
 - The code change is implemented.

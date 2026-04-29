@@ -18,6 +18,7 @@ import '../services/custom_api_auth_service.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/flow_overlays.dart';
 import '../widgets/google_sign_in_action.dart';
+import '../utils/photo_url.dart';
 
 part 'profile_edit_screen_sections.dart';
 

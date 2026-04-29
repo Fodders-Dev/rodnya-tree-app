@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
@@ -24,6 +25,7 @@ class CustomApiPostService implements PostServiceInterface {
   final StorageServiceInterface _storageService;
   final BackendRuntimeConfig _runtimeConfig;
   final http.Client _httpClient;
+  static const _requestTimeout = Duration(seconds: 12);
 
   @override
   Future<List<Post>> getPosts(
@@ -135,30 +137,24 @@ class CustomApiPostService implements PostServiceInterface {
     required String path,
     Map<String, dynamic>? body,
   }) async {
-    final uri = _buildUri(path);
-    late http.Response response;
-
-    final headers = _headers();
-
-    switch (method) {
-      case 'GET':
-        response = await _httpClient.get(uri, headers: headers);
-        break;
-      case 'POST':
-        response = await _httpClient.post(
-          uri,
-          headers: headers,
-          body: body == null ? null : jsonEncode(body),
+    final response = await _sendRequest(
+      method: method,
+      path: path,
+      body: body,
+    );
+    try {
+      return _handleResponse(response);
+    } on CustomApiPostException catch (error) {
+      if (await _shouldRefreshAndRetry(error)) {
+        final retryResponse = await _sendRequest(
+          method: method,
+          path: path,
+          body: body,
         );
-        break;
-      case 'DELETE':
-        response = await _httpClient.delete(uri, headers: headers);
-        break;
-      default:
-        throw Exception('Unsupported HTTP method: $method');
+        return _handleResponse(retryResponse);
+      }
+      rethrow;
     }
-
-    return _handleResponse(response);
   }
 
   Future<List<dynamic>> _requestList({
@@ -166,24 +162,79 @@ class CustomApiPostService implements PostServiceInterface {
     required String path,
     Map<String, String>? queryParams,
   }) async {
-    final uri = _buildUri(path, queryParams: queryParams);
-    late http.Response response;
+    final response = await _sendRequest(
+      method: method,
+      path: path,
+      queryParams: queryParams,
+    );
 
-    final headers = _headers();
-
-    if (method == 'GET') {
-      response = await _httpClient.get(uri, headers: headers);
-    } else {
-      throw Exception('Unsupported List HTTP method: $method');
+    dynamic decoded;
+    try {
+      decoded = _handleResponse(response);
+    } on CustomApiPostException catch (error) {
+      if (!await _shouldRefreshAndRetry(error)) {
+        rethrow;
+      }
+      final retryResponse = await _sendRequest(
+        method: method,
+        path: path,
+        queryParams: queryParams,
+      );
+      decoded = _handleResponse(retryResponse);
     }
-
-    final decoded = _handleResponse(response);
     if (decoded is List) return decoded;
     if (decoded is Map && decoded.containsKey('data')) {
       final data = decoded['data'];
       if (data is List) return data;
     }
     return [];
+  }
+
+  Future<http.Response> _sendRequest({
+    required String method,
+    required String path,
+    Map<String, dynamic>? body,
+    Map<String, String>? queryParams,
+  }) async {
+    final uri = _buildUri(path, queryParams: queryParams);
+    final headers = _headers();
+
+    try {
+      switch (method) {
+        case 'GET':
+          return await _httpClient
+              .get(uri, headers: headers)
+              .timeout(_requestTimeout);
+        case 'POST':
+          return await _httpClient
+              .post(
+                uri,
+                headers: headers,
+                body: body == null ? null : jsonEncode(body),
+              )
+              .timeout(_requestTimeout);
+        case 'DELETE':
+          return await _httpClient
+              .delete(uri, headers: headers)
+              .timeout(_requestTimeout);
+        default:
+          throw CustomApiPostException('Unsupported HTTP method: $method');
+      }
+    } on TimeoutException {
+      throw const CustomApiPostException(
+        'Backend не ответил за 12 секунд',
+      );
+    } on http.ClientException catch (error) {
+      throw CustomApiPostException(error.message);
+    }
+  }
+
+  Future<bool> _shouldRefreshAndRetry(CustomApiPostException error) async {
+    if (error.statusCode != 401 && error.statusCode != 403) {
+      return false;
+    }
+    await _authService.refreshSession();
+    return _authService.accessToken != null;
   }
 
   dynamic _handleResponse(http.Response response) {

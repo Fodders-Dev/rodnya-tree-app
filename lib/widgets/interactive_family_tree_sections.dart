@@ -123,4 +123,196 @@ extension _InteractiveFamilyTreeSections on _InteractiveFamilyTreeState {
       ),
     );
   }
+
+  Widget _buildViewportStatusBar() {
+    final zoomPercent = (_currentScale * 100).round();
+    final chips = <Widget>[
+      _buildOverlayChip(
+        icon: widget.showGenerationGuides
+            ? Icons.account_tree_outlined
+            : Icons.diversity_3_outlined,
+        label: widget.showGenerationGuides ? 'Семья' : 'Друзья',
+        highlighted: true,
+      ),
+      _buildOverlayChip(
+        icon: Icons.people_alt_outlined,
+        label: '${widget.peopleData.length}',
+      ),
+      _buildOverlayChip(
+        icon: Icons.hub_outlined,
+        label: '${widget.relations.length}',
+      ),
+      _buildOverlayChip(
+        icon: Icons.zoom_in_map_outlined,
+        label: '$zoomPercent%',
+      ),
+    ];
+
+    return ConstrainedBox(
+      constraints: BoxConstraints(
+        maxWidth: min((_viewportSize?.width ?? 640) - 24, 640),
+      ),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color:
+                Theme.of(context).colorScheme.surface.withValues(alpha: 0.84),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: Theme.of(context)
+                  .colorScheme
+                  .outlineVariant
+                  .withValues(alpha: 0.88),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.08),
+                blurRadius: 18,
+                offset: const Offset(0, 6),
+              ),
+            ],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (int i = 0; i < chips.length; i++) ...[
+                if (i > 0) const SizedBox(width: 8),
+                chips[i],
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildViewportControlDock() {
+    final currentUserNodeId = _findCurrentUserNodeId();
+    final branchRootPersonId = widget.branchRootPersonId;
+    return Container(
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.9),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(
+          color: Theme.of(context)
+              .colorScheme
+              .outlineVariant
+              .withValues(alpha: 0.88),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.1),
+            blurRadius: 18,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _buildDockButton(
+            icon: Icons.add,
+            tooltip: 'Увеличить',
+            onPressed: () => _zoomBy(1.2),
+          ),
+          const SizedBox(height: 6),
+          _buildDockButton(
+            icon: Icons.remove,
+            tooltip: 'Уменьшить',
+            onPressed: () => _zoomBy(1 / 1.2),
+          ),
+          const SizedBox(height: 6),
+          _buildDockButton(
+            icon: Icons.fit_screen_outlined,
+            tooltip: 'Вписать дерево',
+            onPressed: _fitTreeToViewport,
+          ),
+          if (currentUserNodeId != null) ...[
+            const SizedBox(height: 6),
+            _buildDockButton(
+              icon: Icons.my_location_outlined,
+              tooltip: 'Ко мне',
+              onPressed: () => _focusOnPerson(currentUserNodeId),
+            ),
+          ],
+          if (branchRootPersonId != null && branchRootPersonId.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            _buildDockButton(
+              icon: Icons.alt_route_outlined,
+              tooltip: widget.showGenerationGuides ? 'К ветке' : 'К кругу',
+              onPressed: () => _focusOnPerson(branchRootPersonId),
+            ),
+            if (widget.onBranchFocusCleared != null) ...[
+              const SizedBox(height: 6),
+              _buildDockButton(
+                icon: Icons.clear_all,
+                tooltip: widget.showGenerationGuides
+                    ? 'Сбросить ветку'
+                    : 'Сбросить круг',
+                onPressed: widget.onBranchFocusCleared!,
+              ),
+            ],
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDockButton({
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback onPressed,
+  }) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.96),
+        shape: const CircleBorder(),
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: onPressed,
+          child: SizedBox(
+            width: 44,
+            height: 44,
+            child: Icon(icon, color: colorScheme.primary),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildOverlayChip({
+    required IconData icon,
+    required String label,
+    bool highlighted = false,
+  }) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: highlighted ? colorScheme.primaryContainer : colorScheme.surface,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: highlighted ? colorScheme.primary : colorScheme.outlineVariant,
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+          ),
+        ],
+      ),
+    );
+  }
 }

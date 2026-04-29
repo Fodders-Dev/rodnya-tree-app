@@ -9,6 +9,7 @@ import '../models/family_person.dart';
 import '../models/family_relation.dart';
 import '../models/relation_request.dart';
 import '../models/user_profile.dart';
+import '../utils/photo_url.dart';
 
 class RelationRequestsScreen extends StatefulWidget {
   final String treeId;
@@ -203,6 +204,8 @@ class _RelationRequestsScreenState extends State<RelationRequestsScreen> {
                       itemBuilder: (context, index) {
                         final request = _requests[index];
                         final senderProfile = _userProfiles[request.senderId];
+                        final avatarImage =
+                            buildAvatarImageProvider(senderProfile?.photoURL);
 
                         return Card(
                           margin:
@@ -215,12 +218,8 @@ class _RelationRequestsScreenState extends State<RelationRequestsScreen> {
                                 Row(
                                   children: [
                                     CircleAvatar(
-                                      backgroundImage:
-                                          senderProfile?.photoURL != null
-                                              ? NetworkImage(
-                                                  senderProfile!.photoURL!)
-                                              : null,
-                                      child: senderProfile?.photoURL == null
+                                      backgroundImage: avatarImage,
+                                      child: avatarImage == null
                                           ? Icon(Icons.person)
                                           : null,
                                     ),

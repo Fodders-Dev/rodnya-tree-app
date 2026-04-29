@@ -4,6 +4,7 @@ import 'package:get_it/get_it.dart';
 import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/chat_service_interface.dart';
 import '../models/chat_preview.dart';
+import '../utils/photo_url.dart';
 
 class ChatForwardSelector extends StatefulWidget {
   const ChatForwardSelector({super.key});
@@ -105,12 +106,12 @@ class _ChatForwardSelectorState extends State<ChatForwardSelector> {
                         itemCount: filteredChats.length,
                         itemBuilder: (context, index) {
                           final chat = filteredChats[index];
+                          final avatarImage =
+                              buildAvatarImageProvider(chat.displayPhotoUrl);
                           return ListTile(
                             leading: CircleAvatar(
-                              backgroundImage: chat.displayPhotoUrl != null
-                                  ? NetworkImage(chat.displayPhotoUrl!)
-                                  : null,
-                              child: chat.displayPhotoUrl == null
+                              backgroundImage: avatarImage,
+                              child: avatarImage == null
                                   ? Text(chat.displayName.isNotEmpty
                                       ? chat.displayName[0]
                                       : '?')

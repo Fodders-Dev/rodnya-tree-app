@@ -229,6 +229,8 @@ class CustomApiAuthService implements AuthServiceInterface {
   bool _isRefreshing = false;
   Future<void>? _refreshTask;
   GoogleSignIn? _googleSignIn;
+  StreamController<void>? _googleWebAuthenticationController;
+  StreamSubscription<GoogleSignInAccount?>? _googleWebAccountSubscription;
 
   static Future<CustomApiAuthService> create({
     http.Client? httpClient,
@@ -268,6 +270,20 @@ class CustomApiAuthService implements AuthServiceInterface {
 
   bool get isGoogleSignInConfigured =>
       _runtimeConfig.googleWebClientId.trim().isNotEmpty;
+
+  Stream<void> get googleWebAuthenticationEvents {
+    _googleWebAuthenticationController ??= StreamController<void>.broadcast();
+    _ensureGoogleWebAuthenticationListener();
+    return _googleWebAuthenticationController!.stream;
+  }
+
+  Future<void> initializeGoogleWebAuthentication() async {
+    if (!kIsWeb || !isGoogleSignInConfigured) {
+      return;
+    }
+    _ensureGoogleWebAuthenticationListener();
+    await _googleClient.isSignedIn();
+  }
 
   Future<void> resetGoogleSelection() async {
     try {
@@ -388,9 +404,13 @@ class CustomApiAuthService implements AuthServiceInterface {
       );
     }
 
-    final account = await _resolveGoogleAccountForTokenExchange(
-      interactiveCancelledMessage: 'Привязка Google отменена.',
-    );
+    final account = kIsWeb
+        ? await _resolveCurrentGoogleAccountForTokenExchange(
+            interactiveCancelledMessage: 'Выберите Google-аккаунт.',
+          )
+        : await _resolveGoogleAccountForTokenExchange(
+            interactiveCancelledMessage: 'Привязка Google отменена.',
+          );
     final idToken = await _resolveGoogleIdToken(account);
     final response = await _requestJson(
       method: 'POST',
@@ -410,9 +430,13 @@ class CustomApiAuthService implements AuthServiceInterface {
   }
 
   Future<Object?> _signInWithResolvedGoogleAccount() async {
-    final account = await _resolveGoogleAccountForTokenExchange(
-      interactiveCancelledMessage: 'Вход через Google отменён.',
-    );
+    final account = kIsWeb
+        ? await _resolveCurrentGoogleAccountForTokenExchange(
+            interactiveCancelledMessage: 'Выберите Google-аккаунт.',
+          )
+        : await _resolveGoogleAccountForTokenExchange(
+            interactiveCancelledMessage: 'Вход через Google отменён.',
+          );
     final idToken = await _resolveGoogleIdToken(account);
     return _authenticate(
       path: '/v1/auth/google',
@@ -420,6 +444,25 @@ class CustomApiAuthService implements AuthServiceInterface {
         'idToken': idToken,
       },
     );
+  }
+
+  Future<GoogleSignInAccount> _resolveCurrentGoogleAccountForTokenExchange({
+    required String interactiveCancelledMessage,
+  }) async {
+    _ensureGoogleWebAuthenticationListener();
+    final currentAccount = _googleClient.currentUser;
+    if (currentAccount != null) {
+      return currentAccount;
+    }
+
+    final account = await _googleClient.signInSilently(
+      suppressErrors: true,
+      reAuthenticate: true,
+    );
+    if (account == null) {
+      throw CustomApiException(interactiveCancelledMessage);
+    }
+    return account;
   }
 
   Future<GoogleSignInAccount> _resolveGoogleAccountForTokenExchange({
@@ -465,11 +508,24 @@ class CustomApiAuthService implements AuthServiceInterface {
     return _googleSignIn ??= GoogleSignIn(
       scopes: const ['email'],
       // clientId: web-side client that the GIS library authenticates with.
-      // serverClientId: enables the server auth-code / ID-token flow on web.
-      //   Without it, authentication.idToken may be null on web.
+      // serverClientId is not supported by google_sign_in_web, so web obtains
+      // idToken only through GIS authentication events/renderButton.
       clientId: kIsWeb ? _runtimeConfig.googleWebClientId : null,
-      serverClientId: _runtimeConfig.googleWebClientId,
+      serverClientId: kIsWeb ? null : _runtimeConfig.googleWebClientId,
     );
+  }
+
+  void _ensureGoogleWebAuthenticationListener() {
+    if (!kIsWeb || !isGoogleSignInConfigured) {
+      return;
+    }
+    _googleWebAuthenticationController ??= StreamController<void>.broadcast();
+    _googleWebAccountSubscription ??=
+        _googleClient.onCurrentUserChanged.listen((account) {
+      if (account != null) {
+        _googleWebAuthenticationController?.add(null);
+      }
+    });
   }
 
   String get telegramLoginStartUrl => buildTelegramStartUrl();
@@ -1143,7 +1199,8 @@ class CustomApiAuthService implements AuthServiceInterface {
 
       // For other status codes return the sanitized message or empty string
       // so the caller's context-specific fallback is used.
-      return _sanitizeErrorMessage(normalizedMessage);
+      final sanitized = _sanitizeErrorMessage(normalizedMessage);
+      return sanitized.isEmpty ? _loginFallback : sanitized;
     }
 
     final rawMessage = error.toString();

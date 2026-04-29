@@ -23,6 +23,5 @@
 
 ## Опорные документы
 
-- [docs/rodnya_release_plan_2026-04-13.md](docs/rodnya_release_plan_2026-04-13.md)
+- [docs/active_execution_plan.md](docs/active_execution_plan.md)
 - [docs/mvp_web_audit_2026-04-09.md](docs/mvp_web_audit_2026-04-09.md)
-- [docs/rustore_release_remaining_plan_2026-04-12.md](docs/rustore_release_remaining_plan_2026-04-12.md)

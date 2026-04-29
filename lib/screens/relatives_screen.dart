@@ -17,7 +17,11 @@ import '../backend/interfaces/chat_service_interface.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
 import '../backend/interfaces/invitation_link_service_interface.dart';
 import '../services/app_status_service.dart';
+import '../utils/photo_url.dart';
+import '../utils/snackbar.dart';
 import '../utils/user_facing_error.dart';
+
+part 'relatives_screen_sections.dart';
 
 class _ContactStatus {
   const _ContactStatus({
@@ -347,115 +351,11 @@ class _RelativesScreenState extends State<RelativesScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text(selectedTreeName),
-        actions: [
-          IconButton(
-            icon: Icon(Icons.account_tree_outlined),
-            tooltip: 'Выбрать другое дерево',
-            onPressed: () {
-              context.go('/tree?selector=1');
-            },
-          ),
-          if (_pendingRequestsCount > 0)
-            Badge(
-              label: Text(_pendingRequestsCount.toString()),
-              child: IconButton(
-                icon: Icon(Icons.notifications_none),
-                tooltip: isFriendsTree
-                    ? 'Запросы на связи ($_pendingRequestsCount)'
-                    : 'Запросы на родство ($_pendingRequestsCount)',
-                onPressed: selectedTreeId == null
-                    ? null
-                    : () {
-                        context.push('/relatives/requests/$selectedTreeId');
-                      },
-              ),
-            ),
-          PopupMenuButton<String>(
-            onSelected: (value) {
-              if (selectedTreeId == null) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Сначала выберите дерево')),
-                );
-                return;
-              }
-
-              if (value == 'add') {
-                context.push('/relatives/add/$selectedTreeId');
-              } else if (value == 'find') {
-                context.push('/relatives/find/$selectedTreeId');
-              } else if (value == 'tree_view') {
-                final nameParam = Uri.encodeComponent(
-                  treeProvider.selectedTreeName ??
-                      (_isFriendsTree(treeProvider)
-                          ? 'Дерево друзей'
-                          : 'Семейное дерево'),
-                );
-                context.push('/tree/view/$selectedTreeId?name=$nameParam');
-              } else if (value == 'create_tree') {
-                context.push('/trees/create').then((result) {
-                  // Можно опционально перейти на новый экран дерева после создания
-                });
-              } else if (value == 'requests_menu') {
-                context.push('/relatives/requests/$selectedTreeId');
-              }
-            },
-            itemBuilder: (BuildContext context) => [
-              PopupMenuItem<String>(
-                value: 'add',
-                enabled: selectedTreeId != null,
-                child: ListTile(
-                  leading: Icon(Icons.person_add),
-                  title: Text(_graphAddLabel(treeProvider)),
-                  contentPadding: EdgeInsets.zero,
-                ),
-              ),
-              PopupMenuItem<String>(
-                value: 'create_tree',
-                child: ListTile(
-                  leading: Icon(Icons.add_circle_outline),
-                  title: Text(
-                    isFriendsTree
-                        ? 'Создать новый круг'
-                        : 'Создать новое дерево',
-                  ),
-                  contentPadding: EdgeInsets.zero,
-                ),
-              ),
-              PopupMenuItem<String>(
-                value: 'tree_view',
-                enabled: selectedTreeId != null,
-                child: ListTile(
-                  leading: Icon(Icons.account_tree),
-                  title: Text('Просмотр дерева'),
-                  contentPadding: EdgeInsets.zero,
-                ),
-              ),
-              if (_pendingRequestsCount > 0)
-                PopupMenuItem<String>(
-                  value: 'requests_menu',
-                  enabled: selectedTreeId != null,
-                  child: ListTile(
-                    leading: Icon(Icons.notifications),
-                    title: Text(
-                      isFriendsTree
-                          ? 'Запросы на связи ($_pendingRequestsCount)'
-                          : 'Запросы на родство ($_pendingRequestsCount)',
-                    ),
-                    contentPadding: EdgeInsets.zero,
-                  ),
-                ),
-              PopupMenuItem<String>(
-                value: 'find',
-                enabled: selectedTreeId != null,
-                child: ListTile(
-                  leading: Icon(Icons.search),
-                  title: Text(_graphFindLabel(treeProvider)),
-                  contentPadding: EdgeInsets.zero,
-                ),
-              ),
-            ],
-          ),
-        ],
+        actions: _buildRelativesAppBarActions(
+          treeProvider: treeProvider,
+          selectedTreeId: selectedTreeId,
+          isFriendsTree: isFriendsTree,
+        ),
       ),
       body: selectedTreeId == null
           ? _buildNoTreeSelected()
@@ -1050,7 +950,8 @@ class _RelativesScreenState extends State<RelativesScreen> {
           final contactStatus = _getContactStatus(relative);
           final int photoCount = relative.photoGallery.length;
           final bool hasGallery = photoCount > 0;
-          final String? primaryPhotoUrl = relative.primaryPhotoUrl;
+          final avatarImage =
+              buildAvatarImageProvider(relative.primaryPhotoUrl);
 
           final theme = Theme.of(context);
           return Padding(
@@ -1074,11 +975,8 @@ class _RelativesScreenState extends State<RelativesScreen> {
                   },
                   child: CircleAvatar(
                     radius: 25,
-                    backgroundImage:
-                        (primaryPhotoUrl != null && primaryPhotoUrl.isNotEmpty)
-                            ? NetworkImage(primaryPhotoUrl)
-                            : null,
-                    child: (primaryPhotoUrl == null || primaryPhotoUrl.isEmpty)
+                    backgroundImage: avatarImage,
+                    child: avatarImage == null
                         ? Text(relative.initials,
                             style: TextStyle(fontSize: 18))
                         : null,

@@ -1,0 +1,573 @@
+function registerTreeRoutes(
+  app,
+  {
+    store,
+    requireAuth,
+    requireTreeAccess,
+    requirePublicTree,
+    mapTree,
+    mapPerson,
+    mapRelation,
+    mapProfileContribution,
+    mapTreeChangeRecord,
+    mapTreeGraphSnapshot,
+    buildPersonDossierPayload,
+  },
+) {
+  app.post("/v1/trees", requireAuth, async (req, res) => {
+    const {name, description, isPrivate, kind} = req.body || {};
+    if (!String(name || "").trim()) {
+      res.status(400).json({message: "Нужно название дерева"});
+      return;
+    }
+
+    const tree = await store.createTree({
+      creatorId: req.auth.user.id,
+      name,
+      description,
+      isPrivate,
+      kind,
+    });
+
+    res.status(201).json({tree: mapTree(tree)});
+  });
+
+  app.get("/v1/trees", requireAuth, async (req, res) => {
+    const trees = await store.listUserTrees(req.auth.user.id);
+    res.json({
+      trees: trees.map(mapTree),
+    });
+  });
+
+  app.delete("/v1/trees/:treeId", requireAuth, async (req, res) => {
+    const tree = await store.findTree(req.params.treeId);
+    if (!tree) {
+      res.status(404).json({message: "Дерево не найдено"});
+      return;
+    }
+
+    const memberIds = Array.isArray(tree.memberIds) ? tree.memberIds : [];
+    const members = Array.isArray(tree.members) ? tree.members : [];
+    const hasAccess =
+      tree.creatorId === req.auth.user.id ||
+      memberIds.includes(req.auth.user.id) ||
+      members.includes(req.auth.user.id);
+    if (!hasAccess) {
+      res.status(403).json({message: "Доступ к дереву запрещён"});
+      return;
+    }
+
+    const result = await store.removeTreeForUser({
+      treeId: req.params.treeId,
+      userId: req.auth.user.id,
+    });
+    if (result === null) {
+      res.status(404).json({message: "Дерево не найдено"});
+      return;
+    }
+    if (result === false) {
+      res.status(403).json({message: "Доступ к дереву запрещён"});
+      return;
+    }
+
+    res.json({
+      action: result.action,
+      tree: mapTree(result.tree),
+    });
+  });
+
+  app.get("/v1/public/trees/:publicTreeId", async (req, res) => {
+    const tree = await requirePublicTree(req, res, req.params.publicTreeId);
+    if (!tree) {
+      return;
+    }
+
+    const [persons, relations] = await Promise.all([
+      store.listPersons(tree.id),
+      store.listRelations(tree.id),
+    ]);
+
+    res.json({
+      tree: mapTree(tree),
+      stats: {
+        peopleCount: persons.length,
+        relationsCount: relations.length,
+      },
+    });
+  });
+
+  app.get("/v1/public/trees/:publicTreeId/persons", async (req, res) => {
+    const tree = await requirePublicTree(req, res, req.params.publicTreeId);
+    if (!tree) {
+      return;
+    }
+
+    const persons = await store.listPersons(tree.id);
+    res.json({
+      tree: mapTree(tree),
+      persons: persons.map(mapPerson),
+    });
+  });
+
+  app.get("/v1/public/trees/:publicTreeId/relations", async (req, res) => {
+    const tree = await requirePublicTree(req, res, req.params.publicTreeId);
+    if (!tree) {
+      return;
+    }
+
+    const relations = await store.listRelations(tree.id);
+    res.json({
+      tree: mapTree(tree),
+      relations: relations.map(mapRelation),
+    });
+  });
+
+  app.get("/v1/trees/selectable", requireAuth, async (req, res) => {
+    const trees = await store.listUserTrees(req.auth.user.id);
+    res.json({
+      trees: trees.map((tree) => ({
+        id: tree.id,
+        name: tree.name,
+        createdAt: tree.createdAt,
+      })),
+    });
+  });
+
+  app.get("/v1/trees/:treeId/persons", requireAuth, async (req, res) => {
+    const tree = await requireTreeAccess(req, res, req.params.treeId);
+    if (!tree) {
+      return;
+    }
+
+    const persons = await store.listPersons(tree.id);
+    res.json({
+      persons: persons.map(mapPerson),
+    });
+  });
+
+  app.post("/v1/trees/:treeId/persons", requireAuth, async (req, res) => {
+    const tree = await requireTreeAccess(req, res, req.params.treeId);
+    if (!tree) {
+      return;
+    }
+
+    const requestedUserId = req.body?.userId;
+    if (requestedUserId && requestedUserId !== req.auth.user.id) {
+      res.status(403).json({
+        message: "Нельзя привязать к профилю другого пользователя",
+      });
+      return;
+    }
+
+    const person = await store.createPerson({
+      treeId: tree.id,
+      creatorId: req.auth.user.id,
+      userId: requestedUserId || null,
+      personData: req.body || {},
+    });
+
+    if (!person) {
+      res.status(404).json({message: "Семейное дерево не найдено"});
+      return;
+    }
+
+    res.status(201).json({person: mapPerson(person)});
+  });
+
+  app.get(
+    "/v1/trees/:treeId/persons/:personId",
+    requireAuth,
+    async (req, res) => {
+      const tree = await requireTreeAccess(req, res, req.params.treeId);
+      if (!tree) {
+        return;
+      }
+
+      const person = await store.findPerson(tree.id, req.params.personId);
+      if (!person) {
+        res.status(404).json({message: "Человек не найден"});
+        return;
+      }
+
+      res.json({person: mapPerson(person)});
+    },
+  );
+
+  app.get(
+    "/v1/trees/:treeId/persons/:personId/dossier",
+    requireAuth,
+    async (req, res) => {
+      const tree = await requireTreeAccess(req, res, req.params.treeId);
+      if (!tree) {
+        return;
+      }
+
+      const dossier = await buildPersonDossierPayload({
+        treeId: tree.id,
+        personId: req.params.personId,
+        viewerUserId: req.auth.user.id,
+      });
+      if (!dossier) {
+        res.status(404).json({message: "Человек не найден"});
+        return;
+      }
+
+      res.json({dossier});
+    },
+  );
+
+  app.patch(
+    "/v1/trees/:treeId/persons/:personId",
+    requireAuth,
+    async (req, res) => {
+      const tree = await requireTreeAccess(req, res, req.params.treeId);
+      if (!tree) {
+        return;
+      }
+
+      const person = await store.updatePerson(
+        tree.id,
+        req.params.personId,
+        req.body || {},
+        req.auth.user.id,
+      );
+      if (!person) {
+        res.status(404).json({message: "Человек не найден"});
+        return;
+      }
+
+      res.json({person: mapPerson(person)});
+    },
+  );
+
+  app.post(
+    "/v1/trees/:treeId/persons/:personId/profile-contributions",
+    requireAuth,
+    async (req, res) => {
+      const tree = await requireTreeAccess(req, res, req.params.treeId);
+      if (!tree) {
+        return;
+      }
+
+      const contribution = await store.createProfileContribution({
+        treeId: tree.id,
+        personId: req.params.personId,
+        authorUserId: req.auth.user.id,
+        message: req.body?.message,
+        fields: req.body?.fields,
+      });
+      if (contribution === null) {
+        res.status(404).json({message: "Человек не найден"});
+        return;
+      }
+      if (contribution === false) {
+        res.status(403).json({
+          message: "Пользователь не принимает предложения по профилю.",
+        });
+        return;
+      }
+      if (contribution === undefined) {
+        res.status(400).json({message: "Нет данных для предложения правки"});
+        return;
+      }
+
+      const author = await store.findUserById(req.auth.user.id);
+      res.status(201).json({
+        contribution: mapProfileContribution({
+          ...contribution,
+          authorDisplayName:
+            author?.profile?.displayName || author?.email || "Пользователь",
+          authorPhotoUrl: author?.profile?.photoUrl || null,
+        }),
+      });
+    },
+  );
+
+  app.delete(
+    "/v1/trees/:treeId/persons/:personId",
+    requireAuth,
+    async (req, res) => {
+      const tree = await requireTreeAccess(req, res, req.params.treeId);
+      if (!tree) {
+        return;
+      }
+
+      const deleted = await store.deletePerson(
+        tree.id,
+        req.params.personId,
+        req.auth.user.id,
+      );
+      if (!deleted) {
+        res.status(404).json({message: "Человек не найден"});
+        return;
+      }
+
+      res.status(204).send();
+    },
+  );
+
+  app.post(
+    "/v1/trees/:treeId/persons/:personId/media",
+    requireAuth,
+    async (req, res) => {
+      const tree = await requireTreeAccess(req, res, req.params.treeId);
+      if (!tree) {
+        return;
+      }
+
+      const url =
+        req.body?.url || req.body?.mediaUrl || req.body?.photoUrl || null;
+      if (!url) {
+        res.status(400).json({message: "Нужен url media-файла"});
+        return;
+      }
+
+      const result = await store.addPersonMedia({
+        treeId: tree.id,
+        personId: req.params.personId,
+        actorId: req.auth.user.id,
+        media: req.body || {},
+      });
+      if (!result) {
+        res.status(404).json({message: "Человек не найден"});
+        return;
+      }
+
+      res.status(201).json({
+        person: mapPerson(result.person),
+        media: result.media,
+      });
+    },
+  );
+
+  app.patch(
+    "/v1/trees/:treeId/persons/:personId/media/:mediaId",
+    requireAuth,
+    async (req, res) => {
+      const tree = await requireTreeAccess(req, res, req.params.treeId);
+      if (!tree) {
+        return;
+      }
+
+      const result = await store.updatePersonMedia({
+        treeId: tree.id,
+        personId: req.params.personId,
+        mediaId: req.params.mediaId,
+        actorId: req.auth.user.id,
+        updates: req.body || {},
+      });
+      if (result === null) {
+        res.status(404).json({message: "Человек не найден"});
+        return;
+      }
+      if (result === false) {
+        res.status(404).json({message: "Media элемент не найден"});
+        return;
+      }
+
+      res.json({
+        person: mapPerson(result.person),
+        media: result.media,
+      });
+    },
+  );
+
+  app.delete(
+    "/v1/trees/:treeId/persons/:personId/media/:mediaId",
+    requireAuth,
+    async (req, res) => {
+      const tree = await requireTreeAccess(req, res, req.params.treeId);
+      if (!tree) {
+        return;
+      }
+
+      // Clients that cached person data before real UUIDs were added may send
+      // a synthetic ID like "photo-1". Fall back to URL-based lookup in that case.
+      const fallbackUrl = String(req.body?.url || req.query?.url || "").trim();
+      const result = await store.deletePersonMedia({
+        treeId: tree.id,
+        personId: req.params.personId,
+        mediaId: req.params.mediaId,
+        fallbackUrl: fallbackUrl || null,
+        actorId: req.auth.user.id,
+      });
+      if (result === null) {
+        res.status(404).json({message: "Человек не найден"});
+        return;
+      }
+      if (result === false) {
+        res.status(404).json({message: "Media элемент не найден"});
+        return;
+      }
+
+      res.json({
+        person: mapPerson(result.person),
+        deletedMediaId: result.deletedMedia?.id || req.params.mediaId,
+      });
+    },
+  );
+
+  app.get("/v1/trees/:treeId/history", requireAuth, async (req, res) => {
+    const tree = await requireTreeAccess(req, res, req.params.treeId);
+    if (!tree) {
+      return;
+    }
+
+    const personId = String(req.query.personId || "").trim() || null;
+    const type = String(req.query.type || "").trim() || null;
+    const actorId = String(req.query.actorId || "").trim() || null;
+    const records = await store.listTreeChangeRecords(tree.id, {
+      personId,
+      type,
+      actorId,
+    });
+
+    res.json({
+      records: records.map(mapTreeChangeRecord),
+    });
+  });
+
+  app.get("/v1/trees/:treeId/relations", requireAuth, async (req, res) => {
+    const tree = await requireTreeAccess(req, res, req.params.treeId);
+    if (!tree) {
+      return;
+    }
+
+    const relations = await store.listRelations(tree.id);
+    res.json({
+      relations: relations.map(mapRelation),
+    });
+  });
+
+  app.get("/v1/trees/:treeId/graph", requireAuth, async (req, res) => {
+    const tree = await requireTreeAccess(req, res, req.params.treeId);
+    if (!tree) {
+      return;
+    }
+
+    const snapshot = await store.getTreeGraphSnapshot(tree.id, {
+      viewerUserId: req.auth.user.id,
+    });
+    if (!snapshot) {
+      res.status(404).json({message: "Дерево не найдено"});
+      return;
+    }
+
+    res.json({
+      snapshot: mapTreeGraphSnapshot(snapshot),
+    });
+  });
+
+  app.post("/v1/trees/:treeId/relations", requireAuth, async (req, res) => {
+    const tree = await requireTreeAccess(req, res, req.params.treeId);
+    if (!tree) {
+      return;
+    }
+
+    const {
+      person1Id,
+      person2Id,
+      relation1to2,
+      relation2to1,
+      customRelationLabel1to2,
+      customRelationLabel2to1,
+      isConfirmed,
+      marriageDate,
+      divorceDate,
+      parentSetId,
+      parentSetType,
+      isPrimaryParentSet,
+      unionId,
+      unionType,
+      unionStatus,
+    } =
+      req.body || {};
+    if (!person1Id || !person2Id || !relation1to2) {
+      res.status(400).json({
+        message: "Нужны person1Id, person2Id и relation1to2",
+      });
+      return;
+    }
+
+    const relation = await store.upsertRelation({
+      treeId: tree.id,
+      person1Id: String(person1Id),
+      person2Id: String(person2Id),
+      relation1to2: String(relation1to2),
+      relation2to1: relation2to1 ? String(relation2to1) : undefined,
+      customRelationLabel1to2:
+        customRelationLabel1to2 === undefined || customRelationLabel1to2 === null
+          ? customRelationLabel1to2
+          : String(customRelationLabel1to2),
+      customRelationLabel2to1:
+        customRelationLabel2to1 === undefined || customRelationLabel2to1 === null
+          ? customRelationLabel2to1
+          : String(customRelationLabel2to1),
+      isConfirmed: isConfirmed !== false,
+      marriageDate:
+        marriageDate === undefined || marriageDate === null
+          ? marriageDate
+          : String(marriageDate),
+      divorceDate:
+        divorceDate === undefined || divorceDate === null
+          ? divorceDate
+          : String(divorceDate),
+      parentSetId:
+        parentSetId === undefined || parentSetId === null
+          ? parentSetId
+          : String(parentSetId),
+      parentSetType:
+        parentSetType === undefined || parentSetType === null
+          ? parentSetType
+          : String(parentSetType),
+      isPrimaryParentSet,
+      unionId:
+        unionId === undefined || unionId === null ? unionId : String(unionId),
+      unionType:
+        unionType === undefined || unionType === null
+          ? unionType
+          : String(unionType),
+      unionStatus:
+        unionStatus === undefined || unionStatus === null
+          ? unionStatus
+          : String(unionStatus),
+      createdBy: req.auth.user.id,
+    });
+
+    if (!relation) {
+      res.status(404).json({
+        message: "Один или оба человека не найдены в дереве",
+      });
+      return;
+    }
+
+    res.status(201).json({relation: mapRelation(relation)});
+  });
+
+  app.delete(
+    "/v1/trees/:treeId/relations/:relationId",
+    requireAuth,
+    async (req, res) => {
+      const tree = await requireTreeAccess(req, res, req.params.treeId);
+      if (!tree) {
+        return;
+      }
+
+      const deletedRelation = await store.deleteRelation(
+        tree.id,
+        req.params.relationId,
+        req.auth.user.id,
+      );
+      if (!deletedRelation) {
+        res.status(404).json({message: "Связь не найдена"});
+        return;
+      }
+
+      res.status(204).send();
+    },
+  );
+}
+
+module.exports = {
+  registerTreeRoutes,
+};

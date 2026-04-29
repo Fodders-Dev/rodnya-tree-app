@@ -389,6 +389,36 @@ class _LocalImagePreview extends StatelessWidget {
   }
 }
 
+class _AttachmentImage extends StatelessWidget {
+  const _AttachmentImage({
+    required this.url,
+    required this.fit,
+    this.placeholder,
+    this.errorWidget,
+  });
+
+  final String? url;
+  final BoxFit fit;
+  final Widget? placeholder;
+  final Widget? errorWidget;
+
+  @override
+  Widget build(BuildContext context) {
+    final normalizedUrl = UrlUtils.normalizeImageUrl(url);
+    final fallback = errorWidget ?? const SizedBox.shrink();
+    if (!UrlUtils.isRenderableNetworkImageUrl(normalizedUrl)) {
+      return fallback;
+    }
+
+    return CachedNetworkImage(
+      imageUrl: normalizedUrl!,
+      fit: fit,
+      placeholder: placeholder == null ? null : (_, __) => placeholder!,
+      errorWidget: (_, __, ___) => fallback,
+    );
+  }
+}
+
 class _LocalMediaTile extends StatelessWidget {
   const _LocalMediaTile({
     required this.file,
@@ -467,10 +497,14 @@ class _RemoteMediaTile extends StatelessWidget {
     if (kind == _ChatAttachmentKind.image) {
       return InkWell(
         onTap: onTap,
-        child: Image.network(
-          attachment.thumbnailUrl ?? attachment.url,
+        child: _AttachmentImage(
+          url: attachment.thumbnailUrl ?? attachment.url,
           fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => const _AttachmentPlaceholder(
+          placeholder: const _AttachmentPlaceholder(
+            icon: Icons.image_outlined,
+            label: 'Фото',
+          ),
+          errorWidget: const _AttachmentPlaceholder(
             icon: Icons.broken_image_outlined,
             label: 'Файл',
           ),
@@ -492,10 +526,9 @@ class _RemoteMediaTile extends StatelessWidget {
           if (kind == _ChatAttachmentKind.video &&
               attachment.thumbnailUrl != null &&
               attachment.thumbnailUrl!.isNotEmpty)
-            Image.network(
-              attachment.thumbnailUrl!,
+            _AttachmentImage(
+              url: attachment.thumbnailUrl,
               fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => const SizedBox.shrink(),
             ),
           DecoratedBox(
             decoration: BoxDecoration(
@@ -545,10 +578,9 @@ class _VideoNoteTile extends StatelessWidget {
               fit: StackFit.expand,
               children: [
                 if (previewUrl != null && previewUrl!.trim().isNotEmpty)
-                  Image.network(
-                    previewUrl!,
+                  _AttachmentImage(
+                    url: previewUrl,
                     fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => const SizedBox.shrink(),
                   ),
                 DecoratedBox(
                   decoration: BoxDecoration(
@@ -1271,11 +1303,13 @@ class _AttachmentViewerPage extends StatelessWidget {
             ? InteractiveViewer(
                 minScale: 0.8,
                 maxScale: 4,
-                child: Image.network(
-                  item.source!,
+                child: _AttachmentImage(
+                  url: item.source,
                   fit: BoxFit.contain,
-                  errorBuilder: (_, __, ___) =>
-                      _AttachmentViewerPlaceholder(item: item),
+                  placeholder: const Center(
+                    child: CircularProgressIndicator(),
+                  ),
+                  errorWidget: _AttachmentViewerPlaceholder(item: item),
                 ),
               )
             : FutureBuilder<Uint8List>(
@@ -1473,10 +1507,17 @@ class _AttachmentViewerThumbnailPreview extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (item.kind == _ChatAttachmentKind.image && item.isRemote) {
-      return Image.network(
-        item.thumbnailUrl ?? item.source ?? '',
+      return _AttachmentImage(
+        url: item.thumbnailUrl ?? item.source,
         fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => _AttachmentViewerThumbnailFallback(
+        placeholder: const Center(
+          child: SizedBox(
+            width: 16,
+            height: 16,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+        errorWidget: _AttachmentViewerThumbnailFallback(
           item: item,
         ),
       );
@@ -1506,10 +1547,17 @@ class _AttachmentViewerThumbnailPreview extends StatelessWidget {
     if (item.kind == _ChatAttachmentKind.video &&
         item.thumbnailUrl != null &&
         item.thumbnailUrl!.isNotEmpty) {
-      return Image.network(
-        item.thumbnailUrl!,
+      return _AttachmentImage(
+        url: item.thumbnailUrl,
         fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => _AttachmentViewerThumbnailFallback(
+        placeholder: const Center(
+          child: SizedBox(
+            width: 16,
+            height: 16,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+        errorWidget: _AttachmentViewerThumbnailFallback(
           item: item,
         ),
       );
@@ -1664,10 +1712,9 @@ class _AttachmentVideoPlayerState extends State<_AttachmentVideoPlayer> {
             alignment: Alignment.center,
             children: [
               if (widget.posterUrl != null && widget.posterUrl!.isNotEmpty)
-                Image.network(
-                  widget.posterUrl!,
+                _AttachmentImage(
+                  url: widget.posterUrl,
                   fit: BoxFit.contain,
-                  errorBuilder: (_, __, ___) => const SizedBox.shrink(),
                 ),
               const CircularProgressIndicator(),
             ],

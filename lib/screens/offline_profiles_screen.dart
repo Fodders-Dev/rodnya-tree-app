@@ -8,6 +8,7 @@ import '../backend/interfaces/family_tree_service_interface.dart';
 import '../providers/tree_provider.dart';
 import '../models/family_person.dart';
 import '../backend/interfaces/auth_service_interface.dart';
+import '../utils/photo_url.dart';
 
 class OfflineProfilesScreen extends StatefulWidget {
   const OfflineProfilesScreen({super.key});
@@ -130,12 +131,12 @@ class _OfflineProfilesScreenState extends State<OfflineProfilesScreen> {
       itemCount: _offlineProfiles!.length,
       itemBuilder: (context, index) {
         final person = _offlineProfiles![index];
+        final avatarImage = buildAvatarImageProvider(person.photoUrl);
         return ListTile(
           leading: CircleAvatar(
-            backgroundImage:
-                person.photoUrl != null ? NetworkImage(person.photoUrl!) : null,
+            backgroundImage: avatarImage,
             backgroundColor: Theme.of(context).colorScheme.secondaryContainer,
-            child: person.photoUrl == null
+            child: avatarImage == null
                 // Используем инициалы или иконку по полу
                 ? Text(person.initials, style: TextStyle(color: Colors.white))
                 // ? Icon(person.gender == Gender.male ? Icons.person : Icons.female, color: Colors.white)

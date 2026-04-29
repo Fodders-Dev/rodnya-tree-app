@@ -5,6 +5,7 @@ Widget buildGoogleSignInAction({
   required bool isLoading,
   required bool enabled,
   required VoidCallback onPressed,
+  bool useNativeWebButton = false,
 }) {
   return OutlinedButton.icon(
     onPressed: enabled ? onPressed : null,

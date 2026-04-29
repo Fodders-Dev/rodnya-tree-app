@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -8,9 +9,11 @@ import '../models/family_person.dart';
 import '../models/family_relation.dart';
 import '../models/tree_graph_snapshot.dart';
 import '../models/user_profile.dart';
+import '../utils/photo_url.dart';
 import 'family_tree_node_card.dart';
 
 part 'interactive_family_tree_layout_models.dart';
+part 'interactive_family_tree_positioning.dart';
 part 'interactive_family_tree_sections.dart';
 
 class InteractiveFamilyTree extends StatefulWidget {
@@ -262,245 +265,11 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
     widget.onEditPersonSelected?.call(person);
   }
 
-  Map<String, Offset> _mergeManualNodePositions(
-    Map<String, Offset> automaticPositions,
-  ) {
-    final manualPositions = widget.manualNodePositions;
-    if (manualPositions == null || manualPositions.isEmpty) {
-      return automaticPositions;
-    }
-
-    final merged = Map<String, Offset>.from(automaticPositions);
-    for (final entry in manualPositions.entries) {
-      if (!merged.containsKey(entry.key)) {
-        continue;
-      }
-      merged[entry.key] = _mergeNodePosition(
-        personId: entry.key,
-        automaticPosition: automaticPositions[entry.key]!,
-        manualPosition: entry.value,
-      );
-    }
-    return merged;
-  }
-
-  Offset _mergeNodePosition({
-    required String personId,
-    required Offset automaticPosition,
-    required Offset manualPosition,
-  }) {
-    final normalizedManual = _normalizeNodePosition(manualPosition);
-    final rowHints = _generationRowHints();
-    final semanticRow = rowHints[personId];
-    final maxVerticalDrift = semanticRow == null
-        ? (InteractiveFamilyTree.nodeHeight +
-                InteractiveFamilyTree.levelSeparation) *
-            0.55
-        : (InteractiveFamilyTree.nodeHeight +
-                InteractiveFamilyTree.levelSeparation) *
-            0.38;
-    final mergedDy =
-        (normalizedManual.dy - automaticPosition.dy).abs() > maxVerticalDrift
-            ? automaticPosition.dy
-            : normalizedManual.dy;
-    return Offset(normalizedManual.dx, mergedDy);
-  }
-
-  Map<String, int> _generationRowHints() {
-    final snapshot = widget.graphSnapshot;
-    if (snapshot == null || snapshot.generationRows.isEmpty) {
-      return const <String, int>{};
-    }
-    final hints = <String, int>{};
-    final rowValues =
-        snapshot.generationRows.map((row) => row.row).toList(growable: false);
-    if (rowValues.isEmpty) {
-      return const <String, int>{};
-    }
-    final minRow =
-        rowValues.reduce((left, right) => left < right ? left : right);
-    for (final row in snapshot.generationRows) {
-      for (final personId in row.personIds) {
-        hints[personId] = row.row - minRow;
-      }
-    }
-    return hints;
-  }
-
-  Size _calculateTreeSize(
-    Map<String, Offset> positions, {
-    double minimumWidth = 300,
-    double minimumHeight = 300,
-  }) {
-    if (positions.isEmpty) {
-      return Size(
-        max(minimumWidth, 300),
-        max(minimumHeight, 300),
-      );
-    }
-
-    double maxRight = 0;
-    double maxBottom = 0;
-    for (final position in positions.values) {
-      maxRight = max(
-        maxRight,
-        position.dx +
-            InteractiveFamilyTree.nodeWidth / 2 +
-            InteractiveFamilyTree.contentInsetHorizontal,
-      );
-      maxBottom = max(
-        maxBottom,
-        position.dy +
-            InteractiveFamilyTree.nodeHeight / 2 +
-            InteractiveFamilyTree.contentInsetBottom,
-      );
-    }
-
-    return Size(
-      max(maxRight, max(minimumWidth, 300)),
-      max(maxBottom, max(minimumHeight, 300)),
-    );
-  }
-
-  Offset _normalizeNodePosition(Offset position) {
-    final minDx = InteractiveFamilyTree.contentInsetHorizontal +
-        InteractiveFamilyTree.nodeWidth / 2;
-    final minDy = InteractiveFamilyTree.contentInsetTop +
-        InteractiveFamilyTree.nodeHeight / 2;
-    return Offset(
-      max(position.dx, minDx),
-      max(position.dy, minDy),
-    );
-  }
-
-  void _handleNodeDragStart(FamilyPerson person) {
-    if (!widget.isEditMode) {
+  void _updateTreeState(VoidCallback update) {
+    if (!mounted) {
       return;
     }
-    final currentPosition = nodePositions[person.id];
-    if (currentPosition == null) {
-      return;
-    }
-    _selectEditPerson(person);
-    setState(() {
-      _draggingPersonId = person.id;
-      _dragStartNodePosition = currentPosition;
-    });
-  }
-
-  void _handleNodeDragUpdate(
-    FamilyPerson person,
-    Offset offsetFromOrigin,
-  ) {
-    if (!widget.isEditMode) {
-      return;
-    }
-
-    final dragStartPosition =
-        _dragStartNodePosition ?? nodePositions[person.id];
-    if (dragStartPosition == null) {
-      return;
-    }
-
-    final effectiveScale = _currentScale <= 0 ? 1.0 : _currentScale;
-    final automaticPosition =
-        _automaticNodePositions[person.id] ?? dragStartPosition;
-    final rawCandidate =
-        dragStartPosition + (offsetFromOrigin / effectiveScale);
-    final nextPosition = _snapNodePositionWithinGeneration(
-      personId: person.id,
-      candidatePosition: rawCandidate,
-      automaticPosition: automaticPosition,
-    );
-    final updatedPositions = Map<String, Offset>.from(nodePositions)
-      ..[person.id] = nextPosition;
-
-    setState(() {
-      nodePositions = updatedPositions;
-      treeSize = _calculateTreeSize(updatedPositions);
-    });
-  }
-
-  void _handleNodeDragEnd() {
-    if (_draggingPersonId == null) {
-      return;
-    }
-
-    final updatedPositions = Map<String, Offset>.from(nodePositions);
-    setState(() {
-      _draggingPersonId = null;
-      _dragStartNodePosition = null;
-    });
-    widget.onNodePositionsChanged?.call(updatedPositions);
-  }
-
-  Offset _snapNodePositionWithinGeneration({
-    required String personId,
-    required Offset candidatePosition,
-    required Offset automaticPosition,
-  }) {
-    final normalized = _normalizeNodePosition(candidatePosition);
-    final rowHints = _generationRowHints();
-    final semanticRow = rowHints[personId];
-    final rowAutomaticPositions = _automaticNodePositions.entries
-        .where((entry) => rowHints[entry.key] == semanticRow)
-        .map((entry) => entry.value.dx)
-        .toList()
-      ..sort();
-
-    final rowMinDx = rowAutomaticPositions.isEmpty
-        ? automaticPosition.dx - InteractiveFamilyTree.nodeWidth
-        : rowAutomaticPositions.first -
-            (InteractiveFamilyTree.nodeWidth * 0.85);
-    final rowMaxDx = rowAutomaticPositions.isEmpty
-        ? automaticPosition.dx + InteractiveFamilyTree.nodeWidth
-        : rowAutomaticPositions.last + (InteractiveFamilyTree.nodeWidth * 0.85);
-    final clampedDx = normalized.dx.clamp(rowMinDx, rowMaxDx).toDouble();
-    final snappedDx = _snapNodeDxToGenerationLanes(
-      candidateDx: clampedDx,
-      automaticDx: automaticPosition.dx,
-      rowAutomaticPositions: rowAutomaticPositions,
-    );
-    return Offset(snappedDx, automaticPosition.dy);
-  }
-
-  double _snapNodeDxToGenerationLanes({
-    required double candidateDx,
-    required double automaticDx,
-    required List<double> rowAutomaticPositions,
-  }) {
-    final snapTargets = <double>{automaticDx};
-    for (final dx in rowAutomaticPositions) {
-      snapTargets.add(dx);
-    }
-    final sortedRowPositions = rowAutomaticPositions.toList()..sort();
-    for (var index = 0; index < sortedRowPositions.length - 1; index++) {
-      snapTargets.add(
-        (sortedRowPositions[index] + sortedRowPositions[index + 1]) / 2,
-      );
-    }
-
-    if (snapTargets.isNotEmpty) {
-      double? nearestTarget;
-      var nearestDistance = double.infinity;
-      for (final target in snapTargets) {
-        final distance = (target - candidateDx).abs();
-        if (distance < nearestDistance) {
-          nearestDistance = distance;
-          nearestTarget = target;
-        }
-      }
-      if (nearestTarget != null && nearestDistance <= 36) {
-        return nearestTarget;
-      }
-    }
-
-    const gridStep = 24.0;
-    final snappedGridDx = (candidateDx / gridStep).roundToDouble() * gridStep;
-    if ((snappedGridDx - candidateDx).abs() <= 12) {
-      return snappedGridDx;
-    }
-    return candidateDx;
+    setState(update);
   }
 
   List<Widget> _buildGenerationGuideWidgets({
@@ -1022,8 +791,9 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
                         itemBuilder: (context, index) {
                           final itemUrl =
                               gallery[index]['url']?.toString() ?? '';
+                          final normalizedItemUrl = normalizePhotoUrl(itemUrl);
                           return InteractiveViewer(
-                            child: itemUrl.isEmpty
+                            child: normalizedItemUrl == null
                                 ? const Center(
                                     child: Icon(
                                       Icons.broken_image_outlined,
@@ -1031,12 +801,16 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
                                       size: 40,
                                     ),
                                   )
-                                : Image.network(
-                                    itemUrl,
+                                : CachedNetworkImage(
+                                    imageUrl: normalizedItemUrl,
                                     fit: BoxFit.contain,
-                                    errorBuilder:
-                                        (context, error, stackTrace) =>
-                                            const Center(
+                                    placeholder: (context, url) => const Center(
+                                      child: CircularProgressIndicator(
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                    errorWidget: (context, url, error) =>
+                                        const Center(
                                       child: Icon(
                                         Icons.broken_image_outlined,
                                         color: Colors.white,
@@ -2000,198 +1774,6 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
       return '$birthYear - ?';
     }
     return '${birthYear ?? '?'} - ${deathYear ?? '?'}';
-  }
-
-  Widget _buildViewportStatusBar() {
-    final zoomPercent = (_currentScale * 100).round();
-    final chips = <Widget>[
-      _buildOverlayChip(
-        icon: widget.showGenerationGuides
-            ? Icons.account_tree_outlined
-            : Icons.diversity_3_outlined,
-        label: widget.showGenerationGuides ? 'Семья' : 'Друзья',
-        highlighted: true,
-      ),
-      _buildOverlayChip(
-        icon: Icons.people_alt_outlined,
-        label: '${widget.peopleData.length}',
-      ),
-      _buildOverlayChip(
-        icon: Icons.hub_outlined,
-        label: '${widget.relations.length}',
-      ),
-      _buildOverlayChip(
-        icon: Icons.zoom_in_map_outlined,
-        label: '$zoomPercent%',
-      ),
-    ];
-
-    return ConstrainedBox(
-      constraints: BoxConstraints(
-        maxWidth: min((_viewportSize?.width ?? 640) - 24, 640),
-      ),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Container(
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            color:
-                Theme.of(context).colorScheme.surface.withValues(alpha: 0.84),
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(
-              color: Theme.of(context)
-                  .colorScheme
-                  .outlineVariant
-                  .withValues(alpha: 0.88),
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.08),
-                blurRadius: 18,
-                offset: const Offset(0, 6),
-              ),
-            ],
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              for (int i = 0; i < chips.length; i++) ...[
-                if (i > 0) const SizedBox(width: 8),
-                chips[i],
-              ],
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildViewportControlDock() {
-    final currentUserNodeId = _findCurrentUserNodeId();
-    final branchRootPersonId = widget.branchRootPersonId;
-    return Container(
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.9),
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(
-          color: Theme.of(context)
-              .colorScheme
-              .outlineVariant
-              .withValues(alpha: 0.88),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.1),
-            blurRadius: 18,
-            offset: const Offset(0, 6),
-          ),
-        ],
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _buildDockButton(
-            icon: Icons.add,
-            tooltip: 'Увеличить',
-            onPressed: () => _zoomBy(1.2),
-          ),
-          const SizedBox(height: 6),
-          _buildDockButton(
-            icon: Icons.remove,
-            tooltip: 'Уменьшить',
-            onPressed: () => _zoomBy(1 / 1.2),
-          ),
-          const SizedBox(height: 6),
-          _buildDockButton(
-            icon: Icons.fit_screen_outlined,
-            tooltip: 'Вписать дерево',
-            onPressed: _fitTreeToViewport,
-          ),
-          if (currentUserNodeId != null) ...[
-            const SizedBox(height: 6),
-            _buildDockButton(
-              icon: Icons.my_location_outlined,
-              tooltip: 'Ко мне',
-              onPressed: () => _focusOnPerson(currentUserNodeId),
-            ),
-          ],
-          if (branchRootPersonId != null && branchRootPersonId.isNotEmpty) ...[
-            const SizedBox(height: 6),
-            _buildDockButton(
-              icon: Icons.alt_route_outlined,
-              tooltip: widget.showGenerationGuides ? 'К ветке' : 'К кругу',
-              onPressed: () => _focusOnPerson(branchRootPersonId),
-            ),
-            if (widget.onBranchFocusCleared != null) ...[
-              const SizedBox(height: 6),
-              _buildDockButton(
-                icon: Icons.clear_all,
-                tooltip: widget.showGenerationGuides
-                    ? 'Сбросить ветку'
-                    : 'Сбросить круг',
-                onPressed: widget.onBranchFocusCleared!,
-              ),
-            ],
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _buildDockButton({
-    required IconData icon,
-    required String tooltip,
-    required VoidCallback onPressed,
-  }) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Tooltip(
-      message: tooltip,
-      child: Material(
-        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.96),
-        shape: const CircleBorder(),
-        child: InkWell(
-          customBorder: const CircleBorder(),
-          onTap: onPressed,
-          child: SizedBox(
-            width: 44,
-            height: 44,
-            child: Icon(icon, color: colorScheme.primary),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildOverlayChip({
-    required IconData icon,
-    required String label,
-    bool highlighted = false,
-  }) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: highlighted ? colorScheme.primaryContainer : colorScheme.surface,
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(
-          color: highlighted ? colorScheme.primary : colorScheme.outlineVariant,
-        ),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 14),
-          const SizedBox(width: 6),
-          Text(
-            label,
-            style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
-          ),
-        ],
-      ),
-    );
   }
 
   String? _findCurrentUserNodeId() {

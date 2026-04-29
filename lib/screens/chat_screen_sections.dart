@@ -29,7 +29,7 @@ extension _ChatScreenScaffoldSections on _ChatScreenState {
 
     if (_isSearchMode) {
       return TextField(
-        controller: _searchController,
+        controller: _searchController.textController,
         autofocus: true,
         textInputAction: TextInputAction.search,
         decoration: const InputDecoration(
@@ -38,6 +38,8 @@ extension _ChatScreenScaffoldSections on _ChatScreenState {
         ),
       );
     }
+
+    final peerAvatarImage = buildAvatarImageProvider(widget.photoUrl);
 
     return Row(
       children: [
@@ -49,11 +51,8 @@ extension _ChatScreenScaffoldSections on _ChatScreenState {
               : null,
           child: CircleAvatar(
             radius: 20,
-            backgroundImage:
-                widget.photoUrl != null && widget.photoUrl!.isNotEmpty
-                    ? NetworkImage(widget.photoUrl!)
-                    : null,
-            child: widget.photoUrl == null || widget.photoUrl!.isEmpty
+            backgroundImage: peerAvatarImage,
+            child: peerAvatarImage == null
                 ? widget.isGroup
                     ? const Icon(Icons.group_outlined)
                     : Text(widget.title.isNotEmpty ? widget.title[0] : '?')

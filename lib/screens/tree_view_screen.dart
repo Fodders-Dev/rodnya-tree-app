@@ -25,6 +25,7 @@ import '../services/local_storage_service.dart';
 import '../models/tree_graph_snapshot.dart';
 import '../utils/user_facing_error.dart';
 import '../utils/e2e_state_bridge.dart';
+import '../utils/photo_url.dart';
 
 part 'tree_view_screen_sections.dart';
 

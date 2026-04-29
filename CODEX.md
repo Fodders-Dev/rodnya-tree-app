@@ -19,7 +19,7 @@ Use it together with `AGENTS.md` and `Codex_rules.md`, not instead of them.
 - `lib/services/`: concrete backend adapters and app services.
 - `lib/backend/interfaces/`: abstraction layer that should stay stable during migrations.
 - `lib/providers/`: app-level state, especially selected tree state.
-- `docs/`: architecture notes, migration plans, audit documents.
+- `docs/`: architecture notes, the active execution plan, and audit documents.
 
 ## Working rules for Codex
 - Inspect before editing; do not assume legacy docs are current.
@@ -50,4 +50,4 @@ Use it together with `AGENTS.md` and `Codex_rules.md`, not instead of them.
 - relevant `flutter test`.
 - if web-facing behavior changed, a short Playwright smoke pass.
 - summarize changed files, what passed, what still blocks MVP.
-- keep `docs/rodnya_release_plan_2026-04-13.md` aligned when product priorities shift materially.
+- keep `docs/active_execution_plan.md` aligned when product priorities or wave status shift materially.

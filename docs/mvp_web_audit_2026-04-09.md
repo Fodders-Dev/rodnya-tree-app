@@ -141,8 +141,8 @@ Scope:
 - 2026-04-16 repo state after the rich-profile/privacy foundation pass:
   - `CustomApiStoryService` now refuses to send stories requests without an active session, so the trailing post-delete stories teardown no longer leaves the client as an anonymous network caller
   - the production smoke note above remains true until the next web deploy, but the repo-side fix is in place
-- 2026-04-16 planning and foundation for richer profiles is now explicit in repo:
-  - [profile_visibility_and_identity_plan_2026-04-16.md](./profile_visibility_and_identity_plan_2026-04-16.md) defines the rollout for rich profile sections, visibility scopes, native identity parity, and delete-account cleanup
+- 2026-04-16 planning and foundation for richer profiles became explicit in repo:
+  - the old dated profile rollout plan has been superseded by [active_execution_plan.md](./active_execution_plan.md)
   - first foundation code is now present locally for section-based profile visibility and richer profile fields on edit/view routes
 - 2026-04-17 rich-profile/privacy slice is now live on production:
   - backend and web deploy label `20260417-profile-visibility-native` is active on `rodnya-tree.ru`

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../models/family_person.dart';
 import '../../models/family_relation.dart';
 import '../../screens/relation_request_screen.dart';
+import '../../utils/photo_url.dart';
 
 class TreeNode extends StatelessWidget {
   final FamilyPerson person;
@@ -19,6 +20,7 @@ class TreeNode extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final avatarImage = buildAvatarImageProvider(person.photoUrl);
     return GestureDetector(
       onTap: onNodeTap,
       child: SizedBox(
@@ -41,10 +43,8 @@ class TreeNode extends StatelessWidget {
                     // Фото
                     CircleAvatar(
                       radius: 30,
-                      backgroundImage: person.photoUrl != null
-                          ? NetworkImage(person.photoUrl!)
-                          : null,
-                      child: person.photoUrl == null
+                      backgroundImage: avatarImage,
+                      child: avatarImage == null
                           ? Text(person.name[0].toUpperCase())
                           : null,
                     ),

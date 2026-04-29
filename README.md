@@ -42,7 +42,7 @@
 - поэтапный уход от Firebase-hosted и hosted Supabase зависимостей, если они мешают доступности в России
 - Android и web как основные релизные платформы; iOS позже
 
-Подробный execution plan зафиксирован в [docs/rodnya_release_plan_2026-04-13.md](docs/rodnya_release_plan_2026-04-13.md).
+Подробный execution plan зафиксирован в [docs/active_execution_plan.md](docs/active_execution_plan.md).
 
 ## Начало работы
 

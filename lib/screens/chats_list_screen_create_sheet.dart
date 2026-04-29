@@ -693,6 +693,7 @@ class _CreateChatSheetState extends State<_CreateChatSheet> {
       itemBuilder: (context, index) {
         final participant = participants[index];
         final isSelected = _selectedUserIds.contains(participant.userId);
+        final avatarImage = buildAvatarImageProvider(participant.photoUrl);
         return Padding(
           padding: const EdgeInsets.only(bottom: 8),
           child: GlassPanel(
@@ -718,12 +719,8 @@ class _CreateChatSheetState extends State<_CreateChatSheet> {
               ),
               leading: CircleAvatar(
                 radius: 20,
-                backgroundImage: participant.photoUrl != null &&
-                        participant.photoUrl!.isNotEmpty
-                    ? NetworkImage(participant.photoUrl!)
-                    : null,
-                child: participant.photoUrl == null ||
-                        participant.photoUrl!.isEmpty
+                backgroundImage: avatarImage,
+                child: avatarImage == null
                     ? Text(
                         participant.name.isNotEmpty
                             ? participant.name[0].toUpperCase()
@@ -796,6 +793,7 @@ class _CreateChatSheetState extends State<_CreateChatSheet> {
         final candidate = candidates[index];
         final isSelected = _selectedBranchRootIds.contains(candidate.personId);
         final linkedCount = candidate.linkedParticipantCount;
+        final avatarImage = buildAvatarImageProvider(candidate.photoUrl);
         return Padding(
           padding: const EdgeInsets.only(bottom: 8),
           child: GlassPanel(
@@ -821,11 +819,8 @@ class _CreateChatSheetState extends State<_CreateChatSheet> {
               ),
               leading: CircleAvatar(
                 radius: 20,
-                backgroundImage:
-                    candidate.photoUrl != null && candidate.photoUrl!.isNotEmpty
-                        ? NetworkImage(candidate.photoUrl!)
-                        : null,
-                child: candidate.photoUrl == null || candidate.photoUrl!.isEmpty
+                backgroundImage: avatarImage,
+                child: avatarImage == null
                     ? Text(
                         candidate.name.isNotEmpty
                             ? candidate.name[0].toUpperCase()

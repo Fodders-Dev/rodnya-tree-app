@@ -512,6 +512,7 @@ extension _ProfileScreenSections on _ProfileScreenState {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final photoCount = person.photoGallery.length;
+    final avatarImage = buildAvatarImageProvider(person.primaryPhotoUrl);
 
     return Padding(
       padding: const EdgeInsets.only(top: 10),
@@ -523,12 +524,10 @@ extension _ProfileScreenSections on _ProfileScreenState {
           children: [
             CircleAvatar(
               radius: 18,
-              backgroundImage: person.primaryPhotoUrl != null
-                  ? NetworkImage(person.primaryPhotoUrl!)
-                  : null,
+              backgroundImage: avatarImage,
               backgroundColor: scheme.primary.withValues(alpha: 0.12),
               foregroundColor: scheme.primary,
-              child: person.primaryPhotoUrl == null
+              child: avatarImage == null
                   ? Text(
                       person.initials,
                       style: const TextStyle(

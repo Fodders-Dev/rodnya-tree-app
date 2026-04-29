@@ -1,4 +1,5 @@
 // ignore_for_file: library_private_types_in_public_api
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
@@ -24,6 +25,7 @@ import '../widgets/custom_relation_label_dialog.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/person_dossier_view.dart';
 import '../widgets/tree_history_sheet.dart';
+import '../utils/photo_url.dart';
 import '../utils/user_facing_error.dart';
 
 part 'relative_details_screen_sections.dart';
@@ -1604,8 +1606,9 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
                         itemBuilder: (context, index) {
                           final itemUrl =
                               galleryEntries[index]['url']?.toString() ?? '';
+                          final normalizedItemUrl = normalizePhotoUrl(itemUrl);
                           return InteractiveViewer(
-                            child: itemUrl.isEmpty
+                            child: normalizedItemUrl == null
                                 ? const Center(
                                     child: Icon(
                                       Icons.broken_image_outlined,
@@ -1613,12 +1616,16 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
                                       size: 40,
                                     ),
                                   )
-                                : Image.network(
-                                    itemUrl,
+                                : CachedNetworkImage(
+                                    imageUrl: normalizedItemUrl,
                                     fit: BoxFit.contain,
-                                    errorBuilder:
-                                        (context, error, stackTrace) =>
-                                            const Center(
+                                    placeholder: (context, url) => const Center(
+                                      child: CircularProgressIndicator(
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                    errorWidget: (context, url, error) =>
+                                        const Center(
                                       child: Icon(
                                         Icons.broken_image_outlined,
                                         color: Colors.white,
@@ -1662,6 +1669,8 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
                                   final itemUrl = galleryEntries[index]['url']
                                           ?.toString() ??
                                       '';
+                                  final normalizedItemUrl =
+                                      normalizePhotoUrl(itemUrl);
                                   final isSelected = index == currentIndex;
 
                                   return InkWell(
@@ -1684,7 +1693,7 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
                                         ),
                                       ),
                                       clipBehavior: Clip.antiAlias,
-                                      child: itemUrl.isEmpty
+                                      child: normalizedItemUrl == null
                                           ? const ColoredBox(
                                               color: Colors.black54,
                                               child: Icon(
@@ -1692,9 +1701,18 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
                                                 color: Colors.white54,
                                               ),
                                             )
-                                          : Image.network(
-                                              itemUrl,
+                                          : CachedNetworkImage(
+                                              imageUrl: normalizedItemUrl,
                                               fit: BoxFit.cover,
+                                              errorWidget:
+                                                  (context, url, error) =>
+                                                      const ColoredBox(
+                                                color: Colors.black54,
+                                                child: Icon(
+                                                  Icons.image_not_supported,
+                                                  color: Colors.white54,
+                                                ),
+                                              ),
                                             ),
                                     ),
                                   );

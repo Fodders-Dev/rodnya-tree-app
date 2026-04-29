@@ -45,6 +45,7 @@ class _AuthScreenState extends State<AuthScreen> {
   bool _isMaxLoading = false;
   bool _hasSubmitted = false;
   late final bool _supportsGoogleAuth;
+  StreamSubscription<void>? _googleWebAuthenticationSubscription;
   String? _pendingTelegramLinkCode;
   String? _pendingTelegramMessage;
   String? _pendingVkLinkCode;
@@ -86,6 +87,16 @@ class _AuthScreenState extends State<AuthScreen> {
         ? authService.isGoogleSignInConfigured
         : BackendProviderConfig.current.authProvider !=
             BackendProviderKind.customApi;
+    if (kIsWeb && authService is CustomApiAuthService && _supportsGoogleAuth) {
+      _googleWebAuthenticationSubscription =
+          authService.googleWebAuthenticationEvents.listen((_) {
+        if (!mounted || _isGoogleLoading) {
+          return;
+        }
+        unawaited(_signInWithGoogle());
+      });
+      unawaited(authService.initializeGoogleWebAuthentication());
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(_handleSocialRedirectResults());
     });
@@ -99,6 +110,7 @@ class _AuthScreenState extends State<AuthScreen> {
     _emailController.dispose();
     _passwordController.dispose();
     _nameController.dispose();
+    _googleWebAuthenticationSubscription?.cancel();
     _emailFocusNode.dispose();
     _nameFocusNode.dispose();
     super.dispose();
@@ -1302,6 +1314,7 @@ class _AuthScreenState extends State<AuthScreen> {
                     onPressed: _supportsGoogleAuth
                         ? _signInWithGoogle
                         : () => _showPlannedSocialAuthMessage('Google'),
+                    useNativeWebButton: kIsWeb,
                   ),
                   OutlinedButton.icon(
                     onPressed: _isLoading || _isAnySocialLoading

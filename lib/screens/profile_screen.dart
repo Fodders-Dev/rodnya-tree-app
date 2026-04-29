@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -29,6 +30,7 @@ import '../widgets/glass_panel.dart';
 import '../backend/backend_runtime_config.dart';
 import '../services/app_status_service.dart';
 import '../services/custom_api_post_service.dart';
+import '../utils/photo_url.dart';
 import '../utils/user_facing_error.dart';
 
 part 'profile_screen_sections.dart';
@@ -500,8 +502,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         itemBuilder: (context, index) {
                           final itemUrl =
                               gallery[index]['url']?.toString() ?? '';
+                          final normalizedItemUrl = normalizePhotoUrl(itemUrl);
                           return InteractiveViewer(
-                            child: itemUrl.isEmpty
+                            child: normalizedItemUrl == null
                                 ? const Center(
                                     child: Icon(
                                       Icons.broken_image_outlined,
@@ -509,12 +512,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                       size: 40,
                                     ),
                                   )
-                                : Image.network(
-                                    itemUrl,
+                                : CachedNetworkImage(
+                                    imageUrl: normalizedItemUrl,
                                     fit: BoxFit.contain,
-                                    errorBuilder:
-                                        (context, error, stackTrace) =>
-                                            const Center(
+                                    placeholder: (context, url) => const Center(
+                                      child: CircularProgressIndicator(
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                    errorWidget: (context, url, error) =>
+                                        const Center(
                                       child: Icon(
                                         Icons.broken_image_outlined,
                                         color: Colors.white,

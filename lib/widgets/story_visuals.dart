@@ -1,8 +1,10 @@
 import 'dart:math' as math;
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../models/story.dart';
+import '../utils/photo_url.dart';
 
 @immutable
 class StoryVisualPalette {
@@ -110,6 +112,7 @@ class StoryPosterBackground extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final overlayOpacity = dimmed ? 0.56 : 0.28;
+    final normalizedImageUrl = normalizePhotoUrl(imageUrl);
 
     return Stack(
       fit: StackFit.expand,
@@ -142,9 +145,9 @@ class StoryPosterBackground extends StatelessWidget {
             color: Colors.white.withValues(alpha: 0.12),
           ),
         ),
-        if (imageUrl != null && imageUrl!.isNotEmpty)
+        if (normalizedImageUrl != null)
           _StoryPosterImage(
-            imageUrl: imageUrl!,
+            imageUrl: normalizedImageUrl,
             overlayOpacity: overlayOpacity,
           )
         else
@@ -369,10 +372,10 @@ class _StoryPosterImage extends StatelessWidget {
     return Stack(
       fit: StackFit.expand,
       children: [
-        Image.network(
-          imageUrl,
+        CachedNetworkImage(
+          imageUrl: imageUrl,
           fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+          errorWidget: (_, __, ___) => const SizedBox.shrink(),
         ),
         DecoratedBox(
           decoration: BoxDecoration(

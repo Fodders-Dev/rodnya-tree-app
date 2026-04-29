@@ -80,6 +80,107 @@ void main() {
     expect(post.likeCount, 2);
     expect(post.commentCount, 3);
   });
+
+  test('CustomApiPostService refreshes session once before retrying feed',
+      () async {
+    var postRequests = 0;
+    final client = MockClient((request) async {
+      if (request.url.path == '/v1/posts') {
+        postRequests += 1;
+        if (postRequests == 1) {
+          expect(request.headers['authorization'], 'Bearer old-token');
+          return http.Response.bytes(
+            utf8.encode(jsonEncode({'message': 'Сессия истекла'})),
+            401,
+            headers: {'content-type': 'application/json; charset=utf-8'},
+          );
+        }
+
+        expect(request.headers['authorization'], 'Bearer new-token');
+        return http.Response(
+          jsonEncode([
+            {
+              'id': 'post-1',
+              'treeId': 'tree-1',
+              'authorId': 'author-1',
+              'authorName': 'Анна',
+              'content': 'Семейная новость',
+              'createdAt': '2026-04-13T10:00:00.000Z',
+              'likedBy': const [],
+              'commentCount': 0,
+              'imageUrls': const [],
+            }
+          ]),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+
+      if (request.url.path == '/v1/auth/refresh') {
+        expect(request.method, 'POST');
+        expect(jsonDecode(request.body), {'refreshToken': 'refresh-token'});
+        return http.Response(
+          jsonEncode({
+            'accessToken': 'new-token',
+            'refreshToken': 'new-refresh-token',
+            'user': {
+              'id': 'user-1',
+              'email': 'dev@rodnya.app',
+              'displayName': 'Dev User',
+              'providerIds': ['password'],
+            },
+            'profileStatus': {
+              'isComplete': true,
+              'missingFields': const [],
+            },
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+
+      return http.Response('{"message":"not found"}', 404);
+    });
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'custom_api_session_v1',
+      jsonEncode({
+        'accessToken': 'old-token',
+        'refreshToken': 'refresh-token',
+        'userId': 'user-1',
+        'email': 'dev@rodnya.app',
+        'displayName': 'Dev User',
+        'providerIds': ['password'],
+        'isProfileComplete': true,
+        'missingFields': const [],
+      }),
+    );
+
+    final authService = await CustomApiAuthService.create(
+      httpClient: client,
+      preferences: prefs,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      invitationService: InvitationService(),
+    );
+    final service = CustomApiPostService(
+      authService: authService,
+      storageService: _FakeStorageService(),
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      httpClient: client,
+    );
+
+    final posts = await service.getPosts(treeId: 'tree-1');
+
+    expect(posts, hasLength(1));
+    expect(posts.single.id, 'post-1');
+    expect(postRequests, 2);
+    expect(authService.accessToken, 'new-token');
+  });
 }
 
 class _FakeStorageService implements StorageServiceInterface {

@@ -565,7 +565,8 @@ class RustoreService {
         RustorePushClient.attachCallbacks(
           onNewToken: (token) {
             debugPrint('[RuStore Push v6.5.0] New token received: $token');
-            // TODO: Отправить новый токен на бэкенд
+            // Device registration is owned by CustomApiNotificationService.
+            // Keep this listener passive until token-refresh subscription lives there.
           },
           onMessageReceived: (message) {
             final pushMessage = RustorePushMessage.fromMessage(message);
@@ -649,6 +650,6 @@ class RustoreService {
     }
   }
 
-  // TODO: Добавить методы для обработки полученных сообщений,
-  // подписки/отписки от топиков, если необходимо для задания.
+  // Push messages are exposed through pushMessages; topic subscriptions are
+  // outside the current MVP push scope.
 }
