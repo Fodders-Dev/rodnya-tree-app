@@ -10,18 +10,7 @@ import '../models/tree_graph_snapshot.dart';
 import '../models/user_profile.dart';
 import 'family_tree_node_card.dart';
 
-// Структура для хранения информации о связях для отрисовки
-class FamilyConnection {
-  final String fromId;
-  final String toId;
-  final RelationType type; // Добавляем тип связи
-
-  FamilyConnection({
-    required this.fromId,
-    required this.toId,
-    required this.type,
-  });
-}
+part 'interactive_family_tree_layout_models.dart';
 
 class InteractiveFamilyTree extends StatefulWidget {
   final List<Map<String, dynamic>>
@@ -2449,24 +2438,6 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
       ..translateByDouble(-sceneFocalPoint.dx, -sceneFocalPoint.dy, 0, 1);
   }
 } // <- Закрывающая скобка для класса _InteractiveFamilyTreeState
-
-class _TreeLayoutComputation {
-  const _TreeLayoutComputation({
-    required this.nodePositions,
-    required this.connections,
-    required this.treeSize,
-  });
-
-  final Map<String, Offset> nodePositions;
-  final List<FamilyConnection> connections;
-  final Size treeSize;
-}
-
-class _SpouseGroup {
-  const _SpouseGroup({required this.memberIds});
-
-  final List<String> memberIds;
-}
 
 class _TreeLayoutEngine {
   _TreeLayoutEngine({
