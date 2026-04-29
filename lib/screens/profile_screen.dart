@@ -659,8 +659,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ? _buildProfileStateCard(
               icon: Icons.person_search_outlined,
               title: 'Собираем профиль',
-              message:
-                  'Подтягиваем досье, доверенные каналы и семейный контекст.',
+              message: 'Загружаем профиль.',
               showProgress: true,
             )
           : _errorMessage.isNotEmpty

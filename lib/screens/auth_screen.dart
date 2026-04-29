@@ -11,6 +11,7 @@ import '../providers/tree_provider.dart';
 import '../services/app_status_service.dart';
 import '../services/custom_api_auth_service.dart';
 import '../theme/app_theme.dart';
+import '../utils/user_facing_error.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/google_sign_in_action.dart';
 import '../widgets/offline_indicator.dart';
@@ -55,7 +56,7 @@ class _AuthScreenState extends State<AuthScreen> {
     _AuthFeature(
       icon: Icons.account_tree_outlined,
       title: 'Дерево',
-      description: 'Открывайте семью и круги в одном месте.',
+      description: 'Родные и связи в одном месте.',
     ),
     _AuthFeature(
       icon: Icons.people_alt_outlined,
@@ -65,12 +66,12 @@ class _AuthScreenState extends State<AuthScreen> {
     _AuthFeature(
       icon: Icons.chat_bubble_outline,
       title: 'Чат',
-      description: 'Личные диалоги прямо внутри семьи.',
+      description: 'Личные диалоги с родными.',
     ),
     _AuthFeature(
       icon: Icons.circle_outlined,
       title: 'Stories',
-      description: 'Быстрые семейные обновления и медиа.',
+      description: 'Короткие семейные обновления.',
     ),
   ];
 
@@ -174,7 +175,12 @@ class _AuthScreenState extends State<AuthScreen> {
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(_authService.describeError(e)),
+          content: Text(
+            _authError(
+              e,
+              fallbackMessage: 'Не удалось войти. Попробуйте ещё раз.',
+            ),
+          ),
           backgroundColor: Colors.red.shade800,
         ),
       );
@@ -206,7 +212,12 @@ class _AuthScreenState extends State<AuthScreen> {
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(_authService.describeError(e)),
+          content: Text(
+            _authError(
+              e,
+              fallbackMessage: 'Не удалось войти через Google.',
+            ),
+          ),
           backgroundColor: Colors.red.shade800,
         ),
       );
@@ -221,13 +232,7 @@ class _AuthScreenState extends State<AuthScreen> {
 
   Future<void> _startTelegramSignIn() async {
     if (!kIsWeb) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Telegram вход сначала включим на web. Для Android ещё нужен возврат в приложение по deep link.',
-          ),
-        ),
-      );
+      _showSocialAuthWebOnlyMessage('Telegram');
       return;
     }
 
@@ -266,13 +271,7 @@ class _AuthScreenState extends State<AuthScreen> {
 
   Future<void> _startVkSignIn() async {
     if (!kIsWeb) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'VK ID сначала включим на web. Для Android ещё нужен возврат в приложение по deep link.',
-          ),
-        ),
-      );
+      _showSocialAuthWebOnlyMessage('VK ID');
       return;
     }
 
@@ -429,7 +428,12 @@ class _AuthScreenState extends State<AuthScreen> {
       }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Не удалось завершить вход через Telegram: $e'),
+          content: Text(
+            _authError(
+              e,
+              fallbackMessage: 'Не удалось завершить вход через Telegram.',
+            ),
+          ),
           backgroundColor: Colors.red.shade800,
         ),
       );
@@ -555,7 +559,12 @@ class _AuthScreenState extends State<AuthScreen> {
       }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Не удалось завершить вход через VK ID: $e'),
+          content: Text(
+            _authError(
+              e,
+              fallbackMessage: 'Не удалось завершить вход через VK ID.',
+            ),
+          ),
           backgroundColor: Colors.red.shade800,
         ),
       );
@@ -570,13 +579,7 @@ class _AuthScreenState extends State<AuthScreen> {
 
   Future<void> _startMaxSignIn() async {
     if (!kIsWeb) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'MAX вход сначала включим на web. Для Android ещё нужен возврат в приложение по deep link.',
-          ),
-        ),
-      );
+      _showSocialAuthWebOnlyMessage('MAX');
       return;
     }
 
@@ -726,7 +729,12 @@ class _AuthScreenState extends State<AuthScreen> {
       }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Не удалось завершить вход через MAX: $e'),
+          content: Text(
+            _authError(
+              e,
+              fallbackMessage: 'Не удалось завершить вход через MAX.',
+            ),
+          ),
           backgroundColor: Colors.red.shade800,
         ),
       );
@@ -815,9 +823,27 @@ class _AuthScreenState extends State<AuthScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          '$providerLabel появится после подключения ключей провайдера. Основа для объединения аккаунтов по подтверждённому каналу уже готовится.',
+          '$providerLabel появится после подключения ключей провайдера.',
         ),
       ),
+    );
+  }
+
+  void _showSocialAuthWebOnlyMessage(String providerLabel) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          '$providerLabel пока доступен на web. Android deep link подключим отдельно.',
+        ),
+      ),
+    );
+  }
+
+  String _authError(Object error, {required String fallbackMessage}) {
+    return describeUserFacingError(
+      authService: _authService,
+      error: error,
+      fallbackMessage: fallbackMessage,
     );
   }
 
@@ -1008,7 +1034,7 @@ class _AuthScreenState extends State<AuthScreen> {
           Text(
             compact
                 ? 'Один вход для своих.'
-                : 'Один вход для семьи, чатов и stories.',
+                : 'Вход для семьи, дерева и чатов.',
             style: theme.textTheme.titleMedium?.copyWith(
               color: Colors.white.withValues(alpha: 0.9),
               fontWeight: FontWeight.w400,
@@ -1124,12 +1150,12 @@ class _AuthScreenState extends State<AuthScreen> {
                         child: Text(
                           _pendingTelegramLinkCode != null
                               ? (_pendingTelegramMessage ??
-                                  'Telegram подтверждён. Теперь войдите в существующий аккаунт Родни и мы привяжем его без создания дубля.')
+                                  'Telegram подтверждён. Войдите в аккаунт, чтобы привязать его.')
                               : _pendingVkLinkCode != null
                                   ? (_pendingVkMessage ??
-                                      'VK ID подтверждён. Теперь войдите в существующий аккаунт Родни и мы привяжем его без создания дубля.')
+                                      'VK ID подтверждён. Войдите в аккаунт, чтобы привязать его.')
                                   : (_pendingMaxMessage ??
-                                      'MAX подтверждён. Теперь войдите в существующий аккаунт Родни и мы привяжем его без создания дубля.'),
+                                      'MAX подтверждён. Войдите в аккаунт, чтобы привязать его.'),
                           style: theme.textTheme.bodyMedium,
                         ),
                       ),
