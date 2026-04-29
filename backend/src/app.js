@@ -24,6 +24,11 @@ const {createMaxAuthClient, parseMaxStartParam} = require("./max-auth");
 const {createLiveKitService} = require("./livekit-service");
 const {buildBranchVisiblePersonIds} = require("./store");
 const {createOperationalStatus} = require("./operational-status");
+const {registerAdminRoutes} = require("./routes/admin-routes");
+const {
+  registerAuthenticatedMediaRoutes,
+  registerPublicMediaRoutes,
+} = require("./routes/media-routes");
 
 const DEFAULT_CALL_INVITE_TIMEOUT_MS = 30_000;
 const EMERGENCY_CHAT_PREVIEW_RESPONSE_CAP = 3;
@@ -385,55 +390,7 @@ function createApp({
   // Some legacy/mobile clients still send JSON literal `null` on bodyless POSTs
   // such as like/view/read actions. Accept it and let handlers validate fields.
   app.use(express.json({limit: "50mb", strict: false}));
-  app.get(/^\/media\/(.+)$/, async (req, res) => {
-    try {
-      // Use handlePublicGetRequest (direct S3 proxy) instead of handleGetRequest
-      // (redirect).  When LINEAGE_MEDIA_PUBLIC_BASE_URL points to the API itself
-      // (api.rodnya-tree.ru/media), handleGetRequest creates a circular 302
-      // redirect loop because the redirect URL resolves back to this same handler.
-      // Proxying the S3 object directly avoids the loop and works regardless of
-      // whether the S3/MinIO server is publicly reachable.
-      const handler = resolvedMediaStorage.handlePublicGetRequest
-        ? resolvedMediaStorage.handlePublicGetRequest.bind(resolvedMediaStorage)
-        : resolvedMediaStorage.handleGetRequest.bind(resolvedMediaStorage);
-      await handler(req, res);
-    } catch (error) {
-      if (
-        error?.message === "INVALID_MEDIA_PATH" ||
-        error?.message === "UNSUPPORTED_MEDIA_URL"
-      ) {
-        res.status(400).json({message: "Недопустимый media path"});
-        return;
-      }
-      if (error?.message === "MEDIA_FILE_NOT_FOUND") {
-        res.status(404).json({message: "Media файл не найден"});
-        return;
-      }
-      if (!res.headersSent) {
-        res.status(502).json({message: "Не удалось открыть media файл"});
-      }
-    }
-  });
-  app.get(/^\/storage\/(.+)$/, async (req, res) => {
-    try {
-      await resolvedMediaStorage.handlePublicGetRequest(req, res);
-    } catch (error) {
-      if (
-        error?.message === "INVALID_MEDIA_PATH" ||
-        error?.message === "UNSUPPORTED_MEDIA_URL"
-      ) {
-        res.status(400).json({message: "Недопустимый media path"});
-        return;
-      }
-      if (error?.message === "MEDIA_FILE_NOT_FOUND") {
-        res.status(404).json({message: "Media файл не найден"});
-        return;
-      }
-      if (!res.headersSent) {
-        res.status(502).json({message: "Не удалось открыть media файл"});
-      }
-    }
-  });
+  registerPublicMediaRoutes(app, {mediaStorage: resolvedMediaStorage});
   app.use((req, res, next) => {
     const policy = (() => {
       const pathName = req.path || "/";
@@ -3311,62 +3268,9 @@ function createApp({
     },
   );
 
-  app.post("/v1/media/upload", requireAuth, async (req, res) => {
-    const {bucket, path: mediaPath, fileBase64, contentType} = req.body || {};
-
-    if (!bucket || !mediaPath || !fileBase64) {
-      res.status(400).json({
-        message: "Нужны bucket, path и fileBase64",
-      });
-      return;
-    }
-
-    try {
-      const fileBuffer = Buffer.from(String(fileBase64), "base64");
-      if (fileBuffer.length === 0) {
-        res.status(400).json({message: "Пустой fileBase64 payload"});
-        return;
-      }
-
-      const uploadResult = await resolvedMediaStorage.saveObject({
-        req,
-        bucket,
-        relativePath: mediaPath,
-        contentType,
-        fileBuffer,
-      });
-
-      res.status(201).json(uploadResult);
-    } catch (error) {
-      if (error.message === "INVALID_MEDIA_PATH") {
-        res.status(400).json({message: "Недопустимый media path"});
-        return;
-      }
-      res.status(500).json({message: "Не удалось сохранить файл"});
-    }
-  });
-
-  app.delete("/v1/media", requireAuth, async (req, res) => {
-    const urlValue = String(req.body?.url || "").trim();
-    if (!urlValue) {
-      res.status(400).json({message: "Нужен url"});
-      return;
-    }
-
-    try {
-      await resolvedMediaStorage.deleteObjectByUrl(urlValue);
-      res.status(204).send();
-    } catch (error) {
-      if (
-        error.message === "INVALID_MEDIA_PATH" ||
-        error.message === "UNSUPPORTED_MEDIA_URL" ||
-        error instanceof TypeError
-      ) {
-        res.status(400).json({message: "Недопустимый media URL"});
-        return;
-      }
-      res.status(500).json({message: "Не удалось удалить файл"});
-    }
+  registerAuthenticatedMediaRoutes(app, {
+    mediaStorage: resolvedMediaStorage,
+    requireAuth,
   });
 
   app.get("/v1/stories", requireAuth, async (req, res) => {
@@ -4729,57 +4633,12 @@ function createApp({
     });
   });
 
-  app.get("/v1/admin/runtime", requireAuth, async (req, res) => {
-    if (!requireAdmin(req, res)) {
-      return;
-    }
-
-    res.json(
-      buildStatusPayload("ok", {
-        requestId: req.requestId,
-      }),
-    );
-  });
-
-  app.get("/v1/admin/reports", requireAuth, async (req, res) => {
-    if (!requireAdmin(req, res)) {
-      return;
-    }
-
-    const status = String(req.query?.status || "").trim() || null;
-    const reports = await store.listReports({status});
-    const mappedReports = [];
-    for (const report of reports) {
-      const reporter = await store.findUserById(report.reporterId);
-      mappedReports.push(mapReport(report, reporter));
-    }
-
-    res.json({
-      reports: mappedReports,
-    });
-  });
-
-  app.post("/v1/admin/reports/:reportId/resolve", requireAuth, async (req, res) => {
-    if (!requireAdmin(req, res)) {
-      return;
-    }
-
-    const status = String(req.body?.status || "resolved").trim() || "resolved";
-    const report = await store.resolveReport({
-      reportId: req.params.reportId,
-      resolvedBy: req.auth.user.id,
-      status,
-      resolutionNote: req.body?.resolutionNote,
-    });
-    if (!report) {
-      res.status(404).json({message: "Жалоба не найдена"});
-      return;
-    }
-
-    const reporter = await store.findUserById(report.reporterId);
-    res.json({
-      report: mapReport(report, reporter),
-    });
+  registerAdminRoutes(app, {
+    store,
+    requireAuth,
+    requireAdmin,
+    buildStatusPayload,
+    mapReport,
   });
 
   app.post("/v1/chats/direct", requireAuth, async (req, res) => {
