@@ -1299,12 +1299,9 @@ class _AuthScreenState extends State<AuthScreen> {
                 ],
               ),
               const SizedBox(height: 16),
-              Wrap(
-                alignment: WrapAlignment.center,
-                spacing: 10,
-                runSpacing: 10,
-                children: [
-                  buildGoogleSignInAction(
+              if (kIsWeb) ...[
+                Center(
+                  child: buildGoogleSignInAction(
                     theme: theme,
                     isLoading: _isGoogleLoading,
                     enabled: !_isLoading &&
@@ -1315,8 +1312,29 @@ class _AuthScreenState extends State<AuthScreen> {
                     onPressed: _supportsGoogleAuth
                         ? _signInWithGoogle
                         : () => _showPlannedSocialAuthMessage('Google'),
-                    useNativeWebButton: kIsWeb,
+                    useNativeWebButton: true,
                   ),
+                ),
+                const SizedBox(height: 10),
+              ],
+              Wrap(
+                alignment: WrapAlignment.center,
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  if (!kIsWeb)
+                    buildGoogleSignInAction(
+                      theme: theme,
+                      isLoading: _isGoogleLoading,
+                      enabled: !_isLoading &&
+                          !_isTelegramLoading &&
+                          !_isVkLoading &&
+                          !_isMaxLoading &&
+                          _supportsGoogleAuth,
+                      onPressed: _supportsGoogleAuth
+                          ? _signInWithGoogle
+                          : () => _showPlannedSocialAuthMessage('Google'),
+                    ),
                   OutlinedButton.icon(
                     onPressed: _isLoading || _isAnySocialLoading
                         ? null
