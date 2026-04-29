@@ -57,7 +57,11 @@ try {
         throw "Unable to resolve git revision"
     }
 
-    $dirtyTree = if ((& git status --porcelain).Trim()) { "dirty-tree-backend-build" } else { "clean-tree-backend-build" }
+    $statusOutput = (& git status --porcelain) -join "`n"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to inspect git working tree"
+    }
+    $dirtyTree = if ($statusOutput.Trim()) { "dirty-tree-backend-build" } else { "clean-tree-backend-build" }
     $buildLabel = "deploy $(Get-Date -Format 'yyyy-MM-dd HH:mm zzz') / git $gitSha / $dirtyTree"
     $remoteArchive = "$RemoteUploadDir/rodnya-backend-$timestamp.tgz"
 
