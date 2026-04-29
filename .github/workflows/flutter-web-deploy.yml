@@ -5,11 +5,19 @@ on:
   push:
     branches: ["main"]
     paths:
+      - ".github/workflows/flutter-web-deploy.yml"
       - "lib/**"
       - "web/**"
       - "assets/**"
       - "pubspec.yaml"
       - "pubspec.lock"
+      - "package.json"
+      - "package-lock.json"
+      - "tool/backend_ready_alert.mjs"
+      - "tool/backend_runtime_watch.mjs"
+      - "tool/http_request_with_fallback.mjs"
+      - "tool/prod_route_smoke.mjs"
+      - "tool/sync_web_shell_assets.js"
 
 jobs:
   deploy:
