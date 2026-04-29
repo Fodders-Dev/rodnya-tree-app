@@ -191,53 +191,62 @@ class _FakeChatService implements ChatServiceInterface {
 
 class _FakeFamilyTreeService extends Fake
     implements FamilyTreeServiceInterface {
+  _FakeFamilyTreeService({this.getRelativesDelay});
+
+  final Future<void>? getRelativesDelay;
+  int getRelativesCallCount = 0;
+
   @override
-  Future<List<FamilyPerson>> getRelatives(String treeId) async => [
-        FamilyPerson(
-          id: 'person-root-1',
-          treeId: treeId,
-          userId: 'user-root-1',
-          name: 'Иван Кузнецов',
-          gender: Gender.male,
-          isAlive: true,
-          createdAt: DateTime(2026),
-          updatedAt: DateTime(2026),
-          relation: 'Отец',
-        ),
-        FamilyPerson(
-          id: 'person-root-2',
-          treeId: treeId,
-          userId: 'user-root-2',
-          name: 'Мария Понькина',
-          gender: Gender.female,
-          isAlive: true,
-          createdAt: DateTime(2026),
-          updatedAt: DateTime(2026),
-          relation: 'Сестра',
-        ),
-        FamilyPerson(
-          id: 'person-child-1',
-          treeId: treeId,
-          userId: 'user-child-1',
-          name: 'Олег Кузнецов',
-          gender: Gender.male,
-          isAlive: true,
-          createdAt: DateTime(2026),
-          updatedAt: DateTime(2026),
-          relation: 'Брат',
-        ),
-        FamilyPerson(
-          id: 'person-child-2',
-          treeId: treeId,
-          userId: 'user-child-2',
-          name: 'Катя Понькина',
-          gender: Gender.female,
-          isAlive: true,
-          createdAt: DateTime(2026),
-          updatedAt: DateTime(2026),
-          relation: 'Племянница',
-        ),
-      ];
+  Future<List<FamilyPerson>> getRelatives(String treeId) async {
+    getRelativesCallCount += 1;
+    await getRelativesDelay;
+    return [
+      FamilyPerson(
+        id: 'person-root-1',
+        treeId: treeId,
+        userId: 'user-root-1',
+        name: 'Иван Кузнецов',
+        gender: Gender.male,
+        isAlive: true,
+        createdAt: DateTime(2026),
+        updatedAt: DateTime(2026),
+        relation: 'Отец',
+      ),
+      FamilyPerson(
+        id: 'person-root-2',
+        treeId: treeId,
+        userId: 'user-root-2',
+        name: 'Мария Понькина',
+        gender: Gender.female,
+        isAlive: true,
+        createdAt: DateTime(2026),
+        updatedAt: DateTime(2026),
+        relation: 'Сестра',
+      ),
+      FamilyPerson(
+        id: 'person-child-1',
+        treeId: treeId,
+        userId: 'user-child-1',
+        name: 'Олег Кузнецов',
+        gender: Gender.male,
+        isAlive: true,
+        createdAt: DateTime(2026),
+        updatedAt: DateTime(2026),
+        relation: 'Брат',
+      ),
+      FamilyPerson(
+        id: 'person-child-2',
+        treeId: treeId,
+        userId: 'user-child-2',
+        name: 'Катя Понькина',
+        gender: Gender.female,
+        isAlive: true,
+        createdAt: DateTime(2026),
+        updatedAt: DateTime(2026),
+        relation: 'Племянница',
+      ),
+    ];
+  }
 
   @override
   Future<List<FamilyRelation>> getRelations(String treeId) async => [
@@ -516,6 +525,33 @@ void main() {
 
     expect(find.text('Чатов нет'), findsOneWidget);
   });
+
+  testWidgets(
+    'ChatsListScreen не запускает повторную загрузку родных, пока первая в работе',
+    (tester) async {
+      await getIt.reset();
+      final relativesLoad = Completer<void>();
+      final familyTreeService = _FakeFamilyTreeService(
+        getRelativesDelay: relativesLoad.future,
+      );
+      getIt.registerSingleton<AuthServiceInterface>(_FakeAuthService());
+      getIt.registerSingleton<ChatServiceInterface>(_FakeChatService());
+      getIt.registerSingleton<FamilyTreeServiceInterface>(familyTreeService);
+      getIt.registerSingleton<LocalStorageService>(_FakeLocalStorageService());
+      getIt.registerSingleton<AppStatusService>(AppStatusService());
+
+      await tester.pumpWidget(buildApp());
+      await tester.pump();
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+
+      expect(familyTreeService.getRelativesCallCount, 1);
+
+      relativesLoad.complete();
+      await tester.pumpAndSettle();
+    },
+  );
 
   testWidgets('Пустое состояние чатов ведет в родных и дерево', (tester) async {
     await tester.pumpWidget(buildApp());

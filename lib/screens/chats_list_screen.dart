@@ -87,6 +87,9 @@ class _ChatsListScreenState extends State<ChatsListScreen>
   _ChatsVisibilityFilter _activeFilter = _ChatsVisibilityFilter.all;
   TreeProvider? _treeProvider;
   String? _observedTreeId;
+  bool _isLoadingRelatives = false;
+  String? _relativesLoadTreeId;
+  int _relativesLoadToken = 0;
 
   @override
   void initState() {
@@ -356,10 +359,14 @@ class _ChatsListScreenState extends State<ChatsListScreen>
   }
 
   void _loadRelatives() async {
+    String? activeTreeId;
     try {
       final treeId =
           Provider.of<TreeProvider>(context, listen: false).selectedTreeId;
+      activeTreeId = treeId;
       if (treeId == null || treeId.isEmpty) {
+        _isLoadingRelatives = false;
+        _relativesLoadTreeId = null;
         if (!mounted) {
           return;
         }
@@ -369,11 +376,20 @@ class _ChatsListScreenState extends State<ChatsListScreen>
         return;
       }
 
+      if (_isLoadingRelatives && _relativesLoadTreeId == treeId) {
+        return;
+      }
+      final loadToken = ++_relativesLoadToken;
+      _isLoadingRelatives = true;
+      _relativesLoadTreeId = treeId;
+
       final service = GetIt.I<FamilyTreeServiceInterface>();
       final relatives = await service.getRelatives(treeId);
       final currentUserId = _authService.currentUserId;
 
-      if (!mounted) return;
+      if (!mounted || loadToken != _relativesLoadToken) {
+        return;
+      }
       setState(() {
         _relatives = relatives
             .where((p) => p.userId != null && p.userId != currentUserId)
@@ -390,6 +406,11 @@ class _ChatsListScreenState extends State<ChatsListScreen>
       });
     } catch (e) {
       debugPrint('Error loading relatives for search: $e');
+    } finally {
+      if (mounted && _relativesLoadTreeId == activeTreeId) {
+        _isLoadingRelatives = false;
+        _relativesLoadTreeId = null;
+      }
     }
   }
 
