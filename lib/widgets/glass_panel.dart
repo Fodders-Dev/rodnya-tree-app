@@ -113,6 +113,7 @@ class GlassPanel extends StatelessWidget {
       ),
       child: ClipRRect(
         borderRadius: borderRadius,
+        clipBehavior: clipBehavior,
         child: Stack(
           children: [
             // Subtle specular sheen — pure CSS-level gradient, zero GPU cost.

@@ -114,6 +114,7 @@ test("PostgresStore reads can fall back when the write queue is stuck", async ()
     connectionString: "postgresql://unused/rodnya",
     pool,
     queryTimeoutMs: 25,
+    writeQueueTimeoutMs: 25,
   });
 
   await store.initialize();
@@ -124,12 +125,73 @@ test("PostgresStore reads can fall back when the write queue is stuck", async ()
   assert.deepEqual(snapshot.users, []);
 });
 
+test("PostgresStore writes time out behind a stuck state queue and recover", async () => {
+  let state = {users: []};
+  let writeAttempts = 0;
+  const pool = {
+    async query(sql, params = []) {
+      if (
+        sql.includes("CREATE SCHEMA") ||
+        sql.includes("CREATE TABLE") ||
+        sql.includes("CREATE INDEX") ||
+        sql.includes("ON CONFLICT (id) DO NOTHING")
+      ) {
+        return {rows: []};
+      }
+      if (
+        sql.includes("DELETE FROM \"public\".\"rodnya_state_auth_users\"") ||
+        sql.includes("DELETE FROM \"public\".\"rodnya_state_auth_sessions\"") ||
+        sql.includes("INSERT INTO \"public\".\"rodnya_state_auth_users\"") ||
+        sql.includes("INSERT INTO \"public\".\"rodnya_state_auth_sessions\"")
+      ) {
+        return {rows: []};
+      }
+      if (sql.includes("SELECT session_data")) {
+        return {rows: []};
+      }
+      if (sql.includes("SELECT data")) {
+        return {rows: [{data: state}]};
+      }
+      if (sql.includes("ON CONFLICT (id) DO UPDATE")) {
+        writeAttempts += 1;
+        state = JSON.parse(params[1]);
+        return {rows: []};
+      }
+      throw new Error(`Unexpected query: ${sql}`);
+    },
+  };
+
+  const store = new PostgresStore({
+    connectionString: "postgresql://unused/rodnya",
+    pool,
+    queryTimeoutMs: 25,
+    writeQueueTimeoutMs: 25,
+  });
+
+  await store.initialize();
+  store._stateWriteQueue = new Promise(() => {});
+  store._writeQueue = store._stateWriteQueue;
+
+  await assert.rejects(
+    store._write({users: [{id: "u-stuck"}]}),
+    (error) => error?.code === "POSTGRES_WRITE_QUEUE_TIMEOUT",
+  );
+
+  await assert.doesNotReject(store._write({users: [{id: "u-recovered"}]}));
+
+  assert.equal(writeAttempts, 1);
+  const snapshot = await store._read();
+  assert.deepEqual(snapshot.users, [{id: "u-recovered"}]);
+});
+
 test("PostgresStore reuses one shared pool for identical config", async () => {
   let state = {users: []};
   let createdPoolCount = 0;
   let endCount = 0;
-  const poolFactory = () => {
+  let poolOptions = null;
+  const poolFactory = (options) => {
     createdPoolCount += 1;
+    poolOptions = options;
     return {
       async query(sql) {
         if (
@@ -180,6 +242,8 @@ test("PostgresStore reuses one shared pool for identical config", async () => {
   assert.deepEqual(firstSnapshot.users, state.users);
   assert.deepEqual(secondSnapshot.users, state.users);
   assert.equal(createdPoolCount, 1);
+  assert.equal(poolOptions.query_timeout, 15_000);
+  assert.equal(poolOptions.statement_timeout, 15_000);
 
   await firstStore.close();
   assert.equal(endCount, 0);
@@ -339,6 +403,7 @@ test("PostgresStore auth hot paths avoid full state reads", async () => {
     connectionString: "postgresql://unused/rodnya",
     pool,
     queryTimeoutMs: 25,
+    writeQueueTimeoutMs: 25,
   });
 
   await store.initialize();

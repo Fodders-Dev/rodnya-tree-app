@@ -223,6 +223,12 @@
   - `CustomApiPostService` получил 12s timeout, один refresh-session retry на `401/403`, и regression test для feed retry
   - home feed status copy заменён с ложного `Лента офлайн` на `Лента недоступна`
   - проверки: `flutter pub get`, `dart format` для изменённых Dart-файлов, `flutter test test/custom_api_post_service_test.dart test/custom_api_auth_service_test.dart test/auth_screen_test.dart test/home_screen_test.dart`, `flutter analyze`, backend node tests, `flutter build web`, локальный Playwright smoke с `RODNYA_GOOGLE_WEB_CLIENT_ID`
+- [x] 2026-04-29 — Production hotfix / Postgres write queue and Google button layout:
+  - MCP Playwright на prod подтвердил, что Google GIS iframe есть и консоль чистая, но кнопка клипуется внутри auth card
+  - prod API write smoke подтвердил 60s `504` на `/v1/auth/register`; это объясняет медленную загрузку сайта и статус `Лента недоступна`
+  - `PostgresStore` теперь передаёт `query_timeout`/`statement_timeout` в `pg` и обрывает зависшие state/session write queues вместо бесконечного ожидания следующими write-запросами
+  - web `GlassPanel` теперь уважает `clipBehavior`, auth card на web отключает clipping для Google platform-view, а native GIS button выравнивается без обрезания
+  - проверки: `node --test backend/test/api.test.js backend/test/app-media-routes.test.js backend/test/chat-utils.test.js backend/test/postgres-store.test.js`, `flutter test test/auth_screen_test.dart test/custom_api_auth_service_test.dart`, `flutter analyze`, `flutter build web`, локальный MCP Playwright smoke с production dart-defines
 
 ---
 
@@ -233,7 +239,8 @@
 - Backend split status: `backend/src/app.js` keeps health/ready, LiveKit webhook and `/v1/calls*`; MVP routes for auth/profile/media/posts/stories/trees/relations/chats/safety/users/notifications/push are registered through route modules.
 - Runtime-code TODO status: `rg "TODO|FIXME|HACK" lib backend/src` is clean.
 - Extra safe cleanup completed after the original waves: chat search controller extraction and interactive tree positioning extraction.
-- Residual candidates for the next Claude plan: outgoing-message/attachments controllers in `chat_screen.dart`, notification/RuStore conditional-import design, and production smoke/CI simplification. Calls remain phase 2. `.github/workflows/*` were intentionally not changed because the repo guide requires explicit consent for CI/secrets work.
+- Extra production hotfix completed after MCP smoke: Google web button layout is fixed locally, and Postgres write queues now have query/queue timeouts to prevent the 60s nginx `504` loop seen on prod.
+- Residual candidates for the next Claude plan: outgoing-message/attachments controllers in `chat_screen.dart`, notification/RuStore conditional-import design, production smoke/CI simplification, and a deeper Postgres data model split away from whole-state JSON writes. Calls remain phase 2. `.github/workflows/*` were intentionally not changed because the repo guide requires explicit consent for CI/secrets work.
 - Estimated completion of this plan: 100%.
 - Sections below this point are the original Claude audit baseline; use this status block and the execution log above for current truth.
 

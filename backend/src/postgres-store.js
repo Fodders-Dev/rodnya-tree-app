@@ -102,6 +102,8 @@ function acquireSharedPool({
         idleTimeoutMillis,
         keepAlive: true,
         max: poolMax,
+        query_timeout: queryTimeoutMs > 0 ? queryTimeoutMs : undefined,
+        statement_timeout: queryTimeoutMs > 0 ? queryTimeoutMs : undefined,
         application_name:
           String(applicationName || DEFAULT_POSTGRES_APPLICATION_NAME).trim() ||
           DEFAULT_POSTGRES_APPLICATION_NAME,
@@ -141,6 +143,7 @@ class PostgresStore extends FileStore {
     readQueryTimeoutMs = DEFAULT_POSTGRES_READ_QUERY_TIMEOUT_MS,
     readRetryCount = DEFAULT_POSTGRES_READ_RETRY_COUNT,
     readRetryDelayMs = DEFAULT_POSTGRES_READ_RETRY_DELAY_MS,
+    writeQueueTimeoutMs = null,
     idleTimeoutMillis = DEFAULT_POSTGRES_IDLE_TIMEOUT_MS,
     poolMax = DEFAULT_POSTGRES_POOL_MAX,
     applicationName = DEFAULT_POSTGRES_APPLICATION_NAME,
@@ -185,9 +188,14 @@ class PostgresStore extends FileStore {
     this._snapshotLoadPromise = null;
     this.storageMode = "postgres";
     this.storageTarget = `${this._schema}.${this._table}:${this._rowId}`;
-    this._writeQueueTimeoutMs = queryTimeoutMs > 0
-      ? Math.max(queryTimeoutMs, DEFAULT_WRITE_QUEUE_TIMEOUT_MS)
-      : DEFAULT_WRITE_QUEUE_TIMEOUT_MS;
+    const normalizedWriteQueueTimeoutMs = Number(writeQueueTimeoutMs);
+    this._writeQueueTimeoutMs =
+      Number.isFinite(normalizedWriteQueueTimeoutMs) &&
+      normalizedWriteQueueTimeoutMs > 0
+        ? Math.floor(normalizedWriteQueueTimeoutMs)
+        : queryTimeoutMs > 0
+          ? Math.max(queryTimeoutMs, DEFAULT_WRITE_QUEUE_TIMEOUT_MS)
+          : DEFAULT_WRITE_QUEUE_TIMEOUT_MS;
     this._readQueryTimeoutMs =
       Number.isFinite(Number(readQueryTimeoutMs)) && Number(readQueryTimeoutMs) > 0
         ? Math.floor(Number(readQueryTimeoutMs))
@@ -616,13 +624,41 @@ class PostgresStore extends FileStore {
     return user ? cloneUserWithAuthState(user) : null;
   }
 
+  _logWriteFailure(error) {
+    console.error(
+      "[backend] postgres-store write failed",
+      JSON.stringify({
+        table: `${this._schema}.${this._table}`,
+        rowId: this._rowId,
+        message: String(error?.message || error || "unknown_error"),
+      }),
+    );
+  }
+
+  _enqueueWrite(queueName, operation) {
+    const previousQueue = this[queueName].catch(() => {});
+    const nextWrite = (async () => {
+      await this._awaitWriteQueue(previousQueue);
+      return operation();
+    })();
+
+    this[queueName] = nextWrite.catch((error) => {
+      this._logWriteFailure(error);
+      throw error;
+    });
+    if (queueName === "_stateWriteQueue") {
+      this._writeQueue = this[queueName];
+    }
+
+    return nextWrite;
+  }
+
   async createSession(userId) {
     const createdAt = nowIso();
     const token = crypto.randomBytes(32).toString("hex");
     const refreshToken = crypto.randomBytes(32).toString("hex");
 
-    const previousQueue = this._sessionWriteQueue.catch(() => {});
-    const nextWrite = previousQueue.then(async () => {
+    const nextWrite = this._enqueueWrite("_sessionWriteQueue", async () => {
       await this.initialize();
       const userSessions = await this._selectProjectedSessionsForUser(userId);
       const sessionsToKeep = userSessions.slice(-4);
@@ -649,18 +685,6 @@ class PostgresStore extends FileStore {
       }
       await this._upsertProjectedSession(createdSession);
       return {createdSession, evictedSessions};
-    });
-
-    this._sessionWriteQueue = nextWrite.catch((error) => {
-      console.error(
-        "[backend] postgres-store write failed",
-        JSON.stringify({
-          table: `${this._schema}.${this._table}`,
-          rowId: this._rowId,
-          message: String(error?.message || error || "unknown_error"),
-        }),
-      );
-      throw error;
     });
 
     const {createdSession, evictedSessions} = await nextWrite;
@@ -733,8 +757,7 @@ class PostgresStore extends FileStore {
     }
 
     this._sessionTouchCache.set(normalizedToken, nowMs);
-    const previousQueue = this._sessionWriteQueue.catch(() => {});
-    const nextWrite = previousQueue.then(async () => {
+    const nextWrite = this._enqueueWrite("_sessionWriteQueue", async () => {
       await this.initialize();
       const result = await this._pool.query(
         `SELECT session_data
@@ -765,18 +788,6 @@ class PostgresStore extends FileStore {
       return session;
     });
 
-    this._sessionWriteQueue = nextWrite.catch((error) => {
-      console.error(
-        "[backend] postgres-store write failed",
-        JSON.stringify({
-          table: `${this._schema}.${this._table}`,
-          rowId: this._rowId,
-          message: String(error?.message || error || "unknown_error"),
-        }),
-      );
-      throw error;
-    });
-
     const touchedSession = await nextWrite;
     if (!touchedSession) {
       return null;
@@ -791,25 +802,12 @@ class PostgresStore extends FileStore {
       return;
     }
 
-    const previousQueue = this._sessionWriteQueue.catch(() => {});
-    const nextWrite = previousQueue.then(async () => {
+    const nextWrite = this._enqueueWrite("_sessionWriteQueue", async () => {
       await this.initialize();
       await this._pool.query(
         `DELETE FROM ${this._qualifiedAuthSessionsTableName} WHERE token = $1`,
         [normalizedToken],
         );
-    });
-
-    this._sessionWriteQueue = nextWrite.catch((error) => {
-      console.error(
-        "[backend] postgres-store write failed",
-        JSON.stringify({
-          table: `${this._schema}.${this._table}`,
-          rowId: this._rowId,
-          message: String(error?.message || error || "unknown_error"),
-        }),
-      );
-      throw error;
     });
 
     this._forgetSession(normalizedToken);
@@ -822,8 +820,7 @@ class PostgresStore extends FileStore {
       return;
     }
 
-    const previousQueue = this._sessionWriteQueue.catch(() => {});
-    const nextWrite = previousQueue.then(async () => {
+    const nextWrite = this._enqueueWrite("_sessionWriteQueue", async () => {
       await this.initialize();
       const result = await this._pool.query(
         `SELECT token
@@ -841,18 +838,6 @@ class PostgresStore extends FileStore {
         );
       }
       return deletedTokens;
-    });
-
-    this._sessionWriteQueue = nextWrite.catch((error) => {
-      console.error(
-        "[backend] postgres-store write failed",
-        JSON.stringify({
-          table: `${this._schema}.${this._table}`,
-          rowId: this._rowId,
-          message: String(error?.message || error || "unknown_error"),
-        }),
-      );
-      throw error;
     });
 
     const deletedTokens = (await nextWrite) || [];
@@ -889,8 +874,7 @@ class PostgresStore extends FileStore {
       identityId: null,
     });
 
-    const previousQueue = this._stateWriteQueue.catch(() => {});
-    const nextWrite = previousQueue.then(async () => {
+    return this._enqueueWrite("_stateWriteQueue", async () => {
       await this.initialize();
       const result = await this._pool.query(
         `UPDATE ${this._qualifiedTableName}
@@ -919,21 +903,6 @@ class PostgresStore extends FileStore {
       }
       return structuredClone(person);
     });
-
-    this._stateWriteQueue = nextWrite.catch((error) => {
-      console.error(
-        "[backend] postgres-store write failed",
-        JSON.stringify({
-          table: `${this._schema}.${this._table}`,
-          rowId: this._rowId,
-          message: String(error?.message || error || "unknown_error"),
-        }),
-      );
-      throw error;
-    });
-    this._writeQueue = this._stateWriteQueue;
-
-    return nextWrite;
   }
 
   async deletePerson(treeId, personId, actorId = null) {
@@ -943,8 +912,7 @@ class PostgresStore extends FileStore {
       return null;
     }
 
-    const previousQueue = this._stateWriteQueue.catch(() => {});
-    const nextWrite = previousQueue.then(async () => {
+    return this._enqueueWrite("_stateWriteQueue", async () => {
       await this.initialize();
       const result = await this._pool.query(
         `UPDATE ${this._qualifiedTableName}
@@ -988,21 +956,6 @@ class PostgresStore extends FileStore {
       }
       return super.deletePerson(normalizedTreeId, normalizedPersonId, actorId);
     });
-
-    this._stateWriteQueue = nextWrite.catch((error) => {
-      console.error(
-        "[backend] postgres-store write failed",
-        JSON.stringify({
-          table: `${this._schema}.${this._table}`,
-          rowId: this._rowId,
-          message: String(error?.message || error || "unknown_error"),
-        }),
-      );
-      throw error;
-    });
-    this._writeQueue = this._stateWriteQueue;
-
-    return nextWrite;
   }
 
   async _selectStoredTreeInvitationsForUser(userId) {
@@ -1448,8 +1401,7 @@ class PostgresStore extends FileStore {
   }
 
   async _write(data) {
-    const previousQueue = this._stateWriteQueue.catch(() => {});
-    const nextWrite = previousQueue.then(async () => {
+    return this._enqueueWrite("_stateWriteQueue", async () => {
       await this.initialize();
       const nextUsersHash = computeProjectionHash(data?.users);
       const nextSessionsHash = computeProjectionHash(data?.sessions);
@@ -1476,20 +1428,6 @@ class PostgresStore extends FileStore {
       this._cachedState = normalizeDbState(data);
       await this._persistSnapshotCache(this._cachedState);
     });
-    this._stateWriteQueue = nextWrite.catch((error) => {
-      console.error(
-        "[backend] postgres-store write failed",
-        JSON.stringify({
-          table: `${this._schema}.${this._table}`,
-          rowId: this._rowId,
-          message: String(error?.message || error || "unknown_error"),
-        }),
-      );
-      throw error;
-    });
-    this._writeQueue = this._stateWriteQueue;
-
-    return nextWrite;
   }
 
   async _loadSnapshot() {

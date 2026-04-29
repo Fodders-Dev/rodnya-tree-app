@@ -1129,6 +1129,7 @@ class _AuthScreenState extends State<AuthScreen> {
       child: GlassPanel(
         padding: EdgeInsets.all(compact ? 20 : 28),
         borderRadius: BorderRadius.circular(28),
+        clipBehavior: kIsWeb ? Clip.none : Clip.antiAlias,
         color: cardColor,
         borderColor: isDark
             ? theme.colorScheme.outlineVariant.withValues(alpha: 0.9)
@@ -1300,7 +1301,8 @@ class _AuthScreenState extends State<AuthScreen> {
               ),
               const SizedBox(height: 16),
               if (kIsWeb) ...[
-                Center(
+                Align(
+                  alignment: Alignment.centerRight,
                   child: buildGoogleSignInAction(
                     theme: theme,
                     isLoading: _isGoogleLoading,
