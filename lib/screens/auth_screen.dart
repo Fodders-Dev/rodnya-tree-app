@@ -256,7 +256,7 @@ class _AuthScreenState extends State<AuthScreen> {
       if (!started && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Не удалось открыть Telegram login flow'),
+            content: Text('Не удалось открыть вход через Telegram.'),
           ),
         );
       }
@@ -295,7 +295,7 @@ class _AuthScreenState extends State<AuthScreen> {
       if (!started && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Не удалось открыть VK ID login flow'),
+            content: Text('Не удалось открыть вход через VK ID.'),
           ),
         );
       }
@@ -603,7 +603,7 @@ class _AuthScreenState extends State<AuthScreen> {
       if (!started && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Не удалось открыть MAX login flow'),
+            content: Text('Не удалось открыть вход через MAX.'),
           ),
         );
       }
