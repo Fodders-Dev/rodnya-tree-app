@@ -11,6 +11,7 @@ import '../models/user_profile.dart';
 import 'family_tree_node_card.dart';
 
 part 'interactive_family_tree_layout_models.dart';
+part 'interactive_family_tree_sections.dart';
 
 class InteractiveFamilyTree extends StatefulWidget {
   final List<Map<String, dynamic>>
@@ -243,103 +244,11 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
     final stackWidth = treeSize.width;
     final stackHeight = treeSize.height;
     final interactionBoundary = max(stackWidth, stackHeight) + 160;
-
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: Theme.of(context).dividerColor),
-      ),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final viewportSize = Size(
-            constraints.maxWidth,
-            constraints.maxHeight,
-          );
-          if (_viewportSize != viewportSize) {
-            _viewportSize = viewportSize;
-            _hasAppliedViewportFit = false;
-            _scheduleViewportFit();
-          }
-
-          return Stack(
-            clipBehavior: Clip.none,
-            children: [
-              CallbackShortcuts(
-                bindings: <ShortcutActivator, VoidCallback>{
-                  const SingleActivator(LogicalKeyboardKey.equal): () =>
-                      _zoomBy(1.2),
-                  const SingleActivator(LogicalKeyboardKey.numpadAdd): () =>
-                      _zoomBy(1.2),
-                  const SingleActivator(LogicalKeyboardKey.minus): () =>
-                      _zoomBy(1 / 1.2),
-                  const SingleActivator(LogicalKeyboardKey.numpadSubtract):
-                      () => _zoomBy(1 / 1.2),
-                  const SingleActivator(LogicalKeyboardKey.digit0): () =>
-                      _fitTreeToViewport(),
-                },
-                child: Focus(
-                  autofocus: true,
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.translucent,
-                    onDoubleTap: _fitTreeToViewport,
-                    child: InteractiveViewer(
-                      transformationController: _transformationController,
-                      constrained: false,
-                      clipBehavior: Clip.none,
-                      boundaryMargin: EdgeInsets.all(interactionBoundary),
-                      panAxis: PanAxis.free,
-                      panEnabled: _draggingPersonId == null,
-                      scaleEnabled: true,
-                      trackpadScrollCausesScale: true,
-                      minScale: 0.08,
-                      maxScale: 3.5,
-                      child: SizedBox(
-                        width: stackWidth,
-                        height: stackHeight,
-                        child: Stack(
-                          clipBehavior: Clip.none,
-                          children: [
-                            if (widget.showGenerationGuides)
-                              ..._buildGenerationGuideWidgets(
-                                stackWidth: stackWidth,
-                              ),
-                            CustomPaint(
-                              size: Size(stackWidth, stackHeight),
-                              painter: FamilyTreePainter(
-                                nodePositions,
-                                connections,
-                                graphSnapshot: widget.graphSnapshot,
-                                relations: widget.relations,
-                              ),
-                            ),
-                            ..._buildPersonWidgets(),
-                            if (widget.isEditMode)
-                              _buildInlineEditPanel(
-                                stackWidth: stackWidth,
-                                stackHeight: stackHeight,
-                              ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-              Positioned(
-                top: 12,
-                left: 12,
-                child: _buildViewportStatusBar(),
-              ),
-              Positioned(
-                right: 12,
-                bottom: 12,
-                child: _buildViewportControlDock(),
-              ),
-            ],
-          );
-        },
-      ),
+    return _buildInteractiveTreeSurface(
+      context: context,
+      stackWidth: stackWidth,
+      stackHeight: stackHeight,
+      interactionBoundary: interactionBoundary,
     );
   }
 
@@ -1543,6 +1452,7 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
       );
 
       return Positioned(
+        key: ValueKey<String>('tree-node-position-$personId'),
         left: topLeftX,
         top: topLeftY,
         width: InteractiveFamilyTree.nodeWidth,
