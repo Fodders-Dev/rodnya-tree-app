@@ -1324,7 +1324,10 @@ class _ChatsListScreenState extends State<ChatsListScreen>
       itemCount: totalCount,
       itemBuilder: (context, index) {
         if (showArchiveSummary && index == 0) {
-          return _buildArchiveSummaryCard(theme);
+          return KeyedSubtree(
+            key: const ValueKey<String>('chats-archive-summary'),
+            child: _buildArchiveSummaryCard(theme),
+          );
         }
 
         final chatIndex = index - (showArchiveSummary ? 1 : 0);
@@ -1336,6 +1339,7 @@ class _ChatsListScreenState extends State<ChatsListScreen>
           final relativeIndex = chatIndex - filteredChats.length;
           if (relativeIndex == 0) {
             return Padding(
+              key: const ValueKey<String>('chats-relative-suggestions-header'),
               padding: const EdgeInsets.fromLTRB(8, 14, 8, 8),
               child: Text(
                 context.read<TreeProvider>().selectedTreeKind ==
@@ -1494,6 +1498,7 @@ class _ChatsListScreenState extends State<ChatsListScreen>
   ) {
     final isOpening = _openingPrivateChatUserId == participant.userId;
     return Padding(
+      key: ValueKey<String>('relative-suggestion-${participant.userId}'),
       padding: const EdgeInsets.fromLTRB(4, 4, 4, 4),
       child: InkWell(
         borderRadius: BorderRadius.circular(22),
@@ -1654,6 +1659,7 @@ class _ChatsListScreenState extends State<ChatsListScreen>
     ];
 
     return Padding(
+      key: ValueKey<String>('chat-tile-${chat.chatId}'),
       padding: const EdgeInsets.fromLTRB(4, 4, 4, 4),
       child: InkWell(
         onTap: () {
