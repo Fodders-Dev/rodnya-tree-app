@@ -12,6 +12,7 @@ const SESSION_STORAGE_KEY = "custom_api_session_v1";
 const LEGACY_SHARED_PREFERENCES_PREFIX = "flutter.";
 const TRANSIENT_FETCH_RETRY_LIMIT = 3;
 const TRANSIENT_FETCH_RETRY_DELAY_MS = 1_000;
+const TRANSIENT_HTTP_STATUS_CODES = new Set([408, 429, 502, 503, 504]);
 
 function parseArgs(argv) {
   const options = {
@@ -253,16 +254,62 @@ function isTransientFetchError(error) {
   );
 }
 
+function isTransientHttpStatus(status) {
+  return TRANSIENT_HTTP_STATUS_CODES.has(Number(status));
+}
+
+function smokeFetchRetryLabel(input, init) {
+  const method = String(init?.method || "GET").toUpperCase();
+  let target = String(input || "");
+  try {
+    const parsed = new URL(target);
+    target = `${parsed.origin}${parsed.pathname}`;
+  } catch (_) {
+    target = target.split("?")[0] || "request";
+  }
+  return `${method} ${target}`;
+}
+
+async function drainRetryResponse(response) {
+  try {
+    if (typeof response?.arrayBuffer === "function") {
+      await response.arrayBuffer();
+      return;
+    }
+    if (typeof response?.text === "function") {
+      await response.text();
+    }
+  } catch (_) {
+    // Ignore cleanup failures before retrying the smoke request.
+  }
+}
+
 async function smokeFetch(input, init, {retries = TRANSIENT_FETCH_RETRY_LIMIT} = {}) {
   let lastError = null;
+  const retryLabel = smokeFetchRetryLabel(input, init);
   for (let attempt = 1; attempt <= retries; attempt += 1) {
     try {
-      return await fetchWithHttpFallback(input, init, {retries: 1});
+      const response = await fetchWithHttpFallback(input, init, {retries: 1});
+      if (
+        response.ok ||
+        !isTransientHttpStatus(response.status) ||
+        attempt >= retries
+      ) {
+        return response;
+      }
+      console.warn(
+        `[prod-route-smoke] transient HTTP ${response.status} from ${retryLabel}; retrying (${attempt}/${retries})`,
+      );
+      await drainRetryResponse(response);
+      await delay(TRANSIENT_FETCH_RETRY_DELAY_MS * attempt);
     } catch (error) {
       lastError = error;
       if (attempt >= retries || !isTransientFetchError(error)) {
         throw error;
       }
+      console.warn(
+        `[prod-route-smoke] transient fetch error from ${retryLabel}; retrying (${attempt}/${retries})`,
+      );
       await delay(TRANSIENT_FETCH_RETRY_DELAY_MS * attempt);
     }
   }
