@@ -2,6 +2,14 @@ name: Deploy Rodnya Backend
 
 on:
   workflow_dispatch:
+  push:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/backend-deploy.yml"
+      - "backend/**"
+      - "deploy/backend/**"
+      - "tool/backend_ready_alert.mjs"
+      - "tool/backend_runtime_watch.mjs"
 
 jobs:
   deploy:
@@ -17,22 +25,27 @@ jobs:
           node-version: 24
 
       - name: Install backend dependencies
-        run: npm --prefix backend ci
+        working-directory: backend
+        run: npm ci
 
       - name: Run backend tests
         run: |
-          node --test backend/test/config-env.test.js backend/test/postgres-store.test.js
-          node --test backend/test/api.test.js
+          node --test \
+            backend/test/media-storage.test.js \
+            backend/test/app-media-routes.test.js \
+            backend/test/api.test.js \
+            backend/test/postgres-store.test.js \
+            backend/test/chat-utils.test.js
 
       - name: Create backend release archive
         run: |
-          cd backend
           tar \
             --exclude=node_modules \
             --exclude=data \
             --exclude=test \
             --exclude=.gitignore \
-            -czf ../rodnya-backend.tgz .
+            -czf rodnya-backend.tgz \
+            -C backend .
 
       - name: Setup SSH key
         run: |
@@ -41,7 +54,7 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -H "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts
 
-      - name: Upload backend archive
+      - name: Upload backend release archive
         env:
           REMOTE_ARCHIVE: /tmp/rodnya-backend-${{ github.sha }}.tgz
         run: |
@@ -51,31 +64,35 @@ jobs:
       - name: Activate backend release on server
         env:
           REMOTE_ARCHIVE: /tmp/rodnya-backend-${{ github.sha }}.tgz
+          BACKEND_TARGET_DIR: /opt/rodnya/backend
+          BACKEND_SERVICE_NAME: rodnya-backend.service
         run: |
           DEPLOY_LABEL="deploy ${GITHUB_SHA::7} / github-actions-backend / $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
           ssh -i ~/.ssh/id_ed25519 "${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_HOST }}" \
-            bash -s -- "${REMOTE_ARCHIVE}" "/opt/rodnya/backend" "rodnya-backend.service" "${DEPLOY_LABEL}" <<'EOF'
+            bash -s -- "${REMOTE_ARCHIVE}" "${BACKEND_TARGET_DIR}" "${BACKEND_SERVICE_NAME}" "${DEPLOY_LABEL}" <<'EOF'
           set -euo pipefail
           archive="$1"
           target="$2"
           service="$3"
           label="$4"
           if [ "$(id -u)" -eq 0 ]; then
-            BUILD_LABEL="$label" /usr/local/bin/rodnya-activate-backend-release "$archive" "$target" "$service"
+            /usr/local/bin/rodnya-activate-backend-release "$archive" "$target" "$service" "$label"
           else
-            BUILD_LABEL="$label" sudo -n /usr/local/bin/rodnya-activate-backend-release "$archive" "$target" "$service"
+            sudo -n /usr/local/bin/rodnya-activate-backend-release "$archive" "$target" "$service" "$label"
           fi
           rm -f "$archive"
           EOF
 
-      - name: Ready check
-        run: curl -fsS https://api.rodnya-tree.ru/ready
+      - name: Backend readiness check
+        env:
+          RODNYA_READY_ALERT_WEBHOOK_URL: ${{ secrets.RODNYA_READY_ALERT_WEBHOOK_URL }}
+        run: node tool/backend_ready_alert.mjs --url https://api.rodnya-tree.ru/ready --fail-on-warnings
 
-      - name: Runtime watch
+      - name: Backend runtime watch
         env:
           RODNYA_RUNTIME_API_URL: https://api.rodnya-tree.ru
           RODNYA_RUNTIME_EMAIL: ${{ secrets.RODNYA_RUNTIME_EMAIL }}
           RODNYA_RUNTIME_PASSWORD: ${{ secrets.RODNYA_RUNTIME_PASSWORD }}
           RODNYA_RUNTIME_ALERT_WEBHOOK_URL: ${{ secrets.RODNYA_RUNTIME_ALERT_WEBHOOK_URL }}
           RODNYA_READY_ALERT_WEBHOOK_URL: ${{ secrets.RODNYA_READY_ALERT_WEBHOOK_URL }}
-        run: node tool/backend_runtime_watch.mjs
+        run: node tool/backend_runtime_watch.mjs --fail-on-warnings
