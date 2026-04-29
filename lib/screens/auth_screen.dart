@@ -1300,6 +1300,7 @@ class _AuthScreenState extends State<AuthScreen> {
               ),
               const SizedBox(height: 16),
               Wrap(
+                alignment: WrapAlignment.center,
                 spacing: 10,
                 runSpacing: 10,
                 children: [

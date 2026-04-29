@@ -27,7 +27,7 @@ Widget buildGoogleSignInAction({
 
   if (useNativeWebButton) {
     return SizedBox(
-      width: 126,
+      width: 242,
       height: 40,
       child: google_web.renderButton(
         configuration: google_web.GSIButtonConfiguration(
@@ -37,7 +37,7 @@ Widget buildGoogleSignInAction({
           text: google_web.GSIButtonText.signinWith,
           shape: google_web.GSIButtonShape.pill,
           logoAlignment: google_web.GSIButtonLogoAlignment.left,
-          minimumWidth: 126,
+          minimumWidth: 242,
           locale: 'ru',
         ),
       ),
