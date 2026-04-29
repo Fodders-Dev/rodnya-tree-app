@@ -25,10 +25,12 @@ const {createLiveKitService} = require("./livekit-service");
 const {buildBranchVisiblePersonIds} = require("./store");
 const {createOperationalStatus} = require("./operational-status");
 const {registerAdminRoutes} = require("./routes/admin-routes");
+const {registerAuthSessionRoutes} = require("./routes/auth-session-routes");
 const {
   registerAuthenticatedMediaRoutes,
   registerPublicMediaRoutes,
 } = require("./routes/media-routes");
+const {registerProfileRoutes} = require("./routes/profile-routes");
 
 const DEFAULT_CALL_INVITE_TIMEOUT_MS = 30_000;
 const EMERGENCY_CHAT_PREVIEW_RESPONSE_CAP = 3;
@@ -1963,195 +1965,28 @@ function createApp({
     return mappedNotification;
   }
 
-  app.post("/v1/auth/register", async (req, res) => {
-    const {email, password, displayName} = req.body || {};
-
-    if (!email || !password || !displayName) {
-      res.status(400).json({message: "Нужны email, password и displayName"});
-      return;
-    }
-
-    try {
-      const user = await store.createUser({email, password, displayName});
-      const sessionTokens = await store.createSession(user.id);
-      res.status(201).json(authResponse(user, sessionTokens));
-    } catch (error) {
-      if (error.message === "EMAIL_ALREADY_EXISTS") {
-        res.status(409).json({message: "Этот email уже зарегистрирован"});
-        return;
-      }
-      res.status(500).json({message: "Не удалось зарегистрировать пользователя"});
-    }
+  registerAuthSessionRoutes(app, {
+    store,
+    mediaStorage: resolvedMediaStorage,
+    requireAuth,
+    authResponse,
+    sanitizeProfile,
+    computeProfileStatus,
   });
 
-  app.post("/v1/auth/login", async (req, res) => {
-    const {email, password} = req.body || {};
-    if (!email || !password) {
-      res.status(400).json({message: "Нужны email и password"});
-      return;
-    }
-
-    const user = await store.authenticate(email, password);
-    if (!user) {
-      res.status(401).json({message: "Неверный email или пароль"});
-      return;
-    }
-
-    const sessionTokens = await store.createSession(user.id);
-    res.json(authResponse(user, sessionTokens));
-  });
-
-  app.post("/v1/auth/refresh", async (req, res) => {
-    const {refreshToken} = req.body || {};
-    if (!refreshToken) {
-      res.status(400).json({message: "Нужен refreshToken"});
-      return;
-    }
-
-    const session = await store.findSessionByRefreshToken(refreshToken);
-    if (!session) {
-      res.status(401).json({message: "Сессия по refreshToken не найдена"});
-      return;
-    }
-
-    const user = await store.findUserById(session.userId);
-    if (!user) {
-      res.status(401).json({message: "Пользователь сессии не найден"});
-      return;
-    }
-
-    // Удаляем старую сессию (используем токен старой сессии, если он есть)
-    if (session.token) {
-      await store.deleteSession(session.token);
-    }
-
-    const nextSessionTokens = await store.createSession(user.id);
-    res.json(authResponse(user, nextSessionTokens));
-  });
-
-  app.get("/v1/auth/session", requireAuth, async (req, res) => {
-    const user = await store.findUserById(req.auth.user.id);
-    const profile = sanitizeProfile(user.profile);
-    res.json({
-      session: {
-        accessToken: req.auth.token,
-        refreshToken: req.auth.session.refreshToken,
-        userId: user.id,
-      },
-      user: {
-        id: user.id,
-        identityId: user.identityId || null,
-        email: user.email,
-        displayName: profile.displayName,
-        photoUrl: profile.photoUrl,
-        providerIds: user.providerIds || ["password"],
-      },
-      profileStatus: computeProfileStatus(user.profile),
-    });
-  });
-
-  app.get("/v1/profile/me/account-linking-status", requireAuth, async (req, res) => {
-    const user = await store.findUserById(req.auth.user.id);
-    const authIdentities = await store.listUserAuthIdentities(req.auth.user.id);
-    const profile = user?.profile || {};
-    const linkedProviderIds = user?.providerIds || ["password"];
-    const trustedChannels = buildTrustedChannels({
-      linkedProviderIds,
-      authIdentities,
-      profile,
-    });
-    const primaryTrustedChannelProvider = resolvePrimaryTrustedChannelProvider({
-      linkedProviderIds,
-      profile,
-    });
-    const trustedChannelSummary = buildTrustedChannelSummary(trustedChannels);
-
-    res.json({
-      linkedProviderIds,
-      identities: Array.isArray(authIdentities)
-        ? authIdentities.map(mapLinkedAuthIdentity)
-        : [],
-      trustedChannels,
-      primaryTrustedChannel: primaryTrustedChannelProvider
-        ? trustedChannels.find(
-            (entry) => entry.provider === primaryTrustedChannelProvider,
-          ) || null
-        : null,
-      verificationSummary: trustedChannelSummary,
-      legacyPhoneVerification: false,
-      mergeStrategy: {
-        order: [
-          "provider_identity",
-          "email",
-          "invitation_claim",
-          "manual_merge",
-        ],
-        summary:
-          "Сначала ищем точное совпадение identity провайдера, затем совпадение email. Для остального используем приглашения, claim link и ручную привязку.",
-      },
-      discoveryModes: [
-        "username",
-        "profile_code",
-        "email",
-        "invite_link",
-        "claim_link",
-        "qr",
-      ],
-    });
-  });
-
-  app.post("/v1/auth/logout", requireAuth, async (req, res) => {
-    await store.deleteSession(req.auth.token);
-    res.json({ok: true});
-  });
-
-  app.post("/v1/auth/password-reset", async (req, res) => {
-    const {email} = req.body || {};
-    res.status(202).json({
-      ok: true,
-      email: email ? String(email).trim().toLowerCase() : null,
-      message: "Password reset flow is stubbed in minimal backend",
-    });
-  });
-
-  app.delete("/v1/auth/account", requireAuth, async (req, res) => {
-    const ownedMediaUrls = typeof store.listOwnedMediaUrls === "function"
-      ? await store.listOwnedMediaUrls(req.auth.user.id)
-      : [];
-    await store.deleteUser(req.auth.user.id);
-
-    const mediaCleanupFailures = [];
-    for (const mediaUrl of ownedMediaUrls) {
-      try {
-        await resolvedMediaStorage.deleteObjectByUrl(mediaUrl);
-      } catch (error) {
-        if (
-          error?.message === "INVALID_MEDIA_PATH" ||
-          error?.message === "UNSUPPORTED_MEDIA_URL" ||
-          error instanceof TypeError
-        ) {
-          continue;
-        }
-
-        mediaCleanupFailures.push({
-          url: mediaUrl,
-          message: error?.message || "unknown_error",
-        });
-      }
-    }
-
-    if (mediaCleanupFailures.length > 0) {
-      console.error(
-        "[backend] account media cleanup warnings",
-        JSON.stringify({
-          requestId: req.requestId,
-          userId: req.auth.user.id,
-          failures: mediaCleanupFailures,
-        }),
-      );
-    }
-
-    res.status(204).send();
+  registerProfileRoutes(app, {
+    store,
+    requireAuth,
+    requireOwnUser,
+    sanitizeProfile,
+    computeProfileStatus,
+    composeDisplayName,
+    mapProfileContribution,
+    mapProfileNote,
+    mapLinkedAuthIdentity,
+    buildTrustedChannels,
+    resolvePrimaryTrustedChannelProvider,
+    buildTrustedChannelSummary,
   });
 
   app.post("/v1/auth/google", async (req, res) => {
@@ -3040,233 +2875,6 @@ function createApp({
       throw error;
     }
   });
-
-  app.get("/v1/profile/me/bootstrap", requireAuth, async (req, res) => {
-    res.json({
-      profile: sanitizeProfile(req.auth.user.profile),
-      profileStatus: computeProfileStatus(req.auth.user.profile),
-    });
-  });
-
-  app.put("/v1/profile/me/bootstrap", requireAuth, async (req, res) => {
-    const updatedUser = await store.updateProfile(req.auth.user.id, (profile) => ({
-      ...profile,
-      ...req.body,
-      displayName: composeDisplayName({
-        ...profile,
-        ...req.body,
-        displayName:
-          req.body.displayName !== undefined
-            ? req.body.displayName
-            : profile.displayName,
-      }),
-    }));
-
-    res.json({
-      profile: sanitizeProfile(updatedUser.profile),
-      profileStatus: computeProfileStatus(updatedUser.profile),
-    });
-  });
-
-  app.patch("/v1/profile/me", requireAuth, async (req, res) => {
-    const updatedUser = await store.updateProfile(req.auth.user.id, (profile) => ({
-      ...profile,
-      ...req.body,
-    }));
-    const sanitizedProfile = sanitizeProfile(updatedUser.profile);
-
-    // When the user updates their profile photo, propagate it to all of their
-    // linked tree-person cards so the same photo appears in the tree, in chat
-    // avatars, and everywhere else we display the person's image.
-    const newPhotoUrl = sanitizedProfile.photoUrl;
-    if (newPhotoUrl && req.body?.photoUrl) {
-      await store.syncUserPhotoToTreePersons(req.auth.user.id, newPhotoUrl).catch(
-        (err) => console.warn("[profile] could not sync photo to tree persons:", err),
-      );
-    }
-
-    res.json({
-      user: {
-        id: updatedUser.id,
-        identityId: updatedUser.identityId || null,
-        email: updatedUser.email,
-        displayName: sanitizedProfile.displayName,
-        photoUrl: sanitizedProfile.photoUrl,
-      },
-      profileStatus: computeProfileStatus(updatedUser.profile),
-    });
-  });
-
-  app.get("/v1/profile/me/contributions", requireAuth, async (req, res) => {
-    const status = String(req.query.status || "").trim() || null;
-    const contributions = await store.listProfileContributions(
-      req.auth.user.id,
-      {status},
-    );
-    const authorIds = Array.from(
-      new Set(
-        contributions
-          .map((entry) => String(entry.authorUserId || "").trim())
-          .filter(Boolean),
-      ),
-    );
-    const authors = new Map();
-    await Promise.all(
-      authorIds.map(async (authorId) => {
-        const user = await store.findUserById(authorId);
-        if (user) {
-          authors.set(authorId, user);
-        }
-      }),
-    );
-
-    res.json({
-      contributions: contributions.map((entry) => {
-        const author = authors.get(entry.authorUserId);
-        return mapProfileContribution({
-          ...entry,
-          authorDisplayName:
-            author?.profile?.displayName || author?.email || "Пользователь",
-          authorPhotoUrl: author?.profile?.photoUrl || null,
-        });
-      }),
-    });
-  });
-
-  app.post(
-    "/v1/profile/me/contributions/:contributionId/accept",
-    requireAuth,
-    async (req, res) => {
-      const result = await store.respondToProfileContribution(
-        req.auth.user.id,
-        req.params.contributionId,
-        {accept: true},
-      );
-      if (!result) {
-        res.status(404).json({message: "Предложение не найдено"});
-        return;
-      }
-
-      res.json({
-        contribution: mapProfileContribution(result.contribution),
-        profile: sanitizeProfile(result.user?.profile || req.auth.user.profile),
-      });
-    },
-  );
-
-  app.post(
-    "/v1/profile/me/contributions/:contributionId/reject",
-    requireAuth,
-    async (req, res) => {
-      const result = await store.respondToProfileContribution(
-        req.auth.user.id,
-        req.params.contributionId,
-        {accept: false},
-      );
-      if (!result) {
-        res.status(404).json({message: "Предложение не найдено"});
-        return;
-      }
-
-      res.json({
-        contribution: mapProfileContribution(result.contribution),
-      });
-    },
-  );
-
-  app.get("/v1/users/:userId/profile-notes", requireAuth, async (req, res) => {
-    if (!requireOwnUser(req, res)) {
-      return;
-    }
-
-    const notes = await store.listProfileNotes(req.params.userId);
-    if (notes === null) {
-      res.status(404).json({message: "Пользователь не найден"});
-      return;
-    }
-
-    res.json({
-      notes: notes.map(mapProfileNote),
-    });
-  });
-
-  app.post("/v1/users/:userId/profile-notes", requireAuth, async (req, res) => {
-    if (!requireOwnUser(req, res)) {
-      return;
-    }
-
-    const {title, content} = req.body || {};
-    if (!String(title || "").trim() || !String(content || "").trim()) {
-      res.status(400).json({message: "Нужны title и content"});
-      return;
-    }
-
-    const note = await store.addProfileNote(req.params.userId, {
-      title,
-      content,
-    });
-    if (note === null) {
-      res.status(404).json({message: "Пользователь не найден"});
-      return;
-    }
-
-    res.status(201).json({note: mapProfileNote(note)});
-  });
-
-  app.patch(
-    "/v1/users/:userId/profile-notes/:noteId",
-    requireAuth,
-    async (req, res) => {
-      if (!requireOwnUser(req, res)) {
-        return;
-      }
-
-      const note = await store.updateProfileNote(
-        req.params.userId,
-        req.params.noteId,
-        {
-          title: req.body?.title,
-          content: req.body?.content,
-        },
-      );
-
-      if (note === null) {
-        res.status(404).json({message: "Пользователь не найден"});
-        return;
-      }
-      if (note === undefined) {
-        res.status(404).json({message: "Заметка не найдена"});
-        return;
-      }
-
-      res.json({note: mapProfileNote(note)});
-    },
-  );
-
-  app.delete(
-    "/v1/users/:userId/profile-notes/:noteId",
-    requireAuth,
-    async (req, res) => {
-      if (!requireOwnUser(req, res)) {
-        return;
-      }
-
-      const deleted = await store.deleteProfileNote(
-        req.params.userId,
-        req.params.noteId,
-      );
-      if (deleted === null) {
-        res.status(404).json({message: "Пользователь не найден"});
-        return;
-      }
-      if (deleted === false) {
-        res.status(404).json({message: "Заметка не найдена"});
-        return;
-      }
-
-      res.status(204).send();
-    },
-  );
 
   registerAuthenticatedMediaRoutes(app, {
     mediaStorage: resolvedMediaStorage,
