@@ -6,9 +6,12 @@ import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
+import '../backend/interfaces/circle_service_interface.dart';
 import '../backend/interfaces/story_service_interface.dart';
+import '../models/circle.dart';
 import '../models/story.dart';
 import '../providers/tree_provider.dart';
+import '../widgets/audience_picker.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/story_visuals.dart';
 
@@ -21,6 +24,10 @@ class CreateStoryScreen extends StatefulWidget {
 
 class _CreateStoryScreenState extends State<CreateStoryScreen> {
   final StoryServiceInterface _storyService = GetIt.I<StoryServiceInterface>();
+  final CircleServiceInterface? _circleService =
+      GetIt.I.isRegistered<CircleServiceInterface>()
+          ? GetIt.I<CircleServiceInterface>()
+          : null;
   final ImagePicker _picker = ImagePicker();
   final TextEditingController _textController = TextEditingController();
 
@@ -28,9 +35,27 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
   XFile? _selectedMedia;
   String? _currentTreeId;
   String? _currentTreeName;
+  String? _selectedCircleId;
+  List<FamilyCircle> _audienceCircles = <FamilyCircle>[];
   bool _isSubmitting = false;
+  bool _isLoadingCircles = false;
+  bool _circlesUnavailable = false;
 
   bool get _needsMedia => _storyType != StoryType.text;
+  String get _selectedAudienceLabel => _selectedCircle?.name ?? 'Только свои';
+  FamilyCircle? get _selectedCircle {
+    final selectedId = _selectedCircleId;
+    if (selectedId == null) {
+      return null;
+    }
+    for (final circle in _audienceCircles) {
+      if (circle.id == selectedId) {
+        return circle;
+      }
+    }
+    return null;
+  }
+
   StoryVisualPalette get _palette => storyPaletteForSeed(
         '${_currentTreeId ?? 'story'}:${_storyType.name}:${_textController.text.trim()}',
       );
@@ -45,6 +70,7 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
     _currentTreeId = treeProvider.selectedTreeId;
     _currentTreeName = treeProvider.selectedTreeName;
     _textController.addListener(_handleDraftChanged);
+    _loadAudienceCircles();
   }
 
   @override
@@ -125,6 +151,7 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
         type: _storyType,
         text: text.isEmpty ? null : text,
         media: _selectedMedia,
+        circleId: _selectedCircleId,
       );
       if (!mounted) {
         return;
@@ -161,6 +188,57 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
         }
       }
     });
+  }
+
+  Future<void> _loadAudienceCircles() async {
+    final treeId = _currentTreeId;
+    final circleService = _circleService;
+    if (treeId == null || circleService == null) {
+      return;
+    }
+
+    setState(() {
+      _isLoadingCircles = true;
+    });
+
+    try {
+      final circles = await circleService.getCircles(treeId);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _audienceCircles = circles;
+        _selectedCircleId = _resolveSelectedCircleId(circles);
+        _circlesUnavailable = false;
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _circlesUnavailable = true;
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingCircles = false;
+        });
+      }
+    }
+  }
+
+  String? _resolveSelectedCircleId(List<FamilyCircle> circles) {
+    final selectedId = _selectedCircleId;
+    if (selectedId != null &&
+        circles.any((circle) => circle.id == selectedId)) {
+      return selectedId;
+    }
+    for (final circle in circles) {
+      if (circle.isAllTree) {
+        return circle.id;
+      }
+    }
+    return circles.isEmpty ? null : circles.first.id;
   }
 
   void _showError(String message) {
@@ -223,6 +301,10 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
                               _buildMetaPill(
                                 icon: Icons.schedule_outlined,
                                 label: '24 часа',
+                              ),
+                              _buildMetaPill(
+                                icon: Icons.group_work_outlined,
+                                label: _selectedAudienceLabel,
                               ),
                               _buildMetaPill(
                                 icon: _storyType == StoryType.text
@@ -301,7 +383,7 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
                       ),
                       StoryMediaBadge(
                         icon: Icons.remove_red_eye_outlined,
-                        label: 'Только свои',
+                        label: _selectedAudienceLabel,
                       ),
                     ],
                   ),
@@ -431,6 +513,33 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        GlassPanel(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Аудитория',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 12),
+              AudiencePicker(
+                circles: _audienceCircles,
+                selectedCircleId: _selectedCircleId,
+                onChanged: (circleId) {
+                  setState(() {
+                    _selectedCircleId = circleId;
+                  });
+                },
+                isLoading: _isLoadingCircles,
+                isUnavailable: _circlesUnavailable,
+                onRetry: _loadAudienceCircles,
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
         GlassPanel(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,

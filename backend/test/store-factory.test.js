@@ -20,6 +20,31 @@ test("createStore creates file-backed store by default", async () => {
   await assert.doesNotReject(fs.access(dataPath));
 });
 
+test("file-backed store backfills legacy person identities on initialize", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "rodnya-store-"));
+  const dataPath = path.join(tempDir, "dev-db.json");
+  await fs.writeFile(
+    dataPath,
+    JSON.stringify({
+      users: [],
+      trees: [{id: "tree-1", creatorId: "user-1"}],
+      persons: [{id: "person-1", treeId: "tree-1", identityId: null}],
+    }),
+    "utf8",
+  );
+
+  const store = await createStore({
+    dataPath,
+    storageBackend: "file",
+  });
+  const snapshot = await store._read();
+
+  assert.ok(snapshot.persons[0].identityId);
+  assert.equal(snapshot.personIdentities.length, 1);
+  assert.equal(snapshot.personIdentities[0].id, snapshot.persons[0].identityId);
+  assert.deepEqual(snapshot.personIdentities[0].personIds, ["person-1"]);
+});
+
 test("createStore creates postgres-backed store when pg config is provided", async () => {
   const db = newDb();
   const {Pool} = db.adapters.createPg();

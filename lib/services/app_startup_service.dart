@@ -13,7 +13,9 @@ import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/app_startup_service_interface.dart';
 import '../backend/interfaces/call_service_interface.dart';
 import '../backend/interfaces/chat_service_interface.dart';
+import '../backend/interfaces/circle_service_interface.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
+import '../backend/interfaces/identity_service_interface.dart';
 import '../backend/interfaces/invitation_link_service_interface.dart';
 import '../backend/interfaces/notification_service_interface.dart';
 import '../backend/interfaces/post_service_interface.dart';
@@ -31,10 +33,17 @@ import '../providers/tree_provider.dart';
 import '../startup/app_startup_pipeline.dart';
 import '../startup/app_warmup_coordinator.dart';
 import 'app_status_service.dart';
+import 'audio_route_service.dart';
+import 'chat_message_cache.dart';
+import 'chat_draft_store.dart';
+import 'chat_pin_store.dart';
+import 'chat_send_queue.dart';
 import 'custom_api_auth_service.dart';
 import 'custom_api_call_service.dart';
 import 'custom_api_chat_service.dart';
+import 'custom_api_circle_service.dart';
 import 'custom_api_family_tree_service.dart';
+import 'custom_api_identity_service.dart';
 import 'custom_api_notification_service.dart';
 import 'custom_api_post_service.dart';
 import 'custom_api_profile_service.dart';
@@ -48,6 +57,7 @@ import 'local_storage_service.dart';
 import 'phone_contacts_service.dart';
 import 'rustore_service.dart';
 import 'call_coordinator_service.dart';
+import 'call_preferences.dart';
 
 class AppStartupService implements AppStartupServiceInterface {
   AppStartupService({GetIt? getIt}) : _getIt = getIt ?? GetIt.I;
@@ -139,15 +149,34 @@ class AppStartupService implements AppStartupServiceInterface {
       customApiTreeService,
     );
 
+    final chatMessageCache = HiveChatMessageCache();
+    _registerOrReplaceSingleton<ChatMessageCache>(chatMessageCache);
+
     final customApiChatService = CustomApiChatService(
       authService: customApiAuthService,
       runtimeConfig: runtimeConfig,
       realtimeService: customApiRealtimeService,
       storageService: customApiStorageService,
+      messageCache: chatMessageCache,
       appStatusService: appStatusService,
     );
     _registerOrReplaceSingleton<CustomApiChatService>(customApiChatService);
     _registerOrReplaceSingleton<ChatServiceInterface>(customApiChatService);
+    _registerOrReplaceSingleton<ChatSendQueue>(
+      ChatSendQueue(chatService: customApiChatService),
+    );
+    _registerOrReplaceSingleton<ChatDraftStore>(
+      HybridChatDraftStore(
+        localStore: const SharedPreferencesChatDraftStore(),
+        remoteClient: customApiChatService,
+      ),
+    );
+    _registerOrReplaceSingleton<ChatPinStore>(
+      HybridChatPinStore(
+        localStore: const SharedPreferencesChatPinStore(),
+        remoteClient: customApiChatService,
+      ),
+    );
 
     _registerOrReplaceLazySingleton<CustomApiCallService>(
       () => CustomApiCallService(
@@ -159,11 +188,19 @@ class AppStartupService implements AppStartupServiceInterface {
     _registerOrReplaceLazySingleton<CallServiceInterface>(
       () => _getIt<CustomApiCallService>(),
     );
+    _registerOrReplaceLazySingleton<AudioRouteService>(
+      AudioRouteService.new,
+    );
+    _registerOrReplaceLazySingleton<CallPreferences>(
+      HiveCallPreferences.new,
+    );
     _registerOrReplaceLazySingleton<CallCoordinatorService>(
       () => CallCoordinatorService(
         callService: _getIt<CallServiceInterface>(),
         realtimeService: customApiRealtimeService,
         pushMessages: rustoreService.pushMessages,
+        audioRouteService: _getIt<AudioRouteService>(),
+        callPreferences: _getIt<CallPreferences>(),
       ),
     );
 
@@ -188,6 +225,26 @@ class AppStartupService implements AppStartupServiceInterface {
     );
     _registerOrReplaceSingleton<CustomApiPostService>(customApiPostService);
     _registerOrReplaceSingleton<PostServiceInterface>(customApiPostService);
+
+    final customApiCircleService = CustomApiCircleService(
+      authService: customApiAuthService,
+      runtimeConfig: runtimeConfig,
+    );
+    _registerOrReplaceSingleton<CustomApiCircleService>(customApiCircleService);
+    _registerOrReplaceSingleton<CircleServiceInterface>(
+      customApiCircleService,
+    );
+
+    final customApiIdentityService = CustomApiIdentityService(
+      authService: customApiAuthService,
+      runtimeConfig: runtimeConfig,
+    );
+    _registerOrReplaceSingleton<CustomApiIdentityService>(
+      customApiIdentityService,
+    );
+    _registerOrReplaceSingleton<IdentityServiceInterface>(
+      customApiIdentityService,
+    );
 
     final customApiStoryService = CustomApiStoryService(
       authService: customApiAuthService,

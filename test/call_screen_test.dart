@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -9,7 +10,9 @@ import 'package:rodnya/models/call_invite.dart';
 import 'package:rodnya/models/call_media_mode.dart';
 import 'package:rodnya/models/call_state.dart';
 import 'package:rodnya/screens/call_screen.dart';
+import 'package:rodnya/services/audio_route_service.dart';
 import 'package:rodnya/services/call_coordinator_service.dart';
+import 'package:rodnya/services/call_pip_service.dart';
 
 void main() {
   testWidgets(
@@ -41,6 +44,211 @@ void main() {
       expect(find.byTooltip('Завершить звонок'), findsOneWidget);
     },
   );
+
+  testWidgets('CallScreen falls back to initial for non-network avatar URLs',
+      (tester) async {
+    final coordinator = _FakeCallCoordinator(
+      call: _buildCall(state: CallState.ringing),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CallScreen(
+          initialCall: coordinator.currentCall!,
+          title: 'Нина',
+          coordinator: coordinator,
+          photoUrl: 'avatar.jpg',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Нина'), findsOneWidget);
+    expect(find.text('Н'), findsOneWidget);
+  });
+
+  testWidgets('CallScreen opens audio route picker for active calls',
+      (tester) async {
+    final selectedRoutes = <String>[];
+    final audioRoutes = AudioRouteService(
+      initialRoutes: const <AudioRouteOption>[
+        AudioRouteOption(
+          id: 'speaker',
+          label: 'Динамик',
+          type: AudioRouteType.speaker,
+        ),
+        AudioRouteOption(
+          id: 'earpiece',
+          label: 'Наушник',
+          type: AudioRouteType.earpiece,
+        ),
+      ],
+      initialSelectedRouteId: 'speaker',
+      enumerateAudioOutputs: () async => const <MediaDevice>[],
+      selectAudioRoute: (option, _) async {
+        selectedRoutes.add(option.id);
+      },
+      deviceChanges: const Stream<List<MediaDevice>>.empty(),
+    );
+    final room = _FakeRoom();
+    addTearDown(() async {
+      audioRoutes.dispose();
+    });
+    final coordinator = _FakeCallCoordinator(
+      call: _buildCall(state: CallState.active),
+      roomValue: room,
+      audioRouteServiceValue: audioRoutes,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CallScreen(
+          initialCall: coordinator.currentCall!,
+          title: 'Web QA',
+          coordinator: coordinator,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byTooltip('Аудиовыход: Динамик'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Аудиовыход: Динамик'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Аудиовыход'), findsOneWidget);
+    expect(find.text('Динамик'), findsOneWidget);
+    expect(find.text('Наушник'), findsOneWidget);
+
+    await tester.tap(find.text('Наушник'));
+    await tester.pumpAndSettle();
+
+    expect(selectedRoutes, ['earpiece']);
+    expect(audioRoutes.selectedRouteId, 'earpiece');
+  });
+
+  testWidgets('CallScreen exposes camera switch for active video calls',
+      (tester) async {
+    final coordinator = _FakeCallCoordinator(
+      call: _buildCall(state: CallState.active, mediaMode: CallMediaMode.video),
+      roomValue: _FakeRoom(),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CallScreen(
+          initialCall: coordinator.currentCall!,
+          title: 'Web QA',
+          coordinator: coordinator,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byTooltip('Переключить камеру'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Переключить камеру'));
+    await tester.pumpAndSettle();
+
+    expect(coordinator.switchCameraCallCount, 1);
+    expect(coordinator.cameraPosition, CameraPosition.back);
+  });
+
+  testWidgets('CallScreen opens microphone and camera device picker',
+      (tester) async {
+    final coordinator = _FakeCallCoordinator(
+      call: _buildCall(state: CallState.active, mediaMode: CallMediaMode.video),
+      roomValue: _FakeRoom(),
+      microphoneDevicesValue: const <MediaDevice>[
+        MediaDevice('mic-usb', 'USB mic', 'audioinput', null),
+      ],
+      cameraDevicesValue: const <MediaDevice>[
+        MediaDevice('camera-front', 'Front Camera', 'videoinput', null),
+        MediaDevice('camera-back', 'Back Camera', 'videoinput', null),
+      ],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CallScreen(
+          initialCall: coordinator.currentCall!,
+          title: 'Web QA',
+          coordinator: coordinator,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Источники звука и видео'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Источники звука и видео'), findsOneWidget);
+    expect(find.text('USB mic'), findsOneWidget);
+    expect(find.text('Front Camera'), findsOneWidget);
+    expect(find.text('Back Camera'), findsOneWidget);
+
+    await tester.tap(find.text('USB mic'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Back Camera'));
+    await tester.pumpAndSettle();
+
+    expect(coordinator.selectedMicrophoneDeviceId, 'mic-usb');
+    expect(coordinator.selectedCameraDeviceId, 'camera-back');
+    expect(coordinator.selectedMicrophoneCallCount, 1);
+    expect(coordinator.selectedCameraCallCount, 1);
+  });
+
+  testWidgets('CallScreen shows connection quality for active calls',
+      (tester) async {
+    final coordinator = _FakeCallCoordinator(
+      call: _buildCall(state: CallState.active),
+      roomValue: _FakeRoom(),
+      connectionQualityValue: ConnectionQuality.good,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CallScreen(
+          initialCall: coordinator.currentCall!,
+          title: 'Web QA',
+          coordinator: coordinator,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Связь хорошая'), findsOneWidget);
+    expect(find.byTooltip('Связь хорошая'), findsWidgets);
+  });
+
+  testWidgets('CallScreen shows reconnect banner during room reconnect',
+      (tester) async {
+    final coordinator = _FakeCallCoordinator(
+      call: _buildCall(state: CallState.active),
+      roomValue: _FakeRoom(),
+      connectionQualityValue: ConnectionQuality.lost,
+      isReconnectingRoomValue: true,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CallScreen(
+          initialCall: coordinator.currentCall!,
+          title: 'Web QA',
+          coordinator: coordinator,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('Восстанавливаем соединение...'), findsOneWidget);
+    expect(find.text('Переподключение'), findsOneWidget);
+    expect(
+      find.text('Восстанавливаем звонок. Звук вернётся автоматически.'),
+      findsOneWidget,
+    );
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+  });
 
   testWidgets('CallScreen pops when coordinator clears the active call',
       (tester) async {
@@ -80,6 +288,46 @@ void main() {
     expect(find.byType(CallScreen), findsNothing);
     expect(find.text('open'), findsOneWidget);
   });
+
+  testWidgets('CallScreen requests Android PiP when minimizing active call',
+      (tester) async {
+    final coordinator = _FakeCallCoordinator(
+      call: _buildCall(state: CallState.active),
+    );
+    final pipService = _FakeCallPipService();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => TextButton(
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => CallScreen(
+                    initialCall: coordinator.currentCall!,
+                    title: 'Web QA',
+                    coordinator: coordinator,
+                    pipService: pipService,
+                  ),
+                ),
+              );
+            },
+            child: const Text('open'),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Свернуть звонок'));
+    await tester.pumpAndSettle();
+
+    expect(pipService.enterCalls, 1);
+    expect(find.byType(CallScreen), findsNothing);
+    expect(find.text('open'), findsOneWidget);
+  });
 }
 
 CallInvite _buildCall({
@@ -104,12 +352,61 @@ class _FakeCallCoordinator extends CallCoordinatorService {
     required CallInvite call,
     this.connectionErrorValue,
     this.hasMediaPermissionIssueValue = false,
+    Room? roomValue,
+    AudioRouteService? audioRouteServiceValue,
+    CameraPosition cameraPositionValue = CameraPosition.front,
+    List<MediaDevice> microphoneDevicesValue = const <MediaDevice>[],
+    List<MediaDevice> cameraDevicesValue = const <MediaDevice>[],
+    ConnectionQuality connectionQualityValue = ConnectionQuality.unknown,
+    bool isReconnectingRoomValue = false,
+    bool showReconnectRestoredBannerValue = false,
   })  : _currentCall = call,
+        _room = roomValue,
+        _cameraPosition = cameraPositionValue,
+        _microphoneDevices = microphoneDevicesValue,
+        _cameraDevices = cameraDevicesValue,
+        _connectionQuality = connectionQualityValue,
+        _isReconnectingRoom = isReconnectingRoomValue,
+        _showReconnectRestoredBanner = showReconnectRestoredBannerValue,
+        _selectedMicrophoneDeviceId = microphoneDevicesValue.isEmpty
+            ? null
+            : microphoneDevicesValue.first.deviceId,
+        _selectedCameraDeviceId = cameraDevicesValue.isEmpty
+            ? null
+            : cameraDevicesValue.first.deviceId,
+        _audioRouteService = audioRouteServiceValue ??
+            AudioRouteService(
+              initialRoutes: const <AudioRouteOption>[
+                AudioRouteOption(
+                  id: 'speaker',
+                  label: 'Динамик',
+                  type: AudioRouteType.speaker,
+                ),
+              ],
+              initialSelectedRouteId: 'speaker',
+              enumerateAudioOutputs: () async => const <MediaDevice>[],
+              selectAudioRoute: (_, __) async {},
+              deviceChanges: const Stream<List<MediaDevice>>.empty(),
+            ),
         super(callService: _FakeCallService());
 
   CallInvite? _currentCall;
+  final Room? _room;
+  final AudioRouteService _audioRouteService;
+  CameraPosition _cameraPosition;
+  final List<MediaDevice> _microphoneDevices;
+  final List<MediaDevice> _cameraDevices;
+  final ConnectionQuality _connectionQuality;
+  final bool _isReconnectingRoom;
+  final bool _showReconnectRestoredBanner;
+  String? _selectedMicrophoneDeviceId;
+  String? _selectedCameraDeviceId;
   final String? connectionErrorValue;
   final bool hasMediaPermissionIssueValue;
+  int switchCameraCallCount = 0;
+  int refreshInputDevicesCallCount = 0;
+  int selectedMicrophoneCallCount = 0;
+  int selectedCameraCallCount = 0;
 
   @override
   String? get currentUserId => 'user-1';
@@ -118,7 +415,19 @@ class _FakeCallCoordinator extends CallCoordinatorService {
   CallInvite? get currentCall => _currentCall;
 
   @override
-  Room? get room => null;
+  Room? get room => _room;
+
+  @override
+  AudioRouteService get audioRouteService => _audioRouteService;
+
+  @override
+  bool get isReconnectingRoom => _isReconnectingRoom;
+
+  @override
+  ConnectionQuality get displayedConnectionQuality => _connectionQuality;
+
+  @override
+  bool get showReconnectRestoredBanner => _showReconnectRestoredBanner;
 
   @override
   String? get connectionError => connectionErrorValue;
@@ -132,6 +441,63 @@ class _FakeCallCoordinator extends CallCoordinatorService {
   @override
   bool get cameraEnabled => true;
 
+  @override
+  bool get isSwitchingCamera => false;
+
+  @override
+  CameraPosition get cameraPosition => _cameraPosition;
+
+  @override
+  List<MediaDevice> get microphoneDevices => _microphoneDevices;
+
+  @override
+  List<MediaDevice> get cameraDevices => _cameraDevices;
+
+  @override
+  String? get selectedMicrophoneDeviceId => _selectedMicrophoneDeviceId;
+
+  @override
+  String? get selectedCameraDeviceId => _selectedCameraDeviceId;
+
+  @override
+  bool get isRefreshingInputDevices => false;
+
+  @override
+  bool get isSelectingMediaDevice => false;
+
+  @override
+  String? get devicePickerErrorMessage => null;
+
+  @override
+  Future<void> switchCamera() async {
+    switchCameraCallCount += 1;
+    _cameraPosition = _cameraPosition.switched();
+    notifyListeners();
+  }
+
+  @override
+  Future<void> refreshInputDevices() async {
+    refreshInputDevicesCallCount += 1;
+    notifyListeners();
+  }
+
+  @override
+  Future<void> selectMicrophoneDevice(MediaDevice device) async {
+    selectedMicrophoneCallCount += 1;
+    _selectedMicrophoneDeviceId = device.deviceId;
+    notifyListeners();
+  }
+
+  @override
+  Future<void> selectCameraDevice(MediaDevice device) async {
+    selectedCameraCallCount += 1;
+    _selectedCameraDeviceId = device.deviceId;
+    if (device.deviceId.contains('back')) {
+      _cameraPosition = CameraPosition.back;
+    }
+    notifyListeners();
+  }
+
   void clearCall() {
     _currentCall = null;
     notifyListeners();
@@ -142,6 +508,17 @@ class _FakeCallCoordinator extends CallCoordinatorService {
     _currentCall = call;
     notifyListeners();
   }
+}
+
+class _FakeRoom extends Fake implements Room {
+  @override
+  UnmodifiableMapView<String, RemoteParticipant> get remoteParticipants =>
+      UnmodifiableMapView<String, RemoteParticipant>(
+        const <String, RemoteParticipant>{},
+      );
+
+  @override
+  LocalParticipant? get localParticipant => null;
 }
 
 class _FakeCallService implements CallServiceInterface {
@@ -192,4 +569,17 @@ class _FakeCallService implements CallServiceInterface {
 
   @override
   Future<void> stopRealtimeBridge() async {}
+}
+
+class _FakeCallPipService implements CallPipService {
+  int enterCalls = 0;
+
+  @override
+  Future<bool> enterPictureInPicture({
+    int aspectRatioWidth = 16,
+    int aspectRatioHeight = 9,
+  }) async {
+    enterCalls += 1;
+    return true;
+  }
 }

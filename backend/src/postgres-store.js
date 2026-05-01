@@ -8,6 +8,7 @@ const {
   EMPTY_DB,
   buildPersonRecord,
   cloneUserWithAuthState,
+  createPersonIdentityRecord,
   describeMessagePreview,
   normalizeDbState,
   normalizeParticipantIds,
@@ -17,6 +18,7 @@ const {
   SESSION_TOUCH_MIN_INTERVAL_MS,
   verifyPassword,
 } = require("./store");
+const {backfillPersonIdentities} = require("./migration-utils");
 
 const DEFAULT_POSTGRES_CONNECTION_TIMEOUT_MS = 5_000;
 const DEFAULT_POSTGRES_QUERY_TIMEOUT_MS = 15_000;
@@ -277,7 +279,65 @@ class PostgresStore extends FileStore {
       CREATE INDEX IF NOT EXISTS ${quoteIdentifier(`${this._authSessionsTable}_user_idx`)}
         ON ${this._qualifiedAuthSessionsTableName} (user_id)
     `);
+    try {
+      await this._pool.query(`
+        CREATE INDEX IF NOT EXISTS ${quoteIdentifier(`${this._table}_messages_fts_idx`)}
+          ON ${this._qualifiedTableName}
+          USING GIN (to_tsvector('russian', COALESCE(data->>'messages', '')))
+      `);
+    } catch (error) {
+      const message = String(error?.message || "").toLowerCase();
+      if (
+        !message.includes("to_tsvector") &&
+        !message.includes("text search configuration")
+      ) {
+        throw error;
+      }
+      console.warn(
+        "[backend] postgres-store skipped message fts index",
+        JSON.stringify({
+          table: `${this._schema}.${this._table}`,
+          rowId: this._rowId,
+          message: error?.message || String(error),
+        }),
+      );
+    }
+    await this._backfillPersonIdentitiesInStateRow();
     await this._hydrateAuthProjectionTablesFromStateRow();
+  }
+
+  async _backfillPersonIdentitiesInStateRow() {
+    try {
+      const result = await this._pool.query(
+        `SELECT data FROM ${this._qualifiedTableName} WHERE id = $1`,
+        [this._rowId],
+      );
+      const rawData = result.rows[0]?.data ?? EMPTY_DB;
+      const normalized = normalizeDbState(rawData);
+      const migration = backfillPersonIdentities(normalized);
+      if (!migration.changed) {
+        this._cachedState = normalized;
+        return;
+      }
+
+      await this._pool.query(
+        `UPDATE ${this._qualifiedTableName}
+            SET data = $2::jsonb,
+                updated_at = NOW()
+          WHERE id = $1`,
+        [this._rowId, JSON.stringify(migration.snapshot)],
+      );
+      this._cachedState = normalizeDbState(migration.snapshot);
+    } catch (error) {
+      console.warn(
+        "[backend] postgres-store skipped person identity backfill",
+        JSON.stringify({
+          table: `${this._schema}.${this._table}`,
+          rowId: this._rowId,
+          message: error?.message || String(error),
+        }),
+      );
+    }
   }
 
   async _withProjectionClient(work) {
@@ -871,17 +931,23 @@ class PostgresStore extends FileStore {
       creatorId,
       personData,
       userId: null,
-      identityId: null,
     });
+    const identity = createPersonIdentityRecord({personIds: [person.id]});
+    person.identityId = identity.id;
 
     return this._enqueueWrite("_stateWriteQueue", async () => {
       await this.initialize();
       const result = await this._pool.query(
         `UPDATE ${this._qualifiedTableName}
             SET data = jsonb_set(
-                  data,
-                  '{persons}',
-                  COALESCE(data->'persons', '[]'::jsonb) || jsonb_build_array($2::jsonb),
+                  jsonb_set(
+                    data,
+                    '{persons}',
+                    COALESCE(data->'persons', '[]'::jsonb) || jsonb_build_array($2::jsonb),
+                    true
+                  ),
+                  '{personIdentities}',
+                  COALESCE(data->'personIdentities', '[]'::jsonb) || jsonb_build_array($4::jsonb),
                   true
                 ),
                 updated_at = NOW()
@@ -896,6 +962,7 @@ class PostgresStore extends FileStore {
           this._rowId,
           JSON.stringify(person),
           normalizedTreeId,
+          JSON.stringify(identity),
         ],
       );
       if (result.rowCount === 0) {
@@ -912,50 +979,7 @@ class PostgresStore extends FileStore {
       return null;
     }
 
-    return this._enqueueWrite("_stateWriteQueue", async () => {
-      await this.initialize();
-      const result = await this._pool.query(
-        `UPDATE ${this._qualifiedTableName}
-            SET data = jsonb_set(
-                  data,
-                  '{persons}',
-                  COALESCE(
-                    (
-                      SELECT jsonb_agg(person_entry)
-                        FROM jsonb_array_elements(COALESCE(data->'persons', '[]'::jsonb)) AS person_entry
-                       WHERE COALESCE(person_entry->>'id', '') <> $2
-                    ),
-                    '[]'::jsonb
-                  ),
-                  true
-                ),
-                updated_at = NOW()
-          WHERE id = $1
-            AND EXISTS (
-              SELECT 1
-                FROM jsonb_array_elements(COALESCE(data->'persons', '[]'::jsonb)) AS person_entry
-               WHERE COALESCE(person_entry->>'id', '') = $2
-                 AND COALESCE(person_entry->>'treeId', '') = $3
-                 AND COALESCE(person_entry->>'userId', '') = ''
-                 AND COALESCE(person_entry->>'identityId', '') = ''
-            )
-            AND NOT EXISTS (
-              SELECT 1
-                FROM jsonb_array_elements(COALESCE(data->'relations', '[]'::jsonb)) AS relation_entry
-               WHERE COALESCE(relation_entry->>'treeId', '') = $3
-                 AND (
-                   COALESCE(relation_entry->>'person1Id', '') = $2
-                   OR COALESCE(relation_entry->>'person2Id', '') = $2
-                 )
-            )
-          RETURNING updated_at`,
-        [this._rowId, normalizedPersonId, normalizedTreeId],
-      );
-      if (result.rowCount > 0) {
-        return true;
-      }
-      return super.deletePerson(normalizedTreeId, normalizedPersonId, actorId);
-    });
+    return super.deletePerson(normalizedTreeId, normalizedPersonId, actorId);
   }
 
   async _selectStoredTreeInvitationsForUser(userId) {
@@ -1105,6 +1129,14 @@ class PostgresStore extends FileStore {
     );
   }
 
+  _isProjectedMessageReadByUser(message, userId) {
+    const readBy = normalizeParticipantIds(message?.readBy);
+    if (readBy.length > 0) {
+      return readBy.includes(userId);
+    }
+    return message?.isRead === true;
+  }
+
   async listChatPreviews(userId) {
     const normalizedUserId = String(userId || "").trim();
     if (!normalizedUserId) {
@@ -1203,7 +1235,8 @@ class PostgresStore extends FileStore {
           lastMessageTime:
             lastMessage?.timestamp || chat?.updatedAt || chat?.createdAt || "",
           unreadCount: relevantMessages.filter((message) => {
-            return message?.senderId !== normalizedUserId && message?.isRead !== true;
+            return message?.senderId !== normalizedUserId &&
+              !this._isProjectedMessageReadByUser(message, normalizedUserId);
           }).length,
           lastMessageSenderId: lastMessage?.senderId || "",
         };
@@ -1264,7 +1297,20 @@ class PostgresStore extends FileStore {
                WHERE participant_id.value = $2
             )
             AND COALESCE(message_entry->>'senderId', '') <> $2
-            AND COALESCE(message_entry->>'isRead', 'false') <> 'true'
+            AND (
+              (
+                jsonb_array_length(COALESCE(message_entry->'readBy', '[]'::jsonb)) = 0
+                AND COALESCE(message_entry->>'isRead', 'false') <> 'true'
+              )
+              OR (
+                jsonb_array_length(COALESCE(message_entry->'readBy', '[]'::jsonb)) > 0
+                AND NOT EXISTS (
+                  SELECT 1
+                    FROM jsonb_array_elements_text(COALESCE(message_entry->'readBy', '[]'::jsonb)) AS read_by(value)
+                   WHERE read_by.value = $2
+                )
+              )
+            )
             AND (
               COALESCE(message_entry->>'expiresAt', '') = ''
               OR COALESCE(message_entry->>'expiresAt', '') > $3
@@ -1277,6 +1323,152 @@ class PostgresStore extends FileStore {
         throw error;
       }
       return super.countUnreadChatMessages(normalizedUserId);
+    }
+  }
+
+  async searchChatMessages({
+    userId,
+    query,
+    chatId = null,
+    limit = 50,
+  } = {}) {
+    const normalizedUserId = String(userId || "").trim();
+    const normalizedQuery = String(query || "").trim();
+    if (!normalizedUserId || !normalizedQuery) {
+      return [];
+    }
+
+    const normalizedLimit = Math.min(
+      Math.max(1, Number.parseInt(String(limit || "50"), 10) || 50),
+      100,
+    );
+    const normalizedChatId = String(chatId || "").trim();
+    const chatIdCandidates = new Set();
+    if (normalizedChatId) {
+      chatIdCandidates.add(normalizedChatId);
+      const directParticipants = parseDirectParticipantsFromChatId(normalizedChatId);
+      if (directParticipants.length === 2) {
+        chatIdCandidates.add(directParticipants.join("_"));
+      }
+    }
+
+    await this.initialize();
+    await this._awaitReadConsistency();
+    try {
+      const nowTimestamp = nowIso();
+      const result = await this._pool.query(
+        `WITH search_query AS (
+           SELECT plainto_tsquery('russian', $2) AS value
+         )
+         SELECT
+           message_entry AS message_data,
+           NULLIF(
+             regexp_replace(
+               ts_headline(
+                 'russian',
+                 search_text.value,
+                 search_query.value,
+                 'MaxWords=18, MinWords=6, ShortWord=3, MaxFragments=1'
+               ),
+               '<[^>]+>',
+               '',
+               'g'
+             ),
+             ''
+           ) AS snippet
+           FROM ${this._qualifiedTableName},
+                search_query,
+                LATERAL jsonb_array_elements(COALESCE(data->'messages', '[]'::jsonb)) AS message_entry
+                CROSS JOIN LATERAL (
+                  SELECT concat_ws(
+                    ' ',
+                    COALESCE(message_entry->>'text', ''),
+                    COALESCE(message_entry->>'senderName', ''),
+                    COALESCE(
+                      (
+                        SELECT string_agg(
+                          concat_ws(
+                            ' ',
+                            COALESCE(attachment_entry->>'fileName', ''),
+                            COALESCE(attachment_entry->>'mimeType', ''),
+                            CASE
+                              WHEN COALESCE(attachment_entry->>'presentation', '') = 'voice_note'
+                                THEN 'голосовое сообщение voice note'
+                              ELSE ''
+                            END
+                          ),
+                          ' '
+                        )
+                        FROM jsonb_array_elements(
+                          COALESCE(message_entry->'attachments', '[]'::jsonb)
+                        ) AS attachment_entry
+                      ),
+                      ''
+                    )
+                  ) AS value
+                ) AS search_text
+          WHERE id = $1
+            AND EXISTS (
+              SELECT 1
+                FROM jsonb_array_elements_text(COALESCE(message_entry->'participants', '[]'::jsonb)) AS participant_id(value)
+               WHERE participant_id.value = $3
+            )
+            AND (
+              cardinality($4::text[]) = 0
+              OR COALESCE(message_entry->>'chatId', '') = ANY($4::text[])
+            )
+            AND (
+              COALESCE(message_entry->>'expiresAt', '') = ''
+              OR COALESCE(message_entry->>'expiresAt', '') > $5
+            )
+            AND to_tsvector('russian', search_text.value) @@ search_query.value
+          ORDER BY COALESCE(message_entry->>'timestamp', '') DESC,
+                   COALESCE(message_entry->>'id', '') DESC
+          LIMIT $6`,
+        [
+          this._rowId,
+          normalizedQuery,
+          normalizedUserId,
+          Array.from(chatIdCandidates),
+          nowTimestamp,
+          normalizedLimit,
+        ],
+      );
+      return result.rows
+        .map((row) => {
+          const message = row?.message_data || {};
+          return {
+            messageId: String(message?.id || "").trim(),
+            chatId: String(message?.chatId || "").trim(),
+            senderId: String(message?.senderId || "").trim(),
+            senderName: String(message?.senderName || "").trim() || "Участник",
+            text: String(message?.text || ""),
+            snippet:
+              String(row?.snippet || "").trim() ||
+              String(message?.text || "").trim() ||
+              "Сообщение без текста",
+            matchedAt: message?.timestamp || "",
+          };
+        })
+        .filter((entry) => entry.messageId && entry.chatId)
+        .map((entry) => structuredClone(entry));
+    } catch (error) {
+      const message = String(error?.message || "").toLowerCase();
+      if (
+        isProjectionArrayTextFallbackError(error) ||
+        message.includes("to_tsvector") ||
+        message.includes("plainto_tsquery") ||
+        message.includes("ts_headline") ||
+        message.includes("text search configuration")
+      ) {
+        return super.searchChatMessages({
+          userId: normalizedUserId,
+          query: normalizedQuery,
+          chatId: normalizedChatId,
+          limit: normalizedLimit,
+        });
+      }
+      throw error;
     }
   }
 

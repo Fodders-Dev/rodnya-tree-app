@@ -1,4 +1,5 @@
 import '../utils/url_utils.dart';
+import '../utils/voice_waveform.dart';
 
 enum ChatAttachmentType {
   image,
@@ -70,6 +71,7 @@ class ChatAttachment {
     this.fileName,
     this.sizeBytes,
     this.durationMs,
+    this.waveform = const <double>[],
     this.width,
     this.height,
     this.thumbnailUrl,
@@ -82,6 +84,7 @@ class ChatAttachment {
   final String? fileName;
   final int? sizeBytes;
   final int? durationMs;
+  final List<double> waveform;
   final int? width;
   final int? height;
   final String? thumbnailUrl;
@@ -105,6 +108,7 @@ class ChatAttachment {
       if (fileName != null && fileName!.isNotEmpty) 'fileName': fileName,
       if (sizeBytes != null) 'sizeBytes': sizeBytes,
       if (durationMs != null) 'durationMs': durationMs,
+      if (waveform.isNotEmpty) 'waveform': waveform,
       if (width != null) 'width': width,
       if (height != null) 'height': height,
       if (thumbnailUrl != null && thumbnailUrl!.isNotEmpty)
@@ -123,6 +127,7 @@ class ChatAttachment {
       fileName: map['fileName']?.toString(),
       sizeBytes: _asInt(map['sizeBytes']),
       durationMs: _asInt(map['durationMs']),
+      waveform: normalizeVoiceWaveform(map['waveform']),
       width: _asInt(map['width']),
       height: _asInt(map['height']),
       thumbnailUrl: UrlUtils.normalizeImageUrl(map['thumbnailUrl']?.toString()),

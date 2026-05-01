@@ -9,6 +9,7 @@ import '../screens/complete_profile_screen.dart';
 import '../screens/create_story_screen.dart';
 import '../screens/chat_screen.dart';
 import '../screens/family_tree/create_tree_screen.dart';
+import '../screens/identity_review_screen.dart';
 import '../screens/notifications_screen.dart';
 import '../screens/password_reset_screen.dart';
 import '../screens/privacy_policy_screen.dart';
@@ -37,6 +38,16 @@ class AppOverlayRouteModule {
           key: state.pageKey,
           constrainWidth: true,
           child: const NotificationsScreen(),
+          transitionsBuilder: AppRouteTransitions.slide,
+        ),
+      ),
+      GoRoute(
+        path: '/identity/review',
+        parentNavigatorKey: rootNavigatorKey,
+        pageBuilder: (context, state) => RodnyaCustomTransitionPage(
+          key: state.pageKey,
+          constrainWidth: true,
+          child: const IdentityReviewScreen(),
           transitionsBuilder: AppRouteTransitions.slide,
         ),
       ),

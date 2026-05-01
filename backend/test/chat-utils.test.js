@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const {
   buildSafePreviewText,
   describeMessagePreview,
+  normalizeAttachmentWaveform,
   normalizeMessageAttachments,
   normalizeReplyReference,
 } = require("../src/chat-utils");
@@ -44,6 +45,7 @@ test("normalizeMessageAttachments preserves explicit metadata", () => {
         mimeType: "video/mp4",
         presentation: "video_note",
         durationMs: "1200",
+        waveform: [0, "0.5", 2, -1],
         width: "640",
         height: "480",
       },
@@ -55,8 +57,19 @@ test("normalizeMessageAttachments preserves explicit metadata", () => {
   assert.equal(attachments[0].type, "video");
   assert.equal(attachments[0].presentation, "video_note");
   assert.equal(attachments[0].durationMs, 1200);
+  assert.deepEqual(attachments[0].waveform, [0, 0.5, 1, 0]);
   assert.equal(attachments[0].width, 640);
   assert.equal(attachments[0].height, 480);
+});
+
+test("normalizeAttachmentWaveform caps oversized samples", () => {
+  const waveform = normalizeAttachmentWaveform(
+    Array.from({length: 150}, (_, index) => (index % 3) / 2),
+    30,
+  );
+
+  assert.equal(waveform.length, 30);
+  assert.equal(waveform.every((value) => value >= 0 && value <= 1), true);
 });
 
 test("normalizeReplyReference rejects empty refs and normalizes sender name", () => {

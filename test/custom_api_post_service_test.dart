@@ -34,6 +34,7 @@ void main() {
           'likedBy': ['user-1', 'user-2'],
           'commentCount': 3,
           'imageUrls': const [],
+          'circleId': 'circle-1',
         }),
         200,
         headers: {'content-type': 'application/json'},
@@ -79,6 +80,81 @@ void main() {
     expect(post.likedBy, ['user-1', 'user-2']);
     expect(post.likeCount, 2);
     expect(post.commentCount, 3);
+    expect(post.circleId, 'circle-1');
+  });
+
+  test('CustomApiPostService sends optional circleId on create', () async {
+    final client = MockClient((request) async {
+      expect(request.method, 'POST');
+      expect(request.url.path, '/v1/posts');
+      expect(request.headers['authorization'], 'Bearer access-token');
+      expect(jsonDecode(request.body), {
+        'treeId': 'tree-1',
+        'content': 'Для близких',
+        'imageUrls': const [],
+        'isPublic': false,
+        'scopeType': 'wholeTree',
+        'anchorPersonIds': const [],
+        'circleId': 'circle-1',
+      });
+
+      return http.Response(
+        jsonEncode({
+          'id': 'post-1',
+          'treeId': 'tree-1',
+          'authorId': 'author-1',
+          'authorName': 'Анна',
+          'content': 'Для близких',
+          'createdAt': '2026-04-13T10:00:00.000Z',
+          'likedBy': const [],
+          'commentCount': 0,
+          'imageUrls': const [],
+          'circleId': 'circle-1',
+        }),
+        201,
+        headers: {'content-type': 'application/json'},
+      );
+    });
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'custom_api_session_v1',
+      jsonEncode({
+        'accessToken': 'access-token',
+        'refreshToken': 'refresh-token',
+        'userId': 'user-1',
+        'email': 'dev@rodnya.app',
+        'displayName': 'Dev User',
+        'providerIds': ['password'],
+        'isProfileComplete': true,
+        'missingFields': const [],
+      }),
+    );
+
+    final authService = await CustomApiAuthService.create(
+      httpClient: client,
+      preferences: prefs,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      invitationService: InvitationService(),
+    );
+    final service = CustomApiPostService(
+      authService: authService,
+      storageService: _FakeStorageService(),
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      httpClient: client,
+    );
+
+    final post = await service.createPost(
+      treeId: 'tree-1',
+      content: 'Для близких',
+      circleId: 'circle-1',
+    );
+
+    expect(post.circleId, 'circle-1');
   });
 
   test('CustomApiPostService refreshes session once before retrying feed',

@@ -1,0 +1,181 @@
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:hive/hive.dart';
+
+import '../models/chat_message.dart';
+
+abstract class ChatMessageCache {
+  Future<List<ChatMessage>> read(String chatId);
+
+  Future<void> write(
+    String chatId,
+    List<ChatMessage> messages, {
+    int keepCount = 200,
+  });
+
+  Future<void> mergePage(
+    String chatId,
+    List<ChatMessage> messages, {
+    int keepCount = 200,
+  });
+
+  Future<void> appendOne(
+    String chatId,
+    ChatMessage message, {
+    int keepCount = 200,
+  });
+
+  Future<void> removeOne(String chatId, String messageId);
+
+  Future<void> evictOlder(String chatId, {int keepCount = 200});
+}
+
+class HiveChatMessageCache implements ChatMessageCache {
+  HiveChatMessageCache({
+    this.boxName = 'chat_messages_v1',
+  });
+
+  final String boxName;
+  Future<Box<String>>? _openTask;
+
+  Future<Box<String>> _box() {
+    if (Hive.isBoxOpen(boxName)) {
+      return Future<Box<String>>.value(Hive.box<String>(boxName));
+    }
+    return _openTask ??= Hive.openBox<String>(boxName);
+  }
+
+  @override
+  Future<List<ChatMessage>> read(String chatId) async {
+    final normalizedChatId = chatId.trim();
+    if (normalizedChatId.isEmpty) {
+      return const <ChatMessage>[];
+    }
+
+    final rawValue = (await _box()).get(normalizedChatId);
+    if (rawValue == null || rawValue.trim().isEmpty) {
+      return const <ChatMessage>[];
+    }
+
+    try {
+      final decoded = jsonDecode(rawValue);
+      if (decoded is! List<dynamic>) {
+        return const <ChatMessage>[];
+      }
+      return _sortedMessages(
+        decoded
+            .whereType<Map>()
+            .map((entry) =>
+                ChatMessage.fromMap(Map<String, dynamic>.from(entry)))
+            .toList(),
+      );
+    } catch (_) {
+      return const <ChatMessage>[];
+    }
+  }
+
+  @override
+  Future<void> write(
+    String chatId,
+    List<ChatMessage> messages, {
+    int keepCount = 200,
+  }) async {
+    final normalizedChatId = chatId.trim();
+    if (normalizedChatId.isEmpty) {
+      return;
+    }
+
+    final normalizedMessages = _trimmedMessages(messages, keepCount: keepCount);
+    await (await _box()).put(
+      normalizedChatId,
+      jsonEncode(
+        normalizedMessages.map(_messageToJson).toList(growable: false),
+      ),
+    );
+  }
+
+  @override
+  Future<void> mergePage(
+    String chatId,
+    List<ChatMessage> messages, {
+    int keepCount = 200,
+  }) async {
+    if (messages.isEmpty) {
+      return;
+    }
+    await write(
+      chatId,
+      <ChatMessage>[
+        ...await read(chatId),
+        ...messages,
+      ],
+      keepCount: keepCount,
+    );
+  }
+
+  @override
+  Future<void> appendOne(
+    String chatId,
+    ChatMessage message, {
+    int keepCount = 200,
+  }) {
+    return mergePage(chatId, <ChatMessage>[message], keepCount: keepCount);
+  }
+
+  @override
+  Future<void> removeOne(String chatId, String messageId) async {
+    final normalizedMessageId = messageId.trim();
+    if (normalizedMessageId.isEmpty) {
+      return;
+    }
+
+    final nextMessages = (await read(chatId))
+        .where((message) => message.id != normalizedMessageId)
+        .toList(growable: false);
+    await write(chatId, nextMessages);
+  }
+
+  @override
+  Future<void> evictOlder(String chatId, {int keepCount = 200}) async {
+    await write(chatId, await read(chatId), keepCount: keepCount);
+  }
+
+  Map<String, dynamic> _messageToJson(ChatMessage message) {
+    return <String, dynamic>{
+      ...message.toMap(),
+      'id': message.id,
+    };
+  }
+
+  List<ChatMessage> _trimmedMessages(
+    List<ChatMessage> messages, {
+    required int keepCount,
+  }) {
+    final byId = <String, ChatMessage>{};
+    for (final message in messages) {
+      if (message.id.trim().isEmpty) {
+        continue;
+      }
+      byId[message.id] = message;
+    }
+
+    final sortedMessages = _sortedMessages(byId.values);
+    if (keepCount <= 0 || sortedMessages.length <= keepCount) {
+      return sortedMessages;
+    }
+    return sortedMessages.take(keepCount).toList(growable: false);
+  }
+
+  List<ChatMessage> _sortedMessages(Iterable<ChatMessage> messages) {
+    final sortedMessages = messages.toList();
+    sortedMessages.sort((left, right) {
+      final timestampCompare = right.timestamp.compareTo(left.timestamp);
+      if (timestampCompare != 0) {
+        return timestampCompare;
+      }
+      return right.id.compareTo(left.id);
+    });
+    return sortedMessages;
+  }
+}

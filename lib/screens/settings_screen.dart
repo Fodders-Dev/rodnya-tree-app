@@ -1,6 +1,7 @@
 // ignore_for_file: constant_identifier_names, unused_field, use_build_context_synchronously
 // ignore_for_file: library_private_types_in_public_api
 import 'package:flutter/material.dart';
+import 'package:livekit_client/livekit_client.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 import '../providers/theme_provider.dart';
@@ -13,6 +14,8 @@ import '../backend/interfaces/auth_service_interface.dart';
 import '../providers/tree_provider.dart';
 import '../services/custom_api_notification_service.dart';
 import '../services/app_status_service.dart';
+import '../services/audio_route_service.dart';
+import '../services/call_preferences.dart';
 import '../config/storefront_config.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/flow_overlays.dart';
@@ -36,9 +39,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final RustoreService _rustoreService = GetIt.I<RustoreService>();
   final AppStatusService _appStatusService = GetIt.I<AppStatusService>();
   final StorefrontConfig _storefrontConfig = StorefrontConfig.current;
+  late final CallPreferences _callPreferences =
+      GetIt.I.isRegistered<CallPreferences>()
+          ? GetIt.I<CallPreferences>()
+          : MemoryCallPreferences();
   bool _isLoading = false;
   bool _notificationsEnabled = true;
   bool _profilePrivate = false;
+  CallPreferencesSnapshot _callSettings = CallPreferencesSnapshot.defaults();
+  bool _callSettingsLoading = true;
+  bool _callSettingsSaving = false;
 
   // Состояние для премиума
   bool _isPremium = false;
@@ -57,6 +67,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.initState();
     _loadAppVersion();
     _loadNotificationSettings();
+    _loadCallPreferences();
     if (_showPremiumSection) {
       _checkPremiumStatus();
     } else {
@@ -150,6 +161,308 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() {
       _notificationsEnabled = nextValue;
     });
+  }
+
+  Future<void> _loadCallPreferences() async {
+    try {
+      final snapshot = await _callPreferences.load();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _callSettings = snapshot;
+        _callSettingsLoading = false;
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _callSettings = CallPreferencesSnapshot.defaults();
+        _callSettingsLoading = false;
+      });
+    }
+  }
+
+  Future<void> _saveCallPreferences(
+    CallPreferencesSnapshot snapshot, {
+    String? successMessage,
+  }) async {
+    setState(() {
+      _callSettingsSaving = true;
+    });
+    try {
+      await _callPreferences.save(snapshot);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _callSettings = snapshot;
+      });
+      if (successMessage != null) {
+        _showMessage(successMessage);
+      }
+    } catch (error) {
+      _appStatusService.reportError(
+        error,
+        fallbackMessage: 'Не удалось сохранить настройки звонков.',
+      );
+      if (mounted) {
+        _showMessage('Не удалось сохранить настройки звонков.');
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _callSettingsSaving = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _chooseDefaultMicrophone() async {
+    final choices = <_CallSettingsChoice>[
+      const _CallSettingsChoice(
+        id: null,
+        label: 'Системный микрофон',
+        subtitle: 'Выбирать автоматически',
+        icon: Icons.settings_voice_rounded,
+      ),
+    ];
+    try {
+      final devices = await Hardware.instance.audioInputs();
+      for (final device in devices) {
+        choices.add(_choiceFromMediaDevice(device, Icons.mic_rounded));
+      }
+    } catch (_) {}
+
+    final choice = await _showCallChoiceSheet(
+      title: 'Микрофон по умолчанию',
+      choices: choices,
+      selectedId: _callSettings.defaultMicrophoneDeviceId,
+    );
+    if (choice == null) {
+      return;
+    }
+    await _saveCallPreferences(
+      _callSettings.copyWith(defaultMicrophoneDeviceId: choice.id),
+      successMessage: 'Микрофон по умолчанию обновлён.',
+    );
+  }
+
+  Future<void> _chooseDefaultCamera() async {
+    final choices = <_CallSettingsChoice>[
+      const _CallSettingsChoice(
+        id: null,
+        label: 'Системная камера',
+        subtitle: 'Выбирать автоматически',
+        icon: Icons.videocam_rounded,
+      ),
+    ];
+    try {
+      final devices = await Hardware.instance.videoInputs();
+      for (final device in devices) {
+        choices.add(_choiceFromMediaDevice(device, Icons.videocam_rounded));
+      }
+    } catch (_) {}
+
+    final choice = await _showCallChoiceSheet(
+      title: 'Камера по умолчанию',
+      choices: choices,
+      selectedId: _callSettings.defaultCameraDeviceId,
+    );
+    if (choice == null) {
+      return;
+    }
+    await _saveCallPreferences(
+      _callSettings.copyWith(defaultCameraDeviceId: choice.id),
+      successMessage: 'Камера по умолчанию обновлена.',
+    );
+  }
+
+  Future<void> _chooseDefaultAudioOutput() async {
+    final audioRouteService = AudioRouteService();
+    final choices = <_CallSettingsChoice>[
+      const _CallSettingsChoice(
+        id: null,
+        label: 'Системный аудиовыход',
+        subtitle: 'Выбирать автоматически',
+        icon: Icons.spatial_audio_off_rounded,
+      ),
+    ];
+    try {
+      await audioRouteService.refreshRoutes();
+      for (final route in audioRouteService.routes) {
+        choices.add(
+          _CallSettingsChoice(
+            id: route.id,
+            label: route.label,
+            subtitle: _audioRouteTypeLabel(route.type),
+            icon: _audioRouteIcon(route.type),
+          ),
+        );
+      }
+    } catch (_) {
+      choices.addAll(const <_CallSettingsChoice>[
+        _CallSettingsChoice(
+          id: 'speaker',
+          label: 'Динамик',
+          subtitle: 'Громкая связь',
+          icon: Icons.volume_up_rounded,
+        ),
+        _CallSettingsChoice(
+          id: 'earpiece',
+          label: 'Наушник',
+          subtitle: 'Телефонный динамик',
+          icon: Icons.phone_in_talk_rounded,
+        ),
+      ]);
+    } finally {
+      audioRouteService.dispose();
+    }
+
+    final choice = await _showCallChoiceSheet(
+      title: 'Аудиовыход по умолчанию',
+      choices: choices,
+      selectedId: _callSettings.defaultAudioOutputId,
+    );
+    if (choice == null) {
+      return;
+    }
+    await _saveCallPreferences(
+      _callSettings.copyWith(defaultAudioOutputId: choice.id),
+      successMessage: 'Аудиовыход по умолчанию обновлён.',
+    );
+  }
+
+  Future<void> _chooseRingtone() async {
+    final choices = callRingtonePresets
+        .map(
+          (preset) => _CallSettingsChoice(
+            id: preset.id,
+            label: preset.label,
+            subtitle: preset.description,
+            icon: preset.id == 'none'
+                ? Icons.volume_off_rounded
+                : Icons.notifications_active_rounded,
+          ),
+        )
+        .toList(growable: false);
+
+    final choice = await _showCallChoiceSheet(
+      title: 'Мелодия входящего звонка',
+      choices: choices,
+      selectedId: _callSettings.ringtoneAsset,
+    );
+    if (choice == null || choice.id == null) {
+      return;
+    }
+    await _saveCallPreferences(
+      _callSettings.copyWith(ringtoneAsset: choice.id),
+      successMessage: 'Мелодия звонка обновлена.',
+    );
+  }
+
+  Future<void> _toggleCallVibration(bool value) {
+    return _saveCallPreferences(
+      _callSettings.copyWith(vibrationOnIncoming: value),
+    );
+  }
+
+  IconData _audioRouteIcon(AudioRouteType type) {
+    switch (type) {
+      case AudioRouteType.speaker:
+        return Icons.volume_up_rounded;
+      case AudioRouteType.earpiece:
+        return Icons.phone_in_talk_rounded;
+      case AudioRouteType.bluetooth:
+        return Icons.bluetooth_audio_rounded;
+      case AudioRouteType.wired:
+        return Icons.headphones_rounded;
+      case AudioRouteType.device:
+        return Icons.spatial_audio_off_rounded;
+    }
+  }
+
+  String _audioRouteTypeLabel(AudioRouteType type) {
+    switch (type) {
+      case AudioRouteType.speaker:
+        return 'Громкая связь';
+      case AudioRouteType.earpiece:
+        return 'Телефонный динамик';
+      case AudioRouteType.bluetooth:
+        return 'Bluetooth';
+      case AudioRouteType.wired:
+        return 'Проводные наушники';
+      case AudioRouteType.device:
+        return 'Устройство вывода';
+    }
+  }
+
+  _CallSettingsChoice _choiceFromMediaDevice(
+    MediaDevice device,
+    IconData icon,
+  ) {
+    final label = device.label.trim().isEmpty
+        ? 'Устройство ${device.deviceId}'
+        : device.label.trim();
+    return _CallSettingsChoice(
+      id: device.deviceId,
+      label: label,
+      subtitle: device.deviceId,
+      icon: icon,
+    );
+  }
+
+  Future<_CallSettingsChoice?> _showCallChoiceSheet({
+    required String title,
+    required List<_CallSettingsChoice> choices,
+    required String? selectedId,
+  }) {
+    return showModalBottomSheet<_CallSettingsChoice>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) {
+        final theme = Theme.of(context);
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                ...choices.map(
+                  (choice) {
+                    final selected = choice.id == selectedId ||
+                        (choice.id == null &&
+                            (selectedId == null || selectedId.isEmpty));
+                    return ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(choice.icon),
+                      title: Text(choice.label),
+                      subtitle: Text(choice.subtitle),
+                      trailing: selected
+                          ? Icon(
+                              Icons.check_rounded,
+                              color: theme.colorScheme.primary,
+                            )
+                          : null,
+                      onTap: () => Navigator.of(context).pop(choice),
+                    );
+                  },
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   void _showMessage(String message, {Color? backgroundColor}) {
@@ -678,6 +991,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         ),
                       ]),
                       const SizedBox(height: 16),
+                      _buildCallSettingsSection(),
+                      const SizedBox(height: 16),
                       _buildSectionCard('Документы и поддержка', [
                         _buildActionRow(
                           icon: Icons.privacy_tip_outlined,
@@ -823,6 +1138,62 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ],
       ),
     );
+  }
+
+  Widget _buildCallSettingsSection() {
+    if (_callSettingsLoading) {
+      return _buildSectionCard('Звонки', const [
+        Padding(
+          padding: EdgeInsets.all(16),
+          child: Center(child: CircularProgressIndicator()),
+        ),
+      ]);
+    }
+
+    final controlsEnabled = !_callSettingsSaving;
+    return _buildSectionCard('Звонки', [
+      _buildActionRow(
+        icon: Icons.mic_rounded,
+        title: 'Микрофон по умолчанию',
+        subtitle: _callSettings.defaultMicrophoneDeviceId == null
+            ? 'Системный выбор'
+            : _callSettings.defaultMicrophoneDeviceId!,
+        enabled: controlsEnabled,
+        onTap: controlsEnabled ? _chooseDefaultMicrophone : null,
+      ),
+      _buildActionRow(
+        icon: Icons.videocam_rounded,
+        title: 'Камера по умолчанию',
+        subtitle: _callSettings.defaultCameraDeviceId == null
+            ? 'Системный выбор'
+            : _callSettings.defaultCameraDeviceId!,
+        enabled: controlsEnabled,
+        onTap: controlsEnabled ? _chooseDefaultCamera : null,
+      ),
+      _buildActionRow(
+        icon: Icons.spatial_audio_off_rounded,
+        title: 'Аудиовыход по умолчанию',
+        subtitle: _callSettings.defaultAudioOutputId == null
+            ? 'Системный выбор'
+            : _callSettings.defaultAudioOutputId!,
+        enabled: controlsEnabled,
+        onTap: controlsEnabled ? _chooseDefaultAudioOutput : null,
+      ),
+      _buildActionRow(
+        icon: Icons.notifications_active_rounded,
+        title: 'Мелодия входящего звонка',
+        subtitle: _callSettings.ringtonePreset.label,
+        enabled: controlsEnabled,
+        onTap: controlsEnabled ? _chooseRingtone : null,
+      ),
+      _buildSwitchRow(
+        icon: Icons.vibration_rounded,
+        title: 'Вибрация при входящем',
+        subtitle: _callSettings.vibrationOnIncoming ? 'Включена' : 'Выключена',
+        value: _callSettings.vibrationOnIncoming,
+        onChanged: controlsEnabled ? _toggleCallVibration : (_) {},
+      ),
+    ]);
   }
 
   Widget _buildSettingsStateCard({
@@ -1048,4 +1419,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
             },
     );
   }
+}
+
+class _CallSettingsChoice {
+  const _CallSettingsChoice({
+    required this.id,
+    required this.label,
+    required this.subtitle,
+    required this.icon,
+  });
+
+  final String? id;
+  final String label;
+  final String subtitle;
+  final IconData icon;
 }

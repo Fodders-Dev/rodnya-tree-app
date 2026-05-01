@@ -731,6 +731,7 @@ test("PostgresStore createPerson fast path skips auth projection rewrites", asyn
       ) {
         const nextPerson = JSON.parse(params[1]);
         const treeId = params[2];
+        const nextIdentity = JSON.parse(params[3]);
         const tree = state.trees.find((entry) => entry.id === treeId) || null;
         if (!tree) {
           return {rowCount: 0, rows: []};
@@ -738,6 +739,7 @@ test("PostgresStore createPerson fast path skips auth projection rewrites", asyn
         state = {
           ...state,
           persons: [...state.persons, nextPerson],
+          personIdentities: [...state.personIdentities, nextIdentity],
         };
         return {rowCount: 1, rows: [{updated_at: nextPerson.updatedAt}]};
       }
@@ -772,7 +774,12 @@ test("PostgresStore createPerson fast path skips auth projection rewrites", asyn
   });
 
   assert.equal(person?.treeId, "tree-1");
+  assert.ok(person?.identityId);
   assert.equal(state.persons.length, 1);
+  assert.equal(state.persons[0].identityId, person.identityId);
+  assert.equal(state.personIdentities.length, 1);
+  assert.equal(state.personIdentities[0].id, person.identityId);
+  assert.deepEqual(state.personIdentities[0].personIds, [person.id]);
   assert.equal(state.treeChangeRecords.length, 0);
   assert.equal(
     queries.some(
@@ -804,7 +811,7 @@ test("PostgresStore createPerson fast path skips auth projection rewrites", asyn
   );
 });
 
-test("PostgresStore deletePerson fast path skips full state rewrites for offline standalone people", async () => {
+test("PostgresStore deletePerson supports identity-backed offline people", async () => {
   let state = {
     users: [],
     sessions: [],
@@ -824,7 +831,7 @@ test("PostgresStore deletePerson fast path skips full state rewrites for offline
         id: "person-1",
         treeId: "tree-1",
         userId: null,
-        identityId: null,
+        identityId: "identity-1",
         name: "Smoke Relative",
         creatorId: "user-1",
         createdAt: "2026-01-01T00:00:00.000Z",
@@ -833,7 +840,15 @@ test("PostgresStore deletePerson fast path skips full state rewrites for offline
     ],
     relations: [],
     treeChangeRecords: [],
-    personIdentities: [],
+    personIdentities: [
+      {
+        id: "identity-1",
+        userId: null,
+        personIds: ["person-1"],
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+    ],
   };
   let projectedSessions = [];
   const queries = [];
@@ -861,27 +876,8 @@ test("PostgresStore deletePerson fast path skips full state rewrites for offline
           rows: projectedSessions.map((entry) => ({session_data: entry})),
         };
       }
-      if (
-        sql.includes("UPDATE \"public\".\"rodnya_state\"") &&
-        sql.includes("'{persons}'") &&
-        sql.includes("data->'relations'")
-      ) {
-        const personId = params[1];
-        const treeId = params[2];
-        const person = state.persons.find(
-          (entry) => entry.id === personId && entry.treeId === treeId,
-        );
-        if (!person) {
-          return {rowCount: 0, rows: []};
-        }
-        state = {
-          ...state,
-          persons: state.persons.filter((entry) => entry.id !== personId),
-        };
-        return {rowCount: 1, rows: [{updated_at: "2026-01-02T00:00:00.000Z"}]};
-      }
       if (sql.includes("SELECT data")) {
-        throw new Error("full_state_read_not_allowed");
+        return {rows: [{data: state}]};
       }
       if (sql.includes("ON CONFLICT (id) DO UPDATE")) {
         state = JSON.parse(params[1]);
@@ -903,14 +899,9 @@ test("PostgresStore deletePerson fast path skips full state rewrites for offline
 
   assert.equal(deleted, true);
   assert.equal(state.persons.length, 0);
-  assert.equal(
-    queries.some((sql) => sql.includes("SELECT data FROM")),
-    false,
-  );
-  assert.equal(
-    queries.some((sql) => sql.includes("'{treeChangeRecords}'")),
-    false,
-  );
+  assert.equal(state.personIdentities.length, 0);
+  assert.equal(state.treeChangeRecords.length, 1);
+  assert.equal(state.treeChangeRecords[0].type, "person.deleted");
 });
 
 test("PostgresStore communication hot paths avoid full state reads", async () => {
@@ -1087,6 +1078,25 @@ test("PostgresStore communication hot paths avoid full state reads", async () =>
       if (sql.includes("SELECT chat_entry AS chat_data")) {
         return {rows: chats.map((entry) => ({chat_data: entry}))};
       }
+      if (sql.includes("ts_headline") && sql.includes("data->'messages'")) {
+        const searchQuery = String(params[1] || "").toLowerCase();
+        const chatIdFilter = Array.isArray(params[3]) ? params[3] : [];
+        const limit = Number(params[5] || 50);
+        return {
+          rows: messages
+            .filter((entry) => {
+              const text = String(entry.text || "").toLowerCase();
+              const chatMatches =
+                chatIdFilter.length === 0 || chatIdFilter.includes(entry.chatId);
+              return chatMatches && text.includes(searchQuery);
+            })
+            .slice(0, limit)
+            .map((entry) => ({
+              message_data: entry,
+              snippet: entry.text,
+            })),
+        };
+      }
       if (sql.includes("SELECT message_entry AS message_data")) {
         return {rows: messages.map((entry) => ({message_data: entry}))};
       }
@@ -1142,6 +1152,16 @@ test("PostgresStore communication hot paths avoid full state reads", async () =>
   assert.equal(previews[0]?.unreadCount, 2);
   assert.equal(previews[0]?.otherUserName, "Анна");
   assert.equal(await store.countUnreadChatMessages("user-1"), 2);
+  const searchResults = await store.searchChatMessages({
+    userId: "user-1",
+    query: "вечером",
+    chatId: "chat_group",
+    limit: 5,
+  });
+  assert.deepEqual(
+    searchResults.map((entry) => entry.messageId),
+    ["message-group-1"],
+  );
 
   const activeCallRecord = await store.findActiveCall({userId: "user-1"});
   assert.equal(activeCallRecord?.id, "call-1");

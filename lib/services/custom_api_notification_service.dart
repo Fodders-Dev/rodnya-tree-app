@@ -1254,6 +1254,11 @@ class CustomApiNotificationService implements NotificationServiceInterface {
       return;
     }
 
+    if (type == 'merge_proposal' || type == 'identity_claim') {
+      GoRouter.of(navigatorContext).go('/identity/review');
+      return;
+    }
+
     if (type == 'tree_update') {
       final treeId =
           rootPayload['treeId']?.toString() ?? data['treeId']?.toString();

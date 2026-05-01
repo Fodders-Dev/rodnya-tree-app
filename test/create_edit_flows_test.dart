@@ -7,12 +7,14 @@ import 'package:get_it/get_it.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:rodnya/backend/interfaces/auth_service_interface.dart';
+import 'package:rodnya/backend/interfaces/circle_service_interface.dart';
 import 'package:rodnya/backend/interfaces/family_tree_service_interface.dart';
 import 'package:rodnya/backend/interfaces/post_service_interface.dart';
 import 'package:rodnya/backend/interfaces/profile_service_interface.dart';
 import 'package:rodnya/backend/interfaces/story_service_interface.dart';
 import 'package:rodnya/backend/models/profile_form_data.dart';
 import 'package:rodnya/models/account_linking_status.dart';
+import 'package:rodnya/models/circle.dart';
 import 'package:rodnya/models/family_person.dart';
 import 'package:rodnya/models/family_relation.dart';
 import 'package:rodnya/models/family_tree.dart';
@@ -105,6 +107,7 @@ class _FakePostService implements PostServiceInterface {
     bool isPublic = false,
     TreeContentScopeType scopeType = TreeContentScopeType.wholeTree,
     List<String> anchorPersonIds = const [],
+    String? circleId,
   }) async =>
       Post(
         id: 'post-1',
@@ -114,10 +117,35 @@ class _FakePostService implements PostServiceInterface {
         content: content,
         createdAt: DateTime(2026, 4, 15),
         isPublic: isPublic,
+        circleId: circleId,
       );
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _FakeCircleService implements CircleServiceInterface {
+  @override
+  Future<List<FamilyCircle>> getCircles(String treeId) async => [
+        FamilyCircle(
+          id: 'circle-all',
+          treeId: treeId,
+          kind: FamilyCircleKind.allTree,
+          name: 'Всё дерево',
+          isSystem: true,
+          memberCount: 3,
+          createdAt: DateTime(2026, 4, 15),
+        ),
+        FamilyCircle(
+          id: 'circle-close',
+          treeId: treeId,
+          kind: FamilyCircleKind.custom,
+          name: 'Близкие',
+          isSystem: false,
+          memberCount: 2,
+          createdAt: DateTime(2026, 4, 15),
+        ),
+      ];
 }
 
 class _FakeStoryService implements StoryServiceInterface {
@@ -129,6 +157,7 @@ class _FakeStoryService implements StoryServiceInterface {
     XFile? media,
     String? thumbnailUrl,
     DateTime? expiresAt,
+    String? circleId,
   }) async =>
       Story(
         id: 'story-1',
@@ -141,6 +170,7 @@ class _FakeStoryService implements StoryServiceInterface {
         thumbnailUrl: thumbnailUrl,
         createdAt: DateTime(2026, 4, 15),
         expiresAt: DateTime(2026, 4, 16),
+        circleId: circleId,
       );
 
   @override
@@ -269,6 +299,7 @@ void main() {
     getIt.registerSingleton<FamilyTreeServiceInterface>(
         _FakeFamilyTreeService());
     getIt.registerSingleton<PostServiceInterface>(_FakePostService());
+    getIt.registerSingleton<CircleServiceInterface>(_FakeCircleService());
     getIt.registerSingleton<StoryServiceInterface>(_FakeStoryService());
     getIt.registerSingleton<LocalStorageService>(_FakeLocalStorageService());
     getIt.registerSingleton<AuthServiceInterface>(_FakeAuthService());
@@ -357,6 +388,9 @@ void main() {
 
     expect(find.text('Управление аккаунтом'), findsOneWidget);
     expect(find.text('Внешний вид'), findsOneWidget);
+    expect(find.text('Звонки'), findsOneWidget);
+    expect(find.text('Микрофон по умолчанию'), findsOneWidget);
+    expect(find.text('Мелодия входящего звонка'), findsOneWidget);
     expect(find.text('Документы и поддержка'), findsOneWidget);
     expect(find.text('Аккаунт'), findsOneWidget);
     expect(find.text('Удалить аккаунт'), findsOneWidget);

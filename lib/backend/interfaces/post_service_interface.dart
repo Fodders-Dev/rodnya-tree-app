@@ -17,6 +17,7 @@ abstract class PostServiceInterface {
     bool isPublic = false,
     TreeContentScopeType scopeType = TreeContentScopeType.wholeTree,
     List<String> anchorPersonIds = const [],
+    String? circleId,
   });
 
   /// Delete a post by ID.

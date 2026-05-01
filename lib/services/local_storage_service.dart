@@ -34,7 +34,8 @@ class LocalStorageService {
 
   Future<Box<FamilyTree>> _treesBox() => _openBox<FamilyTree>(_boxTrees);
 
-  Future<Box<FamilyPerson>> _personsBox() => _openBox<FamilyPerson>(_boxPersons);
+  Future<Box<FamilyPerson>> _personsBox() =>
+      _openBox<FamilyPerson>(_boxPersons);
 
   Future<Box<FamilyRelation>> _relationsBox() =>
       _openBox<FamilyRelation>(_boxRelations);
@@ -54,8 +55,7 @@ class LocalStorageService {
       return (await existingTask) as Box<T>;
     }
 
-    final openTask =
-        Hive.openBox<T>(boxName).then<Box<dynamic>>((box) => box);
+    final openTask = Hive.openBox<T>(boxName).then<Box<dynamic>>((box) => box);
     _boxOpenTasks[boxName] = openTask;
 
     try {
@@ -95,7 +95,9 @@ class LocalStorageService {
     try {
       final box = await _treesBox();
       await box.clear();
-      final treesMap = <String, FamilyTree>{for (final tree in trees) tree.id: tree};
+      final treesMap = <String, FamilyTree>{
+        for (final tree in trees) tree.id: tree
+      };
       if (treesMap.isNotEmpty) {
         await box.putAll(treesMap);
       }
@@ -311,8 +313,10 @@ class LocalStorageService {
 
   Future<List<ChatMessage>> getMessagesByChatId(String chatId) async {
     final box = await _messagesBox();
-    final messages = box.values.where((message) => message.chatId == chatId).toList();
-    messages.sort((left, right) => left.getDateTime().compareTo(right.getDateTime()));
+    final messages =
+        box.values.where((message) => message.chatId == chatId).toList();
+    messages.sort(
+        (left, right) => left.getDateTime().compareTo(right.getDateTime()));
     return messages;
   }
 

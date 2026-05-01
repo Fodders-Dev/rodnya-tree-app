@@ -214,6 +214,8 @@ class FamilyPerson extends HiveObject {
   final List<Map<String, dynamic>> _photoGallery;
   @HiveField(26)
   final String? familySummary;
+  @HiveField(27)
+  final String visibility;
 
   String? get photoUrl => _photoUrl;
   String? get primaryPhotoUrl => _photoUrl;
@@ -249,6 +251,7 @@ class FamilyPerson extends HiveObject {
     this.bio,
     this.familySummary,
     required this.isAlive,
+    this.visibility = 'private',
     this.creatorId,
     required this.createdAt,
     required this.updatedAt,
@@ -426,6 +429,7 @@ class FamilyPerson extends HiveObject {
       bio: data['bio'],
       familySummary: data['familySummary'] ?? data['notes'] ?? data['bio'],
       isAlive: data['isAlive'] ?? (data['deathDate'] == null),
+      visibility: data['visibility']?.toString() ?? 'private',
       creatorId: data['creatorId'],
       createdAt: parseDateTimeRequired(data['createdAt']),
       updatedAt: parseDateTimeRequired(data['updatedAt']),
@@ -459,6 +463,7 @@ class FamilyPerson extends HiveObject {
           data['bio']?.toString(),
       bio: data['bio']?.toString(),
       isAlive: data['isAlive'] ?? (data['deathDate'] == null),
+      visibility: data['visibility']?.toString() ?? 'private',
       creatorId: data['creatorId']?.toString(),
       createdAt: data['createdAt'] != null
           ? parseDateTimeRequired(data['createdAt'])
@@ -497,6 +502,7 @@ class FamilyPerson extends HiveObject {
       'familySummary': familySummary,
       'bio': bio,
       'isAlive': isAlive,
+      'visibility': visibility,
       'creatorId': creatorId,
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),

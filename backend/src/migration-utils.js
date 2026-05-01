@@ -7,8 +7,13 @@ const SNAPSHOT_COLLECTION_KEYS = [
   "sessions",
   "trees",
   "persons",
+  "personIdentities",
+  "circles",
+  "circleMembers",
   "relations",
   "chats",
+  "chatDrafts",
+  "chatPins",
   "messages",
   "relationRequests",
   "treeInvitations",
@@ -83,6 +88,176 @@ function hashSnapshot(snapshot) {
     .digest("hex");
 }
 
+function normalizeNullableString(value) {
+  const normalized = String(value || "").trim();
+  return normalized ? normalized : null;
+}
+
+function normalizeIdList(value) {
+  return Array.from(
+    new Set(
+      (Array.isArray(value) ? value : [])
+        .map((entry) => normalizeNullableString(entry))
+        .filter(Boolean),
+    ),
+  ).sort((left, right) => left.localeCompare(right));
+}
+
+function backfillPersonIdentities(
+  snapshot,
+  {
+    idFactory = () => crypto.randomUUID(),
+    now = () => new Date().toISOString(),
+  } = {},
+) {
+  const target = snapshot && typeof snapshot === "object" ? snapshot : {};
+  const persons = Array.isArray(target.persons) ? target.persons : [];
+  const rawIdentities = Array.isArray(target.personIdentities)
+    ? target.personIdentities
+    : [];
+  const beforeHash = hashSnapshot({
+    persons,
+    personIdentities: rawIdentities,
+  });
+  const timestamp = now();
+  const identitiesById = new Map();
+  let createdCount = 0;
+  let linkedPersonCount = 0;
+
+  target.persons = persons;
+
+  function upsertIdentity(rawIdentity = {}, fallbackId = null) {
+    const identityId =
+      normalizeNullableString(rawIdentity?.id) ||
+      normalizeNullableString(fallbackId) ||
+      normalizeNullableString(idFactory());
+    if (!identityId) {
+      return null;
+    }
+
+    const existing = identitiesById.get(identityId);
+    const nextPersonIds = normalizeIdList([
+      ...normalizeIdList(existing?.personIds),
+      ...normalizeIdList(rawIdentity?.personIds),
+    ]);
+
+    if (existing) {
+      identitiesById.set(identityId, {
+        ...existing,
+        ...rawIdentity,
+        id: identityId,
+        userId:
+          normalizeNullableString(existing.userId) ||
+          normalizeNullableString(rawIdentity?.userId),
+        personIds: nextPersonIds,
+        createdAt: existing.createdAt || rawIdentity?.createdAt || timestamp,
+        updatedAt: rawIdentity?.updatedAt || existing.updatedAt || timestamp,
+      });
+      return identitiesById.get(identityId);
+    }
+
+    const identity = {
+      ...rawIdentity,
+      id: identityId,
+      userId: normalizeNullableString(rawIdentity?.userId),
+      personIds: nextPersonIds,
+      createdAt: rawIdentity?.createdAt || timestamp,
+      updatedAt: rawIdentity?.updatedAt || timestamp,
+    };
+    identitiesById.set(identityId, identity);
+    return identity;
+  }
+
+  for (const identity of rawIdentities) {
+    upsertIdentity(identity);
+  }
+
+  const identityIdByPersonId = new Map();
+  for (const identity of identitiesById.values()) {
+    for (const personId of normalizeIdList(identity.personIds)) {
+      if (!identityIdByPersonId.has(personId)) {
+        identityIdByPersonId.set(personId, identity.id);
+      }
+    }
+  }
+
+  for (const person of persons) {
+    if (!person || typeof person !== "object") {
+      continue;
+    }
+
+    const personId = normalizeNullableString(person.id);
+    if (!personId) {
+      continue;
+    }
+
+    const existingIdentityId =
+      normalizeNullableString(person.identityId) ||
+      identityIdByPersonId.get(personId) ||
+      null;
+    let identity = existingIdentityId
+      ? identitiesById.get(existingIdentityId)
+      : null;
+
+    if (!identity) {
+      identity = upsertIdentity(
+        {
+          id: existingIdentityId || undefined,
+          personIds: [personId],
+        },
+        existingIdentityId,
+      );
+      createdCount += 1;
+    }
+
+    if (!identity) {
+      continue;
+    }
+
+    if (person.identityId !== identity.id) {
+      person.identityId = identity.id;
+      linkedPersonCount += 1;
+    }
+
+    const nextPersonIds = normalizeIdList([
+      ...(identity.personIds || []),
+      personId,
+    ]);
+    if (nextPersonIds.length !== normalizeIdList(identity.personIds).length) {
+      linkedPersonCount += 1;
+    }
+    identity.personIds = nextPersonIds;
+  }
+
+  target.personIdentities = Array.from(identitiesById.values())
+    .map((identity) => ({
+      ...identity,
+      id: normalizeNullableString(identity.id),
+      userId: normalizeNullableString(identity.userId),
+      personIds: normalizeIdList(identity.personIds),
+      createdAt: identity.createdAt || timestamp,
+      updatedAt: identity.updatedAt || timestamp,
+    }))
+    .filter(
+      (identity) =>
+        identity.id &&
+        (identity.userId ||
+          (Array.isArray(identity.personIds) && identity.personIds.length > 0)),
+    );
+
+  const afterHash = hashSnapshot({
+    persons: target.persons,
+    personIdentities: target.personIdentities,
+  });
+
+  return {
+    snapshot: target,
+    changed: beforeHash !== afterHash,
+    createdCount,
+    linkedPersonCount,
+  };
+}
+
 async function walkFiles(rootPath) {
   const entries = await fs.readdir(rootPath, {withFileTypes: true});
   const nestedPaths = [];
@@ -149,6 +324,7 @@ function formatBytes(sizeBytes) {
 
 module.exports = {
   SNAPSHOT_COLLECTION_KEYS,
+  backfillPersonIdentities,
   collectLocalMediaObjects,
   formatBytes,
   formatSnapshotSummary,

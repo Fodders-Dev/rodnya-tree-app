@@ -57,6 +57,7 @@ class CustomApiStoryService implements StoryServiceInterface {
     XFile? media,
     String? thumbnailUrl,
     DateTime? expiresAt,
+    String? circleId,
   }) async {
     String? uploadedMediaUrl;
     if (media != null) {
@@ -73,6 +74,8 @@ class CustomApiStoryService implements StoryServiceInterface {
         'mediaUrl': uploadedMediaUrl,
         'thumbnailUrl': thumbnailUrl,
         'expiresAt': expiresAt?.toIso8601String(),
+        if (circleId != null && circleId.trim().isNotEmpty)
+          'circleId': circleId.trim(),
       },
     );
 

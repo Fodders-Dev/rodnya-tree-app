@@ -1,3 +1,7 @@
+const {
+  findWithinTreeDuplicateCandidates,
+} = require("../identity-matcher");
+
 function registerTreeRoutes(
   app,
   {
@@ -142,6 +146,33 @@ function registerTreeRoutes(
     const persons = await store.listPersons(tree.id);
     res.json({
       persons: persons.map(mapPerson),
+    });
+  });
+
+  app.get("/v1/trees/:treeId/duplicates", requireAuth, async (req, res) => {
+    const tree = await requireTreeAccess(req, res, req.params.treeId);
+    if (!tree) {
+      return;
+    }
+
+    const requestedLimit = Number(req.query.limit || 20);
+    const persons = await store.listPersons(tree.id);
+    const suggestions = findWithinTreeDuplicateCandidates({
+      treeId: tree.id,
+      persons,
+      limit: Number.isFinite(requestedLimit) ? requestedLimit : 20,
+    });
+
+    res.json({
+      suggestions: suggestions.map((suggestion) => ({
+        id: suggestion.id,
+        treeId: suggestion.treeId,
+        score: suggestion.score,
+        confidence: suggestion.confidence,
+        reasons: suggestion.reasons,
+        personA: mapPerson(suggestion.personA),
+        personB: mapPerson(suggestion.personB),
+      })),
     });
   });
 

@@ -27,8 +27,11 @@ const {
   registerPublicMediaRoutes,
 } = require("./routes/media-routes");
 const {registerChatRoutes} = require("./routes/chat-routes");
+const {registerCircleRoutes} = require("./routes/circle-routes");
 const {registerGoogleAuthRoutes} = require("./routes/google-auth-routes");
+const {registerIdentityRoutes} = require("./routes/identity-routes");
 const {registerMaxAuthRoutes} = require("./routes/max-auth-routes");
+const {registerMergeRoutes} = require("./routes/merge-routes");
 const {registerNotificationRoutes} = require("./routes/notification-routes");
 const {
   registerPendingInvitationRoutes,
@@ -50,6 +53,7 @@ const {
 const {registerTreeRoutes} = require("./routes/tree-routes");
 const {registerUserRoutes} = require("./routes/user-routes");
 const {registerVkAuthRoutes} = require("./routes/vk-auth-routes");
+const {normalizeAttachmentWaveform} = require("./chat-utils");
 
 const DEFAULT_CALL_INVITE_TIMEOUT_MS = 30_000;
 const EMERGENCY_CHAT_PREVIEW_RESPONSE_CAP = 3;
@@ -633,6 +637,7 @@ function createApp({
       familySummary,
       bio: familySummary,
       isAlive: person.isAlive !== false,
+      visibility: person.visibility || (person.isAlive === false ? "tree" : "private"),
       creatorId: person.creatorId,
       createdAt: person.createdAt,
       updatedAt: person.updatedAt,
@@ -1004,6 +1009,7 @@ function createApp({
       commentCount: Number(commentCount || 0),
       isPublic: post.isPublic === true,
       scopeType: post.scopeType === "branches" ? "branches" : "wholeTree",
+      circleId: post.circleId || null,
       anchorPersonIds: Array.isArray(post.anchorPersonIds)
         ? post.anchorPersonIds
         : [],
@@ -1025,6 +1031,7 @@ function createApp({
       updatedAt: story.updatedAt || story.createdAt,
       expiresAt: story.expiresAt,
       viewedBy: Array.isArray(story.viewedBy) ? story.viewedBy : [],
+      circleId: story.circleId || null,
     };
   }
 
@@ -1059,6 +1066,7 @@ function createApp({
             durationMs: Number.isFinite(Number(attachment.durationMs))
               ? Number(attachment.durationMs)
               : null,
+            waveform: normalizeAttachmentWaveform(attachment.waveform),
             width: Number.isFinite(Number(attachment.width))
               ? Number(attachment.width)
               : null,
@@ -1087,10 +1095,32 @@ function createApp({
           fileName: null,
           sizeBytes: null,
           durationMs: null,
+          waveform: [],
           width: null,
           height: null,
           thumbnailUrl: null,
         }));
+    const reactions = Array.isArray(message.reactions)
+      ? message.reactions
+          .map((reaction) => {
+            const emoji = String(reaction?.emoji || "").trim();
+            const userIds = Array.from(
+              new Set(
+                (Array.isArray(reaction?.userIds) ? reaction.userIds : [])
+                  .map((value) => String(value || "").trim())
+                  .filter(Boolean),
+              ),
+            );
+            return {
+              emoji,
+              userIds,
+              count: Number.isFinite(Number(reaction?.count))
+                ? Math.max(0, Math.floor(Number(reaction.count)))
+                : userIds.length,
+            };
+          })
+          .filter((reaction) => reaction.emoji && reaction.count > 0)
+      : [];
     return {
       id: message.id,
       chatId: message.chatId,
@@ -1099,6 +1129,16 @@ function createApp({
       timestamp: message.timestamp,
       updatedAt: message.updatedAt || null,
       isRead: message.isRead === true,
+      deliveredTo: Array.isArray(message.deliveredTo)
+        ? message.deliveredTo
+            .map((value) => String(value || "").trim())
+            .filter(Boolean)
+        : [],
+      readBy: Array.isArray(message.readBy)
+        ? message.readBy
+            .map((value) => String(value || "").trim())
+            .filter(Boolean)
+        : [],
       attachments,
       imageUrl: normalizePublicUrl(message.imageUrl || null),
       mediaUrls: normalizePublicUrlList(message.mediaUrls),
@@ -1109,6 +1149,7 @@ function createApp({
       clientMessageId: message.clientMessageId || null,
       expiresAt: message.expiresAt || null,
       replyTo: message.replyTo || null,
+      reactions,
     };
   }
 
@@ -1833,6 +1874,23 @@ function createApp({
     composeDisplayName,
     mapPost,
     mapComment,
+  });
+
+  registerCircleRoutes(app, {
+    store,
+    requireAuth,
+    requireTreeAccess,
+  });
+
+  registerMergeRoutes(app, {
+    store,
+    requireAuth,
+  });
+
+  registerIdentityRoutes(app, {
+    store,
+    requireAuth,
+    requireTreeAccess,
   });
 
   registerTreeRoutes(app, {

@@ -16,6 +16,7 @@ import 'package:rodnya/models/call_media_mode.dart';
 import 'package:rodnya/models/chat_attachment.dart';
 import 'package:rodnya/models/chat_details.dart';
 import 'package:rodnya/models/chat_message.dart';
+import 'package:rodnya/models/chat_message_search_result.dart';
 import 'package:rodnya/models/chat_preview.dart';
 import 'package:rodnya/models/chat_send_progress.dart';
 import 'package:rodnya/models/family_tree.dart';
@@ -27,7 +28,6 @@ import 'package:rodnya/services/chat_auto_delete_store.dart';
 import 'package:rodnya/services/chat_draft_store.dart';
 import 'package:rodnya/services/chat_notification_settings_store.dart';
 import 'package:rodnya/services/chat_pin_store.dart';
-import 'package:rodnya/services/chat_reaction_store.dart';
 import 'package:rodnya/services/app_status_service.dart';
 import 'package:rodnya/services/local_storage_service.dart';
 import 'package:provider/provider.dart';
@@ -116,27 +116,6 @@ class _MemoryChatNotificationSettingsStore
   }
 }
 
-class _MemoryChatReactionStore implements ChatReactionStore {
-  final Map<String, ChatReactionCatalogSnapshot> _catalogs =
-      <String, ChatReactionCatalogSnapshot>{};
-
-  @override
-  Future<void> clearCatalog(String key) async {
-    _catalogs.remove(key);
-  }
-
-  @override
-  Future<ChatReactionCatalogSnapshot?> getCatalog(String key) async {
-    return _catalogs[key];
-  }
-
-  @override
-  Future<void> saveCatalog(
-      String key, ChatReactionCatalogSnapshot snapshot) async {
-    _catalogs[key] = snapshot;
-  }
-}
-
 class _MemoryChatAutoDeleteStore implements ChatAutoDeleteStore {
   final Map<String, ChatAutoDeleteSnapshot> _settings =
       <String, ChatAutoDeleteSnapshot>{};
@@ -204,9 +183,15 @@ class _FakeLocalStorageService implements LocalStorageService {
 }
 
 class _FakeChatService implements ChatServiceInterface {
+  _FakeChatService({
+    this.supportsServerSearch = false,
+    this.serverSearchResults = const <ChatMessageSearchResult>[],
+  });
+
   final Completer<void> sendCompleter = Completer<void>();
   final StreamController<List<ChatMessage>> _messagesController =
       StreamController<List<ChatMessage>>.broadcast();
+  List<ChatMessage> _latestMessages = const <ChatMessage>[];
   final List<_SentChatRequest> sentRequests = <_SentChatRequest>[];
   ChatReplyReference? lastReplyTo;
   List<ChatAttachment> lastForwardedAttachments = const <ChatAttachment>[];
@@ -214,8 +199,15 @@ class _FakeChatService implements ChatServiceInterface {
   String? lastEditedText;
   String? lastDeletedMessageId;
   final List<String> deletedMessageIds = <String>[];
+  String? lastReactionMessageId;
+  String? lastReactionEmoji;
   String? lastClientMessageId;
   int? lastExpiresInSeconds;
+  bool supportsServerSearch;
+  List<ChatMessageSearchResult> serverSearchResults;
+  final List<String> searchQueries = <String>[];
+  String? lastSearchChatId;
+  int? lastSearchLimit;
   ChatDetails details = const ChatDetails(
     chatId: 'chat-group-1',
     type: 'group',
@@ -378,7 +370,75 @@ class _FakeChatService implements ChatServiceInterface {
     deletedMessageIds.add(messageId);
   }
 
+  @override
+  Future<void> toggleMessageReaction({
+    required String chatId,
+    required String messageId,
+    required String emoji,
+  }) async {
+    lastReactionMessageId = messageId;
+    lastReactionEmoji = emoji;
+
+    final currentUserId = this.currentUserId!;
+    _latestMessages = _latestMessages.map((message) {
+      if (message.id != messageId) {
+        return message;
+      }
+      final reactions =
+          message.reactions.map((reaction) => reaction.toMap()).toList();
+      final existingIndex = reactions.indexWhere(
+        (reaction) => reaction['emoji'] == emoji,
+      );
+      if (existingIndex >= 0) {
+        final userIds = List<String>.from(
+          (reactions[existingIndex]['userIds'] as List<dynamic>? ?? [])
+              .map((value) => value.toString()),
+        );
+        if (userIds.contains(currentUserId)) {
+          userIds.remove(currentUserId);
+        } else {
+          userIds.add(currentUserId);
+        }
+        if (userIds.isEmpty) {
+          reactions.removeAt(existingIndex);
+        } else {
+          reactions[existingIndex] = <String, dynamic>{
+            'emoji': emoji,
+            'userIds': userIds,
+            'count': userIds.length,
+          };
+        }
+      } else {
+        reactions.add(<String, dynamic>{
+          'emoji': emoji,
+          'userIds': <String>[currentUserId],
+          'count': 1,
+        });
+      }
+      return message.copyWith(
+        reactions: ChatMessageReactionSummary.listFromDynamic(reactions),
+      );
+    }).toList(growable: false);
+    _messagesController.add(_latestMessages);
+  }
+
+  @override
+  Future<List<ChatMessageSearchResult>> searchMessages({
+    required String query,
+    String? chatId,
+    int limit = 50,
+  }) async {
+    searchQueries.add(query);
+    lastSearchChatId = chatId;
+    lastSearchLimit = limit;
+    if (!supportsServerSearch) {
+      throw UnsupportedError('searchMessages is not supported');
+    }
+    return serverSearchResults;
+  }
+
   void emitMessages(List<ChatMessage> messages) {
+    _latestMessages = messages;
     _messagesController.add(messages);
   }
 }
@@ -588,6 +648,62 @@ void main() {
           .getDraft(SharedPreferencesChatDraftStore.chatKey('chat-1')),
       isNull,
     );
+  });
+
+  testWidgets('ChatScreen shows sent, delivered and read receipts',
+      (tester) async {
+    final chatService = _FakeChatService();
+    getIt.registerSingleton<ChatServiceInterface>(chatService);
+
+    await tester.pumpWidget(
+      buildChatApp(
+        ChatScreen(
+          chatId: 'chat-1',
+          title: 'Тестовый чат',
+          draftStore: _MemoryChatDraftStore(),
+          pinStore: _MemoryChatPinStore(),
+        ),
+      ),
+    );
+
+    ChatMessage message({
+      List<String> deliveredTo = const <String>['user-1'],
+      List<String> readBy = const <String>['user-1'],
+      bool isRead = false,
+    }) {
+      return ChatMessage(
+        id: 'm-receipt-1',
+        chatId: 'chat-1',
+        senderId: 'user-1',
+        text: 'Статус доставки',
+        timestamp: DateTime(2026, 4, 11, 12, 0),
+        isRead: isRead,
+        participants: const ['user-1', 'other-user'],
+        senderName: 'Я',
+        deliveredTo: deliveredTo,
+        readBy: readBy,
+      );
+    }
+
+    chatService.emitMessages([message()]);
+    await tester.pumpAndSettle();
+    expect(find.text('Отправлено'), findsOneWidget);
+
+    chatService.emitMessages([
+      message(deliveredTo: const ['user-1', 'other-user']),
+    ]);
+    await tester.pumpAndSettle();
+    expect(find.text('Доставлено'), findsOneWidget);
+
+    chatService.emitMessages([
+      message(
+        deliveredTo: const ['user-1', 'other-user'],
+        readBy: const ['user-1', 'other-user'],
+        isRead: true,
+      ),
+    ]);
+    await tester.pumpAndSettle();
+    expect(find.text('Просмотрено'), findsOneWidget);
   });
 
   testWidgets('ChatScreen applies auto-delete option to outgoing messages',
@@ -969,6 +1085,76 @@ void main() {
     expect(find.textContaining('Ничего не найдено'), findsNothing);
   });
 
+  testWidgets('ChatScreen uses server-side message search results',
+      (tester) async {
+    final chatService = _FakeChatService(
+      supportsServerSearch: true,
+      serverSearchResults: [
+        ChatMessageSearchResult(
+          messageId: 'm-2',
+          chatId: 'chat-1',
+          senderId: 'other-user',
+          senderName: 'Собеседник',
+          snippet: 'Сервер нашёл это сообщение по вложению',
+          matchedAt: DateTime(2026, 4, 11, 10, 5),
+        ),
+      ],
+    );
+    getIt.registerSingleton<ChatServiceInterface>(chatService);
+
+    await tester.pumpWidget(
+      buildChatApp(
+        const ChatScreen(
+          chatId: 'chat-1',
+          title: 'Тестовый чат',
+        ),
+      ),
+    );
+
+    chatService.emitMessages([
+      ChatMessage(
+        id: 'm-1',
+        chatId: 'chat-1',
+        senderId: 'other-user',
+        text: 'Сбор у дома в 19:00',
+        timestamp: DateTime(2026, 4, 11, 10, 0),
+        isRead: false,
+        participants: const ['user-1', 'other-user'],
+      ),
+      ChatMessage(
+        id: 'm-2',
+        chatId: 'chat-1',
+        senderId: 'other-user',
+        text: 'Вложение без искомого слова',
+        timestamp: DateTime(2026, 4, 11, 10, 5),
+        isRead: false,
+        participants: const ['user-1', 'other-user'],
+      ),
+    ]);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Поиск по чату'));
+    await tester.pumpAndSettle();
+    final searchField = find.byWidgetPredicate(
+      (widget) =>
+          widget is TextField &&
+          widget.decoration?.hintText == 'Поиск по сообщениям',
+    );
+    await tester.enterText(searchField, 'архив');
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pumpAndSettle();
+
+    expect(chatService.searchQueries, contains('архив'));
+    expect(chatService.lastSearchChatId, 'chat-1');
+    expect(find.text('Найдено 1 сообщение'), findsOneWidget);
+    expect(
+      find.text('Вложение без искомого слова', findRichText: true),
+      findsOneWidget,
+    );
+    expect(find.text('Сбор у дома в 19:00'), findsNothing);
+    expect(find.textContaining('Ничего не найдено'), findsNothing);
+  });
+
   testWidgets('ChatScreen shows unread divider for unread incoming messages',
       (tester) async {
     final chatService = _FakeChatService();
@@ -1341,12 +1527,79 @@ void main() {
     expect(find.text('Закрепленное сообщение'), findsNothing);
   });
 
-  testWidgets('ChatScreen adds reaction and restores it after reopen',
+  testWidgets('ChatScreen jumps to original message from reply quote',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(800, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final chatService = _FakeChatService();
+    getIt.registerSingleton<ChatServiceInterface>(chatService);
+
+    await tester.pumpWidget(
+      buildChatApp(
+        ChatScreen(
+          chatId: 'chat-1',
+          title: 'Тестовый чат',
+          draftStore: _MemoryChatDraftStore(),
+          pinStore: _MemoryChatPinStore(),
+        ),
+      ),
+    );
+
+    chatService.emitMessages([
+      ChatMessage(
+        id: 'm-reply',
+        chatId: 'chat-1',
+        senderId: 'user-1',
+        text: 'Ответ на старое сообщение',
+        timestamp: DateTime(2026, 4, 11, 12),
+        isRead: true,
+        participants: const ['user-1', 'other-user'],
+        senderName: 'Dev User',
+        replyTo: const ChatReplyReference(
+          messageId: 'm-origin',
+          senderId: 'other-user',
+          senderName: 'Собеседник',
+          text: 'Цитата цели',
+        ),
+      ),
+      for (var index = 0; index < 36; index++)
+        ChatMessage(
+          id: 'm-fill-$index',
+          chatId: 'chat-1',
+          senderId: index.isEven ? 'user-1' : 'other-user',
+          text: 'Промежуточное сообщение $index',
+          timestamp: DateTime(2026, 4, 11, 11, 59 - index),
+          isRead: true,
+          participants: const ['user-1', 'other-user'],
+          senderName: index.isEven ? 'Dev User' : 'Собеседник',
+        ),
+      ChatMessage(
+        id: 'm-origin',
+        chatId: 'chat-1',
+        senderId: 'other-user',
+        text: 'Целевой оригинал для перехода',
+        timestamp: DateTime(2026, 4, 11, 10),
+        isRead: true,
+        participants: const ['user-1', 'other-user'],
+        senderName: 'Собеседник',
+      ),
+    ]);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Цитата цели'), findsOneWidget);
+    expect(find.text('Целевой оригинал для перехода'), findsNothing);
+
+    await tester.tap(find.text('Цитата цели'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Целевой оригинал для перехода'), findsOneWidget);
+  });
+
+  testWidgets('ChatScreen toggles server-synced message reactions',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(800, 1000));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     final chatService = _FakeChatService();
-    final reactionStore = _MemoryChatReactionStore();
     getIt.registerSingleton<ChatServiceInterface>(chatService);
 
     Future<void> pumpChat() async {
@@ -1357,7 +1610,6 @@ void main() {
             title: 'Тестовый чат',
             draftStore: _MemoryChatDraftStore(),
             pinStore: _MemoryChatPinStore(),
-            reactionStore: reactionStore,
           ),
         ),
       );
@@ -1383,9 +1635,31 @@ void main() {
     await tester.tap(find.widgetWithText(ChoiceChip, '👍'));
     await tester.pumpAndSettle();
 
+    expect(chatService.lastReactionMessageId, 'm-react-1');
+    expect(chatService.lastReactionEmoji, '👍');
     expect(find.text('👍 1'), findsOneWidget);
 
     await pumpChat();
+    chatService.emitMessages([
+      ChatMessage(
+        id: 'm-react-1',
+        chatId: 'chat-1',
+        senderId: 'other-user',
+        text: 'Отметь реакцией',
+        timestamp: DateTime(2026, 4, 11, 12, 0),
+        isRead: false,
+        participants: const ['user-1', 'other-user'],
+        senderName: 'Собеседник',
+        reactions: const [
+          ChatMessageReactionSummary(
+            emoji: '👍',
+            userIds: ['user-1'],
+            count: 1,
+          ),
+        ],
+      ),
+    ]);
+    await tester.pumpAndSettle();
 
     expect(find.text('👍 1'), findsOneWidget);
   });

@@ -67,6 +67,89 @@ void main() {
     expect(deleteCalls, 1);
   });
 
+  test('CustomApiFamilyTreeService parses duplicate suggestions', () async {
+    final client = MockClient((request) async {
+      if (request.url.path == '/v1/trees/tree-1/duplicates' &&
+          request.method == 'GET') {
+        expect(request.headers['authorization'], 'Bearer access-token');
+        return http.Response(
+          jsonEncode({
+            'suggestions': [
+              {
+                'id': 'tree-1:person-a:person-b',
+                'treeId': 'tree-1',
+                'score': 0.95,
+                'confidence': 'high',
+                'reasons': ['Совпадает ФИО', 'Совпадает дата рождения'],
+                'personA': {
+                  'id': 'person-a',
+                  'treeId': 'tree-1',
+                  'identityId': 'identity-a',
+                  'name': 'Петров Иван Сергеевич',
+                  'gender': 'male',
+                  'birthDate': '1975-05-10T00:00:00.000Z',
+                  'isAlive': true,
+                },
+                'personB': {
+                  'id': 'person-b',
+                  'treeId': 'tree-1',
+                  'identityId': 'identity-b',
+                  'name': 'Петров Иван Сергеевич',
+                  'gender': 'male',
+                  'birthDate': '1975-05-10T00:00:00.000Z',
+                  'isAlive': true,
+                },
+              },
+            ],
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+
+      return http.Response('{"message":"not found"}', 404);
+    });
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'custom_api_session_v1',
+      jsonEncode({
+        'accessToken': 'access-token',
+        'refreshToken': 'refresh-token',
+        'userId': 'user-1',
+        'email': 'dev@rodnya.app',
+        'displayName': 'Dev User',
+        'providerIds': ['password'],
+        'isProfileComplete': true,
+        'missingFields': const [],
+      }),
+    );
+
+    final authService = await CustomApiAuthService.create(
+      httpClient: client,
+      preferences: prefs,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      invitationService: InvitationService(),
+    );
+
+    final treeService = CustomApiFamilyTreeService(
+      authService: authService,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      httpClient: client,
+    );
+
+    final suggestions = await treeService.getDuplicateSuggestions('tree-1');
+
+    expect(suggestions, hasLength(1));
+    expect(suggestions.first.involves('person-a'), isTrue);
+    expect(suggestions.first.otherPersonFor('person-a').id, 'person-b');
+    expect(suggestions.first.reasons, contains('Совпадает ФИО'));
+  });
+
   test('CustomApiFamilyTreeService covers tree CRUD and direct relations',
       () async {
     final trees = <Map<String, dynamic>>[];

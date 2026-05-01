@@ -3140,6 +3140,7 @@ test("tree endpoints cover create tree, persons and relations", async () => {
     const initialPersonsPayload = await personsResponse.json();
     assert.equal(initialPersonsPayload.persons.length, 1);
     assert.equal(initialPersonsPayload.persons[0].userId, userId);
+    assert.ok(initialPersonsPayload.persons[0].identityId);
     const creatorPersonId = initialPersonsPayload.persons[0].id;
 
     const createPersonResponse = await fetch(
@@ -3160,6 +3161,7 @@ test("tree endpoints cover create tree, persons and relations", async () => {
     assert.equal(createPersonResponse.status, 201);
     const createdPersonPayload = await createPersonResponse.json();
     assert.equal(createdPersonPayload.person.name, "Иванова Мария");
+    assert.ok(createdPersonPayload.person.identityId);
     const childPersonId = createdPersonPayload.person.id;
 
     const createRelationResponse = await fetch(
@@ -3192,6 +3194,414 @@ test("tree endpoints cover create tree, persons and relations", async () => {
     assert.equal(listRelationsResponse.status, 200);
     const listedRelationsPayload = await listRelationsResponse.json();
     assert.equal(listedRelationsPayload.relations.length, 1);
+
+    const snapshot = await ctx.store._read();
+    const childIdentity = snapshot.personIdentities.find(
+      (identity) => identity.id === createdPersonPayload.person.identityId,
+    );
+    assert.ok(childIdentity);
+    assert.deepEqual(childIdentity.personIds, [childPersonId]);
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("tree duplicate endpoint returns read-only within-tree suggestions", async () => {
+  const ctx = await startTestServer();
+
+  try {
+    const registerResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "duplicates@rodnya.app",
+        password: "secret123",
+        displayName: "Owner User",
+      }),
+    });
+    assert.equal(registerResponse.status, 201);
+    const registered = await registerResponse.json();
+
+    const createTreeResponse = await fetch(`${ctx.baseUrl}/v1/trees`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${registered.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "Дерево совпадений",
+        description: "Тест подсказок",
+        isPrivate: true,
+      }),
+    });
+    assert.equal(createTreeResponse.status, 201);
+    const treePayload = await createTreeResponse.json();
+    const treeId = treePayload.tree.id;
+
+    for (const firstName of ["Иван", "Иван"]) {
+      const response = await fetch(`${ctx.baseUrl}/v1/trees/${treeId}/persons`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${registered.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          firstName,
+          lastName: "Петров",
+          middleName: "Сергеевич",
+          gender: "male",
+          birthDate: "1975-05-10",
+        }),
+      });
+      assert.equal(response.status, 201);
+    }
+
+    const duplicatesResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeId}/duplicates`,
+      {
+        headers: {authorization: `Bearer ${registered.accessToken}`},
+      },
+    );
+    assert.equal(duplicatesResponse.status, 200);
+    const duplicatesPayload = await duplicatesResponse.json();
+
+    assert.equal(duplicatesPayload.suggestions.length, 1);
+    assert.equal(duplicatesPayload.suggestions[0].treeId, treeId);
+    assert.equal(duplicatesPayload.suggestions[0].confidence, "high");
+    assert.deepEqual(duplicatesPayload.suggestions[0].reasons, [
+      "Совпадает ФИО",
+      "Совпадает дата рождения",
+      "Совпадает пол",
+    ]);
+    assert.ok(duplicatesPayload.suggestions[0].personA.identityId);
+    assert.ok(duplicatesPayload.suggestions[0].personB.identityId);
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("cross-tree merge proposals expose only safe previews and require reviewer consensus", async () => {
+  const ctx = await startTestServer();
+
+  async function registerUser(email, displayName) {
+    const response = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email,
+        password: "secret123",
+        displayName,
+      }),
+    });
+    assert.equal(response.status, 201);
+    return response.json();
+  }
+
+  async function createTree(token, name) {
+    const response = await fetch(`${ctx.baseUrl}/v1/trees`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        name,
+        description: "Дерево для cross-tree matching",
+        isPrivate: true,
+      }),
+    });
+    assert.equal(response.status, 201);
+    const payload = await response.json();
+    return payload.tree.id;
+  }
+
+  async function createPerson(token, treeId) {
+    const response = await fetch(`${ctx.baseUrl}/v1/trees/${treeId}/persons`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        firstName: "Иван",
+        lastName: "Петров",
+        middleName: "Сергеевич",
+        gender: "male",
+        birthDate: "1950-05-10",
+        photoUrl: "https://cdn.example.com/private-photo.jpg",
+        birthPlace: "Москва",
+        notes: "Не должно утечь в proposal",
+      }),
+    });
+    assert.equal(response.status, 201);
+    return response.json();
+  }
+
+  try {
+    const alice = await registerUser("merge-alice@rodnya.app", "Алиса");
+    const bob = await registerUser("merge-bob@rodnya.app", "Боб");
+    const aliceTreeId = await createTree(alice.accessToken, "Дерево Алисы");
+    const bobTreeId = await createTree(bob.accessToken, "Дерево Боба");
+    const alicePerson = await createPerson(alice.accessToken, aliceTreeId);
+    const bobPerson = await createPerson(bob.accessToken, bobTreeId);
+
+    const pendingForAliceResponse = await fetch(
+      `${ctx.baseUrl}/v1/merge-proposals/pending`,
+      {headers: {authorization: `Bearer ${alice.accessToken}`}},
+    );
+    assert.equal(pendingForAliceResponse.status, 200);
+    const pendingForAlice = await pendingForAliceResponse.json();
+    assert.equal(pendingForAlice.proposals.length, 1);
+    const proposal = pendingForAlice.proposals[0];
+    assert.equal(proposal.status, "pending");
+    assert.equal(proposal.personA.name, "Петров Иван Сергеевич");
+    assert.equal(proposal.personA.birthYear, "1950");
+    assert.deepEqual(Object.keys(proposal.personA).sort(), ["birthYear", "name"]);
+    assert.deepEqual(Object.keys(proposal.personB).sort(), ["birthYear", "name"]);
+    assert.equal(proposal.personA.photoUrl, undefined);
+    assert.equal(proposal.personA.birthDate, undefined);
+    assert.equal(proposal.personA.treeId, undefined);
+    assert.equal(proposal.reviewerUserIds, undefined);
+
+    const aliceReviewResponse = await fetch(
+      `${ctx.baseUrl}/v1/merge-proposals/${proposal.id}/review`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${alice.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({decision: "accept"}),
+      },
+    );
+    assert.equal(aliceReviewResponse.status, 200);
+    const aliceReview = await aliceReviewResponse.json();
+    assert.equal(aliceReview.proposal.status, "pending");
+
+    const pendingForBobResponse = await fetch(
+      `${ctx.baseUrl}/v1/merge-proposals/pending`,
+      {headers: {authorization: `Bearer ${bob.accessToken}`}},
+    );
+    assert.equal(pendingForBobResponse.status, 200);
+    const pendingForBob = await pendingForBobResponse.json();
+    assert.equal(pendingForBob.proposals.length, 1);
+
+    const bobReviewResponse = await fetch(
+      `${ctx.baseUrl}/v1/merge-proposals/${proposal.id}/review`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${bob.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({decision: "accept"}),
+      },
+    );
+    assert.equal(bobReviewResponse.status, 200);
+    const bobReview = await bobReviewResponse.json();
+    assert.equal(bobReview.proposal.status, "accepted");
+
+    const db = await ctx.store._read();
+    const updatedAlicePerson = db.persons.find(
+      (person) => person.id === alicePerson.person.id,
+    );
+    const updatedBobPerson = db.persons.find(
+      (person) => person.id === bobPerson.person.id,
+    );
+    assert.ok(updatedAlicePerson.identityId);
+    assert.equal(updatedAlicePerson.identityId, updatedBobPerson.identityId);
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("identity claims, person privacy attributes and public discovery are opt-in", async () => {
+  const ctx = await startTestServer();
+
+  async function registerUser(email, displayName) {
+    const response = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email,
+        password: "secret123",
+        displayName,
+      }),
+    });
+    assert.equal(response.status, 201);
+    return response.json();
+  }
+
+  try {
+    const owner = await registerUser("claim-owner@rodnya.app", "Владелец");
+    const claimant = await registerUser("claimant@rodnya.app", "Иван Петров");
+
+    const createTreeResponse = await fetch(`${ctx.baseUrl}/v1/trees`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${owner.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "Дерево claim",
+        description: "Проверка identity claims",
+        isPrivate: true,
+      }),
+    });
+    assert.equal(createTreeResponse.status, 201);
+    const treePayload = await createTreeResponse.json();
+    const treeId = treePayload.tree.id;
+
+    const personResponse = await fetch(`${ctx.baseUrl}/v1/trees/${treeId}/persons`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${owner.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        firstName: "Иван",
+        lastName: "Петров",
+        gender: "male",
+        birthDate: "1990-02-01",
+      }),
+    });
+    assert.equal(personResponse.status, 201);
+    const personPayload = await personResponse.json();
+    const personId = personPayload.person.id;
+    assert.equal(personPayload.person.visibility, "private");
+
+    const inviteResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeId}/invitations`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${owner.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({recipientUserId: claimant.user.id}),
+      },
+    );
+    assert.equal(inviteResponse.status, 201);
+    const invitation = await inviteResponse.json();
+
+    const acceptResponse = await fetch(
+      `${ctx.baseUrl}/v1/tree-invitations/${invitation.invitation.invitationId}/respond`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${claimant.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({accept: true}),
+      },
+    );
+    assert.equal(acceptResponse.status, 200);
+
+    const searchBeforeOptInResponse = await fetch(
+      `${ctx.baseUrl}/v1/identity-discovery/search?query=${encodeURIComponent("Петров")}&birthYear=1990`,
+      {headers: {authorization: `Bearer ${owner.accessToken}`}},
+    );
+    assert.equal(searchBeforeOptInResponse.status, 200);
+    const searchBeforeOptIn = await searchBeforeOptInResponse.json();
+    assert.equal(searchBeforeOptIn.results.length, 0);
+
+    const claimResponse = await fetch(`${ctx.baseUrl}/v1/identity-claims`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${claimant.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({treeId, personId}),
+    });
+    assert.equal(claimResponse.status, 201);
+    const claimPayload = await claimResponse.json();
+    assert.equal(claimPayload.claim.status, "pending");
+
+    const ownerClaimsResponse = await fetch(
+      `${ctx.baseUrl}/v1/identity-claims/pending`,
+      {headers: {authorization: `Bearer ${owner.accessToken}`}},
+    );
+    assert.equal(ownerClaimsResponse.status, 200);
+    const ownerClaims = await ownerClaimsResponse.json();
+    assert.equal(ownerClaims.claims.length, 1);
+
+    const reviewClaimResponse = await fetch(
+      `${ctx.baseUrl}/v1/identity-claims/${claimPayload.claim.id}/review`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${owner.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({decision: "approve"}),
+      },
+    );
+    assert.equal(reviewClaimResponse.status, 200);
+    const reviewedClaim = await reviewClaimResponse.json();
+    assert.equal(reviewedClaim.claim.status, "approved");
+
+    const attributesResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeId}/persons/${personId}/attributes`,
+      {headers: {authorization: `Bearer ${owner.accessToken}`}},
+    );
+    assert.equal(attributesResponse.status, 200);
+    const attributesPayload = await attributesResponse.json();
+    assert.ok(
+      attributesPayload.attributes.some(
+        (attribute) => attribute.field === "contacts" && attribute.visibility === "private",
+      ),
+    );
+
+    const updateAttributesResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeId}/persons/${personId}/attributes`,
+      {
+        method: "PUT",
+        headers: {
+          authorization: `Bearer ${owner.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          visibility: "cross-tree",
+          attributes: [
+            {field: "name", visibility: "cross-tree"},
+            {field: "birthYear", visibility: "cross-tree"},
+            {field: "contacts", visibility: "private"},
+          ],
+        }),
+      },
+    );
+    assert.equal(updateAttributesResponse.status, 200);
+    const updatedAttributes = await updateAttributesResponse.json();
+    assert.ok(
+      updatedAttributes.attributes.some(
+        (attribute) => attribute.field === "name" && attribute.visibility === "cross-tree",
+      ),
+    );
+
+    const optInResponse = await fetch(`${ctx.baseUrl}/v1/identity-discovery/me`, {
+      method: "PATCH",
+      headers: {
+        authorization: `Bearer ${claimant.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({isPublicDiscoverable: true}),
+    });
+    assert.equal(optInResponse.status, 200);
+    const optInPayload = await optInResponse.json();
+    assert.equal(optInPayload.isPublicDiscoverable, true);
+
+    const searchAfterOptInResponse = await fetch(
+      `${ctx.baseUrl}/v1/identity-discovery/search?query=${encodeURIComponent("Петров")}&birthYear=1990`,
+      {headers: {authorization: `Bearer ${owner.accessToken}`}},
+    );
+    assert.equal(searchAfterOptInResponse.status, 200);
+    const searchAfterOptIn = await searchAfterOptInResponse.json();
+    assert.equal(searchAfterOptIn.results.length, 1);
+    assert.deepEqual(Object.keys(searchAfterOptIn.results[0]).sort(), [
+      "birthYear",
+      "identityId",
+      "name",
+    ]);
   } finally {
     await stopTestServer(ctx);
   }
@@ -3823,6 +4233,67 @@ test("post endpoints cover feed, likes and comments", async () => {
     const treePayload = await treeResponse.json();
     const treeId = treePayload.tree.id;
 
+    const circlesResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeId}/circles`,
+      {
+        headers: {authorization: `Bearer ${alice.accessToken}`},
+      },
+    );
+    assert.equal(circlesResponse.status, 200);
+    const circlesPayload = await circlesResponse.json();
+    const allTreeCircle = circlesPayload.circles.find(
+      (circle) => circle.kind === "all_tree",
+    );
+    const favoritesCircle = circlesPayload.circles.find(
+      (circle) => circle.kind === "favorites",
+    );
+    assert.ok(allTreeCircle);
+    assert.ok(favoritesCircle);
+    assert.equal(allTreeCircle.memberCount, 1);
+
+    const personsResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeId}/persons`,
+      {
+        headers: {authorization: `Bearer ${alice.accessToken}`},
+      },
+    );
+    assert.equal(personsResponse.status, 200);
+    const personsPayload = await personsResponse.json();
+    const alicePerson = personsPayload.persons.find(
+      (person) => person.userId === alice.user.id,
+    );
+    assert.ok(alicePerson?.identityId);
+
+    const customCircleResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeId}/circles`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${alice.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({name: "Близкие"}),
+      },
+    );
+    assert.equal(customCircleResponse.status, 201);
+    const customCircle = await customCircleResponse.json();
+    assert.equal(customCircle.kind, "custom");
+
+    const updateCircleMembersResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeId}/circles/${customCircle.id}/members`,
+      {
+        method: "PUT",
+        headers: {
+          authorization: `Bearer ${alice.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({personIds: [alicePerson.id]}),
+      },
+    );
+    assert.equal(updateCircleMembersResponse.status, 200);
+    const updatedCustomCircle = await updateCircleMembersResponse.json();
+    assert.equal(updatedCustomCircle.memberCount, 1);
+
     const inviteResponse = await fetch(
       `${ctx.baseUrl}/v1/trees/${treeId}/invitations`,
       {
@@ -3869,8 +4340,25 @@ test("post endpoints cover feed, likes and comments", async () => {
     assert.equal(createPostResponse.status, 201);
     const createdPost = await createPostResponse.json();
     assert.equal(createdPost.treeId, treeId);
+    assert.equal(createdPost.circleId, allTreeCircle.id);
     assert.equal(createdPost.commentCount, 0);
     assert.deepEqual(createdPost.likedBy, []);
+
+    const createCirclePostResponse = await fetch(`${ctx.baseUrl}/v1/posts`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${alice.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        treeId,
+        circleId: customCircle.id,
+        content: "Только для близких",
+      }),
+    });
+    assert.equal(createCirclePostResponse.status, 201);
+    const createdCirclePost = await createCirclePostResponse.json();
+    assert.equal(createdCirclePost.circleId, customCircle.id);
 
     const treeFeedResponse = await fetch(`${ctx.baseUrl}/v1/posts?treeId=${treeId}`, {
       headers: {authorization: `Bearer ${bob.accessToken}`},
@@ -3962,6 +4450,15 @@ test("post endpoints cover feed, likes and comments", async () => {
     );
     assert.equal(deletePostResponse.status, 204);
 
+    const deleteCirclePostResponse = await fetch(
+      `${ctx.baseUrl}/v1/posts/${createdCirclePost.id}`,
+      {
+        method: "DELETE",
+        headers: {authorization: `Bearer ${alice.accessToken}`},
+      },
+    );
+    assert.equal(deleteCirclePostResponse.status, 204);
+
     const feedAfterDeleteResponse = await fetch(
       `${ctx.baseUrl}/v1/posts?treeId=${treeId}`,
       {
@@ -3971,6 +4468,263 @@ test("post endpoints cover feed, likes and comments", async () => {
     assert.equal(feedAfterDeleteResponse.status, 200);
     const feedAfterDelete = await feedAfterDeleteResponse.json();
     assert.equal(feedAfterDelete.length, 0);
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("auto circles follow tree relations and filter audience content", async () => {
+  const ctx = await startTestServer();
+
+  try {
+    const register = async ({email, displayName}) => {
+      const response = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+        method: "POST",
+        headers: {"content-type": "application/json"},
+        body: JSON.stringify({
+          email,
+          password: "secret123",
+          displayName,
+        }),
+      });
+      assert.equal(response.status, 201);
+      return response.json();
+    };
+
+    const alice = await register({
+      email: "auto-circle-alice@rodnya.app",
+      displayName: "Alice Auto",
+    });
+    const bob = await register({
+      email: "auto-circle-bob@rodnya.app",
+      displayName: "Bob Auto",
+    });
+    const carol = await register({
+      email: "auto-circle-carol@rodnya.app",
+      displayName: "Carol Auto",
+    });
+
+    const treeResponse = await fetch(`${ctx.baseUrl}/v1/trees`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${alice.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "Семья автокругов",
+        description: "Тестовые круги по структуре дерева",
+      }),
+    });
+    assert.equal(treeResponse.status, 201);
+    const treeId = (await treeResponse.json()).tree.id;
+
+    const inviteAndAccept = async (user) => {
+      const inviteResponse = await fetch(
+        `${ctx.baseUrl}/v1/trees/${treeId}/invitations`,
+        {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${alice.accessToken}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            recipientUserId: user.user.id,
+            relationToTree: "Родственник",
+          }),
+        },
+      );
+      assert.equal(inviteResponse.status, 201);
+      const invite = await inviteResponse.json();
+
+      const acceptResponse = await fetch(
+        `${ctx.baseUrl}/v1/tree-invitations/${invite.invitation.invitationId}/respond`,
+        {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${user.accessToken}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({accept: true}),
+        },
+      );
+      assert.equal(acceptResponse.status, 200);
+    };
+
+    await inviteAndAccept(bob);
+    await inviteAndAccept(carol);
+
+    const listPersons = async (token) => {
+      const response = await fetch(`${ctx.baseUrl}/v1/trees/${treeId}/persons`, {
+        headers: {authorization: `Bearer ${token}`},
+      });
+      assert.equal(response.status, 200);
+      return (await response.json()).persons;
+    };
+
+    const createPerson = async (token, payload) => {
+      const response = await fetch(`${ctx.baseUrl}/v1/trees/${treeId}/persons`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+      assert.equal(response.status, 201);
+      return (await response.json()).person;
+    };
+
+    const createRelation = async (payload) => {
+      const response = await fetch(`${ctx.baseUrl}/v1/trees/${treeId}/relations`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${alice.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+      assert.equal(response.status, 201);
+      return (await response.json()).relation;
+    };
+
+    const alicePerson = (await listPersons(alice.accessToken)).find(
+      (person) => person.userId === alice.user.id,
+    );
+    assert.ok(alicePerson?.identityId);
+
+    const partner = await createPerson(alice.accessToken, {
+      firstName: "Партнёр",
+      lastName: "Автокругов",
+      gender: "unknown",
+    });
+    const bobPerson = await createPerson(bob.accessToken, {
+      userId: bob.user.id,
+      firstName: "Борис",
+      lastName: "Автокругов",
+      gender: "male",
+    });
+    const carolPerson = await createPerson(carol.accessToken, {
+      userId: carol.user.id,
+      firstName: "Карина",
+      lastName: "Автокругова",
+      gender: "female",
+    });
+
+    await createRelation({
+      person1Id: alicePerson.id,
+      person2Id: partner.id,
+      relation1to2: "spouse",
+      isConfirmed: true,
+    });
+    const aliceParentRelation = await createRelation({
+      person1Id: alicePerson.id,
+      person2Id: bobPerson.id,
+      relation1to2: "parent",
+      isConfirmed: true,
+    });
+    await createRelation({
+      person1Id: partner.id,
+      person2Id: bobPerson.id,
+      relation1to2: "parent",
+      isConfirmed: true,
+    });
+
+    const circlesResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeId}/circles`,
+      {
+        headers: {authorization: `Bearer ${alice.accessToken}`},
+      },
+    );
+    assert.equal(circlesResponse.status, 200);
+    const circles = (await circlesResponse.json()).circles;
+    const descendantsCircle = circles.find(
+      (circle) =>
+        circle.kind === "descendants_of" &&
+        circle.anchorPersonId === alicePerson.id,
+    );
+    const ancestorsCircle = circles.find(
+      (circle) =>
+        circle.kind === "ancestors_of" && circle.anchorPersonId === bobPerson.id,
+    );
+    const pairCircle = circles.find(
+      (circle) =>
+        circle.kind === "pair" &&
+        circle.anchorPersonIds.includes(alicePerson.id) &&
+        circle.anchorPersonIds.includes(partner.id),
+    );
+    assert.ok(descendantsCircle);
+    assert.equal(descendantsCircle.memberCount, 2);
+    assert.ok(ancestorsCircle);
+    assert.equal(ancestorsCircle.memberCount, 3);
+    assert.ok(pairCircle);
+    assert.equal(pairCircle.memberCount, 3);
+
+    const mutateSystemCircleResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeId}/circles/${pairCircle.id}/members`,
+      {
+        method: "PUT",
+        headers: {
+          authorization: `Bearer ${alice.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({personIds: [carolPerson.id]}),
+      },
+    );
+    assert.equal(mutateSystemCircleResponse.status, 403);
+
+    const createPairPostResponse = await fetch(`${ctx.baseUrl}/v1/posts`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${alice.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        treeId,
+        circleId: pairCircle.id,
+        content: "Новость только для пары и ребёнка",
+      }),
+    });
+    assert.equal(createPairPostResponse.status, 201);
+    const pairPost = await createPairPostResponse.json();
+
+    const bobFeedResponse = await fetch(`${ctx.baseUrl}/v1/posts?treeId=${treeId}`, {
+      headers: {authorization: `Bearer ${bob.accessToken}`},
+    });
+    assert.equal(bobFeedResponse.status, 200);
+    const bobFeed = await bobFeedResponse.json();
+    assert.equal(bobFeed.some((post) => post.id === pairPost.id), true);
+
+    const carolFeedResponse = await fetch(
+      `${ctx.baseUrl}/v1/posts?treeId=${treeId}`,
+      {
+        headers: {authorization: `Bearer ${carol.accessToken}`},
+      },
+    );
+    assert.equal(carolFeedResponse.status, 200);
+    const carolFeed = await carolFeedResponse.json();
+    assert.equal(carolFeed.some((post) => post.id === pairPost.id), false);
+
+    const deleteParentRelationResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeId}/relations/${aliceParentRelation.id}`,
+      {
+        method: "DELETE",
+        headers: {authorization: `Bearer ${alice.accessToken}`},
+      },
+    );
+    assert.equal(deleteParentRelationResponse.status, 204);
+
+    const recalculatedCirclesResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeId}/circles`,
+      {
+        headers: {authorization: `Bearer ${alice.accessToken}`},
+      },
+    );
+    assert.equal(recalculatedCirclesResponse.status, 200);
+    const recalculatedCircles = (await recalculatedCirclesResponse.json()).circles;
+    assert.equal(
+      recalculatedCircles.some((circle) => circle.id === descendantsCircle.id),
+      false,
+    );
   } finally {
     await stopTestServer(ctx);
   }
@@ -4049,6 +4803,30 @@ test("story endpoints support create, view, expiry and delete", async () => {
     );
     assert.equal(acceptInviteResponse.status, 200);
 
+    const circlesResponse = await fetch(`${ctx.baseUrl}/v1/trees/${treeId}/circles`, {
+      headers: {authorization: `Bearer ${alice.accessToken}`},
+    });
+    assert.equal(circlesResponse.status, 200);
+    const circlesPayload = await circlesResponse.json();
+    const allTreeCircle = circlesPayload.circles.find(
+      (circle) => circle.kind === "all_tree",
+    );
+    assert.ok(allTreeCircle);
+
+    const customCircleResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeId}/circles`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${alice.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({name: "Близкие истории"}),
+      },
+    );
+    assert.equal(customCircleResponse.status, 201);
+    const customCircle = await customCircleResponse.json();
+
     const createStoryResponse = await fetch(`${ctx.baseUrl}/v1/stories`, {
       method: "POST",
       headers: {
@@ -4065,7 +4843,25 @@ test("story endpoints support create, view, expiry and delete", async () => {
     const createdStory = await createStoryResponse.json();
     assert.equal(createdStory.treeId, treeId);
     assert.equal(createdStory.type, "text");
+    assert.equal(createdStory.circleId, allTreeCircle.id);
     assert.deepEqual(createdStory.viewedBy, []);
+
+    const createCircleStoryResponse = await fetch(`${ctx.baseUrl}/v1/stories`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${alice.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        treeId,
+        circleId: customCircle.id,
+        type: "text",
+        text: "Только для близких",
+      }),
+    });
+    assert.equal(createCircleStoryResponse.status, 201);
+    const circleStory = await createCircleStoryResponse.json();
+    assert.equal(circleStory.circleId, customCircle.id);
 
     const expiredStoryResponse = await fetch(`${ctx.baseUrl}/v1/stories`, {
       method: "POST",
@@ -4134,6 +4930,15 @@ test("story endpoints support create, view, expiry and delete", async () => {
       },
     );
     assert.equal(deleteStoryResponse.status, 204);
+
+    const deleteCircleStoryResponse = await fetch(
+      `${ctx.baseUrl}/v1/stories/${circleStory.id}`,
+      {
+        method: "DELETE",
+        headers: {authorization: `Bearer ${alice.accessToken}`},
+      },
+    );
+    assert.equal(deleteCircleStoryResponse.status, 204);
 
     const storiesAfterDeleteResponse = await fetch(
       `${ctx.baseUrl}/v1/stories?treeId=${treeId}`,
@@ -4261,6 +5066,257 @@ test("chat endpoints cover preview list, history, send and mark as read", async 
     assert.equal(unreadAfterReadResponse.status, 200);
     const unreadAfterReadPayload = await unreadAfterReadResponse.json();
     assert.equal(unreadAfterReadPayload.totalUnread, 0);
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("chat message reactions are server-synced through history and realtime", async () => {
+  const ctx = await startTestServer();
+
+  const waitFor = async (predicate, timeoutMs = 3000) => {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      const result = predicate();
+      if (result) {
+        return result;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    throw new Error("Timed out waiting for realtime reaction event");
+  };
+
+  try {
+    const register = async (email, displayName) => {
+      const response = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+        method: "POST",
+        headers: {"content-type": "application/json"},
+        body: JSON.stringify({
+          email,
+          password: "secret123",
+          displayName,
+        }),
+      });
+      assert.equal(response.status, 201);
+      return response.json();
+    };
+
+    const alice = await register("reaction-alice@rodnya.app", "Alice React");
+    const bob = await register("reaction-bob@rodnya.app", "Bob React");
+
+    const createChatResponse = await fetch(`${ctx.baseUrl}/v1/chats/direct`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${alice.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({otherUserId: bob.user.id}),
+    });
+    assert.equal(createChatResponse.status, 200);
+    const directChat = await createChatResponse.json();
+
+    const bobSocket = new WebSocket(
+      `${ctx.wsBaseUrl}/v1/realtime?accessToken=${bob.accessToken}`,
+    );
+    const bobEvents = [];
+    bobSocket.addEventListener("message", (event) => {
+      bobEvents.push(JSON.parse(String(event.data)));
+    });
+    await new Promise((resolve, reject) => {
+      bobSocket.addEventListener("open", resolve, {once: true});
+      bobSocket.addEventListener("error", reject, {once: true});
+    });
+    await waitFor(() => bobEvents.find((item) => item.type === "connection.ready"));
+
+    const sendMessageResponse = await fetch(
+      `${ctx.baseUrl}/v1/chats/${directChat.chatId}/messages`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${alice.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({text: "Сообщение с реакцией"}),
+      },
+    );
+    assert.equal(sendMessageResponse.status, 201);
+    const sentMessagePayload = await sendMessageResponse.json();
+    const messageId = sentMessagePayload.message.id;
+
+    const reactResponse = await fetch(
+      `${ctx.baseUrl}/v1/chats/${directChat.chatId}/messages/${messageId}/reactions`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${alice.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({emoji: "👍"}),
+      },
+    );
+    assert.equal(reactResponse.status, 200);
+    const reactPayload = await reactResponse.json();
+    assert.equal(reactPayload.added, true);
+    assert.deepEqual(reactPayload.reactions, [
+      {
+        emoji: "👍",
+        userIds: [alice.user.id],
+        count: 1,
+      },
+    ]);
+
+    const reactionEvent = await waitFor(() =>
+      bobEvents.find(
+        (item) =>
+          item.type === "message.reaction.changed" &&
+          item.chatId === directChat.chatId &&
+          item.messageId === messageId,
+      ),
+    );
+    assert.deepEqual(reactionEvent.reactions, reactPayload.reactions);
+
+    const historyResponse = await fetch(
+      `${ctx.baseUrl}/v1/chats/${directChat.chatId}/messages`,
+      {
+        headers: {authorization: `Bearer ${bob.accessToken}`},
+      },
+    );
+    assert.equal(historyResponse.status, 200);
+    const historyPayload = await historyResponse.json();
+    assert.deepEqual(historyPayload.messages[0].reactions, reactPayload.reactions);
+
+    const toggleOffResponse = await fetch(
+      `${ctx.baseUrl}/v1/chats/${directChat.chatId}/messages/${messageId}/reactions`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${alice.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({emoji: "👍"}),
+      },
+    );
+    assert.equal(toggleOffResponse.status, 200);
+    const toggleOffPayload = await toggleOffResponse.json();
+    assert.equal(toggleOffPayload.added, false);
+    assert.deepEqual(toggleOffPayload.reactions, []);
+
+    bobSocket.close();
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("chat message history supports limit, before and after pagination", async () => {
+  const ctx = await startTestServer();
+
+  try {
+    const register = async (email, displayName) => {
+      const response = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+        method: "POST",
+        headers: {"content-type": "application/json"},
+        body: JSON.stringify({
+          email,
+          password: "secret123",
+          displayName,
+        }),
+      });
+      assert.equal(response.status, 201);
+      return response.json();
+    };
+
+    const alice = await register("chat-page-alice@rodnya.app", "Alice Page");
+    const bob = await register("chat-page-bob@rodnya.app", "Bob Page");
+
+    const createChatResponse = await fetch(`${ctx.baseUrl}/v1/chats/direct`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${alice.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({otherUserId: bob.user.id}),
+    });
+    assert.equal(createChatResponse.status, 200);
+    const directChat = await createChatResponse.json();
+
+    for (let index = 1; index <= 5; index += 1) {
+      const sendMessageResponse = await fetch(
+        `${ctx.baseUrl}/v1/chats/${directChat.chatId}/messages`,
+        {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${alice.accessToken}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({text: `Message ${index}`}),
+        },
+      );
+      assert.equal(sendMessageResponse.status, 201);
+    }
+
+    const allHistoryResponse = await fetch(
+      `${ctx.baseUrl}/v1/chats/${directChat.chatId}/messages`,
+      {
+        headers: {authorization: `Bearer ${bob.accessToken}`},
+      },
+    );
+    assert.equal(allHistoryResponse.status, 200);
+    const allHistoryPayload = await allHistoryResponse.json();
+    assert.equal(allHistoryPayload.messages.length, 5);
+    assert.equal(allHistoryPayload.hasMore, false);
+
+    const allMessageIds = allHistoryPayload.messages.map((message) => message.id);
+    const firstPageResponse = await fetch(
+      `${ctx.baseUrl}/v1/chats/${directChat.chatId}/messages?limit=2`,
+      {
+        headers: {authorization: `Bearer ${bob.accessToken}`},
+      },
+    );
+    assert.equal(firstPageResponse.status, 200);
+    const firstPagePayload = await firstPageResponse.json();
+    assert.deepEqual(
+      firstPagePayload.messages.map((message) => message.id),
+      allMessageIds.slice(0, 2),
+    );
+    assert.equal(firstPagePayload.hasMore, true);
+
+    const secondPageCursor = firstPagePayload.messages.at(-1).id;
+    const secondPageResponse = await fetch(
+      `${ctx.baseUrl}/v1/chats/${directChat.chatId}/messages?limit=2&before=${secondPageCursor}`,
+      {
+        headers: {authorization: `Bearer ${bob.accessToken}`},
+      },
+    );
+    assert.equal(secondPageResponse.status, 200);
+    const secondPagePayload = await secondPageResponse.json();
+    assert.deepEqual(
+      secondPagePayload.messages.map((message) => message.id),
+      allMessageIds.slice(2, 4),
+    );
+    assert.equal(secondPagePayload.hasMore, true);
+
+    const newerCursor = allHistoryPayload.messages[2].id;
+    const newerPageResponse = await fetch(
+      `${ctx.baseUrl}/v1/chats/${directChat.chatId}/messages?limit=10&after=${newerCursor}`,
+      {
+        headers: {authorization: `Bearer ${bob.accessToken}`},
+      },
+    );
+    assert.equal(newerPageResponse.status, 200);
+    const newerPagePayload = await newerPageResponse.json();
+    assert.deepEqual(
+      newerPagePayload.messages.map((message) => message.id),
+      allMessageIds.slice(0, 2),
+    );
+    assert.equal(newerPagePayload.hasMore, false);
+
+    const invalidCursorResponse = await fetch(
+      `${ctx.baseUrl}/v1/chats/${directChat.chatId}/messages?before=a&after=b`,
+      {
+        headers: {authorization: `Bearer ${bob.accessToken}`},
+      },
+    );
+    assert.equal(invalidCursorResponse.status, 400);
   } finally {
     await stopTestServer(ctx);
   }
@@ -7638,13 +8694,27 @@ test("websocket realtime and push queue work for chat delivery", async () => {
         const hasChatEvent = observedEvents.some(
           (item) => item.type === "chat.message.created",
         );
+        const hasChatUpdated = observedEvents.some(
+          (item) => item.type === "chat.updated",
+        );
+        const hasUnreadChanged = observedEvents.some(
+          (item) =>
+            item.type === "chat.unread.changed" &&
+            item.totalUnread === 1,
+        );
         const hasNotificationEvent = observedEvents.some(
           (item) =>
             item.type === "notification.created" &&
             item.notification?.type === "chat_message",
         );
 
-        if (hasReady && hasChatEvent && hasNotificationEvent) {
+        if (
+          hasReady &&
+          hasChatEvent &&
+          hasChatUpdated &&
+          hasUnreadChanged &&
+          hasNotificationEvent
+        ) {
           clearTimeout(timer);
           resolve(observedEvents);
         }
@@ -7684,6 +8754,19 @@ test("websocket realtime and push queue work for chat delivery", async () => {
         (item) =>
           item.type === "chat.message.created" &&
           item.message?.text === "Realtime привет",
+      ),
+    );
+    assert.ok(
+      realtimeEvents.some(
+        (item) => item.type === "chat.updated" && item.chatId === chatPayload.chatId,
+      ),
+    );
+    assert.ok(
+      realtimeEvents.some(
+        (item) =>
+          item.type === "chat.unread.changed" &&
+          item.chatId === chatPayload.chatId &&
+          item.totalUnread === 1,
       ),
     );
     assert.ok(
@@ -8009,6 +9092,17 @@ test("presence, typing and read-state realtime updates reach chat participants",
       },
     );
     assert.equal(sendMessageResponse.status, 201);
+    const sentMessagePayload = await sendMessageResponse.json();
+    const deliveredPayload = await waitFor(() =>
+      aliceEvents.find(
+        (item) =>
+          item.type === "message.delivered" &&
+          item.chatId === chatPayload.chatId &&
+          item.messageId === sentMessagePayload.message.id,
+      ),
+    );
+    assert.deepEqual(deliveredPayload.userIds, [bob.user.id]);
+    assert.ok(deliveredPayload.deliveredTo.includes(bob.user.id));
 
     const readResponse = await fetch(
       `${ctx.baseUrl}/v1/chats/${chatPayload.chatId}/read`,
@@ -8023,6 +9117,17 @@ test("presence, typing and read-state realtime updates reach chat participants",
     );
     assert.equal(readResponse.status, 200);
 
+    const messageReadPayload = await waitFor(() =>
+      aliceEvents.find(
+        (item) =>
+          item.type === "message.read" &&
+          item.chatId === chatPayload.chatId &&
+          item.userId === bob.user.id &&
+          (item.messageIds || []).includes(sentMessagePayload.message.id),
+      ),
+    );
+    assert.equal(messageReadPayload.userId, bob.user.id);
+
     const readPayload = await waitFor(() =>
       aliceEvents.find(
         (item) =>
@@ -8033,9 +9138,369 @@ test("presence, typing and read-state realtime updates reach chat participants",
     );
     assert.equal(readPayload.userId, bob.user.id);
 
+    const historyResponse = await fetch(
+      `${ctx.baseUrl}/v1/chats/${chatPayload.chatId}/messages`,
+      {
+        headers: {authorization: `Bearer ${alice.accessToken}`},
+      },
+    );
+    assert.equal(historyResponse.status, 200);
+    const historyPayload = await historyResponse.json();
+    assert.ok(historyPayload.messages[0].deliveredTo.includes(bob.user.id));
+    assert.ok(historyPayload.messages[0].readBy.includes(bob.user.id));
+
     aliceSocket.close();
     bobSocket.close();
   } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("chat message search returns scoped participant results", async () => {
+  const ctx = await startConfiguredTestServer();
+
+  try {
+    const aliceResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "search-alice@rodnya.app",
+        password: "secret123",
+        displayName: "Search Alice",
+      }),
+    });
+    assert.equal(aliceResponse.status, 201);
+    const alice = await aliceResponse.json();
+    const aliceHeaders = {authorization: `Bearer ${alice.accessToken}`};
+
+    const bobResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "search-bob@rodnya.app",
+        password: "secret123",
+        displayName: "Search Bob",
+      }),
+    });
+    assert.equal(bobResponse.status, 201);
+    const bob = await bobResponse.json();
+    const bobHeaders = {authorization: `Bearer ${bob.accessToken}`};
+
+    const charlieResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "search-charlie@rodnya.app",
+        password: "secret123",
+        displayName: "Search Charlie",
+      }),
+    });
+    assert.equal(charlieResponse.status, 201);
+    const charlie = await charlieResponse.json();
+    const charlieHeaders = {authorization: `Bearer ${charlie.accessToken}`};
+
+    const chatResponse = await fetch(`${ctx.baseUrl}/v1/chats/direct`, {
+      method: "POST",
+      headers: {
+        ...aliceHeaders,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({otherUserId: bob.user.id}),
+    });
+    assert.equal(chatResponse.status, 200);
+    const chatPayload = await chatResponse.json();
+    const chatId = chatPayload.chatId;
+
+    const messageResponse = await fetch(
+      `${ctx.baseUrl}/v1/chats/${chatId}/messages`,
+      {
+        method: "POST",
+        headers: {
+          ...aliceHeaders,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          text: "Нашли семейное фото на даче",
+        }),
+      },
+    );
+    assert.equal(messageResponse.status, 201);
+    const messagePayload = await messageResponse.json();
+
+    const bobSearchResponse = await fetch(
+      `${ctx.baseUrl}/v1/chats/search?q=${encodeURIComponent("семейное фото")}&chatId=${encodeURIComponent(chatId)}`,
+      {headers: bobHeaders},
+    );
+    assert.equal(bobSearchResponse.status, 200);
+    const bobSearch = await bobSearchResponse.json();
+    assert.equal(bobSearch.results.length, 1);
+    assert.equal(bobSearch.results[0].messageId, messagePayload.message.id);
+    assert.equal(bobSearch.results[0].chatId, chatId);
+    assert.match(bobSearch.results[0].snippet, /семейное фото/i);
+
+    const charlieSearchResponse = await fetch(
+      `${ctx.baseUrl}/v1/chats/search?q=${encodeURIComponent("семейное фото")}&chatId=${encodeURIComponent(chatId)}`,
+      {headers: charlieHeaders},
+    );
+    assert.equal(charlieSearchResponse.status, 200);
+    const charlieSearch = await charlieSearchResponse.json();
+    assert.equal(charlieSearch.results.length, 0);
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("chat drafts sync through REST and realtime for the current user", async () => {
+  const ctx = await startConfiguredTestServer();
+  const waitFor = async (predicate, timeoutMs = 3000) => {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      const value = predicate();
+      if (value) {
+        return value;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    throw new Error("Timed out waiting for chat draft event");
+  };
+
+  try {
+    const aliceResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "draft-alice@rodnya.app",
+        password: "secret123",
+        displayName: "Draft Alice",
+      }),
+    });
+    assert.equal(aliceResponse.status, 201);
+    const alice = await aliceResponse.json();
+    const aliceHeaders = {authorization: `Bearer ${alice.accessToken}`};
+
+    const bobResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "draft-bob@rodnya.app",
+        password: "secret123",
+        displayName: "Draft Bob",
+      }),
+    });
+    assert.equal(bobResponse.status, 201);
+    const bob = await bobResponse.json();
+    const bobHeaders = {authorization: `Bearer ${bob.accessToken}`};
+
+    const chatResponse = await fetch(`${ctx.baseUrl}/v1/chats/direct`, {
+      method: "POST",
+      headers: {
+        ...aliceHeaders,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({otherUserId: bob.user.id}),
+    });
+    assert.equal(chatResponse.status, 200);
+    const chatPayload = await chatResponse.json();
+    const chatId = chatPayload.chatId;
+
+    const aliceSocket = new WebSocket(
+      `${ctx.wsBaseUrl}/v1/realtime?accessToken=${alice.accessToken}`,
+    );
+    const aliceEvents = [];
+    aliceSocket.addEventListener("message", (event) => {
+      aliceEvents.push(JSON.parse(String(event.data)));
+    });
+    await new Promise((resolve, reject) => {
+      aliceSocket.addEventListener("open", resolve, {once: true});
+      aliceSocket.addEventListener("error", reject, {once: true});
+    });
+    await waitFor(() =>
+      aliceEvents.find((item) => item.type === "connection.ready"),
+    );
+
+    const saveResponse = await fetch(`${ctx.baseUrl}/v1/chats/${chatId}/draft`, {
+      method: "PUT",
+      headers: {
+        ...aliceHeaders,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({text: "Черновик для web"}),
+    });
+    assert.equal(saveResponse.status, 200);
+    const savePayload = await saveResponse.json();
+    assert.equal(savePayload.draft.text, "Черновик для web");
+
+    const updateEvent = await waitFor(() =>
+      aliceEvents.find(
+        (item) =>
+          item.type === "chat.draft.updated" &&
+          item.chatId === chatId &&
+          item.draft?.text === "Черновик для web",
+      ),
+    );
+    assert.equal(updateEvent.userId, alice.user.id);
+
+    const listResponse = await fetch(`${ctx.baseUrl}/v1/chats/drafts`, {
+      headers: aliceHeaders,
+    });
+    assert.equal(listResponse.status, 200);
+    const listPayload = await listResponse.json();
+    assert.equal(listPayload.drafts.length, 1);
+    assert.equal(listPayload.drafts[0].text, "Черновик для web");
+
+    const bobDraftResponse = await fetch(
+      `${ctx.baseUrl}/v1/chats/${chatId}/draft`,
+      {headers: bobHeaders},
+    );
+    assert.equal(bobDraftResponse.status, 200);
+    const bobDraft = await bobDraftResponse.json();
+    assert.equal(bobDraft.draft, null);
+
+    const clearResponse = await fetch(`${ctx.baseUrl}/v1/chats/${chatId}/draft`, {
+      method: "DELETE",
+      headers: aliceHeaders,
+    });
+    assert.equal(clearResponse.status, 200);
+    await waitFor(() =>
+      aliceEvents.find(
+        (item) =>
+          item.type === "chat.draft.updated" &&
+          item.chatId === chatId &&
+          item.draft === null,
+      ),
+    );
+
+    aliceSocket.close();
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("chat pinned messages sync through REST and realtime", async () => {
+  const ctx = await startConfiguredTestServer();
+  const waitFor = async (predicate, timeoutMs = 3000) => {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      const value = predicate();
+      if (value) {
+        return value;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    throw new Error("Timed out waiting for chat pin event");
+  };
+  let bobSocket = null;
+
+  try {
+    const aliceResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "pin-alice@rodnya.app",
+        password: "secret123",
+        displayName: "Pin Alice",
+      }),
+    });
+    assert.equal(aliceResponse.status, 201);
+    const alice = await aliceResponse.json();
+    const aliceHeaders = {authorization: `Bearer ${alice.accessToken}`};
+
+    const bobResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "pin-bob@rodnya.app",
+        password: "secret123",
+        displayName: "Pin Bob",
+      }),
+    });
+    assert.equal(bobResponse.status, 201);
+    const bob = await bobResponse.json();
+    const bobHeaders = {authorization: `Bearer ${bob.accessToken}`};
+
+    const chatResponse = await fetch(`${ctx.baseUrl}/v1/chats/direct`, {
+      method: "POST",
+      headers: {
+        ...aliceHeaders,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({otherUserId: bob.user.id}),
+    });
+    assert.equal(chatResponse.status, 200);
+    const chatPayload = await chatResponse.json();
+    const chatId = chatPayload.chatId;
+
+    const messageResponse = await fetch(`${ctx.baseUrl}/v1/chats/${chatId}/messages`, {
+      method: "POST",
+      headers: {
+        ...aliceHeaders,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({text: "Закрепить семейную договоренность"}),
+    });
+    assert.equal(messageResponse.status, 201);
+    const messagePayload = await messageResponse.json();
+    const messageId = messagePayload.message.id;
+
+    bobSocket = new WebSocket(
+      `${ctx.wsBaseUrl}/v1/realtime?accessToken=${bob.accessToken}`,
+    );
+    const bobEvents = [];
+    bobSocket.addEventListener("message", (event) => {
+      bobEvents.push(JSON.parse(String(event.data)));
+    });
+    await new Promise((resolve, reject) => {
+      bobSocket.addEventListener("open", resolve, {once: true});
+      bobSocket.addEventListener("error", reject, {once: true});
+    });
+    await waitFor(() =>
+      bobEvents.find((item) => item.type === "connection.ready"),
+    );
+
+    const pinResponse = await fetch(
+      `${ctx.baseUrl}/v1/chats/${chatId}/messages/${messageId}/pin`,
+      {
+        method: "POST",
+        headers: aliceHeaders,
+      },
+    );
+    assert.equal(pinResponse.status, 200);
+    const pinPayload = await pinResponse.json();
+    assert.equal(pinPayload.pin.messageId, messageId);
+    assert.equal(pinPayload.pin.senderName, "Pin Alice");
+
+    const pinEvent = await waitFor(() =>
+      bobEvents.find(
+        (item) =>
+          item.type === "chat.pin.updated" &&
+          item.chatId === chatId &&
+          item.pin?.messageId === messageId,
+      ),
+    );
+    assert.equal(pinEvent.pin.text, "Закрепить семейную договоренность");
+
+    const bobPinResponse = await fetch(`${ctx.baseUrl}/v1/chats/${chatId}/pin`, {
+      headers: bobHeaders,
+    });
+    assert.equal(bobPinResponse.status, 200);
+    const bobPinPayload = await bobPinResponse.json();
+    assert.equal(bobPinPayload.pin.messageId, messageId);
+
+    const clearResponse = await fetch(`${ctx.baseUrl}/v1/chats/${chatId}/pin`, {
+      method: "DELETE",
+      headers: bobHeaders,
+    });
+    assert.equal(clearResponse.status, 200);
+    await waitFor(() =>
+      bobEvents.find(
+        (item) =>
+          item.type === "chat.pin.updated" &&
+          item.chatId === chatId &&
+          item.pin === null,
+      ),
+    );
+  } finally {
+    bobSocket?.close();
     await stopTestServer(ctx);
   }
 });

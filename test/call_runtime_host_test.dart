@@ -9,6 +9,7 @@ import 'package:rodnya/models/call_state.dart';
 import 'package:rodnya/navigation/app_router_shared.dart';
 import 'package:rodnya/screens/call_screen.dart';
 import 'package:rodnya/services/call_coordinator_service.dart';
+import 'package:rodnya/widgets/call_floating_pip.dart';
 import 'package:rodnya/widgets/call_runtime_host.dart';
 
 void main() {
@@ -97,17 +98,93 @@ void main() {
       expect(find.text('Подключаем звонок...'), findsNothing);
     },
   );
+
+  testWidgets(
+    'CallRuntimeHost shows floating mini-window for active calls and restores',
+    (tester) async {
+      final coordinator = _HostFakeCallCoordinator();
+      GetIt.I.registerSingleton<CallCoordinatorService>(coordinator);
+      final activeCall = _buildCall(
+        state: CallState.active,
+        initiatorId: 'user-1',
+        recipientId: 'user-2',
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          navigatorKey: rootNavigatorKey,
+          home: const CallRuntimeHost(
+            child: Scaffold(
+              body: Center(child: Text('home')),
+            ),
+          ),
+        ),
+      );
+
+      coordinator.setCall(activeCall);
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      expect(find.byType(CallFloatingPip), findsOneWidget);
+      expect(find.text('Звонок идет'), findsOneWidget);
+      expect(find.text('Открыть экран звонка'), findsNothing);
+
+      await tester.tap(find.text('Звонок идет'));
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      expect(find.byType(CallScreen), findsOneWidget);
+      expect(find.byType(CallFloatingPip), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'CallRuntimeHost floating mini-window can hang up active call',
+    (tester) async {
+      final coordinator = _HostFakeCallCoordinator();
+      GetIt.I.registerSingleton<CallCoordinatorService>(coordinator);
+      final activeCall = _buildCall(
+        state: CallState.active,
+        initiatorId: 'user-1',
+        recipientId: 'user-2',
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          navigatorKey: rootNavigatorKey,
+          home: const CallRuntimeHost(
+            child: Scaffold(
+              body: Center(child: Text('home')),
+            ),
+          ),
+        ),
+      );
+
+      coordinator.setCall(activeCall);
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.call_end_rounded));
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      expect(coordinator.finishCallCount, 1);
+      expect(find.byType(CallFloatingPip), findsNothing);
+    },
+  );
 }
 
 CallInvite _buildCall({
   required CallState state,
   CallMediaMode mediaMode = CallMediaMode.audio,
+  String initiatorId = 'user-2',
+  String recipientId = 'user-1',
 }) {
   return CallInvite(
     id: 'call-1',
     chatId: 'chat-1',
-    initiatorId: 'user-2',
-    recipientId: 'user-1',
+    initiatorId: initiatorId,
+    recipientId: recipientId,
     participantIds: const ['user-1', 'user-2'],
     mediaMode: mediaMode,
     state: state,
@@ -123,6 +200,7 @@ class _HostFakeCallCoordinator extends CallCoordinatorService {
         );
 
   CallInvite? _currentCall;
+  int finishCallCount = 0;
 
   @override
   String? get currentUserId => 'user-1';
@@ -142,6 +220,14 @@ class _HostFakeCallCoordinator extends CallCoordinatorService {
   Future<void> activateCall(CallInvite call) async {
     _currentCall = call;
     notifyListeners();
+  }
+
+  @override
+  Future<CallInvite?> finishCall([String? callId]) async {
+    finishCallCount += 1;
+    _currentCall = null;
+    notifyListeners();
+    return _buildCall(state: CallState.ended);
   }
 }
 

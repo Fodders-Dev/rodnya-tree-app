@@ -94,15 +94,80 @@ class RealtimeHub {
   publishToUser(userId, payload) {
     const sockets = this.userSockets.get(userId);
     if (!sockets || sockets.size === 0) {
-      return;
+      return false;
     }
 
     const serializedPayload = JSON.stringify(payload);
+    let sent = false;
     for (const socket of sockets) {
       if (socket.readyState === socket.OPEN) {
         socket.send(serializedPayload);
+        sent = true;
       }
     }
+    return sent;
+  }
+
+  async publishToChat(chatId, payload, {exceptUserId = null} = {}) {
+    if (!chatId || typeof this.store?.findChat !== "function") {
+      return false;
+    }
+
+    const chat = await this.store.findChat(chatId);
+    if (!chat || !Array.isArray(chat.participantIds)) {
+      return false;
+    }
+
+    const excludedUserId = exceptUserId ? String(exceptUserId).trim() : null;
+    const deliveredUserIds = [];
+    for (const participantId of chat.participantIds) {
+      if (!participantId || participantId === excludedUserId) {
+        continue;
+      }
+      const sent = this.publishToUser(participantId, payload);
+      if (
+        sent &&
+        payload?.type === "chat.message.created" &&
+        payload?.message?.id &&
+        payload?.message?.senderId !== participantId
+      ) {
+        deliveredUserIds.push(participantId);
+      }
+    }
+
+    if (
+      deliveredUserIds.length > 0 &&
+      typeof this.store?.markChatMessageDelivered === "function"
+    ) {
+      const delivery = await this.store.markChatMessageDelivered({
+        chatId,
+        messageId: payload.message.id,
+        userIds: deliveredUserIds,
+      });
+      if (delivery && delivery !== false && delivery !== null) {
+        const changedUserIds = Array.isArray(delivery.changedUserIds)
+          ? delivery.changedUserIds
+          : deliveredUserIds;
+        if (changedUserIds.length > 0) {
+          const deliveredPayload = {
+            type: "message.delivered",
+            chatId: delivery.chatId || chatId,
+            messageId: delivery.messageId || payload.message.id,
+            userIds: changedUserIds,
+            deliveredTo: Array.isArray(delivery.deliveredTo)
+              ? delivery.deliveredTo
+              : changedUserIds,
+          };
+          for (const participantId of chat.participantIds) {
+            if (!participantId || participantId === excludedUserId) {
+              continue;
+            }
+            this.publishToUser(participantId, deliveredPayload);
+          }
+        }
+      }
+    }
+    return true;
   }
 
   isUserOnline(userId) {

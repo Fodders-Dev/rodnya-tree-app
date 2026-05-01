@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart';
@@ -6,6 +7,8 @@ import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:record/record.dart';
+
+import '../utils/voice_waveform.dart';
 
 enum ChatRecordingState {
   idle,
@@ -24,12 +27,14 @@ class ChatRecordingPreview {
     required this.fileName,
     required this.mimeType,
     required this.durationSeconds,
+    this.waveform = const <double>[],
   });
 
   final String path;
   final String fileName;
   final String mimeType;
   final int durationSeconds;
+  final List<double> waveform;
 
   XFile toXFile() {
     return XFile(path, name: fileName, mimeType: mimeType);
@@ -44,10 +49,12 @@ class ChatRecordingController extends ChangeNotifier {
   final AudioRecorder _recorder;
 
   Timer? _ticker;
+  StreamSubscription? _amplitudeSub;
   ChatRecordingState _state = ChatRecordingState.idle;
   int _durationSeconds = 0;
   String? _errorText;
   ChatRecordingPreview? _preview;
+  final List<double> _amplitudeSamples = <double>[];
 
   ChatRecordingState get state => _state;
   int get durationSeconds => _durationSeconds;
@@ -55,6 +62,8 @@ class ChatRecordingController extends ChangeNotifier {
   ChatRecordingPreview? get preview => _preview;
   XFile? get previewFile => _preview?.toXFile();
   int get previewDurationSeconds => _preview?.durationSeconds ?? 0;
+  List<double> get previewWaveform =>
+      List<double>.unmodifiable(_preview?.waveform ?? const <double>[]);
   bool get isRecordingActive =>
       _state == ChatRecordingState.recording ||
       _state == ChatRecordingState.locked;
@@ -77,11 +86,21 @@ class ChatRecordingController extends ChangeNotifier {
     final resolvedPath = recordingPath ??
         'voice_note_${DateTime.now().millisecondsSinceEpoch}.webm';
     _preview = null;
+    _amplitudeSamples.clear();
     _durationSeconds = 0;
     await _recorder.start(
       const RecordConfig(),
       path: resolvedPath,
     );
+    _amplitudeSub?.cancel();
+    _amplitudeSub = _recorder
+        .onAmplitudeChanged(const Duration(milliseconds: 120))
+        .listen((amplitude) {
+      _amplitudeSamples.add(_normalizeAmplitude(amplitude.current));
+      if (_amplitudeSamples.length > 600) {
+        _amplitudeSamples.removeRange(0, _amplitudeSamples.length - 600);
+      }
+    });
 
     _ticker?.cancel();
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -104,6 +123,8 @@ class ChatRecordingController extends ChangeNotifier {
     }
 
     _ticker?.cancel();
+    await _amplitudeSub?.cancel();
+    _amplitudeSub = null;
     final recordedPath = await _recorder.stop();
     final recordedDuration = _durationSeconds;
     _durationSeconds = 0;
@@ -111,6 +132,17 @@ class ChatRecordingController extends ChangeNotifier {
       _preview = null;
       _setState(ChatRecordingState.idle);
       return;
+    }
+
+    var waveform = downsampleVoiceWaveform(_amplitudeSamples);
+    if (waveform.isEmpty) {
+      try {
+        waveform = buildVoiceWaveformFromBytes(
+          await XFile(recordedPath).readAsBytes(),
+        );
+      } catch (_) {
+        waveform = const <double>[];
+      }
     }
 
     final fileName = kIsWeb
@@ -122,17 +154,22 @@ class ChatRecordingController extends ChangeNotifier {
       fileName: fileName,
       mimeType: kIsWeb ? 'audio/webm' : 'audio/m4a',
       durationSeconds: recordedDuration,
+      waveform: waveform,
     );
+    _amplitudeSamples.clear();
     _setState(ChatRecordingState.preview);
   }
 
   Future<void> cancelCurrent() async {
     _ticker?.cancel();
+    await _amplitudeSub?.cancel();
+    _amplitudeSub = null;
     if (isRecordingActive) {
       await _recorder.cancel();
     }
     _durationSeconds = 0;
     _preview = null;
+    _amplitudeSamples.clear();
     _errorText = null;
     _setState(ChatRecordingState.idle);
   }
@@ -140,6 +177,7 @@ class ChatRecordingController extends ChangeNotifier {
   void discardPreview() {
     _preview = null;
     _errorText = null;
+    _amplitudeSamples.clear();
     _setState(ChatRecordingState.idle);
   }
 
@@ -192,9 +230,17 @@ class ChatRecordingController extends ChangeNotifier {
     notifyListeners();
   }
 
+  double _normalizeAmplitude(double decibels) {
+    if (!decibels.isFinite) {
+      return 0.0;
+    }
+    return math.pow(10, decibels / 40).clamp(0.0, 1.0).toDouble();
+  }
+
   @override
   void dispose() {
     _ticker?.cancel();
+    unawaited(_amplitudeSub?.cancel());
     unawaited(_recorder.dispose());
     super.dispose();
   }

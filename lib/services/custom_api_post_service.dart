@@ -59,6 +59,7 @@ class CustomApiPostService implements PostServiceInterface {
     bool isPublic = false,
     TreeContentScopeType scopeType = TreeContentScopeType.wholeTree,
     List<String> anchorPersonIds = const [],
+    String? circleId,
   }) async {
     final imageUrls = <String>[];
     for (final image in images) {
@@ -78,6 +79,8 @@ class CustomApiPostService implements PostServiceInterface {
             ? 'branches'
             : 'wholeTree',
         'anchorPersonIds': anchorPersonIds,
+        if (circleId != null && circleId.trim().isNotEmpty)
+          'circleId': circleId.trim(),
       },
     );
 

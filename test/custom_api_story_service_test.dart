@@ -41,6 +41,7 @@ void main() {
             'updatedAt': '2026-04-13T09:05:00.000Z',
             'expiresAt': '2026-04-14T09:00:00.000Z',
             'viewedBy': ['user-1'],
+            'circleId': 'circle-all',
           },
         ]),
         200,
@@ -63,6 +64,7 @@ void main() {
     expect(stories, hasLength(1));
     expect(stories.first.id, 'story-1');
     expect(stories.first.type, StoryType.image);
+    expect(stories.first.circleId, 'circle-all');
     expect(
       stories.first.mediaUrl,
       'https://api.rodnya-tree.ru/media/stories/story-1.jpg',
@@ -79,6 +81,7 @@ void main() {
         expect(payload['treeId'], 'tree-1');
         expect(payload['type'], 'text');
         expect(payload['text'], 'Привет семье');
+        expect(payload['circleId'], 'circle-close');
 
         return http.Response(
           jsonEncode({
@@ -92,6 +95,7 @@ void main() {
             'updatedAt': '2026-04-13T10:00:00.000Z',
             'expiresAt': '2026-04-14T10:00:00.000Z',
             'viewedBy': [],
+            'circleId': 'circle-close',
           }),
           201,
           headers: {'content-type': 'application/json'},
@@ -140,11 +144,13 @@ void main() {
       treeId: 'tree-1',
       type: StoryType.text,
       text: 'Привет семье',
+      circleId: 'circle-close',
     );
     final viewed = await service.markViewed(created.id);
     await service.deleteStory(created.id);
 
     expect(created.id, 'story-2');
+    expect(created.circleId, 'circle-close');
     expect(viewed.viewedBy, ['user-1']);
     expect(viewed.isViewedBy('user-1'), isTrue);
   });

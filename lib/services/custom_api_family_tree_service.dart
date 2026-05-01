@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 
 import '../backend/backend_runtime_config.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
+import '../backend/interfaces/identity_duplicate_capable_family_tree_service.dart';
 import '../backend/interfaces/profile_service_interface.dart';
 import '../backend/interfaces/tree_graph_capable_family_tree_service.dart';
 import '../backend/models/selectable_tree.dart';
@@ -13,6 +14,7 @@ import '../models/family_person.dart';
 import '../models/family_relation.dart';
 import '../models/family_tree.dart';
 import '../models/person_dossier.dart';
+import '../models/person_duplicate_suggestion.dart';
 import '../models/relation_request.dart';
 import '../models/tree_graph_snapshot.dart';
 import '../models/tree_change_record.dart';
@@ -21,7 +23,10 @@ import 'custom_api_auth_service.dart';
 import 'local_storage_service.dart';
 
 class CustomApiFamilyTreeService
-    implements FamilyTreeServiceInterface, TreeGraphCapableFamilyTreeService {
+    implements
+        FamilyTreeServiceInterface,
+        TreeGraphCapableFamilyTreeService,
+        IdentityDuplicateCapableFamilyTreeService {
   CustomApiFamilyTreeService({
     required CustomApiAuthService authService,
     required BackendRuntimeConfig runtimeConfig,
@@ -100,6 +105,29 @@ class CustomApiFamilyTreeService
     }
     await _cachePersons(relatives);
     return relatives;
+  }
+
+  @override
+  Future<List<PersonDuplicateSuggestion>> getDuplicateSuggestions(
+    String treeId,
+  ) async {
+    final response = await _requestJson(
+      method: 'GET',
+      path: '/v1/trees/$treeId/duplicates',
+    );
+    final rawSuggestions = response['suggestions'];
+    if (rawSuggestions is! List<dynamic>) {
+      return const <PersonDuplicateSuggestion>[];
+    }
+
+    return rawSuggestions
+        .whereType<Map<String, dynamic>>()
+        .map(PersonDuplicateSuggestion.fromJson)
+        .where((suggestion) =>
+            suggestion.id.isNotEmpty &&
+            suggestion.personA.id.isNotEmpty &&
+            suggestion.personB.id.isNotEmpty)
+        .toList(growable: false);
   }
 
   @override
@@ -1259,6 +1287,7 @@ class CustomApiFamilyTreeService
           json['bio']?.toString(),
       bio: json['bio']?.toString(),
       isAlive: json['isAlive'] != false,
+      visibility: json['visibility']?.toString() ?? 'private',
       creatorId: json['creatorId']?.toString(),
       createdAt: createdAt ?? DateTime.now(),
       updatedAt: updatedAt ?? createdAt ?? DateTime.now(),

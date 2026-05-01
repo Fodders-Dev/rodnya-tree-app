@@ -6,6 +6,11 @@ const {
   normalizeMessageAttachments,
   normalizeReplyReference,
 } = require("./chat-utils");
+const {
+  normalizedBirthYear,
+  scorePersonPair,
+} = require("./identity-matcher");
+const {backfillPersonIdentities} = require("./migration-utils");
 
 const PROFILE_CONTRIBUTION_POLICIES = new Set([
   "disabled",
@@ -42,10 +47,18 @@ const EMPTY_DB = {
   trees: [],
   persons: [],
   personIdentities: [],
+  personAttributes: [],
+  circles: [],
+  circleMembers: [],
+  mergeProposals: [],
+  identityClaims: [],
   relations: [],
   chats: [],
+  chatDrafts: [],
+  chatPins: [],
   calls: [],
   messages: [],
+  messageReactions: [],
   relationRequests: [],
   treeInvitations: [],
   treeChangeRecords: [],
@@ -70,12 +83,30 @@ function normalizeDbState(parsed) {
     personIdentities: Array.isArray(parsed?.personIdentities)
       ? parsed.personIdentities
       : [],
+    personAttributes: Array.isArray(parsed?.personAttributes)
+      ? parsed.personAttributes
+      : [],
+    circles: Array.isArray(parsed?.circles) ? parsed.circles : [],
+    circleMembers: Array.isArray(parsed?.circleMembers)
+      ? parsed.circleMembers
+      : [],
+    mergeProposals: Array.isArray(parsed?.mergeProposals)
+      ? parsed.mergeProposals
+      : [],
+    identityClaims: Array.isArray(parsed?.identityClaims)
+      ? parsed.identityClaims
+      : [],
     relations: Array.isArray(parsed?.relations) ? parsed.relations : [],
     chats: Array.isArray(parsed?.chats) ? parsed.chats : [],
+    chatDrafts: Array.isArray(parsed?.chatDrafts) ? parsed.chatDrafts : [],
+    chatPins: Array.isArray(parsed?.chatPins) ? parsed.chatPins : [],
     calls: Array.isArray(parsed?.calls)
       ? parsed.calls.map((entry) => normalizeStoredCall(entry)).filter(Boolean)
       : [],
     messages: Array.isArray(parsed?.messages) ? parsed.messages : [],
+    messageReactions: Array.isArray(parsed?.messageReactions)
+      ? parsed.messageReactions
+      : [],
     relationRequests: Array.isArray(parsed?.relationRequests)
       ? parsed.relationRequests
       : [],
@@ -166,6 +197,7 @@ function createPostRecord({
   isPublic = false,
   scopeType = "wholeTree",
   anchorPersonIds = [],
+  circleId = null,
 }) {
   const timestamp = nowIso();
   return {
@@ -188,7 +220,481 @@ function createPostRecord({
     isPublic: isPublic === true,
     scopeType: scopeType === "branches" ? "branches" : "wholeTree",
     anchorPersonIds: normalizeParticipantIds(anchorPersonIds),
+    circleId: normalizeNullableString(circleId),
   };
+}
+
+function defaultCircleId(treeId, kind) {
+  return `circle:${treeId}:${kind}`;
+}
+
+const AUTO_CIRCLE_KINDS = new Set([
+  "descendants_of",
+  "ancestors_of",
+  "pair",
+]);
+
+function normalizeCircleKind(kind) {
+  const normalizedKind = String(kind || "custom").trim().toLowerCase();
+  if (
+    normalizedKind === "all_tree" ||
+    normalizedKind === "favorites" ||
+    AUTO_CIRCLE_KINDS.has(normalizedKind)
+  ) {
+    return normalizedKind;
+  }
+  return "custom";
+}
+
+function isAutoCircleKind(kind) {
+  return AUTO_CIRCLE_KINDS.has(normalizeCircleKind(kind));
+}
+
+function autoCircleId({treeId, kind, anchorPersonId = null, anchorPersonIds = []}) {
+  const normalizedKind = normalizeCircleKind(kind);
+  if (normalizedKind === "descendants_of" || normalizedKind === "ancestors_of") {
+    return `circle:${treeId}:${normalizedKind}:${normalizeNullableString(anchorPersonId)}`;
+  }
+  if (normalizedKind === "pair") {
+    return `circle:${treeId}:pair:${buildSortedIdKey(anchorPersonIds)}`;
+  }
+  return defaultCircleId(treeId, normalizedKind);
+}
+
+function createCircleRecord({
+  treeId,
+  name,
+  description = null,
+  kind = "custom",
+  createdBy = null,
+  id = null,
+  anchorPersonId = null,
+  anchorPersonIds = [],
+}) {
+  const normalizedKind = normalizeCircleKind(kind);
+  const normalizedAnchorPersonId = normalizeNullableString(anchorPersonId);
+  const normalizedAnchorPersonIds = normalizeParticipantIds(anchorPersonIds);
+  const timestamp = nowIso();
+  return {
+    id:
+      normalizeNullableString(id) ||
+      (normalizedKind === "custom"
+        ? crypto.randomUUID()
+        : autoCircleId({
+            treeId,
+            kind: normalizedKind,
+            anchorPersonId: normalizedAnchorPersonId,
+            anchorPersonIds: normalizedAnchorPersonIds,
+          })),
+    treeId,
+    kind: normalizedKind,
+    name:
+      String(
+        name ||
+          (normalizedKind === "favorites"
+            ? "Избранные"
+            : normalizedKind === "all_tree"
+              ? "Всё дерево"
+              : "Новый круг"),
+      ).trim() || "Новый круг",
+    description: normalizeNullableString(description),
+    createdBy: normalizeNullableString(createdBy),
+    isSystem: normalizedKind !== "custom",
+    anchorPersonId: normalizedAnchorPersonId,
+    anchorPersonIds: normalizedAnchorPersonIds,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+}
+
+function ensureDefaultCirclesForTree(db, treeOrTreeId) {
+  const tree =
+    typeof treeOrTreeId === "string"
+      ? db.trees.find((entry) => entry.id === treeOrTreeId)
+      : treeOrTreeId;
+  const treeId = normalizeNullableString(tree?.id || treeOrTreeId);
+  if (!treeId) {
+    return {changed: false, allTreeCircle: null, favoritesCircle: null};
+  }
+
+  db.circles = Array.isArray(db.circles) ? db.circles : [];
+  db.circleMembers = Array.isArray(db.circleMembers) ? db.circleMembers : [];
+
+  let changed = false;
+  let allTreeCircle = db.circles.find(
+    (entry) => entry.treeId === treeId && entry.kind === "all_tree",
+  );
+  if (!allTreeCircle) {
+    allTreeCircle = createCircleRecord({
+      treeId,
+      kind: "all_tree",
+      name: "Всё дерево",
+      createdBy: tree?.creatorId || null,
+      id: defaultCircleId(treeId, "all_tree"),
+    });
+    db.circles.push(allTreeCircle);
+    changed = true;
+  }
+
+  let favoritesCircle = db.circles.find(
+    (entry) => entry.treeId === treeId && entry.kind === "favorites",
+  );
+  if (!favoritesCircle) {
+    favoritesCircle = createCircleRecord({
+      treeId,
+      kind: "favorites",
+      name: "Избранные",
+      createdBy: tree?.creatorId || null,
+      id: defaultCircleId(treeId, "favorites"),
+    });
+    db.circles.push(favoritesCircle);
+    changed = true;
+  }
+
+  return {changed, allTreeCircle, favoritesCircle};
+}
+
+function ensureDefaultCirclesForAllTrees(db) {
+  let changed = false;
+  for (const tree of Array.isArray(db.trees) ? db.trees : []) {
+    const result = ensureDefaultCirclesForTree(db, tree);
+    changed = changed || result.changed;
+  }
+  return changed;
+}
+
+function normalizeCircleMemberIdentityIds(db, treeId, identityIds = []) {
+  const allowedIdentityIds = new Set(
+    (Array.isArray(db.persons) ? db.persons : [])
+      .filter((person) => person.treeId === treeId)
+      .map((person) => normalizeNullableString(person.identityId))
+      .filter(Boolean),
+  );
+  return Array.from(
+    new Set(
+      (Array.isArray(identityIds) ? identityIds : [])
+        .map((value) => normalizeNullableString(value))
+        .filter((value) => value && allowedIdentityIds.has(value)),
+    ),
+  );
+}
+
+function circlePersonDisplayName(person) {
+  return String(person?.name || "").trim() || "Без имени";
+}
+
+function addMapSetValue(map, key, value) {
+  if (!key || !value) {
+    return;
+  }
+  if (!map.has(key)) {
+    map.set(key, new Set());
+  }
+  map.get(key).add(value);
+}
+
+function collectReachablePersonIds(startPersonId, adjacency) {
+  const start = normalizeNullableString(startPersonId);
+  if (!start) {
+    return new Set();
+  }
+
+  const result = new Set([start]);
+  const queue = [start];
+  while (queue.length > 0) {
+    const current = queue.shift();
+    for (const next of adjacency.get(current) || []) {
+      if (result.has(next)) {
+        continue;
+      }
+      result.add(next);
+      queue.push(next);
+    }
+  }
+  return result;
+}
+
+function identityIdsForPersonIds(db, treeId, personIds) {
+  const personsById = new Map(
+    (Array.isArray(db.persons) ? db.persons : [])
+      .filter((person) => person.treeId === treeId)
+      .map((person) => [person.id, person]),
+  );
+  const identityIds = normalizeParticipantIds(personIds)
+    .map((personId) => normalizeNullableString(personsById.get(personId)?.identityId))
+    .filter(Boolean);
+  return normalizeCircleMemberIdentityIds(db, treeId, identityIds);
+}
+
+function buildAutoCircleSpec({
+  db,
+  treeId,
+  kind,
+  name,
+  description,
+  personIds,
+  anchorPersonId = null,
+  anchorPersonIds = [],
+  createdBy = null,
+}) {
+  const normalizedKind = normalizeCircleKind(kind);
+  const normalizedPersonIds = normalizeParticipantIds(personIds);
+  if (!isAutoCircleKind(normalizedKind) || normalizedPersonIds.length < 2) {
+    return null;
+  }
+
+  const normalizedAnchorPersonId = normalizeNullableString(anchorPersonId);
+  const normalizedAnchorPersonIds = normalizeParticipantIds(anchorPersonIds);
+  const id = autoCircleId({
+    treeId,
+    kind: normalizedKind,
+    anchorPersonId: normalizedAnchorPersonId,
+    anchorPersonIds: normalizedAnchorPersonIds,
+  });
+  const identityIds = identityIdsForPersonIds(db, treeId, normalizedPersonIds);
+  if (identityIds.length === 0) {
+    return null;
+  }
+
+  return {
+    id,
+    treeId,
+    kind: normalizedKind,
+    name,
+    description,
+    personIds: normalizedPersonIds,
+    identityIds,
+    anchorPersonId: normalizedAnchorPersonId,
+    anchorPersonIds: normalizedAnchorPersonIds,
+    createdBy,
+  };
+}
+
+function buildAutoCircleSpecsForTree(db, tree) {
+  const treeId = normalizeNullableString(tree?.id || tree);
+  if (!treeId) {
+    return new Map();
+  }
+
+  const persons = (Array.isArray(db.persons) ? db.persons : []).filter(
+    (person) => person.treeId === treeId,
+  );
+  const personsById = new Map(persons.map((person) => [person.id, person]));
+  const treeRelations = (Array.isArray(db.relations) ? db.relations : []).filter(
+    (relation) => relation.treeId === treeId,
+  );
+  const childrenByParentId = new Map();
+  const parentsByChildId = new Map();
+
+  for (const relation of treeRelations) {
+    const parentId = parentIdFromRelation(relation);
+    const childId = childIdFromRelation(relation);
+    if (!personsById.has(parentId) || !personsById.has(childId)) {
+      continue;
+    }
+    addMapSetValue(childrenByParentId, parentId, childId);
+    addMapSetValue(parentsByChildId, childId, parentId);
+  }
+
+  const specs = new Map();
+  const addSpec = (spec) => {
+    if (spec) {
+      specs.set(spec.id, spec);
+    }
+  };
+
+  for (const person of persons) {
+    const descendants = collectReachablePersonIds(person.id, childrenByParentId);
+    if (descendants.size > 1) {
+      addSpec(
+        buildAutoCircleSpec({
+          db,
+          treeId,
+          kind: "descendants_of",
+          name: `Ветка: ${circlePersonDisplayName(person)}`,
+          description: "Автоматически: человек и его потомки",
+          personIds: Array.from(descendants),
+          anchorPersonId: person.id,
+          createdBy: tree.creatorId || null,
+        }),
+      );
+    }
+
+    const ancestors = collectReachablePersonIds(person.id, parentsByChildId);
+    if (ancestors.size > 1) {
+      addSpec(
+        buildAutoCircleSpec({
+          db,
+          treeId,
+          kind: "ancestors_of",
+          name: `Предки: ${circlePersonDisplayName(person)}`,
+          description: "Автоматически: человек и его предки",
+          personIds: Array.from(ancestors),
+          anchorPersonId: person.id,
+          createdBy: tree.creatorId || null,
+        }),
+      );
+    }
+  }
+
+  for (const relation of treeRelations) {
+    if (!isSpouseLikeRelation(relation)) {
+      continue;
+    }
+    const left = personsById.get(relation.person1Id);
+    const right = personsById.get(relation.person2Id);
+    if (!left || !right) {
+      continue;
+    }
+
+    const pairPersonIds = new Set([left.id, right.id]);
+    for (const candidate of treeRelations) {
+      const parentId = parentIdFromRelation(candidate);
+      const childId = childIdFromRelation(candidate);
+      if (pairPersonIds.has(parentId) && personsById.has(childId)) {
+        pairPersonIds.add(childId);
+      }
+    }
+
+    const anchorPersonIds = normalizeParticipantIds([left.id, right.id]);
+    addSpec(
+      buildAutoCircleSpec({
+        db,
+        treeId,
+        kind: "pair",
+        name: `${circlePersonDisplayName(left)} + ${circlePersonDisplayName(right)}`,
+        description: "Автоматически: пара и дети",
+        personIds: Array.from(pairPersonIds),
+        anchorPersonIds,
+        createdBy: tree.creatorId || null,
+      }),
+    );
+  }
+
+  return specs;
+}
+
+function ensureAutoCirclesForTree(db, treeOrTreeId) {
+  const tree =
+    typeof treeOrTreeId === "string"
+      ? db.trees.find((entry) => entry.id === treeOrTreeId)
+      : treeOrTreeId;
+  const treeId = normalizeNullableString(tree?.id || treeOrTreeId);
+  if (!treeId) {
+    return {changed: false};
+  }
+
+  db.circles = Array.isArray(db.circles) ? db.circles : [];
+  db.circleMembers = Array.isArray(db.circleMembers) ? db.circleMembers : [];
+  const identityMigration = backfillPersonIdentities(db);
+  let changed = identityMigration.changed;
+  const specs = buildAutoCircleSpecsForTree(db, tree);
+  const desiredIds = new Set(specs.keys());
+  const removedCircleIds = new Set();
+
+  db.circles = db.circles.filter((circle) => {
+    if (circle.treeId !== treeId || !isAutoCircleKind(circle.kind)) {
+      return true;
+    }
+    if (desiredIds.has(circle.id)) {
+      return true;
+    }
+    removedCircleIds.add(circle.id);
+    changed = true;
+    return false;
+  });
+
+  if (removedCircleIds.size > 0) {
+    db.circleMembers = db.circleMembers.filter(
+      (entry) =>
+        entry.treeId !== treeId || !removedCircleIds.has(entry.circleId),
+    );
+  }
+
+  for (const spec of specs.values()) {
+    let circle = db.circles.find(
+      (entry) => entry.treeId === treeId && entry.id === spec.id,
+    );
+    if (!circle) {
+      circle = createCircleRecord({
+        treeId,
+        kind: spec.kind,
+        name: spec.name,
+        description: spec.description,
+        createdBy: spec.createdBy,
+        id: spec.id,
+        anchorPersonId: spec.anchorPersonId,
+        anchorPersonIds: spec.anchorPersonIds,
+      });
+      db.circles.push(circle);
+      changed = true;
+    } else {
+      const timestamp = nowIso();
+      const updates = {
+        kind: spec.kind,
+        name: spec.name,
+        description: normalizeNullableString(spec.description),
+        createdBy: normalizeNullableString(circle.createdBy || spec.createdBy),
+        isSystem: true,
+        anchorPersonId: normalizeNullableString(spec.anchorPersonId),
+      };
+      for (const [key, value] of Object.entries(updates)) {
+        if (circle[key] !== value) {
+          circle[key] = value;
+          changed = true;
+          circle.updatedAt = timestamp;
+        }
+      }
+      if (!sameNormalizedIds(circle.anchorPersonIds, spec.anchorPersonIds)) {
+        circle.anchorPersonIds = normalizeParticipantIds(spec.anchorPersonIds);
+        circle.updatedAt = timestamp;
+        changed = true;
+      }
+    }
+
+    const currentIdentityIds = db.circleMembers
+      .filter((entry) => entry.treeId === treeId && entry.circleId === spec.id)
+      .map((entry) => normalizeNullableString(entry.identityId))
+      .filter(Boolean);
+    if (!sameNormalizedIds(currentIdentityIds, spec.identityIds)) {
+      const timestamp = nowIso();
+      db.circleMembers = db.circleMembers.filter(
+        (entry) => !(entry.treeId === treeId && entry.circleId === spec.id),
+      );
+      for (const identityId of spec.identityIds) {
+        db.circleMembers.push({
+          id: crypto.randomUUID(),
+          treeId,
+          circleId: spec.id,
+          identityId,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        });
+      }
+      circle.updatedAt = timestamp;
+      changed = true;
+    }
+  }
+
+  return {changed};
+}
+
+function ensureCirclesForTree(db, treeOrTreeId) {
+  const defaults = ensureDefaultCirclesForTree(db, treeOrTreeId);
+  const autoCircles = ensureAutoCirclesForTree(db, treeOrTreeId);
+  return {
+    ...defaults,
+    changed: defaults.changed || autoCircles.changed,
+  };
+}
+
+function ensureCirclesForAllTrees(db) {
+  let changed = false;
+  for (const tree of Array.isArray(db.trees) ? db.trees : []) {
+    const result = ensureCirclesForTree(db, tree);
+    changed = changed || result.changed;
+  }
+  return changed;
 }
 
 function normalizeStoryType(type) {
@@ -209,6 +715,7 @@ function createStoryRecord({
   mediaUrl = null,
   thumbnailUrl = null,
   expiresAt = null,
+  circleId = null,
 }) {
   const createdAt = nowIso();
   const normalizedExpiresAt =
@@ -224,6 +731,7 @@ function createStoryRecord({
     text: normalizeNullableString(text),
     mediaUrl: normalizeNullableString(mediaUrl),
     thumbnailUrl: normalizeNullableString(thumbnailUrl),
+    circleId: normalizeNullableString(circleId),
     createdAt,
     updatedAt: createdAt,
     expiresAt: normalizedExpiresAt,
@@ -3209,6 +3717,114 @@ function normalizeNullableString(value) {
   return normalized ? normalized : null;
 }
 
+function createChatDraftRecord({userId, chatId, text}) {
+  const timestamp = nowIso();
+  return {
+    userId: String(userId || "").trim(),
+    chatId: String(chatId || "").trim(),
+    text: String(text || ""),
+    updatedAt: timestamp,
+  };
+}
+
+function createChatPinRecord({chatId, message, pinnedBy}) {
+  const attachments = normalizeMessageAttachments(message);
+  return {
+    chatId: String(chatId || "").trim(),
+    messageId: String(message?.id || "").trim(),
+    senderId: String(message?.senderId || "").trim(),
+    senderName: String(message?.senderName || "Участник").trim() || "Участник",
+    text: String(message?.text || ""),
+    attachmentCount: attachments.length,
+    pinnedAt: nowIso(),
+    pinnedBy: String(pinnedBy || "").trim(),
+  };
+}
+
+const PERSON_VISIBILITIES = new Set([
+  "private",
+  "tree",
+  "cross-tree",
+  "public",
+]);
+
+const PERSON_ATTRIBUTE_FIELDS = Object.freeze([
+  "name",
+  "photo",
+  "birthDate",
+  "birthYear",
+  "places",
+  "contacts",
+  "notes",
+  "relations",
+]);
+
+function defaultPersonVisibility({deathDate = null, isAlive = true} = {}) {
+  if (normalizeNullableString(deathDate) || isAlive === false) {
+    return "tree";
+  }
+  return "private";
+}
+
+function normalizePersonVisibility(value, fallback = "private") {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (PERSON_VISIBILITIES.has(normalized)) {
+    return normalized;
+  }
+  return PERSON_VISIBILITIES.has(fallback) ? fallback : "private";
+}
+
+function defaultAttributeVisibility(field, person = {}) {
+  const personDefault = normalizePersonVisibility(
+    person.visibility,
+    defaultPersonVisibility(person),
+  );
+  if (field === "contacts") {
+    return "private";
+  }
+  if (personDefault === "public" || personDefault === "cross-tree") {
+    return field === "name" || field === "birthYear" || field === "relations"
+      ? "cross-tree"
+      : "tree";
+  }
+  return personDefault;
+}
+
+function extractBirthYear(value) {
+  const normalized = normalizeIsoDate(value);
+  return normalized ? normalized.slice(0, 4) : null;
+}
+
+function safeMergePersonPreview(person) {
+  return {
+    name: String(person?.name || "Без имени").trim() || "Без имени",
+    birthYear: normalizedBirthYear(person?.birthDate),
+  };
+}
+
+function personStewardUserIds(db, person) {
+  const tree = db.trees.find((entry) => entry.id === person?.treeId);
+  return normalizeParticipantIds([
+    person?.userId,
+    person?.creatorId,
+    tree?.creatorId,
+  ]);
+}
+
+function identityStewardUserIds(db, identity = {}) {
+  const personIds = normalizeParticipantIds(identity.personIds);
+  const stewards = [
+    identity.claimedByUserId,
+    identity.userId,
+    ...(Array.isArray(identity.stewardUserIds) ? identity.stewardUserIds : []),
+  ];
+  for (const personId of personIds) {
+    const person = db.persons.find((entry) => entry.id === personId);
+    stewards.push(...personStewardUserIds(db, person));
+  }
+  return normalizeParticipantIds(stewards);
+}
+
 function normalizeProfileContributionPolicy(value) {
   const normalized = String(value || "").trim().toLowerCase();
   return PROFILE_CONTRIBUTION_POLICIES.has(normalized)
@@ -3669,6 +4285,10 @@ function buildPersonRecord({
     familySummary,
     bio: normalizeNullableString(personData.bio),
     isAlive: deathDate === null,
+    visibility: normalizePersonVisibility(
+      personData.visibility,
+      defaultPersonVisibility({deathDate, isAlive: deathDate === null}),
+    ),
     creatorId,
     createdAt,
     updatedAt: createdAt,
@@ -3682,13 +4302,120 @@ function createPersonIdentityRecord({
   personIds = [],
 } = {}) {
   const createdAt = nowIso();
+  const normalizedUserId = normalizeNullableString(userId);
   return {
     id,
-    userId: normalizeNullableString(userId),
+    userId: normalizedUserId,
+    claimedByUserId: normalizedUserId,
+    primaryPersonId: normalizeParticipantIds(personIds)[0] || null,
     personIds: normalizeParticipantIds(personIds),
+    isLiving: true,
+    isPublicDiscoverable: false,
+    stewardUserIds: normalizedUserId ? [normalizedUserId] : [],
+    mergedInto: null,
     createdAt,
     updatedAt: createdAt,
   };
+}
+
+function createPersonAttributeRecord({
+  identityId,
+  field,
+  value = null,
+  sourcePersonId = null,
+  sourceUserId = null,
+  visibility = "private",
+  confidence = 1,
+}) {
+  const timestamp = nowIso();
+  return {
+    id: crypto.randomUUID(),
+    identityId,
+    field,
+    value,
+    sourcePersonId: normalizeNullableString(sourcePersonId),
+    sourceUserId: normalizeNullableString(sourceUserId),
+    confidence: Number.isFinite(Number(confidence)) ? Number(confidence) : 1,
+    visibility: normalizePersonVisibility(visibility),
+    status: "active",
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+}
+
+function personAttributeValue(person, field) {
+  switch (field) {
+    case "name":
+      return normalizeNullableString(person?.name);
+    case "photo":
+      return normalizeNullableString(person?.primaryPhotoUrl || person?.photoUrl);
+    case "birthDate":
+      return normalizeNullableString(person?.birthDate);
+    case "birthYear":
+      return extractBirthYear(person?.birthDate);
+    case "places":
+      return normalizeNullableString(
+        [person?.birthPlace, person?.deathPlace].filter(Boolean).join(" · "),
+      );
+    case "contacts":
+      return normalizeNullableString(person?.userId);
+    case "notes":
+      return normalizeNullableString(
+        person?.familySummary || person?.notes || person?.bio,
+      );
+    case "relations":
+      return normalizeNullableString(person?.treeId);
+    default:
+      return null;
+  }
+}
+
+function upsertPersonAttributesForPerson(db, person, sourceUserId = null) {
+  if (!person?.identityId) {
+    return false;
+  }
+  db.personAttributes = Array.isArray(db.personAttributes)
+    ? db.personAttributes
+    : [];
+
+  let changed = false;
+  for (const field of PERSON_ATTRIBUTE_FIELDS) {
+    const value = personAttributeValue(person, field);
+    const existing = db.personAttributes.find(
+      (entry) =>
+        entry.identityId === person.identityId &&
+        entry.sourcePersonId === person.id &&
+        entry.field === field &&
+        entry.status !== "archived",
+    );
+    if (!value && !existing) {
+      continue;
+    }
+
+    const visibility = existing?.visibility || defaultAttributeVisibility(field, person);
+    if (!existing) {
+      db.personAttributes.push(
+        createPersonAttributeRecord({
+          identityId: person.identityId,
+          field,
+          value,
+          sourcePersonId: person.id,
+          sourceUserId: sourceUserId || person.creatorId || person.userId,
+          visibility,
+        }),
+      );
+      changed = true;
+      continue;
+    }
+
+    if (existing.value !== value || existing.visibility !== visibility) {
+      existing.value = value;
+      existing.visibility = normalizePersonVisibility(visibility);
+      existing.updatedAt = nowIso();
+      changed = true;
+    }
+  }
+  return changed;
 }
 
 function pickPersonValue(currentValue, fallbackValue) {
@@ -3828,6 +4555,148 @@ function insertDescendingLimited(items, entry, compareEntries, limit) {
   }
 }
 
+function compareChatMessagesDescending(left, right) {
+  const timestampCompare = String(right?.timestamp || "").localeCompare(
+    String(left?.timestamp || ""),
+  );
+  if (timestampCompare !== 0) {
+    return timestampCompare;
+  }
+
+  return String(right?.id || "").localeCompare(String(left?.id || ""));
+}
+
+function normalizeChatSearchQuery(value) {
+  return String(value || "")
+    .trim()
+    .toLocaleLowerCase("ru-RU")
+    .split(/\s+/)
+    .map((term) => term.trim())
+    .filter(Boolean)
+    .slice(0, 8);
+}
+
+function normalizeSearchText(value) {
+  return String(value || "").toLocaleLowerCase("ru-RU");
+}
+
+function chatMessageSearchHaystack(message) {
+  const attachmentText = normalizeMessageAttachments(message)
+    .map((attachment) =>
+      [
+        attachment.fileName,
+        attachment.mimeType,
+        attachment.presentation === "voice_note" ? "голосовое" : "",
+      ]
+        .map((value) => String(value || "").trim())
+        .filter(Boolean)
+        .join(" "),
+    )
+    .filter(Boolean)
+    .join(" ");
+  return normalizeSearchText(
+    [message?.text, message?.senderName, attachmentText]
+      .map((value) => String(value || "").trim())
+      .filter(Boolean)
+      .join("\n"),
+  );
+}
+
+function buildChatSearchSnippet(message, terms) {
+  const text = String(message?.text || "").trim();
+  const fallback = normalizeMessageAttachments(message).some(
+    (attachment) => attachment.presentation === "voice_note",
+  )
+    ? "Голосовое сообщение"
+    : String(message?.senderName || "Сообщение").trim();
+  const source = text || fallback;
+  if (!source) {
+    return "";
+  }
+
+  const normalizedSource = normalizeSearchText(source);
+  const firstIndex = terms
+    .map((term) => normalizedSource.indexOf(term))
+    .filter((index) => index >= 0)
+    .sort((left, right) => left - right)[0];
+  if (!Number.isFinite(firstIndex)) {
+    return source.length > 180 ? `${source.slice(0, 179).trimEnd()}…` : source;
+  }
+
+  const start = Math.max(0, firstIndex - 70);
+  const end = Math.min(source.length, firstIndex + 110);
+  const prefix = start > 0 ? "…" : "";
+  const suffix = end < source.length ? "…" : "";
+  return `${prefix}${source.slice(start, end).trim()}${suffix}`;
+}
+
+function normalizeReactionEmoji(value) {
+  const emoji = String(value || "").trim();
+  if (!emoji) {
+    return null;
+  }
+  return Array.from(emoji).slice(0, 16).join("");
+}
+
+function ensureMessageReactions(db) {
+  db.messageReactions = Array.isArray(db.messageReactions)
+    ? db.messageReactions
+    : [];
+  return db.messageReactions;
+}
+
+function ensureChatPins(db) {
+  db.chatPins = Array.isArray(db.chatPins) ? db.chatPins : [];
+  return db.chatPins;
+}
+
+function aggregateMessageReactions(db, messageId) {
+  const normalizedMessageId = String(messageId || "").trim();
+  if (!normalizedMessageId) {
+    return [];
+  }
+
+  const grouped = new Map();
+  for (const reaction of ensureMessageReactions(db)) {
+    if (String(reaction?.messageId || "").trim() !== normalizedMessageId) {
+      continue;
+    }
+    const emoji = normalizeReactionEmoji(reaction?.emoji);
+    const userId = String(reaction?.userId || "").trim();
+    if (!emoji || !userId) {
+      continue;
+    }
+    const existing = grouped.get(emoji) || {
+      emoji,
+      userIds: [],
+      count: 0,
+    };
+    if (!existing.userIds.includes(userId)) {
+      existing.userIds.push(userId);
+      existing.count = existing.userIds.length;
+    }
+    grouped.set(emoji, existing);
+  }
+
+  return Array.from(grouped.values()).sort((left, right) =>
+    String(left.emoji || "").localeCompare(String(right.emoji || "")),
+  );
+}
+
+function attachMessageReactions(db, message) {
+  const clone = structuredClone(message);
+  clone.reactions = aggregateMessageReactions(db, clone.id);
+  return clone;
+}
+
+function isMessageReadByUser(message, userId) {
+  const readBy = normalizeParticipantIds(message?.readBy);
+  if (readBy.length > 0) {
+    return readBy.includes(userId);
+  }
+  return message?.isRead === true;
+}
+
 class FileStore {
   constructor(dataPath) {
     this.dataPath = dataPath;
@@ -3837,9 +4706,17 @@ class FileStore {
     this._sessionTouchCache = new Map();
     this._sessionCache = new Map();
     this._userCache = new Map();
+    this._initializePromise = null;
   }
 
   async initialize() {
+    if (!this._initializePromise) {
+      this._initializePromise = this._initializeFileStore();
+    }
+    return this._initializePromise;
+  }
+
+  async _initializeFileStore() {
     await fs.mkdir(path.dirname(this.dataPath), {recursive: true});
 
     try {
@@ -3850,6 +4727,27 @@ class FileStore {
         JSON.stringify(EMPTY_DB, null, 2),
         "utf8",
       );
+      return;
+    }
+
+    const raw = await fs.readFile(this.dataPath, "utf8");
+    const parsed = JSON.parse(raw);
+    const normalized = normalizeDbState(parsed);
+    const migration = backfillPersonIdentities(normalized);
+    const migratedSnapshot = migration.snapshot;
+    const defaultCirclesChanged = ensureCirclesForAllTrees(migratedSnapshot);
+    if (migration.changed || defaultCirclesChanged) {
+      const directoryPath = path.dirname(this.dataPath);
+      const tempPath = path.join(
+        directoryPath,
+        `${path.basename(this.dataPath)}.${crypto.randomUUID()}.tmp`,
+      );
+      await fs.writeFile(
+        tempPath,
+        JSON.stringify(migratedSnapshot, null, 2),
+        "utf8",
+      );
+      await fs.rename(tempPath, this.dataPath);
     }
   }
 
@@ -3945,6 +4843,7 @@ class FileStore {
   }
 
   _reconcilePersonIdentities(db) {
+    backfillPersonIdentities(db);
     const identities = this._ensurePersonIdentityCollection(db);
     const validUserIds = new Set(
       db.users
@@ -3982,17 +4881,39 @@ class FileStore {
       const personIds = normalizeParticipantIds(
         personIdsByIdentity.get(identityId) || [],
       );
+      const claimedByUserId = normalizeNullableString(
+        entry?.claimedByUserId || normalizedUserId,
+      );
+      const linkedPersons = personIds
+        .map((personId) => db.persons.find((person) => person.id === personId))
+        .filter(Boolean);
+      const hasLivingPerson = linkedPersons.some(
+        (person) => person.isAlive !== false,
+      );
 
-      if (!normalizedUserId && personIds.length === 0) {
+      if (!normalizedUserId && !claimedByUserId && personIds.length === 0) {
         return result;
       }
 
-      result.push({
+      const nextIdentity = {
+        ...entry,
         id: identityId,
-        userId: normalizedUserId,
+        userId: normalizedUserId || claimedByUserId,
+        claimedByUserId,
+        primaryPersonId:
+          normalizeNullableString(entry?.primaryPersonId) || personIds[0] || null,
         personIds,
+        isLiving:
+          entry?.isLiving === undefined ? hasLivingPerson : entry.isLiving === true,
+        isPublicDiscoverable: entry?.isPublicDiscoverable === true,
+        mergedInto: normalizeNullableString(entry?.mergedInto),
+        stewardUserIds: [],
         createdAt: entry?.createdAt || nowIso(),
         updatedAt: entry?.updatedAt || nowIso(),
+      };
+      nextIdentity.stewardUserIds = identityStewardUserIds(db, nextIdentity);
+      result.push({
+        ...nextIdentity,
       });
       return result;
     }, []);
@@ -4057,6 +4978,9 @@ class FileStore {
     }
 
     identity.userId = userId;
+    identity.claimedByUserId = normalizeNullableString(
+      identity.claimedByUserId || userId,
+    );
     identity.updatedAt = nowIso();
     user.identityId = identity.id;
     user.updatedAt = nowIso();
@@ -4839,6 +5763,10 @@ class FileStore {
         !removedPersonIds.has(entry.person2Id)
       );
     });
+    db.circles = db.circles.filter((entry) => !removedTreeIds.has(entry.treeId));
+    db.circleMembers = db.circleMembers.filter(
+      (entry) => !removedTreeIds.has(entry.treeId),
+    );
 
     const nextPosts = [];
     const removedPostIds = new Set();
@@ -4936,6 +5864,19 @@ class FileStore {
         (!Array.isArray(entry.participants) ||
           !entry.participants.includes(userId)) &&
         activeChatIds.has(entry.chatId)
+      );
+    });
+    db.chatDrafts = db.chatDrafts.filter((entry) => {
+      return entry.userId !== userId && activeChatIds.has(entry.chatId);
+    });
+    const activeMessageIds = new Set(
+      db.messages.map((entry) => String(entry?.id || "").trim()).filter(Boolean),
+    );
+    db.chatPins = ensureChatPins(db).filter((entry) => {
+      return (
+        activeChatIds.has(entry.chatId) &&
+        activeMessageIds.has(String(entry?.messageId || "").trim()) &&
+        entry.pinnedBy !== userId
       );
     });
 
@@ -5052,10 +5993,12 @@ class FileStore {
 
     const creator = db.users.find((entry) => entry.id === creatorId);
     const creatorProfile = creator?.profile || {};
+    const creatorIdentity = this._ensureUserIdentity(db, creatorId);
     const creatorPerson = buildPersonRecord({
       treeId: tree.id,
       creatorId,
       userId: creatorId,
+      identityId: creatorIdentity?.id || null,
       personData: {
         firstName: creatorProfile.firstName,
         lastName: creatorProfile.lastName,
@@ -5069,7 +6012,13 @@ class FileStore {
     });
 
     db.trees.push(tree);
+    ensureDefaultCirclesForTree(db, tree);
     db.persons.push(creatorPerson);
+    if (creatorIdentity) {
+      this._attachPersonToIdentity(db, creatorPerson, creatorIdentity, creatorId);
+    } else {
+      this._reconcilePersonIdentities(db);
+    }
     this._appendTreeChangeRecord(db, {
       treeId: tree.id,
       actorId: creatorId,
@@ -5079,6 +6028,7 @@ class FileStore {
         after: structuredClone(creatorPerson),
       },
     });
+    upsertPersonAttributesForPerson(db, creatorPerson, creatorId);
     await this._write(db);
     return structuredClone(tree);
   }
@@ -5104,6 +6054,234 @@ class FileStore {
     return tree ? structuredClone(tree) : null;
   }
 
+  _circleMemberCount(db, circle) {
+    if (!circle) {
+      return 0;
+    }
+    if (circle.kind === "all_tree") {
+      return (Array.isArray(db.persons) ? db.persons : []).filter(
+        (person) => person.treeId === circle.treeId,
+      ).length;
+    }
+    return (Array.isArray(db.circleMembers) ? db.circleMembers : []).filter(
+      (entry) => entry.treeId === circle.treeId && entry.circleId === circle.id,
+    ).length;
+  }
+
+  _mapCircleWithCount(db, circle) {
+    return {
+      ...circle,
+      memberCount: this._circleMemberCount(db, circle),
+    };
+  }
+
+  async listCircles(treeId) {
+    const db = await this._read();
+    const tree = db.trees.find((entry) => entry.id === treeId);
+    if (!tree) {
+      return null;
+    }
+
+    const {changed} = ensureCirclesForTree(db, tree);
+    if (changed) {
+      await this._write(db);
+    }
+
+    return db.circles
+      .filter((entry) => entry.treeId === treeId)
+      .sort((left, right) => {
+        const kindOrder = {
+          all_tree: 0,
+          favorites: 1,
+          descendants_of: 2,
+          ancestors_of: 3,
+          pair: 4,
+          custom: 5,
+        };
+        const leftOrder = kindOrder[left.kind] ?? 99;
+        const rightOrder = kindOrder[right.kind] ?? 99;
+        if (leftOrder !== rightOrder) {
+          return leftOrder - rightOrder;
+        }
+        return String(left.name || "").localeCompare(String(right.name || ""));
+      })
+      .map((circle) => structuredClone(this._mapCircleWithCount(db, circle)));
+  }
+
+  async findCircle(treeId, circleId) {
+    const db = await this._read();
+    const tree = db.trees.find((entry) => entry.id === treeId);
+    if (!tree) {
+      return null;
+    }
+    const {changed} = ensureCirclesForTree(db, tree);
+    if (changed) {
+      await this._write(db);
+    }
+    const circle = db.circles.find(
+      (entry) => entry.treeId === treeId && entry.id === circleId,
+    );
+    return circle
+      ? structuredClone(this._mapCircleWithCount(db, circle))
+      : null;
+  }
+
+  async createCircle({treeId, name, description = null, createdBy = null}) {
+    const db = await this._read();
+    const tree = db.trees.find((entry) => entry.id === treeId);
+    if (!tree) {
+      return null;
+    }
+    ensureCirclesForTree(db, tree);
+    const circle = createCircleRecord({
+      treeId,
+      name,
+      description,
+      createdBy,
+      kind: "custom",
+    });
+    db.circles.push(circle);
+    await this._write(db);
+    return structuredClone(this._mapCircleWithCount(db, circle));
+  }
+
+  async updateCircle({treeId, circleId, name, description = undefined}) {
+    const db = await this._read();
+    const circle = db.circles.find(
+      (entry) => entry.treeId === treeId && entry.id === circleId,
+    );
+    if (!circle) {
+      return null;
+    }
+    if (circle.kind !== "custom" && circle.kind !== "favorites") {
+      return false;
+    }
+
+    const normalizedName = String(name || "").trim();
+    if (normalizedName) {
+      circle.name = normalizedName;
+    }
+    if (description !== undefined) {
+      circle.description = normalizeNullableString(description);
+    }
+    circle.updatedAt = nowIso();
+    await this._write(db);
+    return structuredClone(this._mapCircleWithCount(db, circle));
+  }
+
+  async deleteCircle({treeId, circleId}) {
+    const db = await this._read();
+    const circleIndex = db.circles.findIndex(
+      (entry) => entry.treeId === treeId && entry.id === circleId,
+    );
+    if (circleIndex < 0) {
+      return null;
+    }
+    const circle = db.circles[circleIndex];
+    if (circle.kind !== "custom") {
+      return false;
+    }
+    db.circles.splice(circleIndex, 1);
+    db.circleMembers = db.circleMembers.filter(
+      (entry) => !(entry.treeId === treeId && entry.circleId === circleId),
+    );
+    for (const post of db.posts) {
+      if (post.treeId === treeId && post.circleId === circleId) {
+        const {allTreeCircle} = ensureDefaultCirclesForTree(db, treeId);
+        post.circleId = allTreeCircle?.id || null;
+        post.updatedAt = nowIso();
+      }
+    }
+    await this._write(db);
+    return structuredClone(circle);
+  }
+
+  async replaceCircleMembers({
+    treeId,
+    circleId,
+    identityIds = [],
+    personIds = [],
+  }) {
+    const db = await this._read();
+    const tree = db.trees.find((entry) => entry.id === treeId);
+    if (!tree) {
+      return null;
+    }
+    ensureCirclesForTree(db, tree);
+    const circle = db.circles.find(
+      (entry) => entry.treeId === treeId && entry.id === circleId,
+    );
+    if (!circle) {
+      return null;
+    }
+    if (circle.kind !== "custom" && circle.kind !== "favorites") {
+      return false;
+    }
+
+    const identityIdsFromPersons = (Array.isArray(personIds) ? personIds : [])
+      .map((personId) => {
+        const normalizedPersonId = normalizeNullableString(personId);
+        return db.persons.find(
+          (person) => person.treeId === treeId && person.id === normalizedPersonId,
+        )?.identityId;
+      })
+      .filter(Boolean);
+    const normalizedIdentityIds = normalizeCircleMemberIdentityIds(db, treeId, [
+      ...identityIds,
+      ...identityIdsFromPersons,
+    ]);
+    const timestamp = nowIso();
+    db.circleMembers = db.circleMembers.filter(
+      (entry) => !(entry.treeId === treeId && entry.circleId === circleId),
+    );
+    for (const identityId of normalizedIdentityIds) {
+      db.circleMembers.push({
+        id: crypto.randomUUID(),
+        treeId,
+        circleId,
+        identityId,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+    }
+    circle.updatedAt = timestamp;
+    await this._write(db);
+    return structuredClone(this._mapCircleWithCount(db, circle));
+  }
+
+  async listCircleMembers(treeId, circleId) {
+    const db = await this._read();
+    const tree = db.trees.find((entry) => entry.id === treeId);
+    if (!tree) {
+      return null;
+    }
+    const {changed} = ensureCirclesForTree(db, tree);
+    if (changed) {
+      await this._write(db);
+    }
+    const circle = db.circles.find(
+      (entry) => entry.treeId === treeId && entry.id === circleId,
+    );
+    if (!circle) {
+      return null;
+    }
+    if (circle.kind === "all_tree") {
+      return db.persons
+        .filter((person) => person.treeId === treeId)
+        .map((person) => ({
+          treeId,
+          circleId,
+          identityId: normalizeNullableString(person.identityId),
+          personId: person.id,
+        }))
+        .filter((entry) => entry.identityId)
+        .map((entry) => structuredClone(entry));
+    }
+    return db.circleMembers
+      .filter((entry) => entry.treeId === treeId && entry.circleId === circleId)
+      .map((entry) => structuredClone(entry));
+  }
+
   async removeTreeForUser({treeId, userId}) {
     const db = await this._read();
     const treeIndex = db.trees.findIndex((entry) => entry.id === treeId);
@@ -5125,6 +6303,10 @@ class FileStore {
       db.trees.splice(treeIndex, 1);
       db.persons = db.persons.filter((entry) => entry.treeId !== treeId);
       db.relations = db.relations.filter((entry) => entry.treeId !== treeId);
+      db.circles = db.circles.filter((entry) => entry.treeId !== treeId);
+      db.circleMembers = db.circleMembers.filter(
+        (entry) => entry.treeId !== treeId,
+      );
       const removedChatIds = db.chats
         .filter((entry) => entry.treeId === treeId)
         .map((entry) => entry.id);
@@ -5465,6 +6647,614 @@ class FileStore {
     };
   }
 
+  _userCanAccessTreeRecord(tree, userId) {
+    const normalizedUserId = normalizeNullableString(userId);
+    if (!tree || !normalizedUserId) {
+      return false;
+    }
+    const memberIds = Array.isArray(tree.memberIds) ? tree.memberIds : [];
+    const members = Array.isArray(tree.members) ? tree.members : [];
+    return (
+      tree.creatorId === normalizedUserId ||
+      memberIds.includes(normalizedUserId) ||
+      members.includes(normalizedUserId)
+    );
+  }
+
+  _isPersonSteward(db, person, userId) {
+    return personStewardUserIds(db, person).includes(userId);
+  }
+
+  _mergeProposalView(db, proposal) {
+    const fromPerson = db.persons.find(
+      (person) => person.id === proposal.fromPersonId,
+    );
+    const candidatePerson = db.persons.find(
+      (person) => person.id === proposal.candidatePersonId,
+    );
+    return {
+      id: proposal.id,
+      status: proposal.status || "pending",
+      matchScore: Number(proposal.matchScore || 0),
+      confidence: proposal.matchScore >= 0.9 ? "high" : "medium",
+      matchSignals:
+        proposal.matchSignals && typeof proposal.matchSignals === "object"
+          ? structuredClone(proposal.matchSignals)
+          : {},
+      reasons: Array.isArray(proposal.reasons) ? proposal.reasons : [],
+      personA: safeMergePersonPreview(fromPerson),
+      personB: safeMergePersonPreview(candidatePerson),
+      requiredReviewCount: normalizeParticipantIds(proposal.reviewerUserIds).length,
+      reviewCount: Array.isArray(proposal.reviews)
+        ? proposal.reviews.filter((entry) => entry.decision === "accepted").length
+        : 0,
+      createdAt: proposal.createdAt,
+      resolvedAt: proposal.resolvedAt || null,
+    };
+  }
+
+  _notifyReviewers(db, {type, title, body, reviewerUserIds, data}) {
+    db.notifications = Array.isArray(db.notifications) ? db.notifications : [];
+    const normalizedReviewerIds = normalizeParticipantIds(reviewerUserIds);
+    for (const userId of normalizedReviewerIds) {
+      const alreadyQueued = db.notifications.some((notification) => {
+        return (
+          notification.userId === userId &&
+          notification.type === type &&
+          !notification.readAt &&
+          notification.data?.proposalId === data?.proposalId &&
+          notification.data?.claimId === data?.claimId
+        );
+      });
+      if (alreadyQueued) {
+        continue;
+      }
+      db.notifications.push(
+        createNotificationRecord({
+          userId,
+          type,
+          title,
+          body,
+          data,
+        }),
+      );
+    }
+  }
+
+  _ensureCrossTreeMergeProposals(db, userId, {limit = 50} = {}) {
+    const normalizedUserId = normalizeNullableString(userId);
+    if (!normalizedUserId) {
+      return false;
+    }
+    db.mergeProposals = Array.isArray(db.mergeProposals)
+      ? db.mergeProposals
+      : [];
+    this._reconcilePersonIdentities(db);
+
+    const accessibleTreeIds = new Set(
+      db.trees
+        .filter((tree) => this._userCanAccessTreeRecord(tree, normalizedUserId))
+        .map((tree) => tree.id),
+    );
+    const stewardPersons = db.persons.filter((person) => {
+      return (
+        accessibleTreeIds.has(person.treeId) &&
+        this._isPersonSteward(db, person, normalizedUserId)
+      );
+    });
+    if (stewardPersons.length === 0) {
+      return false;
+    }
+
+    let changed = false;
+    let createdCount = 0;
+    const allPersons = Array.isArray(db.persons) ? db.persons : [];
+    for (const fromPerson of stewardPersons) {
+      for (const candidatePerson of allPersons) {
+        if (
+          fromPerson.id === candidatePerson.id ||
+          fromPerson.treeId === candidatePerson.treeId ||
+          normalizeNullableString(fromPerson.identityId) ===
+            normalizeNullableString(candidatePerson.identityId)
+        ) {
+          continue;
+        }
+
+        const match = scorePersonPair(fromPerson, candidatePerson);
+        if (!match) {
+          continue;
+        }
+
+        const proposalPersonIds = [fromPerson.id, candidatePerson.id].sort(
+          (left, right) => left.localeCompare(right),
+        );
+        const proposalId = `merge:${proposalPersonIds[0]}:${proposalPersonIds[1]}`;
+        const existing = db.mergeProposals.find(
+          (proposal) => proposal.id === proposalId,
+        );
+        if (existing && existing.status !== "pending") {
+          continue;
+        }
+
+        const fromIdentity = db.personIdentities.find(
+          (identity) => identity.id === fromPerson.identityId,
+        );
+        const candidateIdentity = db.personIdentities.find(
+          (identity) => identity.id === candidatePerson.identityId,
+        );
+        const reviewerUserIds = normalizeParticipantIds([
+          ...personStewardUserIds(db, fromPerson),
+          ...personStewardUserIds(db, candidatePerson),
+          ...identityStewardUserIds(db, fromIdentity),
+          ...identityStewardUserIds(db, candidateIdentity),
+        ]);
+        if (!reviewerUserIds.includes(normalizedUserId)) {
+          continue;
+        }
+
+        const matchSignals = {
+          name: true,
+          birthYear:
+            normalizedBirthYear(fromPerson.birthDate) &&
+            normalizedBirthYear(fromPerson.birthDate) ===
+              normalizedBirthYear(candidatePerson.birthDate),
+        };
+        if (!existing) {
+          db.mergeProposals.push({
+            id: proposalId,
+            fromPersonId: fromPerson.id,
+            toIdentityId: normalizeNullableString(fromPerson.identityId),
+            candidatePersonId: candidatePerson.id,
+            candidateIdentityId: normalizeNullableString(candidatePerson.identityId),
+            matchScore: match.score,
+            matchSignals,
+            reasons: match.reasons,
+            status: "pending",
+            proposedByUserId: null,
+            reviewerUserIds,
+            reviews: [],
+            createdAt: nowIso(),
+            resolvedAt: null,
+          });
+          this._notifyReviewers(db, {
+            type: "merge_proposal",
+            title: "Возможное совпадение",
+            body: "Проверьте, не описывают ли две карточки одного человека.",
+            reviewerUserIds,
+            data: {proposalId, kind: "cross_tree_merge"},
+          });
+          changed = true;
+          createdCount += 1;
+        } else {
+          existing.matchScore = match.score;
+          existing.matchSignals = matchSignals;
+          existing.reasons = match.reasons;
+          existing.reviewerUserIds = reviewerUserIds;
+          changed = true;
+        }
+
+        if (createdCount >= limit) {
+          return changed;
+        }
+      }
+    }
+    return changed;
+  }
+
+  _mergeIdentitiesForProposal(db, proposal) {
+    const targetIdentityId = normalizeNullableString(proposal.toIdentityId);
+    const sourceIdentityId = normalizeNullableString(proposal.candidateIdentityId);
+    if (!targetIdentityId || !sourceIdentityId || targetIdentityId === sourceIdentityId) {
+      return true;
+    }
+
+    const targetIdentity = db.personIdentities.find(
+      (identity) => identity.id === targetIdentityId,
+    );
+    const sourceIdentity = db.personIdentities.find(
+      (identity) => identity.id === sourceIdentityId,
+    );
+    if (!targetIdentity || !sourceIdentity) {
+      return false;
+    }
+    if (
+      targetIdentity.userId &&
+      sourceIdentity.userId &&
+      targetIdentity.userId !== sourceIdentity.userId
+    ) {
+      return false;
+    }
+
+    for (const person of db.persons) {
+      if (person.identityId === sourceIdentityId) {
+        person.identityId = targetIdentityId;
+        person.updatedAt = nowIso();
+      }
+    }
+    for (const attribute of db.personAttributes || []) {
+      if (attribute.identityId === sourceIdentityId) {
+        attribute.identityId = targetIdentityId;
+        attribute.updatedAt = nowIso();
+      }
+    }
+
+    targetIdentity.userId = targetIdentity.userId || sourceIdentity.userId || null;
+    targetIdentity.claimedByUserId =
+      targetIdentity.claimedByUserId || sourceIdentity.claimedByUserId || null;
+    targetIdentity.personIds = normalizeParticipantIds([
+      ...(targetIdentity.personIds || []),
+      ...(sourceIdentity.personIds || []),
+    ]);
+    targetIdentity.stewardUserIds = normalizeParticipantIds([
+      ...(targetIdentity.stewardUserIds || []),
+      ...(sourceIdentity.stewardUserIds || []),
+    ]);
+    targetIdentity.isLiving =
+      targetIdentity.isLiving === true || sourceIdentity.isLiving === true;
+    targetIdentity.isPublicDiscoverable =
+      targetIdentity.isPublicDiscoverable === true &&
+      sourceIdentity.isPublicDiscoverable === true;
+    targetIdentity.updatedAt = nowIso();
+    sourceIdentity.personIds = [];
+    sourceIdentity.mergedInto = targetIdentityId;
+    sourceIdentity.isPublicDiscoverable = false;
+    sourceIdentity.updatedAt = nowIso();
+
+    this._reconcilePersonIdentities(db);
+    return true;
+  }
+
+  async listPendingMergeProposalsForUser(userId, {limit = 50} = {}) {
+    const db = await this._read();
+    const changed = this._ensureCrossTreeMergeProposals(db, userId, {limit});
+    if (changed) {
+      await this._write(db);
+    }
+
+    return db.mergeProposals
+      .filter(
+        (proposal) =>
+          proposal.status === "pending" &&
+          normalizeParticipantIds(proposal.reviewerUserIds).includes(userId),
+      )
+      .sort((left, right) =>
+        String(right.createdAt || "").localeCompare(String(left.createdAt || "")),
+      )
+      .slice(0, Math.max(0, Math.min(Number(limit) || 50, 100)))
+      .map((proposal) => structuredClone(this._mergeProposalView(db, proposal)));
+  }
+
+  async reviewMergeProposal({proposalId, reviewerUserId, decision, reason = null}) {
+    const db = await this._read();
+    db.mergeProposals = Array.isArray(db.mergeProposals)
+      ? db.mergeProposals
+      : [];
+    const proposal = db.mergeProposals.find((entry) => entry.id === proposalId);
+    if (!proposal) {
+      return null;
+    }
+    if (!normalizeParticipantIds(proposal.reviewerUserIds).includes(reviewerUserId)) {
+      return false;
+    }
+    if (proposal.status !== "pending") {
+      return structuredClone(this._mergeProposalView(db, proposal));
+    }
+
+    const normalizedDecision =
+      String(decision || "").trim().toLowerCase() === "accept"
+        ? "accepted"
+        : "rejected";
+    proposal.reviews = (Array.isArray(proposal.reviews) ? proposal.reviews : [])
+      .filter((review) => review.userId !== reviewerUserId);
+    proposal.reviews.push({
+      userId: reviewerUserId,
+      decision: normalizedDecision,
+      reason: normalizeNullableString(reason),
+      at: nowIso(),
+    });
+
+    if (normalizedDecision === "rejected") {
+      proposal.status = "rejected";
+      proposal.resolvedAt = nowIso();
+    } else {
+      const acceptedReviewerIds = new Set(
+        proposal.reviews
+          .filter((review) => review.decision === "accepted")
+          .map((review) => review.userId),
+      );
+      const allAccepted = normalizeParticipantIds(proposal.reviewerUserIds)
+        .every((userId) => acceptedReviewerIds.has(userId));
+      if (allAccepted) {
+        proposal.status = "accepted";
+        proposal.mergeApplied = this._mergeIdentitiesForProposal(db, proposal);
+        proposal.resolvedAt = nowIso();
+      }
+    }
+    await this._write(db);
+    return structuredClone(this._mergeProposalView(db, proposal));
+  }
+
+  async listPersonAttributes({treeId, personId}) {
+    const db = await this._read();
+    const person = db.persons.find(
+      (entry) => entry.treeId === treeId && entry.id === personId,
+    );
+    if (!person) {
+      return null;
+    }
+    const changed = upsertPersonAttributesForPerson(db, person, person.creatorId);
+    if (changed) {
+      await this._write(db);
+    }
+    return (db.personAttributes || [])
+      .filter(
+        (entry) =>
+          entry.identityId === person.identityId &&
+          entry.sourcePersonId === person.id &&
+          entry.status !== "archived",
+      )
+      .map((entry) => structuredClone(entry));
+  }
+
+  async updatePersonAttributeVisibility({
+    treeId,
+    personId,
+    actorUserId,
+    attributes = [],
+    cardVisibility = undefined,
+  }) {
+    const db = await this._read();
+    const person = db.persons.find(
+      (entry) => entry.treeId === treeId && entry.id === personId,
+    );
+    if (!person) {
+      return null;
+    }
+    if (!this._isPersonSteward(db, person, actorUserId)) {
+      return false;
+    }
+
+    if (cardVisibility !== undefined) {
+      person.visibility = normalizePersonVisibility(
+        cardVisibility,
+        defaultPersonVisibility(person),
+      );
+      person.updatedAt = nowIso();
+    }
+    upsertPersonAttributesForPerson(db, person, actorUserId);
+    for (const item of Array.isArray(attributes) ? attributes : []) {
+      const field = String(item?.field || "").trim();
+      if (!PERSON_ATTRIBUTE_FIELDS.includes(field)) {
+        continue;
+      }
+      const attribute = db.personAttributes.find(
+        (entry) =>
+          entry.identityId === person.identityId &&
+          entry.sourcePersonId === person.id &&
+          entry.field === field &&
+          entry.status !== "archived",
+      );
+      if (!attribute) {
+        continue;
+      }
+      attribute.visibility = normalizePersonVisibility(item.visibility);
+      attribute.updatedAt = nowIso();
+    }
+    await this._write(db);
+    return this.listPersonAttributes({treeId, personId});
+  }
+
+  _identityClaimView(claim) {
+    return {
+      id: claim.id,
+      identityId: claim.identityId,
+      personId: claim.personId,
+      claimantUserId: claim.claimantUserId,
+      status: claim.status,
+      reviewerUserIds: normalizeParticipantIds(claim.reviewerUserIds),
+      reviews: Array.isArray(claim.reviews)
+        ? claim.reviews.map((entry) => structuredClone(entry))
+        : [],
+      createdAt: claim.createdAt,
+      resolvedAt: claim.resolvedAt || null,
+    };
+  }
+
+  _approveIdentityClaim(db, claim) {
+    const identity = db.personIdentities.find(
+      (entry) => entry.id === claim.identityId,
+    );
+    const person = db.persons.find((entry) => entry.id === claim.personId);
+    if (!identity || !person) {
+      return false;
+    }
+    return this._attachPersonToIdentity(
+      db,
+      person,
+      identity,
+      claim.claimantUserId,
+    );
+  }
+
+  async createIdentityClaim({treeId, personId, claimantUserId, evidence = null}) {
+    const db = await this._read();
+    db.identityClaims = Array.isArray(db.identityClaims)
+      ? db.identityClaims
+      : [];
+    const person = db.persons.find(
+      (entry) => entry.treeId === treeId && entry.id === personId,
+    );
+    if (!person) {
+      return null;
+    }
+    this._reconcilePersonIdentities(db);
+    const identity = db.personIdentities.find(
+      (entry) => entry.id === person.identityId,
+    );
+    if (!identity) {
+      return null;
+    }
+    const existing = db.identityClaims.find(
+      (claim) =>
+        claim.identityId === identity.id &&
+        claim.claimantUserId === claimantUserId &&
+        claim.status === "pending",
+    );
+    if (existing) {
+      return structuredClone(this._identityClaimView(existing));
+    }
+
+    const reviewerUserIds = normalizeParticipantIds([
+      ...identityStewardUserIds(db, identity),
+      ...personStewardUserIds(db, person),
+    ]).filter((userId) => userId !== claimantUserId);
+    const timestamp = nowIso();
+    const claim = {
+      id: crypto.randomUUID(),
+      identityId: identity.id,
+      personId: person.id,
+      claimantUserId,
+      evidence: normalizeNullableString(evidence),
+      status: reviewerUserIds.length === 0 ? "approved" : "pending",
+      reviewerUserIds,
+      reviews: [],
+      createdAt: timestamp,
+      resolvedAt: reviewerUserIds.length === 0 ? timestamp : null,
+    };
+    db.identityClaims.push(claim);
+    if (claim.status === "approved") {
+      this._approveIdentityClaim(db, claim);
+    } else {
+      this._notifyReviewers(db, {
+        type: "identity_claim",
+        title: "Запрос подтверждения личности",
+        body: "Пользователь просит связать профиль с карточкой в дереве.",
+        reviewerUserIds,
+        data: {claimId: claim.id, personId: person.id},
+      });
+    }
+    await this._write(db);
+    return structuredClone(this._identityClaimView(claim));
+  }
+
+  async listPendingIdentityClaimsForUser(userId) {
+    const db = await this._read();
+    db.identityClaims = Array.isArray(db.identityClaims)
+      ? db.identityClaims
+      : [];
+    return (db.identityClaims || [])
+      .filter(
+        (claim) =>
+          claim.status === "pending" &&
+          normalizeParticipantIds(claim.reviewerUserIds).includes(userId),
+      )
+      .sort((left, right) =>
+        String(right.createdAt || "").localeCompare(String(left.createdAt || "")),
+      )
+      .map((claim) => structuredClone(this._identityClaimView(claim)));
+  }
+
+  async reviewIdentityClaim({claimId, reviewerUserId, decision, reason = null}) {
+    const db = await this._read();
+    db.identityClaims = Array.isArray(db.identityClaims)
+      ? db.identityClaims
+      : [];
+    const claim = db.identityClaims.find((entry) => entry.id === claimId);
+    if (!claim) {
+      return null;
+    }
+    if (!normalizeParticipantIds(claim.reviewerUserIds).includes(reviewerUserId)) {
+      return false;
+    }
+    if (claim.status !== "pending") {
+      return structuredClone(this._identityClaimView(claim));
+    }
+    const normalizedDecision =
+      String(decision || "").trim().toLowerCase() === "approve"
+        ? "approved"
+        : "denied";
+    claim.reviews = (Array.isArray(claim.reviews) ? claim.reviews : [])
+      .filter((review) => review.userId !== reviewerUserId);
+    claim.reviews.push({
+      userId: reviewerUserId,
+      decision: normalizedDecision,
+      reason: normalizeNullableString(reason),
+      at: nowIso(),
+    });
+    if (normalizedDecision === "denied") {
+      claim.status = "denied";
+      claim.resolvedAt = nowIso();
+    } else {
+      const approvedReviewerIds = new Set(
+        claim.reviews
+          .filter((review) => review.decision === "approved")
+          .map((review) => review.userId),
+      );
+      if (
+        normalizeParticipantIds(claim.reviewerUserIds).every((userId) =>
+          approvedReviewerIds.has(userId),
+        )
+      ) {
+        claim.status = "approved";
+        claim.resolvedAt = nowIso();
+        this._approveIdentityClaim(db, claim);
+      }
+    }
+    await this._write(db);
+    return structuredClone(this._identityClaimView(claim));
+  }
+
+  async setIdentityDiscoverability({userId, isPublicDiscoverable}) {
+    const db = await this._read();
+    const identity = this._ensureUserIdentity(db, userId);
+    if (!identity) {
+      return null;
+    }
+    identity.isPublicDiscoverable = isPublicDiscoverable === true;
+    identity.updatedAt = nowIso();
+    await this._write(db);
+    return structuredClone({
+      identityId: identity.id,
+      isPublicDiscoverable: identity.isPublicDiscoverable,
+    });
+  }
+
+  async searchPublicIdentities({query, birthYear = null, limit = 20} = {}) {
+    const db = await this._read();
+    const normalizedQuery = String(query || "").trim().toLowerCase();
+    const normalizedBirthYear = normalizeNullableString(birthYear);
+    if (normalizedQuery.length < 2 && !normalizedBirthYear) {
+      return [];
+    }
+    return (db.personIdentities || [])
+      .filter((identity) => identity.isPublicDiscoverable === true)
+      .map((identity) => {
+        const primaryPerson =
+          db.persons.find((person) => person.id === identity.primaryPersonId) ||
+          db.persons.find((person) =>
+            normalizeParticipantIds(identity.personIds).includes(person.id),
+          );
+        return {identity, primaryPerson};
+      })
+      .filter(({primaryPerson}) => {
+        if (!primaryPerson) {
+          return false;
+        }
+        const name = String(primaryPerson.name || "").toLowerCase();
+        const year = extractBirthYear(primaryPerson.birthDate);
+        if (normalizedBirthYear && year !== normalizedBirthYear) {
+          return false;
+        }
+        return !normalizedQuery || name.includes(normalizedQuery);
+      })
+      .slice(0, Math.max(0, Math.min(Number(limit) || 20, 50)))
+      .map(({identity, primaryPerson}) => ({
+        identityId: identity.id,
+        name: String(primaryPerson.name || "Без имени").trim() || "Без имени",
+        birthYear: extractBirthYear(primaryPerson.birthDate),
+      }));
+  }
+
   async createPerson({
     treeId,
     creatorId,
@@ -5490,6 +7280,8 @@ class FileStore {
             canonicalIdentity,
             userId,
           );
+          ensureCirclesForTree(db, tree);
+          upsertPersonAttributesForPerson(db, existingLinkedPerson, creatorId);
           await this._write(db);
         }
         return structuredClone(existingLinkedPerson);
@@ -5519,6 +7311,8 @@ class FileStore {
     tree.updatedAt = nowIso();
     if (canonicalIdentity) {
       this._attachPersonToIdentity(db, person, canonicalIdentity, userId);
+    } else {
+      this._reconcilePersonIdentities(db);
     }
     this._appendTreeChangeRecord(db, {
       treeId,
@@ -5530,6 +7324,8 @@ class FileStore {
       },
     });
     this._reconcilePersonIdentities(db);
+    ensureCirclesForTree(db, tree);
+    upsertPersonAttributesForPerson(db, person, creatorId);
 
     await this._write(db);
     return structuredClone(person);
@@ -5563,6 +7359,13 @@ class FileStore {
     nextPerson.birthDate = normalizeIsoDate(nextPerson.birthDate);
     nextPerson.deathDate = normalizeIsoDate(nextPerson.deathDate);
     nextPerson.isAlive = nextPerson.deathDate === null;
+    nextPerson.visibility = normalizePersonVisibility(
+      nextPerson.visibility,
+      defaultPersonVisibility({
+        deathDate: nextPerson.deathDate,
+        isAlive: nextPerson.isAlive,
+      }),
+    );
     const photoState = normalizePersonPhotoGallery(nextPerson.photoGallery, {
       photoUrl: nextPerson.photoUrl,
       primaryPhotoUrl: nextPerson.primaryPhotoUrl,
@@ -5595,6 +7398,8 @@ class FileStore {
         after: structuredClone(person),
       },
     });
+    ensureCirclesForTree(db, treeId);
+    upsertPersonAttributesForPerson(db, person, actorId);
     await this._write(db);
     return structuredClone(person);
   }
@@ -5664,6 +7469,7 @@ class FileStore {
       },
     });
     this._reconcilePersonIdentities(db);
+    ensureCirclesForTree(db, treeId);
 
     await this._write(db);
     return true;
@@ -6310,6 +8116,7 @@ class FileStore {
     if (tree) {
       tree.updatedAt = nowIso();
     }
+    ensureCirclesForTree(db, treeId);
     await this._write(db);
     return structuredClone(relation);
   }
@@ -6390,6 +8197,7 @@ class FileStore {
         before: deletedRelation,
       },
     });
+    ensureCirclesForTree(db, treeId);
     await this._write(db);
     return deletedRelation;
   }
@@ -7030,8 +8838,87 @@ class FileStore {
     return structuredClone(report);
   }
 
-  async listPosts({treeId = null, authorId = null, scope = null} = {}) {
+  _userIdentityIdsInTree(db, treeId, userId) {
+    const normalizedUserId = normalizeNullableString(userId);
+    if (!normalizedUserId) {
+      return new Set();
+    }
+    return new Set(
+      (Array.isArray(db.persons) ? db.persons : [])
+        .filter(
+          (person) => person.treeId === treeId && person.userId === normalizedUserId,
+        )
+        .map((person) => normalizeNullableString(person.identityId))
+        .filter(Boolean),
+    );
+  }
+
+  _canUserViewCircleContent(
+    db,
+    {treeId, circleId: rawCircleId = null, authorId = null, viewerUserId = null},
+  ) {
+    const normalizedViewerUserId = normalizeNullableString(viewerUserId);
+    if (!normalizedViewerUserId || !treeId) {
+      return true;
+    }
+    if (authorId === normalizedViewerUserId) {
+      return true;
+    }
+
+    const explicitCircleId = normalizeNullableString(rawCircleId);
+    const {allTreeCircle} = ensureCirclesForTree(db, treeId);
+    const circleId = explicitCircleId || allTreeCircle?.id;
+    const circle = db.circles.find(
+      (entry) => entry.treeId === treeId && entry.id === circleId,
+    );
+    if (!circle) {
+      return !explicitCircleId;
+    }
+    if (circle.kind === "all_tree") {
+      return true;
+    }
+
+    const viewerIdentityIds = this._userIdentityIdsInTree(
+      db,
+      treeId,
+      normalizedViewerUserId,
+    );
+    if (viewerIdentityIds.size === 0) {
+      return false;
+    }
+
+    return db.circleMembers.some((entry) => {
+      return (
+        entry.treeId === treeId &&
+        entry.circleId === circle.id &&
+        viewerIdentityIds.has(normalizeNullableString(entry.identityId))
+      );
+    });
+  }
+
+  _canUserViewCirclePost(db, post, viewerUserId) {
+    if (!post) {
+      return true;
+    }
+    return this._canUserViewCircleContent(db, {
+      treeId: post.treeId,
+      circleId: post.circleId,
+      authorId: post.authorId,
+      viewerUserId,
+    });
+  }
+
+  async listPosts({
+    treeId = null,
+    authorId = null,
+    scope = null,
+    viewerUserId = null,
+  } = {}) {
     const db = await this._read();
+    const defaultCirclesChanged = ensureCirclesForAllTrees(db);
+    if (defaultCirclesChanged) {
+      await this._write(db);
+    }
     return db.posts
       .filter((entry) => {
         if (treeId && entry.treeId !== treeId) {
@@ -7043,6 +8930,9 @@ class FileStore {
         if (scope === "branches" && entry.scopeType !== "branches") {
           return false;
         }
+        if (!this._canUserViewCirclePost(db, entry, viewerUserId)) {
+          return false;
+        }
         return true;
       })
       .sort((left, right) =>
@@ -7051,8 +8941,9 @@ class FileStore {
       .map((entry) => structuredClone(entry));
   }
 
-  async listStories({treeId = null, authorId = null} = {}) {
+  async listStories({treeId = null, authorId = null, viewerUserId = null} = {}) {
     const db = await this._read();
+    const defaultCirclesChanged = ensureCirclesForAllTrees(db);
     const now = Date.now();
     const activeStories = [];
     let removedExpiredStories = false;
@@ -7065,7 +8956,7 @@ class FileStore {
       activeStories.push(story);
     }
 
-    if (removedExpiredStories) {
+    if (removedExpiredStories || defaultCirclesChanged) {
       db.stories = activeStories;
       await this._write(db);
     }
@@ -7076,6 +8967,16 @@ class FileStore {
           return false;
         }
         if (authorId && entry.authorId !== authorId) {
+          return false;
+        }
+        if (
+          !this._canUserViewCircleContent(db, {
+            treeId: entry.treeId,
+            circleId: entry.circleId,
+            authorId: entry.authorId,
+            viewerUserId,
+          })
+        ) {
           return false;
         }
         return true;
@@ -7110,6 +9011,7 @@ class FileStore {
     mediaUrl = null,
     thumbnailUrl = null,
     expiresAt = null,
+    circleId = null,
   }) {
     const db = await this._read();
     db.stories = db.stories.filter((entry) => !isExpiredAt(entry.expiresAt));
@@ -7117,6 +9019,14 @@ class FileStore {
     const tree = db.trees.find((entry) => entry.id === treeId);
     const user = db.users.find((entry) => entry.id === authorId);
     if (!tree || !user) {
+      return null;
+    }
+    const {allTreeCircle} = ensureCirclesForTree(db, tree);
+    const normalizedCircleId = normalizeNullableString(circleId) || allTreeCircle?.id;
+    const targetCircle = db.circles.find(
+      (entry) => entry.treeId === treeId && entry.id === normalizedCircleId,
+    );
+    if (!targetCircle) {
       return null;
     }
 
@@ -7130,6 +9040,7 @@ class FileStore {
       mediaUrl,
       thumbnailUrl,
       expiresAt,
+      circleId: targetCircle.id,
     });
     if (story.type === "text" && !story.text) {
       return false;
@@ -7198,11 +9109,20 @@ class FileStore {
     isPublic = false,
     scopeType = "wholeTree",
     anchorPersonIds = [],
+    circleId = null,
   }) {
     const db = await this._read();
     const tree = db.trees.find((entry) => entry.id === treeId);
     const user = db.users.find((entry) => entry.id === authorId);
     if (!tree || !user) {
+      return null;
+    }
+    const {allTreeCircle} = ensureCirclesForTree(db, tree);
+    const normalizedCircleId = normalizeNullableString(circleId) || allTreeCircle?.id;
+    const targetCircle = db.circles.find(
+      (entry) => entry.treeId === treeId && entry.id === normalizedCircleId,
+    );
+    if (!targetCircle) {
       return null;
     }
 
@@ -7216,6 +9136,7 @@ class FileStore {
       isPublic,
       scopeType,
       anchorPersonIds,
+      circleId: targetCircle.id,
     });
     if (!post.content && post.imageUrls.length === 0) {
       return false;
@@ -7400,6 +9321,253 @@ class FileStore {
     const db = await this._read();
     const chat = this._resolveChat(db, chatId);
     return chat ? structuredClone(chat) : null;
+  }
+
+  _findChatDraft(db, {userId, chatId}) {
+    const normalizedUserId = String(userId || "").trim();
+    const normalizedChatId = String(chatId || "").trim();
+    if (!normalizedUserId || !normalizedChatId) {
+      return null;
+    }
+    return (
+      (Array.isArray(db.chatDrafts) ? db.chatDrafts : []).find((entry) => {
+        return entry.userId === normalizedUserId && entry.chatId === normalizedChatId;
+      }) || null
+    );
+  }
+
+  _canAccessChatDraft(chat, userId) {
+    return Boolean(
+      chat &&
+        String(userId || "").trim() &&
+        normalizeParticipantIds(chat.participantIds).includes(String(userId).trim()),
+    );
+  }
+
+  async getChatDraft({userId, chatId}) {
+    const db = await this._read();
+    const chat = this._resolveChat(db, chatId);
+    if (!this._canAccessChatDraft(chat, userId)) {
+      return null;
+    }
+    const draft = this._findChatDraft(db, {userId, chatId: chat.id});
+    return draft ? structuredClone(draft) : null;
+  }
+
+  async listChatDrafts(userId) {
+    const db = await this._read();
+    const normalizedUserId = String(userId || "").trim();
+    if (!normalizedUserId) {
+      return [];
+    }
+    return (Array.isArray(db.chatDrafts) ? db.chatDrafts : [])
+      .filter((draft) => {
+        if (draft.userId !== normalizedUserId || !String(draft.text || "").trim()) {
+          return false;
+        }
+        const chat = this._resolveChat(db, draft.chatId);
+        return this._canAccessChatDraft(chat, normalizedUserId);
+      })
+      .sort((left, right) =>
+        String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")),
+      )
+      .map((draft) => structuredClone(draft));
+  }
+
+  async saveChatDraft({userId, chatId, text}) {
+    const db = await this._read();
+    const chat = this._resolveChat(db, chatId);
+    if (!this._canAccessChatDraft(chat, userId)) {
+      return null;
+    }
+
+    db.chatDrafts = Array.isArray(db.chatDrafts) ? db.chatDrafts : [];
+    const normalizedUserId = String(userId || "").trim();
+    const normalizedText = String(text || "");
+    const existingIndex = db.chatDrafts.findIndex((entry) => {
+      return entry.userId === normalizedUserId && entry.chatId === chat.id;
+    });
+
+    if (!normalizedText.trim()) {
+      if (existingIndex >= 0) {
+        db.chatDrafts.splice(existingIndex, 1);
+        await this._write(db);
+      }
+      return null;
+    }
+
+    const draft = createChatDraftRecord({
+      userId: normalizedUserId,
+      chatId: chat.id,
+      text: normalizedText,
+    });
+    if (existingIndex >= 0) {
+      db.chatDrafts[existingIndex] = draft;
+    } else {
+      db.chatDrafts.push(draft);
+    }
+    await this._write(db);
+    return structuredClone(draft);
+  }
+
+  async clearChatDraft({userId, chatId}) {
+    return this.saveChatDraft({userId, chatId, text: ""});
+  }
+
+  _canAccessChatPin(chat, userId) {
+    return Boolean(
+      chat &&
+        String(userId || "").trim() &&
+        normalizeParticipantIds(chat.participantIds).includes(String(userId).trim()),
+    );
+  }
+
+  _findChatPin(db, chat) {
+    if (!chat) {
+      return null;
+    }
+    const relatedChatIds = this._resolveEquivalentChatIds(chat.id, chat);
+    return (
+      ensureChatPins(db).find((entry) => {
+        return relatedChatIds.has(String(entry?.chatId || "").trim());
+      }) || null
+    );
+  }
+
+  _findMessageForChatPin(db, {chat, messageId}) {
+    if (!chat) {
+      return null;
+    }
+    const normalizedMessageId = String(messageId || "").trim();
+    if (!normalizedMessageId) {
+      return null;
+    }
+    const relatedChatIds = this._resolveEquivalentChatIds(chat.id, chat);
+    return (
+      db.messages.find((entry) => {
+        return (
+          String(entry?.id || "").trim() === normalizedMessageId &&
+          relatedChatIds.has(String(entry?.chatId || "").trim())
+        );
+      }) || null
+    );
+  }
+
+  async getChatPinnedMessage({userId, chatId}) {
+    const db = await this._read();
+    const purgedChatIds = this._purgeExpiredMessages(db);
+    const chat = this._resolveChat(db, chatId);
+    if (!this._canAccessChatPin(chat, userId)) {
+      if (purgedChatIds.size > 0) {
+        this._syncChatUpdatedAt(db, purgedChatIds);
+        await this._write(db);
+      }
+      return null;
+    }
+
+    const pin = this._findChatPin(db, chat);
+    if (!pin) {
+      if (purgedChatIds.size > 0) {
+        this._syncChatUpdatedAt(db, purgedChatIds);
+        await this._write(db);
+      }
+      return null;
+    }
+
+    const message = this._findMessageForChatPin(db, {
+      chat,
+      messageId: pin.messageId,
+    });
+    if (!message) {
+      db.chatPins = ensureChatPins(db).filter(
+        (entry) => String(entry?.messageId || "").trim() !== pin.messageId,
+      );
+      if (purgedChatIds.size > 0) {
+        this._syncChatUpdatedAt(db, purgedChatIds);
+      }
+      await this._write(db);
+      return null;
+    }
+
+    const freshPin = {
+      ...createChatPinRecord({
+        chatId: chat.id,
+        message,
+        pinnedBy: pin.pinnedBy || userId,
+      }),
+      pinnedAt: pin.pinnedAt || nowIso(),
+    };
+    if (purgedChatIds.size > 0) {
+      this._syncChatUpdatedAt(db, purgedChatIds);
+      await this._write(db);
+    }
+    return structuredClone(freshPin);
+  }
+
+  async pinChatMessage({userId, chatId, messageId}) {
+    const db = await this._read();
+    const purgedChatIds = this._purgeExpiredMessages(db);
+    const chat = this._resolveChat(db, chatId);
+    if (!this._canAccessChatPin(chat, userId)) {
+      if (purgedChatIds.size > 0) {
+        this._syncChatUpdatedAt(db, purgedChatIds);
+        await this._write(db);
+      }
+      return false;
+    }
+
+    const message = this._findMessageForChatPin(db, {chat, messageId});
+    if (!message) {
+      if (purgedChatIds.size > 0) {
+        this._syncChatUpdatedAt(db, purgedChatIds);
+        await this._write(db);
+      }
+      return null;
+    }
+
+    const relatedChatIds = this._resolveEquivalentChatIds(chat.id, chat);
+    db.chatPins = ensureChatPins(db).filter((entry) => {
+      return !relatedChatIds.has(String(entry?.chatId || "").trim());
+    });
+    const pin = createChatPinRecord({
+      chatId: chat.id,
+      message,
+      pinnedBy: userId,
+    });
+    db.chatPins.push(pin);
+    if (purgedChatIds.size > 0) {
+      this._syncChatUpdatedAt(db, purgedChatIds);
+    }
+    await this._write(db);
+    return structuredClone(pin);
+  }
+
+  async clearChatPinnedMessage({userId, chatId}) {
+    const db = await this._read();
+    const purgedChatIds = this._purgeExpiredMessages(db);
+    const chat = this._resolveChat(db, chatId);
+    if (!this._canAccessChatPin(chat, userId)) {
+      if (purgedChatIds.size > 0) {
+        this._syncChatUpdatedAt(db, purgedChatIds);
+        await this._write(db);
+      }
+      return false;
+    }
+
+    const relatedChatIds = this._resolveEquivalentChatIds(chat.id, chat);
+    const pins = ensureChatPins(db);
+    const nextPins = pins.filter((entry) => {
+      return !relatedChatIds.has(String(entry?.chatId || "").trim());
+    });
+    const changed = nextPins.length !== pins.length;
+    db.chatPins = nextPins;
+    if (purgedChatIds.size > 0) {
+      this._syncChatUpdatedAt(db, purgedChatIds);
+    }
+    if (changed || purgedChatIds.size > 0) {
+      await this._write(db);
+    }
+    return true;
   }
 
   _buildChatDetails(db, chat) {
@@ -7695,7 +9863,7 @@ class FileStore {
     return structuredClone(chat);
   }
 
-  async listChatMessages(chatId) {
+  async listChatMessages(chatId, {limit = null, beforeId = null, afterId = null} = {}) {
     const db = await this._read();
     const purgedChatIds = this._purgeExpiredMessages(db);
     if (purgedChatIds.size > 0) {
@@ -7707,12 +9875,112 @@ class FileStore {
       return [];
     }
     const relatedChatIds = this._resolveEquivalentChatIds(chatId, chat);
-    return db.messages
+    const sortedMessages = db.messages
       .filter((message) => relatedChatIds.has(String(message.chatId || "").trim()))
-      .sort((left, right) =>
-        String(right.timestamp || "").localeCompare(String(left.timestamp || "")),
-      )
-      .map((message) => structuredClone(message));
+      .sort(compareChatMessagesDescending);
+
+    const normalizedBeforeId = normalizeNullableString(beforeId);
+    const normalizedAfterId = normalizeNullableString(afterId);
+    let pageSource = sortedMessages;
+    if (normalizedBeforeId) {
+      const cursorIndex = sortedMessages.findIndex(
+        (message) => String(message?.id || "").trim() === normalizedBeforeId,
+      );
+      pageSource = cursorIndex < 0 ? [] : sortedMessages.slice(cursorIndex + 1);
+    } else if (normalizedAfterId) {
+      const cursorIndex = sortedMessages.findIndex(
+        (message) => String(message?.id || "").trim() === normalizedAfterId,
+      );
+      pageSource = cursorIndex < 0 ? [] : sortedMessages.slice(0, cursorIndex);
+    }
+
+    const normalizedLimit = Number.isFinite(Number(limit))
+      ? Math.max(0, Math.floor(Number(limit)))
+      : null;
+    return (normalizedLimit === null ? pageSource : pageSource.slice(0, normalizedLimit))
+      .map((message) => attachMessageReactions(db, message));
+  }
+
+  async searchChatMessages({
+    userId,
+    query,
+    chatId = null,
+    limit = 50,
+  } = {}) {
+    const db = await this._read();
+    const purgedChatIds = this._purgeExpiredMessages(db);
+    if (purgedChatIds.size > 0) {
+      this._syncChatUpdatedAt(db, purgedChatIds);
+      await this._write(db);
+    }
+
+    const normalizedUserId = String(userId || "").trim();
+    const terms = normalizeChatSearchQuery(query);
+    if (!normalizedUserId || terms.length === 0) {
+      return [];
+    }
+
+    const normalizedLimit = Math.min(
+      Math.max(1, Number.parseInt(String(limit || "50"), 10) || 50),
+      100,
+    );
+    const normalizedChatId = normalizeNullableString(chatId);
+    let allowedChatIds = null;
+    if (normalizedChatId) {
+      const chat = this._resolveChat(db, normalizedChatId);
+      if (!chat || !normalizeParticipantIds(chat.participantIds).includes(normalizedUserId)) {
+        return [];
+      }
+      allowedChatIds = this._resolveEquivalentChatIds(normalizedChatId, chat);
+    }
+
+    const chatsById = new Map(
+      (Array.isArray(db.chats) ? db.chats : [])
+        .map((chat) => [String(chat?.id || "").trim(), chat])
+        .filter(([id]) => id),
+    );
+    const results = [];
+    const messages = (Array.isArray(db.messages) ? db.messages : [])
+      .slice()
+      .sort(compareChatMessagesDescending);
+
+    for (const message of messages) {
+      if (results.length >= normalizedLimit) {
+        break;
+      }
+      const messageChatId = String(message?.chatId || "").trim();
+      if (!messageChatId || (allowedChatIds && !allowedChatIds.has(messageChatId))) {
+        continue;
+      }
+      const chat = chatsById.get(messageChatId);
+      const participantIds = normalizeParticipantIds(
+        Array.isArray(message?.participants) && message.participants.length > 0
+          ? message.participants
+          : chat?.participantIds,
+      );
+      if (!participantIds.includes(normalizedUserId)) {
+        continue;
+      }
+      const expiresAt = normalizeOptionalIsoTimestamp(message?.expiresAt);
+      if (expiresAt && expiresAt <= nowIso()) {
+        continue;
+      }
+      const haystack = chatMessageSearchHaystack(message);
+      if (!terms.every((term) => haystack.includes(term))) {
+        continue;
+      }
+      results.push({
+        messageId: message.id,
+        chatId: messageChatId,
+        senderId: message.senderId || "",
+        senderName: message.senderName || "Участник",
+        text: message.text || "",
+        snippet: buildChatSearchSnippet(message, terms),
+        matchedAt: message.timestamp,
+      });
+    }
+
+    return structuredClone(results);
   }
 
   async addChatMessage({
@@ -7772,7 +10040,7 @@ class FileStore {
       );
       if (existingMessage) {
         return {
-          ...structuredClone(existingMessage),
+          ...attachMessageReactions(db, existingMessage),
           _deduplicated: true,
         };
       }
@@ -7787,6 +10055,8 @@ class FileStore {
       timestamp,
       isRead: false,
       participants,
+      deliveredTo: [senderId],
+      readBy: [senderId],
       senderName: sender?.profile?.displayName || "Пользователь",
       attachments: normalizedAttachments,
       imageUrl: normalizedImageUrl,
@@ -7807,7 +10077,7 @@ class FileStore {
       this._syncChatUpdatedAt(db, purgedChatIds);
     }
     await this._write(db);
-    return structuredClone(message);
+    return attachMessageReactions(db, message);
   }
 
   async updateChatMessage({
@@ -7853,7 +10123,7 @@ class FileStore {
       this._syncChatUpdatedAt(db, purgedChatIds);
     }
     await this._write(db);
-    return structuredClone(message);
+    return attachMessageReactions(db, message);
   }
 
   async deleteChatMessage({
@@ -7884,6 +10154,14 @@ class FileStore {
     }
 
     db.messages.splice(messageIndex, 1);
+    db.messageReactions = ensureMessageReactions(db).filter(
+      (entry) => String(entry?.messageId || "").trim() !== message.id,
+    );
+    const pinCountBeforeDelete = ensureChatPins(db).length;
+    db.chatPins = ensureChatPins(db).filter(
+      (entry) => String(entry?.messageId || "").trim() !== message.id,
+    );
+    const clearedPinnedMessage = db.chatPins.length !== pinCountBeforeDelete;
     const storedChat = db.chats.find((entry) => entry.id === chat.id);
     if (storedChat) {
       storedChat.updatedAt = nowIso();
@@ -7891,7 +10169,140 @@ class FileStore {
     purgedChatIds.add(chat.id);
     this._syncChatUpdatedAt(db, purgedChatIds);
     await this._write(db);
-    return structuredClone(message);
+    const deletedMessage = attachMessageReactions(db, message);
+    if (clearedPinnedMessage) {
+      deletedMessage._clearedPinnedMessage = true;
+    }
+    return deletedMessage;
+  }
+
+  async toggleChatMessageReaction({
+    chatId,
+    messageId,
+    userId,
+    emoji,
+  }) {
+    const db = await this._read();
+    const purgedChatIds = this._purgeExpiredMessages(db);
+    const chat = this._resolveChat(db, chatId);
+    if (!chat || !chat.participantIds.includes(userId)) {
+      return false;
+    }
+    const relatedChatIds = this._resolveEquivalentChatIds(chatId, chat);
+    const message = db.messages.find(
+      (entry) =>
+        entry.id === messageId &&
+        relatedChatIds.has(String(entry.chatId || "").trim()),
+    );
+    if (!message) {
+      if (purgedChatIds.size > 0) {
+        this._syncChatUpdatedAt(db, purgedChatIds);
+        await this._write(db);
+      }
+      return null;
+    }
+
+    const normalizedEmoji = normalizeReactionEmoji(emoji);
+    if (!normalizedEmoji) {
+      return "INVALID_EMOJI";
+    }
+
+    const reactions = ensureMessageReactions(db);
+    const existingIndex = reactions.findIndex(
+      (entry) =>
+        String(entry?.messageId || "").trim() === message.id &&
+        String(entry?.userId || "").trim() === userId &&
+        normalizeReactionEmoji(entry?.emoji) === normalizedEmoji,
+    );
+
+    let added = false;
+    if (existingIndex >= 0) {
+      reactions.splice(existingIndex, 1);
+    } else {
+      reactions.push({
+        messageId: message.id,
+        userId,
+        emoji: normalizedEmoji,
+        createdAt: nowIso(),
+      });
+      added = true;
+    }
+
+    if (purgedChatIds.size > 0) {
+      this._syncChatUpdatedAt(db, purgedChatIds);
+    }
+    await this._write(db);
+
+    return {
+      chatId: message.chatId || chat.id,
+      messageId: message.id,
+      reactions: aggregateMessageReactions(db, message.id),
+      added,
+    };
+  }
+
+  async markChatMessageDelivered({
+    chatId,
+    messageId,
+    userIds = [],
+  }) {
+    const db = await this._read();
+    const purgedChatIds = this._purgeExpiredMessages(db);
+    const chat = this._resolveChat(db, chatId);
+    if (!chat) {
+      return false;
+    }
+    const relatedChatIds = this._resolveEquivalentChatIds(chatId, chat);
+    const message = db.messages.find(
+      (entry) =>
+        entry.id === messageId &&
+        relatedChatIds.has(String(entry.chatId || "").trim()),
+    );
+    if (!message) {
+      if (purgedChatIds.size > 0) {
+        this._syncChatUpdatedAt(db, purgedChatIds);
+        await this._write(db);
+      }
+      return null;
+    }
+
+    const participantIds = normalizeParticipantIds(chat.participantIds);
+    const recipientIds = normalizeParticipantIds(userIds).filter(
+      (userId) => participantIds.includes(userId) && userId !== message.senderId,
+    );
+    if (recipientIds.length === 0) {
+      return {
+        chatId: message.chatId || chat.id,
+        messageId: message.id,
+        deliveredTo: normalizeParticipantIds(message.deliveredTo),
+        changedUserIds: [],
+      };
+    }
+
+    const deliveredTo = normalizeParticipantIds(message.deliveredTo);
+    let changed = false;
+    for (const userId of recipientIds) {
+      if (!deliveredTo.includes(userId)) {
+        deliveredTo.push(userId);
+        changed = true;
+      }
+    }
+    message.deliveredTo = deliveredTo;
+
+    if (purgedChatIds.size > 0) {
+      this._syncChatUpdatedAt(db, purgedChatIds);
+    }
+
+    if (changed || purgedChatIds.size > 0) {
+      await this._write(db);
+    }
+
+    return {
+      chatId: message.chatId || chat.id,
+      messageId: message.id,
+      deliveredTo: normalizeParticipantIds(message.deliveredTo),
+      changedUserIds: changed ? recipientIds : [],
+    };
   }
 
   async markChatAsRead(chatId, userId) {
@@ -7904,15 +10315,32 @@ class FileStore {
     const relatedChatIds = this._resolveEquivalentChatIds(chatId, chat);
 
     let changed = false;
+    const readMessageIds = [];
 
     for (const message of db.messages) {
       if (
         relatedChatIds.has(String(message.chatId || "").trim()) &&
-        message.senderId !== userId &&
-        message.isRead !== true
+        message.senderId !== userId
       ) {
-        message.isRead = true;
-        changed = true;
+        const deliveredTo = normalizeParticipantIds(message.deliveredTo);
+        if (!deliveredTo.includes(userId)) {
+          deliveredTo.push(userId);
+          message.deliveredTo = deliveredTo;
+          changed = true;
+        }
+
+        const readBy = normalizeParticipantIds(message.readBy);
+        if (!readBy.includes(userId)) {
+          readBy.push(userId);
+          message.readBy = readBy;
+          readMessageIds.push(message.id);
+          changed = true;
+        }
+
+        if (message.isRead !== true) {
+          message.isRead = true;
+          changed = true;
+        }
       }
     }
 
@@ -7924,7 +10352,12 @@ class FileStore {
       await this._write(db);
     }
 
-    return changed;
+    return {
+      changed,
+      chatId: chat.id,
+      userId,
+      messageIds: readMessageIds,
+    };
   }
 
   async createCallInvite({
@@ -8377,7 +10810,7 @@ class FileStore {
         preview.lastMessageSenderId = message.senderId;
       }
 
-      if (message.senderId !== userId && message.isRead !== true) {
+      if (message.senderId !== userId && !isMessageReadByUser(message, userId)) {
         preview.unreadCount += 1;
       }
     }
@@ -8418,16 +10851,28 @@ class FileStore {
 
   _purgeExpiredMessages(db) {
     const expiredChatIds = new Set();
+    const expiredMessageIds = new Set();
     const referenceTimeMs = Date.now();
     db.messages = db.messages.filter((message) => {
       if (isExpiredAt(message.expiresAt, referenceTimeMs)) {
         if (message.chatId) {
           expiredChatIds.add(message.chatId);
         }
+        if (message.id) {
+          expiredMessageIds.add(message.id);
+        }
         return false;
       }
       return true;
     });
+    if (expiredMessageIds.size > 0) {
+      db.messageReactions = ensureMessageReactions(db).filter(
+        (entry) => !expiredMessageIds.has(String(entry?.messageId || "").trim()),
+      );
+      db.chatPins = ensureChatPins(db).filter(
+        (entry) => !expiredMessageIds.has(String(entry?.messageId || "").trim()),
+      );
+    }
     return expiredChatIds;
   }
 
@@ -8724,6 +11169,7 @@ module.exports = {
   buildBranchVisiblePersonIds,
   buildPersonRecord,
   cloneUserWithAuthState,
+  createPersonIdentityRecord,
   createTreeChangeRecord,
   describeMessagePreview,
   normalizeDbState,

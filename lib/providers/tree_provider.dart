@@ -11,7 +11,8 @@ class TreeProvider with ChangeNotifier {
   static const _treeNameKey = 'selected_tree_name';
   static const _treeKindKey = 'selected_tree_kind';
 
-  final LocalStorageService _localStorageService = GetIt.I<LocalStorageService>();
+  final LocalStorageService _localStorageService =
+      GetIt.I<LocalStorageService>();
 
   String? _selectedTreeId;
   String? _selectedTreeName;

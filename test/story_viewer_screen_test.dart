@@ -24,6 +24,7 @@ class _FakeStoryService implements StoryServiceInterface {
     media,
     String? thumbnailUrl,
     DateTime? expiresAt,
+    String? circleId,
   }) {
     throw UnimplementedError();
   }

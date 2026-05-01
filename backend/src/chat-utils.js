@@ -81,6 +81,34 @@ function normalizeAttachmentType(rawType, url, mimeType) {
   return "file";
 }
 
+function normalizeAttachmentWaveform(rawWaveform, maxSamples = 100) {
+  const samples = Array.isArray(rawWaveform)
+    ? rawWaveform
+        .map((value) => Number(value))
+        .filter((value) => Number.isFinite(value))
+        .map((value) => Math.max(0, Math.min(1, value)))
+    : [];
+  if (samples.length <= maxSamples) {
+    return samples;
+  }
+
+  const bucketSize = samples.length / maxSamples;
+  const normalized = [];
+  for (let bucket = 0; bucket < maxSamples; bucket += 1) {
+    const start = Math.floor(bucket * bucketSize);
+    const end = Math.min(samples.length, Math.ceil((bucket + 1) * bucketSize));
+    if (start >= end) {
+      continue;
+    }
+    let sum = 0;
+    for (let index = start; index < end; index += 1) {
+      sum += samples[index];
+    }
+    normalized.push(Math.max(0, Math.min(1, sum / (end - start))));
+  }
+  return normalized;
+}
+
 function normalizeMessageAttachments(message) {
   const explicitAttachments = Array.isArray(message?.attachments)
     ? message.attachments
@@ -113,6 +141,7 @@ function normalizeMessageAttachments(message) {
             durationMs: Number.isFinite(Number(attachment?.durationMs))
               ? Number(attachment.durationMs)
               : null,
+            waveform: normalizeAttachmentWaveform(attachment?.waveform),
             width: Number.isFinite(Number(attachment?.width))
               ? Number(attachment.width)
               : null,
@@ -152,6 +181,7 @@ function normalizeMessageAttachments(message) {
     fileName: null,
     sizeBytes: null,
     durationMs: null,
+    waveform: [],
     width: null,
     height: null,
     thumbnailUrl: null,
@@ -219,6 +249,7 @@ module.exports = {
   describeMessagePreview,
   normalizeAttachmentPresentation,
   normalizeAttachmentType,
+  normalizeAttachmentWaveform,
   normalizeMessageAttachments,
   normalizeReplyReference,
 };

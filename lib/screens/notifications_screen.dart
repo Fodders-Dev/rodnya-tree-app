@@ -25,6 +25,10 @@ IconData _notificationIconForType(String type) {
       return Icons.cake_outlined;
     case 'relation_request':
       return Icons.people_outline;
+    case 'merge_proposal':
+      return Icons.merge_type_outlined;
+    case 'identity_claim':
+      return Icons.verified_user_outlined;
     default:
       return Icons.notifications_none;
   }
@@ -43,6 +47,10 @@ String _notificationLabelForType(String type) {
       return 'Семейное событие';
     case 'relation_request':
       return 'Запрос связи';
+    case 'merge_proposal':
+      return 'Возможное совпадение';
+    case 'identity_claim':
+      return 'Запрос личности';
     default:
       return 'Уведомление';
   }
@@ -515,6 +523,12 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                         label: Text(
                           isFriendsTree ? 'Открыть круг' : 'Открыть дерево',
                         ),
+                      ),
+                      const SizedBox(height: 10),
+                      OutlinedButton.icon(
+                        onPressed: () => context.go('/identity/review'),
+                        icon: const Icon(Icons.merge_type_outlined),
+                        label: const Text('Проверить совпадения'),
                       ),
                       const SizedBox(height: 16),
                       ...sortedTypeSummary.map(

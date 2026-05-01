@@ -71,6 +71,17 @@ abstract class ChatPinStore {
   Future<void> clearPinnedMessage(String key);
 }
 
+abstract class RemoteChatPinClient {
+  Future<ChatPinnedMessageSnapshot?> getChatPinnedMessage(String chatId);
+
+  Future<ChatPinnedMessageSnapshot?> pinChatMessage({
+    required String chatId,
+    required String messageId,
+  });
+
+  Future<void> clearChatPinnedMessage(String chatId);
+}
+
 class SharedPreferencesChatPinStore implements ChatPinStore {
   const SharedPreferencesChatPinStore();
 
@@ -118,5 +129,101 @@ class SharedPreferencesChatPinStore implements ChatPinStore {
   Future<void> clearPinnedMessage(String key) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('$_prefix$key');
+  }
+}
+
+class HybridChatPinStore implements ChatPinStore {
+  const HybridChatPinStore({
+    required this.localStore,
+    required this.remoteClient,
+  });
+
+  final ChatPinStore localStore;
+  final RemoteChatPinClient remoteClient;
+
+  static String? chatIdFromKey(String key) {
+    const prefix = 'chat:';
+    if (!key.startsWith(prefix)) {
+      return null;
+    }
+    final chatId = key.substring(prefix.length).trim();
+    return chatId.isEmpty ? null : chatId;
+  }
+
+  static String keyForChatId(String chatId) {
+    return SharedPreferencesChatPinStore.chatKey(chatId);
+  }
+
+  Future<void> saveLocalPinnedMessage(
+    String key,
+    ChatPinnedMessageSnapshot snapshot,
+  ) {
+    return localStore.savePinnedMessage(key, snapshot);
+  }
+
+  Future<void> clearLocalPinnedMessage(String key) {
+    return localStore.clearPinnedMessage(key);
+  }
+
+  @override
+  Future<ChatPinnedMessageSnapshot?> getPinnedMessage(String key) async {
+    final localSnapshot = await localStore.getPinnedMessage(key);
+    final chatId = chatIdFromKey(key);
+    if (chatId == null) {
+      return localSnapshot;
+    }
+
+    try {
+      final remoteSnapshot = await remoteClient.getChatPinnedMessage(chatId);
+      if (remoteSnapshot == null || remoteSnapshot.messageId.trim().isEmpty) {
+        return localSnapshot;
+      }
+      if (localSnapshot == null ||
+          remoteSnapshot.pinnedAt.isAfter(localSnapshot.pinnedAt)) {
+        await localStore.savePinnedMessage(key, remoteSnapshot);
+        return remoteSnapshot;
+      }
+      return localSnapshot;
+    } catch (_) {
+      return localSnapshot;
+    }
+  }
+
+  @override
+  Future<void> savePinnedMessage(
+    String key,
+    ChatPinnedMessageSnapshot snapshot,
+  ) async {
+    await localStore.savePinnedMessage(key, snapshot);
+    final chatId = chatIdFromKey(key);
+    if (chatId == null) {
+      return;
+    }
+    try {
+      final remoteSnapshot = await remoteClient.pinChatMessage(
+        chatId: chatId,
+        messageId: snapshot.messageId,
+      );
+      if (remoteSnapshot != null &&
+          remoteSnapshot.messageId.trim().isNotEmpty) {
+        await localStore.savePinnedMessage(key, remoteSnapshot);
+      }
+    } catch (_) {
+      // Local pin remains available when backend pin sync is offline/unsupported.
+    }
+  }
+
+  @override
+  Future<void> clearPinnedMessage(String key) async {
+    await localStore.clearPinnedMessage(key);
+    final chatId = chatIdFromKey(key);
+    if (chatId == null) {
+      return;
+    }
+    try {
+      await remoteClient.clearChatPinnedMessage(chatId);
+    } catch (_) {
+      // Local clear should not be rolled back by a transient backend failure.
+    }
   }
 }

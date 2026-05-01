@@ -6,6 +6,7 @@ class _VoicePlayerWidget extends StatefulWidget {
     this.path,
     required this.isMe,
     this.initialDuration,
+    this.waveform = const <double>[],
     this.semanticLabel,
   });
 
@@ -13,6 +14,7 @@ class _VoicePlayerWidget extends StatefulWidget {
   final String? path;
   final bool isMe;
   final Duration? initialDuration;
+  final List<double> waveform;
   final String? semanticLabel;
 
   @override
@@ -24,6 +26,7 @@ class _VoicePlayerWidgetState extends State<_VoicePlayerWidget> {
   PlayerState _playerState = PlayerState.stopped;
   Duration _duration = Duration.zero;
   Duration _position = Duration.zero;
+  double _playbackRate = 1.0;
 
   StreamSubscription? _stateSub;
   StreamSubscription? _durationSub;
@@ -71,6 +74,7 @@ class _VoicePlayerWidgetState extends State<_VoicePlayerWidget> {
       } else if (widget.path != null) {
         await _player.play(DeviceFileSource(widget.path!));
       }
+      await _player.setPlaybackRate(_playbackRate);
     } catch (e) {
       debugPrint('Error playing audio: $e');
     }
@@ -80,16 +84,36 @@ class _VoicePlayerWidgetState extends State<_VoicePlayerWidget> {
     await _player.pause();
   }
 
+  Future<void> _cyclePlaybackRate() async {
+    const rates = <double>[1.0, 1.5, 2.0];
+    final currentIndex = rates.indexOf(_playbackRate);
+    final nextRate = rates[(currentIndex + 1) % rates.length];
+    setState(() => _playbackRate = nextRate);
+    try {
+      await _player.setPlaybackRate(nextRate);
+    } catch (e) {
+      debugPrint('Error changing audio speed: $e');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final isPlaying = _playerState == PlayerState.playing;
-    final color = widget.isMe ? Colors.white : Colors.blue[700];
+    final Color color = widget.isMe ? Colors.white : Colors.blue.shade700;
     final totalDuration = _duration > Duration.zero
         ? _duration
         : (widget.initialDuration ?? Duration.zero);
+    final progressFraction = totalDuration.inMilliseconds > 0
+        ? (_position.inMilliseconds / totalDuration.inMilliseconds)
+            .clamp(0.0, 1.0)
+            .toDouble()
+        : 0.0;
     final progressLabel = totalDuration > Duration.zero
         ? '${_formatDuration(_position)} / ${_formatDuration(totalDuration)}'
         : _formatDuration(_position);
+
+    final waveform =
+        widget.waveform.isNotEmpty ? widget.waveform : _fallbackVoiceWaveform;
 
     return Semantics(
       label: widget.semanticLabel ?? 'Голосовое сообщение',
@@ -118,43 +142,62 @@ class _VoicePlayerWidgetState extends State<_VoicePlayerWidget> {
             ),
             const SizedBox(width: 8),
             SizedBox(
-              width: 156,
+              width: 168,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    widget.semanticLabel ?? 'Голосовое сообщение',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: color,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                    ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          widget.semanticLabel ?? 'Голосовое сообщение',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: color,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: _cyclePlaybackRate,
+                        style: TextButton.styleFrom(
+                          foregroundColor: color,
+                          visualDensity: VisualDensity.compact,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          minimumSize: const Size(38, 24),
+                          padding: EdgeInsets.zero,
+                        ),
+                        child: Text(
+                          '${_playbackRate.toStringAsFixed(_playbackRate == 1.0 ? 0 : 1)}x',
+                          style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                  SliderTheme(
-                    data: SliderThemeData(
-                      trackHeight: 2,
-                      thumbShape:
-                          const RoundSliderThumbShape(enabledThumbRadius: 4),
-                      overlayShape:
-                          const RoundSliderOverlayShape(overlayRadius: 10),
-                      activeTrackColor: color,
-                      inactiveTrackColor: color?.withValues(alpha: 0.3),
-                      thumbColor: color,
-                    ),
-                    child: Slider(
-                      value: _position.inMilliseconds.toDouble(),
-                      max: totalDuration.inMilliseconds.toDouble() > 0
-                          ? totalDuration.inMilliseconds.toDouble()
-                          : 1.0,
-                      onChanged: (val) {
-                        _player.seek(Duration(milliseconds: val.toInt()));
-                      },
-                    ),
+                  _VoiceWaveformScrubber(
+                    waveform: waveform,
+                    progress: progressFraction,
+                    activeColor: color,
+                    inactiveColor: color.withValues(alpha: 0.28),
+                    onSeekFraction: totalDuration.inMilliseconds <= 0
+                        ? null
+                        : (fraction) {
+                            _player.seek(
+                              Duration(
+                                milliseconds:
+                                    (totalDuration.inMilliseconds * fraction)
+                                        .round(),
+                              ),
+                            );
+                          },
                   ),
                   Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    padding: const EdgeInsets.symmetric(horizontal: 2),
                     child: Text(
                       progressLabel,
                       style: TextStyle(color: color, fontSize: 10),
@@ -173,6 +216,157 @@ class _VoicePlayerWidgetState extends State<_VoicePlayerWidget> {
     final min = d.inMinutes;
     final sec = d.inSeconds % 60;
     return '$min:${sec.toString().padLeft(2, '0')}';
+  }
+}
+
+const List<double> _fallbackVoiceWaveform = <double>[
+  0.18,
+  0.42,
+  0.28,
+  0.66,
+  0.38,
+  0.74,
+  0.46,
+  0.31,
+  0.58,
+  0.82,
+  0.35,
+  0.52,
+  0.24,
+  0.68,
+  0.44,
+  0.29,
+  0.61,
+  0.76,
+  0.33,
+  0.49,
+  0.22,
+  0.57,
+  0.39,
+  0.71,
+  0.27,
+  0.46,
+  0.63,
+  0.36,
+  0.54,
+  0.25,
+  0.69,
+  0.41,
+];
+
+class _VoiceWaveformScrubber extends StatelessWidget {
+  const _VoiceWaveformScrubber({
+    required this.waveform,
+    required this.progress,
+    required this.activeColor,
+    required this.inactiveColor,
+    required this.onSeekFraction,
+  });
+
+  final List<double> waveform;
+  final double progress;
+  final Color activeColor;
+  final Color inactiveColor;
+  final ValueChanged<double>? onSeekFraction;
+
+  @override
+  Widget build(BuildContext context) {
+    final effectiveWaveform =
+        waveform.isEmpty ? _fallbackVoiceWaveform : waveform;
+    return SizedBox(
+      height: 34,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          void seek(Offset localPosition) {
+            final callback = onSeekFraction;
+            if (callback == null || constraints.maxWidth <= 0) {
+              return;
+            }
+            callback(
+              (localPosition.dx / constraints.maxWidth)
+                  .clamp(0.0, 1.0)
+                  .toDouble(),
+            );
+          }
+
+          return GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTapDown: (details) => seek(details.localPosition),
+            onHorizontalDragUpdate: (details) => seek(details.localPosition),
+            child: CustomPaint(
+              painter: _VoiceWaveformPainter(
+                waveform: effectiveWaveform,
+                progress: progress.clamp(0.0, 1.0).toDouble(),
+                activeColor: activeColor,
+                inactiveColor: inactiveColor,
+              ),
+              child: const SizedBox.expand(),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _VoiceWaveformPainter extends CustomPainter {
+  const _VoiceWaveformPainter({
+    required this.waveform,
+    required this.progress,
+    required this.activeColor,
+    required this.inactiveColor,
+  });
+
+  final List<double> waveform;
+  final double progress;
+  final Color activeColor;
+  final Color inactiveColor;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.width <= 0 || size.height <= 0 || waveform.isEmpty) {
+      return;
+    }
+
+    final gap = waveform.length > 48 ? 1.5 : 2.0;
+    final barWidth =
+        ((size.width - gap * (waveform.length - 1)) / waveform.length)
+            .clamp(2.0, 5.0)
+            .toDouble();
+    final totalWidth = waveform.length * barWidth + (waveform.length - 1) * gap;
+    final startX = (size.width - totalWidth).clamp(0.0, size.width) / 2;
+    final centerY = size.height / 2;
+    final radius = Radius.circular(barWidth / 2);
+
+    final activePaint = Paint()..color = activeColor;
+    final inactivePaint = Paint()..color = inactiveColor;
+
+    for (var index = 0; index < waveform.length; index++) {
+      final value = waveform[index].clamp(0.0, 1.0).toDouble();
+      final barHeight = (size.height * (0.18 + value * 0.78))
+          .clamp(4.0, size.height)
+          .toDouble();
+      final x = startX + index * (barWidth + gap);
+      final rect = Rect.fromLTWH(
+        x,
+        centerY - barHeight / 2,
+        barWidth,
+        barHeight,
+      );
+      final sampleProgress = (index + 0.5) / waveform.length;
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(rect, radius),
+        sampleProgress <= progress ? activePaint : inactivePaint,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _VoiceWaveformPainter oldDelegate) {
+    return oldDelegate.waveform != waveform ||
+        oldDelegate.progress != progress ||
+        oldDelegate.activeColor != activeColor ||
+        oldDelegate.inactiveColor != inactiveColor;
   }
 }
 

@@ -40,6 +40,16 @@ class CustomApiRealtimeEvent {
     return value is Map<String, dynamic> ? value : null;
   }
 
+  Map<String, dynamic>? get draft {
+    final value = payload['draft'];
+    return value is Map<String, dynamic> ? value : null;
+  }
+
+  Map<String, dynamic>? get pin {
+    final value = payload['pin'];
+    return value is Map<String, dynamic> ? value : null;
+  }
+
   Map<String, dynamic>? get call {
     final value = payload['call'];
     return value is Map<String, dynamic> ? value : null;
@@ -67,8 +77,14 @@ class CustomApiRealtimeEvent {
       type == 'chat.message.created' ||
       type == 'chat.message.updated' ||
       type == 'chat.message.deleted' ||
+      type == 'message.reaction.changed' ||
+      type == 'message.delivered' ||
+      type == 'message.read' ||
       type == 'chat.read.updated' ||
-      type == 'chat.typing.updated';
+      type == 'chat.unread.changed' ||
+      type == 'chat.typing.updated' ||
+      type == 'chat.draft.updated' ||
+      type == 'chat.pin.updated';
 
   bool get isNotificationEvent => type == 'notification.created';
 
@@ -76,7 +92,9 @@ class CustomApiRealtimeEvent {
       type == 'call.invite.created' || type == 'call.state.updated';
 
   bool get isPresenceEvent =>
-      type == 'connection.ready' || type == 'presence.updated';
+      type == 'connection.ready' ||
+      type == 'connection.disconnected' ||
+      type == 'presence.updated';
 
   factory CustomApiRealtimeEvent.fromJson(Map<String, dynamic> json) {
     return CustomApiRealtimeEvent(
@@ -228,6 +246,7 @@ class CustomApiRealtimeService {
       return;
     }
 
+    _emitConnectionEvent('connection.disconnected');
     _consecutiveFailures += 1;
     final delay = _nextBackoffDelay(_consecutiveFailures);
     _reconnectTimer?.cancel();
@@ -235,6 +254,22 @@ class CustomApiRealtimeService {
       _reconnectTimer = null;
       unawaited(connect());
     });
+  }
+
+  void _emitConnectionEvent(String type) {
+    if (_eventsController.isClosed) {
+      return;
+    }
+
+    _eventsController.add(
+      CustomApiRealtimeEvent(
+        type: type,
+        payload: <String, dynamic>{
+          'type': type,
+          'updatedAt': DateTime.now().toUtc().toIso8601String(),
+        },
+      ),
+    );
   }
 
   Duration debugBackoffDelayForFailureCount(int failures) {

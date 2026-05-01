@@ -12,6 +12,7 @@ abstract class StoryServiceInterface {
     XFile? media,
     String? thumbnailUrl,
     DateTime? expiresAt,
+    String? circleId,
   });
 
   Future<Story> markViewed(String storyId);

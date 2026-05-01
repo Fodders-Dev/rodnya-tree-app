@@ -19,6 +19,8 @@ import '../services/app_status_service.dart';
 import '../services/chat_archive_store.dart';
 import '../services/chat_draft_store.dart';
 import '../services/chat_notification_settings_store.dart';
+import '../services/custom_api_chat_service.dart';
+import '../services/custom_api_realtime_service.dart';
 import '../utils/photo_url.dart';
 import '../utils/user_facing_error.dart';
 import '../widgets/glass_panel.dart';
@@ -64,8 +66,15 @@ class _ChatsListScreenState extends State<ChatsListScreen>
   final ChatServiceInterface _chatService = GetIt.I<ChatServiceInterface>();
   final AuthServiceInterface _authService = GetIt.I<AuthServiceInterface>();
   final AppStatusService _appStatusService = GetIt.I<AppStatusService>();
+  final CustomApiRealtimeService? _realtimeService =
+      GetIt.I.isRegistered<CustomApiRealtimeService>()
+          ? GetIt.I<CustomApiRealtimeService>()
+          : null;
   ChatDraftStore get _draftStore =>
-      widget.draftStore ?? const SharedPreferencesChatDraftStore();
+      widget.draftStore ??
+      (GetIt.I.isRegistered<ChatDraftStore>()
+          ? GetIt.I<ChatDraftStore>()
+          : const SharedPreferencesChatDraftStore());
   ChatArchiveStore get _archiveStore =>
       widget.archiveStore ?? const SharedPreferencesChatArchiveStore();
   ChatNotificationSettingsStore get _notificationSettingsStore =>
@@ -73,6 +82,7 @@ class _ChatsListScreenState extends State<ChatsListScreen>
       const SharedPreferencesChatNotificationSettingsStore();
 
   StreamSubscription<List<ChatPreview>>? _chatsSubscription;
+  StreamSubscription<CustomApiRealtimeEvent>? _draftsRealtimeSubscription;
   List<ChatPreview> _chatPreviews = [];
   List<_GroupChatParticipant> _relatives = [];
   Map<String, ChatArchiveSnapshot> _archivedChats =
@@ -98,6 +108,7 @@ class _ChatsListScreenState extends State<ChatsListScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _loadChats();
+    _bindDraftRealtimeUpdates();
     _loadRelatives();
     unawaited(_loadAuxiliaryChatState());
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -113,16 +124,70 @@ class _ChatsListScreenState extends State<ChatsListScreen>
   @override
   void dispose() {
     _chatsSubscription?.cancel();
+    _draftsRealtimeSubscription?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _treeProvider?.removeListener(_handleTreeSelectionChanged);
     _searchController.dispose();
     super.dispose();
   }
 
+  void _bindDraftRealtimeUpdates() {
+    final realtimeService = _realtimeService;
+    if (realtimeService == null) {
+      return;
+    }
+    unawaited(realtimeService.connect());
+    _draftsRealtimeSubscription =
+        realtimeService.events.listen(_handleDraftRealtimeEvent);
+  }
+
+  void _handleDraftRealtimeEvent(CustomApiRealtimeEvent event) {
+    if (!mounted ||
+        event.type != 'chat.draft.updated' ||
+        event.userId != _authService.currentUserId) {
+      return;
+    }
+    final chatId = event.chatId;
+    if (chatId == null || chatId.isEmpty) {
+      return;
+    }
+
+    final key = SharedPreferencesChatDraftStore.chatKey(chatId);
+    final rawDraft = event.draft;
+    final nextDraft =
+        rawDraft == null ? null : ChatDraftSnapshot.fromJson(rawDraft);
+    final draftStore = _draftStore;
+    setState(() {
+      if (nextDraft == null || nextDraft.text.trim().isEmpty) {
+        _drafts.remove(key);
+      } else {
+        _drafts[key] = nextDraft;
+      }
+    });
+
+    if (nextDraft == null || nextDraft.text.trim().isEmpty) {
+      unawaited(
+        draftStore is HybridChatDraftStore
+            ? draftStore.clearLocalDraft(key)
+            : draftStore.clearDraft(key),
+      );
+    } else {
+      unawaited(
+        draftStore is HybridChatDraftStore
+            ? draftStore.saveLocalDraft(key, nextDraft.text)
+            : draftStore.saveDraft(key, nextDraft.text),
+      );
+    }
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state != AppLifecycleState.resumed) {
       return;
+    }
+    final chatService = _chatService;
+    if (chatService is CustomApiChatService) {
+      unawaited(chatService.refreshChatOverview());
     }
     unawaited(_loadAuxiliaryChatState());
     _loadRelatives();

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:livekit_client/livekit_client.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -10,12 +11,24 @@ import '../models/call_event.dart';
 import '../models/call_invite.dart';
 import '../models/call_media_mode.dart';
 import '../models/call_state.dart';
+import 'audio_route_service.dart';
+import 'call_preferences.dart';
 import 'custom_api_realtime_service.dart';
 import 'rustore_service.dart';
 
 typedef MediaPermissionRequester = Future<bool> Function(
   CallMediaMode mediaMode,
 );
+typedef CameraPositionSwitcher = Future<void> Function(
+  LocalVideoTrack track,
+  CameraPosition position,
+);
+typedef CallMediaDeviceEnumerator = Future<List<MediaDevice>> Function();
+typedef CallMediaDeviceSelector = Future<void> Function(
+  Room room,
+  MediaDevice device,
+);
+typedef CallVibrationTrigger = Future<void> Function();
 
 class CallCoordinatorService extends ChangeNotifier
     with WidgetsBindingObserver {
@@ -24,10 +37,31 @@ class CallCoordinatorService extends ChangeNotifier
     CustomApiRealtimeService? realtimeService,
     Stream<RustorePushMessage>? pushMessages,
     MediaPermissionRequester? mediaPermissionRequester,
+    AudioRouteService? audioRouteService,
+    CameraPositionSwitcher? cameraPositionSwitcher,
+    CallMediaDeviceEnumerator? audioInputEnumerator,
+    CallMediaDeviceEnumerator? videoInputEnumerator,
+    CallMediaDeviceSelector? microphoneDeviceSelector,
+    CallMediaDeviceSelector? cameraDeviceSelector,
+    CallPreferences? callPreferences,
+    CallVibrationTrigger? vibrationTrigger,
     Duration ringingRecoveryInterval = const Duration(seconds: 5),
   })  : _callService = callService,
         _realtimeService = realtimeService,
         _pushMessages = pushMessages,
+        _audioRouteService = audioRouteService ?? AudioRouteService(),
+        _cameraPositionSwitcher =
+            cameraPositionSwitcher ?? _switchLiveKitCameraPosition,
+        _audioInputEnumerator =
+            audioInputEnumerator ?? _defaultAudioInputEnumerator,
+        _videoInputEnumerator =
+            videoInputEnumerator ?? _defaultVideoInputEnumerator,
+        _microphoneDeviceSelector =
+            microphoneDeviceSelector ?? _selectLiveKitMicrophoneDevice,
+        _cameraDeviceSelector =
+            cameraDeviceSelector ?? _selectLiveKitCameraDevice,
+        _callPreferences = callPreferences ?? const DisabledCallPreferences(),
+        _vibrationTrigger = vibrationTrigger ?? _defaultVibrationTrigger,
         _ringingRecoveryInterval = ringingRecoveryInterval,
         _mediaPermissionRequester =
             mediaPermissionRequester ?? _requestPlatformMediaPermissions {
@@ -53,6 +87,14 @@ class CallCoordinatorService extends ChangeNotifier
   final CustomApiRealtimeService? _realtimeService;
   final Stream<RustorePushMessage>? _pushMessages;
   final MediaPermissionRequester _mediaPermissionRequester;
+  final AudioRouteService _audioRouteService;
+  final CameraPositionSwitcher _cameraPositionSwitcher;
+  final CallMediaDeviceEnumerator _audioInputEnumerator;
+  final CallMediaDeviceEnumerator _videoInputEnumerator;
+  final CallMediaDeviceSelector _microphoneDeviceSelector;
+  final CallMediaDeviceSelector _cameraDeviceSelector;
+  final CallPreferences _callPreferences;
+  final CallVibrationTrigger _vibrationTrigger;
   final Duration _ringingRecoveryInterval;
 
   StreamSubscription<CallEvent>? _callEventsSubscription;
@@ -60,6 +102,7 @@ class CallCoordinatorService extends ChangeNotifier
   StreamSubscription<RustorePushMessage>? _pushSubscription;
   Future<void>? _runtimeReadyFuture;
   Timer? _ringingRecoveryTimer;
+  Timer? _reconnectRestoredTimer;
   String? _ringingRecoveryCallId;
 
   CallInvite? _currentCall;
@@ -70,9 +113,22 @@ class CallCoordinatorService extends ChangeNotifier
   bool _isReconnectingRoom = false;
   bool _microphoneEnabled = true;
   bool _cameraEnabled = false;
+  bool _isSwitchingCamera = false;
+  CameraPosition _cameraPosition = CameraPosition.front;
+  List<MediaDevice> _microphoneDevices = const <MediaDevice>[];
+  List<MediaDevice> _cameraDevices = const <MediaDevice>[];
+  String? _selectedMicrophoneDeviceId;
+  String? _selectedCameraDeviceId;
+  bool _isRefreshingInputDevices = false;
+  bool _isSelectingMediaDevice = false;
+  String? _devicePickerErrorMessage;
+  ConnectionQuality _localConnectionQuality = ConnectionQuality.unknown;
+  ConnectionQuality _remoteConnectionQuality = ConnectionQuality.unknown;
+  bool _showReconnectRestoredBanner = false;
   String? _connectionError;
   bool _hasMediaPermissionIssue = false;
   bool _hasSeenRemoteParticipant = false;
+  String? _lastIncomingVibrationCallId;
   final Set<String> _visibleCallScreenIds = <String>{};
 
   String? get currentUserId => _callService.currentUserId;
@@ -82,8 +138,50 @@ class CallCoordinatorService extends ChangeNotifier
   bool get isReconnectingRoom => _isReconnectingRoom;
   bool get microphoneEnabled => _microphoneEnabled;
   bool get cameraEnabled => _cameraEnabled;
+  bool get isSwitchingCamera => _isSwitchingCamera;
+  CameraPosition get cameraPosition => _cameraPosition;
+  List<MediaDevice> get microphoneDevices => _microphoneDevices;
+  List<MediaDevice> get cameraDevices => _cameraDevices;
+  String? get selectedMicrophoneDeviceId => _selectedMicrophoneDeviceId;
+  String? get selectedCameraDeviceId => _selectedCameraDeviceId;
+  bool get isRefreshingInputDevices => _isRefreshingInputDevices;
+  bool get isSelectingMediaDevice => _isSelectingMediaDevice;
+  String? get devicePickerErrorMessage => _devicePickerErrorMessage;
+  ConnectionQuality get localConnectionQuality => _localConnectionQuality;
+  ConnectionQuality get remoteConnectionQuality {
+    if (_isReconnectingRoom) {
+      return ConnectionQuality.lost;
+    }
+    if (_remoteConnectionQuality != ConnectionQuality.unknown) {
+      return _remoteConnectionQuality;
+    }
+    final participants = _room?.remoteParticipants.values;
+    if (participants == null) {
+      return ConnectionQuality.unknown;
+    }
+    for (final participant in participants) {
+      if (participant.connectionQuality != ConnectionQuality.unknown) {
+        return participant.connectionQuality;
+      }
+    }
+    return ConnectionQuality.unknown;
+  }
+
+  ConnectionQuality get displayedConnectionQuality {
+    if (_isReconnectingRoom || _connectionError != null) {
+      return ConnectionQuality.lost;
+    }
+    final remoteQuality = remoteConnectionQuality;
+    if (remoteQuality != ConnectionQuality.unknown) {
+      return remoteQuality;
+    }
+    return _localConnectionQuality;
+  }
+
+  bool get showReconnectRestoredBanner => _showReconnectRestoredBanner;
   String? get connectionError => _connectionError;
   bool get hasMediaPermissionIssue => _hasMediaPermissionIssue;
+  AudioRouteService get audioRouteService => _audioRouteService;
 
   bool isCallScreenVisible(String? callId) {
     if (callId == null || callId.isEmpty) {
@@ -287,9 +385,105 @@ class CallCoordinatorService extends ChangeNotifier
     }
 
     final nextValue = !_cameraEnabled;
-    await room.localParticipant?.setCameraEnabled(nextValue);
+    await room.localParticipant?.setCameraEnabled(
+      nextValue,
+      cameraCaptureOptions: CameraCaptureOptions(
+        cameraPosition: _cameraPosition,
+      ),
+    );
     _cameraEnabled = nextValue;
     notifyListeners();
+  }
+
+  Future<void> switchCamera() async {
+    final track = _localCameraTrack();
+    if (track == null || _isSwitchingCamera) {
+      return;
+    }
+
+    final nextPosition = _cameraPosition.switched();
+    _isSwitchingCamera = true;
+    notifyListeners();
+    try {
+      await _cameraPositionSwitcher(track, nextPosition);
+      _cameraPosition = nextPosition;
+      _selectedCameraDeviceId = null;
+      _cameraEnabled = true;
+    } finally {
+      _isSwitchingCamera = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> refreshInputDevices() async {
+    if (_isRefreshingInputDevices) {
+      return;
+    }
+    _isRefreshingInputDevices = true;
+    _devicePickerErrorMessage = null;
+    notifyListeners();
+    try {
+      final results = await Future.wait<List<MediaDevice>>([
+        _audioInputEnumerator(),
+        _videoInputEnumerator(),
+      ]);
+      _microphoneDevices = List<MediaDevice>.unmodifiable(results[0]);
+      _cameraDevices = List<MediaDevice>.unmodifiable(results[1]);
+      _selectedMicrophoneDeviceId = _resolveSelectedDeviceId(
+        _microphoneDevices,
+        _selectedMicrophoneDeviceId,
+      );
+      _selectedCameraDeviceId = _resolveSelectedDeviceId(
+        _cameraDevices,
+        _selectedCameraDeviceId,
+      );
+    } catch (_) {
+      _devicePickerErrorMessage =
+          'Не удалось обновить список микрофонов и камер.';
+    } finally {
+      _isRefreshingInputDevices = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> selectMicrophoneDevice(MediaDevice device) async {
+    final room = _room;
+    if (room == null || _isSelectingMediaDevice) {
+      return;
+    }
+    _isSelectingMediaDevice = true;
+    _devicePickerErrorMessage = null;
+    notifyListeners();
+    try {
+      await _microphoneDeviceSelector(room, device);
+      _selectedMicrophoneDeviceId = device.deviceId;
+    } catch (_) {
+      _devicePickerErrorMessage = 'Не удалось выбрать микрофон.';
+    } finally {
+      _isSelectingMediaDevice = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> selectCameraDevice(MediaDevice device) async {
+    final room = _room;
+    if (room == null || _isSelectingMediaDevice) {
+      return;
+    }
+    _isSelectingMediaDevice = true;
+    _devicePickerErrorMessage = null;
+    notifyListeners();
+    try {
+      await _cameraDeviceSelector(room, device);
+      _selectedCameraDeviceId = device.deviceId;
+      _cameraPosition = _cameraPositionFromDevice(device) ?? _cameraPosition;
+      _cameraEnabled = true;
+    } catch (_) {
+      _devicePickerErrorMessage = 'Не удалось выбрать камеру.';
+    } finally {
+      _isSelectingMediaDevice = false;
+      notifyListeners();
+    }
   }
 
   Future<void> _applyCall(CallInvite? nextCall) async {
@@ -299,9 +493,14 @@ class CallCoordinatorService extends ChangeNotifier
       _currentCall = null;
       _isConnectingRoom = false;
       _isReconnectingRoom = false;
+      _isSwitchingCamera = false;
+      _cameraPosition = CameraPosition.front;
+      _clearInputDeviceState();
       _connectionError = null;
       _hasMediaPermissionIssue = false;
       _hasSeenRemoteParticipant = false;
+      _lastIncomingVibrationCallId = null;
+      _clearConnectionQualityState();
       notifyListeners();
       await _disposeRoom();
       return;
@@ -319,9 +518,14 @@ class CallCoordinatorService extends ChangeNotifier
       _currentCall = null;
       _isConnectingRoom = false;
       _isReconnectingRoom = false;
+      _isSwitchingCamera = false;
+      _cameraPosition = CameraPosition.front;
+      _clearInputDeviceState();
       _connectionError = null;
       _hasMediaPermissionIssue = false;
       _hasSeenRemoteParticipant = false;
+      _lastIncomingVibrationCallId = null;
+      _clearConnectionQualityState();
       notifyListeners();
       await _disposeRoom();
       return;
@@ -332,13 +536,21 @@ class CallCoordinatorService extends ChangeNotifier
     _currentCall = nextCall;
     if (nextCall.state == CallState.ringing) {
       _scheduleRingingRecovery(nextCall);
+      unawaited(_maybeVibrateForIncomingCall(nextCall));
     } else {
       _cancelRingingRecovery();
+      if (_lastIncomingVibrationCallId == nextCall.id) {
+        _lastIncomingVibrationCallId = null;
+      }
     }
     if (previousCallId != nextCall.id) {
       _connectionError = null;
       _hasMediaPermissionIssue = false;
       _hasSeenRemoteParticipant = false;
+      _clearReconnectRestoredBanner();
+      _lastIncomingVibrationCallId = null;
+      _cameraPosition = CameraPosition.front;
+      _isSwitchingCamera = false;
     }
     if (!nextCall.mediaMode.isVideo) {
       _cameraEnabled = false;
@@ -473,15 +685,27 @@ class CallCoordinatorService extends ChangeNotifier
       ..on<RoomReconnectingEvent>((_) {
         _isReconnectingRoom = true;
         _connectionError = 'Связь прервалась. Переподключаем...';
+        _clearReconnectRestoredBanner();
         notifyListeners();
       })
       ..on<RoomReconnectedEvent>((_) {
         _isReconnectingRoom = false;
         _connectionError = null;
+        _showReconnectRestoredBannerForMoment();
+        _syncConnectionQualityFromRoom(room);
+        notifyListeners();
+        unawaited(_resumeLocalMediaAfterReconnect());
+      })
+      ..on<ParticipantConnectionQualityUpdatedEvent>((event) {
+        _applyParticipantConnectionQuality(
+          event.participant,
+          event.connectionQuality,
+        );
         notifyListeners();
       })
       ..on<ParticipantConnectedEvent>((_) {
         _hasSeenRemoteParticipant = true;
+        _syncConnectionQualityFromRoom(room);
         notifyListeners();
       })
       ..on<ParticipantDisconnectedEvent>((_) {
@@ -500,7 +724,12 @@ class CallCoordinatorService extends ChangeNotifier
       _cameraEnabled = call.mediaMode.isVideo;
       await room.localParticipant?.setMicrophoneEnabled(_microphoneEnabled);
       if (call.mediaMode.isVideo) {
-        await room.localParticipant?.setCameraEnabled(_cameraEnabled);
+        await room.localParticipant?.setCameraEnabled(
+          _cameraEnabled,
+          cameraCaptureOptions: CameraCaptureOptions(
+            cameraPosition: _cameraPosition,
+          ),
+        );
       }
       _connectionError = null;
       _hasMediaPermissionIssue = false;
@@ -508,6 +737,13 @@ class CallCoordinatorService extends ChangeNotifier
       _room = room;
       _roomListener = listener;
       _connectedRoomName = session.roomName;
+      _syncConnectionQualityFromRoom(room);
+      if (reconnect) {
+        _showReconnectRestoredBannerForMoment();
+      }
+      await _audioRouteService.attachRoom(room);
+      await refreshInputDevices();
+      await _applyCallPreferences(room, call);
     } catch (error) {
       await listener.dispose();
       await room.dispose();
@@ -537,6 +773,7 @@ class CallCoordinatorService extends ChangeNotifier
 
     _connectionError = 'Связь прервалась. Переподключаем...';
     _isReconnectingRoom = true;
+    _clearReconnectRestoredBanner();
     notifyListeners();
     await refreshCurrentCall();
   }
@@ -551,6 +788,7 @@ class CallCoordinatorService extends ChangeNotifier
       return;
     }
     if (!_hasSeenRemoteParticipant || room.remoteParticipants.isNotEmpty) {
+      _syncConnectionQualityFromRoom(room);
       notifyListeners();
       return;
     }
@@ -559,6 +797,7 @@ class CallCoordinatorService extends ChangeNotifier
       return;
     }
     if (_room!.remoteParticipants.isNotEmpty) {
+      _syncConnectionQualityFromRoom(_room!);
       notifyListeners();
       return;
     }
@@ -571,6 +810,257 @@ class CallCoordinatorService extends ChangeNotifier
         message.contains('microphone') ||
         message.contains('camera') ||
         message.contains('device');
+  }
+
+  LocalVideoTrack? _localCameraTrack() {
+    final publications = _room?.localParticipant?.videoTrackPublications;
+    if (publications == null || publications.isEmpty) {
+      return null;
+    }
+    for (final publication in publications) {
+      if (publication.source == TrackSource.camera) {
+        return publication.track;
+      }
+    }
+    return null;
+  }
+
+  String? _resolveSelectedDeviceId(
+    List<MediaDevice> devices,
+    String? currentId,
+  ) {
+    if (currentId != null &&
+        devices.any((device) => device.deviceId == currentId)) {
+      return currentId;
+    }
+    return devices.isEmpty ? null : devices.first.deviceId;
+  }
+
+  CameraPosition? _cameraPositionFromDevice(MediaDevice device) {
+    final haystack =
+        '${device.deviceId} ${device.label} ${device.groupId ?? ''}'
+            .toLowerCase();
+    if (haystack.contains('back') ||
+        haystack.contains('rear') ||
+        haystack.contains('environment') ||
+        haystack.contains('зад') ||
+        haystack.contains('основ')) {
+      return CameraPosition.back;
+    }
+    if (haystack.contains('front') ||
+        haystack.contains('user') ||
+        haystack.contains('face') ||
+        haystack.contains('фронт') ||
+        haystack.contains('перед')) {
+      return CameraPosition.front;
+    }
+    return null;
+  }
+
+  void _clearInputDeviceState() {
+    _microphoneDevices = const <MediaDevice>[];
+    _cameraDevices = const <MediaDevice>[];
+    _selectedMicrophoneDeviceId = null;
+    _selectedCameraDeviceId = null;
+    _isRefreshingInputDevices = false;
+    _isSelectingMediaDevice = false;
+    _devicePickerErrorMessage = null;
+  }
+
+  void _syncConnectionQualityFromRoom(Room room) {
+    _localConnectionQuality =
+        room.localParticipant?.connectionQuality ?? ConnectionQuality.unknown;
+    _remoteConnectionQuality = ConnectionQuality.unknown;
+    for (final participant in room.remoteParticipants.values) {
+      if (participant.connectionQuality != ConnectionQuality.unknown) {
+        _remoteConnectionQuality = participant.connectionQuality;
+        break;
+      }
+    }
+  }
+
+  void _applyParticipantConnectionQuality(
+    Participant participant,
+    ConnectionQuality quality,
+  ) {
+    final room = _room;
+    if (room != null && participant == room.localParticipant) {
+      _localConnectionQuality = quality;
+      return;
+    }
+    if (participant is LocalParticipant) {
+      _localConnectionQuality = quality;
+      return;
+    }
+    _remoteConnectionQuality = quality;
+  }
+
+  void _showReconnectRestoredBannerForMoment() {
+    _reconnectRestoredTimer?.cancel();
+    _showReconnectRestoredBanner = true;
+    _reconnectRestoredTimer = Timer(const Duration(seconds: 3), () {
+      _showReconnectRestoredBanner = false;
+      notifyListeners();
+    });
+  }
+
+  void _clearReconnectRestoredBanner() {
+    _reconnectRestoredTimer?.cancel();
+    _reconnectRestoredTimer = null;
+    _showReconnectRestoredBanner = false;
+  }
+
+  void _clearConnectionQualityState() {
+    _localConnectionQuality = ConnectionQuality.unknown;
+    _remoteConnectionQuality = ConnectionQuality.unknown;
+    _clearReconnectRestoredBanner();
+  }
+
+  Future<void> _resumeLocalMediaAfterReconnect() async {
+    final room = _room;
+    final activeCall = _currentCall;
+    if (room == null ||
+        activeCall == null ||
+        activeCall.state != CallState.active) {
+      return;
+    }
+    try {
+      await room.localParticipant?.setMicrophoneEnabled(_microphoneEnabled);
+      if (activeCall.mediaMode.isVideo) {
+        await room.localParticipant?.setCameraEnabled(
+          _cameraEnabled,
+          cameraCaptureOptions: CameraCaptureOptions(
+            cameraPosition: _cameraPosition,
+          ),
+        );
+      }
+    } catch (_) {
+      // LiveKit will continue reconnecting if media resume is not ready yet.
+    }
+  }
+
+  Future<void> _applyCallPreferences(Room room, CallInvite call) async {
+    final preferences = await _callPreferences.load();
+    await _applyPreferredMicrophone(
+        room, preferences.defaultMicrophoneDeviceId);
+    if (call.mediaMode.isVideo) {
+      await _applyPreferredCamera(room, preferences.defaultCameraDeviceId);
+    }
+    await _applyPreferredAudioOutput(preferences.defaultAudioOutputId);
+  }
+
+  Future<void> _applyPreferredMicrophone(
+    Room room,
+    String? deviceId,
+  ) async {
+    final device = _findMediaDevice(_microphoneDevices, deviceId);
+    if (device == null) {
+      return;
+    }
+    try {
+      await _microphoneDeviceSelector(room, device);
+      _selectedMicrophoneDeviceId = device.deviceId;
+    } catch (_) {
+      // Keep the system-selected input when the saved device is stale.
+    }
+  }
+
+  Future<void> _applyPreferredCamera(Room room, String? deviceId) async {
+    final device = _findMediaDevice(_cameraDevices, deviceId);
+    if (device == null) {
+      return;
+    }
+    try {
+      await _cameraDeviceSelector(room, device);
+      _selectedCameraDeviceId = device.deviceId;
+      _cameraPosition = _cameraPositionFromDevice(device) ?? _cameraPosition;
+      _cameraEnabled = true;
+    } catch (_) {
+      // Keep the system-selected camera when the saved device is stale.
+    }
+  }
+
+  Future<void> _applyPreferredAudioOutput(String? routeId) async {
+    if (routeId == null || routeId.trim().isEmpty) {
+      return;
+    }
+    AudioRouteOption? preferredRoute;
+    for (final route in _audioRouteService.routes) {
+      if (route.id == routeId) {
+        preferredRoute = route;
+        break;
+      }
+    }
+    if (preferredRoute == null) {
+      return;
+    }
+    await _audioRouteService.selectRoute(preferredRoute);
+  }
+
+  MediaDevice? _findMediaDevice(
+    List<MediaDevice> devices,
+    String? deviceId,
+  ) {
+    final normalizedDeviceId = deviceId?.trim();
+    if (normalizedDeviceId == null || normalizedDeviceId.isEmpty) {
+      return null;
+    }
+    for (final device in devices) {
+      if (device.deviceId == normalizedDeviceId) {
+        return device;
+      }
+    }
+    return null;
+  }
+
+  Future<void> _maybeVibrateForIncomingCall(CallInvite call) async {
+    final currentUser = currentUserId;
+    if (currentUser == null ||
+        !call.isIncomingFor(currentUser) ||
+        _lastIncomingVibrationCallId == call.id) {
+      return;
+    }
+    final preferences = await _callPreferences.load();
+    if (!preferences.vibrationOnIncoming) {
+      return;
+    }
+    _lastIncomingVibrationCallId = call.id;
+    try {
+      await _vibrationTrigger();
+    } catch (_) {}
+  }
+
+  static Future<void> _switchLiveKitCameraPosition(
+    LocalVideoTrack track,
+    CameraPosition position,
+  ) {
+    return track.setCameraPosition(position);
+  }
+
+  static Future<List<MediaDevice>> _defaultAudioInputEnumerator() {
+    return Hardware.instance.audioInputs();
+  }
+
+  static Future<List<MediaDevice>> _defaultVideoInputEnumerator() {
+    return Hardware.instance.videoInputs();
+  }
+
+  static Future<void> _selectLiveKitMicrophoneDevice(
+    Room room,
+    MediaDevice device,
+  ) {
+    return room.setAudioInputDevice(device);
+  }
+
+  static Future<void> _selectLiveKitCameraDevice(
+    Room room,
+    MediaDevice device,
+  ) {
+    return room.setVideoInputDevice(device);
+  }
+
+  static Future<void> _defaultVibrationTrigger() {
+    return HapticFeedback.mediumImpact();
   }
 
   static Future<bool> _requestPlatformMediaPermissions(
@@ -657,6 +1147,7 @@ class CallCoordinatorService extends ChangeNotifier
   }
 
   Future<void> _disposeRoom() async {
+    await _audioRouteService.attachRoom(null);
     await _roomListener?.dispose();
     _roomListener = null;
     if (_room != null) {
@@ -676,8 +1167,13 @@ class CallCoordinatorService extends ChangeNotifier
     _isReconnectingRoom = false;
     _microphoneEnabled = true;
     _cameraEnabled = false;
+    _isSwitchingCamera = false;
+    _cameraPosition = CameraPosition.front;
+    _clearInputDeviceState();
+    _clearConnectionQualityState();
     _hasMediaPermissionIssue = false;
     _hasSeenRemoteParticipant = false;
+    _lastIncomingVibrationCallId = null;
     await _disposeRoom();
     notifyListeners();
   }
@@ -697,6 +1193,7 @@ class CallCoordinatorService extends ChangeNotifier
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _cancelRingingRecovery();
+    _clearReconnectRestoredBanner();
     unawaited(_callEventsSubscription?.cancel());
     unawaited(_realtimeSubscription?.cancel());
     unawaited(_pushSubscription?.cancel());

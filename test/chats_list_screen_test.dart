@@ -11,6 +11,7 @@ import 'package:rodnya/backend/interfaces/family_tree_service_interface.dart';
 import 'package:rodnya/models/chat_attachment.dart';
 import 'package:rodnya/models/chat_details.dart';
 import 'package:rodnya/models/chat_message.dart';
+import 'package:rodnya/models/chat_message_search_result.dart';
 import 'package:rodnya/models/chat_preview.dart';
 import 'package:rodnya/models/chat_send_progress.dart';
 import 'package:rodnya/models/family_person.dart';
@@ -187,6 +188,21 @@ class _FakeChatService implements ChatServiceInterface {
     required String chatId,
     required String messageId,
   }) async {}
+
+  @override
+  Future<void> toggleMessageReaction({
+    required String chatId,
+    required String messageId,
+    required String emoji,
+  }) async {}
+
+  @override
+  Future<List<ChatMessageSearchResult>> searchMessages({
+    required String query,
+    String? chatId,
+    int limit = 50,
+  }) async =>
+      const <ChatMessageSearchResult>[];
 }
 
 class _FakeFamilyTreeService extends Fake

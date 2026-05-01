@@ -8,6 +8,7 @@ import 'package:rodnya/models/family_person.dart';
 import '../models/family_relation.dart'; // Добавляем импорт
 
 import '../models/person_dossier.dart';
+import '../models/person_duplicate_suggestion.dart';
 import '../models/user_profile.dart';
 import '../providers/tree_provider.dart'; // Для treeId
 import 'package:go_router/go_router.dart';
@@ -15,6 +16,8 @@ import 'package:share_plus/share_plus.dart';
 import 'package:get_it/get_it.dart';
 import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
+import '../backend/interfaces/identity_service_interface.dart';
+import '../backend/interfaces/identity_duplicate_capable_family_tree_service.dart';
 import '../backend/interfaces/invitation_link_service_interface.dart';
 import '../backend/interfaces/profile_service_interface.dart';
 import '../backend/interfaces/storage_service_interface.dart';
@@ -90,6 +93,8 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
   bool _isGeneratingLink = false;
   bool _isUpdatingGallery = false;
   bool _isLoadingHistory = false;
+  bool _isUpdatingIdentity = false;
+  bool _isUpdatingPrivacy = false;
 
   FamilyPerson? _person;
   List<FamilyPerson> _treePeople = [];
@@ -97,6 +102,8 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
   List<TreeChangeRecord> _historyRecords = [];
   UserProfile? _userProfile;
   PersonDossier? _dossier;
+  List<PersonDuplicateSuggestion> _duplicateSuggestions =
+      const <PersonDuplicateSuggestion>[];
   RelationType? _relationToCurrentUser;
   TreeGraphSnapshot? _graphSnapshot;
   TreeGraphViewerDescriptor? _viewerDescriptor;
@@ -114,6 +121,19 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
     }
     return null;
   }
+
+  IdentityDuplicateCapableFamilyTreeService? get _identityDuplicateService {
+    final service = _familyService;
+    if (service is IdentityDuplicateCapableFamilyTreeService) {
+      return service as IdentityDuplicateCapableFamilyTreeService;
+    }
+    return null;
+  }
+
+  IdentityServiceInterface? get _identityService =>
+      GetIt.I.isRegistered<IdentityServiceInterface>()
+          ? GetIt.I<IdentityServiceInterface>()
+          : null;
 
   @override
   void initState() {
@@ -139,6 +159,7 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
       _historyRecords = [];
       _userProfile = null;
       _dossier = null;
+      _duplicateSuggestions = const <PersonDuplicateSuggestion>[];
       _relationToCurrentUser = null;
       _graphSnapshot = null;
       _viewerDescriptor = null;
@@ -218,6 +239,21 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
         _graphSnapshot = snapshot;
         _viewerDescriptor = snapshot.findViewerDescriptor(_person!.id);
         _viewerRelationLabel = _viewerDescriptor?.primaryRelationLabel?.trim();
+      }
+
+      if (_identityDuplicateService != null && _person != null) {
+        try {
+          final suggestions = await _identityDuplicateService!
+              .getDuplicateSuggestions(_currentTreeId!);
+          _duplicateSuggestions = suggestions
+              .where((suggestion) => suggestion.involves(_person!.id))
+              .toList(growable: false);
+        } catch (duplicateError) {
+          debugPrint(
+            'Не удалось загрузить возможные совпадения для ${widget.personId}: $duplicateError',
+          );
+          _duplicateSuggestions = const <PersonDuplicateSuggestion>[];
+        }
       }
 
       try {
@@ -470,6 +506,247 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
         duration: duration,
       ),
     );
+  }
+
+  Future<void> _requestIdentityClaim() async {
+    final service = _identityService;
+    if (service == null || _currentTreeId == null || _person == null) {
+      return;
+    }
+
+    setState(() {
+      _isUpdatingIdentity = true;
+    });
+    try {
+      final claim = await service.createIdentityClaim(
+        treeId: _currentTreeId!,
+        personId: _person!.id,
+      );
+      if (!mounted) {
+        return;
+      }
+      _showRelativeSnackBar(
+        claim.isApproved
+            ? 'Карточка привязана к вашему аккаунту.'
+            : 'Запрос отправлен ответственным за карточку.',
+      );
+      await _loadData();
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      _showRelativeSnackBar(
+        _describeRelativeActionError(
+          error,
+          fallbackMessage:
+              'Не удалось отправить запрос личности. Попробуйте ещё раз.',
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isUpdatingIdentity = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _showPrivacySettings() async {
+    final service = _identityService;
+    if (service == null || _currentTreeId == null || _person == null) {
+      return;
+    }
+
+    setState(() {
+      _isUpdatingPrivacy = true;
+    });
+
+    try {
+      final attributes = await service.getPersonAttributes(
+        treeId: _currentTreeId!,
+        personId: _person!.id,
+      );
+      if (!mounted) {
+        return;
+      }
+
+      final fieldLabels = <String, String>{
+        'name': 'Имя и фамилия',
+        'photo': 'Фото',
+        'birthDate': 'Полная дата рождения',
+        'birthYear': 'Год рождения',
+        'places': 'Места',
+        'contacts': 'Контакты',
+        'notes': 'Заметки',
+        'relations': 'Связи',
+      };
+      final visibilityLabels = <String, String>{
+        'private': 'Только ответственные',
+        'tree': 'Участники дерева',
+        'cross-tree': 'Связанные деревья',
+        'public': 'Публично',
+      };
+      var cardVisibility = _person!.visibility;
+      final fieldVisibility = <String, String>{
+        for (final attribute in attributes)
+          attribute.field: attribute.visibility,
+      };
+
+      final shouldSave = await showModalBottomSheet<bool>(
+        context: context,
+        isScrollControlled: true,
+        builder: (sheetContext) {
+          return StatefulBuilder(
+            builder: (context, setSheetState) {
+              return SafeArea(
+                child: Padding(
+                  padding: EdgeInsets.only(
+                    left: 20,
+                    right: 20,
+                    top: 20,
+                    bottom: MediaQuery.of(context).viewInsets.bottom + 20,
+                  ),
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Приватность карточки',
+                          style: Theme.of(context)
+                              .textTheme
+                              .titleLarge
+                              ?.copyWith(fontWeight: FontWeight.w800),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'По умолчанию живые люди закрыты. Для кросс-деревьев раскрывайте только то, что действительно можно показывать родственникам из другой ветки.',
+                          style: Theme.of(context).textTheme.bodyMedium,
+                        ),
+                        const SizedBox(height: 16),
+                        DropdownButtonFormField<String>(
+                          initialValue:
+                              visibilityLabels.containsKey(cardVisibility)
+                                  ? cardVisibility
+                                  : 'private',
+                          decoration: const InputDecoration(
+                            labelText: 'Видимость карточки',
+                            border: OutlineInputBorder(),
+                          ),
+                          items: visibilityLabels.entries
+                              .map(
+                                (entry) => DropdownMenuItem<String>(
+                                  value: entry.key,
+                                  child: Text(entry.value),
+                                ),
+                              )
+                              .toList(growable: false),
+                          onChanged: (value) {
+                            if (value == null) {
+                              return;
+                            }
+                            setSheetState(() => cardVisibility = value);
+                          },
+                        ),
+                        const SizedBox(height: 16),
+                        ...fieldLabels.entries.map((entry) {
+                          final value = fieldVisibility[entry.key] ??
+                              (entry.key == 'contacts'
+                                  ? 'private'
+                                  : cardVisibility);
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 12),
+                            child: DropdownButtonFormField<String>(
+                              initialValue: visibilityLabels.containsKey(value)
+                                  ? value
+                                  : 'private',
+                              decoration: InputDecoration(
+                                labelText: entry.value,
+                                border: const OutlineInputBorder(),
+                              ),
+                              items: visibilityLabels.entries
+                                  .map(
+                                    (visibilityEntry) =>
+                                        DropdownMenuItem<String>(
+                                      value: visibilityEntry.key,
+                                      child: Text(visibilityEntry.value),
+                                    ),
+                                  )
+                                  .toList(growable: false),
+                              onChanged: (nextValue) {
+                                if (nextValue == null) {
+                                  return;
+                                }
+                                setSheetState(
+                                  () => fieldVisibility[entry.key] = nextValue,
+                                );
+                              },
+                            ),
+                          );
+                        }),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: OutlinedButton(
+                                onPressed: () =>
+                                    Navigator.of(sheetContext).pop(false),
+                                child: const Text('Отмена'),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: FilledButton(
+                                onPressed: () =>
+                                    Navigator.of(sheetContext).pop(true),
+                                child: const Text('Сохранить'),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      );
+
+      if (shouldSave != true || !mounted) {
+        return;
+      }
+
+      await service.updatePersonAttributeVisibility(
+        treeId: _currentTreeId!,
+        personId: _person!.id,
+        visibility: cardVisibility,
+        attributes: fieldVisibility,
+      );
+      if (!mounted) {
+        return;
+      }
+      _showRelativeSnackBar('Приватность карточки обновлена.');
+      await _loadData();
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      _showRelativeSnackBar(
+        _describeRelativeActionError(
+          error,
+          fallbackMessage:
+              'Не удалось обновить приватность. Попробуйте ещё раз.',
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isUpdatingPrivacy = false;
+        });
+      }
+    }
   }
 
   Future<void> _showOtherParentsSheet() async {

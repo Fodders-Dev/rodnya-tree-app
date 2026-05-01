@@ -7,8 +7,10 @@ import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
 import '../backend/interfaces/auth_service_interface.dart';
+import '../backend/interfaces/circle_service_interface.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
 import '../backend/interfaces/post_service_interface.dart';
+import '../models/circle.dart';
 import '../models/family_person.dart';
 import '../models/family_tree.dart';
 import '../models/post.dart';
@@ -16,6 +18,7 @@ import '../providers/tree_provider.dart';
 import '../services/app_status_service.dart';
 import '../services/local_storage_service.dart';
 import '../utils/user_facing_error.dart';
+import '../widgets/audience_picker.dart';
 import '../widgets/glass_panel.dart';
 
 class CreatePostScreen extends StatefulWidget {
@@ -32,22 +35,50 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
   final FamilyTreeServiceInterface _familyTreeService =
       GetIt.I<FamilyTreeServiceInterface>();
   final PostServiceInterface _postService = GetIt.I<PostServiceInterface>();
+  final CircleServiceInterface? _circleService =
+      GetIt.I.isRegistered<CircleServiceInterface>()
+          ? GetIt.I<CircleServiceInterface>()
+          : null;
   final LocalStorageService _localStorageService =
       GetIt.I<LocalStorageService>();
   final AppStatusService _appStatusService = GetIt.I<AppStatusService>();
 
   bool _isPublic = false;
   bool _isLoading = false;
+  bool _isLoadingCircles = false;
   bool _isLoadingPeople = false;
+  bool _circlesUnavailable = false;
   bool _branchCandidatesUnavailable = false;
   List<XFile> _selectedImages = <XFile>[];
+  List<FamilyCircle> _audienceCircles = <FamilyCircle>[];
   List<FamilyPerson> _availablePeople = <FamilyPerson>[];
   final Set<String> _selectedBranchPersonIds = <String>{};
   TreeContentScopeType _scopeType = TreeContentScopeType.wholeTree;
+  String? _selectedCircleId;
   String? _currentTreeId;
   FamilyTree? _currentTreeMeta;
 
   bool get _isFriendsTree => _currentTreeMeta?.isFriendsTree == true;
+  String get _selectedAudienceLabel {
+    final selectedCircle = _selectedCircle;
+    if (selectedCircle != null) {
+      return selectedCircle.name;
+    }
+    return _isFriendsTree ? 'Весь круг' : 'Всё дерево';
+  }
+
+  FamilyCircle? get _selectedCircle {
+    final selectedId = _selectedCircleId;
+    if (selectedId == null) {
+      return null;
+    }
+    for (final circle in _audienceCircles) {
+      if (circle.id == selectedId) {
+        return circle;
+      }
+    }
+    return null;
+  }
 
   @override
   void initState() {
@@ -57,6 +88,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
       listen: false,
     ).selectedTreeId;
     _loadCurrentTreeMeta();
+    _loadAudienceCircles();
     _loadBranchCandidates();
   }
 
@@ -118,6 +150,61 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     }
   }
 
+  Future<void> _loadAudienceCircles() async {
+    final treeId = _currentTreeId;
+    final circleService = _circleService;
+    if (treeId == null || circleService == null) {
+      return;
+    }
+
+    setState(() {
+      _isLoadingCircles = true;
+    });
+
+    try {
+      final circles = await circleService.getCircles(treeId);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _audienceCircles = circles;
+        _selectedCircleId = _resolveSelectedCircleId(circles);
+        _circlesUnavailable = false;
+      });
+    } catch (error) {
+      _appStatusService.reportError(
+        error,
+        fallbackMessage: 'Не удалось загрузить круги для публикации.',
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _circlesUnavailable = true;
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingCircles = false;
+        });
+      }
+    }
+  }
+
+  String? _resolveSelectedCircleId(List<FamilyCircle> circles) {
+    final selectedId = _selectedCircleId;
+    if (selectedId != null &&
+        circles.any((circle) => circle.id == selectedId)) {
+      return selectedId;
+    }
+    for (final circle in circles) {
+      if (circle.isAllTree) {
+        return circle.id;
+      }
+    }
+    return circles.isEmpty ? null : circles.first.id;
+  }
+
   Future<void> _pickImages() async {
     try {
       final pickedFiles = await _picker.pickMultiImage(
@@ -167,6 +254,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
         isPublic: _isPublic,
         scopeType: _scopeType,
         anchorPersonIds: _selectedBranchPersonIds.toList(),
+        circleId: _selectedCircleId,
       );
 
       if (mounted) {
@@ -251,6 +339,10 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
                             label: _currentTreeMeta?.name.isNotEmpty == true
                                 ? _currentTreeMeta!.name
                                 : 'Текущее дерево',
+                          ),
+                          _buildMetaPill(
+                            icon: Icons.group_work_outlined,
+                            label: _selectedAudienceLabel,
                           ),
                           _buildMetaPill(
                             icon: _scopeType == TreeContentScopeType.wholeTree
@@ -449,6 +541,19 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
                 ),
           ),
           const SizedBox(height: 10),
+          AudiencePicker(
+            circles: _audienceCircles,
+            selectedCircleId: _selectedCircleId,
+            onChanged: (circleId) {
+              setState(() {
+                _selectedCircleId = circleId;
+              });
+            },
+            isLoading: _isLoadingCircles,
+            isUnavailable: _circlesUnavailable,
+            onRetry: _loadAudienceCircles,
+          ),
+          const SizedBox(height: 16),
           SegmentedButton<TreeContentScopeType>(
             segments: [
               ButtonSegment<TreeContentScopeType>(
@@ -571,8 +676,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color:
-            theme.colorScheme.surfaceContainerLowest.withValues(alpha: 0.9),
+        color: theme.colorScheme.surfaceContainerLowest.withValues(alpha: 0.9),
         borderRadius: BorderRadius.circular(22),
       ),
       child: Column(

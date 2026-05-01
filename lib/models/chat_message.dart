@@ -39,6 +39,64 @@ class ChatReplyReference {
   }
 }
 
+class ChatMessageReactionSummary {
+  const ChatMessageReactionSummary({
+    required this.emoji,
+    required this.userIds,
+    required this.count,
+  });
+
+  final String emoji;
+  final List<String> userIds;
+  final int count;
+
+  bool isMine(String? currentUserId) {
+    final normalizedUserId = currentUserId?.trim();
+    return normalizedUserId != null &&
+        normalizedUserId.isNotEmpty &&
+        userIds.contains(normalizedUserId);
+  }
+
+  factory ChatMessageReactionSummary.fromMap(Map<String, dynamic> map) {
+    final userIds = map['userIds'] is List<dynamic>
+        ? List<String>.from(
+            (map['userIds'] as List<dynamic>)
+                .map((value) => value.toString().trim())
+                .where((value) => value.isNotEmpty),
+          )
+        : const <String>[];
+    final parsedCount = int.tryParse(map['count']?.toString() ?? '');
+    return ChatMessageReactionSummary(
+      emoji: map['emoji']?.toString() ?? '',
+      userIds: userIds,
+      count:
+          parsedCount != null && parsedCount > 0 ? parsedCount : userIds.length,
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return <String, dynamic>{
+      'emoji': emoji,
+      'userIds': userIds,
+      'count': count,
+    };
+  }
+
+  static List<ChatMessageReactionSummary> listFromDynamic(dynamic raw) {
+    if (raw is! List) {
+      return const <ChatMessageReactionSummary>[];
+    }
+    return raw
+        .whereType<Map>()
+        .map((entry) => Map<String, dynamic>.from(entry))
+        .map(ChatMessageReactionSummary.fromMap)
+        .where(
+          (reaction) => reaction.emoji.trim().isNotEmpty && reaction.count > 0,
+        )
+        .toList(growable: false);
+  }
+}
+
 @HiveType(typeId: 4)
 class ChatMessage extends HiveObject {
   @HiveField(0)
@@ -59,6 +117,12 @@ class ChatMessage extends HiveObject {
   final String? senderName;
   @HiveField(10)
   final List<ChatAttachment> attachments;
+  @HiveField(11)
+  final List<ChatMessageReactionSummary> reactions;
+  @HiveField(12)
+  final List<String> deliveredTo;
+  @HiveField(13)
+  final List<String> readBy;
   final ChatReplyReference? replyTo;
   final String? clientMessageId;
   final DateTime? expiresAt;
@@ -74,6 +138,9 @@ class ChatMessage extends HiveObject {
     required this.participants,
     this.senderName,
     this.attachments = const <ChatAttachment>[],
+    this.reactions = const <ChatMessageReactionSummary>[],
+    this.deliveredTo = const <String>[],
+    this.readBy = const <String>[],
     this.replyTo,
     this.clientMessageId,
     this.expiresAt,
@@ -118,6 +185,9 @@ class ChatMessage extends HiveObject {
     List<String>? participants,
     String? senderName,
     List<ChatAttachment>? attachments,
+    List<ChatMessageReactionSummary>? reactions,
+    List<String>? deliveredTo,
+    List<String>? readBy,
     ChatReplyReference? replyTo,
     String? clientMessageId,
     DateTime? expiresAt,
@@ -133,6 +203,9 @@ class ChatMessage extends HiveObject {
       participants: participants ?? this.participants,
       senderName: senderName ?? this.senderName,
       attachments: attachments ?? this.attachments,
+      reactions: reactions ?? this.reactions,
+      deliveredTo: deliveredTo ?? this.deliveredTo,
+      readBy: readBy ?? this.readBy,
       replyTo: replyTo ?? this.replyTo,
       clientMessageId: clientMessageId ?? this.clientMessageId,
       expiresAt: expiresAt ?? this.expiresAt,
@@ -153,6 +226,9 @@ class ChatMessage extends HiveObject {
       participants: List<String>.from(map['participants'] ?? []),
       senderName: map['senderName'],
       attachments: _attachmentsFromMap(map),
+      reactions: ChatMessageReactionSummary.listFromDynamic(map['reactions']),
+      deliveredTo: _stringListFromDynamic(map['deliveredTo']),
+      readBy: _stringListFromDynamic(map['readBy']),
       replyTo: _replyReferenceFromMap(map),
       clientMessageId: map['clientMessageId']?.toString(),
       expiresAt: parseDateTime(map['expiresAt']),
@@ -162,6 +238,7 @@ class ChatMessage extends HiveObject {
 
   Map<String, dynamic> toMap() {
     return {
+      'id': id,
       'chatId': chatId,
       'senderId': senderId,
       'text': text,
@@ -169,6 +246,9 @@ class ChatMessage extends HiveObject {
       'isRead': isRead,
       'attachments':
           attachments.map((attachment) => attachment.toMap()).toList(),
+      'reactions': reactions.map((reaction) => reaction.toMap()).toList(),
+      'deliveredTo': deliveredTo,
+      'readBy': readBy,
       'imageUrl': imageUrl,
       'mediaUrls': mediaUrls,
       'participants': participants,
@@ -195,6 +275,9 @@ class ChatMessage extends HiveObject {
           .toList(),
       senderName: data['senderName'] as String?,
       attachments: _attachmentsFromMap(data),
+      reactions: ChatMessageReactionSummary.listFromDynamic(data['reactions']),
+      deliveredTo: _stringListFromDynamic(data['deliveredTo']),
+      readBy: _stringListFromDynamic(data['readBy']),
       replyTo: _replyReferenceFromMap(data),
       clientMessageId: data['clientMessageId']?.toString(),
       expiresAt: parseDateTime(data['expiresAt']),
@@ -211,6 +294,9 @@ class ChatMessage extends HiveObject {
     List<String>? mediaUrls,
     required List<String> participants,
     String? senderName,
+    List<ChatMessageReactionSummary>? reactions,
+    List<String>? deliveredTo,
+    List<String>? readBy,
     ChatReplyReference? replyTo,
     String? clientMessageId,
     DateTime? expiresAt,
@@ -225,6 +311,9 @@ class ChatMessage extends HiveObject {
       participants: participants,
       senderName: senderName,
       attachments: attachments ?? _legacyAttachments(imageUrl, mediaUrls),
+      reactions: reactions ?? const <ChatMessageReactionSummary>[],
+      deliveredTo: deliveredTo ?? const <String>[],
+      readBy: readBy ?? const <String>[],
       replyTo: replyTo,
       clientMessageId: clientMessageId,
       expiresAt: expiresAt,
@@ -258,6 +347,17 @@ class ChatMessage extends HiveObject {
           ? List<String>.from(map['mediaUrls'])
           : null,
     );
+  }
+
+  static List<String> _stringListFromDynamic(dynamic value) {
+    if (value is! List) {
+      return const <String>[];
+    }
+    return value
+        .map((item) => item.toString().trim())
+        .where((item) => item.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
   }
 
   static List<ChatAttachment> _legacyAttachments(

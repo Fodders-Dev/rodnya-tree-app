@@ -23,7 +23,12 @@ function registerPostRoutes(
 
     const accessibleTrees = await store.listUserTrees(req.auth.user.id);
     const accessibleTreeIds = new Set(accessibleTrees.map((tree) => tree.id));
-    const posts = await store.listPosts({treeId, authorId, scope});
+    const posts = await store.listPosts({
+      treeId,
+      authorId,
+      scope,
+      viewerUserId: req.auth.user.id,
+    });
     const visiblePosts = posts.filter((post) => accessibleTreeIds.has(post.treeId));
     const payload = await Promise.all(
       visiblePosts.map(async (post) => {
@@ -41,6 +46,7 @@ function registerPostRoutes(
     const imageUrls = Array.isArray(req.body?.imageUrls) ? req.body.imageUrls : [];
     const isPublic = req.body?.isPublic === true;
     const scopeType = String(req.body?.scopeType || "wholeTree").trim();
+    const circleId = String(req.body?.circleId || "").trim() || null;
     const anchorPersonIds = Array.isArray(req.body?.anchorPersonIds)
       ? req.body.anchorPersonIds
       : [];
@@ -53,6 +59,14 @@ function registerPostRoutes(
     const tree = await requireTreeAccess(req, res, treeId);
     if (!tree) {
       return;
+    }
+
+    if (circleId) {
+      const circle = await store.findCircle(tree.id, circleId);
+      if (!circle) {
+        res.status(400).json({message: "Круг не найден"});
+        return;
+      }
     }
 
     const treePersons = await store.listPersons(tree.id);
@@ -75,6 +89,7 @@ function registerPostRoutes(
       isPublic,
       scopeType,
       anchorPersonIds: normalizedAnchorPersonIds,
+      circleId,
     });
 
     if (post === false) {

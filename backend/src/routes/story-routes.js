@@ -15,7 +15,11 @@ function registerStoryRoutes(
 
     const accessibleTrees = await store.listUserTrees(req.auth.user.id);
     const accessibleTreeIds = new Set(accessibleTrees.map((tree) => tree.id));
-    const stories = await store.listStories({treeId, authorId});
+    const stories = await store.listStories({
+      treeId,
+      authorId,
+      viewerUserId: req.auth.user.id,
+    });
     const visibleStories = stories.filter((story) =>
       accessibleTreeIds.has(story.treeId),
     );
@@ -30,6 +34,7 @@ function registerStoryRoutes(
     const mediaUrl = req.body?.mediaUrl;
     const thumbnailUrl = req.body?.thumbnailUrl;
     const expiresAt = req.body?.expiresAt;
+    const circleId = String(req.body?.circleId || "").trim() || null;
 
     if (!treeId) {
       res.status(400).json({message: "Нужен treeId"});
@@ -39,6 +44,14 @@ function registerStoryRoutes(
     const tree = await requireTreeAccess(req, res, treeId);
     if (!tree) {
       return;
+    }
+
+    if (circleId) {
+      const circle = await store.findCircle(tree.id, circleId);
+      if (!circle) {
+        res.status(400).json({message: "Круг не найден"});
+        return;
+      }
     }
 
     const story = await store.createStory({
@@ -55,6 +68,7 @@ function registerStoryRoutes(
       mediaUrl,
       thumbnailUrl,
       expiresAt,
+      circleId,
     });
 
     if (story === false) {

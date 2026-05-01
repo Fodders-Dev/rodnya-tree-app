@@ -3,6 +3,7 @@ import '../../models/chat_details.dart';
 import '../../models/chat_preview.dart';
 import '../../models/chat_attachment.dart';
 import '../../models/chat_send_progress.dart';
+import '../../models/chat_message_search_result.dart';
 import 'package:image_picker/image_picker.dart';
 
 abstract class ChatServiceInterface {
@@ -96,5 +97,21 @@ abstract class ChatServiceInterface {
     required String messageId,
   }) {
     throw UnsupportedError('deleteChatMessage is not supported');
+  }
+
+  Future<void> toggleMessageReaction({
+    required String chatId,
+    required String messageId,
+    required String emoji,
+  }) {
+    throw UnsupportedError('toggleMessageReaction is not supported');
+  }
+
+  Future<List<ChatMessageSearchResult>> searchMessages({
+    required String query,
+    String? chatId,
+    int limit = 50,
+  }) {
+    throw UnsupportedError('searchMessages is not supported');
   }
 }

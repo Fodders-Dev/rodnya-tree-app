@@ -16,6 +16,7 @@ class Post {
   final bool isPublic;
   final TreeContentScopeType scopeType;
   final List<String> anchorPersonIds;
+  final String? circleId;
 
   // Геттеры для нормализованных URL
   String? get authorPhotoUrl => _authorPhotoUrl;
@@ -43,6 +44,7 @@ class Post {
     this.isPublic = false,
     this.scopeType = TreeContentScopeType.wholeTree,
     List<String>? anchorPersonIds,
+    this.circleId,
   })  : _authorPhotoUrl = UrlUtils.normalizeImageUrl(authorPhotoUrl),
         _imageUrls = imageUrls
             ?.map((url) => UrlUtils.normalizeImageUrl(url))
@@ -76,6 +78,7 @@ class Post {
       anchorPersonIds: (json['anchorPersonIds'] as List<dynamic>? ?? [])
           .map((e) => e.toString())
           .toList(),
+      circleId: json['circleId']?.toString(),
     );
   }
 
@@ -94,6 +97,7 @@ class Post {
       'isPublic': isPublic,
       'scopeType': _scopeTypeToString(scopeType),
       'anchorPersonIds': anchorPersonIds,
+      'circleId': circleId,
     };
   }
 

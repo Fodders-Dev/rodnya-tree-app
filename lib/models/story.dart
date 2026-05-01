@@ -22,6 +22,7 @@ class Story {
     this.isPublic = false,
     this.scopeType = TreeContentScopeType.wholeTree,
     List<String>? anchorPersonIds,
+    this.circleId,
   })  : _authorPhotoUrl = UrlUtils.normalizeImageUrl(authorPhotoUrl),
         _mediaUrl = UrlUtils.normalizeImageUrl(mediaUrl),
         _thumbnailUrl = UrlUtils.normalizeImageUrl(thumbnailUrl),
@@ -45,6 +46,7 @@ class Story {
   final bool isPublic;
   final TreeContentScopeType scopeType;
   final List<String> anchorPersonIds;
+  final String? circleId;
 
   String? get authorPhotoUrl => _authorPhotoUrl;
   String? get mediaUrl => _mediaUrl;
@@ -82,6 +84,7 @@ class Story {
           (json['anchorPersonIds'] as List<dynamic>? ?? const <dynamic>[])
               .map((entry) => entry.toString())
               .toList(),
+      circleId: json['circleId']?.toString(),
     );
   }
 
@@ -112,6 +115,7 @@ class Story {
       'isPublic': isPublic,
       'scopeType': _scopeTypeToString(scopeType),
       'anchorPersonIds': anchorPersonIds,
+      'circleId': circleId,
     };
   }
 
@@ -134,6 +138,7 @@ class Story {
     bool? isPublic,
     TreeContentScopeType? scopeType,
     List<String>? anchorPersonIds,
+    String? circleId,
   }) {
     return Story(
       id: id ?? this.id,
@@ -152,6 +157,7 @@ class Story {
       isPublic: isPublic ?? this.isPublic,
       scopeType: scopeType ?? this.scopeType,
       anchorPersonIds: anchorPersonIds ?? this.anchorPersonIds,
+      circleId: circleId ?? this.circleId,
     );
   }
 

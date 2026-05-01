@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:livekit_client/livekit_client.dart';
 import 'package:rodnya/backend/interfaces/call_service_interface.dart';
 import 'package:rodnya/models/call_event.dart';
 import 'package:rodnya/models/call_invite.dart';
@@ -9,6 +10,7 @@ import 'package:rodnya/models/call_media_mode.dart';
 import 'package:rodnya/models/call_session.dart';
 import 'package:rodnya/models/call_state.dart';
 import 'package:rodnya/services/call_coordinator_service.dart';
+import 'package:rodnya/services/call_preferences.dart';
 import 'package:rodnya/services/rustore_service.dart';
 
 void main() {
@@ -86,6 +88,32 @@ void main() {
 
       expect(activeCall, isNull);
       expect(service.activeCallRequests, 0);
+
+      coordinator.dispose();
+    },
+  );
+
+  test(
+    'CallCoordinatorService refreshes microphone and camera device lists',
+    () async {
+      final service = _CountingCallService(activeCall: null);
+      final coordinator = CallCoordinatorService(
+        callService: service,
+        audioInputEnumerator: () async => const <MediaDevice>[
+          MediaDevice('mic-1', 'USB mic', 'audioinput', null),
+        ],
+        videoInputEnumerator: () async => const <MediaDevice>[
+          MediaDevice('camera-1', 'Front Camera', 'videoinput', null),
+        ],
+      );
+
+      await coordinator.refreshInputDevices();
+
+      expect(coordinator.microphoneDevices.single.deviceId, 'mic-1');
+      expect(coordinator.cameraDevices.single.deviceId, 'camera-1');
+      expect(coordinator.selectedMicrophoneDeviceId, 'mic-1');
+      expect(coordinator.selectedCameraDeviceId, 'camera-1');
+      expect(coordinator.devicePickerErrorMessage, isNull);
 
       coordinator.dispose();
     },
@@ -248,6 +276,44 @@ void main() {
 
       expect(service.callByIdRequests, greaterThanOrEqualTo(1));
       expect(coordinator.currentCall, isNull);
+
+      coordinator.dispose();
+    },
+  );
+
+  test(
+    'CallCoordinatorService uses call preferences for incoming vibration',
+    () async {
+      final service = _CountingCallService(activeCall: null);
+      var vibrationCount = 0;
+      final coordinator = CallCoordinatorService(
+        callService: service,
+        callPreferences: MemoryCallPreferences(
+          CallPreferencesSnapshot.defaults(),
+        ),
+        vibrationTrigger: () async {
+          vibrationCount += 1;
+        },
+      );
+
+      await coordinator.ensureRuntimeReady();
+
+      await coordinator.activateCall(_buildCall(state: CallState.ringing));
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      expect(vibrationCount, 1);
+
+      await coordinator.activateCall(
+        _buildCall(
+          state: CallState.ringing,
+          updatedAt: DateTime(2026, 4, 20, 10, 2),
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      expect(vibrationCount, 1);
 
       coordinator.dispose();
     },

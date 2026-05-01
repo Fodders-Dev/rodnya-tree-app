@@ -108,10 +108,10 @@ class AccountLinkingStatus {
     final mergeStrategyJson = json['mergeStrategy'];
 
     return AccountLinkingStatus(
-      linkedProviderIds: (json['linkedProviderIds'] as List<dynamic>? ??
-              const <dynamic>[])
-          .map((value) => value.toString())
-          .toList(),
+      linkedProviderIds:
+          (json['linkedProviderIds'] as List<dynamic>? ?? const <dynamic>[])
+              .map((value) => value.toString())
+              .toList(),
       identities: (identitiesJson as List<dynamic>? ?? const <dynamic>[])
           .whereType<Map<String, dynamic>>()
           .map(AccountLinkedIdentity.fromJson)
@@ -130,10 +130,10 @@ class AccountLinkingStatus {
       summaryDetail: summaryJson is Map<String, dynamic>
           ? summaryJson['detail']?.toString()
           : null,
-      discoveryModes: (json['discoveryModes'] as List<dynamic>? ??
-              const <dynamic>[])
-          .map((value) => value.toString())
-          .toList(),
+      discoveryModes:
+          (json['discoveryModes'] as List<dynamic>? ?? const <dynamic>[])
+              .map((value) => value.toString())
+              .toList(),
       mergeStrategySummary: mergeStrategyJson is Map<String, dynamic>
           ? mergeStrategyJson['summary']?.toString()
           : null,

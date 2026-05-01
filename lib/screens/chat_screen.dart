@@ -22,6 +22,7 @@ import 'package:file_picker/file_picker.dart';
 import '../backend/interfaces/chat_service_interface.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
 import '../backend/interfaces/safety_service_interface.dart';
+import '../controllers/chat_attachments_controller.dart';
 import '../controllers/chat_recording_controller.dart';
 import '../controllers/chat_search_controller.dart';
 import '../controllers/chat_selection_controller.dart';
@@ -30,6 +31,7 @@ import '../models/call_media_mode.dart';
 import '../models/chat_attachment.dart';
 import '../models/chat_details.dart';
 import '../models/chat_message.dart';
+import '../models/chat_message_search_result.dart';
 import '../models/chat_send_progress.dart';
 import '../models/family_tree.dart';
 import '../providers/tree_provider.dart';
@@ -39,7 +41,7 @@ import '../services/chat_auto_delete_store.dart';
 import '../services/chat_draft_store.dart';
 import '../services/chat_notification_settings_store.dart';
 import '../services/chat_pin_store.dart';
-import '../services/chat_reaction_store.dart';
+import '../services/chat_send_queue.dart';
 import '../services/custom_api_auth_service.dart';
 import '../services/custom_api_realtime_service.dart';
 import '../utils/chat_attachment_download.dart';
@@ -67,7 +69,6 @@ class ChatScreen extends StatefulWidget {
     this.draftStore,
     this.pinStore,
     this.notificationSettingsStore,
-    this.reactionStore,
     this.autoDeleteStore,
     this.initialChatDetails,
   }) : assert(
@@ -87,7 +88,6 @@ class ChatScreen extends StatefulWidget {
   final ChatDraftStore? draftStore;
   final ChatPinStore? pinStore;
   final ChatNotificationSettingsStore? notificationSettingsStore;
-  final ChatReactionStore? reactionStore;
   final ChatAutoDeleteStore? autoDeleteStore;
   final ChatDetails? initialChatDetails;
 
@@ -110,8 +110,6 @@ class _ChatScreenState extends State<ChatScreen> {
 
   final TextEditingController _messageController = TextEditingController();
   final FocusNode _messageFocusNode = FocusNode();
-  // Prevents double-send while an outgoing request is in flight.
-  bool _isSendingMessage = false;
   final CallCoordinatorService _callCoordinator =
       GetIt.I<CallCoordinatorService>();
   final ChatServiceInterface _chatService = GetIt.I<ChatServiceInterface>();
@@ -133,10 +131,13 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _isBootstrapping = true;
   bool _isLoadingChatDetails = false;
   bool _isMarkingRead = false;
-  int _localMessageCounter = 0;
   late String _resolvedTitle;
-  final List<XFile> _selectedAttachments = <XFile>[];
-  final List<_OutgoingMessage> _optimisticMessages = <_OutgoingMessage>[];
+  final ChatAttachmentsController _attachmentsController =
+      ChatAttachmentsController(maxAttachments: _maxAttachments);
+  late final ChatSendQueue _sendQueue;
+  bool _ownsSendQueue = false;
+  final Set<String> _reportedSendFailureIds = <String>{};
+  final Set<String> _handledVoiceSendIds = <String>{};
   Timer? _draftSaveTimer;
   bool _isApplyingDraft = false;
   String? _lastPersistedDraftKey;
@@ -159,14 +160,18 @@ class _ChatScreenState extends State<ChatScreen> {
       ChatRecordingController();
   ChatTimelineController? _timelineController;
   ChatDraftStore get _draftStore =>
-      widget.draftStore ?? const SharedPreferencesChatDraftStore();
+      widget.draftStore ??
+      (GetIt.I.isRegistered<ChatDraftStore>()
+          ? GetIt.I<ChatDraftStore>()
+          : const SharedPreferencesChatDraftStore());
   ChatNotificationSettingsStore get _notificationSettingsStore =>
       widget.notificationSettingsStore ??
       const SharedPreferencesChatNotificationSettingsStore();
   ChatPinStore get _pinStore =>
-      widget.pinStore ?? const SharedPreferencesChatPinStore();
-  ChatReactionStore get _reactionStore =>
-      widget.reactionStore ?? const SharedPreferencesChatReactionStore();
+      widget.pinStore ??
+      (GetIt.I.isRegistered<ChatPinStore>()
+          ? GetIt.I<ChatPinStore>()
+          : const SharedPreferencesChatPinStore());
   ChatAutoDeleteStore get _autoDeleteStore =>
       widget.autoDeleteStore ?? const SharedPreferencesChatAutoDeleteStore();
   ChatNotificationSettingsSnapshot _notificationSettings =
@@ -177,13 +182,17 @@ class _ChatScreenState extends State<ChatScreen> {
   String? _lastPersistedAutoDeleteKey;
   ChatPinnedMessageSnapshot? _pinnedMessage;
   String? _lastPersistedPinKey;
-  Map<String, List<ChatMessageReactionEntry>> _messageReactions =
-      <String, List<ChatMessageReactionEntry>>{};
-  String? _lastPersistedReactionKey;
   List<ChatMessage> _latestRemoteMessages = const <ChatMessage>[];
   final Map<String, GlobalKey> _remoteMessageKeys = <String, GlobalKey>{};
   Timer? _pinnedMessageHighlightTimer;
   String? _highlightedPinnedMessageId;
+  Timer? _serverSearchDebounce;
+  List<ChatMessageSearchResult> _serverSearchResults =
+      const <ChatMessageSearchResult>[];
+  String _serverSearchQuery = '';
+  bool _isServerSearchLoading = false;
+  bool _serverSearchAvailable = true;
+  Object? _serverSearchError;
   StreamSubscription<CustomApiRealtimeEvent>? _realtimeIndicatorsSubscription;
   Timer? _typingHeartbeatTimer;
   Timer? _typingDecayTimer;
@@ -196,6 +205,12 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
+    _ownsSendQueue = !GetIt.I.isRegistered<ChatSendQueue>();
+    _sendQueue = _ownsSendQueue
+        ? ChatSendQueue.memory(chatService: _chatService)
+        : GetIt.I<ChatSendQueue>();
+    _sendQueue.addListener(_handleSendQueueChanged);
+    _attachmentsController.addListener(_handleAttachmentsChanged);
     _chatDetails = widget.initialChatDetails;
     _resolvedTitle = widget.initialChatDetails?.displayTitle ?? widget.title;
     _messageController.addListener(_handleDraftChanged);
@@ -212,6 +227,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void dispose() {
     _draftSaveTimer?.cancel();
     _pinnedMessageHighlightTimer?.cancel();
+    _serverSearchDebounce?.cancel();
     _messageController.removeListener(_handleDraftChanged);
     _searchController.removeListener(_handleSearchChanged);
     HardwareKeyboard.instance.removeHandler(_handleGlobalKeyEvent);
@@ -229,8 +245,14 @@ class _ChatScreenState extends State<ChatScreen> {
       unawaited(realtimeSubscription.cancel());
     }
     _restoreBrowserContextMenu();
+    _sendQueue.removeListener(_handleSendQueueChanged);
+    _attachmentsController.removeListener(_handleAttachmentsChanged);
+    _attachmentsController.dispose();
     _recordingController.removeListener(_handleRecordingControllerChanged);
     _recordingController.dispose();
+    if (_ownsSendQueue) {
+      _sendQueue.dispose();
+    }
     _selectionController.dispose();
     _timelineController?.dispose();
     super.dispose();
@@ -241,6 +263,71 @@ class _ChatScreenState extends State<ChatScreen> {
   bool get _isSearchMode => _searchController.isSearchMode;
 
   int get _selectedMessageCount => _selectionController.selectedMessageCount;
+
+  List<XFile> get _selectedAttachments => _attachmentsController.attachments;
+
+  void _handleAttachmentsChanged() {
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  List<_OutgoingMessage> get _optimisticMessages {
+    final chatId = _chatId;
+    if (chatId == null || chatId.isEmpty) {
+      return const <_OutgoingMessage>[];
+    }
+    return _sendQueue.messagesFor(chatId);
+  }
+
+  void _handleSendQueueChanged() {
+    if (!mounted) {
+      return;
+    }
+
+    String? failureMessageToShow;
+    var shouldMarkDirectChatBlocked = false;
+    for (final message in _optimisticMessages) {
+      if (message.attachments.any(_isRecordedVoiceAttachment) &&
+          _handledVoiceSendIds.add('${message.localId}-${message.status}')) {
+        if (message.status == _OutgoingMessageStatus.sent) {
+          _recordingController.completeSend();
+        } else if (message.status == _OutgoingMessageStatus.failed) {
+          _recordingController.markSendFailed(
+            message.errorText ?? 'Не удалось отправить сообщение.',
+          );
+        }
+      }
+
+      if (message.status != _OutgoingMessageStatus.failed ||
+          !_reportedSendFailureIds.add(message.localId)) {
+        continue;
+      }
+      final errorText = message.errorText ?? 'Не удалось отправить сообщение.';
+      failureMessageToShow ??= errorText;
+      if (errorText.toLowerCase().contains('заблокирован') &&
+          _isCurrentDirectChat) {
+        shouldMarkDirectChatBlocked = true;
+      }
+    }
+
+    setState(() {
+      if (shouldMarkDirectChatBlocked) {
+        _isDirectChatBlocked = true;
+        _directChatBlockedLabel ??=
+            _participantLabelForUserId(_currentDirectPeerUserId ?? '');
+      }
+    });
+
+    if (failureMessageToShow != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) {
+          return;
+        }
+        showAppSnackBar(context, failureMessageToShow!, isError: true);
+      });
+    }
+  }
 
   void _configureBrowserContextMenu() {
     if (!kIsWeb) {
@@ -271,14 +358,10 @@ class _ChatScreenState extends State<ChatScreen> {
         _recordingController.state == ChatRecordingState.preview ||
             _recordingController.state == ChatRecordingState.failed;
 
-    setState(() {
-      _selectedAttachments.removeWhere(_isRecordedVoiceAttachment);
-      if (shouldKeepPreview && previewFile != null) {
-        _selectedAttachments
-          ..clear()
-          ..add(previewFile);
-      }
-    });
+    _attachmentsController.removeWhere(_isRecordedVoiceAttachment);
+    if (shouldKeepPreview && previewFile != null) {
+      _attachmentsController.replaceAll(<XFile>[previewFile]);
+    }
   }
 
   bool _isRecordedVoiceAttachment(XFile file) {
@@ -689,13 +772,9 @@ class _ChatScreenState extends State<ChatScreen> {
     if (!mounted) {
       return;
     }
-    setState(() {
-      if (outgoingIdsToRemove.isNotEmpty) {
-        _optimisticMessages.removeWhere(
-          (message) => outgoingIdsToRemove.contains(message.localId),
-        );
-      }
-    });
+    for (final outgoingId in outgoingIdsToRemove) {
+      await _sendQueue.remove(chatId, outgoingId);
+    }
     _selectionController.clear();
   }
 
@@ -735,6 +814,7 @@ class _ChatScreenState extends State<ChatScreen> {
         _isBootstrapping = false;
       });
 
+      unawaited(_sendQueue.restoreChat(resolvedChatId));
       _bindTimelineController(resolvedChatId);
       _bindRealtimeIndicators();
       unawaited(_restoreBootstrapUiState());
@@ -742,6 +822,9 @@ class _ChatScreenState extends State<ChatScreen> {
         unawaited(_loadChatDetails());
       }
       unawaited(_markChatAsRead());
+      if (_searchController.hasQuery) {
+        _scheduleServerSearch(_searchController.query, resolvedChatId);
+      }
     } catch (error) {
       _appStatusService.reportError(
         error,
@@ -775,10 +858,6 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _restoreBootstrapUiState() async {
-    await _runBootstrapTask(
-      _restoreReactionsIfNeeded,
-      label: 'восстановление реакций',
-    );
     await _runBootstrapTask(
       _restorePinnedMessageIfNeeded,
       label: 'восстановление закрепа',
@@ -875,9 +954,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (_selectedAttachments.any(
       (file) => _attachmentKindFromXFile(file) == _ChatAttachmentKind.audio,
     )) {
-      setState(() {
-        _selectedAttachments.clear();
-      });
+      _attachmentsController.clear();
     }
     if (_selectedAttachments.length >= _maxAttachments) {
       showAppSnackBar(
@@ -899,28 +976,23 @@ class _ChatScreenState extends State<ChatScreen> {
         return;
       }
 
-      setState(() {
-        final hadHeavyMedia = _selectedAttachments.any((f) {
-          final kind = _attachmentKindFromXFile(f);
-          return kind == _ChatAttachmentKind.video ||
-              kind == _ChatAttachmentKind.audio;
-        });
-        if (hadHeavyMedia) {
-          _selectedAttachments.clear();
-        }
-
-        final remaining = 6 - _selectedAttachments.length;
-        if (picked.length > remaining) {
-          _selectedAttachments.addAll(picked.take(remaining));
-          showAppSnackBar(
-            context,
-            'Можно добавить не более 6 фото.',
-            isError: true,
-          );
-        } else {
-          _selectedAttachments.addAll(picked);
-        }
+      final hadHeavyMedia = _selectedAttachments.any((f) {
+        final kind = _attachmentKindFromXFile(f);
+        return kind == _ChatAttachmentKind.video ||
+            kind == _ChatAttachmentKind.audio;
       });
+      if (hadHeavyMedia) {
+        _attachmentsController.clear();
+      }
+
+      final addedCount = _attachmentsController.addAll(picked);
+      if (picked.length > addedCount) {
+        showAppSnackBar(
+          context,
+          'Можно добавить не более 6 фото.',
+          isError: true,
+        );
+      }
     } catch (_) {
       if (!mounted) {
         return;
@@ -946,9 +1018,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (_selectedAttachments.any(
       (file) => _attachmentKindFromXFile(file) == _ChatAttachmentKind.audio,
     )) {
-      setState(() {
-        _selectedAttachments.clear();
-      });
+      _attachmentsController.clear();
     }
     try {
       final pickedVideo = widget.pickVideo != null
@@ -978,10 +1048,7 @@ class _ChatScreenState extends State<ChatScreen> {
         return;
       }
 
-      setState(() {
-        _selectedAttachments.clear();
-        _selectedAttachments.add(picked);
-      });
+      _attachmentsController.replaceAll(<XFile>[picked]);
     } catch (_) {
       if (!mounted) {
         return;
@@ -1013,9 +1080,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (_selectedAttachments.any(
       (file) => _attachmentKindFromXFile(file) == _ChatAttachmentKind.audio,
     )) {
-      setState(() {
-        _selectedAttachments.clear();
-      });
+      _attachmentsController.clear();
     }
     try {
       final result = await FilePicker.platform.pickFiles(
@@ -1034,15 +1099,10 @@ class _ChatScreenState extends State<ChatScreen> {
 
       if (pickedFiles.isEmpty) return;
 
-      setState(() {
-        final remaining = _maxAttachments - _selectedAttachments.length;
-        if (pickedFiles.length > remaining) {
-          _selectedAttachments.addAll(pickedFiles.take(remaining));
-          showAppSnackBar(context, 'Можно добавить не более 6 файлов.');
-        } else {
-          _selectedAttachments.addAll(pickedFiles);
-        }
-      });
+      final addedCount = _attachmentsController.addAll(pickedFiles);
+      if (pickedFiles.length > addedCount) {
+        showAppSnackBar(context, 'Можно добавить не более 6 файлов.');
+      }
     } catch (e) {
       debugPrint('Error picking file: $e');
       if (mounted) {
@@ -1148,7 +1208,7 @@ class _ChatScreenState extends State<ChatScreen> {
           _selectedForward != null ||
           _selectedForwardBatch != null ||
           _selectedEdit != null;
-      if (canSend && !_isSendingMessage) {
+      if (canSend) {
         if (_selectedEdit != null) {
           _saveEditedMessage();
         } else {
@@ -1234,9 +1294,7 @@ class _ChatScreenState extends State<ChatScreen> {
       });
     }
     if (_selectedAttachments.isNotEmpty) {
-      setState(() {
-        _selectedAttachments.clear();
-      });
+      _attachmentsController.clear();
     }
     try {
       await _recordingController.start();
@@ -1272,9 +1330,7 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
     _recordingController.discardPreview();
-    setState(() {
-      _selectedAttachments.remove(voiceAttachment);
-    });
+    _attachmentsController.remove(voiceAttachment);
   }
 
   Future<void> _rerecordVoiceAttachment() async {
@@ -1286,10 +1342,12 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _sendCurrentMessage() async {
-    if (_isSendingMessage) return; // Prevent double-send.
-
     final currentUserId = _currentUserId;
-    if (currentUserId == null || currentUserId.isEmpty) {
+    final chatId = _chatId;
+    if (currentUserId == null ||
+        currentUserId.isEmpty ||
+        chatId == null ||
+        chatId.isEmpty) {
       // Bootstrap still running — give the user visible feedback.
       if (mounted) {
         showAppSnackBar(
@@ -1315,11 +1373,6 @@ class _ChatScreenState extends State<ChatScreen> {
       forwardedText: _selectedForward?.text ?? '',
     );
     final replyTo = _selectedReply;
-    // Include millisecond epoch so IDs are unique across widget re-creations.
-    // Previously 'local-0' was reused when navigating away and back, causing
-    // the backend to deduplicate (200) and silently return old message content.
-    final localMessageId =
-        'local-${DateTime.now().millisecondsSinceEpoch}-${_localMessageCounter++}';
     if (messageText.isEmpty &&
         attachments.isEmpty &&
         forwardedAttachments.isEmpty) {
@@ -1331,38 +1384,21 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     _messageController.clear();
 
-    // ── Show the optimistic message IMMEDIATELY before any network I/O ──────
-    // Placing setState before _setTypingActive / _clearActiveDraft prevents
-    // a silent message loss: if either side-effect throws (e.g. WebSocket not
-    // yet ready), the user still sees their message and it will be retried.
-    final pendingMessage = _OutgoingMessage(
-      localId: localMessageId,
-      senderId: currentUserId,
-      text: messageText,
-      timestamp: DateTime.now(),
-      attachments: attachments,
-      forwardedAttachments: forwardedAttachments,
-      status: _OutgoingMessageStatus.pending,
-      replyTo: replyTo,
-      progress: attachments.isNotEmpty
-          ? const ChatSendProgress(
-              stage: ChatSendProgressStage.preparing,
-              completed: 0,
-              total: 1,
-            )
-          : const ChatSendProgress(
-              stage: ChatSendProgressStage.sending,
-              completed: 1,
-              total: 1,
-            ),
-    );
     setState(() {
-      _selectedAttachments.clear();
       _selectedEdit = null;
       _selectedReply = null;
       _selectedForward = null;
-      _optimisticMessages.insert(0, pendingMessage);
     });
+    _attachmentsController.clear();
+    await _sendQueue.enqueue(
+      chatId: chatId,
+      senderId: currentUserId,
+      text: messageText,
+      attachments: attachments,
+      forwardedAttachments: forwardedAttachments,
+      replyTo: replyTo,
+      expiresInSeconds: _autoDeleteSettings.option.ttl?.inSeconds,
+    );
 
     // Side-effects: fire-and-forget so they can't block or kill the send.
     unawaited(
@@ -1375,13 +1411,6 @@ class _ChatScreenState extends State<ChatScreen> {
         (e) => debugPrint('[chat] draft-clear error: $e'),
       ),
     );
-
-    setState(() => _isSendingMessage = true);
-    try {
-      await _sendOptimisticMessage(pendingMessage);
-    } finally {
-      if (mounted) setState(() => _isSendingMessage = false);
-    }
   }
 
   Future<void> _sendForwardBatch(
@@ -1401,12 +1430,12 @@ class _ChatScreenState extends State<ChatScreen> {
     final comment = commentText.trim();
     _messageController.clear();
     setState(() {
-      _selectedAttachments.clear();
       _selectedEdit = null;
       _selectedReply = null;
       _selectedForward = null;
       _selectedForwardBatch = null;
     });
+    _attachmentsController.clear();
     unawaited(
       _setTypingActive(false, force: true).catchError(
         (e) => debugPrint('[chat] typing-clear error: $e'),
@@ -1442,40 +1471,19 @@ class _ChatScreenState extends State<ChatScreen> {
     List<ChatAttachment> forwardedAttachments = const <ChatAttachment>[],
     ChatReplyReference? replyTo,
   }) async {
-    // Include millisecond epoch so IDs are unique across widget re-creations.
-    // Previously 'local-0' was reused when navigating away and back, causing
-    // the backend to deduplicate (200) and silently return old message content.
-    final localMessageId =
-        'local-${DateTime.now().millisecondsSinceEpoch}-${_localMessageCounter++}';
-    final pendingMessage = _OutgoingMessage(
-      localId: localMessageId,
-      senderId: senderId,
-      text: text,
-      timestamp: DateTime.now(),
-      attachments: attachments,
-      forwardedAttachments: forwardedAttachments,
-      status: _OutgoingMessageStatus.pending,
-      replyTo: replyTo,
-      progress: attachments.isNotEmpty
-          ? ChatSendProgress(
-              stage: ChatSendProgressStage.preparing,
-              completed: 0,
-              total: attachments.length,
-            )
-          : const ChatSendProgress(
-              stage: ChatSendProgressStage.sending,
-              completed: 1,
-              total: 1,
-            ),
-    );
-
-    if (!mounted) {
+    final chatId = _chatId;
+    if (!mounted || chatId == null || chatId.isEmpty) {
       return;
     }
-    setState(() {
-      _optimisticMessages.insert(0, pendingMessage);
-    });
-    await _sendOptimisticMessage(pendingMessage);
+    await _sendQueue.enqueue(
+      chatId: chatId,
+      senderId: senderId,
+      text: text,
+      attachments: attachments,
+      forwardedAttachments: forwardedAttachments,
+      replyTo: replyTo,
+      expiresInSeconds: _autoDeleteSettings.option.ttl?.inSeconds,
+    );
   }
 
   Future<void> _saveEditedMessage() async {
@@ -1512,9 +1520,9 @@ class _ChatScreenState extends State<ChatScreen> {
         return;
       }
       setState(() {
-        _selectedAttachments.clear();
         _selectedEdit = null;
       });
+      _attachmentsController.clear();
       _recordingController.discardPreview();
     } catch (_) {
       if (!mounted) {
@@ -1652,123 +1660,6 @@ class _ChatScreenState extends State<ChatScreen> {
       await _draftStore.clearDraft(key);
     }
     _lastPersistedDraftKey = _primaryDraftKey();
-  }
-
-  List<String> _reactionCandidateKeys() {
-    final keys = <String>[];
-    final resolvedChatId = _chatId;
-    if (resolvedChatId != null && resolvedChatId.isNotEmpty) {
-      keys.add(SharedPreferencesChatReactionStore.chatKey(resolvedChatId));
-    }
-    final widgetChatId = widget.chatId;
-    if (widgetChatId != null && widgetChatId.isNotEmpty) {
-      keys.add(SharedPreferencesChatReactionStore.chatKey(widgetChatId));
-    }
-    final otherUserId = widget.otherUserId;
-    if (otherUserId != null && otherUserId.isNotEmpty) {
-      keys.add(SharedPreferencesChatReactionStore.directUserKey(otherUserId));
-    }
-    return keys.toSet().toList();
-  }
-
-  String? _primaryReactionKey() {
-    final resolvedChatId = _chatId;
-    if (resolvedChatId != null && resolvedChatId.isNotEmpty) {
-      return SharedPreferencesChatReactionStore.chatKey(resolvedChatId);
-    }
-    final widgetChatId = widget.chatId;
-    if (widgetChatId != null && widgetChatId.isNotEmpty) {
-      return SharedPreferencesChatReactionStore.chatKey(widgetChatId);
-    }
-    final otherUserId = widget.otherUserId;
-    if (otherUserId != null && otherUserId.isNotEmpty) {
-      return SharedPreferencesChatReactionStore.directUserKey(otherUserId);
-    }
-    return null;
-  }
-
-  Future<void> _restoreReactionsIfNeeded() async {
-    final keys = _reactionCandidateKeys();
-    if (keys.isEmpty) {
-      return;
-    }
-
-    ChatReactionCatalogSnapshot? bestSnapshot;
-    String? bestKey;
-    for (final key in keys) {
-      final snapshot = await _reactionStore.getCatalog(key);
-      if (snapshot == null) {
-        continue;
-      }
-      if (bestSnapshot == null ||
-          snapshot.updatedAt.isAfter(bestSnapshot.updatedAt)) {
-        bestSnapshot = snapshot;
-        bestKey = key;
-      }
-    }
-
-    final preferredKey = _primaryReactionKey();
-    if (!mounted) {
-      return;
-    }
-    setState(() {
-      _messageReactions = bestSnapshot?.reactionsByMessage.map(
-            (messageId, entries) => MapEntry(
-              messageId,
-              List<ChatMessageReactionEntry>.from(entries),
-            ),
-          ) ??
-          <String, List<ChatMessageReactionEntry>>{};
-    });
-
-    _lastPersistedReactionKey = preferredKey ?? bestKey;
-    if (bestSnapshot != null &&
-        preferredKey != null &&
-        bestKey != null &&
-        preferredKey != bestKey) {
-      await _reactionStore.saveCatalog(preferredKey, bestSnapshot);
-      await _reactionStore.clearCatalog(bestKey);
-    }
-  }
-
-  Future<void> _persistReactions() async {
-    final reactionKey = _primaryReactionKey();
-    if (reactionKey == null) {
-      return;
-    }
-
-    final cleaned = _messageReactions.map(
-      (messageId, entries) => MapEntry(
-        messageId,
-        entries
-            .where(
-              (entry) =>
-                  entry.messageId.trim().isNotEmpty &&
-                  entry.userId.trim().isNotEmpty &&
-                  entry.emoji.trim().isNotEmpty,
-            )
-            .toList(),
-      ),
-    )..removeWhere((_, entries) => entries.isEmpty);
-
-    final previousKey = _lastPersistedReactionKey;
-    _lastPersistedReactionKey = reactionKey;
-
-    if (cleaned.isEmpty) {
-      await _reactionStore.clearCatalog(reactionKey);
-    } else {
-      await _reactionStore.saveCatalog(
-        reactionKey,
-        ChatReactionCatalogSnapshot(
-          updatedAt: DateTime.now(),
-          reactionsByMessage: cleaned,
-        ),
-      );
-    }
-
-    if (previousKey != null && previousKey != reactionKey) {
-      await _reactionStore.clearCatalog(previousKey);
-    }
   }
 
   List<String> _notificationSettingsCandidateKeys() {
@@ -2002,47 +1893,34 @@ class _ChatScreenState extends State<ChatScreen> {
     showAppSnackBar(context, message);
   }
 
-  String _currentReactionEmoji(String messageId) {
+  bool _hasCurrentUserReaction(ChatMessage message, String emoji) {
     final currentUserId = _currentUserId;
-    if (currentUserId == null || currentUserId.isEmpty) {
-      return '';
+    if (currentUserId == null ||
+        currentUserId.isEmpty ||
+        emoji.trim().isEmpty) {
+      return false;
     }
-    final entries = _messageReactions[messageId] ?? const [];
-    final currentReaction =
-        entries.cast<ChatMessageReactionEntry?>().firstWhere(
-              (entry) => entry?.userId == currentUserId,
-              orElse: () => null,
-            );
-    return currentReaction?.emoji ?? '';
+    return message.reactions.any(
+      (reaction) =>
+          reaction.emoji == emoji && reaction.userIds.contains(currentUserId),
+    );
   }
 
-  List<_ReactionGroup> _reactionGroupsForMessage(String messageId) {
-    final entries = _messageReactions[messageId] ?? const [];
-    if (entries.isEmpty) {
+  List<_ReactionGroup> _reactionGroupsForMessage(ChatMessage message) {
+    if (message.reactions.isEmpty) {
       return const <_ReactionGroup>[];
     }
 
     final currentUserId = _currentUserId;
-    final grouped = <String, _ReactionGroup>{};
-    for (final entry in entries) {
-      final existing = grouped[entry.emoji];
-      if (existing == null) {
-        grouped[entry.emoji] = _ReactionGroup(
-          emoji: entry.emoji,
-          count: 1,
-          isMine: currentUserId != null && entry.userId == currentUserId,
-        );
-        continue;
-      }
-      grouped[entry.emoji] = _ReactionGroup(
-        emoji: existing.emoji,
-        count: existing.count + 1,
-        isMine: existing.isMine ||
-            (currentUserId != null && entry.userId == currentUserId),
-      );
-    }
-
-    final groups = grouped.values.toList()
+    final groups = message.reactions
+        .map(
+          (reaction) => _ReactionGroup(
+            emoji: reaction.emoji,
+            count: reaction.count,
+            isMine: reaction.isMine(currentUserId),
+          ),
+        )
+        .toList()
       ..sort((left, right) => left.emoji.compareTo(right.emoji));
     return groups;
   }
@@ -2055,41 +1933,23 @@ class _ChatScreenState extends State<ChatScreen> {
         emoji.trim().isEmpty) {
       return;
     }
-
-    final currentEntries = List<ChatMessageReactionEntry>.from(
-        _messageReactions[message.id] ?? const []);
-    final currentIndex = currentEntries.indexWhere(
-      (entry) => entry.userId == currentUserId,
-    );
-
-    if (currentIndex >= 0 && currentEntries[currentIndex].emoji == emoji) {
-      currentEntries.removeAt(currentIndex);
-    } else {
-      final nextEntry = ChatMessageReactionEntry(
-        messageId: message.id,
-        emoji: emoji,
-        userId: currentUserId,
-        userName: 'Вы',
-        reactedAt: DateTime.now(),
-      );
-      if (currentIndex >= 0) {
-        currentEntries[currentIndex] = nextEntry;
-      } else {
-        currentEntries.add(nextEntry);
-      }
-    }
-
-    if (!mounted) {
+    final chatId = _chatId ?? widget.chatId;
+    if (chatId == null || chatId.trim().isEmpty) {
       return;
     }
-    setState(() {
-      if (currentEntries.isEmpty) {
-        _messageReactions.remove(message.id);
-      } else {
-        _messageReactions[message.id] = currentEntries;
+
+    try {
+      await _chatService.toggleMessageReaction(
+        chatId: chatId,
+        messageId: message.id,
+        emoji: emoji,
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
       }
-    });
-    await _persistReactions();
+      showAppSnackBar(context, 'Не удалось обновить реакцию.');
+    }
   }
 
   List<String> _pinCandidateKeys() {
@@ -2244,12 +2104,6 @@ class _ChatScreenState extends State<ChatScreen> {
         .firstWhere((message) => message != null, orElse: () => null);
 
     if (match == null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted || _pinnedMessage?.messageId != pinned.messageId) {
-          return;
-        }
-        unawaited(_clearPinnedMessage());
-      });
       return;
     }
 
@@ -2335,7 +2189,99 @@ class _ChatScreenState extends State<ChatScreen> {
           _typingUsers.remove(userId);
         }
       });
+      return;
     }
+
+    if (event.type == 'chat.draft.updated' &&
+        currentChatId != null &&
+        event.chatId == currentChatId &&
+        event.userId == _currentUserId) {
+      _handleRemoteDraftUpdate(event);
+      return;
+    }
+
+    if (event.type == 'chat.pin.updated' &&
+        currentChatId != null &&
+        event.chatId == currentChatId) {
+      _handleRemotePinUpdate(event);
+    }
+  }
+
+  void _handleRemotePinUpdate(CustomApiRealtimeEvent event) {
+    final pinKey = _primaryPinKey();
+    if (pinKey == null) {
+      return;
+    }
+
+    final rawPin = event.pin;
+    final snapshot =
+        rawPin == null ? null : ChatPinnedMessageSnapshot.fromJson(rawPin);
+    final pinStore = _pinStore;
+
+    if (snapshot == null || snapshot.messageId.trim().isEmpty) {
+      unawaited(
+        pinStore is HybridChatPinStore
+            ? pinStore.clearLocalPinnedMessage(pinKey)
+            : pinStore.clearPinnedMessage(pinKey),
+      );
+      setState(() {
+        _pinnedMessage = null;
+        _highlightedPinnedMessageId = null;
+      });
+      _lastPersistedPinKey = pinKey;
+      return;
+    }
+
+    unawaited(
+      pinStore is HybridChatPinStore
+          ? pinStore.saveLocalPinnedMessage(pinKey, snapshot)
+          : pinStore.savePinnedMessage(pinKey, snapshot),
+    );
+    setState(() {
+      _pinnedMessage = snapshot;
+    });
+    _lastPersistedPinKey = pinKey;
+  }
+
+  void _handleRemoteDraftUpdate(CustomApiRealtimeEvent event) {
+    final draftKey = _primaryDraftKey();
+    if (draftKey == null) {
+      return;
+    }
+
+    final rawDraft = event.draft;
+    final draft =
+        rawDraft == null ? null : ChatDraftSnapshot.fromJson(rawDraft);
+    final nextText = draft?.text ?? '';
+    final draftStore = _draftStore;
+    if (nextText.trim().isEmpty) {
+      unawaited(
+        draftStore is HybridChatDraftStore
+            ? draftStore.clearLocalDraft(draftKey)
+            : draftStore.clearDraft(draftKey),
+      );
+    } else {
+      unawaited(
+        draftStore is HybridChatDraftStore
+            ? draftStore.saveLocalDraft(draftKey, nextText)
+            : draftStore.saveDraft(draftKey, nextText),
+      );
+    }
+
+    if (_messageFocusNode.hasFocus ||
+        _selectedEdit != null ||
+        _selectedForward != null ||
+        _selectedForwardBatch != null) {
+      return;
+    }
+
+    _isApplyingDraft = true;
+    _messageController.value = TextEditingValue(
+      text: nextText,
+      selection: TextSelection.collapsed(offset: nextText.length),
+    );
+    _isApplyingDraft = false;
+    _lastPersistedDraftKey = draftKey;
   }
 
   void _ensureTypingDecayTimer() {
@@ -2443,9 +2389,9 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
-  Future<void> _focusPinnedMessage() async {
-    final pinned = _pinnedMessage;
-    if (pinned == null) {
+  Future<void> _focusMessageById(String messageId) async {
+    final normalizedMessageId = messageId.trim();
+    if (normalizedMessageId.isEmpty) {
       return;
     }
 
@@ -2453,9 +2399,10 @@ class _ChatScreenState extends State<ChatScreen> {
       _closeSearch();
     }
 
-    final visibleContext = _remoteMessageKeys[pinned.messageId]?.currentContext;
+    final visibleContext =
+        _remoteMessageKeys[normalizedMessageId]?.currentContext;
     if (visibleContext != null) {
-      _highlightPinnedMessage(pinned.messageId);
+      _highlightPinnedMessage(normalizedMessageId);
       await Scrollable.ensureVisible(
         visibleContext,
         duration: const Duration(milliseconds: 260),
@@ -2470,9 +2417,12 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     final messageIndex = _latestRemoteMessages.indexWhere(
-      (message) => message.id == pinned.messageId,
+      (message) => message.id == normalizedMessageId,
     );
     if (messageIndex == -1) {
+      if (mounted) {
+        showAppSnackBar(context, 'Исходное сообщение пока не загружено.');
+      }
       return;
     }
 
@@ -2496,9 +2446,9 @@ class _ChatScreenState extends State<ChatScreen> {
     if (!mounted) {
       return;
     }
-    _highlightPinnedMessage(pinned.messageId);
+    _highlightPinnedMessage(normalizedMessageId);
     final resolvedContext =
-        _remoteMessageKeys[pinned.messageId]?.currentContext;
+        _remoteMessageKeys[normalizedMessageId]?.currentContext;
     if (resolvedContext != null && resolvedContext.mounted) {
       await Scrollable.ensureVisible(
         resolvedContext,
@@ -2509,9 +2459,28 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  Future<void> _focusPinnedMessage() async {
+    final pinned = _pinnedMessage;
+    if (pinned == null) {
+      return;
+    }
+    await _focusMessageById(pinned.messageId);
+  }
+
   void _handleSearchChanged() {
     if (!mounted) {
       return;
+    }
+    final query = _searchController.query;
+    final chatId = _chatId;
+    if (query.isEmpty || chatId == null || chatId.isEmpty) {
+      _serverSearchDebounce?.cancel();
+      setState(_clearServerSearchState);
+      return;
+    }
+
+    if (_serverSearchAvailable) {
+      _scheduleServerSearch(query, chatId);
     }
     setState(() {});
   }
@@ -2531,9 +2500,16 @@ class _ChatScreenState extends State<ChatScreen> {
   int _searchMatchCount(
     List<ChatMessage> remoteMessages,
     List<_OutgoingMessage> optimisticMessages,
+    int? serverResultCount,
   ) {
     if (!_searchController.hasQuery) {
       return 0;
+    }
+    if (serverResultCount != null) {
+      return serverResultCount +
+          optimisticMessages
+              .where((message) => _messageMatchesSearch(message.text))
+              .length;
     }
     return remoteMessages
             .where((message) => _messageMatchesSearch(message.text))
@@ -2541,6 +2517,96 @@ class _ChatScreenState extends State<ChatScreen> {
         optimisticMessages
             .where((message) => _messageMatchesSearch(message.text))
             .length;
+  }
+
+  void _clearServerSearchState() {
+    _serverSearchResults = const <ChatMessageSearchResult>[];
+    _serverSearchQuery = '';
+    _serverSearchError = null;
+    _isServerSearchLoading = false;
+  }
+
+  void _scheduleServerSearch(String query, String chatId) {
+    if (!_serverSearchAvailable) {
+      return;
+    }
+    _serverSearchDebounce?.cancel();
+    final normalizedQuery = query.trim();
+    if (normalizedQuery.isEmpty || chatId.isEmpty) {
+      return;
+    }
+    if (_serverSearchQuery != normalizedQuery || _serverSearchError != null) {
+      _serverSearchQuery = normalizedQuery;
+      _serverSearchResults = const <ChatMessageSearchResult>[];
+      _serverSearchError = null;
+    }
+    _isServerSearchLoading = true;
+    _serverSearchDebounce = Timer(const Duration(milliseconds: 250), () {
+      unawaited(_runServerSearch(query: normalizedQuery, chatId: chatId));
+    });
+  }
+
+  Future<void> _runServerSearch({
+    required String query,
+    required String chatId,
+  }) async {
+    try {
+      final results = await _chatService.searchMessages(
+        query: query,
+        chatId: chatId,
+        limit: 100,
+      );
+      if (!mounted || _searchController.query != query || _chatId != chatId) {
+        return;
+      }
+      setState(() {
+        _serverSearchQuery = query;
+        _serverSearchResults = results;
+        _serverSearchError = null;
+        _isServerSearchLoading = false;
+      });
+    } on UnsupportedError {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _serverSearchAvailable = false;
+        _clearServerSearchState();
+      });
+    } catch (error) {
+      if (!mounted || _searchController.query != query || _chatId != chatId) {
+        return;
+      }
+      setState(() {
+        _serverSearchQuery = query;
+        _serverSearchError = error;
+        _isServerSearchLoading = false;
+      });
+    }
+  }
+
+  bool get _hasCurrentServerSearchResult {
+    return _searchController.hasQuery &&
+        _serverSearchAvailable &&
+        _serverSearchQuery == _searchController.query &&
+        !_isServerSearchLoading &&
+        _serverSearchError == null;
+  }
+
+  String _searchStatusLabel(int matchCount) {
+    if (_isServerSearchLoading &&
+        _serverSearchQuery == _searchController.query &&
+        matchCount == 0) {
+      return 'Ищем сообщения...';
+    }
+    if (_serverSearchError != null &&
+        _serverSearchQuery == _searchController.query &&
+        matchCount == 0) {
+      return 'Поиск временно локальный';
+    }
+    return matchCount == 1
+        ? 'Найдено 1 сообщение'
+        : 'Найдено $matchCount сообщений';
   }
 
   void _handleMessagesScroll() {
@@ -2605,88 +2671,6 @@ class _ChatScreenState extends State<ChatScreen> {
         alignment: 0.12,
       );
     });
-  }
-
-  Future<void> _sendOptimisticMessage(_OutgoingMessage message) async {
-    try {
-      final chatId = _chatId;
-      if (chatId == null || chatId.isEmpty) {
-        throw StateError('Чат недоступен');
-      }
-      await _chatService.sendMessageToChat(
-        chatId: chatId,
-        text: message.text,
-        attachments: message.attachments,
-        forwardedAttachments: message.forwardedAttachments,
-        replyTo: message.replyTo,
-        clientMessageId: message.localId,
-        expiresInSeconds: _autoDeleteSettings.option.ttl?.inSeconds,
-        onProgress: (progress) {
-          if (!mounted) {
-            return;
-          }
-          setState(() {
-            final currentIndex = _optimisticMessages.indexWhere(
-              (item) => item.localId == message.localId,
-            );
-            if (currentIndex == -1) {
-              return;
-            }
-            _optimisticMessages[currentIndex] =
-                _optimisticMessages[currentIndex].copyWith(progress: progress);
-          });
-        },
-      );
-      if (!mounted) {
-        return;
-      }
-      if (message.attachments.any(_isRecordedVoiceAttachment)) {
-        _recordingController.completeSend();
-      }
-      setState(() {
-        _replaceOptimisticMessage(
-          message.localId,
-          message.copyWith(status: _OutgoingMessageStatus.sent),
-        );
-      });
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
-      final failureMessage = _messageActionErrorText(
-        error,
-        'Не удалось отправить сообщение.',
-      );
-      if (message.attachments.any(_isRecordedVoiceAttachment)) {
-        _recordingController.markSendFailed(failureMessage);
-      }
-      setState(() {
-        _replaceOptimisticMessage(
-          message.localId,
-          message.copyWith(
-            status: _OutgoingMessageStatus.failed,
-            errorText: failureMessage,
-          ),
-        );
-        if (failureMessage.toLowerCase().contains('заблокирован') &&
-            _isCurrentDirectChat) {
-          _isDirectChatBlocked = true;
-          _directChatBlockedLabel ??=
-              _participantLabelForUserId(_currentDirectPeerUserId ?? '');
-        }
-      });
-      showAppSnackBar(context, failureMessage, isError: true);
-    }
-  }
-
-  void _replaceOptimisticMessage(String localId, _OutgoingMessage nextMessage) {
-    final index = _optimisticMessages.indexWhere(
-      (message) => message.localId == localId,
-    );
-    if (index == -1) {
-      return;
-    }
-    _optimisticMessages[index] = nextMessage;
   }
 
   bool _matchesRemoteMessage(
@@ -3088,7 +3072,11 @@ class _ChatScreenState extends State<ChatScreen> {
             ],
           ),
           const SizedBox(height: 8),
-          _VoicePlayerWidget(path: voiceFile.path, isMe: true),
+          _VoicePlayerWidget(
+            path: voiceFile.path,
+            isMe: true,
+            waveform: _recordingController.previewWaveform,
+          ),
           const SizedBox(height: 4),
           Text(
             helperText,
@@ -3228,20 +3216,53 @@ class _ChatScreenState extends State<ChatScreen> {
         final remoteMessages = snapshot.data ?? const <ChatMessage>[];
         _latestRemoteMessages = remoteMessages;
         _schedulePinnedSync(remoteMessages);
+        final currentChatId = _chatId;
+        if (currentChatId != null && currentChatId.isNotEmpty) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) {
+              return;
+            }
+            unawaited(
+              _sendQueue.confirmRemoteMessages(currentChatId, remoteMessages),
+            );
+          });
+        }
         final optimisticMessages = _optimisticMessages
             .where((message) => !_matchesRemoteMessage(message, remoteMessages))
             .toList();
         final hasActiveSearch = _searchController.hasQuery;
+        final hasServerSearchResult = _hasCurrentServerSearchResult;
+        final serverSearchResultIds = hasServerSearchResult
+            ? _serverSearchResults
+                .map((result) => result.messageId)
+                .where((messageId) => messageId.isNotEmpty)
+                .toSet()
+            : const <String>{};
         final filteredRemoteMessages = hasActiveSearch
-            ? remoteMessages
-                .where((message) => _messageMatchesSearch(message.text))
-                .toList()
+            ? hasServerSearchResult
+                ? remoteMessages
+                    .where(
+                        (message) => serverSearchResultIds.contains(message.id))
+                    .toList()
+                : remoteMessages
+                    .where((message) => _messageMatchesSearch(message.text))
+                    .toList()
             : remoteMessages;
         final filteredOptimisticMessages = hasActiveSearch
             ? optimisticMessages
                 .where((message) => _messageMatchesSearch(message.text))
                 .toList()
             : optimisticMessages;
+        final loadedServerSearchIds = hasServerSearchResult
+            ? filteredRemoteMessages.map((message) => message.id).toSet()
+            : const <String>{};
+        final serverOnlySearchResults = hasServerSearchResult
+            ? _serverSearchResults
+                .where(
+                  (result) => !loadedServerSearchIds.contains(result.messageId),
+                )
+                .toList(growable: false)
+            : const <ChatMessageSearchResult>[];
         final hasUnreadIncoming = !hasActiveSearch &&
             remoteMessages.any(
               (message) =>
@@ -3257,7 +3278,8 @@ class _ChatScreenState extends State<ChatScreen> {
         }
 
         if (filteredRemoteMessages.isEmpty &&
-            filteredOptimisticMessages.isEmpty) {
+            filteredOptimisticMessages.isEmpty &&
+            serverOnlySearchResults.isEmpty) {
           if (hasActiveSearch) {
             return Center(
               child: GlassPanel(
@@ -3304,7 +3326,9 @@ class _ChatScreenState extends State<ChatScreen> {
         final searchMatchCount = _searchMatchCount(
           filteredRemoteMessages,
           filteredOptimisticMessages,
+          hasServerSearchResult ? _serverSearchResults.length : null,
         );
+        final searchStatusLabel = _searchStatusLabel(searchMatchCount);
 
         return Stack(
           children: [
@@ -3319,6 +3343,7 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
               itemCount: filteredRemoteMessages.length +
                   filteredOptimisticMessages.length +
+                  serverOnlySearchResults.length +
                   (hasUnreadDivider ? 1 : 0),
               itemBuilder: (context, index) {
                 if (index < filteredOptimisticMessages.length) {
@@ -3354,6 +3379,15 @@ class _ChatScreenState extends State<ChatScreen> {
                   }
                 }
 
+                final remoteItemCount =
+                    filteredRemoteMessages.length + (hasUnreadDivider ? 1 : 0);
+                if (remoteIndex >= remoteItemCount) {
+                  final resultIndex = remoteIndex - remoteItemCount;
+                  return _buildServerSearchResultTile(
+                    serverOnlySearchResults[resultIndex],
+                  );
+                }
+
                 final remoteMessage = filteredRemoteMessages[
                     remoteIndex - (hasUnreadDivider ? 1 : 0)];
                 final isMe = remoteMessage.senderId == _currentUserId;
@@ -3386,9 +3420,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     padding:
                         const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                     child: Text(
-                      searchMatchCount == 1
-                          ? 'Найдено 1 сообщение'
-                          : 'Найдено $searchMatchCount сообщений',
+                      searchStatusLabel,
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                             fontWeight: FontWeight.w600,
                           ),
@@ -3638,9 +3670,7 @@ class _ChatScreenState extends State<ChatScreen> {
                             )) {
                               _recordingController.discardPreview();
                             }
-                            setState(() {
-                              _selectedAttachments.clear();
-                            });
+                            _attachmentsController.clear();
                           },
                           child: const Text('Очистить'),
                         ),
@@ -3716,9 +3746,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                     )) {
                                       _recordingController.discardPreview();
                                     }
-                                    setState(() {
-                                      _selectedAttachments.removeAt(index);
-                                    });
+                                    _attachmentsController.removeAt(index);
                                   },
                                   icon: const Icon(Icons.close, size: 16),
                                   visualDensity: VisualDensity.compact,
@@ -3892,20 +3920,10 @@ class _ChatScreenState extends State<ChatScreen> {
   }) {
     if (canSend) {
       return IconButton.filled(
-        // Disabled while a send is in flight to prevent double-send.
-        onPressed: _isSendingMessage
-            ? null
-            : (_selectedEdit != null
-                ? _saveEditedMessage
-                : _sendCurrentMessage),
+        onPressed:
+            _selectedEdit != null ? _saveEditedMessage : _sendCurrentMessage,
         tooltip: _selectedEdit != null ? 'Сохранить изменения' : 'Отправить',
-        icon: _isSendingMessage
-            ? const SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            : Icon(_selectedEdit != null ? Icons.check : Icons.send),
+        icon: Icon(_selectedEdit != null ? Icons.check : Icons.send),
       );
     }
 
@@ -3952,12 +3970,46 @@ class _ChatScreenState extends State<ChatScreen> {
       segments.add('Автоудаление: $expiresLabel');
     }
     if (isMe && !widget.isGroup && isLatestOwnDirectMessage) {
-      segments.add(message.isRead ? 'Просмотрено' : 'Доставлено');
+      segments.add(_receiptLabel(message));
     }
     if (segments.isEmpty) {
       return null;
     }
     return segments.join(' · ');
+  }
+
+  String _receiptLabel(ChatMessage message) {
+    if (_messageReadByAnyRecipient(message)) {
+      return 'Просмотрено';
+    }
+    if (_messageDeliveredToAnyRecipient(message)) {
+      return 'Доставлено';
+    }
+    return 'Отправлено';
+  }
+
+  bool _messageDeliveredToAnyRecipient(ChatMessage message) {
+    return _messageRecipientIds(message).any(message.deliveredTo.contains);
+  }
+
+  bool _messageReadByAnyRecipient(ChatMessage message) {
+    return _messageRecipientIds(message).any(message.readBy.contains) ||
+        (message.readBy.isEmpty && message.isRead);
+  }
+
+  Set<String> _messageRecipientIds(ChatMessage message) {
+    final currentUserId = _currentUserId;
+    final recipients = message.participants
+        .map((value) => value.trim())
+        .where((value) => value.isNotEmpty && value != currentUserId)
+        .toSet();
+    if (recipients.isNotEmpty) {
+      return recipients;
+    }
+    return message.readBy
+        .followedBy(message.deliveredTo)
+        .where((value) => value.trim().isNotEmpty && value != currentUserId)
+        .toSet();
   }
 
   String? _expiresLabel(DateTime? expiresAt) {
@@ -4023,18 +4075,104 @@ class _ChatScreenState extends State<ChatScreen> {
         text: message.text,
         highlightQuery: _searchController.query,
         timeLabel: DateFormat.Hm('ru').format(message.timestamp),
-        isRead: message.isRead,
+        isRead: isMe && _messageReadByAnyRecipient(message),
+        isDelivered: isMe && _messageDeliveredToAnyRecipient(message),
         remoteAttachments: message.attachments,
         replyTo: message.replyTo,
+        onReplyTap: message.replyTo == null
+            ? null
+            : () => unawaited(_focusMessageById(message.replyTo!.messageId)),
         isPinned: _pinnedMessage?.messageId == message.id,
         isHighlighted: _highlightedPinnedMessageId == message.id,
         footerLabel: footerLabel,
-        reactionGroups: _reactionGroupsForMessage(message.id),
+        reactionGroups: _reactionGroupsForMessage(message),
         onReactionTap: (emoji) => _toggleReactionForMessage(message, emoji),
         showSelectionMarker: _isSelectionMode,
         isSelected: _selectionController.isRemoteSelected(message.id),
         onOpenRemoteAttachment: (attachments, attachment) =>
             _openRemoteAttachmentPreview(message, attachments, attachment),
+      ),
+    );
+  }
+
+  Widget _buildServerSearchResultTile(ChatMessageSearchResult result) {
+    final theme = Theme.of(context);
+    final isMe = result.senderId == _currentUserId;
+    final senderLabel = isMe
+        ? 'Вы'
+        : result.senderName.trim().isEmpty
+            ? 'Участник'
+            : result.senderName.trim();
+    final snippet = result.snippet.trim().isNotEmpty
+        ? result.snippet.trim()
+        : result.text.trim();
+    final text = snippet.isEmpty ? 'Сообщение без текста' : snippet;
+    final hasDate = result.matchedAt.millisecondsSinceEpoch > 0;
+    final timeLabel = hasDate
+        ? DateFormat('dd.MM HH:mm', 'ru').format(result.matchedAt.toLocal())
+        : '';
+    final background = isMe
+        ? theme.colorScheme.primaryContainer
+        : theme.colorScheme.surfaceContainerHighest;
+    final foreground = isMe
+        ? theme.colorScheme.onPrimaryContainer
+        : theme.colorScheme.onSurfaceVariant;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+      child: Align(
+        alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 520),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: background,
+              borderRadius: BorderRadius.circular(18),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment:
+                    isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Flexible(
+                        child: Text(
+                          senderLabel,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.labelMedium?.copyWith(
+                            color: foreground.withValues(alpha: 0.82),
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      if (timeLabel.isNotEmpty) ...[
+                        const SizedBox(width: 8),
+                        Text(
+                          timeLabel,
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: foreground.withValues(alpha: 0.68),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  _HighlightedMessageText(
+                    text: text,
+                    query: _searchController.query,
+                    color: foreground,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -4086,9 +4224,15 @@ class _ChatScreenState extends State<ChatScreen> {
                 highlightQuery: _searchController.query,
                 timeLabel: timeLabel,
                 isRead: false,
+                isDelivered: false,
                 remoteAttachments: message.forwardedAttachments,
                 localAttachments: message.attachments,
                 replyTo: message.replyTo,
+                onReplyTap: message.replyTo == null
+                    ? null
+                    : () => unawaited(
+                          _focusMessageById(message.replyTo!.messageId),
+                        ),
                 isPinned: false,
                 isHighlighted: false,
                 reactionGroups: const <_ReactionGroup>[],
@@ -4125,11 +4269,8 @@ class _ChatScreenState extends State<ChatScreen> {
                 if (message.status == _OutgoingMessageStatus.failed) ...[
                   const SizedBox(width: 6),
                   TextButton(
-                    onPressed: () => _sendOptimisticMessage(
-                      message.copyWith(
-                        status: _OutgoingMessageStatus.pending,
-                        errorText: null,
-                      ),
+                    onPressed: () => unawaited(
+                      _sendQueue.retry(message.chatId, message.localId),
                     ),
                     child: const Text('Повторить'),
                   ),
@@ -4538,7 +4679,6 @@ class _ChatScreenState extends State<ChatScreen> {
         return;
       }
       setState(() {
-        _selectedAttachments.clear();
         _selectedEdit = null;
         _selectedReply = null;
         _selectedForward = null;
@@ -4546,6 +4686,7 @@ class _ChatScreenState extends State<ChatScreen> {
         _isDirectChatBlocked = _isCurrentDirectChat;
         _directChatBlockedLabel = senderLabel;
       });
+      _attachmentsController.clear();
       showAppSnackBar(
         context,
         '$senderLabel заблокирован. Отправка в этом личном чате отключена.',
@@ -4648,7 +4789,6 @@ class _ChatScreenState extends State<ChatScreen> {
         _isCurrentDirectChat &&
         (_currentDirectPeerUserId == null ||
             _currentDirectPeerUserId == message.senderId);
-    final currentReaction = _currentReactionEmoji(message.id);
     final useDesktopMenu =
         _useDesktopMessageContextMenu() && anchorPosition != null;
     _MessageSheetSelection? selection;
@@ -4748,7 +4888,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         .map(
                           (emoji) => ChoiceChip(
                             label: Text(emoji),
-                            selected: currentReaction == emoji,
+                            selected: _hasCurrentUserReaction(message, emoji),
                             onSelected: (_) => Navigator.of(context).pop(
                               _MessageSheetSelection(
                                 action: _MessageAction.react,
@@ -5022,18 +5162,10 @@ class _ChatScreenState extends State<ChatScreen> {
       case _MessageAction.block:
         return;
       case _MessageAction.retry:
-        await _sendOptimisticMessage(
-          message.copyWith(
-            status: _OutgoingMessageStatus.pending,
-            errorText: null,
-          ),
-        );
+        await _sendQueue.retry(message.chatId, message.localId);
         return;
       case _MessageAction.delete:
-        setState(() {
-          _optimisticMessages
-              .removeWhere((item) => item.localId == message.localId);
-        });
+        await _sendQueue.remove(message.chatId, message.localId);
         return;
     }
   }
@@ -5121,13 +5253,13 @@ class _ChatScreenState extends State<ChatScreen> {
       _selectedReply = null;
       _selectedForward = null;
       _selectedForwardBatch = null;
-      _selectedAttachments.clear();
       _selectedEdit = _EditDraft(
         messageId: message.id,
         originalText: message.text,
         hasAttachments: message.attachments.isNotEmpty,
       );
     });
+    _attachmentsController.clear();
   }
 
   bool _useDesktopMessageContextMenu() {
@@ -6915,6 +7047,7 @@ class _ChatBubble extends StatelessWidget {
     required this.text,
     required this.timeLabel,
     required this.isRead,
+    required this.isDelivered,
     required this.isPinned,
     required this.isHighlighted,
     this.highlightQuery = '',
@@ -6922,6 +7055,7 @@ class _ChatBubble extends StatelessWidget {
     this.remoteAttachments = const <ChatAttachment>[],
     this.localAttachments = const <XFile>[],
     this.replyTo,
+    this.onReplyTap,
     this.reactionGroups = const <_ReactionGroup>[],
     this.onReactionTap,
     this.footerLabel,
@@ -6935,6 +7069,7 @@ class _ChatBubble extends StatelessWidget {
   final String text;
   final String timeLabel;
   final bool isRead;
+  final bool isDelivered;
   final bool isPinned;
   final bool isHighlighted;
   final String highlightQuery;
@@ -6942,6 +7077,7 @@ class _ChatBubble extends StatelessWidget {
   final List<ChatAttachment> remoteAttachments;
   final List<XFile> localAttachments;
   final ChatReplyReference? replyTo;
+  final VoidCallback? onReplyTap;
   final List<_ReactionGroup> reactionGroups;
   final ValueChanged<String>? onReactionTap;
   final String? footerLabel;
@@ -7112,6 +7248,7 @@ class _ChatBubble extends StatelessWidget {
                         _ReplyQuoteCard(
                           reply: replyTo!,
                           isMe: isMe,
+                          onTap: onReplyTap,
                         ),
                         const SizedBox(height: 8),
                       ],
@@ -7170,7 +7307,9 @@ class _ChatBubble extends StatelessWidget {
                           if (isMe) ...[
                             const SizedBox(width: 4),
                             Icon(
-                              isRead ? Icons.done_all : Icons.done,
+                              isRead || isDelivered
+                                  ? Icons.done_all
+                                  : Icons.done,
                               size: 14,
                               color: isRead
                                   ? scheme.tertiary
@@ -7220,6 +7359,7 @@ class _ChatBubble extends StatelessWidget {
               initialDuration: attachment.durationMs == null
                   ? null
                   : Duration(milliseconds: attachment.durationMs!),
+              waveform: attachment.waveform,
               semanticLabel: attachment.isVoiceNote
                   ? 'Голосовое сообщение'
                   : 'Аудиовложение',
@@ -7325,10 +7465,12 @@ class _ReplyQuoteCard extends StatelessWidget {
   const _ReplyQuoteCard({
     required this.reply,
     required this.isMe,
+    this.onTap,
   });
 
   final ChatReplyReference reply;
   final bool isMe;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -7339,15 +7481,16 @@ class _ReplyQuoteCard extends StatelessWidget {
         ? scheme.onPrimary.withValues(alpha: 0.84)
         : scheme.onSurfaceVariant;
     final accentColor = isMe ? scheme.onPrimary : scheme.primary;
+    final borderRadius = BorderRadius.circular(12);
 
-    return Container(
+    final content = Container(
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
       decoration: BoxDecoration(
         color: isMe
             ? Colors.white.withValues(alpha: 0.16)
             : scheme.primary.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: borderRadius,
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -7391,6 +7534,20 @@ class _ReplyQuoteCard extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+
+    if (onTap == null) {
+      return content;
+    }
+
+    return Semantics(
+      button: true,
+      label: 'Перейти к исходному сообщению',
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: borderRadius,
+        child: content,
       ),
     );
   }

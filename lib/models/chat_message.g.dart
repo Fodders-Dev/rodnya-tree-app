@@ -39,13 +39,16 @@ class ChatMessageAdapter extends TypeAdapter<ChatMessage> {
             participants: (fields[8] as List).cast<String>(),
             senderName: fields[9] as String?,
           ).attachments,
+      reactions: ChatMessageReactionSummary.listFromDynamic(fields[11]),
+      deliveredTo: (fields[12] as List?)?.cast<String>() ?? const <String>[],
+      readBy: (fields[13] as List?)?.cast<String>() ?? const <String>[],
     );
   }
 
   @override
   void write(BinaryWriter writer, ChatMessage obj) {
     writer
-      ..writeByte(11)
+      ..writeByte(14)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -67,7 +70,13 @@ class ChatMessageAdapter extends TypeAdapter<ChatMessage> {
       ..writeByte(9)
       ..write(obj.senderName)
       ..writeByte(10)
-      ..write(obj.attachments.map((attachment) => attachment.toMap()).toList());
+      ..write(obj.attachments.map((attachment) => attachment.toMap()).toList())
+      ..writeByte(11)
+      ..write(obj.reactions.map((reaction) => reaction.toMap()).toList())
+      ..writeByte(12)
+      ..write(obj.deliveredTo)
+      ..writeByte(13)
+      ..write(obj.readBy);
   }
 
   @override

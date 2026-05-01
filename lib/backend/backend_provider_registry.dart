@@ -4,7 +4,9 @@ import 'backend_provider_config.dart';
 import 'interfaces/auth_service_interface.dart';
 import 'interfaces/call_service_interface.dart';
 import 'interfaces/chat_service_interface.dart';
+import 'interfaces/circle_service_interface.dart';
 import 'interfaces/family_tree_service_interface.dart';
+import 'interfaces/identity_service_interface.dart';
 import 'interfaces/notification_service_interface.dart';
 import 'interfaces/post_service_interface.dart';
 import 'interfaces/profile_service_interface.dart';
@@ -42,6 +44,18 @@ class BackendProviderRegistry {
     if (!getIt.isRegistered<ChatServiceInterface>()) {
       getIt.registerSingleton<ChatServiceInterface>(
         const PendingBackendChatService(),
+      );
+    }
+
+    if (!getIt.isRegistered<CircleServiceInterface>()) {
+      getIt.registerSingleton<CircleServiceInterface>(
+        const PendingBackendCircleService(),
+      );
+    }
+
+    if (!getIt.isRegistered<IdentityServiceInterface>()) {
+      getIt.registerSingleton<IdentityServiceInterface>(
+        const PendingBackendIdentityService(),
       );
     }
 

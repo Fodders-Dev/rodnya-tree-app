@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -12,6 +13,7 @@ import 'package:rodnya/models/chat_details.dart';
 import 'package:rodnya/models/chat_message.dart';
 import 'package:rodnya/models/chat_send_progress.dart';
 import 'package:rodnya/backend/interfaces/storage_service_interface.dart';
+import 'package:rodnya/services/chat_message_cache.dart';
 import 'package:rodnya/services/custom_api_auth_service.dart';
 import 'package:rodnya/services/custom_api_chat_service.dart';
 import 'package:rodnya/services/custom_api_realtime_service.dart';
@@ -274,6 +276,488 @@ void main() {
     expect(sentBody?['clientMessageId'], 'local-42');
     expect(sentBody?['expiresInSeconds'], 3600);
   });
+
+  test('CustomApiChatService fetches paged message history', () async {
+    Uri? requestedUri;
+    final client = MockClient((request) async {
+      if (request.url.path == '/v1/chats/chat-1/messages' &&
+          request.method == 'GET') {
+        requestedUri = request.url;
+        return http.Response(
+          jsonEncode({
+            'messages': [
+              {
+                'id': 'm-2',
+                'chatId': 'chat-1',
+                'senderId': 'user-2',
+                'text': 'Вторая страница',
+                'timestamp': '2026-04-30T12:00:00.000Z',
+                'isRead': false,
+                'participants': ['user-1', 'user-2'],
+                'senderName': 'Собеседник',
+              },
+            ],
+            'hasMore': true,
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+
+      return http.Response('{"message":"not found"}', 404);
+    });
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'custom_api_session_v1',
+      jsonEncode({
+        'accessToken': 'access-token',
+        'refreshToken': 'refresh-token',
+        'userId': 'user-1',
+        'email': 'dev@rodnya.app',
+        'displayName': 'Dev User',
+        'providerIds': ['password'],
+        'isProfileComplete': true,
+        'missingFields': const [],
+      }),
+    );
+
+    final authService = await CustomApiAuthService.create(
+      httpClient: client,
+      preferences: await SharedPreferences.getInstance(),
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      invitationService: InvitationService(),
+    );
+
+    final chatService = CustomApiChatService(
+      authService: authService,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      httpClient: client,
+    );
+
+    final page = await chatService.fetchMessagesPage(
+      'chat-1',
+      limit: 25,
+      beforeId: 'm-3',
+    );
+
+    expect(requestedUri?.queryParameters['limit'], '25');
+    expect(requestedUri?.queryParameters['before'], 'm-3');
+    expect(requestedUri?.queryParameters.containsKey('after'), isFalse);
+    expect(page.messages, hasLength(1));
+    expect(page.messages.first.id, 'm-2');
+    expect(page.hasMore, true);
+  });
+
+  test('CustomApiChatService searches messages through backend', () async {
+    Uri? searchUri;
+    final client = MockClient((request) async {
+      if (request.url.path == '/v1/chats/search' && request.method == 'GET') {
+        searchUri = request.url;
+        return http.Response(
+          jsonEncode({
+            'results': [
+              {
+                'messageId': 'message-1',
+                'chatId': 'chat-1',
+                'senderId': 'user-2',
+                'senderName': 'Андрей',
+                'text': 'Нашли семейное фото',
+                'snippet': 'семейное фото',
+                'matchedAt': '2026-04-30T12:00:00.000Z',
+              },
+            ],
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+
+      return http.Response('{"message":"not found"}', 404);
+    });
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'custom_api_session_v1',
+      jsonEncode({
+        'accessToken': 'access-token',
+        'refreshToken': 'refresh-token',
+        'userId': 'user-1',
+        'email': 'dev@rodnya.app',
+        'displayName': 'Dev User',
+        'providerIds': ['password'],
+        'isProfileComplete': true,
+        'missingFields': const [],
+      }),
+    );
+
+    final authService = await CustomApiAuthService.create(
+      httpClient: client,
+      preferences: prefs,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      invitationService: InvitationService(),
+    );
+
+    final chatService = CustomApiChatService(
+      authService: authService,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      httpClient: client,
+    );
+
+    final results = await chatService.searchMessages(
+      query: ' фото ',
+      chatId: 'chat-1',
+      limit: 20,
+    );
+
+    expect(searchUri?.queryParameters['q'], 'фото');
+    expect(searchUri?.queryParameters['chatId'], 'chat-1');
+    expect(searchUri?.queryParameters['limit'], '20');
+    expect(results, hasLength(1));
+    expect(results.single.messageId, 'message-1');
+    expect(results.single.snippet, 'семейное фото');
+  });
+
+  test('CustomApiChatService syncs chat drafts through backend', () async {
+    final requests = <http.Request>[];
+    final client = MockClient((request) async {
+      requests.add(request);
+      if (request.url.path == '/v1/chats/drafts' && request.method == 'GET') {
+        return http.Response(
+          jsonEncode({
+            'drafts': [
+              {
+                'chatId': 'chat-1',
+                'text': 'Черновик со второго устройства',
+                'updatedAt': '2026-04-30T12:00:00.000Z',
+              },
+            ],
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      if (request.url.path == '/v1/chats/chat-1/draft' &&
+          request.method == 'GET') {
+        return http.Response(
+          jsonEncode({
+            'draft': {
+              'chatId': 'chat-1',
+              'text': 'Черновик чата',
+              'updatedAt': '2026-04-30T12:05:00.000Z',
+            },
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      if (request.url.path == '/v1/chats/chat-1/draft' &&
+          request.method == 'PUT') {
+        return http.Response(
+          jsonEncode({
+            'draft': {
+              'chatId': 'chat-1',
+              'text': jsonDecode(request.body)['text'],
+              'updatedAt': '2026-04-30T12:06:00.000Z',
+            },
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      if (request.url.path == '/v1/chats/chat-1/draft' &&
+          request.method == 'DELETE') {
+        return http.Response(
+          jsonEncode({'draft': null}),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+
+      return http.Response('{"message":"not found"}', 404);
+    });
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'custom_api_session_v1',
+      jsonEncode({
+        'accessToken': 'access-token',
+        'refreshToken': 'refresh-token',
+        'userId': 'user-1',
+        'email': 'dev@rodnya.app',
+        'displayName': 'Dev User',
+        'providerIds': ['password'],
+        'isProfileComplete': true,
+        'missingFields': const [],
+      }),
+    );
+
+    final authService = await CustomApiAuthService.create(
+      httpClient: client,
+      preferences: prefs,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      invitationService: InvitationService(),
+    );
+
+    final chatService = CustomApiChatService(
+      authService: authService,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      httpClient: client,
+    );
+
+    final draft = await chatService.getChatDraft('chat-1');
+    expect(draft?.text, 'Черновик чата');
+
+    final drafts = await chatService.getChatDrafts();
+    expect(drafts['chat:chat-1']?.text, 'Черновик со второго устройства');
+
+    await chatService.saveChatDraft(chatId: 'chat-1', text: 'Новый черновик');
+    await chatService.clearChatDraft('chat-1');
+
+    final putRequest = requests.firstWhere((item) => item.method == 'PUT');
+    expect(jsonDecode(putRequest.body)['text'], 'Новый черновик');
+    expect(requests.any((item) => item.method == 'DELETE'), isTrue);
+  });
+
+  test('CustomApiChatService syncs pinned message through backend', () async {
+    final requests = <http.Request>[];
+    final client = MockClient((request) async {
+      requests.add(request);
+      if (request.url.path == '/v1/chats/chat-1/pin' &&
+          request.method == 'GET') {
+        return http.Response(
+          jsonEncode({
+            'pin': {
+              'chatId': 'chat-1',
+              'messageId': 'm-1',
+              'senderId': 'user-2',
+              'senderName': 'Анна',
+              'text': 'Проверить документы',
+              'attachmentCount': 0,
+              'pinnedAt': '2026-04-30T12:00:00.000Z',
+            },
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      if (request.url.path == '/v1/chats/chat-1/messages/m-2/pin' &&
+          request.method == 'POST') {
+        return http.Response(
+          jsonEncode({
+            'pin': {
+              'chatId': 'chat-1',
+              'messageId': 'm-2',
+              'senderId': 'user-1',
+              'senderName': 'Dev User',
+              'text': 'Новый закреп',
+              'attachmentCount': 1,
+              'pinnedAt': '2026-04-30T12:05:00.000Z',
+            },
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      if (request.url.path == '/v1/chats/chat-1/pin' &&
+          request.method == 'DELETE') {
+        return http.Response(
+          jsonEncode({'pin': null}),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+
+      return http.Response('{"message":"not found"}', 404);
+    });
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'custom_api_session_v1',
+      jsonEncode({
+        'accessToken': 'access-token',
+        'refreshToken': 'refresh-token',
+        'userId': 'user-1',
+        'email': 'dev@rodnya.app',
+        'displayName': 'Dev User',
+        'providerIds': ['password'],
+        'isProfileComplete': true,
+        'missingFields': const [],
+      }),
+    );
+
+    final authService = await CustomApiAuthService.create(
+      httpClient: client,
+      preferences: prefs,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      invitationService: InvitationService(),
+    );
+
+    final chatService = CustomApiChatService(
+      authService: authService,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      httpClient: client,
+    );
+
+    final pin = await chatService.getChatPinnedMessage('chat-1');
+    expect(pin?.messageId, 'm-1');
+    expect(pin?.text, 'Проверить документы');
+
+    final updated = await chatService.pinChatMessage(
+      chatId: 'chat-1',
+      messageId: 'm-2',
+    );
+    expect(updated?.messageId, 'm-2');
+    expect(updated?.attachmentCount, 1);
+
+    await chatService.clearChatPinnedMessage('chat-1');
+
+    expect(
+      requests.any((item) =>
+          item.url.path == '/v1/chats/chat-1/messages/m-2/pin' &&
+          item.method == 'POST'),
+      isTrue,
+    );
+    expect(
+      requests.any((item) =>
+          item.url.path == '/v1/chats/chat-1/pin' && item.method == 'DELETE'),
+      isTrue,
+    );
+  });
+
+  test(
+    'CustomApiChatService emits cached messages before fetching newer delta',
+    () async {
+      Uri? requestedUri;
+      final cachedMessage = ChatMessage(
+        id: 'm-cached',
+        chatId: 'chat-1',
+        senderId: 'other-user',
+        text: 'Вчерашнее сообщение',
+        timestamp: DateTime.utc(2026, 4, 29, 18),
+        isRead: true,
+        participants: const ['user-1', 'other-user'],
+        senderName: 'Собеседник',
+      );
+      final messageCache = _MemoryChatMessageCache({
+        'chat-1': [cachedMessage],
+      });
+
+      final client = MockClient((request) async {
+        if (request.url.path == '/v1/chats/chat-1/messages' &&
+            request.method == 'GET') {
+          requestedUri = request.url;
+          return http.Response(
+            jsonEncode({
+              'messages': [
+                {
+                  'id': 'm-new',
+                  'chatId': 'chat-1',
+                  'senderId': 'user-1',
+                  'text': 'Новое сообщение',
+                  'timestamp': '2026-04-30T10:00:00.000Z',
+                  'isRead': false,
+                  'participants': ['user-1', 'other-user'],
+                  'senderName': 'Dev User',
+                },
+              ],
+              'hasMore': false,
+            }),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+
+        return http.Response('{"message":"not found"}', 404);
+      });
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        'custom_api_session_v1',
+        jsonEncode({
+          'accessToken': 'access-token',
+          'refreshToken': 'refresh-token',
+          'userId': 'user-1',
+          'email': 'dev@rodnya.app',
+          'displayName': 'Dev User',
+          'providerIds': ['password'],
+          'isProfileComplete': true,
+          'missingFields': const [],
+        }),
+      );
+
+      final authService = await CustomApiAuthService.create(
+        httpClient: client,
+        preferences: prefs,
+        runtimeConfig: const BackendRuntimeConfig(
+          apiBaseUrl: 'https://api.example.ru',
+        ),
+        invitationService: InvitationService(),
+      );
+
+      final chatService = CustomApiChatService(
+        authService: authService,
+        runtimeConfig: const BackendRuntimeConfig(
+          apiBaseUrl: 'https://api.example.ru',
+        ),
+        httpClient: client,
+        messageCache: messageCache,
+      );
+
+      final firstEmission = Completer<List<ChatMessage>>();
+      final secondEmission = Completer<List<ChatMessage>>();
+      var emissionCount = 0;
+      final subscription = chatService.getMessagesStream('chat-1').listen(
+        (messages) {
+          emissionCount += 1;
+          if (emissionCount == 1 && !firstEmission.isCompleted) {
+            firstEmission.complete(messages);
+          } else if (emissionCount == 2 && !secondEmission.isCompleted) {
+            secondEmission.complete(messages);
+          }
+        },
+      );
+      addTearDown(subscription.cancel);
+
+      final cached = await firstEmission.future.timeout(
+        const Duration(seconds: 2),
+      );
+      expect(cached.map((message) => message.id).toList(), ['m-cached']);
+
+      final refreshed = await secondEmission.future.timeout(
+        const Duration(seconds: 2),
+      );
+      expect(
+        refreshed.map((message) => message.id).toList(),
+        ['m-new', 'm-cached'],
+      );
+      expect(requestedUri?.queryParameters['limit'], '200');
+      expect(requestedUri?.queryParameters['after'], 'm-cached');
+      expect(requestedUri?.queryParameters.containsKey('before'), isFalse);
+
+      await Future<void>.delayed(Duration.zero);
+      expect(
+        messageCache.snapshot('chat-1').map((message) => message.id).toList(),
+        ['m-new', 'm-cached'],
+      );
+    },
+  );
 
   test('CustomApiChatService sends forwarded attachments without reupload',
       () async {
@@ -593,8 +1077,382 @@ void main() {
     await realtimeService.dispose();
   });
 
+  test('CustomApiChatService merges sent message response without refetch',
+      () async {
+    var messageHistoryRequests = 0;
+    final client = MockClient((request) async {
+      if (request.url.path == '/v1/chats/chat-1/messages' &&
+          request.method == 'GET') {
+        messageHistoryRequests++;
+        return http.Response(
+          jsonEncode({
+            'messages': [
+              {
+                'id': 'message-1',
+                'chatId': 'chat-1',
+                'senderId': 'user-2',
+                'text': 'Первое сообщение',
+                'timestamp': '2026-03-27T12:00:00.000Z',
+                'isRead': false,
+                'participants': ['user-1', 'user-2'],
+                'senderName': 'Собеседник',
+              },
+            ],
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+
+      if (request.url.path == '/v1/chats/chat-1/messages' &&
+          request.method == 'POST') {
+        return http.Response(
+          jsonEncode({
+            'message': {
+              'id': 'message-2',
+              'chatId': 'chat-1',
+              'senderId': 'user-1',
+              'text': 'Ответ без refetch',
+              'timestamp': '2026-03-27T12:05:00.000Z',
+              'isRead': false,
+              'participants': ['user-1', 'user-2'],
+              'senderName': 'Dev User',
+            },
+          }),
+          201,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+
+      return http.Response('{"message":"not found"}', 404);
+    });
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'custom_api_session_v1',
+      jsonEncode({
+        'accessToken': 'access-token',
+        'refreshToken': 'refresh-token',
+        'userId': 'user-1',
+        'email': 'dev@rodnya.app',
+        'displayName': 'Dev User',
+        'providerIds': ['password'],
+        'isProfileComplete': true,
+        'missingFields': const [],
+      }),
+    );
+
+    final authService = await CustomApiAuthService.create(
+      httpClient: client,
+      preferences: prefs,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      invitationService: InvitationService(),
+    );
+
+    final chatService = CustomApiChatService(
+      authService: authService,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      httpClient: client,
+    );
+
+    final messagesStream =
+        chatService.getMessagesStream('chat-1').asBroadcastStream();
+    final updatedMessagesFuture = messagesStream.skip(1).first;
+    expect(await messagesStream.first, hasLength(1));
+
+    await chatService.sendMessageToChat(
+      chatId: 'chat-1',
+      text: 'Ответ без refetch',
+    );
+
+    final updatedMessages = await updatedMessagesFuture;
+    expect(updatedMessages.first.text, 'Ответ без refetch');
+    expect(messageHistoryRequests, 1);
+  });
+
+  test('CustomApiChatService applies realtime total unread count', () async {
+    var unreadRequests = 0;
+    final client = MockClient((request) async {
+      if (request.url.path == '/v1/chats/unread-count' &&
+          request.method == 'GET') {
+        unreadRequests++;
+        return http.Response(
+          jsonEncode({'totalUnread': 0}),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+
+      return http.Response(
+        jsonEncode({'messages': const [], 'chats': const []}),
+        200,
+        headers: {'content-type': 'application/json'},
+      );
+    });
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'custom_api_session_v1',
+      jsonEncode({
+        'accessToken': 'access-token',
+        'refreshToken': 'refresh-token',
+        'userId': 'user-1',
+        'email': 'dev@rodnya.app',
+        'displayName': 'Dev User',
+        'providerIds': ['password'],
+        'isProfileComplete': true,
+        'missingFields': const [],
+      }),
+    );
+
+    final authService = await CustomApiAuthService.create(
+      httpClient: client,
+      preferences: prefs,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+        webSocketBaseUrl: 'wss://api.example.ru',
+      ),
+      invitationService: InvitationService(),
+    );
+
+    final realtimeController = StreamController<dynamic>.broadcast();
+    final realtimeService = CustomApiRealtimeService(
+      authService: authService,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+        webSocketBaseUrl: 'wss://api.example.ru',
+      ),
+      channelFactory: (_) => _FakeWebSocketChannel(realtimeController.stream),
+      reconnectDelay: const Duration(milliseconds: 10),
+    );
+
+    final chatService = CustomApiChatService(
+      authService: authService,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+        webSocketBaseUrl: 'wss://api.example.ru',
+      ),
+      httpClient: client,
+      realtimeService: realtimeService,
+      overviewPollInterval: const Duration(hours: 1),
+    );
+
+    final unreadStream =
+        chatService.getTotalUnreadCountStream('user-1').asBroadcastStream();
+    final updatedUnreadFuture = unreadStream.skip(1).first;
+    expect(await unreadStream.first, 0);
+
+    realtimeController.add(
+      jsonEncode({
+        'type': 'chat.unread.changed',
+        'chatId': 'chat-1',
+        'totalUnread': 4,
+      }),
+    );
+
+    expect(await updatedUnreadFuture, 4);
+    expect(unreadRequests, 1);
+
+    await realtimeController.close();
+    await realtimeService.dispose();
+  });
+
+  test('CustomApiChatService refreshes previews from realtime without polling',
+      () async {
+    var chatsRequestCount = 0;
+    var latestPreviewText = 'Привет';
+    final client = MockClient((request) async {
+      if (request.url.path == '/v1/chats' && request.method == 'GET') {
+        chatsRequestCount++;
+        return http.Response(
+          jsonEncode({
+            'chats': [
+              {
+                'id': 'chat-1_user-1',
+                'chatId': 'chat-1',
+                'userId': 'user-1',
+                'otherUserId': 'user-2',
+                'otherUserName': 'Собеседник',
+                'otherUserPhotoUrl': null,
+                'lastMessage': latestPreviewText,
+                'lastMessageTime': '2026-04-30T12:00:00.000Z',
+                'unreadCount': 0,
+                'lastMessageSenderId': 'user-2',
+              },
+            ],
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+
+      return http.Response(
+        jsonEncode({'messages': const [], 'totalUnread': 0}),
+        200,
+        headers: {'content-type': 'application/json'},
+      );
+    });
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'custom_api_session_v1',
+      jsonEncode({
+        'accessToken': 'access-token',
+        'refreshToken': 'refresh-token',
+        'userId': 'user-1',
+        'email': 'dev@rodnya.app',
+        'displayName': 'Dev User',
+        'providerIds': ['password'],
+        'isProfileComplete': true,
+        'missingFields': const [],
+      }),
+    );
+
+    final authService = await CustomApiAuthService.create(
+      httpClient: client,
+      preferences: prefs,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+        webSocketBaseUrl: 'wss://api.example.ru',
+      ),
+      invitationService: InvitationService(),
+    );
+
+    final realtimeController = StreamController<dynamic>.broadcast();
+    final realtimeService = CustomApiRealtimeService(
+      authService: authService,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+        webSocketBaseUrl: 'wss://api.example.ru',
+      ),
+      channelFactory: (_) => _FakeWebSocketChannel(realtimeController.stream),
+      reconnectDelay: const Duration(milliseconds: 10),
+    );
+
+    final chatService = CustomApiChatService(
+      authService: authService,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+        webSocketBaseUrl: 'wss://api.example.ru',
+      ),
+      httpClient: client,
+      realtimeService: realtimeService,
+      realtimeFallbackPollInterval: const Duration(milliseconds: 10),
+    );
+
+    final previewsStream =
+        chatService.getUserChatsStream('user-1').asBroadcastStream();
+    final updatedPreviewsFuture = previewsStream.skip(1).first;
+    final initialPreviews = await previewsStream.first;
+    expect(initialPreviews.first.lastMessage, 'Привет');
+
+    await Future<void>.delayed(const Duration(milliseconds: 40));
+    expect(chatsRequestCount, 1);
+
+    latestPreviewText = 'Новое сообщение';
+    realtimeController.add(
+      jsonEncode({
+        'type': 'chat.updated',
+        'chatId': 'chat-1',
+      }),
+    );
+
+    final updatedPreviews = await updatedPreviewsFuture;
+    expect(updatedPreviews.first.lastMessage, 'Новое сообщение');
+    expect(chatsRequestCount, 2);
+
+    await realtimeController.close();
+    await realtimeService.dispose();
+  });
+
   test(
-      'CustomApiChatService shares previews and unread polling across listeners',
+      'CustomApiChatService starts low-rate fallback after realtime disconnect',
+      () async {
+    var unreadRequests = 0;
+    final client = MockClient((request) async {
+      if (request.url.path == '/v1/chats/unread-count' &&
+          request.method == 'GET') {
+        unreadRequests++;
+        return http.Response(
+          jsonEncode({'totalUnread': unreadRequests == 1 ? 0 : 2}),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+
+      return http.Response(
+        jsonEncode({'messages': const [], 'chats': const []}),
+        200,
+        headers: {'content-type': 'application/json'},
+      );
+    });
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'custom_api_session_v1',
+      jsonEncode({
+        'accessToken': 'access-token',
+        'refreshToken': 'refresh-token',
+        'userId': 'user-1',
+        'email': 'dev@rodnya.app',
+        'displayName': 'Dev User',
+        'providerIds': ['password'],
+        'isProfileComplete': true,
+        'missingFields': const [],
+      }),
+    );
+
+    final authService = await CustomApiAuthService.create(
+      httpClient: client,
+      preferences: prefs,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+        webSocketBaseUrl: 'wss://api.example.ru',
+      ),
+      invitationService: InvitationService(),
+    );
+
+    final realtimeController = StreamController<dynamic>.broadcast();
+    final realtimeService = CustomApiRealtimeService(
+      authService: authService,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+        webSocketBaseUrl: 'wss://api.example.ru',
+      ),
+      channelFactory: (_) => _FakeWebSocketChannel(realtimeController.stream),
+      reconnectDelay: const Duration(hours: 1),
+    );
+
+    final chatService = CustomApiChatService(
+      authService: authService,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+        webSocketBaseUrl: 'wss://api.example.ru',
+      ),
+      httpClient: client,
+      realtimeService: realtimeService,
+      realtimeFallbackPollInterval: const Duration(milliseconds: 10),
+    );
+
+    final unreadStream =
+        chatService.getTotalUnreadCountStream('user-1').asBroadcastStream();
+    final fallbackUnreadFuture = unreadStream.skip(1).first;
+    expect(await unreadStream.first, 0);
+
+    await realtimeController.close();
+
+    expect(await fallbackUnreadFuture.timeout(const Duration(seconds: 1)), 2);
+    expect(unreadRequests, greaterThanOrEqualTo(2));
+
+    await realtimeService.dispose();
+  });
+
+  test(
+      'CustomApiChatService shares previews and unread streams across listeners',
       () async {
     var chatsRequestCount = 0;
     var unreadRequestCount = 0;
@@ -1211,6 +2069,106 @@ void main() {
     expect(progressEvents[3].total, 2);
   });
 
+  test('CustomApiChatService uploads voice notes with waveform metadata',
+      () async {
+    final uploadedAttachments = <Map<String, dynamic>>[];
+    final uploadFolders = <String>[];
+    final storageService = _FakeStorageService(
+      onUpload: (_) => 'https://cdn.example.test/voice-note.m4a',
+      onUploadFolder: uploadFolders.add,
+    );
+
+    final client = MockClient((request) async {
+      if (request.url.path == '/v1/chats/chat-1/messages' &&
+          request.method == 'POST') {
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        uploadedAttachments.addAll(
+          (body['attachments'] as List<dynamic>)
+              .whereType<Map>()
+              .map((item) => Map<String, dynamic>.from(item)),
+        );
+        return http.Response(
+          jsonEncode({'ok': true}),
+          201,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+
+      return http.Response('{"message":"not found"}', 404);
+    });
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'custom_api_session_v1',
+      jsonEncode({
+        'accessToken': 'access-token',
+        'refreshToken': 'refresh-token',
+        'userId': 'user-1',
+        'email': 'dev@rodnya.app',
+        'displayName': 'Dev User',
+        'providerIds': ['password'],
+        'isProfileComplete': true,
+        'missingFields': const [],
+      }),
+    );
+
+    final authService = await CustomApiAuthService.create(
+      httpClient: client,
+      preferences: prefs,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      invitationService: InvitationService(),
+    );
+
+    final chatService = CustomApiChatService(
+      authService: authService,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      httpClient: client,
+      storageService: storageService,
+    );
+
+    final voiceDirectory = await Directory.systemTemp.createTemp(
+      'rodnya_voice_test_',
+    );
+    addTearDown(() async {
+      if (await voiceDirectory.exists()) {
+        await voiceDirectory.delete(recursive: true);
+      }
+    });
+    final voiceFile = File('${voiceDirectory.path}/voice_note_3s_123.m4a');
+    await voiceFile.writeAsBytes(
+      Uint8List.fromList(List<int>.generate(256, (index) => index % 256)),
+    );
+
+    await chatService.sendMessageToChat(
+      chatId: 'chat-1',
+      attachments: [
+        XFile(
+          voiceFile.path,
+          mimeType: 'audio/m4a',
+        ),
+      ],
+    );
+
+    expect(uploadFolders, ['chat-voice/user-1']);
+    expect(uploadedAttachments, hasLength(1));
+    final attachment = uploadedAttachments.single;
+    expect(attachment['type'], 'audio');
+    expect(attachment['presentation'], 'voice_note');
+    expect(attachment['durationMs'], 3000);
+    expect(attachment['waveform'], isA<List<dynamic>>());
+    final waveform = attachment['waveform'] as List<dynamic>;
+    expect(waveform, isNotEmpty);
+    expect(waveform.length, lessThanOrEqualTo(100));
+    expect(
+      waveform.every((value) => value is num && value >= 0 && value <= 1),
+      isTrue,
+    );
+  });
+
   test(
     'CustomApiChatService clears stale session and returns safe defaults on 401 polling',
     () async {
@@ -1322,6 +2280,335 @@ void main() {
       );
     },
   );
+
+  test(
+    'CustomApiChatService toggles message reactions and patches active stream',
+    () async {
+      final messages = <Map<String, dynamic>>[
+        {
+          'id': 'message-1',
+          'chatId': 'chat-1',
+          'senderId': 'user-2',
+          'text': 'Можно лайкнуть',
+          'timestamp': '2026-03-27T12:00:00.000Z',
+          'isRead': false,
+          'participants': ['user-1', 'user-2'],
+          'senderName': 'Собеседник',
+          'reactions': const [],
+        },
+      ];
+      Map<String, dynamic>? sentReactionBody;
+
+      final client = MockClient((request) async {
+        if (request.url.path == '/v1/chats/chat-1/messages' &&
+            request.method == 'GET') {
+          return http.Response(
+            jsonEncode({'messages': messages}),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+
+        if (request.url.path ==
+                '/v1/chats/chat-1/messages/message-1/reactions' &&
+            request.method == 'POST') {
+          sentReactionBody = jsonDecode(request.body) as Map<String, dynamic>;
+          final reactions = [
+            {
+              'emoji': '👍',
+              'userIds': ['user-1'],
+              'count': 1,
+            },
+          ];
+          messages.first['reactions'] = reactions;
+          return http.Response(
+            jsonEncode({
+              'messageId': 'message-1',
+              'reactions': reactions,
+              'added': true,
+            }),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+
+        return http.Response('{"message":"not found"}', 404);
+      });
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        'custom_api_session_v1',
+        jsonEncode({
+          'accessToken': 'access-token',
+          'refreshToken': 'refresh-token',
+          'userId': 'user-1',
+          'email': 'dev@rodnya.app',
+          'displayName': 'Dev User',
+          'providerIds': ['password'],
+          'isProfileComplete': true,
+          'missingFields': const [],
+        }),
+      );
+      final authService = await CustomApiAuthService.create(
+        httpClient: client,
+        preferences: prefs,
+        runtimeConfig: const BackendRuntimeConfig(
+          apiBaseUrl: 'https://api.example.ru',
+        ),
+        invitationService: InvitationService(),
+      );
+      final chatService = CustomApiChatService(
+        authService: authService,
+        runtimeConfig: const BackendRuntimeConfig(
+          apiBaseUrl: 'https://api.example.ru',
+        ),
+        httpClient: client,
+      );
+
+      final emissions = <List<ChatMessage>>[];
+      final subscription =
+          chatService.getMessagesStream('chat-1').listen(emissions.add);
+      addTearDown(subscription.cancel);
+
+      await _waitFor(() => emissions.isNotEmpty);
+      expect(emissions.last.single.reactions, isEmpty);
+
+      await chatService.toggleMessageReaction(
+        chatId: 'chat-1',
+        messageId: 'message-1',
+        emoji: '👍',
+      );
+
+      await _waitFor(() => emissions.last.single.reactions.isNotEmpty);
+      expect(sentReactionBody?['emoji'], '👍');
+      expect(emissions.last.single.reactions.single.emoji, '👍');
+      expect(emissions.last.single.reactions.single.userIds, ['user-1']);
+    },
+  );
+
+  test(
+    'CustomApiChatService applies realtime reaction updates to cached messages',
+    () async {
+      final realtimeController = StreamController<dynamic>.broadcast();
+      final client = MockClient((request) async {
+        if (request.url.path == '/v1/chats/chat-1/messages' &&
+            request.method == 'GET') {
+          return http.Response(
+            jsonEncode({
+              'messages': [
+                {
+                  'id': 'message-1',
+                  'chatId': 'chat-1',
+                  'senderId': 'user-2',
+                  'text': 'Realtime reaction',
+                  'timestamp': '2026-03-27T12:00:00.000Z',
+                  'isRead': false,
+                  'participants': ['user-1', 'user-2'],
+                  'senderName': 'Собеседник',
+                  'reactions': const [],
+                },
+              ],
+            }),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+        return http.Response('{"message":"not found"}', 404);
+      });
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        'custom_api_session_v1',
+        jsonEncode({
+          'accessToken': 'access-token',
+          'refreshToken': 'refresh-token',
+          'userId': 'user-1',
+          'email': 'dev@rodnya.app',
+          'displayName': 'Dev User',
+          'providerIds': ['password'],
+          'isProfileComplete': true,
+          'missingFields': const [],
+        }),
+      );
+      final authService = await CustomApiAuthService.create(
+        httpClient: client,
+        preferences: prefs,
+        runtimeConfig: const BackendRuntimeConfig(
+          apiBaseUrl: 'https://api.example.ru',
+        ),
+        invitationService: InvitationService(),
+      );
+      final realtimeService = CustomApiRealtimeService(
+        authService: authService,
+        runtimeConfig: const BackendRuntimeConfig(
+          apiBaseUrl: 'https://api.example.ru',
+          webSocketBaseUrl: 'wss://api.example.ru',
+        ),
+        channelFactory: (_) => _FakeWebSocketChannel(realtimeController.stream),
+        reconnectDelay: const Duration(milliseconds: 10),
+      );
+      addTearDown(realtimeService.dispose);
+
+      final chatService = CustomApiChatService(
+        authService: authService,
+        runtimeConfig: const BackendRuntimeConfig(
+          apiBaseUrl: 'https://api.example.ru',
+          webSocketBaseUrl: 'wss://api.example.ru',
+        ),
+        httpClient: client,
+        realtimeService: realtimeService,
+      );
+
+      final emissions = <List<ChatMessage>>[];
+      final subscription =
+          chatService.getMessagesStream('chat-1').listen(emissions.add);
+      addTearDown(subscription.cancel);
+
+      await _waitFor(() => emissions.isNotEmpty);
+      realtimeController.add(
+        jsonEncode({
+          'type': 'message.reaction.changed',
+          'chatId': 'chat-1',
+          'messageId': 'message-1',
+          'reactions': [
+            {
+              'emoji': '❤️',
+              'userIds': ['user-2'],
+              'count': 1,
+            },
+          ],
+        }),
+      );
+
+      await _waitFor(() => emissions.last.single.reactions.isNotEmpty);
+      expect(emissions.last.single.reactions.single.emoji, '❤️');
+      expect(emissions.last.single.reactions.single.userIds, ['user-2']);
+      await realtimeController.close();
+    },
+  );
+
+  test(
+    'CustomApiChatService applies realtime delivered and read receipts',
+    () async {
+      final realtimeController = StreamController<dynamic>.broadcast();
+      final client = MockClient((request) async {
+        if (request.url.path == '/v1/chats/chat-1/messages' &&
+            request.method == 'GET') {
+          return http.Response(
+            jsonEncode({
+              'messages': [
+                {
+                  'id': 'message-1',
+                  'chatId': 'chat-1',
+                  'senderId': 'user-1',
+                  'text': 'Receipt test',
+                  'timestamp': '2026-03-27T12:00:00.000Z',
+                  'isRead': false,
+                  'participants': ['user-1', 'user-2'],
+                  'senderName': 'Dev User',
+                  'deliveredTo': ['user-1'],
+                  'readBy': ['user-1'],
+                },
+              ],
+            }),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+        return http.Response('{"message":"not found"}', 404);
+      });
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        'custom_api_session_v1',
+        jsonEncode({
+          'accessToken': 'access-token',
+          'refreshToken': 'refresh-token',
+          'userId': 'user-1',
+          'email': 'dev@rodnya.app',
+          'displayName': 'Dev User',
+          'providerIds': ['password'],
+          'isProfileComplete': true,
+          'missingFields': const [],
+        }),
+      );
+      final authService = await CustomApiAuthService.create(
+        httpClient: client,
+        preferences: prefs,
+        runtimeConfig: const BackendRuntimeConfig(
+          apiBaseUrl: 'https://api.example.ru',
+        ),
+        invitationService: InvitationService(),
+      );
+      final realtimeService = CustomApiRealtimeService(
+        authService: authService,
+        runtimeConfig: const BackendRuntimeConfig(
+          apiBaseUrl: 'https://api.example.ru',
+          webSocketBaseUrl: 'wss://api.example.ru',
+        ),
+        channelFactory: (_) => _FakeWebSocketChannel(realtimeController.stream),
+        reconnectDelay: const Duration(milliseconds: 10),
+      );
+      addTearDown(realtimeService.dispose);
+
+      final chatService = CustomApiChatService(
+        authService: authService,
+        runtimeConfig: const BackendRuntimeConfig(
+          apiBaseUrl: 'https://api.example.ru',
+          webSocketBaseUrl: 'wss://api.example.ru',
+        ),
+        httpClient: client,
+        realtimeService: realtimeService,
+      );
+
+      final emissions = <List<ChatMessage>>[];
+      final subscription =
+          chatService.getMessagesStream('chat-1').listen(emissions.add);
+      addTearDown(subscription.cancel);
+
+      await _waitFor(() => emissions.isNotEmpty);
+      expect(emissions.last.single.deliveredTo, ['user-1']);
+      expect(emissions.last.single.readBy, ['user-1']);
+
+      realtimeController.add(
+        jsonEncode({
+          'type': 'message.delivered',
+          'chatId': 'chat-1',
+          'messageId': 'message-1',
+          'userIds': ['user-2'],
+          'deliveredTo': ['user-1', 'user-2'],
+        }),
+      );
+      await _waitFor(
+          () => emissions.last.single.deliveredTo.contains('user-2'));
+
+      realtimeController.add(
+        jsonEncode({
+          'type': 'message.read',
+          'chatId': 'chat-1',
+          'userId': 'user-2',
+          'messageIds': ['message-1'],
+        }),
+      );
+      await _waitFor(() => emissions.last.single.readBy.contains('user-2'));
+      expect(emissions.last.single.isRead, isTrue);
+      await realtimeController.close();
+    },
+  );
+}
+
+Future<void> _waitFor(
+  bool Function() predicate, {
+  Duration timeout = const Duration(seconds: 1),
+}) async {
+  final startedAt = DateTime.now();
+  while (DateTime.now().difference(startedAt) < timeout) {
+    if (predicate()) {
+      return;
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
+  fail('Condition was not met before timeout.');
 }
 
 class _FakeWebSocketChannel implements WebSocketChannel {
@@ -1367,6 +2654,103 @@ class _FakeWebSocketSink implements WebSocketSink {
 
   @override
   Future get done async {}
+}
+
+class _MemoryChatMessageCache implements ChatMessageCache {
+  _MemoryChatMessageCache([Map<String, List<ChatMessage>>? seed]) {
+    for (final entry in (seed ?? const <String, List<ChatMessage>>{}).entries) {
+      _messages[entry.key] = _trimmed(entry.value);
+    }
+  }
+
+  final Map<String, List<ChatMessage>> _messages =
+      <String, List<ChatMessage>>{};
+
+  List<ChatMessage> snapshot(String chatId) {
+    return List<ChatMessage>.unmodifiable(
+      _messages[chatId] ?? const <ChatMessage>[],
+    );
+  }
+
+  @override
+  Future<List<ChatMessage>> read(String chatId) async {
+    return snapshot(chatId);
+  }
+
+  @override
+  Future<void> write(
+    String chatId,
+    List<ChatMessage> messages, {
+    int keepCount = 200,
+  }) async {
+    _messages[chatId] = _trimmed(messages, keepCount: keepCount);
+  }
+
+  @override
+  Future<void> mergePage(
+    String chatId,
+    List<ChatMessage> messages, {
+    int keepCount = 200,
+  }) async {
+    await write(
+      chatId,
+      <ChatMessage>[
+        ...snapshot(chatId),
+        ...messages,
+      ],
+      keepCount: keepCount,
+    );
+  }
+
+  @override
+  Future<void> appendOne(
+    String chatId,
+    ChatMessage message, {
+    int keepCount = 200,
+  }) {
+    return mergePage(chatId, <ChatMessage>[message], keepCount: keepCount);
+  }
+
+  @override
+  Future<void> removeOne(String chatId, String messageId) async {
+    await write(
+      chatId,
+      snapshot(chatId)
+          .where((message) => message.id != messageId)
+          .toList(growable: false),
+    );
+  }
+
+  @override
+  Future<void> evictOlder(String chatId, {int keepCount = 200}) {
+    return write(chatId, snapshot(chatId), keepCount: keepCount);
+  }
+
+  List<ChatMessage> _trimmed(
+    List<ChatMessage> messages, {
+    int keepCount = 200,
+  }) {
+    final byId = <String, ChatMessage>{};
+    for (final message in messages) {
+      if (message.id.trim().isNotEmpty) {
+        byId[message.id] = message;
+      }
+    }
+    final sortedMessages = byId.values.toList();
+    sortedMessages.sort(_sortMessagesDescending);
+    if (keepCount <= 0 || sortedMessages.length <= keepCount) {
+      return sortedMessages;
+    }
+    return sortedMessages.take(keepCount).toList(growable: false);
+  }
+
+  int _sortMessagesDescending(ChatMessage left, ChatMessage right) {
+    final timestampCompare = right.timestamp.compareTo(left.timestamp);
+    if (timestampCompare != 0) {
+      return timestampCompare;
+    }
+    return right.id.compareTo(left.id);
+  }
 }
 
 class _FakeStorageService implements StorageServiceInterface {

@@ -11,6 +11,7 @@ import 'package:intl/date_symbol_data_local.dart';
 import 'package:rodnya/backend/interfaces/auth_service_interface.dart';
 import 'package:rodnya/backend/interfaces/chat_service_interface.dart';
 import 'package:rodnya/backend/interfaces/family_tree_service_interface.dart';
+import 'package:rodnya/backend/interfaces/identity_duplicate_capable_family_tree_service.dart';
 import 'package:rodnya/backend/interfaces/invitation_link_service_interface.dart';
 import 'package:rodnya/backend/interfaces/profile_service_interface.dart';
 import 'package:rodnya/backend/interfaces/storage_service_interface.dart';
@@ -22,6 +23,7 @@ import 'package:rodnya/models/family_person.dart';
 import 'package:rodnya/models/family_relation.dart';
 import 'package:rodnya/models/family_tree.dart';
 import 'package:rodnya/models/chat_send_progress.dart';
+import 'package:rodnya/models/person_duplicate_suggestion.dart';
 import 'package:rodnya/models/tree_graph_snapshot.dart';
 import 'package:rodnya/models/tree_change_record.dart';
 import 'package:rodnya/models/user_profile.dart';
@@ -198,7 +200,13 @@ class _FakeStorageService implements StorageServiceInterface {
 }
 
 class _FakeFamilyTreeService
-    implements FamilyTreeServiceInterface, TreeGraphCapableFamilyTreeService {
+    implements
+        FamilyTreeServiceInterface,
+        TreeGraphCapableFamilyTreeService,
+        IdentityDuplicateCapableFamilyTreeService {
+  List<PersonDuplicateSuggestion> duplicateSuggestions =
+      const <PersonDuplicateSuggestion>[];
+
   final _father = FamilyPerson(
     id: 'father',
     treeId: 'tree-1',
@@ -395,6 +403,12 @@ class _FakeFamilyTreeService
 
   @override
   Future<List<FamilyPerson>> getRelatives(String treeId) async => _people;
+
+  @override
+  Future<List<PersonDuplicateSuggestion>> getDuplicateSuggestions(
+    String treeId,
+  ) async =>
+      duplicateSuggestions;
 
   @override
   Future<List<FamilyRelation>> getRelations(String treeId) async => _relations;
@@ -701,6 +715,7 @@ class _TestHttpHeaders implements HttpHeaders {
 void main() {
   final getIt = GetIt.instance;
   final originalHttpOverrides = HttpOverrides.current;
+  late _FakeFamilyTreeService familyTreeService;
 
   setUpAll(() async {
     await initializeDateFormatting('ru');
@@ -718,8 +733,9 @@ void main() {
       _FakeInvitationLinkService(),
     );
     getIt.registerSingleton<StorageServiceInterface>(_FakeStorageService());
+    familyTreeService = _FakeFamilyTreeService();
     getIt.registerSingleton<FamilyTreeServiceInterface>(
-      _FakeFamilyTreeService(),
+      familyTreeService,
     );
   });
 
@@ -961,6 +977,61 @@ void main() {
       expect(find.text('Пригласить в Родню'), findsOneWidget);
       expect(find.text('Написать'), findsNothing);
       expect(find.text('Связанный профиль'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'RelativeDetailsScreen показывает read-only подсказку о совпадении',
+    (tester) async {
+      final duplicate = FamilyPerson(
+        id: 'grandmother-duplicate',
+        treeId: 'tree-1',
+        identityId: 'identity-grandmother-duplicate',
+        name: 'Кузнецова Валентина',
+        gender: Gender.female,
+        birthDate: DateTime(1947, 5, 12),
+        isAlive: true,
+        creatorId: 'user-1',
+        createdAt: DateTime(2024, 1, 1),
+        updatedAt: DateTime(2024, 1, 1),
+      );
+      familyTreeService.duplicateSuggestions = [
+        PersonDuplicateSuggestion(
+          id: 'tree-1:grandmother:grandmother-duplicate',
+          treeId: 'tree-1',
+          personA: familyTreeService._grandmother,
+          personB: duplicate,
+          score: 0.95,
+          confidence: 'high',
+          reasons: const ['Совпадает ФИО', 'Совпадает дата рождения'],
+        ),
+      ];
+      final treeProvider = TreeProvider();
+      await treeProvider.selectTree('tree-1', 'Семья Кузнецовых');
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider<TreeProvider>.value(
+          value: treeProvider,
+          child: const MaterialApp(
+            home: RelativeDetailsScreen(personId: 'grandmother'),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      expect(find.text('Возможное совпадение'), findsOneWidget);
+      expect(find.text('Сравнить'), findsOneWidget);
+
+      await tester.ensureVisible(find.text('Сравнить'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Сравнить'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Сравнение карточек'), findsOneWidget);
+      expect(find.text('Эта карточка'), findsOneWidget);
+      expect(find.text('Похожая карточка'), findsOneWidget);
+      expect(find.text('Совпадает ФИО'), findsWidgets);
     },
   );
 

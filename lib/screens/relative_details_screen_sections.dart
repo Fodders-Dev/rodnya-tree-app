@@ -186,6 +186,35 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
                   icon: const Icon(Icons.edit_note_outlined),
                   label: const Text('Предложить правку'),
                 ),
+              if (_identityService != null &&
+                  _currentTreeId != null &&
+                  _person?.userId != _authService.currentUserId)
+                OutlinedButton.icon(
+                  onPressed: _isUpdatingIdentity
+                      ? null
+                      : () => _requestIdentityClaim(),
+                  icon: _isUpdatingIdentity
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.verified_user_outlined),
+                  label: const Text('Это моя карточка'),
+                ),
+              if (_identityService != null && _canEditOrDelete())
+                OutlinedButton.icon(
+                  onPressed:
+                      _isUpdatingPrivacy ? null : () => _showPrivacySettings(),
+                  icon: _isUpdatingPrivacy
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.lock_outline),
+                  label: const Text('Приватность'),
+                ),
               if (_canDirectEditProfile())
                 OutlinedButton.icon(
                   onPressed: _editRelative,
@@ -198,6 +227,10 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
               style: TextStyle(color: Colors.grey[800], height: 1.35),
             ),
           ),
+          if (_duplicateSuggestions.isNotEmpty) ...[
+            const SizedBox(height: 20),
+            _buildDuplicateSuggestionBanner(),
+          ],
           if (galleryEntries.isNotEmpty || _canEditOrDelete()) ...[
             const SizedBox(height: 20),
             _buildGallerySection(galleryEntries),
@@ -221,6 +254,208 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
         ],
       ),
     );
+  }
+
+  Widget _buildDuplicateSuggestionBanner() {
+    final theme = Theme.of(context);
+    final suggestion = _duplicateSuggestions.first;
+    final otherPerson = suggestion.otherPersonFor(_person!.id);
+    final extraCount = _duplicateSuggestions.length - 1;
+
+    return GlassPanel(
+      padding: const EdgeInsets.all(16),
+      borderRadius: BorderRadius.circular(24),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: theme.colorScheme.tertiaryContainer,
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              Icons.person_search_outlined,
+              color: theme.colorScheme.onTertiaryContainer,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Возможное совпадение',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  extraCount > 0
+                      ? 'Похоже, эта карточка может совпадать с ${otherPerson.displayName} и ещё $extraCount.'
+                      : 'Похоже, эта карточка может совпадать с ${otherPerson.displayName}.',
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                    height: 1.35,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: suggestion.reasons
+                      .take(3)
+                      .map(
+                        (reason) => Chip(
+                          label: Text(reason),
+                          visualDensity: VisualDensity.compact,
+                        ),
+                      )
+                      .toList(growable: false),
+                ),
+                const SizedBox(height: 10),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: OutlinedButton.icon(
+                    onPressed: () => _showDuplicateSuggestionSheet(suggestion),
+                    icon: const Icon(Icons.compare_arrows_outlined),
+                    label: const Text('Сравнить'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showDuplicateSuggestionSheet(PersonDuplicateSuggestion suggestion) {
+    if (_person == null || !suggestion.involves(_person!.id)) {
+      return;
+    }
+    final currentPerson = suggestion.personA.id == _person!.id
+        ? suggestion.personA
+        : suggestion.personB;
+    final otherPerson = suggestion.otherPersonFor(_person!.id);
+
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (context) {
+        final theme = Theme.of(context);
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Сравнение карточек',
+                  style: theme.textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Перед объединением семьи стоит проверить, не описывают ли эти карточки одного человека.',
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                    height: 1.35,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                _buildDuplicatePersonSummary('Эта карточка', currentPerson),
+                const SizedBox(height: 12),
+                _buildDuplicatePersonSummary('Похожая карточка', otherPerson),
+                const SizedBox(height: 16),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: suggestion.reasons
+                      .map(
+                        (reason) => Chip(
+                          avatar: const Icon(Icons.check, size: 16),
+                          label: Text(reason),
+                          visualDensity: VisualDensity.compact,
+                        ),
+                      )
+                      .toList(growable: false),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildDuplicatePersonSummary(String title, FamilyPerson person) {
+    final theme = Theme.of(context);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color:
+            theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.55),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.55),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: theme.textTheme.labelLarge?.copyWith(
+              color: theme.colorScheme.primary,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            person.displayName,
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(_formatDuplicatePersonFacts(person)),
+        ],
+      ),
+    );
+  }
+
+  String _formatDuplicatePersonFacts(FamilyPerson person) {
+    final facts = <String>[
+      _formatDuplicateGender(person.gender),
+      person.birthDate != null
+          ? DateFormat('dd.MM.yyyy').format(person.birthDate!)
+          : 'Дата рождения не указана',
+    ];
+    final birthPlace = person.birthPlace?.trim();
+    if (birthPlace != null && birthPlace.isNotEmpty) {
+      facts.add(birthPlace);
+    }
+    return facts.join(' • ');
+  }
+
+  String _formatDuplicateGender(Gender gender) {
+    switch (gender) {
+      case Gender.male:
+        return 'Мужчина';
+      case Gender.female:
+        return 'Женщина';
+      case Gender.other:
+        return 'Другой пол';
+      case Gender.unknown:
+        return 'Пол не указан';
+    }
   }
 
   Widget _buildInfoSection(String title, List<Widget> children) {

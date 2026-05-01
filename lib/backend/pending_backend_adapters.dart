@@ -9,12 +9,17 @@ import '../models/call_media_mode.dart';
 import '../models/chat_message.dart';
 import '../models/chat_details.dart';
 import '../models/chat_preview.dart';
+import '../models/chat_message_search_result.dart';
 import '../models/chat_send_progress.dart';
+import '../models/circle.dart';
+import '../models/identity_claim.dart';
+import '../models/merge_proposal.dart';
 import '../models/account_linking_status.dart';
 import '../models/family_person.dart';
 import '../models/family_relation.dart';
 import '../models/family_tree.dart';
 import '../models/person_dossier.dart';
+import '../models/person_attribute.dart';
 import '../models/profile_contribution.dart';
 import '../models/profile_note.dart';
 import '../models/relation_request.dart';
@@ -23,11 +28,14 @@ import '../models/post.dart';
 import '../models/comment.dart';
 import '../models/story.dart';
 import '../models/tree_change_record.dart';
+import '../models/public_identity_result.dart';
 import '../models/user_block_record.dart';
 import 'interfaces/auth_service_interface.dart';
 import 'interfaces/call_service_interface.dart';
 import 'interfaces/chat_service_interface.dart';
+import 'interfaces/circle_service_interface.dart';
 import 'interfaces/family_tree_service_interface.dart';
+import 'interfaces/identity_service_interface.dart';
 import 'interfaces/profile_service_interface.dart';
 import 'interfaces/storage_service_interface.dart';
 import 'interfaces/notification_service_interface.dart';
@@ -578,6 +586,15 @@ class PendingBackendChatService implements ChatServiceInterface {
   }
 
   @override
+  Future<void> toggleMessageReaction({
+    required String chatId,
+    required String messageId,
+    required String emoji,
+  }) {
+    throw UnsupportedError(_pendingProviderMessage('chat'));
+  }
+
+  @override
   Future<String?> createGroupChat({
     required List<String> participantIds,
     String? title,
@@ -620,6 +637,15 @@ class PendingBackendChatService implements ChatServiceInterface {
   Future<ChatDetails> removeGroupParticipant({
     required String chatId,
     required String participantId,
+  }) {
+    throw UnsupportedError(_pendingProviderMessage('chat'));
+  }
+
+  @override
+  Future<List<ChatMessageSearchResult>> searchMessages({
+    required String query,
+    String? chatId,
+    int limit = 50,
   }) {
     throw UnsupportedError(_pendingProviderMessage('chat'));
   }
@@ -675,6 +701,87 @@ class PendingBackendCallService implements CallServiceInterface {
   }
 }
 
+class PendingBackendCircleService implements CircleServiceInterface {
+  const PendingBackendCircleService();
+
+  @override
+  Future<List<FamilyCircle>> getCircles(String treeId) async {
+    return const <FamilyCircle>[];
+  }
+}
+
+class PendingBackendIdentityService implements IdentityServiceInterface {
+  const PendingBackendIdentityService();
+
+  @override
+  Future<IdentityClaim> createIdentityClaim({
+    required String treeId,
+    required String personId,
+    String? evidence,
+  }) {
+    throw UnsupportedError(_pendingProviderMessage('identity'));
+  }
+
+  @override
+  Future<List<PersonAttribute>> getPersonAttributes({
+    required String treeId,
+    required String personId,
+  }) async {
+    return const <PersonAttribute>[];
+  }
+
+  @override
+  Future<List<IdentityClaim>> getPendingIdentityClaims() async {
+    return const <IdentityClaim>[];
+  }
+
+  @override
+  Future<List<MergeProposal>> getPendingMergeProposals() async {
+    return const <MergeProposal>[];
+  }
+
+  @override
+  Future<IdentityClaim> reviewIdentityClaim(
+    String claimId, {
+    required bool approve,
+    String? reason,
+  }) {
+    throw UnsupportedError(_pendingProviderMessage('identity'));
+  }
+
+  @override
+  Future<MergeProposal> reviewMergeProposal(
+    String proposalId, {
+    required bool accept,
+    String? reason,
+  }) {
+    throw UnsupportedError(_pendingProviderMessage('identity'));
+  }
+
+  @override
+  Future<List<PublicIdentityResult>> searchPublicIdentities({
+    String? query,
+    String? birthYear,
+  }) async {
+    return const <PublicIdentityResult>[];
+  }
+
+  @override
+  Future<bool> setPublicDiscoverability(bool enabled) {
+    throw UnsupportedError(_pendingProviderMessage('identity'));
+  }
+
+  @override
+  Future<List<PersonAttribute>> updatePersonAttributeVisibility({
+    required String treeId,
+    required String personId,
+    String? visibility,
+    Map<String, String> attributes = const <String, String>{},
+  }) {
+    throw UnsupportedError(_pendingProviderMessage('identity'));
+  }
+}
+
 class PendingBackendPostService implements PostServiceInterface {
   const PendingBackendPostService();
 
@@ -692,6 +799,7 @@ class PendingBackendPostService implements PostServiceInterface {
     bool isPublic = false,
     TreeContentScopeType scopeType = TreeContentScopeType.wholeTree,
     List<String> anchorPersonIds = const [],
+    String? circleId,
   }) {
     throw UnsupportedError(_pendingProviderMessage('post'));
   }
@@ -738,6 +846,7 @@ class PendingBackendStoryService implements StoryServiceInterface {
     XFile? media,
     String? thumbnailUrl,
     DateTime? expiresAt,
+    String? circleId,
   }) {
     throw UnsupportedError(_pendingProviderMessage('story'));
   }

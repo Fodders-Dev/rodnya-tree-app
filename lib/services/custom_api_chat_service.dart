@@ -12,9 +12,15 @@ import '../backend/interfaces/storage_service_interface.dart';
 import '../models/chat_attachment.dart';
 import '../models/chat_details.dart';
 import '../models/chat_message.dart';
+import '../models/chat_message_search_result.dart';
+import '../models/chat_messages_page.dart';
 import '../models/chat_preview.dart';
 import '../models/chat_send_progress.dart';
+import '../utils/voice_waveform.dart';
 import 'app_status_service.dart';
+import 'chat_draft_store.dart';
+import 'chat_message_cache.dart';
+import 'chat_pin_store.dart';
 import 'custom_api_auth_service.dart';
 import 'custom_api_realtime_service.dart';
 
@@ -35,56 +41,67 @@ class _ChatMessageStreamState {
 class _UploadedAttachmentMetadata {
   const _UploadedAttachmentMetadata({
     this.durationMs,
+    this.waveform = const <double>[],
     this.width,
     this.height,
   });
 
   final int? durationMs;
+  final List<double> waveform;
   final int? width;
   final int? height;
 }
 
-class CustomApiChatService implements ChatServiceInterface {
+class CustomApiChatService
+    implements
+        ChatServiceInterface,
+        RemoteChatDraftClient,
+        RemoteChatPinClient {
   CustomApiChatService({
     required CustomApiAuthService authService,
     required BackendRuntimeConfig runtimeConfig,
     http.Client? httpClient,
     CustomApiRealtimeService? realtimeService,
     StorageServiceInterface? storageService,
+    ChatMessageCache? messageCache,
     AppStatusService? appStatusService,
     Duration? pollInterval,
     Duration? overviewPollInterval,
+    Duration? realtimeFallbackPollInterval,
   })  : _authService = authService,
         _runtimeConfig = runtimeConfig,
         _httpClient = httpClient ?? http.Client(),
         _realtimeService = realtimeService,
         _storageService = storageService,
+        _messageCache = messageCache,
         _appStatusService = appStatusService,
         _pollInterval = pollInterval ?? const Duration(seconds: 3),
-        _overviewPollInterval =
-            overviewPollInterval ?? const Duration(seconds: 12);
+        _realtimeFallbackPollInterval = realtimeFallbackPollInterval ??
+            overviewPollInterval ??
+            const Duration(seconds: 30);
 
   final CustomApiAuthService _authService;
   final BackendRuntimeConfig _runtimeConfig;
   final http.Client _httpClient;
   final CustomApiRealtimeService? _realtimeService;
   final StorageServiceInterface? _storageService;
+  final ChatMessageCache? _messageCache;
   final AppStatusService? _appStatusService;
   final Duration _pollInterval;
-  final Duration _overviewPollInterval;
+  final Duration _realtimeFallbackPollInterval;
   StreamController<List<ChatPreview>>? _chatPreviewsController;
-  Timer? _chatPreviewsTimer;
+  Timer? _chatPreviewsFallbackTimer;
   Timer? _chatPreviewsRealtimeDebounce;
   StreamSubscription<CustomApiRealtimeEvent>? _chatPreviewsRealtimeSubscription;
   int _chatPreviewsListenerCount = 0;
-  bool _chatPreviewsPollingEnabled = false;
+  bool _chatPreviewsUpdatesActive = false;
 
   StreamController<int>? _totalUnreadController;
-  Timer? _totalUnreadTimer;
+  Timer? _totalUnreadFallbackTimer;
   Timer? _totalUnreadRealtimeDebounce;
   StreamSubscription<CustomApiRealtimeEvent>? _totalUnreadRealtimeSubscription;
   int _totalUnreadListenerCount = 0;
-  bool _totalUnreadPollingEnabled = false;
+  bool _totalUnreadUpdatesActive = false;
   final Map<String, _ChatMessageStreamState> _messageStates =
       <String, _ChatMessageStreamState>{};
 
@@ -117,6 +134,185 @@ class CustomApiChatService implements ChatServiceInterface {
   @override
   Stream<List<ChatMessage>> getMessagesStream(String chatId) {
     return _ensureMessageStream(chatId).controller.stream;
+  }
+
+  Future<void> refreshChatOverview() async {
+    if (_chatPreviewsUpdatesActive) {
+      await _emitChatPreviews();
+    }
+    if (_totalUnreadUpdatesActive) {
+      await _emitTotalUnread();
+    }
+  }
+
+  Future<ChatMessagesPage> fetchMessagesPage(
+    String chatId, {
+    int limit = 50,
+    String? beforeId,
+    String? afterId,
+  }) async {
+    final normalizedBeforeId = beforeId?.trim();
+    final normalizedAfterId = afterId?.trim();
+    if ((normalizedBeforeId?.isNotEmpty ?? false) &&
+        (normalizedAfterId?.isNotEmpty ?? false)) {
+      throw const CustomApiException(
+        'Нельзя запрашивать сообщения одновременно до и после курсора',
+      );
+    }
+
+    final normalizedLimit = limit.clamp(1, 200).toInt();
+    final response = await _requestJson(
+      method: 'GET',
+      path: '/v1/chats/$chatId/messages',
+      queryParameters: <String, String>{
+        'limit': '$normalizedLimit',
+        if (normalizedBeforeId != null && normalizedBeforeId.isNotEmpty)
+          'before': normalizedBeforeId,
+        if (normalizedAfterId != null && normalizedAfterId.isNotEmpty)
+          'after': normalizedAfterId,
+      },
+    );
+
+    final rawMessages = response['messages'];
+    final messages = rawMessages is List<dynamic>
+        ? rawMessages
+            .whereType<Map<String, dynamic>>()
+            .map(_parseChatMessage)
+            .toList()
+        : const <ChatMessage>[];
+    if (messages.isNotEmpty) {
+      _cacheMessages(
+        (cache) => cache.mergePage(chatId, messages),
+      );
+    }
+    return ChatMessagesPage(
+      messages: messages,
+      hasMore: response['hasMore'] == true,
+    );
+  }
+
+  @override
+  Future<List<ChatMessageSearchResult>> searchMessages({
+    required String query,
+    String? chatId,
+    int limit = 50,
+  }) async {
+    final normalizedQuery = query.trim();
+    if (normalizedQuery.isEmpty) {
+      return const <ChatMessageSearchResult>[];
+    }
+
+    final response = await _requestJson(
+      method: 'GET',
+      path: '/v1/chats/search',
+      queryParameters: <String, String>{
+        'q': normalizedQuery,
+        if (chatId != null && chatId.trim().isNotEmpty) 'chatId': chatId.trim(),
+        'limit': limit.clamp(1, 100).toString(),
+      },
+    );
+    final rawResults = response['results'];
+    if (rawResults is! List<dynamic>) {
+      return const <ChatMessageSearchResult>[];
+    }
+    return rawResults
+        .whereType<Map>()
+        .map((entry) => ChatMessageSearchResult.fromMap(
+              Map<String, dynamic>.from(entry),
+            ))
+        .where(
+            (result) => result.messageId.isNotEmpty && result.chatId.isNotEmpty)
+        .toList(growable: false);
+  }
+
+  @override
+  Future<ChatDraftSnapshot?> getChatDraft(String chatId) async {
+    final response = await _requestJson(
+      method: 'GET',
+      path: '/v1/chats/$chatId/draft',
+    );
+    final draft = response['draft'];
+    if (draft is! Map<String, dynamic>) {
+      return null;
+    }
+    final snapshot = ChatDraftSnapshot.fromJson(draft);
+    return snapshot.text.trim().isEmpty ? null : snapshot;
+  }
+
+  @override
+  Future<Map<String, ChatDraftSnapshot>> getChatDrafts() async {
+    final response = await _requestJson(
+      method: 'GET',
+      path: '/v1/chats/drafts',
+    );
+    final rawDrafts = response['drafts'];
+    if (rawDrafts is! List<dynamic>) {
+      return const <String, ChatDraftSnapshot>{};
+    }
+
+    final drafts = <String, ChatDraftSnapshot>{};
+    for (final entry in rawDrafts.whereType<Map>()) {
+      final map = Map<String, dynamic>.from(entry);
+      final chatId = (map['chatId']?.toString() ?? '').trim();
+      if (chatId.isEmpty) {
+        continue;
+      }
+      final snapshot = ChatDraftSnapshot.fromJson(map);
+      if (snapshot.text.trim().isEmpty) {
+        continue;
+      }
+      drafts[SharedPreferencesChatDraftStore.chatKey(chatId)] = snapshot;
+    }
+    return drafts;
+  }
+
+  @override
+  Future<void> saveChatDraft({
+    required String chatId,
+    required String text,
+  }) async {
+    await _requestJson(
+      method: 'PUT',
+      path: '/v1/chats/$chatId/draft',
+      body: <String, dynamic>{'text': text},
+    );
+  }
+
+  @override
+  Future<void> clearChatDraft(String chatId) async {
+    await _requestJson(
+      method: 'DELETE',
+      path: '/v1/chats/$chatId/draft',
+    );
+  }
+
+  @override
+  Future<ChatPinnedMessageSnapshot?> getChatPinnedMessage(String chatId) async {
+    final response = await _requestJson(
+      method: 'GET',
+      path: '/v1/chats/$chatId/pin',
+    );
+    return _parsePinnedMessageSnapshot(response['pin']);
+  }
+
+  @override
+  Future<ChatPinnedMessageSnapshot?> pinChatMessage({
+    required String chatId,
+    required String messageId,
+  }) async {
+    final response = await _requestJson(
+      method: 'POST',
+      path: '/v1/chats/$chatId/messages/$messageId/pin',
+    );
+    return _parsePinnedMessageSnapshot(response['pin']);
+  }
+
+  @override
+  Future<void> clearChatPinnedMessage(String chatId) async {
+    await _requestJson(
+      method: 'DELETE',
+      path: '/v1/chats/$chatId/pin',
+    );
   }
 
   @override
@@ -195,7 +391,7 @@ class CustomApiChatService implements ChatServiceInterface {
       ),
     );
 
-    await _requestJson(
+    final response = await _requestJson(
       method: 'POST',
       path: '/v1/chats/$chatId/messages',
       body: {
@@ -217,7 +413,12 @@ class CustomApiChatService implements ChatServiceInterface {
     );
     final messageState = _messageStates[chatId];
     if (messageState != null) {
-      _scheduleMessageRefresh(messageState, immediate: true);
+      final rawMessage = response['message'];
+      if (rawMessage is Map<String, dynamic>) {
+        _mergeRealtimeMessage(messageState, rawMessage);
+      } else {
+        _scheduleMessageRefresh(messageState, immediate: true);
+      }
     }
   }
 
@@ -254,6 +455,37 @@ class CustomApiChatService implements ChatServiceInterface {
       method: 'DELETE',
       path: '/v1/chats/$chatId/messages/$messageId',
     );
+  }
+
+  @override
+  Future<void> toggleMessageReaction({
+    required String chatId,
+    required String messageId,
+    required String emoji,
+  }) async {
+    final normalizedEmoji = emoji.trim();
+    if (normalizedEmoji.isEmpty) {
+      return;
+    }
+
+    final response = await _requestJson(
+      method: 'POST',
+      path: '/v1/chats/$chatId/messages/$messageId/reactions',
+      body: <String, dynamic>{
+        'emoji': normalizedEmoji,
+      },
+    );
+
+    final state = _messageStates[chatId];
+    final rawReactions = response['reactions'];
+    if (state == null) {
+      return;
+    }
+    if (rawReactions is List<dynamic>) {
+      _applyReactionUpdate(state, messageId, rawReactions);
+    } else {
+      _scheduleMessageRefresh(state, immediate: true);
+    }
   }
 
   @override
@@ -468,61 +700,86 @@ class CustomApiChatService implements ChatServiceInterface {
       onListen: () {
         _chatPreviewsListenerCount++;
         if (_chatPreviewsListenerCount == 1) {
-          _startChatPreviewsPolling();
+          _startChatPreviewsUpdates();
         }
       },
       onCancel: () async {
         _chatPreviewsListenerCount--;
         if (_chatPreviewsListenerCount <= 0) {
           _chatPreviewsListenerCount = 0;
-          await _stopChatPreviewsPolling();
+          await _stopChatPreviewsUpdates();
         }
       },
     );
   }
 
-  void _startChatPreviewsPolling() {
-    if (_chatPreviewsPollingEnabled || _chatPreviewsController == null) {
+  void _startChatPreviewsUpdates() {
+    if (_chatPreviewsUpdatesActive || _chatPreviewsController == null) {
       return;
     }
 
-    _chatPreviewsPollingEnabled = true;
+    _chatPreviewsUpdatesActive = true;
     unawaited(_emitChatPreviews());
-    _chatPreviewsTimer = Timer.periodic(
-      _overviewPollInterval,
-      (_) => unawaited(_emitChatPreviews()),
-    );
 
     if (_realtimeService != null) {
       unawaited(_realtimeService!.connect());
-      _chatPreviewsRealtimeSubscription = _realtimeService!.events
-          .where((event) => event.isChatEvent || event.isNotificationEvent)
-          .listen((_) {
-        _scheduleChatPreviewsRefresh();
+      _chatPreviewsRealtimeSubscription =
+          _realtimeService!.events.listen((event) {
+        if (event.type == 'connection.ready') {
+          _stopChatPreviewsFallbackPolling();
+          _scheduleChatPreviewsRefresh(immediate: true);
+          return;
+        }
+        if (event.type == 'connection.disconnected') {
+          _startChatPreviewsFallbackPolling();
+          return;
+        }
+        if (_shouldRefreshChatPreviewsForRealtimeEvent(event)) {
+          _scheduleChatPreviewsRefresh();
+        }
       });
+    } else {
+      _startChatPreviewsFallbackPolling();
     }
   }
 
-  Future<void> _stopChatPreviewsPolling() async {
-    _chatPreviewsPollingEnabled = false;
-    _chatPreviewsTimer?.cancel();
-    _chatPreviewsTimer = null;
+  Future<void> _stopChatPreviewsUpdates() async {
+    _chatPreviewsUpdatesActive = false;
+    _stopChatPreviewsFallbackPolling();
     _chatPreviewsRealtimeDebounce?.cancel();
     _chatPreviewsRealtimeDebounce = null;
     await _chatPreviewsRealtimeSubscription?.cancel();
     _chatPreviewsRealtimeSubscription = null;
   }
 
+  void _startChatPreviewsFallbackPolling() {
+    if (!_chatPreviewsUpdatesActive ||
+        _chatPreviewsController == null ||
+        _chatPreviewsFallbackTimer != null) {
+      return;
+    }
+
+    _chatPreviewsFallbackTimer = Timer.periodic(
+      _realtimeFallbackPollInterval,
+      (_) => unawaited(_emitChatPreviews()),
+    );
+  }
+
+  void _stopChatPreviewsFallbackPolling() {
+    _chatPreviewsFallbackTimer?.cancel();
+    _chatPreviewsFallbackTimer = null;
+  }
+
   Future<void> _emitChatPreviews() async {
     final controller = _chatPreviewsController;
-    if (!_chatPreviewsPollingEnabled ||
+    if (!_chatPreviewsUpdatesActive ||
         controller == null ||
         controller.isClosed) {
       return;
     }
 
     if (!_hasActiveSession) {
-      await _stopChatPreviewsPolling();
+      await _stopChatPreviewsUpdates();
       if (!controller.isClosed) {
         controller.add(const <ChatPreview>[]);
       }
@@ -533,7 +790,7 @@ class CustomApiChatService implements ChatServiceInterface {
       controller.add(await _fetchChatPreviews());
     } on CustomApiException catch (error, stackTrace) {
       if (await _handleSessionError(error)) {
-        await _stopChatPreviewsPolling();
+        await _stopChatPreviewsUpdates();
         if (!controller.isClosed) {
           controller.add(const <ChatPreview>[]);
         }
@@ -546,7 +803,7 @@ class CustomApiChatService implements ChatServiceInterface {
       controller.addError(error, stackTrace);
     } catch (error, stackTrace) {
       if (await _handleSessionError(error)) {
-        await _stopChatPreviewsPolling();
+        await _stopChatPreviewsUpdates();
         if (!controller.isClosed) {
           controller.add(const <ChatPreview>[]);
         }
@@ -560,8 +817,23 @@ class CustomApiChatService implements ChatServiceInterface {
     }
   }
 
-  void _scheduleChatPreviewsRefresh() {
+  bool _shouldRefreshChatPreviewsForRealtimeEvent(
+    CustomApiRealtimeEvent event,
+  ) {
+    return event.type == 'chat.created' ||
+        event.type == 'chat.updated' ||
+        event.type == 'chat.message.created' ||
+        event.type == 'chat.message.updated' ||
+        event.type == 'chat.message.deleted';
+  }
+
+  void _scheduleChatPreviewsRefresh({bool immediate = false}) {
     _chatPreviewsRealtimeDebounce?.cancel();
+    if (immediate) {
+      unawaited(_emitChatPreviews());
+      return;
+    }
+
     _chatPreviewsRealtimeDebounce = Timer(
       const Duration(milliseconds: 350),
       () => unawaited(_emitChatPreviews()),
@@ -577,61 +849,89 @@ class CustomApiChatService implements ChatServiceInterface {
       onListen: () {
         _totalUnreadListenerCount++;
         if (_totalUnreadListenerCount == 1) {
-          _startTotalUnreadPolling();
+          _startTotalUnreadUpdates();
         }
       },
       onCancel: () async {
         _totalUnreadListenerCount--;
         if (_totalUnreadListenerCount <= 0) {
           _totalUnreadListenerCount = 0;
-          await _stopTotalUnreadPolling();
+          await _stopTotalUnreadUpdates();
         }
       },
     );
   }
 
-  void _startTotalUnreadPolling() {
-    if (_totalUnreadPollingEnabled || _totalUnreadController == null) {
+  void _startTotalUnreadUpdates() {
+    if (_totalUnreadUpdatesActive || _totalUnreadController == null) {
       return;
     }
 
-    _totalUnreadPollingEnabled = true;
+    _totalUnreadUpdatesActive = true;
     unawaited(_emitTotalUnread());
-    _totalUnreadTimer = Timer.periodic(
-      _overviewPollInterval,
-      (_) => unawaited(_emitTotalUnread()),
-    );
 
     if (_realtimeService != null) {
       unawaited(_realtimeService!.connect());
-      _totalUnreadRealtimeSubscription = _realtimeService!.events
-          .where((event) => event.isChatEvent || event.isNotificationEvent)
-          .listen((_) {
-        _scheduleTotalUnreadRefresh();
+      _totalUnreadRealtimeSubscription =
+          _realtimeService!.events.listen((event) {
+        if (event.type == 'connection.ready') {
+          _stopTotalUnreadFallbackPolling();
+          _scheduleTotalUnreadRefresh(immediate: true);
+          return;
+        }
+        if (event.type == 'connection.disconnected') {
+          _startTotalUnreadFallbackPolling();
+          return;
+        }
+        if (_applyTotalUnreadRealtimeEvent(event)) {
+          return;
+        }
+        if (_shouldRefreshTotalUnreadForRealtimeEvent(event)) {
+          _scheduleTotalUnreadRefresh();
+        }
       });
+    } else {
+      _startTotalUnreadFallbackPolling();
     }
   }
 
-  Future<void> _stopTotalUnreadPolling() async {
-    _totalUnreadPollingEnabled = false;
-    _totalUnreadTimer?.cancel();
-    _totalUnreadTimer = null;
+  Future<void> _stopTotalUnreadUpdates() async {
+    _totalUnreadUpdatesActive = false;
+    _stopTotalUnreadFallbackPolling();
     _totalUnreadRealtimeDebounce?.cancel();
     _totalUnreadRealtimeDebounce = null;
     await _totalUnreadRealtimeSubscription?.cancel();
     _totalUnreadRealtimeSubscription = null;
   }
 
+  void _startTotalUnreadFallbackPolling() {
+    if (!_totalUnreadUpdatesActive ||
+        _totalUnreadController == null ||
+        _totalUnreadFallbackTimer != null) {
+      return;
+    }
+
+    _totalUnreadFallbackTimer = Timer.periodic(
+      _realtimeFallbackPollInterval,
+      (_) => unawaited(_emitTotalUnread()),
+    );
+  }
+
+  void _stopTotalUnreadFallbackPolling() {
+    _totalUnreadFallbackTimer?.cancel();
+    _totalUnreadFallbackTimer = null;
+  }
+
   Future<void> _emitTotalUnread() async {
     final controller = _totalUnreadController;
-    if (!_totalUnreadPollingEnabled ||
+    if (!_totalUnreadUpdatesActive ||
         controller == null ||
         controller.isClosed) {
       return;
     }
 
     if (!_hasActiveSession) {
-      await _stopTotalUnreadPolling();
+      await _stopTotalUnreadUpdates();
       if (!controller.isClosed) {
         controller.add(0);
       }
@@ -642,7 +942,7 @@ class CustomApiChatService implements ChatServiceInterface {
       controller.add(await _fetchTotalUnreadCount());
     } on CustomApiException catch (error, stackTrace) {
       if (await _handleSessionError(error)) {
-        await _stopTotalUnreadPolling();
+        await _stopTotalUnreadUpdates();
         if (!controller.isClosed) {
           controller.add(0);
         }
@@ -655,7 +955,7 @@ class CustomApiChatService implements ChatServiceInterface {
       controller.addError(error, stackTrace);
     } catch (error, stackTrace) {
       if (await _handleSessionError(error)) {
-        await _stopTotalUnreadPolling();
+        await _stopTotalUnreadUpdates();
         if (!controller.isClosed) {
           controller.add(0);
         }
@@ -669,12 +969,44 @@ class CustomApiChatService implements ChatServiceInterface {
     }
   }
 
-  void _scheduleTotalUnreadRefresh() {
+  void _scheduleTotalUnreadRefresh({bool immediate = false}) {
     _totalUnreadRealtimeDebounce?.cancel();
+    if (immediate) {
+      unawaited(_emitTotalUnread());
+      return;
+    }
+
     _totalUnreadRealtimeDebounce = Timer(
       const Duration(milliseconds: 350),
       () => unawaited(_emitTotalUnread()),
     );
+  }
+
+  bool _applyTotalUnreadRealtimeEvent(CustomApiRealtimeEvent event) {
+    if (event.type != 'chat.unread.changed') {
+      return false;
+    }
+
+    final totalUnread = int.tryParse(
+      event.payload['totalUnread']?.toString() ?? '',
+    );
+    final controller = _totalUnreadController;
+    if (totalUnread == null || controller == null || controller.isClosed) {
+      return false;
+    }
+
+    _totalUnreadRealtimeDebounce?.cancel();
+    controller.add(totalUnread);
+    return true;
+  }
+
+  bool _shouldRefreshTotalUnreadForRealtimeEvent(
+    CustomApiRealtimeEvent event,
+  ) {
+    return event.type == 'chat.message.created' ||
+        event.type == 'chat.message.deleted' ||
+        event.type == 'chat.read.updated' ||
+        event.type == 'notification.created';
   }
 
   _ChatMessageStreamState _ensureMessageStream(String chatId) {
@@ -717,7 +1049,7 @@ class CustomApiChatService implements ChatServiceInterface {
       return;
     }
 
-    unawaited(_refreshMessageState(state));
+    unawaited(_hydrateMessageState(state));
 
     if (_realtimeService != null) {
       unawaited(_realtimeService!.connect());
@@ -748,6 +1080,44 @@ class CustomApiChatService implements ChatServiceInterface {
               return;
             }
             _removeRealtimeMessage(state, messageId);
+            return;
+          case 'message.reaction.changed':
+            final messageId = event.payload['messageId']?.toString();
+            final rawReactions = event.payload['reactions'];
+            if (messageId == null ||
+                messageId.isEmpty ||
+                rawReactions is! List<dynamic>) {
+              _scheduleMessageRefresh(state);
+              return;
+            }
+            _applyReactionUpdate(state, messageId, rawReactions);
+            return;
+          case 'message.delivered':
+            final messageId = event.payload['messageId']?.toString();
+            final userIds = _stringListFromDynamic(event.payload['userIds']);
+            final deliveredTo =
+                _stringListFromDynamic(event.payload['deliveredTo']);
+            if (messageId == null || messageId.isEmpty) {
+              _scheduleMessageRefresh(state);
+              return;
+            }
+            _applyDeliveryUpdate(
+              state,
+              messageId: messageId,
+              userIds: deliveredTo.isNotEmpty ? deliveredTo : userIds,
+            );
+            return;
+          case 'message.read':
+            final readerUserId = event.userId;
+            if (readerUserId == null || readerUserId.isEmpty) {
+              _scheduleMessageRefresh(state);
+              return;
+            }
+            _applyReadUpdate(
+              state,
+              readerUserId,
+              messageIds: _stringListFromDynamic(event.payload['messageIds']),
+            );
             return;
           case 'chat.read.updated':
             final readerUserId = event.userId;
@@ -792,7 +1162,35 @@ class CustomApiChatService implements ChatServiceInterface {
     );
   }
 
-  Future<void> _refreshMessageState(_ChatMessageStreamState state) async {
+  Future<void> _hydrateMessageState(_ChatMessageStreamState state) async {
+    if (_messageCache == null) {
+      await _refreshMessageState(state);
+      return;
+    }
+
+    var cachedMessages = const <ChatMessage>[];
+    try {
+      cachedMessages = await _messageCache!.read(state.chatId);
+    } catch (_) {
+      cachedMessages = const <ChatMessage>[];
+    }
+
+    if (cachedMessages.isNotEmpty) {
+      state.messages = cachedMessages;
+      if (!state.controller.isClosed) {
+        state.controller.add(List<ChatMessage>.unmodifiable(cachedMessages));
+      }
+      await _refreshMessageState(state, afterId: cachedMessages.first.id);
+      return;
+    }
+
+    await _refreshMessageState(state);
+  }
+
+  Future<void> _refreshMessageState(
+    _ChatMessageStreamState state, {
+    String? afterId,
+  }) async {
     if (state.isFetching) {
       state.hasQueuedRefresh = true;
       return;
@@ -808,7 +1206,22 @@ class CustomApiChatService implements ChatServiceInterface {
 
     state.isFetching = true;
     try {
-      state.messages = await _fetchMessages(state.chatId);
+      final normalizedAfterId = afterId?.trim();
+      final hasAfterId =
+          normalizedAfterId != null && normalizedAfterId.isNotEmpty;
+      final page = await fetchMessagesPage(
+        state.chatId,
+        limit: hasAfterId ? 200 : 100,
+        afterId: hasAfterId ? normalizedAfterId : null,
+      );
+      state.messages = hasAfterId
+          ? _mergeMessageLists(state.messages, page.messages)
+          : page.messages;
+      if (!hasAfterId) {
+        _cacheMessages(
+          (cache) => cache.write(state.chatId, state.messages),
+        );
+      }
       if (!state.controller.isClosed) {
         state.controller.add(List<ChatMessage>.unmodifiable(state.messages));
       }
@@ -868,6 +1281,9 @@ class CustomApiChatService implements ChatServiceInterface {
     }
     nextMessages.sort(_sortMessagesDescending);
     state.messages = nextMessages;
+    _cacheMessages(
+      (cache) => cache.appendOne(state.chatId, incomingMessage),
+    );
     if (!state.controller.isClosed) {
       state.controller.add(List<ChatMessage>.unmodifiable(nextMessages));
     }
@@ -881,26 +1297,167 @@ class CustomApiChatService implements ChatServiceInterface {
         .where((message) => message.id != messageId)
         .toList(growable: false);
     state.messages = nextMessages;
+    _cacheMessages(
+      (cache) => cache.removeOne(state.chatId, messageId),
+    );
     if (!state.controller.isClosed) {
       state.controller.add(List<ChatMessage>.unmodifiable(nextMessages));
     }
   }
 
-  void _applyReadUpdate(_ChatMessageStreamState state, String readerUserId) {
-    final nextMessages = state.messages.map((message) {
-      if (message.senderId == readerUserId || message.isRead) {
-        return message;
-      }
-      return message.copyWith(isRead: true);
-    }).toList(growable: false);
+  void _applyReactionUpdate(
+    _ChatMessageStreamState state,
+    String messageId,
+    List<dynamic> rawReactions,
+  ) {
+    final messageIndex = state.messages.indexWhere(
+      (message) => message.id == messageId,
+    );
+    if (messageIndex < 0) {
+      _scheduleMessageRefresh(state);
+      return;
+    }
+
+    final nextMessages = List<ChatMessage>.from(state.messages);
+    final nextMessage = nextMessages[messageIndex].copyWith(
+      reactions: ChatMessageReactionSummary.listFromDynamic(rawReactions),
+    );
+    nextMessages[messageIndex] = nextMessage;
     state.messages = nextMessages;
+    _cacheMessages(
+      (cache) => cache.appendOne(state.chatId, nextMessage),
+    );
     if (!state.controller.isClosed) {
       state.controller.add(List<ChatMessage>.unmodifiable(nextMessages));
     }
+  }
+
+  void _applyDeliveryUpdate(
+    _ChatMessageStreamState state, {
+    required String messageId,
+    required List<String> userIds,
+  }) {
+    if (userIds.isEmpty) {
+      return;
+    }
+
+    final messageIndex = state.messages.indexWhere(
+      (message) => message.id == messageId,
+    );
+    if (messageIndex < 0) {
+      _scheduleMessageRefresh(state);
+      return;
+    }
+
+    final nextMessages = List<ChatMessage>.from(state.messages);
+    final message = nextMessages[messageIndex];
+    final deliveredTo = <String>{
+      ...message.deliveredTo,
+      ...userIds,
+    }.where((userId) => userId.trim().isNotEmpty).toList(growable: false);
+    final nextMessage = message.copyWith(deliveredTo: deliveredTo);
+    nextMessages[messageIndex] = nextMessage;
+    state.messages = nextMessages;
+    _cacheMessages(
+      (cache) => cache.appendOne(state.chatId, nextMessage),
+    );
+    if (!state.controller.isClosed) {
+      state.controller.add(List<ChatMessage>.unmodifiable(nextMessages));
+    }
+  }
+
+  void _applyReadUpdate(
+    _ChatMessageStreamState state,
+    String readerUserId, {
+    List<String> messageIds = const <String>[],
+  }) {
+    final targetMessageIds = messageIds.toSet();
+    final nextMessages = state.messages.map((message) {
+      if (message.senderId == readerUserId ||
+          (targetMessageIds.isNotEmpty &&
+              !targetMessageIds.contains(message.id))) {
+        return message;
+      }
+      return message.copyWith(
+        isRead: true,
+        deliveredTo: <String>{
+          ...message.deliveredTo,
+          readerUserId,
+        }.toList(growable: false),
+        readBy: <String>{
+          ...message.readBy,
+          readerUserId,
+        }.toList(growable: false),
+      );
+    }).toList(growable: false);
+    state.messages = nextMessages;
+    _cacheMessages(
+      (cache) => cache.write(state.chatId, nextMessages),
+    );
+    if (!state.controller.isClosed) {
+      state.controller.add(List<ChatMessage>.unmodifiable(nextMessages));
+    }
+  }
+
+  List<String> _stringListFromDynamic(dynamic value) {
+    if (value is! List) {
+      return const <String>[];
+    }
+    return value
+        .map((item) => item.toString().trim())
+        .where((item) => item.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+  }
+
+  List<ChatMessage> _mergeMessageLists(
+    List<ChatMessage> existingMessages,
+    List<ChatMessage> incomingMessages,
+  ) {
+    if (incomingMessages.isEmpty) {
+      return existingMessages;
+    }
+
+    final byId = <String, ChatMessage>{};
+    for (final message in existingMessages) {
+      if (message.id.trim().isNotEmpty) {
+        byId[message.id] = message;
+      }
+    }
+    for (final message in incomingMessages) {
+      if (message.id.trim().isNotEmpty) {
+        byId[message.id] = message;
+      }
+    }
+
+    final nextMessages = byId.values.toList();
+    nextMessages.sort(_sortMessagesDescending);
+    return nextMessages;
+  }
+
+  void _cacheMessages(
+    Future<void> Function(ChatMessageCache cache) operation,
+  ) {
+    final cache = _messageCache;
+    if (cache == null) {
+      return;
+    }
+
+    unawaited(() async {
+      try {
+        await operation(cache);
+      } catch (_) {
+        // Cache failures should not break chat rendering or delivery.
+      }
+    }());
   }
 
   int _sortMessagesDescending(ChatMessage left, ChatMessage right) {
-    return right.timestamp.compareTo(left.timestamp);
+    final timestampCompare = right.timestamp.compareTo(left.timestamp);
+    if (timestampCompare != 0) {
+      return timestampCompare;
+    }
+    return right.id.compareTo(left.id);
   }
 
   ChatMessage _parseChatMessage(Map<String, dynamic> message) {
@@ -920,24 +1477,24 @@ class CustomApiChatService implements ChatServiceInterface {
       'clientMessageId': message['clientMessageId'],
       'expiresAt': message['expiresAt'],
       'replyTo': message['replyTo'],
+      'reactions': message['reactions'],
+      'deliveredTo': message['deliveredTo'],
+      'readBy': message['readBy'],
     });
   }
 
-  Future<List<ChatMessage>> _fetchMessages(String chatId) async {
-    final response = await _requestJson(
-      method: 'GET',
-      path: '/v1/chats/$chatId/messages',
-    );
-
-    final rawMessages = response['messages'];
-    if (rawMessages is! List<dynamic>) {
-      return const <ChatMessage>[];
+  ChatPinnedMessageSnapshot? _parsePinnedMessageSnapshot(dynamic value) {
+    if (value is! Map) {
+      return null;
     }
+    final snapshot = ChatPinnedMessageSnapshot.fromJson(
+      Map<String, dynamic>.from(value),
+    );
+    return snapshot.messageId.trim().isEmpty ? null : snapshot;
+  }
 
-    return rawMessages
-        .whereType<Map<String, dynamic>>()
-        .map(_parseChatMessage)
-        .toList();
+  Future<List<ChatMessage>> _fetchMessages(String chatId) async {
+    return (await fetchMessagesPage(chatId, limit: 100)).messages;
   }
 
   Future<List<ChatAttachment>> _uploadAttachments(
@@ -975,12 +1532,25 @@ class CustomApiChatService implements ChatServiceInterface {
     final uploadedAttachments = <ChatAttachment>[];
     for (var index = 0; index < attachments.length; index++) {
       final attachment = attachments[index];
+      final initialType = _attachmentTypeForFile(attachment, '');
+      final initialPresentation = _attachmentPresentationForFile(
+        attachment,
+        initialType,
+      );
+      final useVoiceFolder = _looksLikeVoiceNoteAttachment(attachment);
       final uploadedUrl = await storageService.uploadImage(
         attachment,
-        'chat-media/$userId',
+        initialPresentation == ChatAttachmentPresentation.voiceNote ||
+                useVoiceFolder
+            ? 'chat-voice/$userId'
+            : 'chat-media/$userId',
       );
       if (uploadedUrl != null && uploadedUrl.isNotEmpty) {
         final attachmentType = _attachmentTypeForFile(attachment, uploadedUrl);
+        final presentation = _attachmentPresentationForFile(
+          attachment,
+          attachmentType,
+        );
         final metadata = await _buildAttachmentMetadata(
           attachment,
           attachmentType,
@@ -989,14 +1559,12 @@ class CustomApiChatService implements ChatServiceInterface {
           ChatAttachment(
             type: attachmentType,
             url: uploadedUrl,
-            presentation: _attachmentPresentationForFile(
-              attachment,
-              attachmentType,
-            ),
+            presentation: presentation,
             mimeType: attachment.mimeType,
             fileName: _attachmentFileName(attachment, uploadedUrl),
             sizeBytes: await attachment.length(),
             durationMs: metadata.durationMs,
+            waveform: metadata.waveform,
             width: metadata.width,
             height: metadata.height,
           ),
@@ -1020,6 +1588,7 @@ class CustomApiChatService implements ChatServiceInterface {
     if (type == ChatAttachmentType.audio) {
       return _UploadedAttachmentMetadata(
         durationMs: _durationFromAttachmentName(attachment.name),
+        waveform: await _buildVoiceWaveform(attachment),
       );
     }
     if (type != ChatAttachmentType.video) {
@@ -1050,22 +1619,45 @@ class CustomApiChatService implements ChatServiceInterface {
     }
   }
 
+  Future<List<double>> _buildVoiceWaveform(XFile attachment) async {
+    try {
+      return buildVoiceWaveformFromBytes(await attachment.readAsBytes());
+    } catch (_) {
+      return const <double>[];
+    }
+  }
+
   ChatAttachmentPresentation _attachmentPresentationForFile(
     XFile attachment,
     ChatAttachmentType type,
   ) {
-    final normalizedName = attachment.name.toLowerCase().trim();
     if (type == ChatAttachmentType.audio &&
-        (normalizedName.startsWith('voice_note') ||
-            normalizedName.startsWith('voice-'))) {
+        _looksLikeVoiceNoteAttachment(attachment)) {
       return ChatAttachmentPresentation.voiceNote;
     }
+    final normalizedName = attachment.name.toLowerCase().trim();
     if (type == ChatAttachmentType.video &&
         (normalizedName.startsWith('video_note') ||
             normalizedName.startsWith('video-note'))) {
       return ChatAttachmentPresentation.videoNote;
     }
     return ChatAttachmentPresentation.defaultPresentation;
+  }
+
+  bool _looksLikeVoiceNoteAttachment(XFile attachment) {
+    final candidates = <String>[
+      attachment.name,
+      attachment.path,
+    ].map((value) => value.toLowerCase().trim()).where((value) {
+      return value.isNotEmpty;
+    });
+    return candidates.any((value) =>
+        value.startsWith('voice_note') ||
+        value.startsWith('voice-note') ||
+        value.contains('/voice_note') ||
+        value.contains(r'\voice_note') ||
+        value.contains('/voice-note') ||
+        value.contains(r'\voice-note'));
   }
 
   ChatAttachmentType _attachmentTypeForFile(
@@ -1139,8 +1731,9 @@ class CustomApiChatService implements ChatServiceInterface {
     required String method,
     required String path,
     Map<String, dynamic>? body,
+    Map<String, String>? queryParameters,
   }) async {
-    final uri = _buildUri(path);
+    final uri = _buildUri(path, queryParameters: queryParameters);
     late http.Response response;
 
     switch (method) {
@@ -1149,6 +1742,13 @@ class CustomApiChatService implements ChatServiceInterface {
         break;
       case 'POST':
         response = await _httpClient.post(
+          uri,
+          headers: _headers(),
+          body: jsonEncode(body ?? const <String, dynamic>{}),
+        );
+        break;
+      case 'PUT':
+        response = await _httpClient.put(
           uri,
           headers: _headers(),
           body: jsonEncode(body ?? const <String, dynamic>{}),
@@ -1199,12 +1799,21 @@ class CustomApiChatService implements ChatServiceInterface {
     );
   }
 
-  Uri _buildUri(String path) {
+  Uri _buildUri(String path, {Map<String, String>? queryParameters}) {
     final normalizedBase = _runtimeConfig.apiBaseUrl.replaceAll(
       RegExp(r'/$'),
       '',
     );
-    return Uri.parse('$normalizedBase$path');
+    final uri = Uri.parse('$normalizedBase$path');
+    if (queryParameters == null || queryParameters.isEmpty) {
+      return uri;
+    }
+    return uri.replace(
+      queryParameters: <String, String>{
+        ...uri.queryParameters,
+        ...queryParameters,
+      },
+    );
   }
 
   Map<String, String> _headers() {
