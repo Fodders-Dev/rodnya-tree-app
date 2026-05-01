@@ -309,6 +309,7 @@ extension _ChatsListScreenSections on _ChatsListScreenState {
         color: theme.colorScheme.surface.withValues(alpha: 0.72),
         child: TextField(
           controller: _searchController,
+          focusNode: _searchFocusNode,
           onChanged: (value) {
             _setSearchQuery(value.trim().toLowerCase());
           },

@@ -21,6 +21,7 @@ import '../services/chat_draft_store.dart';
 import '../services/chat_notification_settings_store.dart';
 import '../services/custom_api_chat_service.dart';
 import '../services/custom_api_realtime_service.dart';
+import '../theme/app_theme.dart';
 import '../utils/photo_url.dart';
 import '../utils/user_facing_error.dart';
 import '../widgets/glass_panel.dart';
@@ -95,6 +96,7 @@ class _ChatsListScreenState extends State<ChatsListScreen>
   String? _errorMessage;
   String? _openingPrivateChatUserId;
   final TextEditingController _searchController = TextEditingController();
+  final FocusNode _searchFocusNode = FocusNode();
   String _searchQuery = '';
   _ChatsVisibilityFilter _activeFilter = _ChatsVisibilityFilter.all;
   TreeProvider? _treeProvider;
@@ -128,6 +130,7 @@ class _ChatsListScreenState extends State<ChatsListScreen>
     WidgetsBinding.instance.removeObserver(this);
     _treeProvider?.removeListener(_handleTreeSelectionChanged);
     _searchController.dispose();
+    _searchFocusNode.dispose();
     super.dispose();
   }
 
@@ -645,26 +648,24 @@ class _ChatsListScreenState extends State<ChatsListScreen>
     final treeProvider = context.watch<TreeProvider>();
     final isFriendsTree = treeProvider.selectedTreeKind == TreeKind.friends;
     final selectedTreeName = treeProvider.selectedTreeName;
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
 
     return Scaffold(
       backgroundColor: Colors.transparent,
-      appBar: AppBar(
-        title: const Text('Чаты'),
-        actions: [
-          IconButton(
-            onPressed: _openChatComposer,
-            tooltip: 'Новый чат',
-            icon: const Icon(Icons.add_comment_outlined),
-          ),
-        ],
+      appBar: PreferredSize(
+        preferredSize: const Size.fromHeight(56),
+        child: _buildChatsTopbar(theme: theme, tokens: tokens),
       ),
       body: _errorMessage != null && _chatPreviews.isEmpty
           ? _buildErrorState()
           : Center(
               child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 1400),
+                constraints: const BoxConstraints(maxWidth: 760),
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+                  padding: const EdgeInsets.fromLTRB(0, 6, 0, 12),
                   child: _buildDesktopShell(
                     theme: theme,
                     currentUserId: currentUserId,
@@ -678,6 +679,94 @@ class _ChatsListScreenState extends State<ChatsListScreen>
               ),
             ),
     );
+  }
+
+  Widget _buildChatsTopbar({
+    required ThemeData theme,
+    required RodnyaDesignTokens tokens,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        color: tokens.surface.withValues(
+          alpha: theme.brightness == Brightness.dark ? 0.62 : 0.66,
+        ),
+        border: Border(
+          bottom: BorderSide(color: tokens.surfaceLine, width: 0.7),
+        ),
+      ),
+      padding: const EdgeInsets.fromLTRB(18, 0, 12, 0),
+      child: SafeArea(
+        bottom: false,
+        child: Row(
+          children: [
+            Text(
+              'Чаты',
+              style: AppTheme.serif(
+                color: tokens.ink,
+                fontSize: 22,
+                fontWeight: FontWeight.w600,
+                letterSpacing: -0.22,
+              ),
+            ),
+            const Spacer(),
+            _buildTopbarPillButton(
+              tokens: tokens,
+              tooltip: 'Поиск',
+              onTap: _focusSearch,
+              child: Icon(
+                Icons.search_rounded,
+                size: 19,
+                color: tokens.ink,
+              ),
+            ),
+            const SizedBox(width: 8),
+            _buildTopbarPillButton(
+              tokens: tokens,
+              tooltip: 'Новый чат',
+              onTap: _openChatComposer,
+              child: Icon(
+                Icons.edit_outlined,
+                size: 18,
+                color: tokens.accent,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTopbarPillButton({
+    required RodnyaDesignTokens tokens,
+    required Widget child,
+    required String tooltip,
+    required VoidCallback onTap,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: tokens.surfaceStrong,
+        shape: RoundedRectangleBorder(
+          side: BorderSide(color: tokens.surfaceLine),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(14),
+          child: SizedBox(
+            width: 38,
+            height: 38,
+            child: Center(child: child),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _focusSearch() {
+    if (_searchFocusNode.canRequestFocus) {
+      _searchFocusNode.requestFocus();
+    }
   }
 
   Widget _buildErrorState() {
@@ -1229,9 +1318,13 @@ class _ChatsListScreenState extends State<ChatsListScreen>
         ),
     ];
 
-    return Padding(
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+    return Material(
       key: ValueKey<String>('chat-tile-${chat.chatId}'),
-      padding: const EdgeInsets.fromLTRB(4, 4, 4, 4),
+      color: Colors.transparent,
       child: InkWell(
         onTap: () {
           final titleParam = Uri.encodeComponent(chat.displayName);
@@ -1251,43 +1344,36 @@ class _ChatsListScreenState extends State<ChatsListScreen>
           });
         },
         onLongPress: () => _openChatActions(chat),
-        borderRadius: BorderRadius.circular(24),
-        child: GlassPanel(
-          padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
-          blur: 10,
-          borderRadius: BorderRadius.circular(24),
-          color: theme.colorScheme.surface
-              .withValues(alpha: hasUnread ? 0.84 : 0.72),
-          borderColor: hasUnread
-              ? theme.colorScheme.primary.withValues(alpha: 0.24)
-              : theme.colorScheme.outlineVariant.withValues(alpha: 0.55),
-          plain: true,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
           child: Row(
             children: [
               CircleAvatar(
-                radius: 26,
+                radius: 24,
                 backgroundImage: avatarImage,
-                backgroundColor: theme.colorScheme.primaryContainer,
+                backgroundColor: tokens.accentSoft,
                 child: avatarImage == null
-                    ? chat.isGroup
+                    ? (chat.isGroup
                         ? Icon(
                             chat.isBranch
                                 ? Icons.account_tree_outlined
                                 : Icons.group_outlined,
-                            color: theme.colorScheme.onPrimaryContainer,
+                            size: 22,
+                            color: tokens.accent,
                           )
                         : Text(
                             chat.displayName.isNotEmpty
                                 ? chat.displayName[0].toUpperCase()
                                 : '?',
-                            style: TextStyle(
-                              color: theme.colorScheme.onPrimaryContainer,
-                              fontWeight: FontWeight.bold,
+                            style: AppTheme.sans(
+                              color: tokens.accent,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w800,
                             ),
-                          )
+                          ))
                     : null,
               ),
-              const SizedBox(width: 14),
+              const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
