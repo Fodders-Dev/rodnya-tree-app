@@ -152,27 +152,31 @@ extension _HomeScreenSections on _HomeScreenState {
 
   Widget _buildHomeContentSections({required bool isWideLayout}) {
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _buildHomeHeader(
-          hasSelectedTree: true,
-          selectedTreeName: _treeProviderInstance?.selectedTreeName,
-          isFriendsTree:
-              _treeProviderInstance?.selectedTreeKind == TreeKind.friends,
-        ),
-        if (_pendingIdentityReviewCount > 0 || _identityReviewsUnavailable) ...[
-          const SizedBox(height: 10),
-          _buildIdentityReviewBanner(),
-        ],
-        const SizedBox(height: 10),
-        _buildStoriesSection(),
-        const SizedBox(height: 10),
-        _buildUpcomingEventsSection(isWideLayout: isWideLayout),
-        const SizedBox(height: 10),
-        _buildComposeTeaser(),
-        const SizedBox(height: 10),
-        _buildFeedFilterStrip(),
         const SizedBox(height: 8),
-        _buildHomeFeedStage(isWideLayout: isWideLayout),
+        if (_pendingIdentityReviewCount > 0 || _identityReviewsUnavailable)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 4, 14, 10),
+            child: _buildIdentityReviewBanner(),
+          ),
+        _buildStoriesSection(),
+        const SizedBox(height: 6),
+        _buildUpcomingEventsSection(isWideLayout: isWideLayout),
+        const SizedBox(height: 4),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(18, 6, 18, 12),
+          child: _buildComposeTeaser(),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(18, 0, 18, 10),
+          child: _buildFeedFilterStrip(),
+        ),
+        const SizedBox(height: 4),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(14, 0, 14, 0),
+          child: _buildHomeFeedStage(isWideLayout: isWideLayout),
+        ),
       ],
     );
   }
@@ -656,22 +660,5 @@ extension _HomeScreenSections on _HomeScreenState {
         },
       ),
     );
-  }
-
-  double _eventCardWidthFor(BoxConstraints constraints) {
-    final availableWidth = constraints.maxWidth;
-    if (!availableWidth.isFinite || availableWidth <= 0) {
-      return 220;
-    }
-    if (availableWidth < 360) {
-      return (availableWidth - 8).clamp(196.0, 230.0);
-    }
-    if (availableWidth < 520) {
-      return (availableWidth * 0.76).clamp(212.0, 250.0);
-    }
-    if (availableWidth < 760) {
-      return (availableWidth * 0.48).clamp(226.0, 268.0);
-    }
-    return 250;
   }
 }

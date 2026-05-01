@@ -3,7 +3,6 @@ import 'package:go_router/go_router.dart';
 
 import '../models/app_event.dart';
 import '../theme/app_theme.dart';
-import 'glass_panel.dart';
 
 class EventCard extends StatelessWidget {
   final AppEvent event;
@@ -19,24 +18,28 @@ class EventCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final tokens = _tokensFor(theme);
     final canOpenProfile = event.isLinkedToPerson;
     final personName = canOpenProfile ? event.personName.trim() : '';
+    final radius = BorderRadius.circular(compact ? 14 : 20);
 
     return SizedBox(
-      width: width ?? (compact ? 232 : 220),
-      child: GlassPanel(
-        margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-        padding: EdgeInsets.zero,
-        borderRadius: BorderRadius.circular(compact ? 18 : 20),
-        plain: true,
+      width: width ?? (compact ? null : 220),
+      child: Material(
+        color: tokens.surfaceStrong,
+        shape: RoundedRectangleBorder(
+          side: BorderSide(color: tokens.surfaceLine),
+          borderRadius: radius,
+        ),
         child: InkWell(
-          borderRadius: BorderRadius.circular(compact ? 18 : 20),
+          borderRadius: radius,
           onTap: canOpenProfile
               ? () => context.push('/relative/details/${event.personId}')
               : null,
           child: Padding(
             padding: compact
-                ? const EdgeInsets.fromLTRB(10, 9, 10, 9)
+                ? const EdgeInsets.fromLTRB(8, 8, 14, 8)
                 : const EdgeInsets.fromLTRB(12, 11, 12, 12),
             child: compact
                 ? _buildCompactBody(context, personName, canOpenProfile)
@@ -56,80 +59,76 @@ class EventCard extends StatelessWidget {
     final tokens = _tokensFor(theme);
     final accent = _eventAccent(tokens);
     final accentSoft = _eventAccentSoft(tokens);
-    final subtitle = [
-      if (personName.isNotEmpty) personName,
-      event.status,
-    ].join(' · ');
+    final subtitle = personName.isNotEmpty ? personName : event.status;
 
     return Row(
       children: [
         Container(
-          width: 42,
-          height: 42,
+          width: 38,
+          height: 38,
           decoration: BoxDecoration(
             color: accentSoft,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: accent.withValues(alpha: 0.16)),
+            borderRadius: BorderRadius.circular(10),
           ),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Text(
-                event.date.day.toString(),
-                style: theme.textTheme.titleSmall?.copyWith(
+                _shortMonth(event.date).toUpperCase(),
+                style: AppTheme.sans(
                   color: accent,
-                  fontWeight: FontWeight.w900,
-                  height: 0.98,
+                  fontSize: 9,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.6,
+                  height: 1.0,
                 ),
               ),
               Text(
-                _shortMonth(event.date),
-                style: theme.textTheme.labelSmall?.copyWith(
+                event.date.day.toString(),
+                style: AppTheme.sans(
                   color: accent,
+                  fontSize: 16,
                   fontWeight: FontWeight.w800,
-                  height: 0.98,
+                  letterSpacing: -0.2,
+                  height: 1.05,
                 ),
               ),
             ],
           ),
         ),
         const SizedBox(width: 10),
-        Expanded(
+        Flexible(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
             children: [
               Text(
                 event.title,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.titleSmall?.copyWith(
-                  fontWeight: FontWeight.w800,
-                  height: 1.08,
+                style: AppTheme.sans(
+                  color: tokens.ink,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  height: 1.1,
                 ),
               ),
-              const SizedBox(height: 3),
+              const SizedBox(height: 2),
               Text(
                 subtitle,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                  fontWeight: FontWeight.w600,
+                style: AppTheme.sans(
+                  color: tokens.inkMuted,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
                   height: 1.1,
                 ),
               ),
             ],
           ),
         ),
-        if (canOpenProfile) ...[
-          const SizedBox(width: 4),
-          Icon(
-            Icons.chevron_right_rounded,
-            size: 18,
-            color: theme.colorScheme.onSurfaceVariant,
-          ),
-        ],
       ],
     );
   }

@@ -23,7 +23,6 @@ import '../services/app_status_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/post_card.dart';
 import '../widgets/post_card_shimmer.dart';
-import '../widgets/story_rail.dart';
 import '../widgets/glass_panel.dart';
 import '../services/custom_api_notification_service.dart';
 import '../utils/e2e_state_bridge.dart';
@@ -440,30 +439,16 @@ class _HomeScreenState extends State<HomeScreen> {
       hasSelectedTree: hasSelectedTree,
     );
 
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+
     return Scaffold(
       backgroundColor: Colors.transparent,
-      appBar: AppBar(
-        title: Text(
-          'Родня',
-          style: theme.textTheme.titleLarge?.copyWith(
-            fontWeight: FontWeight.w800,
-          ),
-        ),
-        backgroundColor: (theme.extension<RodnyaDesignTokens>()?.surface ??
-                theme.colorScheme.surface)
-            .withValues(
-          alpha: theme.brightness == Brightness.dark ? 0.82 : 0.74,
-        ),
-        surfaceTintColor: Colors.transparent,
-        scrolledUnderElevation: 0,
-        actions: [
-          _buildNotificationsAction(),
-          IconButton(
-            icon: const Icon(Icons.account_tree_outlined),
-            tooltip: 'Выбрать дерево',
-            onPressed: () => context.go('/tree?selector=1'),
-          ),
-        ],
+      appBar: PreferredSize(
+        preferredSize: const Size.fromHeight(56),
+        child: _buildHomeTopbar(theme: theme, tokens: tokens),
       ),
       body: RefreshIndicator(
         onRefresh: () async {
@@ -479,7 +464,7 @@ class _HomeScreenState extends State<HomeScreen> {
         },
         child: Center(
           child: ConstrainedBox(
-            constraints: BoxConstraints(maxWidth: isWideLayout ? 980 : 1400),
+            constraints: BoxConstraints(maxWidth: isWideLayout ? 980 : 720),
             child: StreamBuilder<List<TreeInvitation>>(
               stream: _familyTreeService.getPendingTreeInvitations(),
               builder: (context, snapshot) {
@@ -509,11 +494,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     if (hasSelectedTree) ...[
                       SliverToBoxAdapter(
-                        child: Padding(
-                          padding: const EdgeInsets.fromLTRB(16, 18, 16, 0),
-                          child: _buildHomeContentSections(
-                            isWideLayout: isWideLayout,
-                          ),
+                        child: _buildHomeContentSections(
+                          isWideLayout: isWideLayout,
                         ),
                       ),
                       const SliverToBoxAdapter(child: SizedBox(height: 80)),
@@ -530,14 +512,93 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildNotificationsAction() {
+  Widget _buildHomeTopbar({
+    required ThemeData theme,
+    required RodnyaDesignTokens tokens,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        color: tokens.surface.withValues(
+          alpha: theme.brightness == Brightness.dark ? 0.62 : 0.66,
+        ),
+        border: Border(
+          bottom: BorderSide(color: tokens.surfaceLine, width: 0.7),
+        ),
+      ),
+      padding: const EdgeInsets.fromLTRB(18, 0, 12, 0),
+      child: SafeArea(
+        bottom: false,
+        child: Row(
+          children: [
+            Text(
+              'Родня',
+              style: AppTheme.serif(
+                color: tokens.ink,
+                fontSize: 22,
+                fontWeight: FontWeight.w600,
+                letterSpacing: -0.22,
+              ),
+            ),
+            const Spacer(),
+            _buildTopbarIconButton(
+              tokens: tokens,
+              child: _buildNotificationsAction(tokens: tokens),
+              tooltip: 'Уведомления',
+              onTap: () => context.push('/notifications'),
+            ),
+            const SizedBox(width: 8),
+            _buildTopbarIconButton(
+              tokens: tokens,
+              tooltip: 'Выбрать дерево',
+              onTap: () => context.go('/tree?selector=1'),
+              child: Icon(
+                Icons.account_tree_outlined,
+                size: 19,
+                color: tokens.accent,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTopbarIconButton({
+    required RodnyaDesignTokens tokens,
+    required Widget child,
+    required String tooltip,
+    required VoidCallback onTap,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: tokens.surfaceStrong,
+        shape: RoundedRectangleBorder(
+          side: BorderSide(color: tokens.surfaceLine),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(14),
+          child: SizedBox(
+            width: 38,
+            height: 38,
+            child: Center(child: child),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNotificationsAction({required RodnyaDesignTokens tokens}) {
     final notificationService = _customNotificationService;
+    final defaultIcon = Icon(
+      Icons.notifications_outlined,
+      size: 19,
+      color: tokens.ink,
+    );
     if (notificationService == null) {
-      return IconButton(
-        icon: const Icon(Icons.notifications_outlined),
-        tooltip: 'Активность',
-        onPressed: () => context.push('/notifications'),
-      );
+      return defaultIcon;
     }
 
     return StreamBuilder<int>(
@@ -545,18 +606,40 @@ class _HomeScreenState extends State<HomeScreen> {
       initialData: notificationService.unreadNotificationsCount,
       builder: (context, snapshot) {
         final unreadCount = snapshot.data ?? 0;
-        final icon = unreadCount > 0
-            ? Badge(
-                label: Text(unreadCount > 99 ? '99+' : unreadCount.toString()),
-                child: const Icon(Icons.notifications_outlined),
-              )
-            : const Icon(Icons.notifications_outlined);
-
-        return IconButton(
-          icon: icon,
-          tooltip:
-              unreadCount > 0 ? 'Активность, $unreadCount новых' : 'Активность',
-          onPressed: () => context.push('/notifications'),
+        if (unreadCount <= 0) {
+          return defaultIcon;
+        }
+        return Stack(
+          clipBehavior: Clip.none,
+          alignment: Alignment.center,
+          children: [
+            defaultIcon,
+            Positioned(
+              top: -6,
+              right: -8,
+              child: Container(
+                constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                decoration: BoxDecoration(
+                  color: tokens.warm,
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: tokens.surfaceStrong, width: 1.5),
+                ),
+                child: Center(
+                  child: Text(
+                    unreadCount > 99 ? '99+' : unreadCount.toString(),
+                    style: AppTheme.sans(
+                      color: Colors.black87,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0,
+                      height: 1.0,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
         );
       },
     );
@@ -583,78 +666,6 @@ class _HomeScreenState extends State<HomeScreen> {
       padding: padding,
       borderRadius: BorderRadius.circular(22),
       child: child,
-    );
-  }
-
-  Widget _buildEventStatePanel({
-    required IconData icon,
-    required String title,
-    required String message,
-    bool showProgress = false,
-    String? actionLabel,
-    VoidCallback? onAction,
-  }) {
-    final theme = Theme.of(context);
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surface.withValues(alpha: 0.72),
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(
-          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.82),
-        ),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 46,
-            height: 46,
-            decoration: BoxDecoration(
-              color: theme.colorScheme.primary.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: showProgress
-                ? const Padding(
-                    padding: EdgeInsets.all(11),
-                    child: CircularProgressIndicator(strokeWidth: 2.4),
-                  )
-                : Icon(icon, color: theme.colorScheme.primary),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: theme.textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  message,
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
-                    height: 1.35,
-                  ),
-                ),
-                if (actionLabel != null && onAction != null) ...[
-                  const SizedBox(height: 10),
-                  FilledButton.tonalIcon(
-                    onPressed: onAction,
-                    icon: const Icon(Icons.refresh_rounded, size: 18),
-                    label: Text(actionLabel),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ],
-      ),
     );
   }
 
@@ -812,28 +823,92 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildUpcomingEventsSection({required bool isWideLayout}) {
-    final theme = Theme.of(context);
+    if (_isLoadingEvents) {
+      return const SizedBox(height: 0);
+    }
+    if (_upcomingEvents.isEmpty) {
+      return const SizedBox(height: 0);
+    }
+
     final visibleEvents = _visibleUpcomingEvents;
     final showRailControls = MediaQuery.of(context).size.width >= 760;
-    final canScrollRail = showRailControls && visibleEvents.length > 1;
-    return _buildDesktopSideCard(
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  _treeProviderInstance?.selectedTreeKind == TreeKind.friends
-                      ? 'Поводы'
-                      : 'События',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w800,
+    final categories = _eventCategories;
+    final hasCategories = categories.isNotEmpty;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (hasCategories)
+          SizedBox(
+            height: 30,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 18),
+              children: [
+                _buildEventFilterChip(
+                  label: 'Все',
+                  semanticLabel: 'home-event-filter-all',
+                  selected: _selectedEventCategoryFilter == null,
+                  onTap: () {
+                    setState(() {
+                      _selectedEventCategoryFilter = null;
+                    });
+                  },
+                ),
+                for (final category in categories) ...[
+                  const SizedBox(width: 6),
+                  _buildEventFilterChip(
+                    label: category,
+                    semanticLabel:
+                        'home-event-filter-${_eventCategoryKey(category)}',
+                    selected: _selectedEventCategoryFilter == category,
+                    onTap: () {
+                      setState(() {
+                        _selectedEventCategoryFilter = category;
+                      });
+                    },
                   ),
+                ],
+              ],
+            ),
+          ),
+        if (hasCategories) const SizedBox(height: 8),
+        if (visibleEvents.isEmpty)
+          const SizedBox(height: 0)
+        else
+          SizedBox(
+            height: 56,
+            child: MouseRegion(
+              onEnter: (_) => _setEventRailHovered(true),
+              onExit: (_) => _setEventRailHovered(false),
+              child: Listener(
+                behavior: HitTestBehavior.translucent,
+                onPointerSignal:
+                    showRailControls ? _handleEventRailPointerSignal : null,
+                child: ListView.separated(
+                  key: _eventRailRegionKey,
+                  controller: _eventRailController,
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 18),
+                  itemCount: visibleEvents.length,
+                  separatorBuilder: (_, __) => const SizedBox(width: 8),
+                  itemBuilder: (context, index) {
+                    return EventCard(
+                      event: visibleEvents[index],
+                      compact: true,
+                    );
+                  },
                 ),
               ),
-              if (canScrollRail) ...[
+            ),
+          ),
+        if (showRailControls && visibleEvents.length > 1) ...[
+          const SizedBox(height: 6),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 18),
+            child: Row(
+              children: [
                 _buildEventRailArrowButton(
                   icon: Icons.chevron_left_rounded,
                   tooltip: 'Прокрутить события влево',
@@ -847,122 +922,11 @@ class _HomeScreenState extends State<HomeScreen> {
                   semanticLabel: 'home-event-scroll-right',
                   onTap: () => _nudgeEventRail(220),
                 ),
-                const SizedBox(width: 8),
               ],
-              if (!_isLoadingEvents)
-                _buildHeaderChip(
-                  icon: Icons.schedule_outlined,
-                  label: visibleEvents.isEmpty
-                      ? '0'
-                      : visibleEvents.length.toString(),
-                ),
-            ],
+            ),
           ),
-          const SizedBox(height: 8),
-          if (!_isLoadingEvents && _upcomingEvents.isNotEmpty) ...[
-            SizedBox(
-              height: 34,
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                children: [
-                  _buildEventFilterChip(
-                    label: 'Все',
-                    semanticLabel: 'home-event-filter-all',
-                    selected: _selectedEventCategoryFilter == null,
-                    onTap: () {
-                      setState(() {
-                        _selectedEventCategoryFilter = null;
-                      });
-                    },
-                  ),
-                  for (final category in _eventCategories) ...[
-                    const SizedBox(width: 8),
-                    _buildEventFilterChip(
-                      label: category,
-                      semanticLabel:
-                          'home-event-filter-${_eventCategoryKey(category)}',
-                      selected: _selectedEventCategoryFilter == category,
-                      onTap: () {
-                        setState(() {
-                          _selectedEventCategoryFilter = category;
-                        });
-                      },
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            const SizedBox(height: 8),
-          ],
-          if (_isLoadingEvents)
-            _buildEventStatePanel(
-              icon: Icons.schedule_outlined,
-              title: 'Собираем ближайшие даты',
-              message:
-                  'Подтягиваем дни рождения, памятные даты и поводы для семьи.',
-              showProgress: true,
-            )
-          else if (_upcomingEvents.isEmpty)
-            _buildEventStatePanel(
-              icon: Icons.event_busy_outlined,
-              title: 'Ближайшие даты появятся здесь',
-              message: _treeProviderInstance?.selectedTreeKind ==
-                      TreeKind.friends
-                  ? 'Добавьте памятные поводы, чтобы круг видел, что важно сейчас.'
-                  : 'Когда в семье появятся дни рождения и памятные даты, они сразу соберутся в эту ленту.',
-              actionLabel: _currentTreeId == null ? null : 'Обновить события',
-              onAction: _currentTreeId == null
-                  ? null
-                  : () => _loadEvents(_currentTreeId!),
-            )
-          else if (visibleEvents.isEmpty)
-            _buildEventStatePanel(
-              icon: Icons.filter_alt_off_outlined,
-              title: 'Под выбранный фильтр пока пусто',
-              message:
-                  'Сбросьте фильтр и посмотрите все ближайшие события одним списком.',
-              actionLabel: 'Показать все',
-              onAction: () {
-                setState(() {
-                  _selectedEventCategoryFilter = null;
-                });
-              },
-            )
-          else
-            Container(
-              key: _eventRailRegionKey,
-              child: MouseRegion(
-                onEnter: (_) => _setEventRailHovered(true),
-                onExit: (_) => _setEventRailHovered(false),
-                child: Listener(
-                  behavior: HitTestBehavior.translucent,
-                  onPointerSignal:
-                      showRailControls ? _handleEventRailPointerSignal : null,
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      final cardWidth = _eventCardWidthFor(constraints);
-                      return SizedBox(
-                        height: 62,
-                        child: ListView.builder(
-                          controller: _eventRailController,
-                          scrollDirection: Axis.horizontal,
-                          itemCount: visibleEvents.length,
-                          itemBuilder: (context, index) {
-                            return EventCard(
-                              event: visibleEvents[index],
-                              width: cardWidth,
-                              compact: true,
-                            );
-                          },
-                        ),
-                      );
-                    },
-                  ),
-                ),
-              ),
-            ),
         ],
-      ),
+      ],
     );
   }
 
@@ -1101,41 +1065,198 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildStoriesSection() {
-    return StoryRail(
-      title: _treeProviderInstance?.selectedTreeKind == TreeKind.friends
-          ? 'Истории круга'
-          : 'Истории семьи',
-      currentUserId: _authService.currentUserId ?? '',
-      stories: _stories,
-      isLoading: _isLoadingStories,
-      unavailable: _storiesUnavailable,
-      onRetry: () {
-        if (_currentTreeId != null) {
-          _loadStories(_currentTreeId!);
-        }
-      },
-      onCreateStory: () async {
-        final result = await context.push('/stories/create');
-        if (result == true && _currentTreeId != null) {
-          _loadStories(_currentTreeId!);
-        }
-      },
-      onOpenStories: (stories) async {
-        if (stories.isEmpty) {
-          return;
-        }
-        final story = stories.last;
-        final route = '/stories/view/${story.treeId}/${story.authorId}';
-        await context.push(
-          route,
-        );
-        if (_currentTreeId != null) {
-          _loadStories(_currentTreeId!);
-        }
-      },
-      emptyLabel: _treeProviderInstance?.selectedTreeKind == TreeKind.friends
-          ? 'Первая история появится здесь.'
-          : 'Первая история появится здесь.',
+    final theme = Theme.of(context);
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+    final currentUserId = _authService.currentUserId ?? '';
+    if (_isLoadingStories && _stories.isEmpty) {
+      return const SizedBox(height: 0);
+    }
+
+    final byAuthor = <String, Story>{};
+    for (final story in _stories) {
+      final existing = byAuthor[story.authorId];
+      if (existing == null || story.createdAt.isAfter(existing.createdAt)) {
+        byAuthor[story.authorId] = story;
+      }
+    }
+    final ordered = byAuthor.values.toList()
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+    return SizedBox(
+      height: 88,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        physics: const BouncingScrollPhysics(),
+        padding: const EdgeInsets.symmetric(horizontal: 18),
+        children: [
+          _StoryRing(
+            tokens: tokens,
+            isAdd: true,
+            label: 'Создать',
+            onTap: () async {
+              final result = await context.push('/stories/create');
+              if (result == true && _currentTreeId != null) {
+                _loadStories(_currentTreeId!);
+              }
+            },
+          ),
+          for (final story in ordered)
+            Padding(
+              padding: const EdgeInsets.only(left: 6),
+              child: _StoryRing(
+                tokens: tokens,
+                isAdd: false,
+                label: story.authorName.split(' ').first,
+                photoUrl: story.authorPhotoUrl,
+                initials: _initialsFor(story.authorName),
+                read: story.viewedBy.contains(currentUserId),
+                onTap: () async {
+                  final stories = _stories
+                      .where((s) => s.authorId == story.authorId)
+                      .toList();
+                  if (stories.isEmpty) return;
+                  final route =
+                      '/stories/view/${story.treeId}/${story.authorId}';
+                  await context.push(route);
+                  if (_currentTreeId != null) {
+                    _loadStories(_currentTreeId!);
+                  }
+                },
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  String _initialsFor(String name) {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) return '?';
+    final parts =
+        trimmed.split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+    if (parts.length >= 2) {
+      final a = String.fromCharCode(parts[0].runes.first);
+      final b = String.fromCharCode(parts[1].runes.first);
+      return (a + b).toUpperCase();
+    }
+    return String.fromCharCode(parts.first.runes.first).toUpperCase();
+  }
+}
+
+class _StoryRing extends StatelessWidget {
+  const _StoryRing({
+    required this.tokens,
+    required this.isAdd,
+    required this.label,
+    required this.onTap,
+    this.photoUrl,
+    this.initials,
+    this.read = false,
+  });
+
+  final RodnyaDesignTokens tokens;
+  final bool isAdd;
+  final String label;
+  final VoidCallback onTap;
+  final String? photoUrl;
+  final String? initials;
+  final bool read;
+
+  @override
+  Widget build(BuildContext context) {
+    final ringColor = isAdd
+        ? tokens.accent
+        : (read ? tokens.surfaceLine.withValues(alpha: 0.55) : tokens.accent);
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: SizedBox(
+        width: 64,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 56,
+              height: 56,
+              padding: const EdgeInsets.all(2.5),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: !isAdd && !read
+                    ? LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [tokens.accent, tokens.warm],
+                      )
+                    : null,
+                color: (isAdd || read) ? Colors.transparent : null,
+                border: (isAdd || read)
+                    ? Border.all(color: ringColor, width: 1.6)
+                    : null,
+              ),
+              child: Container(
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: tokens.surfaceStrong,
+                  border: Border.all(color: tokens.surfaceLine, width: 1),
+                ),
+                child: ClipOval(
+                  child: isAdd
+                      ? Center(
+                          child: Icon(
+                            Icons.add_rounded,
+                            size: 22,
+                            color: tokens.accent,
+                          ),
+                        )
+                      : (photoUrl != null && photoUrl!.isNotEmpty)
+                          ? Image.network(
+                              photoUrl!,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) => Center(
+                                child: Text(
+                                  initials ?? '?',
+                                  style: AppTheme.sans(
+                                    color: tokens.ink,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                            )
+                          : Center(
+                              child: Text(
+                                initials ?? '?',
+                                style: AppTheme.sans(
+                                  color: tokens.ink,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 5),
+            SizedBox(
+              width: 64,
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: AppTheme.sans(
+                  color: tokens.inkSecondary,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

@@ -267,8 +267,13 @@ class _PostCardState extends State<PostCard>
     final scheme = theme.colorScheme;
     final tokens = _tokensFor(theme);
     final authorPhotoUrl = widget.post.renderableAuthorPhotoUrl;
+    const String? relativeRel = null;
+    final timeText = DateFormat('d MMM • HH:mm', 'ru').format(
+      widget.post.createdAt,
+    );
+
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 14, 14, 12),
+      padding: const EdgeInsets.fromLTRB(14, 12, 10, 10),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -276,9 +281,9 @@ class _PostCardState extends State<PostCard>
             borderRadius: BorderRadius.circular(999),
             onTap: _openAuthorProfile,
             child: Container(
-              width: 42,
-              height: 42,
-              padding: const EdgeInsets.all(2),
+              width: 40,
+              height: 40,
+              padding: const EdgeInsets.all(1.5),
               decoration: BoxDecoration(
                 gradient: authorPhotoUrl == null ? tokens.accentGradient : null,
                 shape: BoxShape.circle,
@@ -293,51 +298,75 @@ class _PostCardState extends State<PostCard>
                 foregroundColor:
                     authorPhotoUrl == null ? tokens.accentInk : scheme.primary,
                 child: authorPhotoUrl == null
-                    ? const Icon(Icons.person_rounded, size: 22)
+                    ? Text(
+                        _shortInitial(widget.post.authorName),
+                        style: AppTheme.sans(
+                          color: tokens.accentInk,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      )
                     : null,
               ),
             ),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 10),
           Expanded(
             child: InkWell(
               onTap: _openAuthorProfile,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(
-                    widget.post.authorName,
+                  RichText(
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w800,
-                      height: 1.1,
+                    text: TextSpan(
+                      style: AppTheme.sans(
+                        color: tokens.ink,
+                        fontSize: 14.5,
+                        fontWeight: FontWeight.w700,
+                        height: 1.15,
+                      ),
+                      children: [
+                        TextSpan(text: widget.post.authorName),
+                        if (relativeRel != null && relativeRel.isNotEmpty)
+                          TextSpan(
+                            text: ' · $relativeRel',
+                            style: AppTheme.sans(
+                              color: tokens.inkMuted,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                      ],
                     ),
                   ),
-                  const SizedBox(height: 5),
-                  Wrap(
-                    spacing: 6,
-                    runSpacing: 6,
-                    children: [
-                      _PostMetaChip(
-                        icon: Icons.schedule_outlined,
-                        label: DateFormat(
-                          'd MMM • HH:mm',
-                          'ru',
-                        ).format(widget.post.createdAt),
-                      ),
-                      _PostMetaChip(
-                        icon: _audienceIcon,
-                        label: _audienceLabel,
-                        highlighted: widget.post.isPublic,
-                      ),
-                      if (widget.post.scopeType ==
-                          TreeContentScopeType.branches)
-                        _PostMetaChip(
-                          icon: Icons.alt_route,
-                          label: 'Ветки: ${widget.post.anchorPersonIds.length}',
-                        ),
-                    ],
+                  const SizedBox(height: 2),
+                  DefaultTextStyle.merge(
+                    style: AppTheme.sans(
+                      color: tokens.inkMuted,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w500,
+                      height: 1.2,
+                    ),
+                    child: Wrap(
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: 6,
+                      children: [
+                        Text(timeText),
+                        const Text('·'),
+                        Icon(_audienceIcon, size: 11, color: tokens.inkMuted),
+                        Text(_audienceLabel),
+                        if (widget.post.scopeType ==
+                            TreeContentScopeType.branches) ...[
+                          const Text('·'),
+                          Icon(Icons.alt_route,
+                              size: 11, color: tokens.inkMuted),
+                          Text('Ветки: ${widget.post.anchorPersonIds.length}'),
+                        ],
+                      ],
+                    ),
                   ),
                 ],
               ),
@@ -345,9 +374,12 @@ class _PostCardState extends State<PostCard>
           ),
           if (_currentUserId == widget.post.authorId)
             PopupMenuButton<String>(
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
               icon: Icon(
-                Icons.more_vert,
-                color: theme.colorScheme.onSurfaceVariant,
+                Icons.more_horiz_rounded,
+                color: tokens.inkMuted,
+                size: 18,
               ),
               onSelected: (value) {
                 if (value == 'delete') {
@@ -370,6 +402,12 @@ class _PostCardState extends State<PostCard>
         ],
       ),
     );
+  }
+
+  String _shortInitial(String name) {
+    final t = name.trim();
+    if (t.isEmpty) return '?';
+    return String.fromCharCode(t.runes.first).toUpperCase();
   }
 
   Widget _buildPostImages(List<String> images) {
@@ -459,45 +497,109 @@ class _PostCardState extends State<PostCard>
 
   Widget _buildPostActions() {
     final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-      child: Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        children: [
-          _PostActionChip(
-            onPressed: _toggleLike,
-            icon: ScaleTransition(
-              scale: _likeScaleAnimation,
-              child: Icon(
-                _isLikedByCurrentUser ? Icons.favorite : Icons.favorite_border,
-                color: _isLikedByCurrentUser
-                    ? Colors.redAccent
-                    : theme.colorScheme.onSurfaceVariant,
-                size: 18,
+    final tokens = _tokensFor(theme);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (_likeCount > 0 || _commentCount > 0)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 0, 14, 6),
+            child: Row(
+              children: [
+                if (_likeCount > 0)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: tokens.surface.withValues(alpha: 0.7),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(color: tokens.surfaceLine),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text('🤍', style: TextStyle(fontSize: 11)),
+                        const SizedBox(width: 4),
+                        Text(
+                          _likeCount.toString(),
+                          style: AppTheme.sans(
+                            color: tokens.inkSecondary,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                const Spacer(),
+                if (_commentCount > 0)
+                  Text(
+                    '$_commentCount комм.',
+                    style: AppTheme.sans(
+                      color: tokens.inkMuted,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        Container(
+          height: 0.7,
+          margin: const EdgeInsets.symmetric(horizontal: 14),
+          color: tokens.surfaceLine,
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(6, 4, 6, 6),
+          child: Row(
+            children: [
+              Expanded(
+                child: _PostActionButton(
+                  onPressed: _toggleLike,
+                  icon: ScaleTransition(
+                    scale: _likeScaleAnimation,
+                    child: Icon(
+                      _isLikedByCurrentUser
+                          ? Icons.favorite
+                          : Icons.favorite_border,
+                      color: _isLikedByCurrentUser
+                          ? tokens.warm
+                          : tokens.inkSecondary,
+                      size: 18,
+                    ),
+                  ),
+                  label: 'Тепло',
+                  active: _isLikedByCurrentUser,
+                ),
               ),
-            ),
-            label: 'Тепло',
-            count: _likeCount,
+              Expanded(
+                child: _PostActionButton(
+                  onPressed: _showCommentsSheet,
+                  icon: Icon(
+                    Icons.chat_bubble_outline_rounded,
+                    color: tokens.inkSecondary,
+                    size: 18,
+                  ),
+                  label: 'Ответить',
+                ),
+              ),
+              Expanded(
+                child: _PostActionButton(
+                  onPressed: _sharePost,
+                  icon: Icon(
+                    Icons.bookmark_outline_rounded,
+                    color: tokens.inkSecondary,
+                    size: 18,
+                  ),
+                  label: 'Сохранить',
+                ),
+              ),
+            ],
           ),
-          _PostActionChip(
-            onPressed: _showCommentsSheet,
-            icon: Icon(
-              Icons.chat_bubble_outline,
-              color: theme.colorScheme.onSurfaceVariant,
-              size: 18,
-            ),
-            label: 'Ответить',
-            count: _commentCount,
-          ),
-          _PostActionChip(
-            onPressed: _sharePost,
-            icon: Icon(Icons.share_outlined,
-                color: theme.colorScheme.onSurfaceVariant, size: 18),
-            label: 'Отправить',
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
@@ -509,102 +611,46 @@ class _PostCardState extends State<PostCard>
   }
 }
 
-class _PostActionChip extends StatelessWidget {
-  const _PostActionChip({
+class _PostActionButton extends StatelessWidget {
+  const _PostActionButton({
     required this.onPressed,
     required this.icon,
     required this.label,
-    this.count,
+    this.active = false,
   });
 
   final VoidCallback onPressed;
   final Widget icon;
   final String label;
-  final int? count;
+  final bool active;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return TextButton.icon(
-      onPressed: onPressed,
-      style: TextButton.styleFrom(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-        backgroundColor:
-            theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.56),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
-      ),
-      icon: icon,
-      label: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            label,
-            style: TextStyle(
-              color: theme.colorScheme.onSurfaceVariant,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          if (count != null) ...[
-            const SizedBox(width: 6),
-            Text(
-              count.toString(),
-              style: TextStyle(
-                color: theme.colorScheme.onSurfaceVariant,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _PostMetaChip extends StatelessWidget {
-  const _PostMetaChip({
-    required this.icon,
-    required this.label,
-    this.highlighted = false,
-  });
-
-  final IconData icon;
-  final String label;
-  final bool highlighted;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
     final tokens = theme.extension<RodnyaDesignTokens>() ??
         (theme.brightness == Brightness.dark
             ? RodnyaDesignTokens.dark
             : RodnyaDesignTokens.light);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: highlighted
-            ? tokens.accentSoft
-            : colorScheme.surfaceContainerHighest.withValues(alpha: 0.72),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
+    return InkWell(
+      onTap: onPressed,
+      borderRadius: BorderRadius.circular(14),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
             icon,
-            size: 12,
-            color: highlighted ? tokens.accent : colorScheme.onSurfaceVariant,
-          ),
-          const SizedBox(width: 4),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              color: highlighted ? tokens.accent : colorScheme.onSurfaceVariant,
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: AppTheme.sans(
+                color: active ? tokens.warm : tokens.inkSecondary,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
