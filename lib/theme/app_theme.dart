@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 @immutable
 class RodnyaDesignTokens extends ThemeExtension<RodnyaDesignTokens> {
@@ -229,6 +230,38 @@ class AppTheme {
     'Apple Color Emoji',
     'Noto Color Emoji',
   ];
+
+  static TextStyle serif({
+    Color? color,
+    double fontSize = 22,
+    FontWeight fontWeight = FontWeight.w600,
+    double letterSpacing = -0.22,
+    double? height,
+  }) {
+    return GoogleFonts.lora(
+      color: color,
+      fontSize: fontSize,
+      fontWeight: fontWeight,
+      letterSpacing: letterSpacing,
+      height: height,
+    );
+  }
+
+  static TextStyle sans({
+    Color? color,
+    double fontSize = 15,
+    FontWeight fontWeight = FontWeight.w500,
+    double letterSpacing = -0.07,
+    double? height,
+  }) {
+    return GoogleFonts.manrope(
+      color: color,
+      fontSize: fontSize,
+      fontWeight: fontWeight,
+      letterSpacing: letterSpacing,
+      height: height,
+    );
+  }
 
   static ThemeData get lightTheme {
     final scheme = ColorScheme.fromSeed(
@@ -651,37 +684,25 @@ class AppTheme {
   }
 
   static TextTheme _withFontFallback(TextTheme textTheme) {
-    return textTheme.copyWith(
-      displayLarge:
-          textTheme.displayLarge?.copyWith(fontFamilyFallback: _fontFallback),
-      displayMedium:
-          textTheme.displayMedium?.copyWith(fontFamilyFallback: _fontFallback),
-      displaySmall:
-          textTheme.displaySmall?.copyWith(fontFamilyFallback: _fontFallback),
-      headlineLarge:
-          textTheme.headlineLarge?.copyWith(fontFamilyFallback: _fontFallback),
-      headlineMedium:
-          textTheme.headlineMedium?.copyWith(fontFamilyFallback: _fontFallback),
-      headlineSmall:
-          textTheme.headlineSmall?.copyWith(fontFamilyFallback: _fontFallback),
-      titleLarge:
-          textTheme.titleLarge?.copyWith(fontFamilyFallback: _fontFallback),
-      titleMedium:
-          textTheme.titleMedium?.copyWith(fontFamilyFallback: _fontFallback),
-      titleSmall:
-          textTheme.titleSmall?.copyWith(fontFamilyFallback: _fontFallback),
-      bodyLarge:
-          textTheme.bodyLarge?.copyWith(fontFamilyFallback: _fontFallback),
-      bodyMedium:
-          textTheme.bodyMedium?.copyWith(fontFamilyFallback: _fontFallback),
-      bodySmall:
-          textTheme.bodySmall?.copyWith(fontFamilyFallback: _fontFallback),
-      labelLarge:
-          textTheme.labelLarge?.copyWith(fontFamilyFallback: _fontFallback),
-      labelMedium:
-          textTheme.labelMedium?.copyWith(fontFamilyFallback: _fontFallback),
-      labelSmall:
-          textTheme.labelSmall?.copyWith(fontFamilyFallback: _fontFallback),
+    final base = GoogleFonts.manropeTextTheme(textTheme);
+    TextStyle? withFallback(TextStyle? style) =>
+        style?.copyWith(fontFamilyFallback: _fontFallback);
+    return base.copyWith(
+      displayLarge: withFallback(base.displayLarge),
+      displayMedium: withFallback(base.displayMedium),
+      displaySmall: withFallback(base.displaySmall),
+      headlineLarge: withFallback(base.headlineLarge),
+      headlineMedium: withFallback(base.headlineMedium),
+      headlineSmall: withFallback(base.headlineSmall),
+      titleLarge: withFallback(base.titleLarge),
+      titleMedium: withFallback(base.titleMedium),
+      titleSmall: withFallback(base.titleSmall),
+      bodyLarge: withFallback(base.bodyLarge),
+      bodyMedium: withFallback(base.bodyMedium),
+      bodySmall: withFallback(base.bodySmall),
+      labelLarge: withFallback(base.labelLarge),
+      labelMedium: withFallback(base.labelMedium),
+      labelSmall: withFallback(base.labelSmall),
     );
   }
 }
