@@ -305,6 +305,9 @@ class AppStartupService implements AppStartupServiceInterface {
     if (!Hive.isAdapterRegistered(FamilyTreeAdapter().typeId)) {
       Hive.registerAdapter(FamilyTreeAdapter());
     }
+    if (!Hive.isAdapterRegistered(TreeKindAdapter().typeId)) {
+      Hive.registerAdapter(TreeKindAdapter());
+    }
     if (!Hive.isAdapterRegistered(
       rodnya_models.FamilyPersonAdapter().typeId,
     )) {
