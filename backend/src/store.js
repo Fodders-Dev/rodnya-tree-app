@@ -3795,10 +3795,11 @@ function extractBirthYear(value) {
   return normalized ? normalized.slice(0, 4) : null;
 }
 
-function safeMergePersonPreview(person) {
+function safeMergePersonPreview(person, {contextLabel = null} = {}) {
   return {
     name: String(person?.name || "Без имени").trim() || "Без имени",
     birthYear: normalizedBirthYear(person?.birthDate),
+    contextLabel: normalizeNullableString(contextLabel),
   };
 }
 
@@ -6665,7 +6666,79 @@ class FileStore {
     return personStewardUserIds(db, person).includes(userId);
   }
 
-  _mergeProposalView(db, proposal) {
+  _mergeProposalStillActionable(db, proposal) {
+    if (!proposal || proposal.status !== "pending") {
+      return false;
+    }
+    const fromPerson = db.persons.find(
+      (person) => person.id === proposal.fromPersonId,
+    );
+    const candidatePerson = db.persons.find(
+      (person) => person.id === proposal.candidatePersonId,
+    );
+    if (!fromPerson || !candidatePerson) {
+      return false;
+    }
+    if (
+      fromPerson.id === candidatePerson.id ||
+      fromPerson.treeId === candidatePerson.treeId
+    ) {
+      return false;
+    }
+    const fromTree = db.trees.find((tree) => tree.id === fromPerson.treeId);
+    const candidateTree = db.trees.find(
+      (tree) => tree.id === candidatePerson.treeId,
+    );
+    if (!fromTree || !candidateTree) {
+      return false;
+    }
+    const fromIdentityId = normalizeNullableString(fromPerson.identityId);
+    const candidateIdentityId = normalizeNullableString(candidatePerson.identityId);
+    if (
+      !fromIdentityId ||
+      !candidateIdentityId ||
+      fromIdentityId === candidateIdentityId
+    ) {
+      return false;
+    }
+    return Boolean(scorePersonPair(fromPerson, candidatePerson));
+  }
+
+  _markStaleMergeProposals(db) {
+    let changed = false;
+    db.mergeProposals = Array.isArray(db.mergeProposals)
+      ? db.mergeProposals
+      : [];
+    for (const proposal of db.mergeProposals) {
+      if (
+        proposal.status === "pending" &&
+        !this._mergeProposalStillActionable(db, proposal)
+      ) {
+        proposal.status = "stale";
+        proposal.resolvedAt = nowIso();
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  _mergeProposalPersonContext(db, person, viewerUserId) {
+    if (!person) {
+      return "Карточка удалена";
+    }
+    const tree = db.trees.find((entry) => entry.id === person.treeId);
+    if (!tree) {
+      return "Дерево удалено";
+    }
+    if (this._userCanAccessTreeRecord(tree, viewerUserId)) {
+      const treeName =
+        String(tree.name || "Без названия").trim() || "Без названия";
+      return `Дерево: ${treeName}`;
+    }
+    return "Другое приватное дерево";
+  }
+
+  _mergeProposalView(db, proposal, viewerUserId = null) {
     const fromPerson = db.persons.find(
       (person) => person.id === proposal.fromPersonId,
     );
@@ -6682,8 +6755,20 @@ class FileStore {
           ? structuredClone(proposal.matchSignals)
           : {},
       reasons: Array.isArray(proposal.reasons) ? proposal.reasons : [],
-      personA: safeMergePersonPreview(fromPerson),
-      personB: safeMergePersonPreview(candidatePerson),
+      personA: safeMergePersonPreview(fromPerson, {
+        contextLabel: this._mergeProposalPersonContext(
+          db,
+          fromPerson,
+          viewerUserId,
+        ),
+      }),
+      personB: safeMergePersonPreview(candidatePerson, {
+        contextLabel: this._mergeProposalPersonContext(
+          db,
+          candidatePerson,
+          viewerUserId,
+        ),
+      }),
       requiredReviewCount: normalizeParticipantIds(proposal.reviewerUserIds).length,
       reviewCount: Array.isArray(proposal.reviews)
         ? proposal.reviews.filter((entry) => entry.decision === "accepted").length
@@ -6905,8 +6990,10 @@ class FileStore {
   }
 
   async listPendingMergeProposalsForUser(userId, {limit = 50} = {}) {
+    const normalizedUserId = normalizeNullableString(userId);
     const db = await this._read();
-    const changed = this._ensureCrossTreeMergeProposals(db, userId, {limit});
+    let changed = this._ensureCrossTreeMergeProposals(db, normalizedUserId, {limit});
+    changed = this._markStaleMergeProposals(db) || changed;
     if (changed) {
       await this._write(db);
     }
@@ -6915,13 +7002,18 @@ class FileStore {
       .filter(
         (proposal) =>
           proposal.status === "pending" &&
-          normalizeParticipantIds(proposal.reviewerUserIds).includes(userId),
+          normalizeParticipantIds(proposal.reviewerUserIds).includes(
+            normalizedUserId,
+          ) &&
+          this._mergeProposalStillActionable(db, proposal),
       )
       .sort((left, right) =>
         String(right.createdAt || "").localeCompare(String(left.createdAt || "")),
       )
       .slice(0, Math.max(0, Math.min(Number(limit) || 50, 100)))
-      .map((proposal) => structuredClone(this._mergeProposalView(db, proposal)));
+      .map((proposal) =>
+        structuredClone(this._mergeProposalView(db, proposal, normalizedUserId)),
+      );
   }
 
   async reviewMergeProposal({proposalId, reviewerUserId, decision, reason = null}) {
@@ -6937,7 +7029,17 @@ class FileStore {
       return false;
     }
     if (proposal.status !== "pending") {
-      return structuredClone(this._mergeProposalView(db, proposal));
+      return structuredClone(
+        this._mergeProposalView(db, proposal, reviewerUserId),
+      );
+    }
+    if (!this._mergeProposalStillActionable(db, proposal)) {
+      proposal.status = "stale";
+      proposal.resolvedAt = nowIso();
+      await this._write(db);
+      return structuredClone(
+        this._mergeProposalView(db, proposal, reviewerUserId),
+      );
     }
 
     const normalizedDecision =

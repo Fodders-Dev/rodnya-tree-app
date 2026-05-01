@@ -3356,11 +3356,22 @@ test("cross-tree merge proposals expose only safe previews and require reviewer 
     assert.equal(proposal.status, "pending");
     assert.equal(proposal.personA.name, "Петров Иван Сергеевич");
     assert.equal(proposal.personA.birthYear, "1950");
-    assert.deepEqual(Object.keys(proposal.personA).sort(), ["birthYear", "name"]);
-    assert.deepEqual(Object.keys(proposal.personB).sort(), ["birthYear", "name"]);
+    assert.equal(proposal.personA.contextLabel, "Дерево: Дерево Алисы");
+    assert.equal(proposal.personB.contextLabel, "Другое приватное дерево");
+    assert.deepEqual(Object.keys(proposal.personA).sort(), [
+      "birthYear",
+      "contextLabel",
+      "name",
+    ]);
+    assert.deepEqual(Object.keys(proposal.personB).sort(), [
+      "birthYear",
+      "contextLabel",
+      "name",
+    ]);
     assert.equal(proposal.personA.photoUrl, undefined);
     assert.equal(proposal.personA.birthDate, undefined);
     assert.equal(proposal.personA.treeId, undefined);
+    assert.equal(proposal.personA.treeName, undefined);
     assert.equal(proposal.reviewerUserIds, undefined);
 
     const aliceReviewResponse = await fetch(
@@ -3385,6 +3396,14 @@ test("cross-tree merge proposals expose only safe previews and require reviewer 
     assert.equal(pendingForBobResponse.status, 200);
     const pendingForBob = await pendingForBobResponse.json();
     assert.equal(pendingForBob.proposals.length, 1);
+    assert.equal(
+      pendingForBob.proposals[0].personA.contextLabel,
+      "Другое приватное дерево",
+    );
+    assert.equal(
+      pendingForBob.proposals[0].personB.contextLabel,
+      "Дерево: Дерево Боба",
+    );
 
     const bobReviewResponse = await fetch(
       `${ctx.baseUrl}/v1/merge-proposals/${proposal.id}/review`,
@@ -3410,6 +3429,110 @@ test("cross-tree merge proposals expose only safe previews and require reviewer 
     );
     assert.ok(updatedAlicePerson.identityId);
     assert.equal(updatedAlicePerson.identityId, updatedBobPerson.identityId);
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("cross-tree merge proposals hide stale deleted-card matches", async () => {
+  const ctx = await startTestServer();
+
+  async function registerUser(email, displayName) {
+    const response = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email,
+        password: "secret123",
+        displayName,
+      }),
+    });
+    assert.equal(response.status, 201);
+    return response.json();
+  }
+
+  async function createTree(token, name) {
+    const response = await fetch(`${ctx.baseUrl}/v1/trees`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        name,
+        description: "Дерево для stale merge matching",
+        isPrivate: true,
+      }),
+    });
+    assert.equal(response.status, 201);
+    const payload = await response.json();
+    return payload.tree.id;
+  }
+
+  async function createPerson(token, treeId) {
+    const response = await fetch(`${ctx.baseUrl}/v1/trees/${treeId}/persons`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        firstName: "Павел",
+        lastName: "Смирнов",
+        middleName: "Иванович",
+        gender: "male",
+        birthDate: "1970-02-03",
+      }),
+    });
+    assert.equal(response.status, 201);
+    const payload = await response.json();
+    return payload.person;
+  }
+
+  try {
+    const user = await registerUser(
+      "merge-stale@rodnya.app",
+      "Stale Reviewer",
+    );
+    const firstTreeId = await createTree(user.accessToken, "Первое дерево");
+    const secondTreeId = await createTree(user.accessToken, "Второе дерево");
+    await createPerson(user.accessToken, firstTreeId);
+    const deletedPerson = await createPerson(user.accessToken, secondTreeId);
+
+    const initialPendingResponse = await fetch(
+      `${ctx.baseUrl}/v1/merge-proposals/pending`,
+      {headers: {authorization: `Bearer ${user.accessToken}`}},
+    );
+    assert.equal(initialPendingResponse.status, 200);
+    const initialPending = await initialPendingResponse.json();
+    assert.equal(
+      initialPending.proposals.filter((proposal) =>
+        JSON.stringify(proposal).includes("Смирнов"),
+      ).length,
+      1,
+    );
+
+    const deleteResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${secondTreeId}/persons/${deletedPerson.id}`,
+      {
+        method: "DELETE",
+        headers: {authorization: `Bearer ${user.accessToken}`},
+      },
+    );
+    assert.equal(deleteResponse.status, 204);
+
+    const pendingAfterDeleteResponse = await fetch(
+      `${ctx.baseUrl}/v1/merge-proposals/pending`,
+      {headers: {authorization: `Bearer ${user.accessToken}`}},
+    );
+    assert.equal(pendingAfterDeleteResponse.status, 200);
+    const pendingAfterDelete = await pendingAfterDeleteResponse.json();
+    assert.equal(
+      pendingAfterDelete.proposals.filter((proposal) =>
+        JSON.stringify(proposal).includes("Смирнов"),
+      ).length,
+      0,
+    );
   } finally {
     await stopTestServer(ctx);
   }

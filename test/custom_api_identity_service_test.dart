@@ -28,8 +28,16 @@ void main() {
               'matchScore': 0.95,
               'confidence': 'high',
               'reasons': ['Совпадает ФИО', 'Совпадает год рождения'],
-              'personA': {'name': 'Иван Петров', 'birthYear': '1950'},
-              'personB': {'name': 'Иван Петров', 'birthYear': '1950'},
+              'personA': {
+                'name': 'Иван Петров',
+                'birthYear': '1950',
+                'contextLabel': 'Дерево: Родня Петровых',
+              },
+              'personB': {
+                'name': 'Иван Петров',
+                'birthYear': '1950',
+                'contextLabel': 'Другое приватное дерево',
+              },
               'requiredReviewCount': 2,
               'reviewCount': 1,
               'createdAt': '2026-05-01T10:00:00.000Z',
@@ -52,6 +60,11 @@ void main() {
     expect(proposals, hasLength(1));
     expect(proposals.single.personA.name, 'Иван Петров');
     expect(proposals.single.personA.birthYear, '1950');
+    expect(proposals.single.personA.contextLabel, 'Дерево: Родня Петровых');
+    expect(
+      proposals.single.personB.contextLabel,
+      'Другое приватное дерево',
+    );
     expect(proposals.single.requiredReviewCount, 2);
   });
 

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
+import 'package:go_router/go_router.dart';
 
 import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/identity_service_interface.dart';
@@ -198,10 +199,23 @@ class _IdentityReviewScreenState extends State<IdentityReviewScreen> {
     );
   }
 
+  void _leaveScreen() {
+    if (context.canPop()) {
+      context.pop();
+      return;
+    }
+    context.go('/');
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        leading: IconButton(
+          onPressed: _leaveScreen,
+          icon: const Icon(Icons.arrow_back),
+          tooltip: 'Назад',
+        ),
         title: const Text('Совпадения и личность'),
         actions: [
           IconButton(
@@ -252,12 +266,19 @@ class _IdentityReviewScreenState extends State<IdentityReviewScreen> {
           onChanged: _setPublicDiscoverability,
         ),
         const SizedBox(height: 16),
-        Text(
-          'Возможные совпадения',
-          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w800,
-              ),
+        _SectionTitle(
+          title: 'Возможные совпадения',
+          trailing: _mergeProposals.isEmpty
+              ? null
+              : '${_mergeProposals.length} на проверку',
         ),
+        if (_mergeProposals.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          const _ReviewHintCard(
+            message:
+                'Показываем только безопасные данные: ФИО, год рождения и источник карточки. Название дерева видно только тем, у кого уже есть доступ к этому дереву.',
+          ),
+        ],
         const SizedBox(height: 8),
         if (_mergeProposals.isEmpty)
           const _ReviewStateCard(
@@ -285,11 +306,11 @@ class _IdentityReviewScreenState extends State<IdentityReviewScreen> {
             ),
           ),
         const SizedBox(height: 18),
-        Text(
-          'Запросы личности',
-          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w800,
-              ),
+        _SectionTitle(
+          title: 'Запросы личности',
+          trailing: _identityClaims.isEmpty
+              ? null
+              : '${_identityClaims.length} на проверку',
         ),
         const SizedBox(height: 8),
         if (_identityClaims.isEmpty)
@@ -353,6 +374,89 @@ class _PublicDiscoveryCard extends StatelessWidget {
   }
 }
 
+class _SectionTitle extends StatelessWidget {
+  const _SectionTitle({
+    required this.title,
+    this.trailing,
+  });
+
+  final String title;
+  final String? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            title,
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ),
+        if (trailing != null)
+          DecoratedBox(
+            decoration: BoxDecoration(
+              color: theme.colorScheme.secondaryContainer,
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              child: Text(
+                trailing!,
+                style: theme.textTheme.labelMedium?.copyWith(
+                  color: theme.colorScheme.onSecondaryContainer,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _ReviewHintCard extends StatelessWidget {
+  const _ReviewHintCard({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.primaryContainer.withValues(alpha: 0.38),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(
+              Icons.privacy_tip_outlined,
+              color: theme.colorScheme.primary,
+              size: 20,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                message,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _MergeProposalCard extends StatelessWidget {
   const _MergeProposalCard({
     required this.proposal,
@@ -388,7 +492,23 @@ class _MergeProposalCard extends StatelessWidget {
                     ),
                   ),
                 ),
-                Text('${(proposal.matchScore * 100).round()}%'),
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.primaryContainer,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Padding(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    child: Text(
+                      '${(proposal.matchScore * 100).round()}%',
+                      style: theme.textTheme.labelMedium?.copyWith(
+                        color: theme.colorScheme.onPrimaryContainer,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ),
               ],
             ),
             const SizedBox(height: 12),
@@ -435,12 +555,42 @@ class _MergePersonLine extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final year = person.birthYear == null ? '' : ' · ${person.birthYear}';
     return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Icon(Icons.person_outline, size: 18),
         const SizedBox(width: 8),
-        Expanded(child: Text('${person.name}$year')),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('${person.name}$year'),
+              if (person.contextLabel != null) ...[
+                const SizedBox(height: 2),
+                Row(
+                  children: [
+                    Icon(
+                      Icons.account_tree_outlined,
+                      size: 14,
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Text(
+                        person.contextLabel!,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ],
+          ),
+        ),
       ],
     );
   }

@@ -2,10 +2,12 @@ class MergePersonPreview {
   const MergePersonPreview({
     required this.name,
     this.birthYear,
+    this.contextLabel,
   });
 
   final String name;
   final String? birthYear;
+  final String? contextLabel;
 
   factory MergePersonPreview.fromJson(Map<String, dynamic> json) {
     return MergePersonPreview(
@@ -13,6 +15,9 @@ class MergePersonPreview {
           ? json['name'].toString().trim()
           : 'Без имени',
       birthYear: json['birthYear']?.toString(),
+      contextLabel: json['contextLabel']?.toString().trim().isNotEmpty == true
+          ? json['contextLabel'].toString().trim()
+          : null,
     );
   }
 }
