@@ -121,7 +121,11 @@ class CustomApiChatService
 
   @override
   Stream<List<ChatPreview>> getUserChatsStream(String userId) {
+    final wasActive = _chatPreviewsUpdatesActive;
     _ensureChatPreviewsStream();
+    if (wasActive) {
+      scheduleMicrotask(() => unawaited(_emitChatPreviews()));
+    }
     return _chatPreviewsController!.stream;
   }
 

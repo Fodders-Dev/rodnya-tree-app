@@ -11,6 +11,7 @@ import 'package:rodnya/backend/backend_runtime_config.dart';
 import 'package:rodnya/models/chat_attachment.dart';
 import 'package:rodnya/models/chat_details.dart';
 import 'package:rodnya/models/chat_message.dart';
+import 'package:rodnya/models/chat_preview.dart';
 import 'package:rodnya/models/chat_send_progress.dart';
 import 'package:rodnya/backend/interfaces/storage_service_interface.dart';
 import 'package:rodnya/services/chat_message_cache.dart';
@@ -202,6 +203,91 @@ void main() {
     final unreadAfterRead =
         await chatService.getTotalUnreadCountStream('user-1').first;
     expect(unreadAfterRead, 0);
+  });
+
+  test('CustomApiChatService replays fresh previews to new subscribers',
+      () async {
+    var chatRequestCount = 0;
+    final client = MockClient((request) async {
+      if (request.url.path == '/v1/chats' && request.method == 'GET') {
+        chatRequestCount++;
+        return http.Response(
+          jsonEncode({
+            'chats': [
+              {
+                'id': 'other-user_user-1_user-1',
+                'chatId': 'other-user_user-1',
+                'userId': 'user-1',
+                'otherUserId': 'other-user',
+                'otherUserName': 'Собеседник',
+                'otherUserPhotoUrl': null,
+                'lastMessage': 'Привет',
+                'lastMessageTime': '2026-03-27T12:00:00.000Z',
+                'unreadCount': 0,
+                'lastMessageSenderId': 'other-user',
+              },
+            ],
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+
+      return http.Response('{"message":"not found"}', 404);
+    });
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'custom_api_session_v1',
+      jsonEncode({
+        'accessToken': 'access-token',
+        'refreshToken': 'refresh-token',
+        'userId': 'user-1',
+        'email': 'dev@rodnya.app',
+        'displayName': 'Dev User',
+        'providerIds': ['password'],
+        'isProfileComplete': true,
+        'missingFields': const [],
+      }),
+    );
+
+    final authService = await CustomApiAuthService.create(
+      httpClient: client,
+      preferences: await SharedPreferences.getInstance(),
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      invitationService: InvitationService(),
+    );
+
+    final chatService = CustomApiChatService(
+      authService: authService,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      httpClient: client,
+      realtimeFallbackPollInterval: const Duration(minutes: 5),
+    );
+
+    final firstEvent = Completer<List<ChatPreview>>();
+    final firstSubscription =
+        chatService.getUserChatsStream('user-1').listen((previews) {
+      if (!firstEvent.isCompleted) {
+        firstEvent.complete(previews);
+      }
+    });
+    addTearDown(firstSubscription.cancel);
+
+    expect(await firstEvent.future, hasLength(1));
+
+    final secondPreviews = await chatService
+        .getUserChatsStream('user-1')
+        .first
+        .timeout(const Duration(seconds: 1));
+
+    expect(secondPreviews, hasLength(1));
+    expect(secondPreviews.first.otherUserName, 'Собеседник');
+    expect(chatRequestCount, greaterThanOrEqualTo(2));
   });
 
   test('CustomApiChatService sends reply metadata with message body', () async {
