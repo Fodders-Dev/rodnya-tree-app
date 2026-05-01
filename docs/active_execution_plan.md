@@ -32,7 +32,7 @@ Current reference unpack path: `.tmp/claude_design_reference/`.
 
 ## Wave Status
 
-- [ ] **Wave 1 — Design Foundation**
+- [x] **Wave 1 — Design Foundation**
   - [x] Compare current `app_theme.dart`, `glass_panel.dart`,
         `main_navigation_bar.dart`, `app_backdrop.dart` with `styles.css` and
         `src/shell.jsx`.
@@ -47,12 +47,14 @@ Current reference unpack path: `.tmp/claude_design_reference/`.
         Playwright smoke screenshots for desktop/tablet/mobile.
   - [x] Commit Wave 1 separately from unrelated calls/backend work.
 
-- [ ] **Wave 2 — Home / Feed UX**
-  - Feed-first topbar: `Родня`, notifications, tree action.
-  - Pending identity merge banner when proposals exist.
-  - Compact stories strip, events strip, compose teaser, audience/filter chips.
-  - New post card hierarchy while preserving real feed APIs.
-  - Loading, empty, offline states must not mask working API data.
+- [x] **Wave 2 — Home / Feed UX**
+  - [x] Feed-first topbar: `Родня`, notifications, tree action.
+  - [x] Pending identity merge banner when proposals exist.
+  - [x] Compact stories strip, events strip, compose teaser, audience/filter
+        chips.
+  - [x] New post card hierarchy while preserving real feed APIs.
+  - [x] Loading, empty, offline states keep explicit retry/create actions.
+  - [x] Run format/analyze/relevant widget tests and web smoke screenshots.
 
 - [ ] **Wave 3 — Tree UX**
   - Keep current `interactive_family_tree.dart` logic and generation grouping.
@@ -101,3 +103,6 @@ Current reference unpack path: `.tmp/claude_design_reference/`.
   stage them with UI waves.
 - Production API still needs deployment for latest posts/media backend behavior;
   this UI migration must not hide that backend reality.
+- Wave 2 web smoke requires `flutter build web --no-web-resources-cdn` for a
+  stable local browser pass when CanvasKit CDN requests are flaky; source build
+  with plain `flutter build web` also passed.

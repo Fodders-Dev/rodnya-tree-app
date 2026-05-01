@@ -13,12 +13,14 @@ import '../widgets/event_card.dart';
 import 'package:get_it/get_it.dart';
 import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
+import '../backend/interfaces/identity_service_interface.dart';
 import '../backend/models/tree_invitation.dart';
 import '../backend/interfaces/post_service_interface.dart';
 import '../backend/interfaces/story_service_interface.dart';
 import '../models/post.dart';
 import '../models/story.dart';
 import '../services/app_status_service.dart';
+import '../theme/app_theme.dart';
 import '../widgets/post_card.dart';
 import '../widgets/post_card_shimmer.dart';
 import '../widgets/story_rail.dart';
@@ -49,11 +51,14 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Post> _posts = [];
   List<Story> _stories = [];
   String? _selectedEventCategoryFilter;
+  String _selectedFeedFilter = 'Семья';
   bool _isLoadingEvents = true;
   bool _isLoadingPosts = false;
   bool _isLoadingStories = false;
   bool _postsUnavailable = false;
   bool _storiesUnavailable = false;
+  bool _identityReviewsUnavailable = false;
+  int _pendingIdentityReviewCount = 0;
   String? _currentTreeId;
   TreeProvider? _treeProviderInstance;
   final ScrollController _eventRailController = ScrollController();
@@ -65,6 +70,11 @@ class _HomeScreenState extends State<HomeScreen> {
   CustomApiNotificationService? get _customNotificationService =>
       GetIt.I.isRegistered<CustomApiNotificationService>()
           ? GetIt.I<CustomApiNotificationService>()
+          : null;
+
+  IdentityServiceInterface? get _identityService =>
+      GetIt.I.isRegistered<IdentityServiceInterface>()
+          ? GetIt.I<IdentityServiceInterface>()
           : null;
 
   @override
@@ -81,6 +91,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _treeProviderInstance = Provider.of<TreeProvider>(context, listen: false);
       _treeProviderInstance!.addListener(_handleTreeChange);
       _currentTreeId = _treeProviderInstance!.selectedTreeId;
+      _loadIdentityReviewSummary();
       if (_currentTreeId != null) {
         _loadStories(_currentTreeId!);
         _loadEvents(_currentTreeId!);
@@ -110,6 +121,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final newTreeId = _treeProviderInstance?.selectedTreeId;
     if (_currentTreeId != newTreeId) {
       _currentTreeId = newTreeId;
+      _loadIdentityReviewSummary();
       if (_currentTreeId != null) {
         _loadStories(_currentTreeId!);
         _loadEvents(_currentTreeId!);
@@ -123,6 +135,39 @@ class _HomeScreenState extends State<HomeScreen> {
           _upcomingEvents = [];
           _posts = [];
           _selectedEventCategoryFilter = null;
+          _selectedFeedFilter = 'Семья';
+        });
+      }
+    }
+  }
+
+  Future<void> _loadIdentityReviewSummary() async {
+    final service = _identityService;
+    if (service == null) {
+      if (mounted) {
+        setState(() {
+          _pendingIdentityReviewCount = 0;
+          _identityReviewsUnavailable = false;
+        });
+      }
+      return;
+    }
+
+    try {
+      final proposals = await service.getPendingMergeProposals();
+      final claims = await service.getPendingIdentityClaims();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _pendingIdentityReviewCount = proposals.length + claims.length;
+        _identityReviewsUnavailable = false;
+      });
+    } catch (error) {
+      debugPrint('Ошибка загрузки identity review summary: $error');
+      if (mounted) {
+        setState(() {
+          _identityReviewsUnavailable = true;
         });
       }
     }
@@ -212,6 +257,55 @@ class _HomeScreenState extends State<HomeScreen> {
         .toList();
   }
 
+  List<String> get _feedFilters {
+    final filters = <String>['Семья'];
+    if (_posts.any((post) => post.circleId != null)) {
+      filters.add('Круги');
+    }
+    if (_posts.any((post) => post.scopeType == TreeContentScopeType.branches)) {
+      filters.add('Ветки');
+    }
+    if (_posts.any((post) => post.isPublic)) {
+      filters.add('Публичные');
+    }
+    if (_posts.any((post) => post.renderableImageUrls.isNotEmpty)) {
+      filters.add('С фото');
+    }
+    return filters;
+  }
+
+  List<Post> get _visiblePosts {
+    if (!_feedFilters.contains(_selectedFeedFilter)) {
+      return _posts;
+    }
+    switch (_selectedFeedFilter) {
+      case 'Круги':
+        return _posts.where((post) => post.circleId != null).toList();
+      case 'Ветки':
+        return _posts
+            .where((post) => post.scopeType == TreeContentScopeType.branches)
+            .toList();
+      case 'Публичные':
+        return _posts.where((post) => post.isPublic).toList();
+      case 'С фото':
+        return _posts
+            .where((post) => post.renderableImageUrls.isNotEmpty)
+            .toList();
+      case 'Семья':
+      default:
+        return _posts;
+    }
+  }
+
+  void _selectFeedFilter(String label) {
+    if (_selectedFeedFilter == label) {
+      return;
+    }
+    setState(() {
+      _selectedFeedFilter = label;
+    });
+  }
+
   String _eventCategoryKey(String label) {
     switch (label) {
       case 'Родня':
@@ -257,6 +351,8 @@ class _HomeScreenState extends State<HomeScreen> {
           'selectedTreeName': selectedTreeName,
           'hasSelectedTree': hasSelectedTree,
           'isLoadingEvents': _isLoadingEvents,
+          'selectedFeedFilter': _selectedFeedFilter,
+          'availableFeedFilters': _feedFilters,
           'selectedEventFilter': _selectedEventCategoryFilter,
           'availableEventFilters': <String>['Все', ..._eventCategories],
           'eventRailOffset':
@@ -347,11 +443,19 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       backgroundColor: Colors.transparent,
       appBar: AppBar(
-        title: Text(selectedTreeName ?? 'Главная'),
-        backgroundColor: theme.colorScheme.surface.withValues(
-          alpha: theme.brightness == Brightness.dark ? 0.84 : 0.76,
+        title: Text(
+          'Родня',
+          style: theme.textTheme.titleLarge?.copyWith(
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        backgroundColor: (theme.extension<RodnyaDesignTokens>()?.surface ??
+                theme.colorScheme.surface)
+            .withValues(
+          alpha: theme.brightness == Brightness.dark ? 0.82 : 0.74,
         ),
         surfaceTintColor: Colors.transparent,
+        scrolledUnderElevation: 0,
         actions: [
           _buildNotificationsAction(),
           IconButton(
@@ -364,6 +468,7 @@ class _HomeScreenState extends State<HomeScreen> {
       body: RefreshIndicator(
         onRefresh: () async {
           await _customNotificationService?.refreshUnreadNotificationsCount();
+          await _loadIdentityReviewSummary();
           if (_currentTreeId != null) {
             await Future.wait([
               _loadStories(_currentTreeId!),
@@ -374,7 +479,7 @@ class _HomeScreenState extends State<HomeScreen> {
         },
         child: Center(
           child: ConstrainedBox(
-            constraints: BoxConstraints(maxWidth: isWideLayout ? 1500 : 1400),
+            constraints: BoxConstraints(maxWidth: isWideLayout ? 980 : 1400),
             child: StreamBuilder<List<TreeInvitation>>(
               stream: _familyTreeService.getPendingTreeInvitations(),
               builder: (context, snapshot) {
@@ -394,13 +499,14 @@ class _HomeScreenState extends State<HomeScreen> {
                           hasSelectedTree: hasSelectedTree,
                         ),
                       ),
-                    SliverToBoxAdapter(
-                      child: _buildHomeHeader(
-                        hasSelectedTree: hasSelectedTree,
-                        selectedTreeName: selectedTreeName,
-                        isFriendsTree: isFriendsTree,
+                    if (!hasSelectedTree)
+                      SliverToBoxAdapter(
+                        child: _buildHomeHeader(
+                          hasSelectedTree: hasSelectedTree,
+                          selectedTreeName: selectedTreeName,
+                          isFriendsTree: isFriendsTree,
+                        ),
                       ),
-                    ),
                     if (hasSelectedTree) ...[
                       SliverToBoxAdapter(
                         child: Padding(
@@ -836,7 +942,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     builder: (context, constraints) {
                       final cardWidth = _eventCardWidthFor(constraints);
                       return SizedBox(
-                        height: 132,
+                        height: 62,
                         child: ListView.builder(
                           controller: _eventRailController,
                           scrollDirection: Axis.horizontal,
@@ -845,6 +951,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             return EventCard(
                               event: visibleEvents[index],
                               width: cardWidth,
+                              compact: true,
                             );
                           },
                         ),

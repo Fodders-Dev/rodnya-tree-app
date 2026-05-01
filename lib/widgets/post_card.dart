@@ -9,6 +9,7 @@ import 'package:share_plus/share_plus.dart';
 import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/post_service_interface.dart';
 import '../models/post.dart';
+import '../theme/app_theme.dart';
 import 'comment_sheet.dart';
 import 'glass_panel.dart';
 
@@ -143,6 +144,32 @@ class _PostCardState extends State<PostCard>
     await Share.share(buffer.toString().trim());
   }
 
+  String get _audienceLabel {
+    if (widget.post.circleId?.trim().isNotEmpty == true) {
+      return 'Круг';
+    }
+    if (widget.post.scopeType == TreeContentScopeType.branches) {
+      return 'Ветки';
+    }
+    if (widget.post.isPublic) {
+      return 'Публично';
+    }
+    return 'Семья';
+  }
+
+  IconData get _audienceIcon {
+    if (widget.post.circleId?.trim().isNotEmpty == true) {
+      return Icons.diversity_3_outlined;
+    }
+    if (widget.post.scopeType == TreeContentScopeType.branches) {
+      return Icons.alt_route;
+    }
+    if (widget.post.isPublic) {
+      return Icons.public;
+    }
+    return Icons.family_restroom_rounded;
+  }
+
   Future<void> _showCommentsSheet() async {
     final result = await showModalBottomSheet<bool>(
       context: context,
@@ -203,23 +230,26 @@ class _PostCardState extends State<PostCard>
     final renderableImageUrls = widget.post.renderableImageUrls;
     final hasInvalidOnlyImages = renderableImageUrls.isEmpty &&
         (widget.post.imageUrls?.isNotEmpty ?? false);
+    final theme = Theme.of(context);
+    final tokens = _tokensFor(theme);
 
     return GlassPanel(
       padding: EdgeInsets.zero,
-      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-      borderRadius: BorderRadius.circular(28),
+      margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 7),
+      borderRadius: BorderRadius.circular(tokens.radiusMd + 2),
+      plain: true,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _buildPostHeader(),
           if (widget.post.content.isNotEmpty)
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
               child: Text(
                 widget.post.content,
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      height: 1.45,
-                    ),
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  height: 1.45,
+                ),
               ),
             ),
           if (renderableImageUrls.isNotEmpty)
@@ -235,24 +265,37 @@ class _PostCardState extends State<PostCard>
   Widget _buildPostHeader() {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final tokens = _tokensFor(theme);
     final authorPhotoUrl = widget.post.renderableAuthorPhotoUrl;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+      padding: const EdgeInsets.fromLTRB(16, 14, 14, 12),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           InkWell(
             borderRadius: BorderRadius.circular(999),
             onTap: _openAuthorProfile,
-            child: CircleAvatar(
-              radius: 20,
-              backgroundImage: authorPhotoUrl != null
-                  ? CachedNetworkImageProvider(authorPhotoUrl)
-                  : null,
-              backgroundColor: scheme.primary.withValues(alpha: 0.12),
-              foregroundColor: scheme.primary,
-              child: authorPhotoUrl == null
-                  ? const Icon(Icons.person_rounded, size: 22)
-                  : null,
+            child: Container(
+              width: 42,
+              height: 42,
+              padding: const EdgeInsets.all(2),
+              decoration: BoxDecoration(
+                gradient: authorPhotoUrl == null ? tokens.accentGradient : null,
+                shape: BoxShape.circle,
+              ),
+              child: CircleAvatar(
+                backgroundImage: authorPhotoUrl != null
+                    ? CachedNetworkImageProvider(authorPhotoUrl)
+                    : null,
+                backgroundColor: authorPhotoUrl == null
+                    ? Colors.transparent
+                    : scheme.primary.withValues(alpha: 0.12),
+                foregroundColor:
+                    authorPhotoUrl == null ? tokens.accentInk : scheme.primary,
+                child: authorPhotoUrl == null
+                    ? const Icon(Icons.person_rounded, size: 22)
+                    : null,
+              ),
             ),
           ),
           const SizedBox(width: 12),
@@ -264,34 +307,35 @@ class _PostCardState extends State<PostCard>
                 children: [
                   Text(
                     widget.post.authorName,
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    DateFormat(
-                      'd MMM • HH:mm',
-                      'ru',
-                    ).format(widget.post.createdAt),
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                      height: 1.1,
                     ),
                   ),
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 5),
                   Wrap(
                     spacing: 6,
                     runSpacing: 6,
                     children: [
+                      _PostMetaChip(
+                        icon: Icons.schedule_outlined,
+                        label: DateFormat(
+                          'd MMM • HH:mm',
+                          'ru',
+                        ).format(widget.post.createdAt),
+                      ),
+                      _PostMetaChip(
+                        icon: _audienceIcon,
+                        label: _audienceLabel,
+                        highlighted: widget.post.isPublic,
+                      ),
                       if (widget.post.scopeType ==
                           TreeContentScopeType.branches)
                         _PostMetaChip(
                           icon: Icons.alt_route,
                           label: 'Ветки: ${widget.post.anchorPersonIds.length}',
-                        ),
-                      if (widget.post.isPublic)
-                        const _PostMetaChip(
-                          icon: Icons.public,
-                          label: 'Публично',
-                          highlighted: true,
                         ),
                     ],
                   ),
@@ -329,10 +373,10 @@ class _PostCardState extends State<PostCard>
   }
 
   Widget _buildPostImages(List<String> images) {
-    final borderRadius = BorderRadius.circular(20);
+    final borderRadius = BorderRadius.circular(18);
     if (images.length == 1) {
       return Padding(
-        padding: const EdgeInsets.fromLTRB(14, 0, 14, 8),
+        padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
         child: AspectRatio(
           aspectRatio: 16 / 9,
           child: ClipRRect(
@@ -349,7 +393,7 @@ class _PostCardState extends State<PostCard>
     }
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(14, 0, 14, 8),
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
       child: CarouselSlider.builder(
         itemCount: images.length,
         itemBuilder: (context, index, _) {
@@ -379,11 +423,11 @@ class _PostCardState extends State<PostCard>
 
   Widget _buildInvalidPostImageFallback() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(14, 0, 14, 8),
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
       child: AspectRatio(
         aspectRatio: 16 / 9,
         child: ClipRRect(
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(18),
           child: _buildPostImageFallback(),
         ),
       ),
@@ -416,7 +460,7 @@ class _PostCardState extends State<PostCard>
   Widget _buildPostActions() {
     final theme = Theme.of(context);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(14, 2, 14, 14),
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
       child: Wrap(
         spacing: 8,
         runSpacing: 8,
@@ -433,10 +477,8 @@ class _PostCardState extends State<PostCard>
                 size: 18,
               ),
             ),
-            label: Text(
-              _likeCount.toString(),
-              style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
-            ),
+            label: 'Тепло',
+            count: _likeCount,
           ),
           _PostActionChip(
             onPressed: _showCommentsSheet,
@@ -445,23 +487,25 @@ class _PostCardState extends State<PostCard>
               color: theme.colorScheme.onSurfaceVariant,
               size: 18,
             ),
-            label: Text(
-              _commentCount.toString(),
-              style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
-            ),
+            label: 'Ответить',
+            count: _commentCount,
           ),
           _PostActionChip(
             onPressed: _sharePost,
             icon: Icon(Icons.share_outlined,
                 color: theme.colorScheme.onSurfaceVariant, size: 18),
-            label: Text(
-              'Отправить',
-              style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
-            ),
+            label: 'Отправить',
           ),
         ],
       ),
     );
+  }
+
+  RodnyaDesignTokens _tokensFor(ThemeData theme) {
+    return theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
   }
 }
 
@@ -470,11 +514,13 @@ class _PostActionChip extends StatelessWidget {
     required this.onPressed,
     required this.icon,
     required this.label,
+    this.count,
   });
 
   final VoidCallback onPressed;
   final Widget icon;
-  final Widget label;
+  final String label;
+  final int? count;
 
   @override
   Widget build(BuildContext context) {
@@ -482,13 +528,34 @@ class _PostActionChip extends StatelessWidget {
     return TextButton.icon(
       onPressed: onPressed,
       style: TextButton.styleFrom(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
         backgroundColor:
-            theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
+            theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.56),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
       ),
       icon: icon,
-      label: label,
+      label: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              color: theme.colorScheme.onSurfaceVariant,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          if (count != null) ...[
+            const SizedBox(width: 6),
+            Text(
+              count.toString(),
+              style: TextStyle(
+                color: theme.colorScheme.onSurfaceVariant,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
+        ],
+      ),
     );
   }
 }
@@ -506,13 +573,18 @@ class _PostMetaChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
         color: highlighted
-            ? colorScheme.primaryContainer
-            : colorScheme.surfaceContainerHighest,
+            ? tokens.accentSoft
+            : colorScheme.surfaceContainerHighest.withValues(alpha: 0.72),
         borderRadius: BorderRadius.circular(999),
       ),
       child: Row(
@@ -521,9 +593,7 @@ class _PostMetaChip extends StatelessWidget {
           Icon(
             icon,
             size: 12,
-            color: highlighted
-                ? colorScheme.primary
-                : colorScheme.onSurfaceVariant,
+            color: highlighted ? tokens.accent : colorScheme.onSurfaceVariant,
           ),
           const SizedBox(width: 4),
           Text(
@@ -531,9 +601,7 @@ class _PostMetaChip extends StatelessWidget {
             style: TextStyle(
               fontSize: 11,
               fontWeight: FontWeight.w600,
-              color: highlighted
-                  ? colorScheme.primary
-                  : colorScheme.onSurfaceVariant,
+              color: highlighted ? tokens.accent : colorScheme.onSurfaceVariant,
             ),
           ),
         ],

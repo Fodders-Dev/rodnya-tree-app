@@ -26,14 +26,16 @@ extension _HomeScreenSections on _HomeScreenState {
     }
 
     return const _HomeFeedEmptyViewState(
-      title: 'Лента пуста',
-      message: 'Новый пост можно создать из верхней кнопки.',
+      title: 'Пока тихо в ленте',
+      message: 'Поделитесь семейной новостью, фото или короткой историей.',
       icon: Icons.post_add_outlined,
+      actionLabel: 'Написать',
     );
   }
 
   Future<void> _handleFeedEmptyAction() async {
     if (!_postsUnavailable) {
+      await _openCreatePost();
       return;
     }
     await _refreshCurrentPosts();
@@ -151,10 +153,25 @@ extension _HomeScreenSections on _HomeScreenState {
   Widget _buildHomeContentSections({required bool isWideLayout}) {
     return Column(
       children: [
+        _buildHomeHeader(
+          hasSelectedTree: true,
+          selectedTreeName: _treeProviderInstance?.selectedTreeName,
+          isFriendsTree:
+              _treeProviderInstance?.selectedTreeKind == TreeKind.friends,
+        ),
+        if (_pendingIdentityReviewCount > 0 || _identityReviewsUnavailable) ...[
+          const SizedBox(height: 10),
+          _buildIdentityReviewBanner(),
+        ],
+        const SizedBox(height: 10),
         _buildStoriesSection(),
-        const SizedBox(height: 12),
+        const SizedBox(height: 10),
         _buildUpcomingEventsSection(isWideLayout: isWideLayout),
-        SizedBox(height: isWideLayout ? 18 : 16),
+        const SizedBox(height: 10),
+        _buildComposeTeaser(),
+        const SizedBox(height: 10),
+        _buildFeedFilterStrip(),
+        const SizedBox(height: 8),
         _buildHomeFeedStage(isWideLayout: isWideLayout),
       ],
     );
@@ -167,8 +184,6 @@ extension _HomeScreenSections on _HomeScreenState {
   }) {
     final theme = Theme.of(context);
 
-    // Action-first: tight glass strip with the active tree pill on the left and
-    // the most useful one or two actions on the right. No prose subtitle.
     final treeLabel = !hasSelectedTree
         ? 'Выберите дерево'
         : (selectedTreeName?.trim().isNotEmpty == true
@@ -199,25 +214,18 @@ extension _HomeScreenSections on _HomeScreenState {
       );
     }
 
-    final primaryAction = hasSelectedTree
-        ? _buildQuickActionButton(
-            icon: Icons.post_add_outlined,
-            label: 'Новый пост',
-            onTap: () => context.push('/post/create'),
-            primary: true,
-          )
-        : _buildQuickActionButton(
-            icon: Icons.account_tree_outlined,
-            label: 'Выбрать дерево',
-            onTap: () => context.go('/tree?selector=1'),
-            primary: true,
-          );
+    final primaryAction = _buildQuickActionButton(
+      icon: hasSelectedTree ? Icons.account_tree_outlined : treeIcon,
+      label: hasSelectedTree ? 'Дерево' : 'Выбрать',
+      onTap: () => context.go('/tree?selector=1'),
+      primary: !hasSelectedTree,
+    );
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+      padding: EdgeInsets.fromLTRB(16, hasSelectedTree ? 8 : 10, 16, 0),
       child: GlassPanel(
-        padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
-        borderRadius: BorderRadius.circular(22),
+        padding: const EdgeInsets.fromLTRB(12, 8, 10, 8),
+        borderRadius: BorderRadius.circular(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -254,22 +262,23 @@ extension _HomeScreenSections on _HomeScreenState {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  hasSelectedTree
-                                      ? 'Активное дерево'
-                                      : 'Нет активного дерева',
-                                  style: theme.textTheme.labelSmall?.copyWith(
-                                    color: theme.colorScheme.onSurfaceVariant,
-                                    fontWeight: FontWeight.w600,
-                                    letterSpacing: 0.2,
-                                  ),
-                                ),
-                                Text(
                                   treeLabel,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                   style: theme.textTheme.titleMedium?.copyWith(
                                     fontWeight: FontWeight.w800,
-                                    letterSpacing: -0.2,
+                                    letterSpacing: 0,
+                                  ),
+                                ),
+                                Text(
+                                  hasSelectedTree
+                                      ? (isFriendsTree
+                                          ? 'Лента круга'
+                                          : 'Лента семьи')
+                                      : 'Выберите контекст для ленты',
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: theme.colorScheme.onSurfaceVariant,
+                                    fontWeight: FontWeight.w600,
                                   ),
                                 ),
                               ],
@@ -308,12 +317,13 @@ extension _HomeScreenSections on _HomeScreenState {
       return Column(children: List.generate(3, (_) => const PostCardShimmer()));
     }
 
-    if (_posts.isEmpty) {
+    final visiblePosts = _visiblePosts;
+    if (_posts.isEmpty || visiblePosts.isEmpty) {
       return _buildFeedEmptyState(wideLayout: wideLayout);
     }
 
     return Column(
-      children: _posts
+      children: visiblePosts
           .map(
             (post) => PostCard(
               post: post,
@@ -358,7 +368,7 @@ extension _HomeScreenSections on _HomeScreenState {
                     const SizedBox(height: 2),
                     Text(
                       state.message,
-                      maxLines: 1,
+                      maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: theme.colorScheme.onSurfaceVariant,
@@ -435,7 +445,11 @@ extension _HomeScreenSections on _HomeScreenState {
             const SizedBox(width: 16),
             FilledButton.icon(
               onPressed: _handleFeedEmptyAction,
-              icon: const Icon(Icons.refresh_rounded),
+              icon: Icon(
+                _postsUnavailable
+                    ? Icons.refresh_rounded
+                    : Icons.post_add_outlined,
+              ),
               label: Text(state.actionLabel!),
             ),
           ],
@@ -452,20 +466,212 @@ extension _HomeScreenSections on _HomeScreenState {
     await _loadPosts(treeId);
   }
 
+  Future<void> _openCreatePost() async {
+    final result = await context.push('/post/create');
+    if (result == true && _currentTreeId != null) {
+      await _loadPosts(_currentTreeId!);
+    }
+  }
+
+  Widget _buildIdentityReviewBanner() {
+    final theme = Theme.of(context);
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+    final unavailable = _identityReviewsUnavailable;
+    final title = unavailable
+        ? 'Проверки личности не обновились'
+        : _pendingIdentityReviewCount == 1
+            ? 'Есть совпадение личности'
+            : 'Есть проверки личности';
+    final message = unavailable
+        ? 'Откройте раздел проверки или обновите экран позже.'
+        : _pendingIdentityReviewCount == 1
+            ? 'Проверьте возможное совпадение, прежде чем объединять данные.'
+            : '$_pendingIdentityReviewCount совпадений и запросов ждут решения.';
+
+    return Semantics(
+      button: true,
+      label: 'home-identity-review-banner',
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: () => context.go('/identity/review'),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                tokens.warmSoft,
+                tokens.accentSoft,
+              ],
+            ),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: tokens.surfaceLine),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: tokens.surfaceStrong,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: tokens.surfaceLine),
+                ),
+                child: Icon(
+                  unavailable
+                      ? Icons.sync_problem_outlined
+                      : Icons.merge_type_rounded,
+                  color: tokens.accent,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      message,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Icon(
+                Icons.chevron_right_rounded,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildComposeTeaser() {
+    final theme = Theme.of(context);
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+    final name = _authService.currentUserDisplayName?.trim();
+    final initials = (name == null || name.isEmpty)
+        ? 'Я'
+        : String.fromCharCode(name.runes.first).toUpperCase();
+
+    return Semantics(
+      button: true,
+      label: 'home-compose-teaser',
+      child: GlassPanel(
+        padding: EdgeInsets.zero,
+        borderRadius: BorderRadius.circular(20),
+        plain: true,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(20),
+          onTap: _openCreatePost,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            child: Row(
+              children: [
+                Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    gradient: tokens.accentGradient,
+                    shape: BoxShape.circle,
+                  ),
+                  alignment: Alignment.center,
+                  child: Text(
+                    initials,
+                    style: theme.textTheme.labelLarge?.copyWith(
+                      color: tokens.accentInk,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    _treeProviderInstance?.selectedTreeKind == TreeKind.friends
+                        ? 'Поделиться с кругом...'
+                        : 'Поделиться с роднёй...',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                Icon(Icons.photo_outlined, color: tokens.accent),
+                const SizedBox(width: 10),
+                Icon(Icons.videocam_outlined, color: tokens.warm),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFeedFilterStrip() {
+    final filters = _feedFilters;
+    final selectedFilter =
+        filters.contains(_selectedFeedFilter) ? _selectedFeedFilter : 'Семья';
+
+    return SizedBox(
+      height: 36,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: filters.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (context, index) {
+          final label = filters[index];
+          return Semantics(
+            button: true,
+            selected: selectedFilter == label,
+            label: 'home-feed-filter-$label',
+            child: ChoiceChip(
+              label: Text(label),
+              selected: selectedFilter == label,
+              visualDensity: VisualDensity.compact,
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              onSelected: (_) => _selectFeedFilter(label),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
   double _eventCardWidthFor(BoxConstraints constraints) {
     final availableWidth = constraints.maxWidth;
     if (!availableWidth.isFinite || availableWidth <= 0) {
       return 220;
     }
     if (availableWidth < 360) {
-      return (availableWidth - 8).clamp(176.0, 220.0);
+      return (availableWidth - 8).clamp(196.0, 230.0);
     }
     if (availableWidth < 520) {
-      return (availableWidth * 0.72).clamp(196.0, 236.0);
+      return (availableWidth * 0.76).clamp(212.0, 250.0);
     }
     if (availableWidth < 760) {
-      return (availableWidth * 0.46).clamp(210.0, 248.0);
+      return (availableWidth * 0.48).clamp(226.0, 268.0);
     }
-    return 232;
+    return 250;
   }
 }

@@ -64,8 +64,8 @@ class StoryRail extends StatelessWidget {
     }
 
     return GlassPanel(
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-      borderRadius: BorderRadius.circular(22),
+      padding: const EdgeInsets.fromLTRB(12, 9, 12, 10),
+      borderRadius: BorderRadius.circular(20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -86,7 +86,7 @@ class StoryRail extends StatelessWidget {
                 ),
             ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 7),
           if (isLoading && groups.isEmpty)
             const _StoryLoadingRail()
           else if (unavailable)
@@ -101,11 +101,11 @@ class StoryRail extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 SizedBox(
-                  height: 82,
+                  height: 74,
                   child: ListView.separated(
                     scrollDirection: Axis.horizontal,
                     itemCount: groups.length + 1,
-                    separatorBuilder: (_, __) => const SizedBox(width: 8),
+                    separatorBuilder: (_, __) => const SizedBox(width: 7),
                     itemBuilder: (context, index) {
                       if (index == 0) {
                         return _StoryAvatarTile.add(
@@ -294,26 +294,25 @@ class _StoryAvatarTile extends StatelessWidget {
       label: semanticLabel,
       onTap: onTap,
       child: SizedBox(
-        width: 66,
+        width: 58,
         child: InkWell(
-          borderRadius: BorderRadius.circular(22),
+          borderRadius: BorderRadius.circular(999),
           onTap: onTap,
           child: Column(
             children: [
               Container(
-                width: 58,
-                height: 58,
+                width: 50,
+                height: 50,
                 padding: const EdgeInsets.all(3),
                 decoration: BoxDecoration(
                   color: Colors.white.withValues(alpha: 0.28),
-                  borderRadius: BorderRadius.circular(21),
+                  shape: BoxShape.circle,
                   border: Border.all(
                     color: ringColor,
-                    width: hasUnseen ? 2.6 : 1.15,
+                    width: hasUnseen ? 2.4 : 1.1,
                   ),
                 ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(18),
+                child: ClipOval(
                   child: Stack(
                     fit: StackFit.expand,
                     children: [
@@ -353,7 +352,7 @@ class _StoryAvatarTile extends StatelessWidget {
                             child: const Icon(
                               Icons.add_rounded,
                               color: Colors.white,
-                              size: 18,
+                              size: 17,
                             ),
                           ),
                         )
@@ -361,7 +360,7 @@ class _StoryAvatarTile extends StatelessWidget {
                         Align(
                           alignment: Alignment.center,
                           child: CircleAvatar(
-                            radius: 13,
+                            radius: 12,
                             backgroundColor:
                                 Colors.black.withValues(alpha: 0.24),
                             child: Text(
@@ -390,7 +389,7 @@ class _StoryAvatarTile extends StatelessWidget {
                   ),
                 ),
               ),
-              const SizedBox(height: 6),
+              const SizedBox(height: 5),
               Text(
                 label,
                 maxLines: 1,
@@ -510,28 +509,28 @@ class _StoryLoadingRail extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return SizedBox(
-      height: 82,
+      height: 74,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         itemCount: 5,
-        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        separatorBuilder: (_, __) => const SizedBox(width: 7),
         itemBuilder: (context, index) {
           return SizedBox(
-            width: 66,
+            width: 58,
             child: Column(
               children: [
                 Container(
-                  width: 58,
-                  height: 58,
+                  width: 50,
+                  height: 50,
                   decoration: BoxDecoration(
                     color: theme.colorScheme.surfaceContainerHighest
                         .withValues(alpha: 0.7),
-                    borderRadius: BorderRadius.circular(21),
+                    shape: BoxShape.circle,
                   ),
                 ),
-                const SizedBox(height: 6),
+                const SizedBox(height: 5),
                 Container(
-                  width: 56,
+                  width: 50,
                   height: 10,
                   decoration: BoxDecoration(
                     color: theme.colorScheme.surfaceContainerHighest

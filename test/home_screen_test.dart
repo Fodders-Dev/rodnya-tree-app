@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:rodnya/backend/interfaces/auth_service_interface.dart';
 import 'package:rodnya/backend/interfaces/family_tree_service_interface.dart';
 import 'package:rodnya/backend/interfaces/post_service_interface.dart';
@@ -103,13 +104,22 @@ class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
 }
 
 class _FakePostService implements PostServiceInterface {
+  _FakePostService({this.posts});
+
+  final List<Post>? posts;
+
   @override
   Future<List<Post>> getPosts({
     String? treeId,
     String? authorId,
     bool onlyBranches = false,
-  }) async =>
+  }) async {
+    final data = posts;
+    if (data == null) {
       throw Exception('feed unavailable');
+    }
+    return data;
+  }
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -199,6 +209,10 @@ FamilyTree _buildTree({
 void main() {
   final getIt = GetIt.instance;
 
+  setUpAll(() async {
+    await initializeDateFormatting('ru');
+  });
+
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
     await getIt.reset();
@@ -241,15 +255,18 @@ void main() {
 
       await tester.pumpAndSettle();
 
+      expect(find.text('Родня'), findsWidgets);
       expect(find.text('Тестовое дерево'), findsWidgets);
+      expect(find.text('Лента семьи'), findsOneWidget);
       expect(find.text('События'), findsOneWidget);
       expect(find.text('Дерево активно'), findsNothing);
       expect(find.text('Истории семьи'), findsOneWidget);
       expect(find.text('Создать'), findsOneWidget);
+      expect(find.text('Поделиться с роднёй...'), findsOneWidget);
+      expect(find.widgetWithText(ChoiceChip, 'Семья'), findsOneWidget);
       expect(find.text('Обновите позже.'), findsOneWidget);
       expect(find.text('Лента недоступна'), findsWidgets);
-      expect(find.text('Новый пост'), findsOneWidget);
-      expect(find.widgetWithText(FilledButton, 'Новый пост'), findsOneWidget);
+      expect(find.text('Новый пост'), findsNothing);
       expect(find.text('День рождения'), findsOneWidget);
       expect(find.byType(FloatingActionButton), findsNothing);
     },
@@ -269,9 +286,11 @@ void main() {
 
       await tester.pumpAndSettle();
 
-      expect(find.text('Главная'), findsOneWidget);
-      expect(find.text('Нет активного дерева'), findsOneWidget);
-      expect(find.text('Выбрать дерево'), findsOneWidget);
+      expect(find.text('Родня'), findsOneWidget);
+      expect(find.text('Выберите дерево'), findsOneWidget);
+      expect(find.text('Выберите контекст для ленты'), findsOneWidget);
+      expect(find.text('Выбрать'), findsOneWidget);
+      expect(find.text('Нет активного дерева'), findsNothing);
       expect(find.text('Создать граф'), findsNothing);
       expect(find.text('События'), findsNothing);
       expect(find.text('Лента новостей'), findsNothing);
@@ -414,6 +433,81 @@ void main() {
       expect(find.byType(EventCard), findsOneWidget);
       expect(find.text('День рождения'), findsOneWidget);
       semantics.dispose();
+    },
+  );
+
+  testWidgets(
+    'HomeScreen фильтрует ленту по аудитории постов',
+    (tester) async {
+      await getIt.unregister<PostServiceInterface>();
+      getIt.registerSingleton<PostServiceInterface>(
+        _FakePostService(
+          posts: [
+            Post(
+              id: 'post-family',
+              treeId: 'tree-1',
+              authorId: 'author-1',
+              authorName: 'Анна',
+              content: 'Семейная новость',
+              createdAt: DateTime(2026, 4, 13, 10),
+            ),
+            Post(
+              id: 'post-circle',
+              treeId: 'tree-1',
+              authorId: 'author-2',
+              authorName: 'Иван',
+              content: 'Новость круга',
+              createdAt: DateTime(2026, 4, 13, 11),
+              circleId: 'circle-1',
+            ),
+            Post(
+              id: 'post-branch',
+              treeId: 'tree-1',
+              authorId: 'author-3',
+              authorName: 'Мария',
+              content: 'Новость ветки',
+              createdAt: DateTime(2026, 4, 13, 12),
+              scopeType: TreeContentScopeType.branches,
+              anchorPersonIds: const ['person-1'],
+            ),
+            Post(
+              id: 'post-public',
+              treeId: 'tree-1',
+              authorId: 'author-4',
+              authorName: 'Олег',
+              content: 'Публичная новость',
+              createdAt: DateTime(2026, 4, 13, 13),
+              isPublic: true,
+            ),
+          ],
+        ),
+      );
+
+      final treeProvider = TreeProvider();
+      await treeProvider.selectTree('tree-1', 'Тестовое дерево');
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider<TreeProvider>.value(
+          value: treeProvider,
+          child: const MaterialApp(home: HomeScreen()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.widgetWithText(ChoiceChip, 'Семья'), findsOneWidget);
+      expect(find.widgetWithText(ChoiceChip, 'Круги'), findsOneWidget);
+      expect(find.widgetWithText(ChoiceChip, 'Ветки'), findsOneWidget);
+      expect(find.widgetWithText(ChoiceChip, 'Публичные'), findsOneWidget);
+      expect(find.text('Семейная новость'), findsOneWidget);
+      expect(find.text('Новость круга'), findsOneWidget);
+
+      await tester.tap(find.widgetWithText(ChoiceChip, 'Круги'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Новость круга'), findsOneWidget);
+      expect(find.text('Семейная новость'), findsNothing);
+      expect(find.text('Новость ветки'), findsNothing);
+      expect(find.text('Публичная новость'), findsNothing);
     },
   );
 
