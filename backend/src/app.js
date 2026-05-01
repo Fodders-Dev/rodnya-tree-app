@@ -18,7 +18,7 @@ const {createGoogleTokenVerifier} = require("./google-auth");
 const {createVkAuthClient} = require("./vk-auth");
 const {createMaxAuthClient} = require("./max-auth");
 const {createLiveKitService} = require("./livekit-service");
-const {buildBranchVisiblePersonIds} = require("./store");
+const {buildBranchVisiblePersonIds, normalizeParticipantIds} = require("./store");
 const {createOperationalStatus} = require("./operational-status");
 const {registerAdminRoutes} = require("./routes/admin-routes");
 const {registerAuthSessionRoutes} = require("./routes/auth-session-routes");
@@ -1380,6 +1380,40 @@ function createApp({
       `${req.protocol}://${req.get("host")}`;
   }
 
+  function displayNameForCallParticipant(user) {
+    return (
+      user?.profile?.displayName ||
+      user?.displayName ||
+      user?.email ||
+      "Участник"
+    );
+  }
+
+  async function createCallSessionsForParticipants({
+    call,
+    roomName,
+    participantIds,
+  }) {
+    const sessionEntries = await Promise.all(
+      participantIds.map(async (participantId) => {
+        const participant = await store.findUserById(participantId);
+        const session = await resolvedLiveKitService.createSession({
+          roomName,
+          participantIdentity: participantId,
+          participantName: displayNameForCallParticipant(participant),
+          metadata: {
+            callId: call.id,
+            chatId: call.chatId,
+            userId: participantId,
+            mediaMode: call.mediaMode,
+          },
+        });
+        return [participantId, session];
+      }),
+    );
+    return Object.fromEntries(sessionEntries);
+  }
+
   function resolvePublicAppUrl() {
     return String(config.publicAppUrl || "https://rodnya-tree.ru")
       .trim()
@@ -1976,11 +2010,29 @@ function createApp({
       return;
     }
     const chatId = chat.id;
-    const participantIds = Array.isArray(chat.participantIds)
-      ? chat.participantIds
+    const chatParticipantIds = normalizeParticipantIds(chat.participantIds || []);
+    const requestedParticipantIds = Array.isArray(req.body?.participantIds)
+      ? normalizeParticipantIds(req.body.participantIds)
       : [];
-    if (chat.type !== "direct" || participantIds.length !== 2) {
-      res.status(400).json({message: "Пока поддерживаются только личные звонки"});
+    const participantIds = requestedParticipantIds.length > 0
+      ? normalizeParticipantIds([
+          req.auth.user.id,
+          ...requestedParticipantIds,
+        ])
+      : chatParticipantIds;
+    const isSupportedCallChat =
+      chat.type === "direct" || chat.type === "group" || chat.type === "branch";
+    const participantsBelongToChat = participantIds.every((participantId) =>
+      chatParticipantIds.includes(participantId),
+    );
+    if (
+      !isSupportedCallChat ||
+      !participantsBelongToChat ||
+      !participantIds.includes(req.auth.user.id) ||
+      participantIds.length < 2 ||
+      (chat.type === "direct" && participantIds.length !== 2)
+    ) {
+      res.status(400).json({message: "Не удалось определить участников звонка"});
       return;
     }
 
@@ -1990,13 +2042,15 @@ function createApp({
       return;
     }
 
-    await reconcileUserBusyCall(req.auth.user.id);
-    await reconcileUserBusyCall(recipientId);
+    for (const participantId of participantIds) {
+      await reconcileUserBusyCall(participantId);
+    }
 
     const call = await store.createCallInvite({
       chatId,
       initiatorId: req.auth.user.id,
       recipientId,
+      participantIds,
       mediaMode,
     });
     if (call === null) {
@@ -2023,28 +2077,33 @@ function createApp({
         },
         {
           initiatorId: req.auth.user.id,
-          recipientId,
+          participantIds,
         },
       );
       res.status(409).json({message: "Пользователь уже участвует в другом звонке"});
       return;
     }
 
-    const callerName =
-      req.auth.user.profile?.displayName ||
-      req.auth.user.displayName ||
-      "Участник";
-    await createAndDispatchNotification({
-      userId: recipientId,
-      type: "call_invite",
-      title: callerName,
-      body: mediaMode === "video" ? "Видеозвонок" : "Аудиозвонок",
-      data: {
-        chatId,
-        callId: call.id,
-        mediaMode,
-      },
-    });
+    const callerName = displayNameForCallParticipant(req.auth.user);
+    const isGroupCall = participantIds.length > 2;
+    for (const inviteeId of participantIds) {
+      if (inviteeId === req.auth.user.id) {
+        continue;
+      }
+      await createAndDispatchNotification({
+        userId: inviteeId,
+        type: "call_invite",
+        title: callerName,
+        body: isGroupCall
+          ? (mediaMode === "video" ? "Групповой видеозвонок" : "Групповой аудиозвонок")
+          : (mediaMode === "video" ? "Видеозвонок" : "Аудиозвонок"),
+        data: {
+          chatId,
+          callId: call.id,
+          mediaMode,
+        },
+      });
+    }
 
     for (const participantId of call.participantIds || []) {
       realtimeHub?.publishToUser(participantId, {
@@ -2055,7 +2114,7 @@ function createApp({
 
     logCallEvent("invite.created", call, {
       initiatorId: call.initiatorId,
-      recipientId: call.recipientId,
+      participantIds: call.participantIds,
     });
     scheduleCallInviteTimeout(call);
 
@@ -2098,8 +2157,14 @@ function createApp({
     if (!call) {
       return;
     }
-    if (call.recipientId !== req.auth.user.id) {
-      res.status(403).json({message: "Только получатель может принять звонок"});
+    if (call.initiatorId === req.auth.user.id) {
+      res.status(403).json({message: "Только приглашенный участник может принять звонок"});
+      return;
+    }
+    if (call.state === "active") {
+      res.json({
+        call: mapCallRecord(call, {viewerUserId: req.auth.user.id}),
+      });
       return;
     }
     if (call.state !== "ringing") {
@@ -2107,41 +2172,17 @@ function createApp({
       return;
     }
 
-    const initiator = await store.findUserById(call.initiatorId);
-    const recipient = await store.findUserById(call.recipientId);
     const roomName = call.roomName || `call_${call.id}`;
+    const callParticipantIds = normalizeParticipantIds(call.participantIds || []);
     try {
-      await resolvedLiveKitService.ensureRoom(roomName);
-      const sessionByUserId = {
-        [call.initiatorId]: await resolvedLiveKitService.createSession({
-          roomName,
-          participantIdentity: call.initiatorId,
-          participantName:
-            initiator?.profile?.displayName ||
-            initiator?.displayName ||
-            "Участник",
-          metadata: {
-            callId: call.id,
-            chatId: call.chatId,
-            userId: call.initiatorId,
-            mediaMode: call.mediaMode,
-          },
-        }),
-        [call.recipientId]: await resolvedLiveKitService.createSession({
-          roomName,
-          participantIdentity: call.recipientId,
-          participantName:
-            recipient?.profile?.displayName ||
-            recipient?.displayName ||
-            "Участник",
-          metadata: {
-            callId: call.id,
-            chatId: call.chatId,
-            userId: call.recipientId,
-            mediaMode: call.mediaMode,
-          },
-        }),
-      };
+      await resolvedLiveKitService.ensureRoom(roomName, {
+        maxParticipants: callParticipantIds.length,
+      });
+      const sessionByUserId = await createCallSessionsForParticipants({
+        call,
+        roomName,
+        participantIds: callParticipantIds,
+      });
       const acceptedCall = await store.acceptCall({
         callId: call.id,
         userId: req.auth.user.id,

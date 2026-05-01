@@ -33,8 +33,14 @@ async function handlePushEvent(event) {
     tag: payload.tag,
     icon: '/icons/Icon-192.png',
     badge: '/icons/Icon-192.png',
+    renotify: payload.renotify,
+    requireInteraction: payload.requireInteraction,
+    silent: false,
+    timestamp: payload.timestamp,
     data: {
       url: payload.url,
+      payload: payload.payload,
+      event: payload.event,
     },
   });
 }
@@ -69,6 +75,11 @@ function parsePayload(event) {
     body: '',
     tag: `rodnya-${Date.now()}`,
     url: '/#/notifications',
+    payload: null,
+    event: null,
+    renotify: false,
+    requireInteraction: false,
+    timestamp: Date.now(),
   };
 
   if (!event.data) {
@@ -82,6 +93,11 @@ function parsePayload(event) {
       body: parsed.body || fallback.body,
       tag: parsed.tag || fallback.tag,
       url: parsed.url || fallback.url,
+      payload: parsed.payload || fallback.payload,
+      event: parsed.event || fallback.event,
+      renotify: parsed.renotify === true,
+      requireInteraction: parsed.requireInteraction === true,
+      timestamp: Number(parsed.timestamp || Date.now()),
     };
   } catch (_) {
     return fallback;

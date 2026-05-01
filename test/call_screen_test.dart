@@ -3,8 +3,14 @@ import 'dart:collection';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:livekit_client/livekit_client.dart';
+import 'package:rodnya/backend/interfaces/chat_service_interface.dart';
 import 'package:rodnya/backend/interfaces/call_service_interface.dart';
+import 'package:rodnya/models/chat_attachment.dart';
+import 'package:rodnya/models/chat_message.dart' as rodnya_chat;
+import 'package:rodnya/models/chat_preview.dart';
+import 'package:rodnya/models/chat_send_progress.dart';
 import 'package:rodnya/models/call_event.dart';
 import 'package:rodnya/models/call_invite.dart';
 import 'package:rodnya/models/call_media_mode.dart';
@@ -250,6 +256,78 @@ void main() {
     expect(find.byType(LinearProgressIndicator), findsOneWidget);
   });
 
+  testWidgets('CallScreen shows waiting status for active group calls',
+      (tester) async {
+    final coordinator = _FakeCallCoordinator(
+      call: _buildCall(
+        state: CallState.active,
+        participantIds: const ['user-1', 'user-2', 'user-3'],
+      ),
+      roomValue: _FakeRoom(),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CallScreen(
+          initialCall: coordinator.currentCall!,
+          title: 'Семейный созвон',
+          coordinator: coordinator,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Семейный созвон'), findsOneWidget);
+    expect(find.text('Ожидаем участников звонка...'), findsOneWidget);
+  });
+
+  testWidgets('CallScreen opens in-call chat sheet and sends a text message',
+      (tester) async {
+    final coordinator = _FakeCallCoordinator(
+      call: _buildCall(state: CallState.active),
+      roomValue: _FakeRoom(),
+    );
+    final chatService = _FakeInCallChatService(
+      messages: <rodnya_chat.ChatMessage>[
+        rodnya_chat.ChatMessage(
+          id: 'msg-1',
+          chatId: 'chat-1',
+          senderId: 'user-2',
+          senderName: 'Нина',
+          text: 'Я на связи',
+          timestamp: DateTime(2026, 5, 1, 12),
+          isRead: false,
+          participants: const ['user-1', 'user-2'],
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CallScreen(
+          initialCall: coordinator.currentCall!,
+          title: 'Web QA',
+          coordinator: coordinator,
+          chatService: chatService,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Чат во время звонка'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Чат во время звонка'), findsOneWidget);
+    expect(find.text('Я на связи'), findsOneWidget);
+    expect(chatService.markReadCalls, 1);
+
+    await tester.enterText(find.byType(TextField).last, 'Минуту');
+    await tester.tap(find.byTooltip('Отправить'));
+    await tester.pumpAndSettle();
+
+    expect(chatService.sentTexts, ['Минуту']);
+  });
+
   testWidgets('CallScreen pops when coordinator clears the active call',
       (tester) async {
     final coordinator = _FakeCallCoordinator(
@@ -333,13 +411,14 @@ void main() {
 CallInvite _buildCall({
   required CallState state,
   CallMediaMode mediaMode = CallMediaMode.audio,
+  List<String> participantIds = const ['user-1', 'user-2'],
 }) {
   return CallInvite(
     id: 'call-1',
     chatId: 'chat-1',
     initiatorId: 'user-1',
     recipientId: 'user-2',
-    participantIds: const ['user-1', 'user-2'],
+    participantIds: participantIds,
     mediaMode: mediaMode,
     state: state,
     createdAt: DateTime(2026, 4, 20, 10),
@@ -569,6 +648,71 @@ class _FakeCallService implements CallServiceInterface {
 
   @override
   Future<void> stopRealtimeBridge() async {}
+}
+
+class _FakeInCallChatService extends ChatServiceInterface {
+  _FakeInCallChatService({
+    required List<rodnya_chat.ChatMessage> messages,
+  }) : _messages = messages;
+
+  final List<rodnya_chat.ChatMessage> _messages;
+  final List<String> sentTexts = <String>[];
+  int markReadCalls = 0;
+
+  @override
+  String? get currentUserId => 'user-1';
+
+  @override
+  String buildChatId(String otherUserId) => 'chat-$otherUserId';
+
+  @override
+  Stream<List<ChatPreview>> getUserChatsStream(String userId) {
+    return Stream<List<ChatPreview>>.value(const <ChatPreview>[]);
+  }
+
+  @override
+  Stream<int> getTotalUnreadCountStream(String userId) {
+    return Stream<int>.value(0);
+  }
+
+  @override
+  Stream<List<rodnya_chat.ChatMessage>> getMessagesStream(String chatId) {
+    return Stream<List<rodnya_chat.ChatMessage>>.value(_messages);
+  }
+
+  @override
+  Future<void> refreshMessages(String chatId) async {}
+
+  @override
+  Future<void> sendMessage({
+    required String otherUserId,
+    String text = '',
+    List<XFile> attachments = const <XFile>[],
+  }) async {}
+
+  @override
+  Future<void> sendMessageToChat({
+    required String chatId,
+    String text = '',
+    List<XFile> attachments = const <XFile>[],
+    List<ChatAttachment> forwardedAttachments = const <ChatAttachment>[],
+    rodnya_chat.ChatReplyReference? replyTo,
+    String? clientMessageId,
+    int? expiresInSeconds,
+    void Function(ChatSendProgress progress)? onProgress,
+  }) async {
+    sentTexts.add(text);
+  }
+
+  @override
+  Future<void> markChatAsRead(String chatId, String userId) async {
+    markReadCalls += 1;
+  }
+
+  @override
+  Future<String?> getOrCreateChat(String otherUserId) async {
+    return 'chat-$otherUserId';
+  }
 }
 
 class _FakeCallPipService implements CallPipService {

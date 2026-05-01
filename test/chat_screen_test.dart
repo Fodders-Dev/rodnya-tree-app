@@ -965,6 +965,41 @@ void main() {
     );
   });
 
+  testWidgets('ChatScreen exposes group call actions for group chat',
+      (tester) async {
+    final chatService = _FakeChatService();
+    getIt.registerSingleton<ChatServiceInterface>(chatService);
+
+    await tester.pumpWidget(
+      buildChatApp(
+        const ChatScreen(
+          chatId: 'chat-group-1',
+          title: 'Семья Кузнецовых',
+          chatType: 'group',
+          initialChatDetails: ChatDetails(
+            chatId: 'chat-group-1',
+            type: 'group',
+            title: 'Семья Кузнецовых',
+            participantIds: ['user-1', 'user-2', 'user-3'],
+            participants: [
+              ChatParticipantSummary(userId: 'user-1', displayName: 'Артем'),
+              ChatParticipantSummary(userId: 'user-2', displayName: 'Андрей'),
+              ChatParticipantSummary(userId: 'user-3', displayName: 'Дарья'),
+            ],
+            branchRoots: [],
+            treeId: 'tree-1',
+          ),
+        ),
+      ),
+    );
+
+    chatService.emitMessages(const <ChatMessage>[]);
+    await tester.pumpAndSettle();
+
+    expect(find.byTooltip('Групповой аудиозвонок'), findsOneWidget);
+    expect(find.byTooltip('Групповой видеозвонок'), findsOneWidget);
+  });
+
   testWidgets('ChatScreen stores per-chat notification mode from info sheet',
       (tester) async {
     final chatService = _FakeChatService();

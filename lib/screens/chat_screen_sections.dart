@@ -112,15 +112,15 @@ extension _ChatScreenScaffoldSections on _ChatScreenState {
     }
 
     return [
-      if (_isCurrentDirectChat) ...[
+      if (_canStartCallInChat) ...[
         IconButton(
           onPressed: () => _startCall(CallMediaMode.audio),
-          tooltip: 'Аудиозвонок',
+          tooltip: widget.isGroup ? 'Групповой аудиозвонок' : 'Аудиозвонок',
           icon: const Icon(Icons.call_outlined),
         ),
         IconButton(
           onPressed: () => _startCall(CallMediaMode.video),
-          tooltip: 'Видеозвонок',
+          tooltip: widget.isGroup ? 'Групповой видеозвонок' : 'Видеозвонок',
           icon: const Icon(Icons.videocam_outlined),
         ),
       ],

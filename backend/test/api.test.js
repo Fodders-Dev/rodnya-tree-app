@@ -109,6 +109,84 @@ async function stopTestServer(ctx) {
   await fs.rm(ctx.tempDir, {recursive: true, force: true});
 }
 
+function createFakeLiveKitService() {
+  return {
+    isConfigured: true,
+    async ensureRoom() {},
+    async createSession({
+      roomName,
+      participantIdentity,
+      participantName,
+    }) {
+      return {
+        roomName,
+        url: "wss://livekit.test",
+        token: `token-${participantIdentity}`,
+        participantIdentity,
+        participantName,
+        createdAt: new Date().toISOString(),
+      };
+    },
+    async receiveWebhook(body) {
+      return JSON.parse(body);
+    },
+  };
+}
+
+async function registerTestUser(ctx, email, displayName) {
+  const response = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+    method: "POST",
+    headers: {"content-type": "application/json"},
+    body: JSON.stringify({
+      email,
+      password: "secret123",
+      displayName,
+    }),
+  });
+  assert.equal(response.status, 201);
+  return response.json();
+}
+
+async function registerPushDevice(ctx, accessToken, device) {
+  const response = await fetch(`${ctx.baseUrl}/v1/push/devices`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${accessToken}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(device),
+  });
+  assert.equal(response.status, 201);
+  return response.json();
+}
+
+async function createDirectChat(ctx, accessToken, otherUserId) {
+  const response = await fetch(`${ctx.baseUrl}/v1/chats/direct`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${accessToken}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({otherUserId}),
+  });
+  assert.equal(response.status, 200);
+  const payload = await response.json();
+  return payload.chat || payload;
+}
+
+async function startDirectCall(ctx, accessToken, chatId, mediaMode = "audio") {
+  const response = await fetch(`${ctx.baseUrl}/v1/calls`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${accessToken}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({chatId, mediaMode}),
+  });
+  assert.equal(response.status, 201);
+  return response.json();
+}
+
 function extractHashQueryParameters(redirectUrl) {
   const parsedUrl = new URL(redirectUrl);
   const hashValue = String(parsedUrl.hash || "");
@@ -406,6 +484,178 @@ test("direct call lifecycle works with backend signaling and webhook updates", a
     const endedCall = await ctx.store.findCall(startedCall.call.id);
     assert.equal(endedCall.state, "ended");
     assert.equal(endedCall.endedReason, callee.user.id);
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("group call starts from group chat and creates LiveKit sessions for every participant", async () => {
+  const ensuredRooms = [];
+  const createdSessions = [];
+  const fakeLiveKitService = {
+    isConfigured: true,
+    async ensureRoom(roomName, options = {}) {
+      ensuredRooms.push({roomName, options});
+    },
+    async createSession({
+      roomName,
+      participantIdentity,
+      participantName,
+      metadata,
+    }) {
+      createdSessions.push({
+        roomName,
+        participantIdentity,
+        participantName,
+        metadata,
+      });
+      return {
+        roomName,
+        url: "wss://livekit.test",
+        token: `token-${participantIdentity}`,
+        participantIdentity,
+        participantName,
+        createdAt: new Date().toISOString(),
+      };
+    },
+    async receiveWebhook(body) {
+      return JSON.parse(body);
+    },
+  };
+  const ctx = await startConfiguredTestServer({
+    liveKitService: fakeLiveKitService,
+  });
+
+  try {
+    const caller = await registerTestUser(ctx, "group-caller@rodnya.app", "Арина");
+    const bob = await registerTestUser(ctx, "group-bob@rodnya.app", "Борис");
+    const carol = await registerTestUser(ctx, "group-carol@rodnya.app", "Вера");
+
+    const createGroupResponse = await fetch(`${ctx.baseUrl}/v1/chats/groups`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${caller.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        title: "Семейный созвон",
+        participantIds: [bob.user.id, carol.user.id],
+      }),
+    });
+    assert.equal(createGroupResponse.status, 201);
+    const createdGroup = await createGroupResponse.json();
+
+    const startCallResponse = await fetch(`${ctx.baseUrl}/v1/calls`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${caller.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        chatId: createdGroup.chat.id,
+        mediaMode: "audio",
+      }),
+    });
+    assert.equal(startCallResponse.status, 201);
+    const startedCall = await startCallResponse.json();
+    assert.equal(startedCall.call.state, "ringing");
+    assert.notEqual(startedCall.call.recipientId, caller.user.id);
+    assert.ok([bob.user.id, carol.user.id].includes(startedCall.call.recipientId));
+    assert.deepEqual(
+      [...startedCall.call.participantIds].sort(),
+      [caller.user.id, bob.user.id, carol.user.id].sort(),
+    );
+
+    const bobActiveResponse = await fetch(
+      `${ctx.baseUrl}/v1/calls/active?chatId=${encodeURIComponent(createdGroup.chat.id)}`,
+      {
+        headers: {
+          authorization: `Bearer ${bob.accessToken}`,
+        },
+      },
+    );
+    assert.equal(bobActiveResponse.status, 200);
+    const bobActive = await bobActiveResponse.json();
+    assert.equal(bobActive.call.id, startedCall.call.id);
+    assert.equal(bobActive.call.session, null);
+
+    const acceptResponse = await fetch(
+      `${ctx.baseUrl}/v1/calls/${startedCall.call.id}/accept`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${bob.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: "{}",
+      },
+    );
+    assert.equal(acceptResponse.status, 200);
+    const acceptedCall = await acceptResponse.json();
+    assert.equal(acceptedCall.call.state, "active");
+    assert.equal(acceptedCall.call.session.participantIdentity, bob.user.id);
+    assert.equal(ensuredRooms.length, 1);
+    assert.equal(ensuredRooms[0].options.maxParticipants, 3);
+    assert.equal(createdSessions.length, 3);
+    assert.deepEqual(
+      createdSessions.map((session) => session.participantIdentity).sort(),
+      [caller.user.id, bob.user.id, carol.user.id].sort(),
+    );
+
+    const carolCallResponse = await fetch(
+      `${ctx.baseUrl}/v1/calls/${startedCall.call.id}`,
+      {
+        headers: {
+          authorization: `Bearer ${carol.accessToken}`,
+        },
+      },
+    );
+    assert.equal(carolCallResponse.status, 200);
+    const carolCall = await carolCallResponse.json();
+    assert.equal(carolCall.call.state, "active");
+    assert.equal(carolCall.call.session.participantIdentity, carol.user.id);
+
+    for (const participant of [bob.user, carol.user]) {
+      const joinedResponse = await fetch(`${ctx.baseUrl}/v1/livekit/webhook`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/webhook+json",
+        },
+        body: JSON.stringify({
+          event: "participant_joined",
+          room: {
+            name: `call_${startedCall.call.id}`,
+          },
+          participant: {
+            identity: participant.id,
+          },
+        }),
+      });
+      assert.equal(joinedResponse.status, 200);
+    }
+
+    const leftResponse = await fetch(`${ctx.baseUrl}/v1/livekit/webhook`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/webhook+json",
+      },
+      body: JSON.stringify({
+        event: "participant_left",
+        room: {
+          name: `call_${startedCall.call.id}`,
+        },
+        participant: {
+          identity: bob.user.id,
+        },
+      }),
+    });
+    assert.equal(leftResponse.status, 200);
+
+    const stillActiveCall = await ctx.store.findCall(startedCall.call.id);
+    assert.equal(stillActiveCall.state, "active");
+    assert.deepEqual(stillActiveCall.metrics.connectedParticipantIds, [
+      carol.user.id,
+    ]);
   } finally {
     await stopTestServer(ctx);
   }
@@ -9763,6 +10013,139 @@ test("rustore push delivery sends notification through RuStore API", async () =>
           delivery.responseCode === 200,
       ),
     );
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("incoming call push uses high-priority metadata for WebPush and RuStore", async () => {
+  const sentWebPush = [];
+  const observedRustoreRequests = [];
+  const fakeWebPushClient = {
+    setVapidDetails() {},
+    async sendNotification(subscription, payload, options) {
+      sentWebPush.push({
+        subscription,
+        payload: JSON.parse(payload),
+        options,
+      });
+      return {statusCode: 201};
+    },
+  };
+  const ctx = await startConfiguredTestServer({
+    configOverrides: {
+      webPushEnabled: true,
+      webPushPublicKey: "public-vapid-key",
+      webPushPrivateKey: "private-vapid-key",
+      rustorePushEnabled: true,
+      rustorePushProjectId: "rustore-project-1",
+      rustorePushServiceToken: "rustore-service-token",
+      rustorePushApiBaseUrl: "https://vkpns.rustore.ru",
+    },
+    liveKitService: createFakeLiveKitService(),
+    pushGatewayFactory: ({store, config}) =>
+      new PushGateway({
+        store,
+        config,
+        webPushClient: fakeWebPushClient,
+        httpClient: async (url, options) => {
+          observedRustoreRequests.push({
+            url,
+            method: options?.method,
+            headers: options?.headers,
+            body: JSON.parse(String(options?.body || "{}")),
+          });
+          return {
+            ok: true,
+            status: 200,
+            text: async () => "{}",
+          };
+        },
+      }),
+  });
+
+  try {
+    const caller = await registerTestUser(
+      ctx,
+      "call-push-caller@rodnya.app",
+      "Caller Push",
+    );
+    const recipient = await registerTestUser(
+      ctx,
+      "call-push-recipient@rodnya.app",
+      "Recipient Push",
+    );
+    await registerPushDevice(ctx, recipient.accessToken, {
+      provider: "webpush",
+      token: JSON.stringify({
+        endpoint: "https://push.example.test/call-subscription",
+        keys: {
+          p256dh: "p256dh-key",
+          auth: "auth-key",
+        },
+      }),
+      platform: "web",
+    });
+    await registerPushDevice(ctx, recipient.accessToken, {
+      provider: "rustore",
+      token: "rustore-call-token",
+      platform: "android",
+    });
+
+    const chat = await createDirectChat(
+      ctx,
+      caller.accessToken,
+      recipient.user.id,
+    );
+    const startedCall = await startDirectCall(
+      ctx,
+      caller.accessToken,
+      chat.id,
+      "video",
+    );
+
+    assert.equal(startedCall.call.state, "ringing");
+    assert.equal(sentWebPush.length, 1);
+    assert.equal(observedRustoreRequests.length, 1);
+
+    const webPush = sentWebPush[0];
+    assert.equal(
+      webPush.subscription.endpoint,
+      "https://push.example.test/call-subscription",
+    );
+    assert.equal(webPush.options.TTL, 30);
+    assert.equal(webPush.options.urgency, "high");
+    assert.equal(webPush.payload.event, "incoming_call");
+    assert.equal(webPush.payload.urgency, "high");
+    assert.equal(webPush.payload.ttlSeconds, 30);
+    assert.equal(webPush.payload.timeSensitive, true);
+    assert.equal(webPush.payload.renotify, true);
+    assert.equal(webPush.payload.requireInteraction, true);
+    assert.equal(webPush.payload.tag, `call:${startedCall.call.id}`);
+    const webClientPayload = JSON.parse(webPush.payload.payload);
+    assert.equal(webClientPayload.type, "call_invite");
+    assert.equal(webClientPayload.event, "incoming_call");
+    assert.equal(webClientPayload.data.callId, startedCall.call.id);
+    assert.equal(webClientPayload.data.chatId, chat.id);
+
+    const rustoreData = observedRustoreRequests[0].body.message.data;
+    assert.equal(
+      observedRustoreRequests[0].body.message.token,
+      "rustore-call-token",
+    );
+    assert.equal(rustoreData.type, "call_invite");
+    assert.equal(rustoreData.callId, startedCall.call.id);
+    assert.equal(rustoreData.chatId, chat.id);
+    assert.equal(rustoreData.priority, "high");
+    assert.equal(rustoreData.urgency, "high");
+    assert.equal(rustoreData.ttlSeconds, "30");
+    assert.equal(rustoreData.timeSensitive, "true");
+    assert.equal(rustoreData.event, "incoming_call");
+    assert.equal(rustoreData.collapseKey, `call:${startedCall.call.id}`);
+    const rustoreClientPayload = JSON.parse(rustoreData.payload);
+    assert.equal(rustoreClientPayload.type, "call_invite");
+    assert.equal(rustoreClientPayload.event, "incoming_call");
+    assert.equal(rustoreClientPayload.data.callId, startedCall.call.id);
   } finally {
     await stopTestServer(ctx);
   }

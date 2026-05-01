@@ -311,6 +311,7 @@ class _CallRuntimeHostState extends State<CallRuntimeHost>
       callId: call.id,
       callerName: presentation.title,
       isVideo: call.mediaMode.isVideo,
+      chatId: call.chatId,
     );
     _notifiedCallId = call.id;
   }

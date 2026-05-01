@@ -44,14 +44,17 @@ class LiveKitService {
     }
   }
 
-  async ensureRoom(roomName) {
+  async ensureRoom(roomName, {maxParticipants = 2} = {}) {
     this.ensureConfigured();
+    const normalizedMaxParticipants = Number.isFinite(Number(maxParticipants))
+      ? Math.max(2, Math.floor(Number(maxParticipants)))
+      : 2;
     try {
       await this.roomServiceClient.createRoom({
         name: roomName,
         emptyTimeout: 60,
         departureTimeout: 15,
-        maxParticipants: 2,
+        maxParticipants: normalizedMaxParticipants,
       });
     } catch (error) {
       const message = String(error?.message || "").toLowerCase();

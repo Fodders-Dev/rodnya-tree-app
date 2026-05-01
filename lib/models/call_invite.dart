@@ -36,7 +36,16 @@ class CallInvite {
   final CallSession? session;
 
   bool isOutgoingFor(String userId) => initiatorId == userId;
-  bool isIncomingFor(String userId) => recipientId == userId;
+  bool isIncomingFor(String userId) {
+    final normalizedUserId = userId.trim();
+    if (normalizedUserId.isEmpty || initiatorId == normalizedUserId) {
+      return false;
+    }
+    return recipientId == normalizedUserId ||
+        participantIds.contains(normalizedUserId);
+  }
+
+  bool get isGroupCall => participantIds.length > 2;
 
   CallInvite copyWith({
     CallState? state,

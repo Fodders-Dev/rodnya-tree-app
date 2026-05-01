@@ -11,6 +11,7 @@ import '../models/call_event.dart';
 import '../models/call_invite.dart';
 import '../models/call_media_mode.dart';
 import '../models/call_state.dart';
+import 'android_incoming_call_service.dart';
 import 'audio_route_service.dart';
 import 'call_preferences.dart';
 import 'custom_api_realtime_service.dart';
@@ -44,8 +45,10 @@ class CallCoordinatorService extends ChangeNotifier
     CallMediaDeviceSelector? microphoneDeviceSelector,
     CallMediaDeviceSelector? cameraDeviceSelector,
     CallPreferences? callPreferences,
+    AndroidIncomingCallService? androidIncomingCallService,
     CallVibrationTrigger? vibrationTrigger,
     Duration ringingRecoveryInterval = const Duration(seconds: 5),
+    Duration activeCallRecoveryInterval = const Duration(seconds: 2),
   })  : _callService = callService,
         _realtimeService = realtimeService,
         _pushMessages = pushMessages,
@@ -61,8 +64,10 @@ class CallCoordinatorService extends ChangeNotifier
         _cameraDeviceSelector =
             cameraDeviceSelector ?? _selectLiveKitCameraDevice,
         _callPreferences = callPreferences ?? const DisabledCallPreferences(),
+        _androidIncomingCallService = androidIncomingCallService,
         _vibrationTrigger = vibrationTrigger ?? _defaultVibrationTrigger,
         _ringingRecoveryInterval = ringingRecoveryInterval,
+        _activeCallRecoveryInterval = activeCallRecoveryInterval,
         _mediaPermissionRequester =
             mediaPermissionRequester ?? _requestPlatformMediaPermissions {
     WidgetsFlutterBinding.ensureInitialized();
@@ -80,7 +85,9 @@ class CallCoordinatorService extends ChangeNotifier
     if (activePushMessages != null) {
       _pushSubscription = activePushMessages.listen(_handlePushMessage);
     }
+    unawaited(_androidIncomingCallService?.registerPhoneAccount());
     unawaited(ensureRuntimeReady());
+    unawaited(_handlePendingAndroidCallAction());
   }
 
   final CallServiceInterface _callService;
@@ -94,16 +101,21 @@ class CallCoordinatorService extends ChangeNotifier
   final CallMediaDeviceSelector _microphoneDeviceSelector;
   final CallMediaDeviceSelector _cameraDeviceSelector;
   final CallPreferences _callPreferences;
+  final AndroidIncomingCallService? _androidIncomingCallService;
   final CallVibrationTrigger _vibrationTrigger;
   final Duration _ringingRecoveryInterval;
+  final Duration _activeCallRecoveryInterval;
 
   StreamSubscription<CallEvent>? _callEventsSubscription;
   StreamSubscription<CustomApiRealtimeEvent>? _realtimeSubscription;
   StreamSubscription<RustorePushMessage>? _pushSubscription;
   Future<void>? _runtimeReadyFuture;
+  Future<void>? _androidCallActionFuture;
   Timer? _ringingRecoveryTimer;
+  Timer? _activeCallRecoveryTimer;
   Timer? _reconnectRestoredTimer;
   String? _ringingRecoveryCallId;
+  String? _activeCallRecoveryCallId;
 
   CallInvite? _currentCall;
   Room? _room;
@@ -266,6 +278,57 @@ class CallCoordinatorService extends ChangeNotifier
       }
     }());
     return completer.future;
+  }
+
+  Future<void> _handlePendingAndroidCallAction() {
+    final existingFuture = _androidCallActionFuture;
+    if (existingFuture != null) {
+      return existingFuture;
+    }
+
+    final future = _consumePendingAndroidCallAction();
+    _androidCallActionFuture = future;
+    future.whenComplete(() {
+      if (identical(_androidCallActionFuture, future)) {
+        _androidCallActionFuture = null;
+      }
+    });
+    return future;
+  }
+
+  Future<void> _consumePendingAndroidCallAction() async {
+    final service = _androidIncomingCallService;
+    if (service == null) {
+      return;
+    }
+
+    final action = await service.consumePendingAction();
+    if (action == null) {
+      return;
+    }
+
+    await ensureRuntimeReady();
+    final call = await hydrateIncomingCall(
+      callId: action.callId,
+      chatId: action.chatId,
+    );
+    if (call == null) {
+      return;
+    }
+
+    if (action.isAccept) {
+      if (call.state == CallState.ringing &&
+          call.isIncomingFor(currentUserId ?? '')) {
+        await acceptCall(call.id);
+      } else {
+        await activateCall(call);
+      }
+      return;
+    }
+
+    if (action.isReject || action.isDisconnect) {
+      await finishCall(call.id);
+    }
   }
 
   Future<CallInvite?> getCall(String callId) {
@@ -489,7 +552,11 @@ class CallCoordinatorService extends ChangeNotifier
   Future<void> _applyCall(CallInvite? nextCall) async {
     final currentCall = _currentCall;
     if (nextCall == null) {
+      if (currentCall != null) {
+        unawaited(_androidIncomingCallService?.dismissCall(currentCall.id));
+      }
       _cancelRingingRecovery();
+      _cancelActiveCallRecovery();
       _currentCall = null;
       _isConnectingRoom = false;
       _isReconnectingRoom = false;
@@ -514,7 +581,9 @@ class CallCoordinatorService extends ChangeNotifier
       if (currentCall == null || currentCall.id != nextCall.id) {
         return;
       }
+      unawaited(_androidIncomingCallService?.dismissCall(nextCall.id));
       _cancelRingingRecovery();
+      _cancelActiveCallRecovery();
       _currentCall = null;
       _isConnectingRoom = false;
       _isReconnectingRoom = false;
@@ -536,12 +605,18 @@ class CallCoordinatorService extends ChangeNotifier
     _currentCall = nextCall;
     if (nextCall.state == CallState.ringing) {
       _scheduleRingingRecovery(nextCall);
+      _cancelActiveCallRecovery();
       unawaited(_maybeVibrateForIncomingCall(nextCall));
     } else {
       _cancelRingingRecovery();
       if (_lastIncomingVibrationCallId == nextCall.id) {
         _lastIncomingVibrationCallId = null;
       }
+    }
+    if (nextCall.state == CallState.active) {
+      _scheduleActiveCallRecovery(nextCall);
+    } else {
+      _cancelActiveCallRecovery();
     }
     if (previousCallId != nextCall.id) {
       _connectionError = null;
@@ -597,6 +672,27 @@ class CallCoordinatorService extends ChangeNotifier
     _ringingRecoveryCallId = null;
   }
 
+  void _scheduleActiveCallRecovery(CallInvite call) {
+    if (_activeCallRecoveryInterval <= Duration.zero) {
+      return;
+    }
+    if (_activeCallRecoveryCallId == call.id &&
+        _activeCallRecoveryTimer?.isActive == true) {
+      return;
+    }
+    _cancelActiveCallRecovery();
+    _activeCallRecoveryCallId = call.id;
+    _activeCallRecoveryTimer = Timer.periodic(_activeCallRecoveryInterval, (_) {
+      unawaited(_refreshActiveCall(call.id));
+    });
+  }
+
+  void _cancelActiveCallRecovery() {
+    _activeCallRecoveryTimer?.cancel();
+    _activeCallRecoveryTimer = null;
+    _activeCallRecoveryCallId = null;
+  }
+
   Future<void> _refreshRingingCall(String callId) async {
     final activeCall = _currentCall;
     if (activeCall == null ||
@@ -628,6 +724,30 @@ class CallCoordinatorService extends ChangeNotifier
       await _applyCall(refreshedActiveCall);
     } catch (_) {
       // Keep the current ringing state and retry on the next interval.
+    }
+  }
+
+  Future<void> _refreshActiveCall(String callId) async {
+    final activeCall = _currentCall;
+    if (activeCall == null ||
+        activeCall.id != callId ||
+        activeCall.state != CallState.active) {
+      _cancelActiveCallRecovery();
+      return;
+    }
+
+    try {
+      final refreshedCall = await _callService.getCall(callId);
+      if (_currentCall == null || _currentCall!.id != callId) {
+        return;
+      }
+      if (refreshedCall == null) {
+        await _applyCall(null);
+        return;
+      }
+      await _applyCall(refreshedCall);
+    } catch (_) {
+      // Keep the current active state and retry on the next interval.
     }
   }
 
@@ -1110,6 +1230,9 @@ class CallCoordinatorService extends ChangeNotifier
     if (currentCall.id != nextCall.id) {
       return nextCall.state.isTerminal;
     }
+    if (nextCall.state.isTerminal) {
+      return false;
+    }
 
     final currentUpdatedAt = currentCall.updatedAt.millisecondsSinceEpoch;
     final nextUpdatedAt = nextCall.updatedAt.millisecondsSinceEpoch;
@@ -1161,6 +1284,7 @@ class CallCoordinatorService extends ChangeNotifier
 
   Future<void> reset() async {
     _cancelRingingRecovery();
+    _cancelActiveCallRecovery();
     _currentCall = null;
     _connectionError = null;
     _isConnectingRoom = false;
@@ -1186,6 +1310,7 @@ class CallCoordinatorService extends ChangeNotifier
         _connectionError = null;
       }
       unawaited(ensureRuntimeReady().then((_) => resync()));
+      unawaited(_handlePendingAndroidCallAction());
     }
   }
 
@@ -1193,6 +1318,7 @@ class CallCoordinatorService extends ChangeNotifier
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _cancelRingingRecovery();
+    _cancelActiveCallRecovery();
     _clearReconnectRestoredBanner();
     unawaited(_callEventsSubscription?.cancel());
     unawaited(_realtimeSubscription?.cancel());

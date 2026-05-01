@@ -2,9 +2,11 @@ import 'dart:async';
 
 import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
+import 'package:get_it/get_it.dart';
 import 'package:livekit_client/livekit_client.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import '../backend/interfaces/chat_service_interface.dart';
 import '../models/call_invite.dart';
 import '../models/call_media_mode.dart';
 import '../models/call_state.dart';
@@ -15,6 +17,7 @@ import '../utils/photo_url.dart';
 import '../widgets/call_connection_quality_badge.dart';
 import '../widgets/call_device_picker_sheet.dart';
 import '../widgets/glass_panel.dart';
+import '../widgets/in_call_chat_sheet.dart';
 
 class CallScreen extends StatefulWidget {
   const CallScreen({
@@ -24,6 +27,7 @@ class CallScreen extends StatefulWidget {
     required this.coordinator,
     this.photoUrl,
     this.pipService = const MethodChannelCallPipService(),
+    this.chatService,
   });
 
   final CallInvite initialCall;
@@ -31,6 +35,7 @@ class CallScreen extends StatefulWidget {
   final String? photoUrl;
   final CallCoordinatorService coordinator;
   final CallPipService pipService;
+  final ChatServiceInterface? chatService;
 
   @override
   State<CallScreen> createState() => _CallScreenState();
@@ -46,6 +51,11 @@ class _CallScreenState extends State<CallScreen> {
   bool get _isVideoCall => _resolvedCall.mediaMode == CallMediaMode.video;
   AudioRouteService get _audioRouteService =>
       widget.coordinator.audioRouteService;
+  ChatServiceInterface? get _chatService =>
+      widget.chatService ??
+      (GetIt.I.isRegistered<ChatServiceInterface>()
+          ? GetIt.I<ChatServiceInterface>()
+          : null);
 
   @override
   void initState() {
@@ -168,17 +178,46 @@ class _CallScreenState extends State<CallScreen> {
     );
   }
 
+  Future<void> _openInCallChatSheet() async {
+    final chatService = _chatService;
+    if (chatService == null) {
+      return;
+    }
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) => InCallChatSheet(
+        chatId: _resolvedCall.chatId,
+        chatService: chatService,
+      ),
+    );
+  }
+
   void _openSystemSettings() {
     unawaited(openAppSettings());
   }
 
-  RemoteParticipant? get _remoteParticipant =>
-      widget.coordinator.room?.remoteParticipants.values.firstOrNull;
+  bool get _isGroupCall => _resolvedCall.isGroupCall;
+
+  List<RemoteParticipant> get _remoteParticipants =>
+      widget.coordinator.room?.remoteParticipants.values.toList() ??
+      const <RemoteParticipant>[];
+
+  RemoteParticipant? get _remoteParticipant => _remoteParticipants.firstOrNull;
 
   VideoTrack? get _remoteVideoTrack {
     final publication = _remoteParticipant?.videoTrackPublications
         .firstWhereOrNull((entry) => entry.source == TrackSource.camera);
     return publication?.track;
+  }
+
+  List<VideoTrack?> get _remoteVideoTracks {
+    return _remoteParticipants.map((participant) {
+      final publication = participant.videoTrackPublications
+          .firstWhereOrNull((entry) => entry.source == TrackSource.camera);
+      return publication?.track;
+    }).toList();
   }
 
   VideoTrack? get _localVideoTrack {
@@ -213,6 +252,13 @@ class _CallScreenState extends State<CallScreen> {
         if (widget.coordinator.room == null) {
           return 'Подключаем медиаканал...';
         }
+        if (_isGroupCall) {
+          if (_remoteParticipants.isEmpty) {
+            return 'Ожидаем участников звонка...';
+          }
+          final connectedCount = _remoteParticipants.length + 1;
+          return '${_formatParticipantCount(connectedCount)} в звонке';
+        }
         return _remoteParticipant == null
             ? 'Ожидаем подключение собеседника...'
             : (_isVideoCall ? 'Видеозвонок' : 'Аудиозвонок');
@@ -227,6 +273,17 @@ class _CallScreenState extends State<CallScreen> {
       case CallState.failed:
         return 'Не удалось начать звонок';
     }
+  }
+
+  String _formatParticipantCount(int count) {
+    final mod10 = count % 10;
+    final mod100 = count % 100;
+    final suffix = mod10 == 1 && mod100 != 11
+        ? 'участник'
+        : (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)
+            ? 'участника'
+            : 'участников');
+    return '$count $suffix';
   }
 
   Widget _buildAvatar() {
@@ -298,6 +355,7 @@ class _CallScreenState extends State<CallScreen> {
   @override
   Widget build(BuildContext context) {
     final remoteVideoTrack = _remoteVideoTrack;
+    final remoteVideoTracks = _remoteVideoTracks;
     final localVideoTrack = _localVideoTrack;
     final hasConnectedRoom = widget.coordinator.room != null;
     final showPermissionSettingsCta = _resolvedCall.state == CallState.active &&
@@ -309,25 +367,12 @@ class _CallScreenState extends State<CallScreen> {
       body: Stack(
         children: [
           Positioned.fill(
-            child: remoteVideoTrack != null
-                ? VideoTrackRenderer(
-                    remoteVideoTrack,
-                    fit: VideoViewFit.cover,
-                  )
-                : DecoratedBox(
-                    decoration: const BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: [
-                          Color(0xFF1A202C),
-                          Color(0xFF0F1722),
-                          Color(0xFF201A27),
-                        ],
-                      ),
-                    ),
-                    child: Center(child: _buildAvatar()),
-                  ),
+            child: _CallStage(
+              isGroupCall: _isGroupCall,
+              remoteVideoTrack: remoteVideoTrack,
+              remoteVideoTracks: remoteVideoTracks,
+              fallbackAvatar: _buildAvatar(),
+            ),
           ),
           SafeArea(
             child: Padding(
@@ -457,6 +502,14 @@ class _CallScreenState extends State<CallScreen> {
                           icon: Icons.tune_rounded,
                           tooltip: 'Источники звука и видео',
                         ),
+                        if (_chatService != null)
+                          _CallActionButton(
+                            onPressed: _openInCallChatSheet,
+                            backgroundColor:
+                                Colors.white.withValues(alpha: 0.14),
+                            icon: Icons.chat_bubble_outline_rounded,
+                            tooltip: 'Чат во время звонка',
+                          ),
                         if (_isVideoCall)
                           _CallActionButton(
                             onPressed: _toggleCamera,
@@ -532,6 +585,134 @@ String _audioRouteTooltip(AudioRouteOption? route) {
     return 'Аудиовыход';
   }
   return 'Аудиовыход: $label';
+}
+
+class _CallStage extends StatelessWidget {
+  const _CallStage({
+    required this.isGroupCall,
+    required this.remoteVideoTrack,
+    required this.remoteVideoTracks,
+    required this.fallbackAvatar,
+  });
+
+  final bool isGroupCall;
+  final VideoTrack? remoteVideoTrack;
+  final List<VideoTrack?> remoteVideoTracks;
+  final Widget fallbackAvatar;
+
+  @override
+  Widget build(BuildContext context) {
+    if (isGroupCall && remoteVideoTracks.length > 1) {
+      return DecoratedBox(
+        decoration: _stageDecoration,
+        child: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 84, 12, 220),
+            child: GridView.builder(
+              physics: const NeverScrollableScrollPhysics(),
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: remoteVideoTracks.length <= 2 ? 1 : 2,
+                crossAxisSpacing: 10,
+                mainAxisSpacing: 10,
+                childAspectRatio: remoteVideoTracks.length <= 2 ? 1.7 : 0.88,
+              ),
+              itemCount: remoteVideoTracks.length,
+              itemBuilder: (context, index) => _RemoteVideoTile(
+                track: remoteVideoTracks[index],
+                index: index,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    if (remoteVideoTrack != null) {
+      return VideoTrackRenderer(
+        remoteVideoTrack!,
+        fit: VideoViewFit.cover,
+      );
+    }
+
+    return DecoratedBox(
+      decoration: _stageDecoration,
+      child: Center(child: fallbackAvatar),
+    );
+  }
+
+  static const BoxDecoration _stageDecoration = BoxDecoration(
+    gradient: LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [
+        Color(0xFF1A202C),
+        Color(0xFF0F1722),
+        Color(0xFF201A27),
+      ],
+    ),
+  );
+}
+
+class _RemoteVideoTile extends StatelessWidget {
+  const _RemoteVideoTile({
+    required this.track,
+    required this.index,
+  });
+
+  final VideoTrack? track;
+  final int index;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(18),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.08),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.10)),
+        ),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (track != null)
+              VideoTrackRenderer(
+                track!,
+                fit: VideoViewFit.cover,
+              )
+            else
+              Center(
+                child: Icon(
+                  Icons.person_rounded,
+                  color: Colors.white.withValues(alpha: 0.78),
+                  size: 40,
+                ),
+              ),
+            Positioned(
+              left: 10,
+              bottom: 10,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.36),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  child: Text(
+                    'Участник ${index + 1}',
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w700,
+                        ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _AudioRouteSheet extends StatelessWidget {

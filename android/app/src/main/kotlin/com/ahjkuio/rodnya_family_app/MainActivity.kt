@@ -1,6 +1,7 @@
 package com.ahjkuio.rodnya_family_app
 
 import android.app.PictureInPictureParams
+import android.content.Intent
 import android.os.Build
 import android.util.Rational
 import io.flutter.embedding.android.FlutterActivity
@@ -23,6 +24,13 @@ class MainActivity: FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+        RodnyaTelecomBridge.configure(this, flutterEngine)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        RodnyaTelecomBridge.handleIntent(this, intent)
     }
 
     private fun enterRodnyaPictureInPicture(width: Int, height: Int): Boolean {

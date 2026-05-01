@@ -4467,6 +4467,15 @@ class _ChatScreenState extends State<ChatScreen> {
   bool get _isCurrentDirectChat =>
       _chatDetails?.isDirect ?? widget.chatType == 'direct';
 
+  bool get _canStartCallInChat {
+    final details = _chatDetails;
+    if (details != null) {
+      return (details.isDirect || details.isGroup) &&
+          details.participantIds.length >= 2;
+    }
+    return widget.chatType == 'direct';
+  }
+
   String? get _currentDirectPeerUserId {
     if (!_isCurrentDirectChat) {
       return null;

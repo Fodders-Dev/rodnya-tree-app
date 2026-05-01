@@ -101,22 +101,14 @@ class PushGateway {
       return;
     }
 
-    const payload = JSON.stringify({
-      title: notification.title || "Родня",
-      body: notification.body || "",
-      tag: notification.id,
-      payload: JSON.stringify({
-        id: notification.id,
-        type: notification.type,
-        data: notification.data || {},
-      }),
-      url: this._notificationUrl(notification),
-    });
+    const payload = JSON.stringify(this._buildWebPushPayload(notification));
+    const options = this._buildWebPushOptions(notification);
 
     try {
       const response = await this.webPushClient.sendNotification(
         subscription,
         payload,
+        options,
       );
       await this.store.updatePushDelivery(delivery.id, {
         status: "sent",
@@ -144,6 +136,35 @@ class PushGateway {
       }),
     );
     return `${baseUrl}/?notificationPayload=${payload}#/notifications`;
+  }
+
+  _buildWebPushPayload(notification) {
+    const isIncomingCall = this._isIncomingCallNotification(notification);
+    const payload = {
+      title: notification.title || "Родня",
+      body: notification.body || "",
+      tag: this._notificationTag(notification),
+      payload: JSON.stringify(this._buildClientPayload(notification)),
+      url: this._notificationUrl(notification),
+    };
+
+    if (isIncomingCall) {
+      payload.event = "incoming_call";
+      payload.urgency = "high";
+      payload.ttlSeconds = this._notificationTtlSeconds(notification);
+      payload.timeSensitive = true;
+      payload.renotify = true;
+      payload.requireInteraction = true;
+    }
+
+    return payload;
+  }
+
+  _buildWebPushOptions(notification) {
+    return {
+      TTL: this._notificationTtlSeconds(notification),
+      urgency: this._notificationUrgency(notification),
+    };
   }
 
   async _deliverRustorePush(notification, device, delivery) {
@@ -210,14 +231,11 @@ class PushGateway {
   }
 
   _buildRustoreDataPayload(notification) {
+    const isIncomingCall = this._isIncomingCallNotification(notification);
     const payload = {
       notificationId: notification.id,
       type: notification.type || "generic",
-      payload: JSON.stringify({
-        id: notification.id,
-        type: notification.type,
-        data: notification.data || {},
-      }),
+      payload: JSON.stringify(this._buildClientPayload(notification)),
     };
 
     for (const [key, value] of Object.entries(notification.data || {})) {
@@ -228,7 +246,57 @@ class PushGateway {
         typeof value === "string" ? value : JSON.stringify(value);
     }
 
+    if (isIncomingCall) {
+      payload.priority = "high";
+      payload.urgency = "high";
+      payload.ttlSeconds = String(this._notificationTtlSeconds(notification));
+      payload.timeSensitive = "true";
+      payload.event = "incoming_call";
+      payload.collapseKey = this._notificationTag(notification);
+    }
+
     return payload;
+  }
+
+  _buildClientPayload(notification) {
+    const payload = {
+      id: notification.id,
+      type: notification.type,
+      data: notification.data || {},
+    };
+
+    if (this._isIncomingCallNotification(notification)) {
+      payload.priority = "high";
+      payload.urgency = "high";
+      payload.ttlSeconds = this._notificationTtlSeconds(notification);
+      payload.timeSensitive = true;
+      payload.event = "incoming_call";
+    }
+
+    return payload;
+  }
+
+  _isIncomingCallNotification(notification) {
+    const type = String(notification?.type || "").trim();
+    return type === "call_invite" || type === "call";
+  }
+
+  _notificationUrgency(notification) {
+    return this._isIncomingCallNotification(notification) ? "high" : "normal";
+  }
+
+  _notificationTtlSeconds(notification) {
+    return this._isIncomingCallNotification(notification) ? 30 : 3600;
+  }
+
+  _notificationTag(notification) {
+    if (this._isIncomingCallNotification(notification)) {
+      const callId = notification?.data?.callId;
+      if (callId != null && String(callId).trim()) {
+        return `call:${String(callId).trim()}`;
+      }
+    }
+    return notification.id;
   }
 
   async _safeReadResponse(response) {

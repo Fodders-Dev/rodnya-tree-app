@@ -9,6 +9,7 @@ import 'package:rodnya/models/call_invite.dart';
 import 'package:rodnya/models/call_media_mode.dart';
 import 'package:rodnya/models/call_session.dart';
 import 'package:rodnya/models/call_state.dart';
+import 'package:rodnya/services/android_incoming_call_service.dart';
 import 'package:rodnya/services/call_coordinator_service.dart';
 import 'package:rodnya/services/call_preferences.dart';
 import 'package:rodnya/services/rustore_service.dart';
@@ -163,6 +164,48 @@ void main() {
   );
 
   test(
+    'CallCoordinatorService accepts pending Android telecom action',
+    () async {
+      final incomingCall = _buildCall(state: CallState.ringing);
+      final acceptedCall = _buildCall(
+        state: CallState.active,
+        session: const CallSession(
+          roomName: 'room-1',
+          url: 'wss://livekit.example.test',
+          token: 'token-1',
+          participantIdentity: 'user-1',
+        ),
+      );
+      final service = _CountingCallService(
+        activeCall: incomingCall,
+        callById: incomingCall,
+      )..acceptResult = acceptedCall;
+      final androidCalls = _FakeAndroidIncomingCallService(
+        const AndroidCallAction(
+          action: 'accept',
+          callId: 'call-1',
+          chatId: 'chat-1',
+        ),
+      );
+      final coordinator = CallCoordinatorService(
+        callService: service,
+        androidIncomingCallService: androidCalls,
+        mediaPermissionRequester: (_) async => false,
+      );
+
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(androidCalls.registerPhoneAccountCalls, 1);
+      expect(androidCalls.consumePendingActionCalls, 1);
+      expect(service.acceptCallRequests, 1);
+      expect(coordinator.currentCall?.state, CallState.active);
+
+      coordinator.dispose();
+    },
+  );
+
+  test(
     'CallCoordinatorService ignores terminal updates for another call id',
     () async {
       final events = StreamController<CallEvent>.broadcast();
@@ -256,6 +299,85 @@ void main() {
   );
 
   test(
+    'CallCoordinatorService applies terminal same-call snapshot even when stale',
+    () async {
+      final events = StreamController<CallEvent>.broadcast();
+      final activeCall = _buildCall(
+        state: CallState.active,
+        updatedAt: DateTime(2026, 4, 20, 10, 5),
+        session: const CallSession(
+          roomName: 'room-1',
+          url: 'wss://livekit.example.test',
+          token: 'token-1',
+          participantIdentity: 'user-1',
+        ),
+      );
+      final service = _CountingCallService(
+        activeCall: activeCall,
+        events: events.stream,
+      );
+      final coordinator = CallCoordinatorService(
+        callService: service,
+        mediaPermissionRequester: (_) async => false,
+      );
+
+      await coordinator.activateCall(activeCall);
+
+      events.add(
+        CallEvent(
+          type: CallEventType.stateUpdated,
+          call: _buildCall(
+            state: CallState.ended,
+            updatedAt: DateTime(2026, 4, 20, 10, 1),
+          ),
+        ),
+      );
+
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      expect(coordinator.currentCall, isNull);
+
+      await events.close();
+      coordinator.dispose();
+    },
+  );
+
+  test(
+    'CallCoordinatorService refreshes active call until terminal state',
+    () async {
+      final activeCall = _buildCall(
+        state: CallState.active,
+        session: const CallSession(
+          roomName: 'room-1',
+          url: 'wss://livekit.example.test',
+          token: 'token-1',
+          participantIdentity: 'user-1',
+        ),
+      );
+      final service = _CountingCallService(activeCall: activeCall);
+      final coordinator = CallCoordinatorService(
+        callService: service,
+        mediaPermissionRequester: (_) async => false,
+        activeCallRecoveryInterval: const Duration(milliseconds: 20),
+      );
+
+      await coordinator.activateCall(activeCall);
+      service.callById = _buildCall(
+        state: CallState.ended,
+        updatedAt: DateTime(2026, 4, 20, 10, 2),
+      );
+
+      await Future<void>.delayed(const Duration(milliseconds: 60));
+
+      expect(service.callByIdRequests, greaterThanOrEqualTo(1));
+      expect(coordinator.currentCall, isNull);
+
+      coordinator.dispose();
+    },
+  );
+
+  test(
     'CallCoordinatorService refreshes stale ringing call until terminal state',
     () async {
       final service = _CountingCallService(
@@ -344,10 +466,12 @@ CallInvite _buildCall({
 class _CountingCallService implements CallServiceInterface {
   CallInvite? activeCall;
   CallInvite? callById;
+  CallInvite? acceptResult;
   final Stream<CallEvent> _events;
   final String? _currentUserId;
   int activeCallRequests = 0;
   int callByIdRequests = 0;
+  int acceptCallRequests = 0;
 
   _CountingCallService._internal({
     required this.activeCall,
@@ -383,7 +507,11 @@ class _CountingCallService implements CallServiceInterface {
   Stream<CallEvent> get events => _events;
 
   @override
-  Future<CallInvite> acceptCall(String callId) async => activeCall!;
+  Future<CallInvite> acceptCall(String callId) async {
+    acceptCallRequests += 1;
+    activeCall = acceptResult ?? activeCall;
+    return activeCall!;
+  }
 
   @override
   Future<CallInvite> cancelCall(String callId) async => activeCall!;
@@ -418,4 +546,24 @@ class _CountingCallService implements CallServiceInterface {
 
   @override
   Future<void> stopRealtimeBridge() async {}
+}
+
+class _FakeAndroidIncomingCallService extends AndroidIncomingCallService {
+  _FakeAndroidIncomingCallService(this.action);
+
+  final AndroidCallAction? action;
+  int registerPhoneAccountCalls = 0;
+  int consumePendingActionCalls = 0;
+
+  @override
+  Future<bool> registerPhoneAccount() async {
+    registerPhoneAccountCalls += 1;
+    return true;
+  }
+
+  @override
+  Future<AndroidCallAction?> consumePendingAction() async {
+    consumePendingActionCalls += 1;
+    return action;
+  }
 }

@@ -33,6 +33,7 @@ import '../providers/tree_provider.dart';
 import '../startup/app_startup_pipeline.dart';
 import '../startup/app_warmup_coordinator.dart';
 import 'app_status_service.dart';
+import 'android_incoming_call_service.dart';
 import 'audio_route_service.dart';
 import 'chat_message_cache.dart';
 import 'chat_draft_store.dart';
@@ -53,6 +54,7 @@ import 'custom_api_story_service.dart';
 import 'custom_api_storage_service.dart';
 import 'invitation_service.dart';
 import 'invitation_link_service.dart';
+import 'incoming_call_watcher.dart';
 import 'local_storage_service.dart';
 import 'phone_contacts_service.dart';
 import 'rustore_service.dart';
@@ -194,14 +196,24 @@ class AppStartupService implements AppStartupServiceInterface {
     _registerOrReplaceLazySingleton<CallPreferences>(
       HiveCallPreferences.new,
     );
-    _registerOrReplaceLazySingleton<CallCoordinatorService>(
-      () => CallCoordinatorService(
-        callService: _getIt<CallServiceInterface>(),
-        realtimeService: customApiRealtimeService,
-        pushMessages: rustoreService.pushMessages,
-        audioRouteService: _getIt<AudioRouteService>(),
-        callPreferences: _getIt<CallPreferences>(),
-      ),
+    _registerOrReplaceLazySingleton<AndroidIncomingCallService>(
+      AndroidIncomingCallService.new,
+    );
+    final callCoordinatorService = CallCoordinatorService(
+      callService: _getIt<CallServiceInterface>(),
+      realtimeService: customApiRealtimeService,
+      pushMessages: rustoreService.pushMessages,
+      audioRouteService: _getIt<AudioRouteService>(),
+      callPreferences: _getIt<CallPreferences>(),
+      androidIncomingCallService: _getIt<AndroidIncomingCallService>(),
+    );
+    _registerOrReplaceSingleton<CallCoordinatorService>(callCoordinatorService);
+    final incomingCallWatcher = IncomingCallWatcher(
+      coordinator: callCoordinatorService,
+      realtimeService: customApiRealtimeService,
+    )..start();
+    _registerOrReplaceSingleton<IncomingCallWatcher>(
+      incomingCallWatcher,
     );
 
     final customApiNotificationService =
@@ -210,6 +222,7 @@ class AppStartupService implements AppStartupServiceInterface {
       runtimeConfig: runtimeConfig,
       realtimeService: customApiRealtimeService,
       rustoreService: rustoreService,
+      androidIncomingCallService: _getIt<AndroidIncomingCallService>(),
     );
     _registerOrReplaceSingleton<CustomApiNotificationService>(
       customApiNotificationService,

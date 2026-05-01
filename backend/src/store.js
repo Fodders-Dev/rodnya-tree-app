@@ -1081,15 +1081,23 @@ function createCallRecord({
   chatId,
   initiatorId,
   recipientId,
+  participantIds = null,
   mediaMode,
 }) {
   const timestamp = nowIso();
+  const normalizedParticipantIds = normalizeParticipantIds(
+    participantIds || [initiatorId, recipientId],
+  );
+  const normalizedRecipientId =
+    normalizeNullableString(recipientId) ||
+    normalizedParticipantIds.find((participantId) => participantId !== initiatorId) ||
+    "";
   return {
     id: `call_${crypto.randomUUID()}`,
     chatId,
     initiatorId,
-    recipientId,
-    participantIds: normalizeParticipantIds([initiatorId, recipientId]),
+    recipientId: normalizedRecipientId,
+    participantIds: normalizedParticipantIds,
     mediaMode: normalizeCallMediaMode(mediaMode),
     state: "ringing",
     roomName: null,
@@ -7073,7 +7081,9 @@ class FileStore {
       }
     }
     await this._write(db);
-    return structuredClone(this._mergeProposalView(db, proposal));
+    return structuredClone(
+      this._mergeProposalView(db, proposal, reviewerUserId),
+    );
   }
 
   async listPersonAttributes({treeId, personId}) {
@@ -10466,6 +10476,7 @@ class FileStore {
     chatId,
     initiatorId,
     recipientId,
+    participantIds: requestedParticipantIds = null,
     mediaMode,
   }) {
     const db = await this._read();
@@ -10474,13 +10485,33 @@ class FileStore {
       return null;
     }
 
-    const participantIds = normalizeParticipantIds(chat.participantIds || []);
+    const chatParticipantIds = normalizeParticipantIds(chat.participantIds || []);
+    const participantIds = normalizeParticipantIds(
+      Array.isArray(requestedParticipantIds) && requestedParticipantIds.length > 0
+        ? requestedParticipantIds
+        : chatParticipantIds,
+    );
     if (
-      chat.type !== "direct" ||
-      participantIds.length !== 2 ||
       !participantIds.includes(initiatorId) ||
-      !participantIds.includes(recipientId)
+      participantIds.some((participantId) => !chatParticipantIds.includes(participantId))
     ) {
+      return false;
+    }
+    if (chat.type === "direct" && participantIds.length !== 2) {
+      return false;
+    }
+    if ((chat.type === "group" || chat.type === "branch") && participantIds.length < 2) {
+      return false;
+    }
+    if (chat.type !== "direct" && chat.type !== "group" && chat.type !== "branch") {
+      return false;
+    }
+
+    const normalizedRecipientId =
+      normalizeNullableString(recipientId) ||
+      participantIds.find((participantId) => participantId !== initiatorId) ||
+      "";
+    if (!normalizedRecipientId || !participantIds.includes(normalizedRecipientId)) {
       return false;
     }
 
@@ -10503,7 +10534,8 @@ class FileStore {
     const call = createCallRecord({
       chatId,
       initiatorId,
-      recipientId,
+      recipientId: normalizedRecipientId,
+      participantIds,
       mediaMode,
     });
     db.calls.push(call);
@@ -10577,7 +10609,7 @@ class FileStore {
     if (!storedCall || !call) {
       return null;
     }
-    if (call.recipientId !== userId) {
+    if (!call.participantIds.includes(userId) || call.initiatorId === userId) {
       return false;
     }
     if (call.state !== "ringing") {
@@ -10626,7 +10658,7 @@ class FileStore {
     if (!storedCall || !call) {
       return null;
     }
-    if (call.recipientId !== userId) {
+    if (!call.participantIds.includes(userId) || call.initiatorId === userId) {
       return false;
     }
     if (call.state !== "ringing") {
@@ -10763,6 +10795,15 @@ class FileStore {
           storedCall.metrics.connectedParticipantIds.filter(
             (value) => value !== normalizedParticipantIdentity,
           );
+      }
+      if (
+        normalizedEvent === "participant_left" &&
+        call.participantIds.length > 2 &&
+        storedCall.metrics.connectedParticipantIds.length > 0
+      ) {
+        storedCall.updatedAt = timestamp;
+        await this._write(db);
+        return structuredClone(normalizeStoredCall(storedCall));
       }
       storedCall.state = "ended";
       storedCall.updatedAt = timestamp;

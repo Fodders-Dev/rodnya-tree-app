@@ -16,6 +16,7 @@ import '../models/app_notification_item.dart';
 import '../models/family_person.dart' as rodnya_models;
 import '../navigation/app_router_shared.dart';
 import '../providers/tree_provider.dart';
+import 'android_incoming_call_service.dart';
 import 'call_coordinator_service.dart';
 import 'chat_notification_settings_store.dart';
 import 'browser_notification_bridge.dart';
@@ -66,6 +67,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     ChatNotificationCallback? onChatNotification,
     GenericNotificationCallback? onGenericNotification,
     BrowserNotificationBridge? browserNotificationBridge,
+    AndroidIncomingCallService? androidIncomingCallService,
   })  : _plugin = plugin,
         _preferences = preferences,
         _authService = authService,
@@ -77,6 +79,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
         _remotePushTokenProvider = remotePushTokenProvider,
         _onChatNotification = onChatNotification,
         _onGenericNotification = onGenericNotification,
+        _androidIncomingCallService = androidIncomingCallService,
         _browserNotificationBridge =
             browserNotificationBridge ?? createBrowserNotificationBridge();
 
@@ -104,6 +107,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     ChatNotificationCallback? onChatNotification,
     GenericNotificationCallback? onGenericNotification,
     BrowserNotificationBridge? browserNotificationBridge,
+    AndroidIncomingCallService? androidIncomingCallService,
   }) async {
     return CustomApiNotificationService._(
       plugin: plugin ?? FlutterLocalNotificationsPlugin(),
@@ -118,6 +122,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
       onChatNotification: onChatNotification,
       onGenericNotification: onGenericNotification,
       browserNotificationBridge: browserNotificationBridge,
+      androidIncomingCallService: androidIncomingCallService,
     );
   }
 
@@ -132,6 +137,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
   final RemotePushTokenProvider? _remotePushTokenProvider;
   final ChatNotificationCallback? _onChatNotification;
   final GenericNotificationCallback? _onGenericNotification;
+  final AndroidIncomingCallService? _androidIncomingCallService;
   final BrowserNotificationBridge _browserNotificationBridge;
   final ChatNotificationSettingsStore _chatNotificationSettingsStore =
       const SharedPreferencesChatNotificationSettingsStore();
@@ -672,6 +678,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     required String callId,
     required String callerName,
     required bool isVideo,
+    String? chatId,
   }) async {
     if (!_notificationsEnabled) {
       return;
@@ -696,6 +703,17 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     }
 
     await initialize();
+    final nativeCallShown = await _androidIncomingCallService?.showIncomingCall(
+          callId: callId,
+          callerName: resolvedCallerName,
+          isVideo: isVideo,
+          chatId: chatId,
+        ) ??
+        false;
+    if (nativeCallShown) {
+      return;
+    }
+
     await _plugin.show(
       callId.hashCode,
       resolvedCallerName,
@@ -726,6 +744,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
       return;
     }
     await initialize();
+    await _androidIncomingCallService?.dismissCall(callId);
     await _plugin.cancel(callId.hashCode);
   }
 
@@ -805,6 +824,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
           callId: callId,
           callerName: title,
           isVideo: callData['mediaMode']?.toString() == 'video',
+          chatId: callData['chatId']?.toString(),
         );
         return;
       }
