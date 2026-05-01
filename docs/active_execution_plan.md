@@ -72,11 +72,13 @@ Current reference unpack path: `.tmp/claude_design_reference/`.
   - [x] Preserve create post flow and media upload.
   - [x] Run format/focused widget tests and web smoke screenshots.
 
-- [ ] **Wave 5 — Identity Review**
-  - Move from flat list cards to clear A/B comparison with confidence, matching
-    signals, privacy note, and actions: merge / different people / later.
-  - Do not expose sensitive fields without access.
-  - Keep empty state and back action polished.
+- [x] **Wave 5 — Identity Review**
+  - [x] Move from flat list cards to clear A/B comparison with confidence,
+        matching signals, privacy note, and actions: merge / different people /
+        later.
+  - [x] Do not expose sensitive fields without access.
+  - [x] Keep empty state and back action polished.
+  - [x] Run format/analyze/relevant tests and web smoke screenshots.
 
 - [ ] **Wave 6 — Auth / Profile / Relatives / Chats Polish**
   - Auth adopts the hero/sheet approach without breaking Google, Telegram, VK,
