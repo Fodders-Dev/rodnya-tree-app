@@ -9,6 +9,7 @@ import '../models/family_person.dart';
 import '../models/family_relation.dart';
 import '../models/tree_graph_snapshot.dart';
 import '../models/user_profile.dart';
+import '../theme/app_theme.dart';
 import '../utils/photo_url.dart';
 import 'family_tree_node_card.dart';
 
@@ -31,6 +32,7 @@ class InteractiveFamilyTree extends StatefulWidget {
       onAddSelfTapWithType; // <<< НОВЫЙ ПАРАМЕТР: Коллбэк для добавления себя
   final String? currentUserId;
   final String? branchRootPersonId;
+  final String? selectedPersonId;
   final ValueChanged<FamilyPerson>? onBranchFocusRequested;
   final VoidCallback? onBranchFocusCleared;
   final String? selectedEditPersonId;
@@ -71,6 +73,7 @@ class InteractiveFamilyTree extends StatefulWidget {
     required this.onAddSelfTapWithType, // Делаем обязательным
     this.currentUserId,
     this.branchRootPersonId,
+    this.selectedPersonId,
     this.onBranchFocusRequested,
     this.onBranchFocusCleared,
     this.selectedEditPersonId,
@@ -1254,6 +1257,7 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
     final Gender displayGender = person.gender;
     final isCurrentUserNode =
         widget.currentUserId != null && person.userId == widget.currentUserId;
+    final isSelectedPerson = widget.selectedPersonId == person.id;
     final isSelectedInEditMode =
         widget.isEditMode && _selectedEditPersonId == person.id;
     final isDraggingNode = _draggingPersonId == person.id;
@@ -1279,7 +1283,7 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
       relationChipLabel: relationChipLabel,
       isBloodRelation: viewerDescriptor?.isBlood == true,
       isCurrentUserNode: isCurrentUserNode,
-      isSelectedInEditMode: isSelectedInEditMode,
+      isSelectedInEditMode: isSelectedInEditMode || isSelectedPerson,
       isDraggingNode: isDraggingNode,
       isHovered: isHoveredNode,
     );
@@ -3402,4 +3406,116 @@ class _PaintFamilyUnit {
 
   final String childId;
   final Set<String> parentIds = <String>{};
+}
+
+class _SelectedTreePathPainter extends CustomPainter {
+  const _SelectedTreePathPainter({
+    required this.nodePositions,
+    required this.relations,
+    required this.selectedPersonId,
+    required this.accent,
+  });
+
+  final Map<String, Offset> nodePositions;
+  final List<FamilyRelation> relations;
+  final String selectedPersonId;
+  final Color accent;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final selectedPosition = nodePositions[selectedPersonId];
+    if (selectedPosition == null) {
+      return;
+    }
+
+    final paint = Paint()
+      ..color = accent.withValues(alpha: 0.62)
+      ..strokeWidth = 5
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..style = PaintingStyle.stroke
+      ..isAntiAlias = true;
+
+    final glowPaint = Paint()
+      ..color = accent.withValues(alpha: 0.16)
+      ..strokeWidth = 13
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..style = PaintingStyle.stroke
+      ..isAntiAlias = true;
+
+    final highlightedPairs = <String>{};
+    for (final relation in relations) {
+      final isFromSelected = relation.person1Id == selectedPersonId;
+      final isToSelected = relation.person2Id == selectedPersonId;
+      if (!isFromSelected && !isToSelected) {
+        continue;
+      }
+      final otherId = isFromSelected ? relation.person2Id : relation.person1Id;
+      final otherPosition = nodePositions[otherId];
+      if (otherPosition == null) {
+        continue;
+      }
+      final pair = <String>[selectedPersonId, otherId]..sort();
+      if (!highlightedPairs.add(pair.join('::'))) {
+        continue;
+      }
+
+      final path = _pathBetweenNodes(selectedPosition, otherPosition);
+      canvas.drawPath(path, glowPaint);
+      canvas.drawPath(path, paint);
+    }
+
+    final ringPaint = Paint()
+      ..color = accent.withValues(alpha: 0.34)
+      ..strokeWidth = 3
+      ..style = PaintingStyle.stroke
+      ..isAntiAlias = true;
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromCenter(
+          center: selectedPosition,
+          width: InteractiveFamilyTree.nodeWidth + 16,
+          height: InteractiveFamilyTree.nodeHeight + 16,
+        ),
+        const Radius.circular(18),
+      ),
+      ringPaint,
+    );
+  }
+
+  Path _pathBetweenNodes(Offset start, Offset end) {
+    final dx = end.dx - start.dx;
+    final dy = end.dy - start.dy;
+    final path = Path()..moveTo(start.dx, start.dy);
+    if (dy.abs() < 24) {
+      path.cubicTo(
+        start.dx + dx * 0.35,
+        start.dy,
+        start.dx + dx * 0.65,
+        end.dy,
+        end.dx,
+        end.dy,
+      );
+      return path;
+    }
+    final controlYOffset = dy.sign * min(96.0, dy.abs() * 0.42);
+    path.cubicTo(
+      start.dx,
+      start.dy + controlYOffset,
+      end.dx,
+      end.dy - controlYOffset,
+      end.dx,
+      end.dy,
+    );
+    return path;
+  }
+
+  @override
+  bool shouldRepaint(covariant _SelectedTreePathPainter oldDelegate) {
+    return oldDelegate.nodePositions != nodePositions ||
+        oldDelegate.relations != relations ||
+        oldDelegate.selectedPersonId != selectedPersonId ||
+        oldDelegate.accent != accent;
+  }
 }

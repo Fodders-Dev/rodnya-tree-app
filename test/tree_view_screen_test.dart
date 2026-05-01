@@ -680,6 +680,60 @@ void main() {
     expect(find.text('Пост'), findsOneWidget);
   });
 
+  testWidgets('tap по узлу открывает bottom sheet с действиями карточки',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final familyService = _FakeFamilyTreeService()..showFirstPerson = true;
+    getIt.registerSingleton<FamilyTreeServiceInterface>(familyService);
+    final treeProvider = TreeProvider();
+    await treeProvider.selectTree('tree-1', 'Тест');
+
+    final router = GoRouter(
+      initialLocation: '/tree/view/tree-1?name=%D0%A2%D0%B5%D1%81%D1%82',
+      routes: [
+        GoRoute(
+          path: '/tree/view/:treeId',
+          builder: (context, state) => TreeViewScreen(
+            routeTreeId: state.pathParameters['treeId'],
+            routeTreeName: state.uri.queryParameters['name'],
+          ),
+        ),
+        GoRoute(
+          path: '/relative/details/:personId',
+          builder: (context, state) =>
+              Text('details:${state.pathParameters['personId']}'),
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<TreeProvider>.value(
+        value: treeProvider,
+        child: MaterialApp.router(routerConfig: router),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    final treeWidget = tester.widget<InteractiveFamilyTree>(
+      find.byType(InteractiveFamilyTree),
+    );
+    final person = treeWidget.peopleData.first['person']! as FamilyPerson;
+    treeWidget.onPersonTap(person);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Профиль'), findsOneWidget);
+    expect(find.text('Ветка'), findsOneWidget);
+    expect(find.text('Связь'), findsOneWidget);
+
+    await tester.tap(find.text('Профиль'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('details:${person.id}'), findsOneWidget);
+  });
+
   testWidgets('после фокуса на ветке можно открыть общий чат ветки',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(390, 844));

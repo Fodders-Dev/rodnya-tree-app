@@ -2,6 +2,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../models/family_person.dart';
+import '../theme/app_theme.dart';
 import '../utils/photo_url.dart';
 
 class FamilyTreeNodeCard extends StatelessWidget {
@@ -32,24 +33,39 @@ class FamilyTreeNodeCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+    final genderAccent = displayGender == Gender.male
+        ? const Color(0xFF5A8E8C)
+        : const Color(0xFFC78372);
+    final borderColor = isDraggingNode
+        ? tokens.accentStrong
+        : isSelectedInEditMode
+            ? tokens.warm
+            : isCurrentUserNode
+                ? tokens.accent
+                : genderAccent.withValues(alpha: 0.42);
+    final surfaceColor = isCurrentUserNode
+        ? tokens.accentSoft.withValues(alpha: 0.9)
+        : tokens.surfaceStrong.withValues(alpha: 0.9);
     return Container(
       padding: const EdgeInsets.fromLTRB(10, 10, 10, 8),
       decoration: BoxDecoration(
-        color: isCurrentUserNode
-            ? colorScheme.primaryContainer
-            : Theme.of(context).cardColor,
-        borderRadius: BorderRadius.circular(12),
+        color: surfaceColor,
+        borderRadius: BorderRadius.circular(tokens.radiusSm),
         boxShadow: [
           BoxShadow(
             color: isDraggingNode
-                ? colorScheme.primary.withValues(alpha: 0.32)
+                ? tokens.accentStrong.withValues(alpha: 0.30)
                 : isHovered
-                    ? colorScheme.primary.withValues(alpha: 0.18)
+                    ? tokens.accent.withValues(alpha: 0.18)
                     : isSelectedInEditMode
-                        ? colorScheme.secondary.withValues(alpha: 0.28)
+                        ? tokens.warm.withValues(alpha: 0.26)
                         : isCurrentUserNode
-                            ? colorScheme.primary.withValues(alpha: 0.22)
+                            ? tokens.accent.withValues(alpha: 0.20)
                             : Colors.black.withValues(alpha: 0.1),
             blurRadius: isDraggingNode
                 ? 16
@@ -62,15 +78,7 @@ class FamilyTreeNodeCard extends StatelessWidget {
           ),
         ],
         border: Border.all(
-          color: isDraggingNode
-              ? colorScheme.primary
-              : isSelectedInEditMode
-                  ? colorScheme.secondary
-                  : isCurrentUserNode
-                      ? colorScheme.primary
-                      : displayGender == Gender.male
-                          ? Colors.blue.shade300
-                          : Colors.pink.shade300,
+          color: borderColor,
           width: isDraggingNode
               ? 2.8
               : isSelectedInEditMode
@@ -84,6 +92,7 @@ class FamilyTreeNodeCard extends StatelessWidget {
           _FamilyTreeNodeAvatar(
             displayGender: displayGender,
             displayPhotoUrl: displayPhotoUrl,
+            accent: genderAccent,
           ),
           const SizedBox(height: 6),
           Text(
@@ -100,10 +109,10 @@ class FamilyTreeNodeCard extends StatelessWidget {
           const SizedBox(height: 4),
           Text(
             lifeDates,
-            style: TextStyle(
+            style: theme.textTheme.labelSmall?.copyWith(
               fontSize: 9,
               fontWeight: FontWeight.w500,
-              color: Colors.grey[700],
+              color: tokens.inkMuted,
             ),
             textAlign: TextAlign.center,
           ),
@@ -112,7 +121,7 @@ class FamilyTreeNodeCard extends StatelessWidget {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
               decoration: BoxDecoration(
-                color: colorScheme.primary,
+                color: tokens.accent,
                 borderRadius: BorderRadius.circular(999),
               ),
               child: Text(
@@ -120,7 +129,7 @@ class FamilyTreeNodeCard extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 8,
                   fontWeight: FontWeight.w700,
-                  color: colorScheme.onPrimary,
+                  color: tokens.accentInk,
                 ),
               ),
             ),
@@ -131,9 +140,8 @@ class FamilyTreeNodeCard extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
               decoration: BoxDecoration(
                 color: isBloodRelation
-                    ? colorScheme.secondaryContainer.withValues(alpha: 0.92)
-                    : colorScheme.surfaceContainerHighest
-                        .withValues(alpha: 0.96),
+                    ? tokens.accentSoft.withValues(alpha: 0.92)
+                    : tokens.warmSoft.withValues(alpha: 0.8),
                 borderRadius: BorderRadius.circular(999),
               ),
               child: Text(
@@ -141,7 +149,7 @@ class FamilyTreeNodeCard extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 8,
                   fontWeight: FontWeight.w700,
-                  color: colorScheme.onSurface,
+                  color: tokens.ink,
                 ),
               ),
             ),
@@ -155,22 +163,20 @@ class FamilyTreeNodeCard extends StatelessWidget {
 class _FamilyTreeNodeAvatar extends StatelessWidget {
   const _FamilyTreeNodeAvatar({
     required this.displayGender,
+    required this.accent,
     this.displayPhotoUrl,
   });
 
   final Gender displayGender;
+  final Color accent;
   final String? displayPhotoUrl;
 
   @override
   Widget build(BuildContext context) {
     final photoUrl = normalizePhotoUrl(displayPhotoUrl);
     final hasPhoto = photoUrl != null;
-    final fallbackBackground = displayGender == Gender.male
-        ? Colors.blue.shade100
-        : Colors.pink.shade100;
-    final fallbackIconColor = displayGender == Gender.male
-        ? Colors.blue.shade800
-        : Colors.pink.shade800;
+    final fallbackBackground = accent.withValues(alpha: 0.18);
+    final fallbackIconColor = accent;
     final fallbackIcon = Icon(
       displayGender == Gender.male ? Icons.person : Icons.person_outline,
       size: 20,

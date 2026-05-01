@@ -56,11 +56,14 @@ Current reference unpack path: `.tmp/claude_design_reference/`.
   - [x] Loading, empty, offline states keep explicit retry/create actions.
   - [x] Run format/analyze/relevant widget tests and web smoke screenshots.
 
-- [ ] **Wave 3 — Tree UX**
-  - Keep current `interactive_family_tree.dart` logic and generation grouping.
-  - Add top toolbar, stats pill, generation bands/labels, selected path state,
-    right-side zoom controls, bottom person sheet, circle/branch filter state.
-  - On web, tree canvas is full-width and not centered as a phone layout.
+- [x] **Wave 3 — Tree UX**
+  - [x] Keep current `interactive_family_tree.dart` logic and generation
+        grouping.
+  - [x] Add top toolbar, stats pill, generation bands/labels, selected path
+        state, right-side zoom controls, bottom person sheet, circle/branch
+        filter state.
+  - [x] On web, tree canvas is full-width and not centered as a phone layout.
+  - [x] Run web build/smoke and commit Wave 3 separately.
 
 - [ ] **Wave 4 — Compose + Audience Picker**
   - Port compose hierarchy and audience sheet UX natively to Flutter.

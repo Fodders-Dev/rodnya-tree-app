@@ -23,6 +23,7 @@ import '../services/app_status_service.dart';
 import '../services/public_tree_link_service.dart';
 import '../services/local_storage_service.dart';
 import '../models/tree_graph_snapshot.dart';
+import '../theme/app_theme.dart';
 import '../utils/user_facing_error.dart';
 import '../utils/e2e_state_bridge.dart';
 import '../utils/photo_url.dart';
@@ -94,6 +95,7 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
   TreeProvider? _treeProviderInstance; // Храним экземпляр
   String? _currentTreeId;
   String? _branchRootPersonId;
+  String? _selectedPersonSheetId;
   String? _selectedEditPersonId;
   FamilyTree? _currentTreeMeta;
   Map<String, Offset> _manualNodePositions = <String, Offset>{};
@@ -140,8 +142,34 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
     return null;
   }
 
+  FamilyPerson? get _selectedPersonSheetPerson {
+    final selectedId = _selectedPersonSheetId;
+    if (selectedId == null) {
+      return null;
+    }
+    for (final person in _treePeople) {
+      if (person.id == selectedId) {
+        return person;
+      }
+    }
+    return null;
+  }
+
   void _updateSectionState(VoidCallback update) {
     setState(update);
+  }
+
+  void _selectTreePerson(FamilyPerson person) {
+    setState(() {
+      _selectedPersonSheetId =
+          _selectedPersonSheetId == person.id ? null : person.id;
+    });
+  }
+
+  void _clearSelectedTreePerson() {
+    setState(() {
+      _selectedPersonSheetId = null;
+    });
   }
 
   void _publishTreeE2EState(String? selectedTreeId) {
@@ -151,6 +179,7 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
 
     final people = _treePeople;
     final selectedPerson = _selectedEditPerson;
+    final selectedSheetPerson = _selectedPersonSheetPerson;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) {
         return;
@@ -164,7 +193,17 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
           'isLoading': _isLoading,
           'isEditMode': _isEditMode,
           'branchRootPersonId': _branchRootPersonId,
+          'selectedPersonSheetId': _selectedPersonSheetId,
           'selectedEditPersonId': _selectedEditPersonId,
+          'selectedPersonSheet': selectedSheetPerson == null
+              ? null
+              : <String, dynamic>{
+                  'id': selectedSheetPerson.id,
+                  'name': selectedSheetPerson.name,
+                  'photoCount': selectedSheetPerson.photoGallery.length,
+                  'hasPrimaryPhoto':
+                      selectedSheetPerson.primaryPhotoUrl != null,
+                },
           'selectedEditPerson': selectedPerson == null
               ? null
               : <String, dynamic>{
@@ -255,6 +294,7 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
           _isLoading = false;
           _errorMessage = '';
           _manualNodePositions = <String, Offset>{};
+          _selectedPersonSheetId = null;
         });
       }
     }
@@ -276,6 +316,7 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
         _relationsData = [];
         _manualNodePositions = <String, Offset>{};
         _graphSnapshot = null;
+        _selectedPersonSheetId = null;
       }
     });
 
@@ -318,6 +359,7 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
           _manualNodePositions = <String, Offset>{};
           _graphSnapshot = graphSnapshot;
           _currentUserIsInTree = graphSnapshot.viewerPersonId != null;
+          _selectedPersonSheetId = null;
         });
         return;
       }
@@ -349,6 +391,8 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
             relatives.any((person) => person.id == _branchRootPersonId);
         final selectedEditPersonStillExists = _selectedEditPersonId == null ||
             relatives.any((person) => person.id == _selectedEditPersonId);
+        final selectedSheetPersonStillExists = _selectedPersonSheetId == null ||
+            relatives.any((person) => person.id == _selectedPersonSheetId);
         setState(() {
           // Сохраняем исходные данные, а не построенный граф
           _relativesData = peopleData;
@@ -363,6 +407,9 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
           }
           if (!selectedEditPersonStillExists) {
             _selectedEditPersonId = null;
+          }
+          if (!selectedSheetPersonStillExists) {
+            _selectedPersonSheetId = null;
           }
         });
       }
@@ -832,6 +879,7 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
     }
     setState(() {
       _branchRootPersonId = person.id;
+      _selectedPersonSheetId = person.id;
     });
   }
 

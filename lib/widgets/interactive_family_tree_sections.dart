@@ -32,7 +32,7 @@ extension _InteractiveFamilyTreeSections on _InteractiveFamilyTreeState {
               ),
               Positioned(
                 right: 12,
-                bottom: 12,
+                top: 92,
                 child: _buildViewportControlDock(),
               ),
             ],
@@ -96,6 +96,10 @@ extension _InteractiveFamilyTreeSections on _InteractiveFamilyTreeState {
     required double stackWidth,
     required double stackHeight,
   }) {
+    final tokens = Theme.of(context).extension<RodnyaDesignTokens>() ??
+        (Theme.of(context).brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
     return SizedBox(
       width: stackWidth,
       height: stackHeight,
@@ -113,6 +117,16 @@ extension _InteractiveFamilyTreeSections on _InteractiveFamilyTreeState {
               relations: widget.relations,
             ),
           ),
+          if ((widget.selectedPersonId ?? '').isNotEmpty)
+            CustomPaint(
+              size: Size(stackWidth, stackHeight),
+              painter: _SelectedTreePathPainter(
+                nodePositions: nodePositions,
+                relations: widget.relations,
+                selectedPersonId: widget.selectedPersonId!,
+                accent: tokens.warm,
+              ),
+            ),
           ..._buildPersonWidgets(),
           if (widget.isEditMode)
             _buildInlineEditPanel(
@@ -125,6 +139,10 @@ extension _InteractiveFamilyTreeSections on _InteractiveFamilyTreeState {
   }
 
   Widget _buildViewportStatusBar() {
+    final tokens = Theme.of(context).extension<RodnyaDesignTokens>() ??
+        (Theme.of(context).brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
     final zoomPercent = (_currentScale * 100).round();
     final chips = <Widget>[
       _buildOverlayChip(
@@ -157,22 +175,15 @@ extension _InteractiveFamilyTreeSections on _InteractiveFamilyTreeState {
         child: Container(
           padding: const EdgeInsets.all(8),
           decoration: BoxDecoration(
-            color:
-                Theme.of(context).colorScheme.surface.withValues(alpha: 0.84),
-            borderRadius: BorderRadius.circular(20),
+            color: tokens.surfaceStrong.withValues(alpha: 0.9),
+            borderRadius: BorderRadius.circular(tokens.radiusMd),
             border: Border.all(
-              color: Theme.of(context)
-                  .colorScheme
-                  .outlineVariant
-                  .withValues(alpha: 0.88),
+              color: tokens.surfaceLine.withValues(alpha: 0.9),
             ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.08),
-                blurRadius: 18,
-                offset: const Offset(0, 6),
-              ),
-            ],
+            boxShadow: tokens.panelShadow(
+              Theme.of(context).brightness,
+              floating: true,
+            ),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
@@ -189,26 +200,24 @@ extension _InteractiveFamilyTreeSections on _InteractiveFamilyTreeState {
   }
 
   Widget _buildViewportControlDock() {
+    final tokens = Theme.of(context).extension<RodnyaDesignTokens>() ??
+        (Theme.of(context).brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
     final currentUserNodeId = _findCurrentUserNodeId();
     final branchRootPersonId = widget.branchRootPersonId;
     return Container(
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.9),
-        borderRadius: BorderRadius.circular(22),
+        color: tokens.surfaceStrong.withValues(alpha: 0.92),
+        borderRadius: BorderRadius.circular(tokens.radiusMd),
         border: Border.all(
-          color: Theme.of(context)
-              .colorScheme
-              .outlineVariant
-              .withValues(alpha: 0.88),
+          color: tokens.surfaceLine.withValues(alpha: 0.9),
         ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.1),
-            blurRadius: 18,
-            offset: const Offset(0, 6),
-          ),
-        ],
+        boxShadow: tokens.panelShadow(
+          Theme.of(context).brightness,
+          floating: true,
+        ),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -266,11 +275,14 @@ extension _InteractiveFamilyTreeSections on _InteractiveFamilyTreeState {
     required String tooltip,
     required VoidCallback onPressed,
   }) {
-    final colorScheme = Theme.of(context).colorScheme;
+    final tokens = Theme.of(context).extension<RodnyaDesignTokens>() ??
+        (Theme.of(context).brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
     return Tooltip(
       message: tooltip,
       child: Material(
-        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.96),
+        color: tokens.surface.withValues(alpha: 0.96),
         shape: const CircleBorder(),
         child: InkWell(
           customBorder: const CircleBorder(),
@@ -278,7 +290,7 @@ extension _InteractiveFamilyTreeSections on _InteractiveFamilyTreeState {
           child: SizedBox(
             width: 44,
             height: 44,
-            child: Icon(icon, color: colorScheme.primary),
+            child: Icon(icon, color: tokens.accentStrong),
           ),
         ),
       ),
@@ -291,13 +303,17 @@ extension _InteractiveFamilyTreeSections on _InteractiveFamilyTreeState {
     bool highlighted = false,
   }) {
     final colorScheme = Theme.of(context).colorScheme;
+    final tokens = Theme.of(context).extension<RodnyaDesignTokens>() ??
+        (Theme.of(context).brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: highlighted ? colorScheme.primaryContainer : colorScheme.surface,
+        color: highlighted ? tokens.accentSoft : tokens.surface,
         borderRadius: BorderRadius.circular(999),
         border: Border.all(
-          color: highlighted ? colorScheme.primary : colorScheme.outlineVariant,
+          color: highlighted ? tokens.accent : tokens.surfaceLine,
         ),
       ),
       child: Row(
@@ -309,6 +325,8 @@ extension _InteractiveFamilyTreeSections on _InteractiveFamilyTreeState {
             label,
             style: Theme.of(context).textTheme.labelMedium?.copyWith(
                   fontWeight: FontWeight.w700,
+                  color:
+                      highlighted ? tokens.accentStrong : colorScheme.onSurface,
                 ),
           ),
         ],

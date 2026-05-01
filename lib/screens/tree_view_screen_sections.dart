@@ -56,7 +56,6 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
           );
         }
 
-        final treeCanvas = _buildTreeCanvas();
         final selectedEditPerson = _selectedEditPerson;
         final branchRootPerson = _findBranchRootPerson();
         final warnings = _graphSnapshot?.warnings ?? const <TreeGraphWarning>[];
@@ -64,29 +63,45 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
             ? warnings
             : _graphSnapshot?.warningsForPerson(branchRootPerson.id) ??
                 const <TreeGraphWarning>[];
+        final treeCanvas = _buildTreeCanvas();
+        final topToolbar = _buildTreeTopToolbar(
+          selectedTreeId: selectedTreeId,
+          branchRootPerson: branchRootPerson,
+          warnings: treeWarnings,
+          compact: isCompact,
+        );
 
         if (isWideDesktop) {
           return Center(
             child: SizedBox(
-              width: constraints.maxWidth > 1680 ? 1680 : constraints.maxWidth,
+              width: constraints.maxWidth,
               height: constraints.maxHeight,
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 10, 12, 14),
-                child: Row(
+                padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
+                child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    SizedBox(
-                      width: 336,
-                      child: _buildTreeContextColumn(
-                        selectedTreeId: selectedTreeId,
-                        branchRootPerson: branchRootPerson,
-                        selectedEditPerson: selectedEditPerson,
-                        warnings: treeWarnings,
-                        compact: false,
+                    topToolbar,
+                    const SizedBox(height: 12),
+                    Expanded(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          SizedBox(
+                            width: 312,
+                            child: _buildTreeContextColumn(
+                              selectedTreeId: selectedTreeId,
+                              branchRootPerson: branchRootPerson,
+                              selectedEditPerson: selectedEditPerson,
+                              warnings: treeWarnings,
+                              compact: false,
+                            ),
+                          ),
+                          const SizedBox(width: 14),
+                          Expanded(child: treeCanvas),
+                        ],
                       ),
                     ),
-                    const SizedBox(width: 14),
-                    Expanded(child: treeCanvas),
                   ],
                 ),
               ),
@@ -95,8 +110,8 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
         }
 
         final compactContextHeight = constraints.maxHeight.isFinite
-            ? (constraints.maxHeight * (isCompact ? 0.22 : 0.28))
-                .clamp(150.0, isCompact ? 230.0 : 280.0)
+            ? (constraints.maxHeight * (isCompact ? 0.18 : 0.24))
+                .clamp(128.0, isCompact ? 202.0 : 260.0)
                 .toDouble()
             : (isCompact ? 210.0 : 260.0);
 
@@ -110,6 +125,8 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              topToolbar,
+              const SizedBox(height: 10),
               SizedBox(
                 height: compactContextHeight,
                 child: SingleChildScrollView(
@@ -185,6 +202,255 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
 
     return SingleChildScrollView(
       child: body,
+    );
+  }
+
+  Widget _buildTreeTopToolbar({
+    required String selectedTreeId,
+    required FamilyPerson? branchRootPerson,
+    required List<TreeGraphWarning> warnings,
+    required bool compact,
+  }) {
+    final theme = Theme.of(context);
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+    final accent =
+        _isFriendsTree ? const Color(0xFF0F9D8A) : tokens.accentStrong;
+    final generationCount = _graphSnapshot?.generationRows.length ?? 0;
+
+    return GlassPanel(
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 8 : 10,
+        vertical: compact ? 7 : 8,
+      ),
+      borderRadius: BorderRadius.circular(tokens.radiusLg),
+      color: tokens.surfaceStrong.withValues(alpha: 0.9),
+      borderColor: tokens.surfaceLine,
+      child: Row(
+        children: [
+          _buildTreeBranchFilterChip(
+            branchRootPerson: branchRootPerson,
+            accent: accent,
+            compact: compact,
+          ),
+          SizedBox(width: compact ? 8 : 10),
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  _buildTreeToolbarStat(
+                    icon: Icons.people_outline,
+                    label: '${_relativesData.length}',
+                    tooltip: 'Люди',
+                    accent: accent,
+                  ),
+                  const SizedBox(width: 6),
+                  _buildTreeToolbarStat(
+                    icon: Icons.alt_route_outlined,
+                    label: '${_relationsData.length}',
+                    tooltip: 'Связи',
+                    accent: accent,
+                  ),
+                  const SizedBox(width: 6),
+                  _buildTreeToolbarStat(
+                    icon: Icons.layers_outlined,
+                    label: generationCount == 0 ? '-' : '$generationCount',
+                    tooltip: 'Поколения',
+                    accent: accent,
+                  ),
+                  const SizedBox(width: 6),
+                  _buildTreeToolbarStat(
+                    icon: Icons.flag_outlined,
+                    label: '${warnings.length}',
+                    tooltip: 'Ждут проверки',
+                    accent: warnings.isEmpty ? accent : tokens.warm,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          SizedBox(width: compact ? 8 : 10),
+          _buildTreeToolbarIconButton(
+            icon: Icons.person_add_alt_1_outlined,
+            tooltip: _isFriendsTree
+                ? 'Добавить из панели круга'
+                : 'Добавить из панели дерева',
+            onPressed: () => _navigateToAddRelative(selectedTreeId),
+            emphasized: true,
+          ),
+          _buildTreeToolbarIconButton(
+            icon: Icons.search_rounded,
+            tooltip: _isFriendsTree ? 'Найти связь' : 'Найти родственника',
+            onPressed: () => context.go('/relatives'),
+          ),
+          _buildTreeToolbarIconButton(
+            icon: _isEditMode ? Icons.visibility_outlined : Icons.open_with,
+            tooltip:
+                _isEditMode ? 'Вернуться к просмотру' : 'Расставить карточки',
+            onPressed: () {
+              _updateSectionState(() {
+                _isEditMode = !_isEditMode;
+                if (!_isEditMode) {
+                  _selectedEditPersonId = null;
+                }
+              });
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTreeBranchFilterChip({
+    required FamilyPerson? branchRootPerson,
+    required Color accent,
+    required bool compact,
+  }) {
+    final theme = Theme.of(context);
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+    final hasBranchFocus = branchRootPerson != null;
+    final label = hasBranchFocus
+        ? branchRootPerson.displayName
+        : (_isFriendsTree ? 'Весь круг' : 'Всё дерево');
+
+    return Tooltip(
+      message: hasBranchFocus
+          ? (_isFriendsTree ? 'Сбросить круг' : 'Сбросить ветку')
+          : (_isFriendsTree ? 'Фильтр круга' : 'Фильтр ветки'),
+      child: Material(
+        color: hasBranchFocus ? accent.withValues(alpha: 0.12) : tokens.surface,
+        borderRadius: tokens.chipRadius,
+        child: InkWell(
+          borderRadius: tokens.chipRadius,
+          onTap: hasBranchFocus ? _resetBranchFocus : null,
+          child: Container(
+            constraints: BoxConstraints(maxWidth: compact ? 128 : 220),
+            padding: EdgeInsets.symmetric(
+              horizontal: compact ? 10 : 12,
+              vertical: compact ? 8 : 9,
+            ),
+            decoration: BoxDecoration(
+              borderRadius: tokens.chipRadius,
+              border: Border.all(
+                color: hasBranchFocus
+                    ? accent.withValues(alpha: 0.42)
+                    : tokens.surfaceLine,
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  hasBranchFocus
+                      ? Icons.alt_route_outlined
+                      : (_isFriendsTree
+                          ? Icons.diversity_3_outlined
+                          : Icons.account_tree_outlined),
+                  size: 16,
+                  color: hasBranchFocus ? accent : tokens.inkSecondary,
+                ),
+                const SizedBox(width: 7),
+                Flexible(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.labelLarge?.copyWith(
+                      color: hasBranchFocus ? accent : tokens.inkSecondary,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                if (hasBranchFocus) ...[
+                  const SizedBox(width: 6),
+                  Icon(Icons.close, size: 14, color: accent),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTreeToolbarStat({
+    required IconData icon,
+    required String label,
+    required String tooltip,
+    required Color accent,
+  }) {
+    final theme = Theme.of(context);
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+
+    return Tooltip(
+      message: tooltip,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          color: tokens.surface.withValues(alpha: 0.92),
+          borderRadius: tokens.chipRadius,
+          border: Border.all(color: tokens.surfaceLine),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 15, color: accent),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: theme.textTheme.labelLarge?.copyWith(
+                color: tokens.ink,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTreeToolbarIconButton({
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback onPressed,
+    bool emphasized = false,
+  }) {
+    final theme = Theme.of(context);
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+    final background =
+        emphasized ? tokens.accent : tokens.surface.withValues(alpha: 0.92);
+    final foreground = emphasized ? tokens.accentInk : tokens.accentStrong;
+
+    return Padding(
+      padding: const EdgeInsets.only(left: 6),
+      child: Tooltip(
+        message: tooltip,
+        child: Material(
+          color: background,
+          borderRadius: BorderRadius.circular(999),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(999),
+            onTap: onPressed,
+            child: SizedBox(
+              width: 42,
+              height: 42,
+              child: Icon(icon, size: 20, color: foreground),
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -905,6 +1171,7 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
 
   Widget _buildTreeCanvas() {
     final theme = Theme.of(context);
+    final selectedPerson = _selectedPersonSheetPerson;
     final canvasAccent =
         _isFriendsTree ? const Color(0xFF0F9D8A) : theme.colorScheme.primary;
     return GlassPanel(
@@ -974,10 +1241,11 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
                 graphSnapshot: _graphSnapshot,
                 currentUserId: _authService.currentUserId,
                 branchRootPersonId: _branchRootPersonId,
+                selectedPersonId: _selectedPersonSheetId,
                 onBranchFocusCleared: _resetBranchFocus,
                 onPersonTap: (person) {
                   debugPrint('Нажатие на узел: ${person.name} (${person.id})');
-                  _openPersonDetails(person);
+                  _selectTreePerson(person);
                 },
                 onShowRelationPath: (person) =>
                     _openPersonDetails(person, action: 'path'),
@@ -1008,6 +1276,25 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
                 onAddRelativeTapWithType: _handleAddRelativeFromTree,
                 currentUserIsInTree: _currentUserIsInTree,
                 onAddSelfTapWithType: _handleAddSelfFromTree,
+              ),
+              Positioned(
+                left: 12,
+                right: 12,
+                bottom: 12,
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 180),
+                  switchInCurve: Curves.easeOut,
+                  switchOutCurve: Curves.easeIn,
+                  child: selectedPerson == null
+                      ? const SizedBox.shrink()
+                      : _buildTreePersonBottomSheet(
+                          key: ValueKey<String>(
+                            'tree-person-sheet-${selectedPerson.id}',
+                          ),
+                          person: selectedPerson,
+                          accent: canvasAccent,
+                        ),
+                ),
               ),
               IgnorePointer(
                 child: Padding(
@@ -1078,6 +1365,283 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildTreePersonBottomSheet({
+    Key? key,
+    required FamilyPerson person,
+    required Color accent,
+  }) {
+    final theme = Theme.of(context);
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+    final avatarImage = buildAvatarImageProvider(person.primaryPhotoUrl);
+    final metaParts = <String>[
+      if ((person.birthDate?.year ?? 0) > 0) 'р. ${person.birthDate!.year}',
+      if (person.isAlive == false && (person.deathDate?.year ?? 0) > 0)
+        'память ${person.deathDate!.year}',
+      if ((person.birthPlace ?? '').trim().isNotEmpty)
+        person.birthPlace!.trim(),
+    ];
+
+    return Align(
+      key: key,
+      alignment: Alignment.bottomCenter,
+      child: Semantics(
+        label: 'tree-person-sheet',
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 620),
+          child: GlassPanel(
+            padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
+            borderRadius: BorderRadius.circular(tokens.radiusLg),
+            color: tokens.surfaceStrong.withValues(alpha: 0.94),
+            borderColor: accent.withValues(alpha: 0.20),
+            boxShadow: tokens.panelShadow(theme.brightness, floating: true),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    CircleAvatar(
+                      radius: 26,
+                      backgroundColor: accent.withValues(alpha: 0.14),
+                      backgroundImage: avatarImage,
+                      child: avatarImage == null
+                          ? Text(
+                              person.initials,
+                              style: theme.textTheme.titleSmall?.copyWith(
+                                color: accent,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            )
+                          : null,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            person.displayName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w900,
+                              color: tokens.ink,
+                            ),
+                          ),
+                          const SizedBox(height: 3),
+                          Text(
+                            metaParts.isEmpty
+                                ? (_isFriendsTree
+                                    ? 'Карточка круга'
+                                    : 'Карточка дерева')
+                                : metaParts.join(' · '),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: tokens.inkSecondary,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Закрыть карточку',
+                      icon: const Icon(Icons.close),
+                      onPressed: _clearSelectedTreePerson,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      _buildTreeSheetAction(
+                        icon: Icons.open_in_new,
+                        label: 'Профиль',
+                        onPressed: () => _openPersonDetails(person),
+                        emphasized: true,
+                      ),
+                      const SizedBox(width: 8),
+                      _buildTreeSheetAction(
+                        icon: Icons.alt_route_outlined,
+                        label: _isFriendsTree ? 'Круг' : 'Ветка',
+                        onPressed: () => _focusBranch(person),
+                      ),
+                      const SizedBox(width: 8),
+                      _buildTreeSheetAction(
+                        icon: Icons.person_add_alt_1_outlined,
+                        label: 'Связь',
+                        onPressed: () => _showTreePersonRelationSheet(person),
+                      ),
+                      if (_graphSnapshot
+                              ?.warningsForPerson(person.id)
+                              .isNotEmpty ==
+                          true) ...[
+                        const SizedBox(width: 8),
+                        _buildTreeSheetAction(
+                          icon: Icons.report_problem_outlined,
+                          label: 'Проверить',
+                          onPressed: () =>
+                              _openPersonDetails(person, action: 'relations'),
+                        ),
+                      ],
+                      const SizedBox(width: 8),
+                      _buildTreeSheetAction(
+                        icon: Icons.history_outlined,
+                        label: 'История',
+                        onPressed: () => _showPersonHistorySheet(person),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTreeSheetAction({
+    required IconData icon,
+    required String label,
+    required VoidCallback onPressed,
+    bool emphasized = false,
+  }) {
+    final theme = Theme.of(context);
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+    final background =
+        emphasized ? tokens.accent : tokens.surface.withValues(alpha: 0.95);
+    final foreground = emphasized ? tokens.accentInk : tokens.accentStrong;
+
+    return Material(
+      color: background,
+      borderRadius: BorderRadius.circular(tokens.radiusMd),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(tokens.radiusMd),
+        onTap: onPressed,
+        child: Container(
+          constraints: const BoxConstraints(minWidth: 86),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 18, color: foreground),
+              const SizedBox(width: 7),
+              Text(
+                label,
+                style: theme.textTheme.labelLarge?.copyWith(
+                  color: foreground,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showTreePersonRelationSheet(FamilyPerson person) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Добавить связь',
+                  style: Theme.of(sheetContext).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  person.displayName,
+                  style: Theme.of(sheetContext).textTheme.bodyMedium?.copyWith(
+                        color:
+                            Theme.of(sheetContext).colorScheme.onSurfaceVariant,
+                      ),
+                ),
+                const SizedBox(height: 12),
+                _buildRelationSheetTile(
+                  sheetContext: sheetContext,
+                  person: person,
+                  icon: Icons.arrow_upward,
+                  label: 'Родителя',
+                  type: RelationType.parent,
+                ),
+                _buildRelationSheetTile(
+                  sheetContext: sheetContext,
+                  person: person,
+                  icon: Icons.favorite_border,
+                  label: 'Супруга или партнёра',
+                  type: RelationType.spouse,
+                ),
+                _buildRelationSheetTile(
+                  sheetContext: sheetContext,
+                  person: person,
+                  icon: Icons.arrow_downward,
+                  label: 'Ребёнка',
+                  type: RelationType.child,
+                ),
+                _buildRelationSheetTile(
+                  sheetContext: sheetContext,
+                  person: person,
+                  icon: Icons.people_outline,
+                  label: 'Брата или сестру',
+                  type: RelationType.sibling,
+                ),
+                if (!_currentUserIsInTree)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.person_add_alt_1),
+                    title: const Text('Добавить себя рядом с этим человеком'),
+                    onTap: () {
+                      Navigator.of(sheetContext).pop();
+                      _handleAddSelfFromTree(person, RelationType.sibling);
+                    },
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildRelationSheetTile({
+    required BuildContext sheetContext,
+    required FamilyPerson person,
+    required IconData icon,
+    required String label,
+    required RelationType type,
+  }) {
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: Icon(icon),
+      title: Text(label),
+      onTap: () {
+        Navigator.of(sheetContext).pop();
+        _handleAddRelativeFromTree(person, type);
+      },
     );
   }
 
