@@ -3,6 +3,8 @@ import 'dart:ui';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
+import '../theme/app_theme.dart';
+
 /// Frosted-glass panel.
 ///
 /// On **native** (Android / iOS) this uses [BackdropFilter] + blur so surfaces
@@ -20,8 +22,8 @@ class GlassPanel extends StatelessWidget {
     required this.child,
     this.padding = const EdgeInsets.all(16),
     this.margin,
-    this.borderRadius = const BorderRadius.all(Radius.circular(22)),
-    this.blur = 14,
+    this.borderRadius = const BorderRadius.all(Radius.circular(28)),
+    this.blur = 20,
     this.color,
     this.borderColor,
     this.boxShadow,
@@ -53,17 +55,11 @@ class GlassPanel extends StatelessWidget {
   Widget _buildPlainPanel(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final panelColor = color ??
-        theme.colorScheme.surface.withValues(alpha: isDark ? 0.84 : 0.94);
-    final outlineColor = borderColor ??
-        theme.colorScheme.outlineVariant.withValues(alpha: isDark ? 0.38 : 0.7);
-    final defaultShadow = <BoxShadow>[
-      BoxShadow(
-        color: theme.colorScheme.shadow.withValues(alpha: isDark ? 0.16 : 0.04),
-        blurRadius: 10,
-        offset: const Offset(0, 4),
-      ),
-    ];
+    final tokens = _tokensFor(theme);
+    final panelColor =
+        color ?? tokens.surfaceStrong.withValues(alpha: isDark ? 0.90 : 0.94);
+    final outlineColor = borderColor ?? tokens.surfaceLine;
+    final defaultShadow = tokens.panelShadow(theme.brightness);
 
     return Container(
       margin: margin,
@@ -86,22 +82,13 @@ class GlassPanel extends StatelessWidget {
   Widget _buildWebPanel(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
+    final tokens = _tokensFor(theme);
 
     // Higher opacity so the panel reads clearly without blur.
-    final panelColor = color ??
-        theme.colorScheme.surface.withValues(alpha: isDark ? 0.88 : 0.92);
-    final outlineColor = borderColor ??
-        (isDark
-            ? Colors.white.withValues(alpha: 0.10)
-            : Colors.white.withValues(alpha: 0.65));
-
-    final defaultShadow = <BoxShadow>[
-      BoxShadow(
-        color: theme.colorScheme.shadow.withValues(alpha: isDark ? 0.28 : 0.07),
-        blurRadius: 18,
-        offset: const Offset(0, 8),
-      ),
-    ];
+    final panelColor =
+        color ?? tokens.surfaceStrong.withValues(alpha: isDark ? 0.90 : 0.94);
+    final outlineColor = borderColor ?? tokens.surfaceLine;
+    final defaultShadow = tokens.panelShadow(theme.brightness);
 
     return Container(
       margin: margin,
@@ -149,25 +136,11 @@ class GlassPanel extends StatelessWidget {
   Widget _buildNativePanel(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final panelColor = color ??
-        theme.colorScheme.surface.withValues(alpha: isDark ? 0.62 : 0.66);
-    final outlineColor = borderColor ??
-        (isDark
-            ? Colors.white.withValues(alpha: 0.08)
-            : Colors.white.withValues(alpha: 0.55));
-
-    final defaultShadow = <BoxShadow>[
-      BoxShadow(
-        color: theme.colorScheme.shadow.withValues(alpha: isDark ? 0.32 : 0.07),
-        blurRadius: 22,
-        offset: const Offset(0, 10),
-      ),
-      BoxShadow(
-        color: theme.colorScheme.shadow.withValues(alpha: isDark ? 0.18 : 0.04),
-        blurRadius: 6,
-        offset: const Offset(0, 2),
-      ),
-    ];
+    final tokens = _tokensFor(theme);
+    final panelColor =
+        color ?? tokens.surface.withValues(alpha: isDark ? 0.58 : 0.64);
+    final outlineColor = borderColor ?? tokens.surfaceLine;
+    final defaultShadow = tokens.panelShadow(theme.brightness);
 
     return Container(
       margin: margin,
@@ -226,5 +199,12 @@ class GlassPanel extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  RodnyaDesignTokens _tokensFor(ThemeData theme) {
+    return theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
   }
 }

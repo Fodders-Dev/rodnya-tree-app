@@ -3,6 +3,8 @@ import 'dart:ui';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
+import '../theme/app_theme.dart';
+
 class MainNavigationBar extends StatelessWidget {
   const MainNavigationBar({
     super.key,
@@ -39,7 +41,7 @@ class MainNavigationBar extends StatelessWidget {
 
                 final items = <_NavItemData>[
                   _NavItemData(
-                    label: 'Главная',
+                    label: 'Лента',
                     outlinedIcon: Icons.home_outlined,
                     filledIcon: Icons.home_rounded,
                     count: unreadNotificationsCount,
@@ -62,33 +64,37 @@ class MainNavigationBar extends StatelessWidget {
                     count: unreadCount,
                   ),
                   const _NavItemData(
-                    label: 'Профиль',
+                    label: 'Я',
                     outlinedIcon: Icons.person_outline_rounded,
                     filledIcon: Icons.person_rounded,
                   ),
                 ];
 
                 final theme = Theme.of(context);
-                final scheme = theme.colorScheme;
                 final isDark = theme.brightness == Brightness.dark;
+                final tokens = theme.extension<RodnyaDesignTokens>() ??
+                    (isDark
+                        ? RodnyaDesignTokens.dark
+                        : RodnyaDesignTokens.light);
 
                 return SafeArea(
-                  minimum: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                  minimum: const EdgeInsets.fromLTRB(14, 0, 14, 14),
                   child: LayoutBuilder(
                     builder: (context, constraints) {
-                      final showLabels = constraints.maxWidth >= 480;
-                      final itemBorderRadius = showLabels ? 22.0 : 20.0;
+                      final showLabels = constraints.maxWidth >= 340;
+                      final navHeight = showLabels ? 70.0 : 62.0;
+                      final slotWidth = constraints.maxWidth / items.length;
+                      final pillLeft = (slotWidth * currentIndex) + 6;
+                      final pillWidth = slotWidth - 12;
 
                       // On web skip BackdropFilter — too expensive.
-                      final navFill = scheme.surface.withValues(
+                      final navFill = tokens.surface.withValues(
                         alpha: kIsWeb
-                            ? (isDark ? 0.95 : 0.97)
-                            : (isDark ? 0.62 : 0.70),
+                            ? (isDark ? 0.90 : 0.94)
+                            : (isDark ? 0.58 : 0.64),
                       );
-                      final borderColor = isDark
-                          ? Colors.white.withValues(alpha: 0.08)
-                          : Colors.white.withValues(alpha: 0.6);
-                      final navRadius = BorderRadius.circular(34);
+                      final borderColor = tokens.surfaceLine;
+                      final navRadius = BorderRadius.circular(999);
 
                       Widget navInner = ClipRRect(
                         borderRadius: navRadius,
@@ -118,10 +124,34 @@ class MainNavigationBar extends StatelessWidget {
                                 ),
                               ),
                             ),
+                            AnimatedPositioned(
+                              duration: const Duration(milliseconds: 320),
+                              curve: Curves.easeOutCubic,
+                              left: pillLeft,
+                              top: 6,
+                              bottom: 6,
+                              width: pillWidth,
+                              child: DecoratedBox(
+                                decoration: BoxDecoration(
+                                  gradient: tokens.accentGradient,
+                                  borderRadius: BorderRadius.circular(999),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: tokens.accent.withValues(
+                                        alpha: isDark ? 0.34 : 0.30,
+                                      ),
+                                      blurRadius: 22,
+                                      spreadRadius: -8,
+                                      offset: const Offset(0, 8),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
                             Padding(
                               padding: EdgeInsets.symmetric(
-                                horizontal: showLabels ? 8 : 6,
-                                vertical: showLabels ? 8 : 6,
+                                horizontal: showLabels ? 6 : 4,
+                                vertical: 6,
                               ),
                               child: Row(
                                 children: [
@@ -133,7 +163,6 @@ class MainNavigationBar extends StatelessWidget {
                                         data: items[index],
                                         selected: currentIndex == index,
                                         showLabel: showLabels,
-                                        itemBorderRadius: itemBorderRadius,
                                         onTap: () => onTap(index),
                                       ),
                                     ),
@@ -170,17 +199,10 @@ class MainNavigationBar extends StatelessWidget {
                       return DecoratedBox(
                         decoration: BoxDecoration(
                           borderRadius: navRadius,
-                          boxShadow: [
-                            BoxShadow(
-                              color: scheme.shadow.withValues(
-                                alpha: isDark ? 0.36 : 0.10,
-                              ),
-                              blurRadius: 28,
-                              offset: const Offset(0, 14),
-                            ),
-                          ],
+                          boxShadow: tokens.panelShadow(theme.brightness,
+                              floating: true),
                         ),
-                        child: navInner,
+                        child: SizedBox(height: navHeight, child: navInner),
                       );
                     },
                   ),
@@ -213,22 +235,24 @@ class _NavItem extends StatelessWidget {
     required this.data,
     required this.selected,
     required this.showLabel,
-    required this.itemBorderRadius,
     required this.onTap,
   });
 
   final _NavItemData data;
   final bool selected;
   final bool showLabel;
-  final double itemBorderRadius;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
 
-    final iconColor = selected ? scheme.primary : scheme.onSurfaceVariant;
+    final iconColor = selected ? tokens.accentInk : scheme.onSurfaceVariant;
     final icon = Icon(
       selected ? data.filledIcon : data.outlinedIcon,
       size: 22,
@@ -238,6 +262,8 @@ class _NavItem extends StatelessWidget {
     final iconWithBadge = data.count <= 0
         ? icon
         : Badge(
+            backgroundColor: tokens.warm,
+            textColor: const Color(0xFF241A0D),
             label: Text(data.count > 99 ? '99+' : data.count.toString()),
             child: icon,
           );
@@ -249,7 +275,7 @@ class _NavItem extends StatelessWidget {
       child: Padding(
         padding: EdgeInsets.symmetric(horizontal: showLabel ? 4 : 2),
         child: InkWell(
-          borderRadius: BorderRadius.circular(itemBorderRadius),
+          borderRadius: BorderRadius.circular(999),
           onTap: onTap,
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 220),
@@ -258,25 +284,7 @@ class _NavItem extends StatelessWidget {
               horizontal: showLabel ? 8 : 4,
               vertical: showLabel ? 8 : 10,
             ),
-            decoration: BoxDecoration(
-              gradient: selected
-                  ? LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        scheme.primary.withValues(alpha: 0.22),
-                        scheme.primary.withValues(alpha: 0.10),
-                      ],
-                    )
-                  : null,
-              borderRadius: BorderRadius.circular(itemBorderRadius),
-              border: selected
-                  ? Border.all(
-                      color: scheme.primary.withValues(alpha: 0.28),
-                      width: 0.8,
-                    )
-                  : null,
-            ),
+            decoration: BoxDecoration(borderRadius: BorderRadius.circular(999)),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -289,8 +297,9 @@ class _NavItem extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: theme.textTheme.labelSmall?.copyWith(
                       color:
-                          selected ? scheme.primary : scheme.onSurfaceVariant,
+                          selected ? tokens.accentInk : scheme.onSurfaceVariant,
                       fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+                      letterSpacing: 0,
                     ),
                   ),
                 ],

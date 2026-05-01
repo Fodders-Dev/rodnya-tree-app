@@ -43,7 +43,7 @@ void main() {
     invitationsController.add(2);
     await tester.pump();
 
-    expect(find.text('Главная'), findsOneWidget);
+    expect(find.text('Лента'), findsOneWidget);
     expect(find.text('Чаты'), findsOneWidget);
     expect(find.text('Дерево'), findsOneWidget);
     expect(find.text('3'), findsOneWidget);
@@ -81,7 +81,7 @@ void main() {
 
   testWidgets('MainNavigationBar скрывает подписи на узких мобильных экранах',
       (tester) async {
-    await tester.binding.setSurfaceSize(const Size(360, 800));
+    await tester.binding.setSurfaceSize(const Size(320, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
     await tester.pumpWidget(
@@ -103,10 +103,10 @@ void main() {
     invitationsController.add(0);
     await tester.pump();
 
-    expect(find.text('Главная'), findsNothing);
+    expect(find.text('Лента'), findsNothing);
     expect(find.text('Родные'), findsNothing);
     expect(find.text('Дерево'), findsNothing);
     expect(find.text('Чаты'), findsNothing);
-    expect(find.text('Профиль'), findsNothing);
+    expect(find.text('Я'), findsNothing);
   });
 }

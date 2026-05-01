@@ -1,14 +1,220 @@
 import 'package:flutter/material.dart';
 
+@immutable
+class RodnyaDesignTokens extends ThemeExtension<RodnyaDesignTokens> {
+  const RodnyaDesignTokens({
+    required this.bgBase,
+    required this.bgTintWarm,
+    required this.bgTintSage,
+    required this.bgTintHoney,
+    required this.ink,
+    required this.inkSecondary,
+    required this.inkMuted,
+    required this.inkLine,
+    required this.accent,
+    required this.accentStrong,
+    required this.accentSoft,
+    required this.accentInk,
+    required this.warm,
+    required this.warmSoft,
+    required this.surface,
+    required this.surfaceStrong,
+    required this.surfaceLine,
+    required this.radiusXs,
+    required this.radiusSm,
+    required this.radiusMd,
+    required this.radiusLg,
+  });
+
+  static const light = RodnyaDesignTokens(
+    bgBase: Color(0xFFF3ECDB),
+    bgTintWarm: Color(0xFFF8F2E4),
+    bgTintSage: Color(0xFFDDE8D2),
+    bgTintHoney: Color(0xFFF2DB9A),
+    ink: Color(0xFF293327),
+    inkSecondary: Color(0xFF53624F),
+    inkMuted: Color(0xFF778071),
+    inkLine: Color(0x1F293327),
+    accent: Color(0xFF3F8E52),
+    accentStrong: Color(0xFF2F7644),
+    accentSoft: Color(0x223F8E52),
+    accentInk: Color(0xFFFFFFFF),
+    warm: Color(0xFFD7A33A),
+    warmSoft: Color(0x33D7A33A),
+    surface: Color(0xA3FFFCF5),
+    surfaceStrong: Color(0xE0FFFCF5),
+    surfaceLine: Color(0x1F46381F),
+    radiusXs: 10,
+    radiusSm: 14,
+    radiusMd: 20,
+    radiusLg: 28,
+  );
+
+  static const dark = RodnyaDesignTokens(
+    bgBase: Color(0xFF14110D),
+    bgTintWarm: Color(0xFF352719),
+    bgTintSage: Color(0xFF17342B),
+    bgTintHoney: Color(0xFF302415),
+    ink: Color(0xFFF7F1E6),
+    inkSecondary: Color(0xFFD1C7B8),
+    inkMuted: Color(0xFFA69B8C),
+    inkLine: Color(0x1FF7F1E6),
+    accent: Color(0xFF72D49D),
+    accentStrong: Color(0xFF56B980),
+    accentSoft: Color(0x2972D49D),
+    accentInk: Color(0xFF102618),
+    warm: Color(0xFFE3B75E),
+    warmSoft: Color(0x2EE3B75E),
+    surface: Color(0x8C1C1812),
+    surfaceStrong: Color(0xD11C1812),
+    surfaceLine: Color(0x1FF7F1E6),
+    radiusXs: 10,
+    radiusSm: 14,
+    radiusMd: 20,
+    radiusLg: 28,
+  );
+
+  final Color bgBase;
+  final Color bgTintWarm;
+  final Color bgTintSage;
+  final Color bgTintHoney;
+  final Color ink;
+  final Color inkSecondary;
+  final Color inkMuted;
+  final Color inkLine;
+  final Color accent;
+  final Color accentStrong;
+  final Color accentSoft;
+  final Color accentInk;
+  final Color warm;
+  final Color warmSoft;
+  final Color surface;
+  final Color surfaceStrong;
+  final Color surfaceLine;
+  final double radiusXs;
+  final double radiusSm;
+  final double radiusMd;
+  final double radiusLg;
+
+  BorderRadius get cardRadius => BorderRadius.circular(radiusLg);
+  BorderRadius get controlRadius => BorderRadius.circular(radiusMd);
+  BorderRadius get chipRadius => BorderRadius.circular(999);
+
+  LinearGradient get accentGradient => LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [accent, accentStrong],
+      );
+
+  List<BoxShadow> panelShadow(Brightness brightness, {bool floating = false}) {
+    final isDark = brightness == Brightness.dark;
+    return <BoxShadow>[
+      BoxShadow(
+        color: Colors.black.withValues(
+          alpha: isDark ? 0.34 : (floating ? 0.14 : 0.08),
+        ),
+        blurRadius: floating ? 34 : 26,
+        spreadRadius: floating ? -12 : -16,
+        offset: Offset(0, floating ? 18 : 10),
+      ),
+    ];
+  }
+
+  @override
+  RodnyaDesignTokens copyWith({
+    Color? bgBase,
+    Color? bgTintWarm,
+    Color? bgTintSage,
+    Color? bgTintHoney,
+    Color? ink,
+    Color? inkSecondary,
+    Color? inkMuted,
+    Color? inkLine,
+    Color? accent,
+    Color? accentStrong,
+    Color? accentSoft,
+    Color? accentInk,
+    Color? warm,
+    Color? warmSoft,
+    Color? surface,
+    Color? surfaceStrong,
+    Color? surfaceLine,
+    double? radiusXs,
+    double? radiusSm,
+    double? radiusMd,
+    double? radiusLg,
+  }) {
+    return RodnyaDesignTokens(
+      bgBase: bgBase ?? this.bgBase,
+      bgTintWarm: bgTintWarm ?? this.bgTintWarm,
+      bgTintSage: bgTintSage ?? this.bgTintSage,
+      bgTintHoney: bgTintHoney ?? this.bgTintHoney,
+      ink: ink ?? this.ink,
+      inkSecondary: inkSecondary ?? this.inkSecondary,
+      inkMuted: inkMuted ?? this.inkMuted,
+      inkLine: inkLine ?? this.inkLine,
+      accent: accent ?? this.accent,
+      accentStrong: accentStrong ?? this.accentStrong,
+      accentSoft: accentSoft ?? this.accentSoft,
+      accentInk: accentInk ?? this.accentInk,
+      warm: warm ?? this.warm,
+      warmSoft: warmSoft ?? this.warmSoft,
+      surface: surface ?? this.surface,
+      surfaceStrong: surfaceStrong ?? this.surfaceStrong,
+      surfaceLine: surfaceLine ?? this.surfaceLine,
+      radiusXs: radiusXs ?? this.radiusXs,
+      radiusSm: radiusSm ?? this.radiusSm,
+      radiusMd: radiusMd ?? this.radiusMd,
+      radiusLg: radiusLg ?? this.radiusLg,
+    );
+  }
+
+  @override
+  RodnyaDesignTokens lerp(
+    ThemeExtension<RodnyaDesignTokens>? other,
+    double t,
+  ) {
+    if (other is! RodnyaDesignTokens) {
+      return this;
+    }
+    double lerpDoubleValue(double a, double b) => a + (b - a) * t;
+
+    return RodnyaDesignTokens(
+      bgBase: Color.lerp(bgBase, other.bgBase, t)!,
+      bgTintWarm: Color.lerp(bgTintWarm, other.bgTintWarm, t)!,
+      bgTintSage: Color.lerp(bgTintSage, other.bgTintSage, t)!,
+      bgTintHoney: Color.lerp(bgTintHoney, other.bgTintHoney, t)!,
+      ink: Color.lerp(ink, other.ink, t)!,
+      inkSecondary: Color.lerp(inkSecondary, other.inkSecondary, t)!,
+      inkMuted: Color.lerp(inkMuted, other.inkMuted, t)!,
+      inkLine: Color.lerp(inkLine, other.inkLine, t)!,
+      accent: Color.lerp(accent, other.accent, t)!,
+      accentStrong: Color.lerp(accentStrong, other.accentStrong, t)!,
+      accentSoft: Color.lerp(accentSoft, other.accentSoft, t)!,
+      accentInk: Color.lerp(accentInk, other.accentInk, t)!,
+      warm: Color.lerp(warm, other.warm, t)!,
+      warmSoft: Color.lerp(warmSoft, other.warmSoft, t)!,
+      surface: Color.lerp(surface, other.surface, t)!,
+      surfaceStrong: Color.lerp(surfaceStrong, other.surfaceStrong, t)!,
+      surfaceLine: Color.lerp(surfaceLine, other.surfaceLine, t)!,
+      radiusXs: lerpDoubleValue(radiusXs, other.radiusXs),
+      radiusSm: lerpDoubleValue(radiusSm, other.radiusSm),
+      radiusMd: lerpDoubleValue(radiusMd, other.radiusMd),
+      radiusLg: lerpDoubleValue(radiusLg, other.radiusLg),
+    );
+  }
+}
+
 class AppTheme {
-  static const Color accent = Color(0xFF129A8D);
-  static const Color accentStrong = Color(0xFF0E857A);
-  static const Color accentSoft = Color(0xFFE0F5F1);
-  static const Color warmCanvas = Color(0xFFF3F5F1);
-  static const Color warmSurface = Color(0xFFFFFFFF);
-  static const Color warmLine = Color(0xFFD7DED9);
-  static const Color warmText = Color(0xFF18201E);
-  static const Color warmMuted = Color(0xFF5B6863);
+  static const Color accent = Color(0xFF3F8E52);
+  static const Color accentStrong = Color(0xFF2F7644);
+  static const Color accentSoft = Color(0xFFE4F0DF);
+  static const Color warmCanvas = Color(0xFFF3ECDB);
+  static const Color warmSurface = Color(0xFFFFFCF5);
+  static const Color warmLine = Color(0xFFDDD3BE);
+  static const Color warmText = Color(0xFF293327);
+  static const Color warmMuted = Color(0xFF66715F);
+  static const Color warm = Color(0xFFD7A33A);
   static const List<String> _fontFallback = <String>[
     'Segoe UI Variable Text',
     'Segoe UI',
@@ -30,17 +236,17 @@ class AppTheme {
       brightness: Brightness.light,
     ).copyWith(
       primary: accentStrong,
-      secondary: const Color(0xFF71A59D),
+      secondary: const Color(0xFF7F9C72),
       tertiary: accentSoft,
       surface: warmSurface,
       surfaceContainerLowest: const Color(0xFFFFFFFF),
-      surfaceContainerLow: const Color(0xFFF9FBF8),
-      surfaceContainer: const Color(0xFFF2F5F1),
-      surfaceContainerHigh: const Color(0xFFEBF0EB),
-      surfaceContainerHighest: const Color(0xFFE3EAE4),
+      surfaceContainerLow: const Color(0xFFFBF6EA),
+      surfaceContainer: const Color(0xFFF3ECDB),
+      surfaceContainerHigh: const Color(0xFFECE2CD),
+      surfaceContainerHighest: const Color(0xFFE0D4BE),
       outline: warmLine,
-      outlineVariant: const Color(0xFFE5EBE6),
-      shadow: const Color(0xFF0F1614),
+      outlineVariant: const Color(0xFFE7DCC7),
+      shadow: const Color(0xFF231B12),
       onSurface: warmText,
       onSurfaceVariant: warmMuted,
       onPrimary: Colors.white,
@@ -54,6 +260,9 @@ class AppTheme {
       colorScheme: scheme,
       scaffoldBackgroundColor: warmCanvas,
       canvasColor: warmCanvas,
+      extensions: const <ThemeExtension<dynamic>>[
+        RodnyaDesignTokens.light,
+      ],
     );
 
     final textTheme = _withFontFallback(
@@ -68,15 +277,15 @@ class AppTheme {
       textTheme: textTheme.copyWith(
         headlineSmall: textTheme.headlineSmall?.copyWith(
           fontWeight: FontWeight.w700,
-          letterSpacing: -0.5,
+          letterSpacing: 0,
         ),
         titleLarge: textTheme.titleLarge?.copyWith(
           fontWeight: FontWeight.w700,
-          letterSpacing: -0.4,
+          letterSpacing: 0,
         ),
         titleMedium: textTheme.titleMedium?.copyWith(
           fontWeight: FontWeight.w700,
-          letterSpacing: -0.2,
+          letterSpacing: 0,
         ),
         bodyLarge: textTheme.bodyLarge?.copyWith(height: 1.35),
         bodyMedium: textTheme.bodyMedium?.copyWith(height: 1.32),
@@ -86,7 +295,7 @@ class AppTheme {
         ),
       ),
       appBarTheme: AppBarTheme(
-        backgroundColor: scheme.surface.withValues(alpha: 0.76),
+        backgroundColor: scheme.surface.withValues(alpha: 0.66),
         foregroundColor: scheme.onSurface,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
@@ -96,12 +305,12 @@ class AppTheme {
         titleTextStyle: textTheme.titleLarge?.copyWith(
           color: scheme.onSurface,
           fontWeight: FontWeight.w700,
-          letterSpacing: -0.4,
+          letterSpacing: 0,
         ),
         iconTheme: IconThemeData(color: scheme.onSurface),
       ),
       cardTheme: CardThemeData(
-        color: scheme.surface.withValues(alpha: 0.76),
+        color: RodnyaDesignTokens.light.surfaceStrong,
         margin: EdgeInsets.zero,
         elevation: 0,
         shadowColor: scheme.shadow.withValues(alpha: 0.06),
@@ -109,7 +318,7 @@ class AppTheme {
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(28),
           side: BorderSide(
-            color: scheme.outlineVariant.withValues(alpha: 0.9),
+            color: RodnyaDesignTokens.light.surfaceLine,
           ),
         ),
       ),
@@ -186,7 +395,7 @@ class AppTheme {
       iconTheme: IconThemeData(color: scheme.onSurface, size: 22),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: scheme.surface.withValues(alpha: 0.62),
+        fillColor: RodnyaDesignTokens.light.surfaceStrong,
         hintStyle:
             textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
         contentPadding:
@@ -211,7 +420,7 @@ class AppTheme {
         ),
       ),
       snackBarTheme: SnackBarThemeData(
-        backgroundColor: const Color(0xFF1E2624),
+        backgroundColor: const Color(0xFF293327),
         contentTextStyle: textTheme.bodyMedium?.copyWith(color: Colors.white),
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
@@ -240,22 +449,22 @@ class AppTheme {
       seedColor: accent,
       brightness: Brightness.dark,
     ).copyWith(
-      primary: const Color(0xFF65D4C6),
-      secondary: const Color(0xFF78BDB4),
-      tertiary: const Color(0xFF173B37),
-      surface: const Color(0xFF161D1B),
-      surfaceContainerLowest: const Color(0xFF121715),
-      surfaceContainerLow: const Color(0xFF1B2320),
-      surfaceContainer: const Color(0xFF202A26),
-      surfaceContainerHigh: const Color(0xFF26312D),
-      surfaceContainerHighest: const Color(0xFF2C3833),
-      outline: const Color(0xFF41514B),
-      outlineVariant: const Color(0xFF33403B),
-      onSurface: const Color(0xFFF1F5F3),
-      onSurfaceVariant: const Color(0xFFB2BDB8),
-      onPrimary: const Color(0xFF072B27),
-      onSecondary: const Color(0xFF0C2C28),
-      onTertiary: const Color(0xFFE3FAF6),
+      primary: const Color(0xFF72D49D),
+      secondary: const Color(0xFF93B889),
+      tertiary: const Color(0xFF1D3B2A),
+      surface: const Color(0xFF1C1812),
+      surfaceContainerLowest: const Color(0xFF14110D),
+      surfaceContainerLow: const Color(0xFF1A1610),
+      surfaceContainer: const Color(0xFF221D16),
+      surfaceContainerHigh: const Color(0xFF2C251A),
+      surfaceContainerHighest: const Color(0xFF382E20),
+      outline: const Color(0xFF564B3B),
+      outlineVariant: const Color(0xFF3E3529),
+      onSurface: const Color(0xFFF7F1E6),
+      onSurfaceVariant: const Color(0xFFD1C7B8),
+      onPrimary: const Color(0xFF102618),
+      onSecondary: const Color(0xFF172612),
+      onTertiary: const Color(0xFFEAF8E7),
       shadow: Colors.black,
     );
 
@@ -263,8 +472,11 @@ class AppTheme {
       useMaterial3: true,
       brightness: Brightness.dark,
       colorScheme: scheme,
-      scaffoldBackgroundColor: const Color(0xFF101513),
-      canvasColor: const Color(0xFF101513),
+      scaffoldBackgroundColor: RodnyaDesignTokens.dark.bgBase,
+      canvasColor: RodnyaDesignTokens.dark.bgBase,
+      extensions: const <ThemeExtension<dynamic>>[
+        RodnyaDesignTokens.dark,
+      ],
     );
 
     final textTheme = _withFontFallback(
@@ -288,12 +500,12 @@ class AppTheme {
         titleTextStyle: textTheme.titleLarge?.copyWith(
           fontWeight: FontWeight.w700,
           color: scheme.onSurface,
-          letterSpacing: -0.3,
+          letterSpacing: 0,
         ),
         iconTheme: IconThemeData(color: scheme.onSurface),
       ),
       cardTheme: CardThemeData(
-        color: scheme.surface.withValues(alpha: 0.82),
+        color: RodnyaDesignTokens.dark.surfaceStrong,
         margin: EdgeInsets.zero,
         elevation: 0,
         shadowColor: scheme.shadow.withValues(alpha: 0.16),

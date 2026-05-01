@@ -1,5 +1,6 @@
 import 'dart:ui';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
@@ -29,6 +30,7 @@ import '../screens/tree_selector_screen.dart';
 import '../screens/tree_view_screen.dart';
 import '../screens/user_profile_entry_screen.dart';
 import '../services/custom_api_notification_service.dart';
+import '../theme/app_theme.dart';
 import '../utils/url_utils.dart';
 import '../widgets/app_backdrop.dart';
 import '../widgets/main_navigation_bar.dart';
@@ -480,7 +482,7 @@ class AdaptiveNavigationRail extends StatelessWidget {
                 final invitationsCount = invitationsSnapshot.data ?? 0;
                 final destinations = <_RailDestinationData>[
                   _RailDestinationData(
-                    label: 'Главная',
+                    label: 'Лента',
                     outlinedIcon: Icons.home_outlined,
                     filledIcon: Icons.home_rounded,
                     count: notificationsCount,
@@ -503,85 +505,97 @@ class AdaptiveNavigationRail extends StatelessWidget {
                     count: chatsCount,
                   ),
                   const _RailDestinationData(
-                    label: 'Профиль',
+                    label: 'Я',
                     outlinedIcon: Icons.person_outline_rounded,
                     filledIcon: Icons.person_rounded,
                   ),
                 ];
                 final theme = Theme.of(context);
-                final scheme = theme.colorScheme;
+                final isDark = theme.brightness == Brightness.dark;
+                final tokens = theme.extension<RodnyaDesignTokens>() ??
+                    (isDark
+                        ? RodnyaDesignTokens.dark
+                        : RodnyaDesignTokens.light);
+                final railRadius = BorderRadius.circular(32);
+                final rail = Container(
+                  width: 94,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 18,
+                  ),
+                  decoration: BoxDecoration(
+                    color: tokens.surface.withValues(
+                      alpha: kIsWeb
+                          ? (isDark ? 0.90 : 0.94)
+                          : (isDark ? 0.58 : 0.64),
+                    ),
+                    borderRadius: railRadius,
+                    border: Border.all(color: tokens.surfaceLine),
+                    boxShadow:
+                        tokens.panelShadow(theme.brightness, floating: true),
+                  ),
+                  child: Column(
+                    children: [
+                      Container(
+                        width: 42,
+                        height: 42,
+                        decoration: BoxDecoration(
+                          gradient: tokens.accentGradient,
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color: tokens.accent.withValues(alpha: 0.28),
+                              blurRadius: 18,
+                              spreadRadius: -6,
+                              offset: const Offset(0, 8),
+                            ),
+                          ],
+                        ),
+                        child: Icon(
+                          Icons.family_restroom,
+                          color: tokens.accentInk,
+                          size: 22,
+                        ),
+                      ),
+                      const SizedBox(height: 18),
+                      Expanded(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.start,
+                          children: [
+                            for (var index = 0;
+                                index < destinations.length;
+                                index++) ...[
+                              _RailDestination(
+                                data: destinations[index],
+                                selected: navigationShell.currentIndex == index,
+                                onTap: () {
+                                  navigationShell.goBranch(
+                                    index,
+                                    initialLocation:
+                                        index == navigationShell.currentIndex,
+                                  );
+                                },
+                              ),
+                              if (index != destinations.length - 1)
+                                const SizedBox(height: 6),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                );
 
                 return Padding(
                   padding: const EdgeInsets.fromLTRB(14, 18, 14, 18),
                   child: ClipRRect(
-                    borderRadius: BorderRadius.circular(32),
-                    child: BackdropFilter(
-                      filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-                      child: Container(
-                        width: 94,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 18,
-                        ),
-                        decoration: BoxDecoration(
-                          color: scheme.surface.withValues(alpha: 0.84),
-                          borderRadius: BorderRadius.circular(32),
-                          border: Border.all(
-                            color: scheme.outlineVariant.withValues(alpha: 0.9),
+                    borderRadius: railRadius,
+                    child: kIsWeb
+                        ? rail
+                        : BackdropFilter(
+                            filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+                            child: rail,
                           ),
-                          boxShadow: [
-                            BoxShadow(
-                              color: scheme.shadow.withValues(alpha: 0.1),
-                              blurRadius: 34,
-                              offset: const Offset(0, 18),
-                            ),
-                          ],
-                        ),
-                        child: Column(
-                          children: [
-                            Container(
-                              width: 42,
-                              height: 42,
-                              decoration: BoxDecoration(
-                                color: scheme.primary.withValues(alpha: 0.14),
-                                shape: BoxShape.circle,
-                              ),
-                              child: Icon(
-                                Icons.family_restroom,
-                                color: scheme.primary,
-                                size: 22,
-                              ),
-                            ),
-                            const SizedBox(height: 18),
-                            Expanded(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.start,
-                                children: [
-                                  for (var index = 0;
-                                      index < destinations.length;
-                                      index++) ...[
-                                    _RailDestination(
-                                      data: destinations[index],
-                                      selected:
-                                          navigationShell.currentIndex == index,
-                                      onTap: () {
-                                        navigationShell.goBranch(
-                                          index,
-                                          initialLocation: index ==
-                                              navigationShell.currentIndex,
-                                        );
-                                      },
-                                    ),
-                                    if (index != destinations.length - 1)
-                                      const SizedBox(height: 6),
-                                  ],
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
                   ),
                 );
               },
@@ -622,15 +636,21 @@ class _RailDestination extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
     final icon = Icon(
       selected ? data.filledIcon : data.outlinedIcon,
       size: 22,
-      color: selected ? scheme.primary : scheme.onSurfaceVariant,
+      color: selected ? tokens.accentInk : scheme.onSurfaceVariant,
     );
 
     final iconWithBadge = data.count <= 0
         ? icon
         : Badge(
+            backgroundColor: tokens.warm,
+            textColor: const Color(0xFF241A0D),
             label: Text(data.count > 99 ? '99+' : data.count.toString()),
             child: icon,
           );
@@ -648,10 +668,18 @@ class _RailDestination extends StatelessWidget {
           width: double.infinity,
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
           decoration: BoxDecoration(
-            color: selected
-                ? scheme.primary.withValues(alpha: 0.14)
-                : Colors.transparent,
+            gradient: selected ? tokens.accentGradient : null,
             borderRadius: BorderRadius.circular(24),
+            boxShadow: selected
+                ? [
+                    BoxShadow(
+                      color: tokens.accent.withValues(alpha: 0.28),
+                      blurRadius: 16,
+                      spreadRadius: -7,
+                      offset: const Offset(0, 8),
+                    ),
+                  ]
+                : null,
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -667,8 +695,9 @@ class _RailDestination extends StatelessWidget {
                 style: theme.textTheme.labelSmall?.copyWith(
                   fontSize: 11,
                   height: 1.05,
-                  color: selected ? scheme.primary : scheme.onSurfaceVariant,
+                  color: selected ? tokens.accentInk : scheme.onSurfaceVariant,
                   fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+                  letterSpacing: 0,
                 ),
               ),
             ],
