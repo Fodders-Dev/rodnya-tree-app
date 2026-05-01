@@ -65,11 +65,12 @@ Current reference unpack path: `.tmp/claude_design_reference/`.
   - [x] On web, tree canvas is full-width and not centered as a phone layout.
   - [x] Run web build/smoke and commit Wave 3 separately.
 
-- [ ] **Wave 4 — Compose + Audience Picker**
-  - Port compose hierarchy and audience sheet UX natively to Flutter.
-  - Use real circles/auto-circles: all family, close, branch, custom circles,
-    and only-me only if backend supports it.
-  - Preserve create post flow and media upload.
+- [x] **Wave 4 — Compose + Audience Picker**
+  - [x] Port compose hierarchy and audience sheet UX natively to Flutter.
+  - [x] Use real circles/auto-circles: all family, close, branch, custom
+        circles, and only-me only if backend supports it.
+  - [x] Preserve create post flow and media upload.
+  - [x] Run format/focused widget tests and web smoke screenshots.
 
 - [ ] **Wave 5 — Identity Review**
   - Move from flat list cards to clear A/B comparison with confidence, matching

@@ -323,10 +323,34 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 
-    expect(find.text('Публикация'), findsOneWidget);
-    expect(find.text('Что нового'), findsOneWidget);
-    expect(find.text('Видимость'), findsOneWidget);
+    expect(find.text('Новый пост'), findsOneWidget);
+    expect(find.text('О чём хотите рассказать родне?'), findsOneWidget);
+    expect(find.text('Кому'), findsOneWidget);
     expect(find.text('Фото'), findsOneWidget);
+    expect(find.text('Опубликовать'), findsOneWidget);
+    expect(find.text('Всё дерево'), findsWidgets);
+  });
+
+  testWidgets('CreatePostScreen opens audience sheet and selects a circle',
+      (tester) async {
+    await tester.pumpWidget(_withTree(const CreatePostScreen()));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    await tester.tap(find.text('Кому'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Кто увидит пост?'), findsOneWidget);
+    expect(find.text('По публичной ссылке'), findsOneWidget);
+    expect(find.text('Отдельные ветки'), findsOneWidget);
+    expect(find.text('Ирина Кузнецова'), findsOneWidget);
+
+    await tester.tap(find.text('Близкие').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Готово'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Близкие'), findsWidgets);
   });
 
   testWidgets('CreateStoryScreen shows compact story composer UI',

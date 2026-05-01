@@ -17,6 +17,7 @@ import '../models/post.dart';
 import '../providers/tree_provider.dart';
 import '../services/app_status_service.dart';
 import '../services/local_storage_service.dart';
+import '../theme/app_theme.dart';
 import '../utils/user_facing_error.dart';
 import '../widgets/audience_picker.dart';
 import '../widgets/glass_panel.dart';
@@ -59,12 +60,47 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
   FamilyTree? _currentTreeMeta;
 
   bool get _isFriendsTree => _currentTreeMeta?.isFriendsTree == true;
+
   String get _selectedAudienceLabel {
     final selectedCircle = _selectedCircle;
+    if (_scopeType == TreeContentScopeType.branches &&
+        _selectedBranchPersonIds.isNotEmpty) {
+      return _isFriendsTree
+          ? '${_selectedBranchPersonIds.length} круг(а)'
+          : '${_selectedBranchPersonIds.length} ветк(и)';
+    }
     if (selectedCircle != null) {
       return selectedCircle.name;
     }
     return _isFriendsTree ? 'Весь круг' : 'Всё дерево';
+  }
+
+  String get _selectedAudienceDetail {
+    final selectedCircle = _selectedCircle;
+    final parts = <String>[];
+    if (_scopeType == TreeContentScopeType.branches &&
+        _selectedBranchPersonIds.isNotEmpty) {
+      parts.add(
+        _isFriendsTree
+            ? 'выбранные люди и их круги'
+            : 'выбранные люди и их ветки',
+      );
+    } else if (selectedCircle != null) {
+      parts.add(_memberLabel(selectedCircle.memberCount));
+      if ((selectedCircle.description ?? '').trim().isNotEmpty) {
+        parts.add(selectedCircle.description!.trim());
+      } else if (selectedCircle.isAllTree) {
+        parts.add(_isFriendsTree ? 'весь круг' : 'вся семья');
+      } else if (selectedCircle.isAuto) {
+        parts.add('автоматический круг по ветке');
+      }
+    } else {
+      parts.add(_isFriendsTree ? 'внутри текущего круга' : 'внутри дерева');
+    }
+    if (_isPublic) {
+      parts.add('публично по ссылке');
+    }
+    return parts.join(' · ');
   }
 
   FamilyCircle? get _selectedCircle {
@@ -74,6 +110,49 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     }
     for (final circle in _audienceCircles) {
       if (circle.id == selectedId) {
+        return circle;
+      }
+    }
+    return null;
+  }
+
+  List<FamilyCircle> get _quickAudienceCircles {
+    if (_audienceCircles.isEmpty) {
+      return const <FamilyCircle>[];
+    }
+
+    final selected = _selectedCircle;
+    final result = <FamilyCircle>[];
+    void addIfMissing(FamilyCircle? circle) {
+      if (circle == null) {
+        return;
+      }
+      if (result.any((entry) => entry.id == circle.id)) {
+        return;
+      }
+      result.add(circle);
+    }
+
+    addIfMissing(_firstCircleWhere((circle) => circle.isAllTree));
+    addIfMissing(
+      _firstCircleWhere((circle) => circle.isFavorites),
+    );
+    addIfMissing(
+      _firstCircleWhere((circle) => circle.isAuto),
+    );
+    addIfMissing(selected);
+    for (final circle in _audienceCircles) {
+      if (result.length >= 4) {
+        break;
+      }
+      addIfMissing(circle);
+    }
+    return result.take(4).toList(growable: false);
+  }
+
+  FamilyCircle? _firstCircleWhere(bool Function(FamilyCircle) test) {
+    for (final circle in _audienceCircles) {
+      if (test(circle)) {
         return circle;
       }
     }
@@ -241,6 +320,15 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
       _showMessage('Добавьте текст или хотя бы одно фото.');
       return;
     }
+    if (_scopeType == TreeContentScopeType.branches &&
+        _selectedBranchPersonIds.isEmpty) {
+      _showMessage(
+        _isFriendsTree
+            ? 'Выберите хотя бы один круг для публикации.'
+            : 'Выберите хотя бы одну ветку для публикации.',
+      );
+      return;
+    }
 
     if (_currentTreeId == null) return;
 
@@ -298,182 +386,489 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final isWideLayout = MediaQuery.of(context).size.width >= 1100;
-
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Публикация'),
-        actions: [
-          TextButton(
-            onPressed:
-                _isLoading || _currentTreeId == null ? null : _createPost,
-            child: _isLoading
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: Colors.white,
-                    ),
-                  )
-                : const Text('Готово'),
-          ),
-        ],
-      ),
-      body: _currentTreeId == null
-          ? _buildMissingTreeState()
-          : Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 1260),
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Wrap(
-                        spacing: 10,
-                        runSpacing: 10,
-                        children: [
-                          _buildMetaPill(
-                            icon: Icons.account_tree_outlined,
-                            label: _currentTreeMeta?.name.isNotEmpty == true
-                                ? _currentTreeMeta!.name
-                                : 'Текущее дерево',
-                          ),
-                          _buildMetaPill(
-                            icon: Icons.group_work_outlined,
-                            label: _selectedAudienceLabel,
-                          ),
-                          _buildMetaPill(
-                            icon: _scopeType == TreeContentScopeType.wholeTree
-                                ? Icons.groups_2_outlined
-                                : Icons.alt_route,
-                            label: _scopeType == TreeContentScopeType.wholeTree
-                                ? (_isFriendsTree ? 'Весь круг' : 'Всё дерево')
-                                : (_isFriendsTree
-                                    ? 'Выборочные круги'
-                                    : 'Выборочные ветки'),
-                          ),
-                          _buildMetaPill(
-                            icon: Icons.photo_library_outlined,
-                            label: _selectedImages.isEmpty
-                                ? 'Без фото'
-                                : '${_selectedImages.length}/5 фото',
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 16),
-                      if (isWideLayout)
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(flex: 3, child: _buildEditorCard()),
-                            const SizedBox(width: 16),
-                            Expanded(flex: 2, child: _buildScopeCard()),
-                          ],
-                        )
-                      else
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            _buildEditorCard(),
-                            const SizedBox(height: 16),
-                            _buildScopeCard(),
-                          ],
-                        ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
+    final width = MediaQuery.of(context).size.width;
+    final isWideLayout = width >= 900;
+    final composeTheme = Theme.of(context).copyWith(
+      splashFactory: InkRipple.splashFactory,
     );
-  }
 
-  Widget _buildMetaPill({
-    required IconData icon,
-    required String label,
-  }) {
-    final theme = Theme.of(context);
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color:
-            theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.75),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 16, color: theme.colorScheme.primary),
-            const SizedBox(width: 6),
-            Text(
-              label,
-              style: theme.textTheme.labelMedium?.copyWith(
-                fontWeight: FontWeight.w700,
+    return Theme(
+      data: composeTheme,
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Новый пост'),
+          actions: [
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: FilledButton.tonal(
+                onPressed:
+                    _isLoading || _currentTreeId == null ? null : _createPost,
+                child: _isLoading
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Text('Опубликовать'),
               ),
             ),
           ],
+        ),
+        body: _currentTreeId == null
+            ? _buildMissingTreeState()
+            : SafeArea(
+                child: Stack(
+                  children: [
+                    Positioned.fill(
+                      child: Center(
+                        child: ConstrainedBox(
+                          constraints: BoxConstraints(
+                            maxWidth: isWideLayout ? 1180 : 680,
+                          ),
+                          child: SingleChildScrollView(
+                            padding: EdgeInsets.fromLTRB(
+                              isWideLayout ? 24 : 14,
+                              isWideLayout ? 18 : 12,
+                              isWideLayout ? 24 : 14,
+                              116,
+                            ),
+                            child: isWideLayout
+                                ? Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Expanded(
+                                        flex: 3,
+                                        child: _buildEditorCard(compact: false),
+                                      ),
+                                      const SizedBox(width: 16),
+                                      SizedBox(
+                                        width: 370,
+                                        child: _buildAudiencePanel(),
+                                      ),
+                                    ],
+                                  )
+                                : _buildEditorCard(compact: true),
+                          ),
+                        ),
+                      ),
+                    ),
+                    Align(
+                      alignment: Alignment.bottomCenter,
+                      child: _buildComposeToolDock(compact: !isWideLayout),
+                    ),
+                  ],
+                ),
+              ),
+      ),
+    );
+  }
+
+  Widget _buildComposeToolDock({required bool compact}) {
+    final theme = Theme.of(context);
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        compact ? 12 : 24,
+        0,
+        compact ? 12 : 24,
+        compact ? 12 : 18,
+      ),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 760),
+        child: GlassPanel(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          borderRadius: BorderRadius.circular(tokens.radiusLg),
+          color: tokens.surfaceStrong.withValues(alpha: 0.94),
+          borderColor: tokens.surfaceLine,
+          child: Row(
+            children: [
+              _buildToolButton(
+                icon: Icons.photo_library_outlined,
+                label: _selectedImages.isEmpty
+                    ? 'Фото'
+                    : '${_selectedImages.length}/5',
+                active: _selectedImages.isNotEmpty,
+                onPressed: _pickImages,
+              ),
+              _buildToolButton(
+                icon: Icons.group_work_outlined,
+                label: 'Кому',
+                active: _selectedCircleId != null,
+                onPressed: _showAudienceSheet,
+              ),
+              _buildToolButton(
+                icon: Icons.alt_route_outlined,
+                label: _isFriendsTree ? 'Круги' : 'Ветки',
+                active: _scopeType == TreeContentScopeType.branches,
+                onPressed: () {
+                  setState(() {
+                    _scopeType = TreeContentScopeType.branches;
+                  });
+                  _showAudienceSheet();
+                },
+              ),
+              _buildToolButton(
+                icon: _isPublic ? Icons.public : Icons.lock_outline,
+                label: _isPublic ? 'Публично' : 'Внутри',
+                active: _isPublic,
+                onPressed: () {
+                  setState(() {
+                    _isPublic = !_isPublic;
+                  });
+                },
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildEditorCard() {
+  Widget _buildToolButton({
+    required IconData icon,
+    required String label,
+    required bool active,
+    required VoidCallback onPressed,
+  }) {
     final theme = Theme.of(context);
-    return GlassPanel(
-      padding: const EdgeInsets.all(18),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text(
-            'Что нового',
-            style: theme.textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w700,
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+    final foreground = active ? tokens.accentStrong : tokens.inkSecondary;
+
+    return Expanded(
+      child: Material(
+        color: active ? tokens.accentSoft : Colors.transparent,
+        borderRadius: BorderRadius.circular(tokens.radiusSm),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(tokens.radiusSm),
+          onTap: onPressed,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, color: foreground, size: 21),
+                const SizedBox(height: 4),
+                Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: foreground,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ],
             ),
           ),
-          const SizedBox(height: 8),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showAudienceSheet() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (sheetContext, sheetSetState) {
+            return SafeArea(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(sheetContext).size.height * 0.86,
+                ),
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(18, 0, 18, 22),
+                  child: _buildAudiencePanelContent(
+                    sheetSetState: sheetSetState,
+                    inSheet: true,
+                    onDone: () => Navigator.of(sheetContext).pop(),
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _updateAudienceState(VoidCallback update, [StateSetter? sheetSetState]) {
+    if (!mounted) {
+      return;
+    }
+    setState(update);
+    sheetSetState?.call(() {});
+  }
+
+  Widget _buildAudiencePanel() {
+    return GlassPanel(
+      padding: const EdgeInsets.all(16),
+      child: _buildAudiencePanelContent(inSheet: false),
+    );
+  }
+
+  Widget _buildAudiencePanelContent({
+    required bool inSheet,
+    StateSetter? sheetSetState,
+    VoidCallback? onDone,
+  }) {
+    final theme = Theme.of(context);
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Кто увидит пост?',
+          style: theme.textTheme.titleLarge?.copyWith(
+            fontWeight: FontWeight.w900,
+            color: tokens.ink,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          'Выбор аудитории сохраняется вместе с постом. При необходимости круг можно поменять перед публикацией.',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: tokens.inkSecondary,
+            height: 1.35,
+          ),
+        ),
+        const SizedBox(height: 14),
+        AudiencePicker(
+          circles: _audienceCircles,
+          selectedCircleId: _selectedCircleId,
+          onChanged: (circleId) {
+            _updateAudienceState(() {
+              _selectedCircleId = circleId;
+              if (_scopeType == TreeContentScopeType.branches &&
+                  _selectedBranchPersonIds.isEmpty) {
+                _scopeType = TreeContentScopeType.wholeTree;
+              }
+            }, sheetSetState);
+          },
+          isLoading: _isLoadingCircles,
+          isUnavailable: _circlesUnavailable,
+          isFriendsTree: _isFriendsTree,
+          onRetry: _loadAudienceCircles,
+        ),
+        const SizedBox(height: 16),
+        _buildBranchAudienceSection(sheetSetState: sheetSetState),
+        const SizedBox(height: 16),
+        SwitchListTile.adaptive(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('По публичной ссылке'),
+          subtitle: Text(
+            _isPublic
+                ? 'Пост можно будет открыть по ссылке.'
+                : 'Пост останется внутри выбранной аудитории.',
+          ),
+          value: _isPublic,
+          onChanged: (value) {
+            _updateAudienceState(() {
+              _isPublic = value;
+            }, sheetSetState);
+          },
+        ),
+        if (inSheet) ...[
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton(
+              onPressed: onDone,
+              child: const Text('Готово'),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildBranchAudienceSection({StateSetter? sheetSetState}) {
+    final theme = Theme.of(context);
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                _isFriendsTree ? 'Отдельные круги' : 'Отдельные ветки',
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w900,
+                  color: tokens.ink,
+                ),
+              ),
+            ),
+            if (_selectedBranchPersonIds.isNotEmpty)
+              TextButton(
+                onPressed: () {
+                  _updateAudienceState(() {
+                    _selectedBranchPersonIds.clear();
+                    _scopeType = TreeContentScopeType.wholeTree;
+                  }, sheetSetState);
+                },
+                child: const Text('Сбросить'),
+              ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Text(
+          _isFriendsTree
+              ? 'Можно сузить видимость до выбранных людей и их кругов.'
+              : 'Можно сузить видимость до выбранных людей и их веток.',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: tokens.inkSecondary,
+            height: 1.3,
+          ),
+        ),
+        const SizedBox(height: 10),
+        if (_isLoadingPeople)
+          _buildScopeState(
+            icon: Icons.sync,
+            title: 'Подбираем ветки',
+            message:
+                'Проверяем, какие люди доступны для выборочной публикации.',
+            showProgress: true,
+          )
+        else if (_branchCandidatesUnavailable)
+          _buildScopeState(
+            icon: _appStatusService.isOffline
+                ? Icons.cloud_off_outlined
+                : Icons.error_outline,
+            title: _appStatusService.isOffline
+                ? 'Нет соединения'
+                : 'Ветки сейчас недоступны',
+            message: _appStatusService.isOffline
+                ? 'Список веток вернётся, когда интернет снова появится.'
+                : 'Не удалось обновить список веток. Попробуйте ещё раз.',
+            actions: [
+              OutlinedButton.icon(
+                onPressed: _loadBranchCandidates,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Повторить'),
+              ),
+            ],
+          )
+        else if (_availablePeople.isEmpty)
+          _buildScopeState(
+            icon: Icons.alt_route,
+            title: _isFriendsTree ? 'Кругов пока нет' : 'Веток пока нет',
+            message: _isFriendsTree
+                ? 'Сначала добавьте людей в круг.'
+                : 'Сначала добавьте людей и связи в дерево.',
+          )
+        else
           Wrap(
             spacing: 8,
             runSpacing: 8,
-            children: [
-              _buildMetaPill(
-                icon: Icons.feed_outlined,
-                label: _isFriendsTree ? 'Лента круга' : 'Лента семьи',
-              ),
-              _buildMetaPill(
-                icon: Icons.public,
-                label: _isPublic ? 'Видно всем' : 'Внутри контекста',
-              ),
-            ],
+            children: _availablePeople.map((person) {
+              final isSelected = _selectedBranchPersonIds.contains(person.id);
+              return FilterChip(
+                avatar: CircleAvatar(
+                  backgroundColor: isSelected
+                      ? tokens.accent.withValues(alpha: 0.18)
+                      : tokens.surface,
+                  child: Text(
+                    person.initials,
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: isSelected ? tokens.accentStrong : tokens.inkMuted,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+                label: Text(person.displayName),
+                selected: isSelected,
+                onSelected: (selected) {
+                  _updateAudienceState(() {
+                    if (selected) {
+                      _selectedBranchPersonIds.add(person.id);
+                      _scopeType = TreeContentScopeType.branches;
+                    } else {
+                      _selectedBranchPersonIds.remove(person.id);
+                      if (_selectedBranchPersonIds.isEmpty) {
+                        _scopeType = TreeContentScopeType.wholeTree;
+                      }
+                    }
+                  }, sheetSetState);
+                },
+              );
+            }).toList(),
           ),
-          const SizedBox(height: 16),
+      ],
+    );
+  }
+
+  String _memberLabel(int count) {
+    final mod10 = count % 10;
+    final mod100 = count % 100;
+    final suffix = mod10 == 1 && mod100 != 11
+        ? 'человек'
+        : mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)
+            ? 'человека'
+            : 'человек';
+    return '$count $suffix';
+  }
+
+  Widget _buildEditorCard({required bool compact}) {
+    final theme = Theme.of(context);
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+
+    return GlassPanel(
+      padding: EdgeInsets.all(compact ? 16 : 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _buildAuthorRow(compact: compact),
+          const SizedBox(height: 14),
+          _buildAudienceStrip(),
+          const SizedBox(height: 18),
           DecoratedBox(
             decoration: BoxDecoration(
-              color: theme.colorScheme.surfaceContainerLowest
-                  .withValues(alpha: 0.88),
-              borderRadius: BorderRadius.circular(24),
+              color: tokens.surface.withValues(alpha: 0.78),
+              borderRadius: BorderRadius.circular(tokens.radiusLg),
+              border: Border.all(color: tokens.surfaceLine),
             ),
             child: TextField(
               controller: _contentController,
-              decoration: const InputDecoration(
-                hintText: 'Напишите пост',
+              decoration: InputDecoration(
+                hintText: 'О чём хотите рассказать родне?',
                 border: InputBorder.none,
-                contentPadding: EdgeInsets.all(18),
+                contentPadding: EdgeInsets.all(compact ? 16 : 18),
+                hintStyle: theme.textTheme.titleMedium?.copyWith(
+                  color: tokens.inkMuted,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
-              maxLines: 10,
-              minLines: 6,
+              keyboardType: TextInputType.multiline,
+              textCapitalization: TextCapitalization.sentences,
+              maxLines: compact ? 9 : 12,
+              minLines: compact ? 7 : 10,
+              style: theme.textTheme.titleMedium?.copyWith(
+                color: tokens.ink,
+                height: 1.35,
+              ),
             ),
-          ),
-          const SizedBox(height: 16),
-          FilledButton.tonalIcon(
-            icon: const Icon(Icons.photo_library_outlined),
-            label: Text(
-              _selectedImages.isEmpty
-                  ? 'Фото'
-                  : 'Фото ${_selectedImages.length}/5',
-            ),
-            onPressed: _pickImages,
           ),
           if (_selectedImages.isNotEmpty) ...[
             const SizedBox(height: 16),
@@ -482,6 +877,261 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
         ],
       ),
     );
+  }
+
+  Widget _buildAuthorRow({required bool compact}) {
+    final theme = Theme.of(context);
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+
+    return Row(
+      children: [
+        _buildAuthorAvatar(),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                _authorName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.titleSmall?.copyWith(
+                  color: tokens.ink,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                _selectedAudienceDetail,
+                maxLines: compact ? 2 : 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: tokens.inkSecondary,
+                  height: 1.2,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 10),
+        OutlinedButton.icon(
+          onPressed: _showAudienceSheet,
+          icon: const Icon(Icons.expand_more, size: 18),
+          label: Text(_selectedAudienceLabel),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAuthorAvatar() {
+    final theme = Theme.of(context);
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+    final photoUrl = _authService.currentUserPhotoUrl?.trim();
+
+    return Container(
+      width: 48,
+      height: 48,
+      decoration: BoxDecoration(
+        color: tokens.accentSoft,
+        borderRadius: BorderRadius.circular(tokens.radiusMd),
+        border: Border.all(color: tokens.surfaceLine),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: photoUrl != null && photoUrl.isNotEmpty
+          ? Image.network(
+              photoUrl,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => _buildAuthorInitials(tokens),
+            )
+          : _buildAuthorInitials(tokens),
+    );
+  }
+
+  Widget _buildAuthorInitials(RodnyaDesignTokens tokens) {
+    return Center(
+      child: Text(
+        _authorInitials,
+        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+              color: tokens.accentStrong,
+              fontWeight: FontWeight.w900,
+            ),
+      ),
+    );
+  }
+
+  String get _authorName {
+    final displayName = _authService.currentUserDisplayName?.trim();
+    if (displayName != null && displayName.isNotEmpty) {
+      return displayName;
+    }
+    final email = _authService.currentUserEmail?.trim();
+    if (email != null && email.isNotEmpty) {
+      return email.split('@').first;
+    }
+    return 'Родня';
+  }
+
+  String get _authorInitials {
+    final words =
+        _authorName.split(RegExp(r'\s+')).where((word) => word.isNotEmpty);
+    final initials = words
+        .take(2)
+        .map((word) => String.fromCharCode(word.runes.first).toUpperCase())
+        .join();
+    return initials.isEmpty ? 'Р' : initials;
+  }
+
+  Widget _buildAudienceStrip() {
+    final theme = Theme.of(context);
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+    final circles = _quickAudienceCircles;
+
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          for (final circle in circles) ...[
+            _buildAudienceQuickChip(
+              label: circle.name,
+              icon: _circleIcon(circle),
+              accent: _circleAccent(circle, tokens),
+              active: _scopeType == TreeContentScopeType.wholeTree &&
+                  _selectedCircleId == circle.id,
+              onTap: () {
+                setState(() {
+                  _selectedCircleId = circle.id;
+                  _scopeType = TreeContentScopeType.wholeTree;
+                  _selectedBranchPersonIds.clear();
+                });
+              },
+            ),
+            const SizedBox(width: 8),
+          ],
+          _buildAudienceQuickChip(
+            label: _isFriendsTree ? 'Круг' : 'Ветка',
+            icon: Icons.alt_route_outlined,
+            accent: tokens.warm,
+            active: _scopeType == TreeContentScopeType.branches,
+            onTap: () {
+              setState(() {
+                _scopeType = TreeContentScopeType.branches;
+              });
+              _showAudienceSheet();
+            },
+          ),
+          const SizedBox(width: 8),
+          _buildAudienceQuickChip(
+            label: 'ещё',
+            icon: Icons.tune,
+            accent: tokens.inkSecondary,
+            active: false,
+            onTap: _showAudienceSheet,
+          ),
+          if (_isLoadingCircles) ...[
+            const SizedBox(width: 10),
+            SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: theme.colorScheme.primary,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAudienceQuickChip({
+    required String label,
+    required IconData icon,
+    required Color accent,
+    required bool active,
+    required VoidCallback onTap,
+  }) {
+    final theme = Theme.of(context);
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+
+    return Material(
+      color: active ? accent.withValues(alpha: 0.13) : tokens.surface,
+      borderRadius: BorderRadius.circular(999),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(999),
+        onTap: onTap,
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 150),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(
+              color:
+                  active ? accent.withValues(alpha: 0.55) : tokens.surfaceLine,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 16, color: active ? accent : tokens.inkMuted),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.labelMedium?.copyWith(
+                    color: active ? accent : tokens.inkSecondary,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  IconData _circleIcon(FamilyCircle circle) {
+    switch (circle.kind) {
+      case FamilyCircleKind.allTree:
+        return Icons.account_tree_outlined;
+      case FamilyCircleKind.favorites:
+        return Icons.favorite_border;
+      case FamilyCircleKind.descendantsOf:
+      case FamilyCircleKind.ancestorsOf:
+        return Icons.alt_route_outlined;
+      case FamilyCircleKind.pair:
+        return Icons.people_outline;
+      case FamilyCircleKind.custom:
+        return Icons.group_work_outlined;
+    }
+  }
+
+  Color _circleAccent(FamilyCircle circle, RodnyaDesignTokens tokens) {
+    switch (circle.kind) {
+      case FamilyCircleKind.favorites:
+        return tokens.warm;
+      case FamilyCircleKind.descendantsOf:
+      case FamilyCircleKind.ancestorsOf:
+      case FamilyCircleKind.pair:
+        return tokens.accentStrong;
+      case FamilyCircleKind.allTree:
+      case FamilyCircleKind.custom:
+        return tokens.accent;
+    }
   }
 
   Widget _buildMissingTreeState() {
@@ -524,142 +1174,6 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
             ),
           ),
         ),
-      ),
-    );
-  }
-
-  Widget _buildScopeCard() {
-    return GlassPanel(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Видимость',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
-          ),
-          const SizedBox(height: 10),
-          AudiencePicker(
-            circles: _audienceCircles,
-            selectedCircleId: _selectedCircleId,
-            onChanged: (circleId) {
-              setState(() {
-                _selectedCircleId = circleId;
-              });
-            },
-            isLoading: _isLoadingCircles,
-            isUnavailable: _circlesUnavailable,
-            onRetry: _loadAudienceCircles,
-          ),
-          const SizedBox(height: 16),
-          SegmentedButton<TreeContentScopeType>(
-            segments: [
-              ButtonSegment<TreeContentScopeType>(
-                value: TreeContentScopeType.wholeTree,
-                icon: const Icon(Icons.account_tree_outlined),
-                label: Text(_isFriendsTree ? 'Весь круг' : 'Всё дерево'),
-              ),
-              ButtonSegment<TreeContentScopeType>(
-                value: TreeContentScopeType.branches,
-                icon: const Icon(Icons.alt_route),
-                label: Text(
-                    _isFriendsTree ? 'Отдельные круги' : 'Отдельные ветки'),
-              ),
-            ],
-            selected: <TreeContentScopeType>{_scopeType},
-            onSelectionChanged: (selection) {
-              final nextScope = selection.first;
-              setState(() {
-                _scopeType = nextScope;
-                if (nextScope == TreeContentScopeType.wholeTree) {
-                  _selectedBranchPersonIds.clear();
-                }
-              });
-            },
-          ),
-          const SizedBox(height: 12),
-          SwitchListTile.adaptive(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('Видно всем'),
-            value: _isPublic,
-            onChanged: (value) {
-              setState(() {
-                _isPublic = value;
-              });
-            },
-          ),
-          if (_scopeType == TreeContentScopeType.branches) ...[
-            const SizedBox(height: 8),
-            Text(
-              _selectedBranchPersonIds.isEmpty
-                  ? (_isFriendsTree ? 'Выберите круги' : 'Выберите ветки')
-                  : '${_selectedBranchPersonIds.length} выбрано',
-              style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
-            ),
-            const SizedBox(height: 10),
-            if (_isLoadingPeople)
-              _buildScopeState(
-                icon: Icons.sync,
-                title: 'Подбираем ветки',
-                message:
-                    'Проверяем, какие люди и ветки доступны для выборочной публикации.',
-                showProgress: true,
-              )
-            else if (_branchCandidatesUnavailable)
-              _buildScopeState(
-                icon: _appStatusService.isOffline
-                    ? Icons.cloud_off_outlined
-                    : Icons.error_outline,
-                title: _appStatusService.isOffline
-                    ? 'Нет соединения'
-                    : 'Ветки сейчас недоступны',
-                message: _appStatusService.isOffline
-                    ? 'Список веток вернётся, как только интернет снова появится.'
-                    : 'Не удалось обновить список веток. Попробуйте ещё раз.',
-                actions: [
-                  OutlinedButton.icon(
-                    onPressed: _loadBranchCandidates,
-                    icon: const Icon(Icons.refresh),
-                    label: const Text('Повторить'),
-                  ),
-                ],
-              )
-            else if (_availablePeople.isEmpty)
-              _buildScopeState(
-                icon: Icons.alt_route,
-                title: _isFriendsTree ? 'Кругов пока нет' : 'Веток пока нет',
-                message: _isFriendsTree
-                    ? 'Сначала соберите людей в круге, затем можно будет сузить видимость поста.'
-                    : 'Сначала добавьте людей и связи в дерево, затем публикацию можно будет адресовать отдельной ветке.',
-              )
-            else
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: _availablePeople.map((person) {
-                  final isSelected =
-                      _selectedBranchPersonIds.contains(person.id);
-                  return FilterChip(
-                    label: Text(person.name),
-                    selected: isSelected,
-                    onSelected: (selected) {
-                      setState(() {
-                        if (selected) {
-                          _selectedBranchPersonIds.add(person.id);
-                        } else {
-                          _selectedBranchPersonIds.remove(person.id);
-                        }
-                      });
-                    },
-                  );
-                }).toList(),
-              ),
-          ],
-        ],
       ),
     );
   }

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/circle.dart';
+import '../theme/app_theme.dart';
 
 class AudiencePicker extends StatelessWidget {
   const AudiencePicker({
@@ -10,6 +11,7 @@ class AudiencePicker extends StatelessWidget {
     required this.onChanged,
     this.isLoading = false,
     this.isUnavailable = false,
+    this.isFriendsTree = false,
     this.onRetry,
   });
 
@@ -18,46 +20,52 @@ class AudiencePicker extends StatelessWidget {
   final ValueChanged<String?> onChanged;
   final bool isLoading;
   final bool isUnavailable;
+  final bool isFriendsTree;
   final VoidCallback? onRetry;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
     final selectedValue = _resolveSelectedValue();
     final hasChoices = circles.isNotEmpty;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        InputDecorator(
-          decoration: InputDecoration(
-            labelText: 'Кому видно',
-            prefixIcon: Icon(
-              Icons.group_work_outlined,
-              color: theme.colorScheme.primary,
-            ),
+        DecoratedBox(
+          decoration: BoxDecoration(
+            color: tokens.surface.withValues(alpha: 0.88),
+            borderRadius: BorderRadius.circular(tokens.radiusMd),
+            border: Border.all(color: tokens.surfaceLine),
           ),
-          child: DropdownButtonHideUnderline(
-            child: DropdownButton<String>(
-              value: selectedValue,
-              isExpanded: true,
-              items: hasChoices
-                  ? circles
-                      .map(
-                        (circle) => DropdownMenuItem<String>(
-                          value: circle.id,
-                          child: _AudienceOption(circle: circle),
-                        ),
-                      )
-                      .toList(growable: false)
-                  : const [
-                      DropdownMenuItem<String>(
-                        value: '',
-                        child: Text('Всё дерево'),
+          child: Column(
+            children: hasChoices
+                ? [
+                    for (var index = 0; index < circles.length; index++) ...[
+                      _AudienceOptionTile(
+                        circle: circles[index],
+                        selected: circles[index].id == selectedValue,
+                        enabled: !isLoading,
+                        onTap: () => onChanged(circles[index].id),
                       ),
+                      if (index != circles.length - 1)
+                        Divider(
+                          height: 1,
+                          indent: 58,
+                          color: tokens.surfaceLine,
+                        ),
                     ],
-              onChanged: isLoading || !hasChoices ? null : onChanged,
-            ),
+                  ]
+                : [
+                    _FallbackAudienceTile(
+                      isFriendsTree: isFriendsTree,
+                      selected: selectedValue == '',
+                    ),
+                  ],
           ),
         ),
         if (isLoading || isUnavailable) ...[
@@ -118,21 +126,141 @@ class AudiencePicker extends StatelessWidget {
   }
 }
 
-class _AudienceOption extends StatelessWidget {
-  const _AudienceOption({required this.circle});
+class _AudienceOptionTile extends StatelessWidget {
+  const _AudienceOptionTile({
+    required this.circle,
+    required this.selected,
+    required this.enabled,
+    required this.onTap,
+  });
 
   final FamilyCircle circle;
+  final bool selected;
+  final bool enabled;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final memberLabel = _memberLabel(circle.memberCount);
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+    final accent = _accentFor(circle, tokens);
+    final subtitle = _subtitleFor(circle);
 
-    return Text(
-      '${circle.name} · $memberLabel',
-      overflow: TextOverflow.ellipsis,
-      style: theme.textTheme.bodyMedium,
+    return Material(
+      color: selected ? accent.withValues(alpha: 0.08) : Colors.transparent,
+      child: InkWell(
+        onTap: enabled ? onTap : null,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: Row(
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: accent.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(tokens.radiusSm),
+                ),
+                child: Icon(_iconFor(circle), size: 20, color: accent),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      circle.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodyLarge?.copyWith(
+                        color: tokens.ink,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: tokens.inkSecondary,
+                        height: 1.25,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 140),
+                width: 24,
+                height: 24,
+                decoration: BoxDecoration(
+                  color: selected ? accent : Colors.transparent,
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(
+                    color: selected ? accent : tokens.surfaceLine,
+                  ),
+                ),
+                child: selected
+                    ? Icon(Icons.check, size: 15, color: tokens.accentInk)
+                    : null,
+              ),
+            ],
+          ),
+        ),
+      ),
     );
+  }
+
+  IconData _iconFor(FamilyCircle circle) {
+    switch (circle.kind) {
+      case FamilyCircleKind.allTree:
+        return Icons.account_tree_outlined;
+      case FamilyCircleKind.favorites:
+        return Icons.favorite_border;
+      case FamilyCircleKind.descendantsOf:
+      case FamilyCircleKind.ancestorsOf:
+        return Icons.alt_route_outlined;
+      case FamilyCircleKind.pair:
+        return Icons.people_outline;
+      case FamilyCircleKind.custom:
+        return Icons.group_work_outlined;
+    }
+  }
+
+  Color _accentFor(FamilyCircle circle, RodnyaDesignTokens tokens) {
+    switch (circle.kind) {
+      case FamilyCircleKind.favorites:
+        return tokens.warm;
+      case FamilyCircleKind.descendantsOf:
+      case FamilyCircleKind.ancestorsOf:
+      case FamilyCircleKind.pair:
+        return tokens.accentStrong;
+      case FamilyCircleKind.allTree:
+      case FamilyCircleKind.custom:
+        return tokens.accent;
+    }
+  }
+
+  String _subtitleFor(FamilyCircle circle) {
+    final parts = <String>[
+      _memberLabel(circle.memberCount),
+      if ((circle.description ?? '').trim().isNotEmpty)
+        circle.description!.trim()
+      else if (circle.isAllTree)
+        'все участники выбранного дерева'
+      else if (circle.isFavorites)
+        'самые близкие родственники'
+      else if (circle.isAuto)
+        'автоматический круг по ветке'
+      else if (circle.isSystem)
+        'системный круг',
+    ];
+    return parts.join(' · ');
   }
 
   String _memberLabel(int count) {
@@ -144,5 +272,73 @@ class _AudienceOption extends StatelessWidget {
             ? 'человека'
             : 'человек';
     return '$count $suffix';
+  }
+}
+
+class _FallbackAudienceTile extends StatelessWidget {
+  const _FallbackAudienceTile({
+    required this.isFriendsTree,
+    required this.selected,
+  });
+
+  final bool isFriendsTree;
+  final bool selected;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      child: Row(
+        children: [
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: tokens.accentSoft,
+              borderRadius: BorderRadius.circular(tokens.radiusSm),
+            ),
+            child: Icon(
+              isFriendsTree
+                  ? Icons.diversity_3_outlined
+                  : Icons.account_tree_outlined,
+              size: 20,
+              color: tokens.accent,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  isFriendsTree ? 'Весь круг' : 'Всё дерево',
+                  style: theme.textTheme.bodyLarge?.copyWith(
+                    color: tokens.ink,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Круги пока недоступны, публикация останется внутри выбранного контекста.',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: tokens.inkSecondary,
+                    height: 1.25,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (selected) ...[
+            const SizedBox(width: 10),
+            Icon(Icons.check_circle, color: tokens.accent),
+          ],
+        ],
+      ),
+    );
   }
 }
