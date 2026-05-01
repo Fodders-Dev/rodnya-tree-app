@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart'; // Импортируем Provider
 import 'package:share_plus/share_plus.dart';
+import '../theme/app_theme.dart';
 import '../models/family_person.dart';
 import '../models/family_tree.dart';
 import '../models/person_dossier.dart';
@@ -154,16 +155,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
   String _graphSelectionHint(BuildContext context) => _isFriendsTree(context)
       ? 'Сначала выберите активный круг друзей на вкладке "Дерево" или "Родные"'
       : 'Сначала выберите активное дерево на вкладке "Дерево" или "Родные"';
-
-  String get _appBarTitle {
-    final profile = _userProfile;
-    if (profile == null) {
-      return 'Профиль';
-    }
-
-    final displayName = _getSafeDisplayName(profile).trim();
-    return displayName.isEmpty ? 'Профиль' : displayName;
-  }
 
   @override
   void initState() {
@@ -615,52 +606,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
 
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+
     return Scaffold(
       backgroundColor: Colors.transparent,
-      appBar: AppBar(
-        title: Text(_appBarTitle),
-        backgroundColor: Colors.transparent,
-        surfaceTintColor: Colors.transparent,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () {
-            if (context.canPop()) {
-              context.pop();
-            } else {
-              context.go('/');
-            }
-          },
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.edit_outlined),
-            tooltip: 'Редактировать профиль',
-            onPressed: () async {
-              await context.push('/profile/edit');
-              if (mounted) unawaited(_loadUserData());
-            },
-          ),
-          PopupMenuButton<String>(
-            onSelected: (value) {
-              switch (value) {
-                case 'settings':
-                  context.push('/profile/settings');
-                  break;
-                case 'about':
-                  context.push('/profile/about');
-                  break;
-                case 'logout':
-                  _signOut();
-                  break;
-              }
-            },
-            itemBuilder: (_) => [
-              const PopupMenuItem(value: 'settings', child: Text('Настройки')),
-              const PopupMenuItem(value: 'about', child: Text('О приложении')),
-              const PopupMenuItem(value: 'logout', child: Text('Выйти')),
-            ],
-          ),
-        ],
+      appBar: PreferredSize(
+        preferredSize: const Size.fromHeight(56),
+        child: _buildProfileTopbar(theme: theme, tokens: tokens),
       ),
       body: _isLoading
           ? _buildProfileStateCard(
@@ -989,6 +944,142 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         ],
                       ),
                     ),
+    );
+  }
+
+  Widget _buildProfileTopbar({
+    required ThemeData theme,
+    required RodnyaDesignTokens tokens,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        color: tokens.surface.withValues(
+          alpha: theme.brightness == Brightness.dark ? 0.62 : 0.66,
+        ),
+        border: Border(
+          bottom: BorderSide(color: tokens.surfaceLine, width: 0.7),
+        ),
+      ),
+      padding: const EdgeInsets.fromLTRB(8, 0, 12, 0),
+      child: SafeArea(
+        bottom: false,
+        child: Row(
+          children: [
+            if (Navigator.of(context).canPop())
+              IconButton(
+                icon: Icon(Icons.arrow_back_rounded, color: tokens.ink),
+                tooltip: 'Назад',
+                onPressed: () {
+                  if (context.canPop()) {
+                    context.pop();
+                  } else {
+                    context.go('/');
+                  }
+                },
+              )
+            else
+              const SizedBox(width: 14),
+            Text(
+              'Профиль',
+              style: AppTheme.serif(
+                color: tokens.ink,
+                fontSize: 22,
+                fontWeight: FontWeight.w600,
+                letterSpacing: -0.22,
+              ),
+            ),
+            const Spacer(),
+            _ProfileTopbarPill(
+              tokens: tokens,
+              tooltip: 'Редактировать',
+              onTap: () async {
+                await context.push('/profile/edit');
+                if (mounted) unawaited(_loadUserData());
+              },
+              child: Icon(
+                Icons.edit_outlined,
+                size: 18,
+                color: tokens.ink,
+              ),
+            ),
+            const SizedBox(width: 8),
+            PopupMenuButton<String>(
+              tooltip: 'Меню',
+              onSelected: (value) {
+                switch (value) {
+                  case 'settings':
+                    context.push('/profile/settings');
+                    break;
+                  case 'about':
+                    context.push('/profile/about');
+                    break;
+                  case 'logout':
+                    _signOut();
+                    break;
+                }
+              },
+              itemBuilder: (_) => [
+                const PopupMenuItem(
+                    value: 'settings', child: Text('Настройки')),
+                const PopupMenuItem(
+                    value: 'about', child: Text('О приложении')),
+                const PopupMenuItem(value: 'logout', child: Text('Выйти')),
+              ],
+              child: Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: tokens.surfaceStrong,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: tokens.surfaceLine),
+                ),
+                child: Icon(
+                  Icons.settings_outlined,
+                  size: 19,
+                  color: tokens.ink,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ProfileTopbarPill extends StatelessWidget {
+  const _ProfileTopbarPill({
+    required this.tokens,
+    required this.child,
+    required this.tooltip,
+    required this.onTap,
+  });
+
+  final RodnyaDesignTokens tokens;
+  final Widget child;
+  final String tooltip;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: tokens.surfaceStrong,
+        shape: RoundedRectangleBorder(
+          side: BorderSide(color: tokens.surfaceLine),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(14),
+          child: SizedBox(
+            width: 38,
+            height: 38,
+            child: Center(child: child),
+          ),
+        ),
+      ),
     );
   }
 }

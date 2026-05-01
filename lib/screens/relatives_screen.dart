@@ -6,6 +6,7 @@ import 'package:get_it/get_it.dart';
 import 'package:intl/intl.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../theme/app_theme.dart';
 import '../models/family_tree.dart';
 import '../models/family_person.dart';
 import '../models/family_relation.dart';
@@ -348,10 +349,19 @@ class _RelativesScreenState extends State<RelativesScreen> {
         visibleRelatives.where((person) => _canInviteRelative(person)).length;
     // -------------------------
 
+    final theme = Theme.of(context);
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+
     return Scaffold(
-      appBar: AppBar(
-        title: Text(selectedTreeName),
-        actions: _buildRelativesAppBarActions(
+      backgroundColor: Colors.transparent,
+      appBar: PreferredSize(
+        preferredSize: const Size.fromHeight(56),
+        child: _buildRelativesTopbar(
+          theme: theme,
+          tokens: tokens,
           treeProvider: treeProvider,
           selectedTreeId: selectedTreeId,
           isFriendsTree: isFriendsTree,
@@ -1397,5 +1407,47 @@ class _RelativesScreenState extends State<RelativesScreen> {
     if (completer != null && !completer.isCompleted) {
       completer.completeError(error, stackTrace);
     }
+  }
+
+  Widget _buildRelativesTopbar({
+    required ThemeData theme,
+    required RodnyaDesignTokens tokens,
+    required TreeProvider treeProvider,
+    required String? selectedTreeId,
+    required bool isFriendsTree,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        color: tokens.surface.withValues(
+          alpha: theme.brightness == Brightness.dark ? 0.62 : 0.66,
+        ),
+        border: Border(
+          bottom: BorderSide(color: tokens.surfaceLine, width: 0.7),
+        ),
+      ),
+      padding: const EdgeInsets.fromLTRB(18, 0, 12, 0),
+      child: SafeArea(
+        bottom: false,
+        child: Row(
+          children: [
+            Text(
+              isFriendsTree ? 'Круг' : 'Родные',
+              style: AppTheme.serif(
+                color: tokens.ink,
+                fontSize: 22,
+                fontWeight: FontWeight.w600,
+                letterSpacing: -0.22,
+              ),
+            ),
+            const Spacer(),
+            ..._buildRelativesAppBarActions(
+              treeProvider: treeProvider,
+              selectedTreeId: selectedTreeId,
+              isFriendsTree: isFriendsTree,
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
