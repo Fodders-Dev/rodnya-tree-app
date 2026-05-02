@@ -2478,6 +2478,26 @@ class _TreeLayoutEngine {
       }
     }
 
+    // Derive implicit couples from shared children: any two adults who
+    // share at least one biological child should be treated as a couple
+    // for layout purposes, even when no explicit spouse/partner relation
+    // exists. Without this, a mother and a father that the user added
+    // independently (only as "parent of me") end up on different rows.
+    final impliedCouples = <String, Set<String>>{};
+    for (final entry in parentToChildren.entries) {
+      final parentA = entry.key;
+      if (!component.contains(parentA)) continue;
+      final children = entry.value.where(component.contains).toList();
+      for (final childId in children) {
+        for (final parentB in childToParents[childId] ?? const <String>{}) {
+          if (parentB == parentA || !component.contains(parentB)) continue;
+          impliedCouples
+              .putIfAbsent(parentA, () => <String>{})
+              .add(parentB);
+        }
+      }
+    }
+
     // Final spouse-parity pass — runs even when there's no snapshot. The
     // earlier loops can leave a spouse pair on different rows when one
     // partner has parents in-tree and the other doesn't, or when adding a
@@ -2496,10 +2516,14 @@ class _TreeLayoutEngine {
       safetyIterations += 1;
 
       // Spouses ↔ shared row. Anchored by their kids' row when possible.
+      // Use both explicit spouse/partner relations AND implicit "shared-
+      // child" pairings so a mother and father that the user added
+      // independently still end up on the same row.
       for (final personId in component) {
-        final spouseIds = (spousesByPerson[personId] ?? const <String>{})
-            .where(component.contains)
-            .toList(growable: false);
+        final spouseIds = <String>{
+          ...(spousesByPerson[personId] ?? const <String>{}),
+          ...(impliedCouples[personId] ?? const <String>{}),
+        }.where(component.contains).toList(growable: false);
         if (spouseIds.isEmpty) continue;
 
         final pair = <String>{personId, ...spouseIds};
