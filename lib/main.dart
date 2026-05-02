@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show FontLoader, rootBundle;
 import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'theme/app_theme.dart';
 import 'package:provider/provider.dart';
@@ -34,7 +35,34 @@ Object? _e2eSemanticsHandle;
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // Preload bundled Manrope + Lora before first paint so headlines pick the
+  // serif/sans treatment immediately, instead of flashing the system fallback
+  // for one frame while Flutter lazily fetches the .ttf assets.
+  await _preloadBrandFonts();
+
   await _bootstrapAndRunApp();
+}
+
+Future<void> _preloadBrandFonts() async {
+  Future<void> loadOne(String family, List<String> assetPaths) async {
+    final loader = FontLoader(family);
+    for (final path in assetPaths) {
+      loader.addFont(rootBundle.load(path));
+    }
+    try {
+      await loader.load();
+    } catch (error) {
+      debugPrint('Font preload failed for $family: $error');
+    }
+  }
+
+  await Future.wait([
+    loadOne('Manrope', const ['assets/fonts/Manrope-VariableFont_wght.ttf']),
+    loadOne('Lora', const [
+      'assets/fonts/Lora-VariableFont_wght.ttf',
+      'assets/fonts/Lora-Italic-VariableFont_wght.ttf',
+    ]),
+  ]);
 }
 
 Future<void> _bootstrapAndRunApp() async {

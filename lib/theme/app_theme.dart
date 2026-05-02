@@ -215,20 +215,41 @@ class AppTheme {
   static const Color warmText = Color(0xFF293327);
   static const Color warmMuted = Color(0xFF66715F);
   static const Color warm = Color(0xFFD7A33A);
-  static const List<String> _fontFallback = <String>[
+  // Sans fallback chain — Manrope first, then OS UI fonts, then symbol/emoji
+  // catch-alls so the Noto-fallback warning Flutter web emits when Manrope
+  // does not cover a glyph stops triggering for ASCII punctuation and
+  // common Cyrillic ranges.
+  static const List<String> _sansFallback = <String>[
+    'Manrope',
     'Segoe UI Variable Text',
     'Segoe UI',
+    'system-ui',
+    'Roboto',
+    'Helvetica Neue',
+    'Arial',
+    'Arial Unicode MS',
     'Noto Sans',
     'Noto Sans Symbols 2',
     'Noto Sans Symbols',
-    'Roboto',
-    'Arial',
-    'Arial Unicode MS',
     'Noto Emoji',
     'Segoe UI Emoji',
     'Apple Color Emoji',
     'Noto Color Emoji',
   ];
+
+  // Serif fallback chain — Lora first, then platform serif fonts so headlines
+  // render as a serif on every browser even if the variable font fails to
+  // load (network/SW edge cases).
+  static const List<String> _serifFallback = <String>[
+    'Lora',
+    'Georgia',
+    'Cambria',
+    'Times New Roman',
+    'Noto Serif',
+    'serif',
+  ];
+
+  static const List<String> _fontFallback = _sansFallback;
 
   static TextStyle serif({
     Color? color,
@@ -239,6 +260,7 @@ class AppTheme {
   }) {
     return TextStyle(
       fontFamily: 'Lora',
+      fontFamilyFallback: _serifFallback,
       color: color,
       fontSize: fontSize,
       fontWeight: fontWeight,
@@ -256,6 +278,7 @@ class AppTheme {
   }) {
     return TextStyle(
       fontFamily: 'Manrope',
+      fontFamilyFallback: _sansFallback,
       color: color,
       fontSize: fontSize,
       fontWeight: fontWeight,
