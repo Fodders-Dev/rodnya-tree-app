@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../models/person_dossier.dart';
+import '../theme/app_theme.dart';
 import 'glass_panel.dart';
 
 // Icon mapping for each dossier section.
@@ -221,74 +222,127 @@ class _HeroCard extends StatelessWidget {
         final compact = constraints.maxWidth < 520;
 
         if (compact) {
+          final tokens = theme.extension<RodnyaDesignTokens>() ??
+              (isDark ? RodnyaDesignTokens.dark : RodnyaDesignTokens.light);
           final controls = <Widget>[...allChips, ...actionButtons];
-          return GlassPanel(
-            padding: const EdgeInsets.all(12),
-            borderRadius: BorderRadius.circular(22),
+          return Container(
+            decoration: BoxDecoration(
+              color: tokens.surfaceStrong,
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(color: tokens.surfaceLine),
+              boxShadow: tokens.panelShadow(theme.brightness),
+            ),
+            clipBehavior: Clip.antiAlias,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Row(
-                  children: [
-                    _GradientAvatarRing(
-                      photoUrl: dossier.photoUrl,
-                      displayName: dossier.displayName,
-                      radius: 30,
-                      ringColor: ringColor,
+                // Cover gradient banner
+                Container(
+                  height: 96,
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        tokens.accent,
+                        tokens.warm,
+                      ],
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            dossier.displayName,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.titleMedium?.copyWith(
-                              fontWeight: FontWeight.w800,
+                  ),
+                ),
+                // Avatar overlapping + content
+                Transform.translate(
+                  offset: const Offset(0, -34),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(4),
+                              decoration: BoxDecoration(
+                                color: tokens.surfaceStrong,
+                                shape: BoxShape.circle,
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withValues(
+                                      alpha: 0.18,
+                                    ),
+                                    blurRadius: 22,
+                                    spreadRadius: -10,
+                                    offset: const Offset(0, 8),
+                                  ),
+                                ],
+                              ),
+                              child: _GradientAvatarRing(
+                                photoUrl: dossier.photoUrl,
+                                displayName: dossier.displayName,
+                                radius: 36,
+                                ringColor: ringColor,
+                              ),
                             ),
-                          ),
-                          if (location.isNotEmpty) ...[
-                            const SizedBox(height: 4),
-                            Row(
+                            const Spacer(),
+                            // Edit chip placeholder rendered by actionButtons below
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        if (location.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 4),
+                            child: Row(
                               children: [
                                 Icon(
                                   Icons.location_on_rounded,
-                                  size: 15,
-                                  color: scheme.onSurfaceVariant,
+                                  size: 13,
+                                  color: tokens.inkMuted,
                                 ),
                                 const SizedBox(width: 4),
-                                Expanded(
+                                Flexible(
                                   child: Text(
                                     location,
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
-                                    style: theme.textTheme.bodySmall?.copyWith(
-                                      color: scheme.onSurfaceVariant,
+                                    style: AppTheme.sans(
+                                      color: tokens.inkMuted,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
                                     ),
                                   ),
                                 ),
                               ],
                             ),
-                          ],
+                          ),
+                        Text(
+                          dossier.displayName,
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                          style: AppTheme.serif(
+                            color: tokens.ink,
+                            fontSize: 22,
+                            fontWeight: FontWeight.w600,
+                            letterSpacing: -0.22,
+                            height: 1.2,
+                          ),
+                        ),
+                        if (statsRow != null) ...[
+                          const SizedBox(height: 16),
+                          statsRow!,
                         ],
-                      ),
+                        if (controls.isNotEmpty) ...[
+                          const SizedBox(height: 12),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: controls,
+                          ),
+                        ],
+                      ],
                     ),
-                  ],
-                ),
-                if (statsRow != null) ...[
-                  const SizedBox(height: 10),
-                  statsRow!,
-                ],
-                if (controls.isNotEmpty) ...[
-                  const SizedBox(height: 10),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: controls,
                   ),
-                ],
+                ),
               ],
             ),
           );

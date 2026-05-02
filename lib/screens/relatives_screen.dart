@@ -756,41 +756,115 @@ class _RelativesScreenState extends State<RelativesScreen> {
     required bool isFriendsTree,
     required int relativesCount,
   }) {
-    final peopleLabel = isFriendsTree
-        ? _countLabel(
-            relativesCount,
-            one: 'человек',
-            few: 'человека',
-            many: 'человек',
-          )
-        : _countLabel(
-            relativesCount,
-            one: 'родственник',
-            few: 'родственника',
-            many: 'родственников',
-          );
-    // Compact strip: tree pill + count chip + tree button — no verbose heading.
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        crossAxisAlignment: WrapCrossAlignment.center,
+    final theme = Theme.of(context);
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+    final inAppCount = _allRelatives.where((p) {
+      final id = p.userId;
+      return id != null && id.isNotEmpty;
+    }).length;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: tokens.surfaceStrong,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: tokens.surfaceLine),
+        boxShadow: tokens.panelShadow(theme.brightness),
+      ),
+      padding: const EdgeInsets.all(14),
+      child: Row(
         children: [
-          _buildSideStatChip(
-            icon: isFriendsTree
-                ? Icons.diversity_3_outlined
-                : Icons.account_tree_outlined,
-            label: treeName,
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: tokens.accentSoft,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Icon(
+              isFriendsTree
+                  ? Icons.diversity_3_outlined
+                  : Icons.account_tree_outlined,
+              color: tokens.accent,
+              size: 22,
+            ),
           ),
-          _buildSideStatChip(
-            icon: Icons.people_outline,
-            label: peopleLabel,
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  isFriendsTree ? 'АКТИВНЫЙ КРУГ' : 'АКТИВНОЕ ДЕРЕВО',
+                  style: AppTheme.sans(
+                    color: tokens.inkMuted,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.6,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  treeName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTheme.serif(
+                    color: tokens.ink,
+                    fontSize: 17,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: -0.18,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '$inAppCount из $relativesCount в приложении',
+                  style: AppTheme.sans(
+                    color: tokens.inkMuted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
           ),
-          FilledButton.tonalIcon(
-            onPressed: () => context.go('/tree'),
-            icon: const Icon(Icons.arrow_forward, size: 18),
-            label: const Text('Дерево'),
+          const SizedBox(width: 10),
+          Material(
+            color: tokens.accent,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: InkWell(
+              onTap: () => context.go('/tree'),
+              borderRadius: BorderRadius.circular(999),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 9,
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Дерево',
+                      style: AppTheme.sans(
+                        color: tokens.accentInk,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Icon(
+                      Icons.chevron_right_rounded,
+                      size: 16,
+                      color: tokens.accentInk,
+                    ),
+                  ],
+                ),
+              ),
+            ),
           ),
         ],
       ),
@@ -1418,8 +1492,8 @@ class _RelativesScreenState extends State<RelativesScreen> {
   }) {
     return Container(
       decoration: BoxDecoration(
-        color: tokens.surface.withValues(
-          alpha: theme.brightness == Brightness.dark ? 0.62 : 0.66,
+        color: tokens.surfaceStrong.withValues(
+          alpha: theme.brightness == Brightness.dark ? 0.86 : 0.90,
         ),
         border: Border(
           bottom: BorderSide(color: tokens.surfaceLine, width: 0.7),

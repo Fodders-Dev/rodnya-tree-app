@@ -504,8 +504,8 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
   }) {
     return Container(
       decoration: BoxDecoration(
-        color: tokens.surface.withValues(
-          alpha: theme.brightness == Brightness.dark ? 0.62 : 0.66,
+        color: tokens.surfaceStrong.withValues(
+          alpha: theme.brightness == Brightness.dark ? 0.86 : 0.90,
         ),
         border: Border(
           bottom: BorderSide(color: tokens.surfaceLine, width: 0.7),

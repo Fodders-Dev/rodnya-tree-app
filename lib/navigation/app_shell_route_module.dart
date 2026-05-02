@@ -524,10 +524,10 @@ class AdaptiveNavigationRail extends StatelessWidget {
                     vertical: 18,
                   ),
                   decoration: BoxDecoration(
-                    color: tokens.surface.withValues(
+                    color: tokens.surfaceStrong.withValues(
                       alpha: kIsWeb
-                          ? (isDark ? 0.90 : 0.94)
-                          : (isDark ? 0.58 : 0.64),
+                          ? (isDark ? 0.92 : 0.96)
+                          : (isDark ? 0.78 : 0.82),
                     ),
                     borderRadius: railRadius,
                     border: Border.all(color: tokens.surfaceLine),
