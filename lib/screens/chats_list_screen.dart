@@ -1169,17 +1169,30 @@ class _ChatsListScreenState extends State<ChatsListScreen>
     return ListView.builder(
       padding: const EdgeInsets.fromLTRB(10, 2, 10, 12),
       itemCount: totalCount,
+      // Each tile gets its own RepaintBoundary so repaints triggered by
+      // unread-count animation, timestamp ticking, or selection state on
+      // one row don't drag siblings into the GPU pass with them. Chat
+      // lists can have realtime presence dots updating frequently — this
+      // costs ~1 layer per tile but eliminates O(N) repaints.
       itemBuilder: (context, index) {
         if (showArchiveSummary && index == 0) {
-          return KeyedSubtree(
-            key: const ValueKey<String>('chats-archive-summary'),
-            child: _buildArchiveSummaryCard(theme),
+          return RepaintBoundary(
+            child: KeyedSubtree(
+              key: const ValueKey<String>('chats-archive-summary'),
+              child: _buildArchiveSummaryCard(theme),
+            ),
           );
         }
 
         final chatIndex = index - (showArchiveSummary ? 1 : 0);
         if (chatIndex < filteredChats.length) {
-          return _buildChatTile(theme, filteredChats[chatIndex], currentUserId);
+          return RepaintBoundary(
+            child: _buildChatTile(
+              theme,
+              filteredChats[chatIndex],
+              currentUserId,
+            ),
+          );
         }
 
         if (showRelatives) {

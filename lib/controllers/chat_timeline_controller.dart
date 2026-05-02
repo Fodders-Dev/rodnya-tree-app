@@ -19,6 +19,13 @@ class ChatTimelineController extends ChangeNotifier
 
   StreamSubscription<List<ChatMessage>>? _messagesSubscription;
   bool _started = false;
+  /// Snapshot of the most recently emitted message list. Exposed as
+  /// `lastValue` so StreamBuilder can use it as `initialData` and skip the
+  /// flash-of-empty when the chat screen rebuilds (route hop, hot reload,
+  /// app resume) — the cached snapshot from `getMessagesStream` shows
+  /// instantly while the stream wires up.
+  List<ChatMessage>? _lastValue;
+  List<ChatMessage>? get lastValue => _lastValue;
 
   Stream<List<ChatMessage>> get stream => _streamController.stream;
 
@@ -31,6 +38,7 @@ class ChatTimelineController extends ChangeNotifier
     WidgetsBinding.instance.addObserver(this);
     _messagesSubscription = _chatService.getMessagesStream(chatId).listen(
       (messages) {
+        _lastValue = messages;
         if (!_streamController.isClosed) {
           _streamController.add(messages);
         }

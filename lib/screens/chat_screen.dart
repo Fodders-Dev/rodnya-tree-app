@@ -3174,6 +3174,11 @@ class _ChatScreenState extends State<ChatScreen> {
 
     return StreamBuilder<List<ChatMessage>>(
       stream: timelineController.stream,
+      // Hand StreamBuilder the controller's cached snapshot so the screen
+      // doesn't flash a spinner on rebuilds (route swap, hot reload, app
+      // resume) — the underlying chat service already has the messages
+      // hydrated from Hive cache by the time we get here.
+      initialData: timelineController.lastValue,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting &&
             !snapshot.hasData) {
