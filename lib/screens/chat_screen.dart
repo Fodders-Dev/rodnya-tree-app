@@ -200,6 +200,11 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _typingHeartbeatActive = false;
   final Map<String, DateTime> _typingUsers = <String, DateTime>{};
   final Set<String> _onlineUserIds = <String>{};
+  /// Last-seen timestamps per peer userId. Populated from chat-details
+  /// participants on chat open and updated by realtime `presence.updated`
+  /// events when a peer goes offline. Drives the "был(а) N минут назад"
+  /// subtitle on direct chats.
+  final Map<String, DateTime> _peerLastSeenAt = <String, DateTime>{};
   static const double _recordingLockThreshold = 52;
   static const double _recordingCancelThreshold = 72;
 
@@ -914,6 +919,18 @@ class _ChatScreenState extends State<ChatScreen> {
         _chatDetails = details;
         _resolvedTitle = details.displayTitleFor(_currentUserId);
         _isLoadingChatDetails = false;
+        // Seed presence state from the chat details — gives the
+        // subtitle a correct "в сети / был N минут назад" on first
+        // paint without waiting for a realtime event.
+        for (final participant in details.participants) {
+          if (participant.userId == _currentUserId) continue;
+          if (participant.isOnline) {
+            _onlineUserIds.add(participant.userId);
+          }
+          if (participant.lastSeenAt != null) {
+            _peerLastSeenAt[participant.userId] = participant.lastSeenAt!;
+          }
+        }
       });
     } catch (_) {
       if (!mounted) {
@@ -2161,12 +2178,22 @@ class _ChatScreenState extends State<ChatScreen> {
       if (userId == null || userId.isEmpty) {
         return;
       }
+      // Backend sends lastSeenAt on the offline transition (== updatedAt
+      // for that broadcast). For online events lastSeenAt is null —
+      // because the user IS online, the timestamp would be misleading.
+      final lastSeenRaw = event.lastSeenAt ?? event.updatedAt;
+      final parsedLastSeen = lastSeenRaw == null
+          ? null
+          : DateTime.tryParse(lastSeenRaw);
       setState(() {
         if (event.isOnline == true) {
           _onlineUserIds.add(userId);
         } else {
           _onlineUserIds.remove(userId);
           _typingUsers.remove(userId);
+          if (parsedLastSeen != null) {
+            _peerLastSeenAt[userId] = parsedLastSeen;
+          }
         }
       });
       return;
@@ -2804,14 +2831,101 @@ class _ChatScreenState extends State<ChatScreen> {
     final onlineCount = otherParticipantIds
         .where((participantId) => _onlineUserIds.contains(participantId))
         .length;
-    if (onlineCount == 0) {
-      return null;
+
+    if (widget.isGroup) {
+      if (onlineCount == 0) {
+        return null;
+      }
+      return onlineCount == 1 ? '1 участник в сети' : '$onlineCount в сети';
     }
 
-    if (!widget.isGroup) {
+    // Direct chat — single peer presence drives the subtitle. Either
+    // "в сети" (live) or "был(а) N минут назад" derived from the
+    // last-seen timestamp populated by chat-details + presence events.
+    if (onlineCount > 0) {
       return 'в сети';
     }
-    return onlineCount == 1 ? '1 участник в сети' : '$onlineCount в сети';
+    final peerId =
+        otherParticipantIds.isNotEmpty ? otherParticipantIds.first : null;
+    if (peerId == null) {
+      return null;
+    }
+    final lastSeen = _peerLastSeenAt[peerId];
+    if (lastSeen == null) {
+      return null;
+    }
+    return _formatLastSeen(lastSeen, peerId: peerId, details: details);
+  }
+
+  /// "был(а) N минут назад" formatter. Prefers gendered Russian forms
+  /// when the participant has a known gender hint in the chat details
+  /// (currently we don't carry gender on ChatParticipantSummary, so we
+  /// default to feminine "была" if the display name ends with a vowel —
+  /// a reasonable heuristic for Russian first names).
+  String _formatLastSeen(
+    DateTime lastSeen, {
+    required String peerId,
+    required ChatDetails? details,
+  }) {
+    final delta = DateTime.now().difference(lastSeen);
+    final female = _looksFemaleName(_participantLabelForUserId(peerId));
+    final byl = female ? 'была' : 'был';
+
+    if (delta.inSeconds < 60) {
+      return '$byl только что';
+    }
+    if (delta.inMinutes < 60) {
+      final m = delta.inMinutes;
+      return '$byl $m ${_minutesSuffix(m)} назад';
+    }
+    if (delta.inHours < 24) {
+      final h = delta.inHours;
+      return '$byl $h ${_hoursSuffix(h)} назад';
+    }
+    if (delta.inDays < 7) {
+      final d = delta.inDays;
+      return '$byl $d ${_daysSuffix(d)} назад';
+    }
+    // Older than a week — fall back to a date string.
+    final date =
+        '${lastSeen.day.toString().padLeft(2, '0')}.${lastSeen.month.toString().padLeft(2, '0')}';
+    return '$byl $date';
+  }
+
+  bool _looksFemaleName(String displayName) {
+    final firstName = displayName.trim().split(RegExp(r'\s+')).first;
+    if (firstName.isEmpty) return false;
+    final last = firstName[firstName.length - 1].toLowerCase();
+    // Russian feminine first names overwhelmingly end in 'а' or 'я'.
+    return last == 'а' || last == 'я';
+  }
+
+  String _minutesSuffix(int n) {
+    final mod10 = n % 10;
+    final mod100 = n % 100;
+    if (mod10 == 1 && mod100 != 11) return 'минуту';
+    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) {
+      return 'минуты';
+    }
+    return 'минут';
+  }
+
+  String _hoursSuffix(int n) {
+    final mod10 = n % 10;
+    final mod100 = n % 100;
+    if (mod10 == 1 && mod100 != 11) return 'час';
+    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) {
+      return 'часа';
+    }
+    return 'часов';
+  }
+
+  String _daysSuffix(int n) {
+    final mod10 = n % 10;
+    final mod100 = n % 100;
+    if (mod10 == 1 && mod100 != 11) return 'день';
+    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return 'дня';
+    return 'дней';
   }
 
   List<String> _otherParticipantIds(ChatDetails? details) {

@@ -3,17 +3,44 @@ class ChatParticipantSummary {
     required this.userId,
     required this.displayName,
     this.photoUrl,
+    this.isOnline = false,
+    this.lastSeenAt,
   });
 
   final String userId;
   final String displayName;
   final String? photoUrl;
+  /// Live presence flag from the API/realtime channel. True when at least
+  /// one of the user's sessions has an active socket on the realtime hub.
+  final bool isOnline;
+  /// Last time the user was observed online — populated from
+  /// `users.lastSeenAt` (persisted on socket disconnect). Null if the
+  /// user has never connected since the field was added.
+  final DateTime? lastSeenAt;
 
   factory ChatParticipantSummary.fromMap(Map<String, dynamic> map) {
+    final lastSeenRaw = map['lastSeenAt']?.toString();
     return ChatParticipantSummary(
       userId: map['userId']?.toString() ?? '',
       displayName: map['displayName']?.toString() ?? 'Пользователь',
       photoUrl: map['photoUrl']?.toString(),
+      isOnline: map['isOnline'] == true,
+      lastSeenAt: lastSeenRaw == null || lastSeenRaw.isEmpty
+          ? null
+          : DateTime.tryParse(lastSeenRaw),
+    );
+  }
+
+  ChatParticipantSummary copyWith({
+    bool? isOnline,
+    DateTime? lastSeenAt,
+  }) {
+    return ChatParticipantSummary(
+      userId: userId,
+      displayName: displayName,
+      photoUrl: photoUrl,
+      isOnline: isOnline ?? this.isOnline,
+      lastSeenAt: lastSeenAt ?? this.lastSeenAt,
     );
   }
 }

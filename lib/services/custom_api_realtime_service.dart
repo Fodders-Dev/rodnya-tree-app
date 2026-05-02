@@ -64,6 +64,13 @@ class CustomApiRealtimeEvent {
   bool? get isOnline =>
       payload['isOnline'] is bool ? payload['isOnline'] as bool : null;
 
+  /// ISO8601 timestamp from `presence.updated` payloads. `lastSeenAt` is
+  /// what to render in subtitles for offline peers; `updatedAt` is the
+  /// broadcast moment (== lastSeenAt for offline transitions, "now" for
+  /// online ones).
+  String? get lastSeenAt => payload['lastSeenAt']?.toString();
+  String? get updatedAt => payload['updatedAt']?.toString();
+
   List<String> get onlineUserIds {
     final value = payload['onlineUserIds'];
     if (value is! List) {

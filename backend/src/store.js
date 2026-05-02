@@ -5415,6 +5415,32 @@ class FileStore {
     return cloneUserWithAuthState(user);
   }
 
+  /// Mark the user's last-seen timestamp. Called by the realtime hub when
+  /// the user's last socket disconnects, so clients can render "был(а) N
+  /// минут назад" in chat subtitles. Idempotent and resilient: errors
+  /// don't propagate (the broadcast itself is more important than the
+  /// timestamp persistence).
+  async markUserSeenAt(userId, {when} = {}) {
+    const normalizedUserId = String(userId || "").trim();
+    if (!normalizedUserId) {
+      return;
+    }
+    const timestamp =
+      when instanceof Date ? when.toISOString() : when || nowIso();
+    try {
+      const db = await this._read();
+      const user = db.users.find((entry) => entry.id === normalizedUserId);
+      if (!user) {
+        return;
+      }
+      user.lastSeenAt = timestamp;
+      this._rememberUser(user);
+      await this._write(db);
+    } catch (_) {
+      // Last-seen is a best-effort UX hint, not auth state.
+    }
+  }
+
   async findUserById(userId) {
     const normalizedUserId = String(userId || "").trim();
     if (!normalizedUserId) {
@@ -10010,6 +10036,12 @@ class FileStore {
             user.email ||
             "Пользователь",
           photoUrl: user.profile?.photoUrl || null,
+          // Last time the user was seen online. Updated on socket
+          // disconnect via markUserSeenAt() — used by clients to render
+          // "был(а) N минут назад" subtitles. Falls back to user updated/
+          // created timestamp when never online.
+          lastSeenAt:
+            user.lastSeenAt || user.updatedAt || user.createdAt || null,
         };
       })
       .filter(Boolean);

@@ -265,11 +265,28 @@ class RealtimeHub {
     const participantIds = await this._safeListRelatedChatParticipantIds(userId, {
       context: "broadcast_presence_update",
     });
+    const updatedAt = new Date().toISOString();
+    // For going-offline transitions, the broadcast timestamp is exactly
+    // the user's lastSeenAt. Persist it on the user record so chat-detail
+    // responses on cold opens render "был(а) N минут назад" without
+    // waiting for the realtime event. Best-effort — never blocks the
+    // broadcast itself.
+    if (!isOnline && typeof this.store?.markUserSeenAt === "function") {
+      try {
+        await this.store.markUserSeenAt(userId, {when: updatedAt});
+      } catch (_) {
+        /* swallow — UX hint, not source of truth */
+      }
+    }
     const payload = {
       type: "presence.updated",
       userId,
       isOnline,
-      updatedAt: new Date().toISOString(),
+      // Explicit lastSeenAt so the frontend doesn't have to assume
+      // `updatedAt === lastSeenAt`. Online events return null — the user
+      // is online, the timestamp would be misleading.
+      lastSeenAt: isOnline ? null : updatedAt,
+      updatedAt,
     };
 
     for (const participantId of participantIds) {

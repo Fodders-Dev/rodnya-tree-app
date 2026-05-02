@@ -1517,10 +1517,22 @@ function createApp({
   }
 
   function mapChatParticipant(participant) {
+    // `isOnline` reflects the live realtime-hub state at response time —
+    // any active socket for this user counts as online. `lastSeenAt`
+    // comes from the user record (persisted via markUserSeenAt on socket
+    // disconnect). Together they let the chat-screen subtitle render
+    // "в сети" / "была N минут назад" on first paint, without needing
+    // an extra realtime event before the data shows up.
+    const isOnline =
+      typeof realtimeHub?.isUserOnline === "function" && participant.userId
+        ? realtimeHub.isUserOnline(participant.userId)
+        : false;
     return {
       userId: participant.userId,
       displayName: participant.displayName || "Пользователь",
       photoUrl: normalizePublicUrl(participant.photoUrl || null),
+      isOnline,
+      lastSeenAt: participant.lastSeenAt || null,
     };
   }
 
