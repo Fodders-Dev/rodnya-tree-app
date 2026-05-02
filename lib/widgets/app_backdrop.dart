@@ -23,37 +23,45 @@ class AppBackdrop extends StatelessWidget {
           // honey at 90% 30%, sage at 50% 95%. Light theme uses these as
           // colour mixing — no separate ink-tinted SVG layer.
           DecoratedBox(decoration: BoxDecoration(color: tokens.bgBase)),
+          // Reference: radial(60% 50% at 18% 12%, warm, transparent 70%)
           DecoratedBox(
             decoration: BoxDecoration(
               gradient: RadialGradient(
                 center: const Alignment(-0.64, -0.76),
-                radius: 1.20,
+                radius: 0.85,
+                stops: const [0.0, 0.7],
                 colors: [
-                  tokens.bgTintWarm.withValues(alpha: isDark ? 0.46 : 0.92),
+                  tokens.bgTintWarm.withValues(alpha: isDark ? 0.42 : 0.78),
                   Colors.transparent,
                 ],
               ),
             ),
           ),
+          // Reference: radial(55% 50% at 90% 30%, honey, transparent 70%)
           DecoratedBox(
             decoration: BoxDecoration(
               gradient: RadialGradient(
                 center: const Alignment(0.80, -0.40),
-                radius: 1.10,
+                radius: 0.80,
+                stops: const [0.0, 0.7],
                 colors: [
-                  tokens.bgTintHoney.withValues(alpha: isDark ? 0.34 : 0.66),
+                  tokens.bgTintHoney.withValues(alpha: isDark ? 0.30 : 0.42),
                   Colors.transparent,
                 ],
               ),
             ),
           ),
+          // Reference: radial(70% 60% at 50% 95%, sage, transparent 75%)
+          // Pulled WAY down on the alpha because at desktop widths the sage
+          // bottom radial bleeds upward and reads as olive over the cream.
           DecoratedBox(
             decoration: BoxDecoration(
               gradient: RadialGradient(
-                center: const Alignment(0.0, 1.10),
-                radius: 1.40,
+                center: const Alignment(0.0, 1.20),
+                radius: 1.00,
+                stops: const [0.0, 0.75],
                 colors: [
-                  tokens.bgTintSage.withValues(alpha: isDark ? 0.34 : 0.22),
+                  tokens.bgTintSage.withValues(alpha: isDark ? 0.30 : 0.14),
                   Colors.transparent,
                 ],
               ),
