@@ -447,24 +447,22 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
         widget.routeTreeName ??
         'Семейное дерево';
 
+    final theme = Theme.of(context);
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+
     if (selectedTreeId == null) {
       return Scaffold(
         backgroundColor: Colors.transparent,
-        appBar: AppBar(
-          title: const Text('Семейное дерево'),
-          leading: context.canPop()
-              ? IconButton(
-                  icon: const Icon(Icons.arrow_back),
-                  onPressed: () => context.pop(),
-                )
-              : null,
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.account_tree_outlined),
-              tooltip: 'Выбрать дерево',
-              onPressed: () => context.go('/tree?selector=1'),
-            ),
-          ],
+        appBar: PreferredSize(
+          preferredSize: const Size.fromHeight(56),
+          child: _buildTreeTopbar(
+            theme: theme,
+            tokens: tokens,
+            selectedTreeId: null,
+          ),
         ),
         body: _buildTreeState(
           icon: Icons.account_tree_outlined,
@@ -483,35 +481,133 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
 
     return Scaffold(
       backgroundColor: Colors.transparent,
-      appBar: AppBar(
-        title: Text(selectedTreeName),
-        leading: context.canPop()
-            ? IconButton(
-                icon: const Icon(Icons.arrow_back),
-                onPressed: () => context.pop(),
-              )
-            : null,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.account_tree_outlined),
-            tooltip: 'Выбрать другое дерево',
-            onPressed: () => context.go('/tree?selector=1'),
-          ),
-          IconButton(
-            icon: const Icon(Icons.person_add_alt_1_outlined),
-            tooltip: _isFriendsTree ? 'Добавить в круг' : 'Добавить человека',
-            onPressed: () => _navigateToAddRelative(selectedTreeId),
-          ),
-          PopupMenuButton<_TreeToolbarAction>(
-            tooltip: 'Действия дерева',
-            onSelected: (action) =>
-                _handleTreeToolbarAction(selectedTreeId, action),
-            itemBuilder: (context) => _buildTreeToolbarMenuItems(),
-          ),
-        ],
+      appBar: PreferredSize(
+        preferredSize: const Size.fromHeight(56),
+        child: _buildTreeTopbar(
+          theme: theme,
+          tokens: tokens,
+          selectedTreeId: selectedTreeId,
+          treeName: selectedTreeName,
+        ),
       ),
       body: SafeArea(
         child: _buildTreeBody(selectedTreeId: selectedTreeId),
+      ),
+    );
+  }
+
+  Widget _buildTreeTopbar({
+    required ThemeData theme,
+    required RodnyaDesignTokens tokens,
+    required String? selectedTreeId,
+    String? treeName,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        color: tokens.surface.withValues(
+          alpha: theme.brightness == Brightness.dark ? 0.62 : 0.66,
+        ),
+        border: Border(
+          bottom: BorderSide(color: tokens.surfaceLine, width: 0.7),
+        ),
+      ),
+      padding: const EdgeInsets.fromLTRB(8, 0, 12, 0),
+      child: SafeArea(
+        bottom: false,
+        child: Row(
+          children: [
+            if (context.canPop())
+              IconButton(
+                icon: Icon(Icons.arrow_back_rounded, color: tokens.ink),
+                tooltip: 'Назад',
+                onPressed: () => context.pop(),
+              )
+            else
+              const SizedBox(width: 14),
+            Flexible(
+              child: Text(
+                _isFriendsTree ? 'Круг' : 'Дерево',
+                style: AppTheme.serif(
+                  color: tokens.ink,
+                  fontSize: 22,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: -0.22,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            if (treeName != null && treeName.isNotEmpty) ...[
+              const SizedBox(width: 8),
+              Flexible(
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: tokens.accentSoft,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    treeName,
+                    style: AppTheme.sans(
+                      color: tokens.accent,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ),
+            ],
+            const Spacer(),
+            _TreeTopbarPill(
+              tokens: tokens,
+              tooltip: 'Выбрать дерево',
+              onTap: () => context.go('/tree?selector=1'),
+              child: Icon(
+                Icons.account_tree_outlined,
+                size: 19,
+                color: tokens.ink,
+              ),
+            ),
+            if (selectedTreeId != null) ...[
+              const SizedBox(width: 8),
+              _TreeTopbarPill(
+                tokens: tokens,
+                tooltip:
+                    _isFriendsTree ? 'Добавить в круг' : 'Добавить человека',
+                onTap: () => _navigateToAddRelative(selectedTreeId),
+                child: Icon(
+                  Icons.person_add_alt_1_outlined,
+                  size: 19,
+                  color: tokens.accent,
+                ),
+              ),
+              const SizedBox(width: 8),
+              PopupMenuButton<_TreeToolbarAction>(
+                tooltip: 'Действия дерева',
+                onSelected: (action) =>
+                    _handleTreeToolbarAction(selectedTreeId, action),
+                itemBuilder: (context) => _buildTreeToolbarMenuItems(),
+                child: Container(
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    color: tokens.surfaceStrong,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: tokens.surfaceLine),
+                  ),
+                  child: Icon(
+                    Icons.more_horiz_rounded,
+                    size: 19,
+                    color: tokens.ink,
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -978,6 +1074,43 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
     }
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Публичная ссылка скопирована.')),
+    );
+  }
+}
+
+class _TreeTopbarPill extends StatelessWidget {
+  const _TreeTopbarPill({
+    required this.tokens,
+    required this.child,
+    required this.tooltip,
+    required this.onTap,
+  });
+
+  final RodnyaDesignTokens tokens;
+  final Widget child;
+  final String tooltip;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: tokens.surfaceStrong,
+        shape: RoundedRectangleBorder(
+          side: BorderSide(color: tokens.surfaceLine),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(14),
+          child: SizedBox(
+            width: 38,
+            height: 38,
+            child: Center(child: child),
+          ),
+        ),
+      ),
     );
   }
 }
