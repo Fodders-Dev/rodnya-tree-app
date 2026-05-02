@@ -1243,6 +1243,12 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
                   debugPrint('Нажатие на узел: ${person.name} (${person.id})');
                   _selectTreePerson(person);
                 },
+                onPersonDoubleTap: (person) {
+                  // Double-click on a card = drill into full profile.
+                  // Single tap still opens the bottom sheet peek; double
+                  // is the shortcut for users who want the full page.
+                  _openPersonDetails(person);
+                },
                 onShowRelationPath: (person) =>
                     _openPersonDetails(person, action: 'path'),
                 onShowOtherParents: (person) =>

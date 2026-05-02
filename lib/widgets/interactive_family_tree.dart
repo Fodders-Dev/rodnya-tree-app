@@ -23,6 +23,8 @@ class InteractiveFamilyTree extends StatefulWidget {
   final List<FamilyRelation> relations;
   final TreeGraphSnapshot? graphSnapshot;
   final Function(FamilyPerson) onPersonTap; // Коллбэк при нажатии на узел
+  /// Двойной клик/тап по карточке — обычно открывает полную страницу профиля.
+  final void Function(FamilyPerson)? onPersonDoubleTap;
   final bool isEditMode; // Флаг режима редактирования
   final void Function(FamilyPerson person, RelationType type)
       onAddRelativeTapWithType; // Коллбэк для добавления
@@ -74,6 +76,7 @@ class InteractiveFamilyTree extends StatefulWidget {
     required this.relations,
     this.graphSnapshot,
     required this.onPersonTap,
+    this.onPersonDoubleTap,
     this.isEditMode = false, // По умолчанию выключен
     required this.onAddRelativeTapWithType,
     required this.currentUserIsInTree, // Делаем обязательным
@@ -1435,6 +1438,9 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
               }
               widget.onPersonTap(person);
             },
+            onDoubleTap: widget.isEditMode || widget.onPersonDoubleTap == null
+                ? null
+                : () => widget.onPersonDoubleTap!(person),
             onLongPress: widget.isEditMode || !canUseLongPressQuickAdd
                 ? null
                 : () => _showQuickAddRelativeSheet(context, person),
