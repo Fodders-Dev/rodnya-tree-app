@@ -942,48 +942,37 @@ class _RelativesScreenState extends State<RelativesScreen> {
       );
     }
 
-    Map<String, List<FamilyPerson>> groupedRelatives = {};
-    for (var relative in relativesForTab) {
-      String nameToSort = relative.displayName.trim();
-      String firstLetter = nameToSort.isNotEmpty
-          ? nameToSort.substring(0, 1).toUpperCase()
-          : '#';
-      if (!RegExp(r'[А-ЯA-Z]', caseSensitive: false).hasMatch(firstLetter)) {
-        firstLetter = '#';
+    int byName(FamilyPerson a, FamilyPerson b) =>
+        a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase());
+
+    final pendingPeople = <FamilyPerson>[];
+    final joinedPeople = <FamilyPerson>[];
+    for (final relative in relativesForTab) {
+      if (_canInviteRelative(relative)) {
+        pendingPeople.add(relative);
+      } else {
+        joinedPeople.add(relative);
       }
-      groupedRelatives.putIfAbsent(firstLetter, () => []).add(relative);
     }
+    pendingPeople.sort(byName);
+    joinedPeople.sort(byName);
 
-    List<String> sortedKeys = groupedRelatives.keys.toList()
-      ..sort((a, b) {
-        if (a == '#') return 1;
-        if (b == '#') return -1;
-        const russianAlphabet = 'АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ';
-        final indexA = russianAlphabet.indexOf(a);
-        final indexB = russianAlphabet.indexOf(b);
-
-        if (indexA != -1 && indexB != -1) {
-          return indexA.compareTo(indexB);
-        } else if (indexA != -1) {
-          return -1;
-        } else if (indexB != -1) {
-          return 1;
-        } else {
-          return a.compareTo(b);
-        }
-      });
-
-    groupedRelatives.forEach((key, list) {
-      list.sort(
-        (a, b) =>
-            a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase()),
-      );
-    });
-
-    List<dynamic> flatList = [];
-    for (var key in sortedKeys) {
-      flatList.add(key);
-      flatList.addAll(groupedRelatives[key]!);
+    final List<dynamic> flatList = [];
+    if (!isOnlineTab && pendingPeople.isNotEmpty) {
+      flatList.add(_RelativesSectionHeader(
+        title: 'Нужно пригласить',
+        count: pendingPeople.length,
+      ));
+      flatList.addAll(pendingPeople);
+    }
+    if (joinedPeople.isNotEmpty) {
+      flatList.add(_RelativesSectionHeader(
+        title: isOnlineTab ? 'Чаты' : 'В приложении',
+      ));
+      flatList.addAll(joinedPeople);
+    }
+    if (!isOnlineTab && pendingPeople.isEmpty && joinedPeople.isEmpty) {
+      flatList.addAll(relativesForTab);
     }
 
     return ListView.builder(
@@ -993,20 +982,47 @@ class _RelativesScreenState extends State<RelativesScreen> {
       itemBuilder: (context, index) {
         final item = flatList[index];
 
-        if (item is String) {
+        if (item is _RelativesSectionHeader) {
+          final theme = Theme.of(context);
+          final tokens = theme.extension<RodnyaDesignTokens>() ??
+              (theme.brightness == Brightness.dark
+                  ? RodnyaDesignTokens.dark
+                  : RodnyaDesignTokens.light);
           return Padding(
-            padding: const EdgeInsets.only(
-              left: 4,
-              top: 14,
-              bottom: 6,
-              right: 4,
-            ),
-            child: Text(
-              item,
-              style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                    fontWeight: FontWeight.w800,
-                    color: Theme.of(context).colorScheme.primary,
+            padding: const EdgeInsets.fromLTRB(4, 18, 4, 8),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    item.title,
+                    style: AppTheme.serif(
+                      color: tokens.ink,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: -0.18,
+                    ),
                   ),
+                ),
+                if (item.count != null && item.count! > 0)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: tokens.warmSoft,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      '${item.count}',
+                      style: AppTheme.sans(
+                        color: tokens.warm,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+              ],
             ),
           );
         } else if (item is FamilyPerson) {
@@ -1093,7 +1109,12 @@ class _RelativesScreenState extends State<RelativesScreen> {
                           spacing: 8,
                           runSpacing: 8,
                           children: [
-                            if (!isOnlineTab)
+                            // Skip the per-tile invite-status chip for the
+                            // pending section since the section header already
+                            // says "Нужно пригласить". Keep "Можно написать"
+                            // and "Только просмотр" so chat-ready and view-only
+                            // states stay scannable per row.
+                            if (!isOnlineTab && !canInvite)
                               _buildRelativeInfoChip(
                                 context,
                                 icon: Icons.circle,
@@ -1524,4 +1545,11 @@ class _RelativesScreenState extends State<RelativesScreen> {
       ),
     );
   }
+}
+
+class _RelativesSectionHeader {
+  const _RelativesSectionHeader({required this.title, this.count});
+
+  final String title;
+  final int? count;
 }

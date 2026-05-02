@@ -91,6 +91,7 @@ class _ChatsListScreenState extends State<ChatsListScreen>
   Map<String, ChatDraftSnapshot> _drafts = <String, ChatDraftSnapshot>{};
   Map<String, ChatNotificationSettingsSnapshot> _notificationSettings =
       <String, ChatNotificationSettingsSnapshot>{};
+  final Set<String> _onlineUserIds = <String>{};
   bool _isLoading = true;
   bool _hasLoadedInitialBatch = false;
   String? _errorMessage;
@@ -140,8 +141,39 @@ class _ChatsListScreenState extends State<ChatsListScreen>
       return;
     }
     unawaited(realtimeService.connect());
-    _draftsRealtimeSubscription =
-        realtimeService.events.listen(_handleDraftRealtimeEvent);
+    _draftsRealtimeSubscription = realtimeService.events.listen((event) {
+      _handlePresenceRealtimeEvent(event);
+      _handleDraftRealtimeEvent(event);
+    });
+  }
+
+  void _handlePresenceRealtimeEvent(CustomApiRealtimeEvent event) {
+    if (!mounted || !event.isPresenceEvent) return;
+    final ids = event.onlineUserIds;
+    final userId = event.userId;
+    final isOnline = event.isOnline;
+    bool changed = false;
+    if (ids.isNotEmpty) {
+      final next = ids.toSet();
+      if (next.length != _onlineUserIds.length ||
+          !next.every(_onlineUserIds.contains)) {
+        _onlineUserIds
+          ..clear()
+          ..addAll(next);
+        changed = true;
+      }
+    } else if (userId != null && userId.isNotEmpty && isOnline != null) {
+      changed =
+          isOnline ? _onlineUserIds.add(userId) : _onlineUserIds.remove(userId);
+    } else if (event.type == 'connection.disconnected') {
+      if (_onlineUserIds.isNotEmpty) {
+        _onlineUserIds.clear();
+        changed = true;
+      }
+    }
+    if (changed) {
+      setState(() {});
+    }
   }
 
   void _handleDraftRealtimeEvent(CustomApiRealtimeEvent event) {
@@ -1348,30 +1380,54 @@ class _ChatsListScreenState extends State<ChatsListScreen>
           padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
           child: Row(
             children: [
-              CircleAvatar(
-                radius: 24,
-                backgroundImage: avatarImage,
-                backgroundColor: tokens.accentSoft,
-                child: avatarImage == null
-                    ? (chat.isGroup
-                        ? Icon(
-                            chat.isBranch
-                                ? Icons.account_tree_outlined
-                                : Icons.group_outlined,
-                            size: 22,
-                            color: tokens.accent,
-                          )
-                        : Text(
-                            chat.displayName.isNotEmpty
-                                ? chat.displayName[0].toUpperCase()
-                                : '?',
-                            style: AppTheme.sans(
-                              color: tokens.accent,
-                              fontSize: 14,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ))
-                    : null,
+              Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  CircleAvatar(
+                    radius: 24,
+                    backgroundImage: avatarImage,
+                    backgroundColor: tokens.accentSoft,
+                    child: avatarImage == null
+                        ? (chat.isGroup
+                            ? Icon(
+                                chat.isBranch
+                                    ? Icons.account_tree_outlined
+                                    : Icons.group_outlined,
+                                size: 22,
+                                color: tokens.accent,
+                              )
+                            : Text(
+                                chat.displayName.isNotEmpty
+                                    ? chat.displayName[0].toUpperCase()
+                                    : '?',
+                                style: AppTheme.sans(
+                                  color: tokens.accent,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ))
+                        : null,
+                  ),
+                  if (!chat.isGroup &&
+                      chat.otherUserId.isNotEmpty &&
+                      _onlineUserIds.contains(chat.otherUserId))
+                    Positioned(
+                      right: -1,
+                      bottom: -1,
+                      child: Container(
+                        width: 12,
+                        height: 12,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF5BC176),
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: tokens.bgBase,
+                            width: 2.5,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
               ),
               const SizedBox(width: 12),
               Expanded(

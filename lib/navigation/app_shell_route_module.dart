@@ -648,11 +648,45 @@ class _RailDestination extends StatelessWidget {
 
     final iconWithBadge = data.count <= 0
         ? icon
-        : Badge(
-            backgroundColor: tokens.warm,
-            textColor: const Color(0xFF241A0D),
-            label: Text(data.count > 99 ? '99+' : data.count.toString()),
-            child: icon,
+        : Stack(
+            clipBehavior: Clip.none,
+            children: [
+              icon,
+              Positioned(
+                top: -4,
+                right: -8,
+                child: Container(
+                  constraints: const BoxConstraints(
+                    minWidth: 16,
+                    minHeight: 16,
+                  ),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 4,
+                    vertical: 1,
+                  ),
+                  decoration: BoxDecoration(
+                    color: tokens.warm,
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(
+                      color: selected ? tokens.accentInk : tokens.surfaceStrong,
+                      width: 1.5,
+                    ),
+                  ),
+                  child: Center(
+                    child: Text(
+                      data.count > 99 ? '99+' : data.count.toString(),
+                      style: AppTheme.sans(
+                        color: const Color(0xFF241A0D),
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0,
+                        height: 1.0,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
           );
 
     return Semantics(
