@@ -622,21 +622,22 @@ void main() {
     );
   });
 
-  testWidgets('Desktop shell показывает контекст и быстрые действия',
-      (tester) async {
-    tester.view.physicalSize = const Size(1600, 1200);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
+  testWidgets(
+    'ChatsListScreen renders the mobile-style flat list on wide screens too',
+    (tester) async {
+      tester.view.physicalSize = const Size(1600, 1200);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
 
-    await tester.pumpWidget(buildApp());
-    await tester.pumpAndSettle();
+      await tester.pumpWidget(buildApp());
+      await tester.pumpAndSettle();
 
-    expect(find.text('Связь'), findsOneWidget);
-    expect(find.text('Семья Кузнецовых'), findsAtLeastNWidgets(1));
-    expect(find.text('Создать чат'), findsWidgets);
-    expect(find.text('Открыть родных'), findsWidgets);
-    expect(find.text('Открыть дерево'), findsWidgets);
-  });
+      // Per Claude reference the chats screen no longer renders a desktop
+      // side "Связь" panel — the same flat list reads on every breakpoint.
+      expect(find.text('Связь'), findsNothing);
+      expect(find.text('Семья Кузнецовых'), findsAtLeastNWidgets(1));
+    },
+  );
 
   testWidgets('ChatsListScreen склоняет overview counts корректно',
       (tester) async {

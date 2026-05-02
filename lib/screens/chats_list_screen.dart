@@ -653,8 +653,9 @@ class _ChatsListScreenState extends State<ChatsListScreen>
     return 'Ветки: $previewNames$suffix';
   }
 
-  bool _isWideLayout(BuildContext context) =>
-      MediaQuery.of(context).size.width >= 1180;
+  // Always render the mobile-style chat list flow per Claude reference,
+  // even on desktop — the side "Связь" panel is dropped intentionally.
+  bool _isWideLayout(BuildContext context) => false;
 
   void _setSearchQuery(String value) {
     setState(() {

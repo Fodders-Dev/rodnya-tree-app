@@ -211,7 +211,10 @@ class _HeroCard extends StatelessWidget {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final compact = constraints.maxWidth < 520;
+        // Always use the cover-banner compact layout per Claude reference.
+        // The legacy wide-card variant below is kept only as a fallback if
+        // ever explicitly forced (currently never reached).
+        const compact = true;
 
         if (compact) {
           final tokens = theme.extension<RodnyaDesignTokens>() ??
@@ -340,6 +343,7 @@ class _HeroCard extends StatelessWidget {
           );
         }
 
+        // ignore: dead_code
         return GlassPanel(
           padding: const EdgeInsets.fromLTRB(18, 20, 18, 18),
           borderRadius: BorderRadius.circular(26),
