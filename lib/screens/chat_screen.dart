@@ -4120,8 +4120,17 @@ class _ChatScreenState extends State<ChatScreen> {
     if (expiresLabel != null) {
       segments.add('Автоудаление: $expiresLabel');
     }
-    if (isMe && !widget.isGroup && isLatestOwnDirectMessage) {
-      segments.add(_receiptLabel(message));
+    // Direct: show receipt only on the latest own message (avoids label
+    // spam down the entire bubble column). Group: same restriction —
+    // we want the reader to glance at the latest message, not the
+    // ten-message-back trail. Group label includes a "X из N прочитали"
+    // hint when partial coverage.
+    if (isMe && isLatestOwnDirectMessage) {
+      final receipt =
+          widget.isGroup ? _groupReceiptLabel(message) : _receiptLabel(message);
+      if (receipt != null && receipt.isNotEmpty) {
+        segments.add(receipt);
+      }
     }
     if (segments.isEmpty) {
       return null;
@@ -4131,10 +4140,38 @@ class _ChatScreenState extends State<ChatScreen> {
 
   String _receiptLabel(ChatMessage message) {
     if (_messageReadByAnyRecipient(message)) {
-      return 'Просмотрено';
+      return 'Прочитано';
     }
     if (_messageDeliveredToAnyRecipient(message)) {
       return 'Доставлено';
+    }
+    return 'Отправлено';
+  }
+
+  /// Group-chat receipt summary: "Прочитали все", "Прочитали X из N",
+  /// "Доставлено всем" depending on coverage. Returns null when the
+  /// group has no other recipients (single-member group, edge case).
+  String? _groupReceiptLabel(ChatMessage message) {
+    final recipients = _messageRecipientIds(message);
+    final total = recipients.length;
+    if (total == 0) {
+      return null;
+    }
+    final readCount =
+        recipients.where(message.readBy.contains).length;
+    if (readCount >= total) {
+      return 'Прочитали все';
+    }
+    if (readCount > 0) {
+      return 'Прочитали $readCount из $total';
+    }
+    final deliveredCount =
+        recipients.where(message.deliveredTo.contains).length;
+    if (deliveredCount >= total) {
+      return 'Доставлено всем';
+    }
+    if (deliveredCount > 0) {
+      return 'Доставлено $deliveredCount из $total';
     }
     return 'Отправлено';
   }
@@ -7652,14 +7689,20 @@ class _ChatBubble extends StatelessWidget {
                           ),
                           if (isMe) ...[
                             const SizedBox(width: 4),
+                            // Telegram-style read receipts:
+                            //   sent only       → single tick
+                            //   delivered       → double tick (faded)
+                            //   read by anyone  → double tick in a calm
+                            //                     blue (cuts through the
+                            //                     accent-green bubble bg)
                             Icon(
                               isRead || isDelivered
                                   ? Icons.done_all
                                   : Icons.done,
                               size: 14,
                               color: isRead
-                                  ? scheme.tertiary
-                                  : scheme.onPrimary.withValues(alpha: 0.78),
+                                  ? const Color(0xFF6FC4FF)
+                                  : scheme.onPrimary.withValues(alpha: 0.72),
                             ),
                           ],
                         ],

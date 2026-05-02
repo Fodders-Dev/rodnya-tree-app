@@ -98,8 +98,14 @@ class _VoicePlayerWidgetState extends State<_VoicePlayerWidget> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     final isPlaying = _playerState == PlayerState.playing;
-    final Color color = widget.isMe ? Colors.white : Colors.blue.shade700;
+    // Theme-aligned palette: outgoing bubble uses onPrimary against the
+    // accent gradient; incoming uses primary (accent) on the surface
+    // bubble. Replaces the previous hardcoded white / blue.shade700,
+    // which clashed with the warm cream brand.
+    final Color color = widget.isMe ? scheme.onPrimary : scheme.primary;
     final totalDuration = _duration > Duration.zero
         ? _duration
         : (widget.initialDuration ?? Duration.zero);
@@ -123,8 +129,8 @@ class _VoicePlayerWidgetState extends State<_VoicePlayerWidget> {
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
         decoration: BoxDecoration(
           color: widget.isMe
-              ? Colors.white.withValues(alpha: 0.15)
-              : Colors.blue.withValues(alpha: 0.1),
+              ? scheme.onPrimary.withValues(alpha: 0.14)
+              : scheme.primary.withValues(alpha: 0.08),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Row(
@@ -381,47 +387,128 @@ class _RemoteMediaGrid extends StatelessWidget {
           List<ChatAttachment> attachments, ChatAttachment attachment)?
       onOpenAttachment;
 
+  // Telegram-style smart photo grid:
+  //   1 photo  → full 220x220 with adaptive aspect.
+  //   2 photos → side-by-side 50/50, single tall row.
+  //   3 photos → first big-left + two stacked right.
+  //   4 photos → 2x2 grid.
+  //   5+ photos → 2x2 grid with the last tile carrying a "+N" overlay so
+  //               the user knows there's more behind the tap.
+  // Total grid width is locked at 220 — same as the previous single-tile
+  // variant — so bubble width stays predictable.
+  static const double _gridWidth = 220;
+  static const double _gap = 4;
+  static const double _radius = 14;
+
+  void _open(int index) {
+    final callback = onOpenAttachment;
+    if (callback == null || index < 0 || index >= attachments.length) return;
+    callback(attachments, attachments[index]);
+  }
+
+  Widget _tile(int index, {Widget? overlay}) {
+    Widget tile = _RemoteMediaTile(
+      attachment: attachments[index],
+      onTap: onOpenAttachment == null ? null : () => _open(index),
+    );
+    if (overlay != null) {
+      tile = Stack(fit: StackFit.expand, children: [tile, overlay]);
+    }
+    return ClipRRect(borderRadius: BorderRadius.circular(_radius), child: tile);
+  }
+
+  Widget _moreOverlay(int extraCount) {
+    return IgnorePointer(
+      child: ColoredBox(
+        color: Colors.black.withValues(alpha: 0.42),
+        child: Center(
+          child: Text(
+            '+$extraCount',
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 28,
+              fontWeight: FontWeight.w800,
+              letterSpacing: -0.5,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    if (attachments.length == 1) {
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(14),
-        child: SizedBox(
-          width: 220,
-          height: 220,
-          child: _RemoteMediaTile(
-            attachment: attachments.first,
-            onTap: onOpenAttachment == null
-                ? null
-                : () => onOpenAttachment!(attachments, attachments.first),
-          ),
+    final count = attachments.length;
+    if (count == 1) {
+      return SizedBox(width: _gridWidth, height: 220, child: _tile(0));
+    }
+    if (count == 2) {
+      return SizedBox(
+        width: _gridWidth,
+        height: 130,
+        child: Row(
+          children: [
+            Expanded(child: _tile(0)),
+            const SizedBox(width: _gap),
+            Expanded(child: _tile(1)),
+          ],
         ),
       );
     }
-
+    if (count == 3) {
+      return SizedBox(
+        width: _gridWidth,
+        height: 158,
+        child: Row(
+          children: [
+            Expanded(flex: 3, child: _tile(0)),
+            const SizedBox(width: _gap),
+            Expanded(
+              flex: 2,
+              child: Column(
+                children: [
+                  Expanded(child: _tile(1)),
+                  const SizedBox(height: _gap),
+                  Expanded(child: _tile(2)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    // 4+ photos: 2x2 grid; last tile gets a +N overlay when count > 4.
+    final extra = count - 4;
     return SizedBox(
-      width: 220,
-      child: Wrap(
-        spacing: 6,
-        runSpacing: 6,
-        children: attachments
-            .take(4)
-            .map(
-              (attachment) => ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: SizedBox(
-                  width: 106,
-                  height: 106,
-                  child: _RemoteMediaTile(
-                    attachment: attachment,
-                    onTap: onOpenAttachment == null
-                        ? null
-                        : () => onOpenAttachment!(attachments, attachment),
+      width: _gridWidth,
+      height: 220,
+      child: Column(
+        children: [
+          Expanded(
+            child: Row(
+              children: [
+                Expanded(child: _tile(0)),
+                const SizedBox(width: _gap),
+                Expanded(child: _tile(1)),
+              ],
+            ),
+          ),
+          const SizedBox(height: _gap),
+          Expanded(
+            child: Row(
+              children: [
+                Expanded(child: _tile(2)),
+                const SizedBox(width: _gap),
+                Expanded(
+                  child: _tile(
+                    3,
+                    overlay: extra > 0 ? _moreOverlay(extra) : null,
                   ),
                 ),
-              ),
-            )
-            .toList(),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -436,47 +523,121 @@ class _LocalMediaGrid extends StatelessWidget {
   final List<XFile> files;
   final void Function(List<XFile> files, XFile file)? onOpenAttachment;
 
+  // Mirror of _RemoteMediaGrid for not-yet-uploaded local files. Same
+  //1/2/3/4+ smart layouts so the optimistic preview matches the final
+  // remote rendering.
+  static const double _gridWidth = 220;
+  static const double _gap = 4;
+  static const double _radius = 14;
+
+  void _open(int index) {
+    final callback = onOpenAttachment;
+    if (callback == null || index < 0 || index >= files.length) return;
+    callback(files, files[index]);
+  }
+
+  Widget _tile(int index, {Widget? overlay}) {
+    Widget tile = _LocalMediaTile(
+      file: files[index],
+      onTap: onOpenAttachment == null ? null : () => _open(index),
+    );
+    if (overlay != null) {
+      tile = Stack(fit: StackFit.expand, children: [tile, overlay]);
+    }
+    return ClipRRect(borderRadius: BorderRadius.circular(_radius), child: tile);
+  }
+
+  Widget _moreOverlay(int extraCount) {
+    return IgnorePointer(
+      child: ColoredBox(
+        color: Colors.black.withValues(alpha: 0.42),
+        child: Center(
+          child: Text(
+            '+$extraCount',
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 28,
+              fontWeight: FontWeight.w800,
+              letterSpacing: -0.5,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    if (files.length == 1) {
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(14),
-        child: SizedBox(
-          width: 220,
-          height: 220,
-          child: _LocalMediaTile(
-            file: files.first,
-            onTap: onOpenAttachment == null
-                ? null
-                : () => onOpenAttachment!(files, files.first),
-          ),
+    final count = files.length;
+    if (count == 1) {
+      return SizedBox(width: _gridWidth, height: 220, child: _tile(0));
+    }
+    if (count == 2) {
+      return SizedBox(
+        width: _gridWidth,
+        height: 130,
+        child: Row(
+          children: [
+            Expanded(child: _tile(0)),
+            const SizedBox(width: _gap),
+            Expanded(child: _tile(1)),
+          ],
         ),
       );
     }
-
+    if (count == 3) {
+      return SizedBox(
+        width: _gridWidth,
+        height: 158,
+        child: Row(
+          children: [
+            Expanded(flex: 3, child: _tile(0)),
+            const SizedBox(width: _gap),
+            Expanded(
+              flex: 2,
+              child: Column(
+                children: [
+                  Expanded(child: _tile(1)),
+                  const SizedBox(height: _gap),
+                  Expanded(child: _tile(2)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    final extra = count - 4;
     return SizedBox(
-      width: 220,
-      child: Wrap(
-        spacing: 6,
-        runSpacing: 6,
-        children: files
-            .take(4)
-            .map(
-              (file) => ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: SizedBox(
-                  width: 106,
-                  height: 106,
-                  child: _LocalMediaTile(
-                    file: file,
-                    onTap: onOpenAttachment == null
-                        ? null
-                        : () => onOpenAttachment!(files, file),
+      width: _gridWidth,
+      height: 220,
+      child: Column(
+        children: [
+          Expanded(
+            child: Row(
+              children: [
+                Expanded(child: _tile(0)),
+                const SizedBox(width: _gap),
+                Expanded(child: _tile(1)),
+              ],
+            ),
+          ),
+          const SizedBox(height: _gap),
+          Expanded(
+            child: Row(
+              children: [
+                Expanded(child: _tile(2)),
+                const SizedBox(width: _gap),
+                Expanded(
+                  child: _tile(
+                    3,
+                    overlay: extra > 0 ? _moreOverlay(extra) : null,
                   ),
                 ),
-              ),
-            )
-            .toList(),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

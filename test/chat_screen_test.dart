@@ -703,7 +703,9 @@ void main() {
       ),
     ]);
     await tester.pumpAndSettle();
-    expect(find.text('Просмотрено'), findsOneWidget);
+    // Renamed Просмотрено → Прочитано to match the Telegram-style
+    // spoken wording the rest of the read-receipt UX uses.
+    expect(find.text('Прочитано'), findsOneWidget);
   });
 
   testWidgets('ChatScreen applies auto-delete option to outgoing messages',
