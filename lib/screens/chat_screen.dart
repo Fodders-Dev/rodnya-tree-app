@@ -4047,6 +4047,13 @@ class _ChatScreenState extends State<ChatScreen> {
       message.id,
       () => GlobalKey(),
     );
+    final callMetadata = message.call;
+    if (callMetadata != null) {
+      return KeyedSubtree(
+        key: messageKey,
+        child: _buildCallSummaryBubble(message, callMetadata, isMe),
+      );
+    }
     return GestureDetector(
       key: messageKey,
       onTap: _isSelectionMode
@@ -4097,6 +4104,180 @@ class _ChatScreenState extends State<ChatScreen> {
         onOpenRemoteAttachment: (attachments, attachment) =>
             _openRemoteAttachmentPreview(message, attachments, attachment),
       ),
+    );
+  }
+
+  Widget _buildCallSummaryBubble(
+    ChatMessage message,
+    ChatMessageCall callMetadata,
+    bool isMe,
+  ) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final timeLabel = DateFormat.Hm('ru').format(message.timestamp);
+    final palette = _callSummaryPalette(scheme, callMetadata);
+    final mediaIcon =
+        callMetadata.isVideo ? Icons.videocam_rounded : Icons.call_rounded;
+    final summaryLabel = _callSummaryLabel(callMetadata);
+    final secondaryLabel = _callSummarySecondaryLabel(callMetadata);
+    final tapMode = callMetadata.isVideo
+        ? CallMediaMode.video
+        : CallMediaMode.audio;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 16),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 320),
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(20),
+              onTap: () => unawaited(_startCall(tapMode)),
+              child: Ink(
+                decoration: BoxDecoration(
+                  color: palette.background,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: palette.border,
+                    width: 0.6,
+                  ),
+                ),
+                padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 34,
+                      height: 34,
+                      decoration: BoxDecoration(
+                        color: palette.iconBackground,
+                        shape: BoxShape.circle,
+                      ),
+                      alignment: Alignment.center,
+                      child: Icon(
+                        mediaIcon,
+                        size: 18,
+                        color: palette.iconColor,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Flexible(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            summaryLabel,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: palette.titleColor,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          if (secondaryLabel != null) ...[
+                            const SizedBox(height: 2),
+                            Text(
+                              '$secondaryLabel · $timeLabel',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: palette.subtitleColor,
+                              ),
+                            ),
+                          ] else ...[
+                            const SizedBox(height: 2),
+                            Text(
+                              timeLabel,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: palette.subtitleColor,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Icon(
+                      isMe
+                          ? Icons.call_made_rounded
+                          : Icons.call_received_rounded,
+                      size: 16,
+                      color: palette.subtitleColor,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _callSummaryLabel(ChatMessageCall callMetadata) {
+    final isVideo = callMetadata.isVideo;
+    switch (callMetadata.state) {
+      case 'ended':
+        return isVideo ? 'Видеозвонок' : 'Аудиозвонок';
+      case 'missed':
+        return isVideo ? 'Пропущенный видеозвонок' : 'Пропущенный звонок';
+      case 'rejected':
+        return isVideo ? 'Видеозвонок отклонён' : 'Звонок отклонён';
+      case 'cancelled':
+        return isVideo ? 'Видеозвонок отменён' : 'Звонок отменён';
+      case 'failed':
+        return 'Не удалось позвонить';
+      default:
+        return isVideo ? 'Видеозвонок' : 'Аудиозвонок';
+    }
+  }
+
+  String? _callSummarySecondaryLabel(ChatMessageCall callMetadata) {
+    if (callMetadata.state != 'ended') {
+      return null;
+    }
+    final durationMs = callMetadata.durationMs;
+    if (durationMs == null || durationMs <= 0) {
+      return null;
+    }
+    final totalSeconds = (durationMs / 1000).floor();
+    final seconds = totalSeconds % 60;
+    final totalMinutes = totalSeconds ~/ 60;
+    final minutes = totalMinutes % 60;
+    final hours = totalMinutes ~/ 60;
+    String two(int v) => v.toString().padLeft(2, '0');
+    if (hours > 0) {
+      return '$hours:${two(minutes)}:${two(seconds)}';
+    }
+    return '$minutes:${two(seconds)}';
+  }
+
+  _CallSummaryPalette _callSummaryPalette(
+    ColorScheme scheme,
+    ChatMessageCall callMetadata,
+  ) {
+    final isMissedLike =
+        callMetadata.isMissed || callMetadata.isRejected;
+    if (isMissedLike) {
+      final accent = scheme.error;
+      return _CallSummaryPalette(
+        background: scheme.errorContainer.withValues(alpha: 0.55),
+        border: accent.withValues(alpha: 0.32),
+        iconBackground: accent.withValues(alpha: 0.18),
+        iconColor: accent,
+        titleColor: scheme.onErrorContainer,
+        subtitleColor: scheme.onErrorContainer.withValues(alpha: 0.78),
+      );
+    }
+    return _CallSummaryPalette(
+      background: scheme.surfaceContainerHigh.withValues(alpha: 0.85),
+      border: scheme.outlineVariant.withValues(alpha: 0.55),
+      iconBackground: scheme.primary.withValues(alpha: 0.12),
+      iconColor: scheme.primary,
+      titleColor: scheme.onSurface,
+      subtitleColor: scheme.onSurfaceVariant,
     );
   }
 
@@ -7687,4 +7868,22 @@ String _displayName(String? value) {
   return normalized.length > 24
       ? '${normalized.substring(0, 21)}...'
       : normalized;
+}
+
+class _CallSummaryPalette {
+  const _CallSummaryPalette({
+    required this.background,
+    required this.border,
+    required this.iconBackground,
+    required this.iconColor,
+    required this.titleColor,
+    required this.subtitleColor,
+  });
+
+  final Color background;
+  final Color border;
+  final Color iconBackground;
+  final Color iconColor;
+  final Color titleColor;
+  final Color subtitleColor;
 }

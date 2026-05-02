@@ -856,6 +856,82 @@ function normalizeParticipantIds(participantIds) {
   ).sort((left, right) => left.localeCompare(right));
 }
 
+function deriveSessionPublicId(token) {
+  const normalizedToken = String(token || "").trim();
+  if (!normalizedToken) {
+    return "";
+  }
+  return crypto
+    .createHash("sha256")
+    .update(normalizedToken)
+    .digest("base64url")
+    .slice(0, 22);
+}
+
+function buildCallParticipantIdentity(userId, sessionPublicId) {
+  const normalizedUserId = String(userId || "").trim();
+  const normalizedSessionId = String(sessionPublicId || "").trim();
+  if (!normalizedUserId) {
+    return "";
+  }
+  if (!normalizedSessionId) {
+    return normalizedUserId;
+  }
+  return `${normalizedUserId}#${normalizedSessionId}`;
+}
+
+function normalizeChatMessageCall(value) {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const callId = String(value.callId || "").trim();
+  if (!callId) {
+    return null;
+  }
+  const allowedStates = new Set([
+    "ringing",
+    "active",
+    "ended",
+    "rejected",
+    "cancelled",
+    "missed",
+    "failed",
+  ]);
+  const rawState = String(value.state || "").trim().toLowerCase();
+  const state = allowedStates.has(rawState) ? rawState : "ended";
+  const mediaModeRaw = String(value.mediaMode || "").trim().toLowerCase();
+  const mediaMode = mediaModeRaw === "video" ? "video" : "audio";
+  const durationCandidate = Number(value.durationMs);
+  const durationMs = Number.isFinite(durationCandidate) && durationCandidate > 0
+    ? Math.floor(durationCandidate)
+    : null;
+  const initiatorId = String(value.initiatorId || "").trim() || null;
+  const direction = value.direction === "incoming" ? "incoming" : "outgoing";
+  return {
+    callId,
+    state,
+    mediaMode,
+    durationMs,
+    initiatorId,
+    direction,
+  };
+}
+
+function parseCallParticipantIdentity(identity) {
+  const normalized = String(identity || "").trim();
+  if (!normalized) {
+    return {userId: "", sessionPublicId: ""};
+  }
+  const hashIndex = normalized.indexOf("#");
+  if (hashIndex < 0) {
+    return {userId: normalized, sessionPublicId: ""};
+  }
+  return {
+    userId: normalized.slice(0, hashIndex),
+    sessionPublicId: normalized.slice(hashIndex + 1),
+  };
+}
+
 function collectMediaUrl(urlSet, value) {
   const normalizedValue = String(value || "").trim();
   if (normalizedValue) {
@@ -1083,6 +1159,7 @@ function createCallRecord({
   recipientId,
   participantIds = null,
   mediaMode,
+  originatedBySessionId = null,
 }) {
   const timestamp = nowIso();
   const normalizedParticipantIds = normalizeParticipantIds(
@@ -1102,6 +1179,9 @@ function createCallRecord({
     state: "ringing",
     roomName: null,
     sessionByUserId: {},
+    originatedBySessionId: normalizeNullableString(originatedBySessionId),
+    acceptedByUserId: null,
+    acceptedBySessionId: null,
     createdAt: timestamp,
     updatedAt: timestamp,
     acceptedAt: null,
@@ -1135,6 +1215,9 @@ function normalizeStoredCall(call) {
     state: normalizeCallState(call.state),
     roomName: normalizeNullableString(call.roomName),
     sessionByUserId: normalizeCallSessionMap(call.sessionByUserId),
+    originatedBySessionId: normalizeNullableString(call.originatedBySessionId),
+    acceptedByUserId: normalizeNullableString(call.acceptedByUserId),
+    acceptedBySessionId: normalizeNullableString(call.acceptedBySessionId),
     createdAt: normalizeOptionalIsoTimestamp(call.createdAt) || nowIso(),
     updatedAt: normalizeOptionalIsoTimestamp(call.updatedAt) || nowIso(),
     acceptedAt: normalizeOptionalIsoTimestamp(call.acceptedAt),
@@ -10105,6 +10188,7 @@ class FileStore {
     clientMessageId = null,
     expiresAt = null,
     replyTo = null,
+    call = null,
   }) {
     const db = await this._read();
     const purgedChatIds = this._purgeExpiredMessages(db);
@@ -10137,7 +10221,12 @@ class FileStore {
     const normalizedClientMessageId = String(clientMessageId || "").trim() || null;
     const normalizedExpiresAt = normalizeOptionalIsoTimestamp(expiresAt);
     const normalizedReplyTo = normalizeReplyReference(replyTo);
-    if (!normalizedText && normalizedAttachments.length === 0) {
+    const normalizedCall = normalizeChatMessageCall(call);
+    if (
+      !normalizedText &&
+      normalizedAttachments.length === 0 &&
+      !normalizedCall
+    ) {
       return false;
     }
 
@@ -10183,6 +10272,9 @@ class FileStore {
       storedChat.updatedAt = timestamp;
     }
 
+    if (normalizedCall) {
+      message.call = normalizedCall;
+    }
     db.messages.push(message);
     if (purgedChatIds.size > 0) {
       purgedChatIds.add(chat.id);
@@ -10478,6 +10570,7 @@ class FileStore {
     recipientId,
     participantIds: requestedParticipantIds = null,
     mediaMode,
+    originatedBySessionId = null,
   }) {
     const db = await this._read();
     const chat = this._resolveChat(db, chatId);
@@ -10537,6 +10630,7 @@ class FileStore {
       recipientId: normalizedRecipientId,
       participantIds,
       mediaMode,
+      originatedBySessionId,
     });
     db.calls.push(call);
     await this._write(db);
@@ -10602,6 +10696,7 @@ class FileStore {
     userId,
     roomName,
     sessionByUserId,
+    acceptedBySessionId = null,
   }) {
     const db = await this._read();
     const storedCall = db.calls.find((entry) => String(entry?.id || "") === callId);
@@ -10621,6 +10716,8 @@ class FileStore {
     storedCall.state = "active";
     storedCall.roomName = normalizeNullableString(roomName);
     storedCall.sessionByUserId = normalizeCallSessionMap(sessionByUserId);
+    storedCall.acceptedByUserId = userId;
+    storedCall.acceptedBySessionId = normalizeNullableString(acceptedBySessionId);
     storedCall.acceptedAt = timestamp;
     storedCall.updatedAt = timestamp;
     storedCall.endedAt = null;
@@ -11311,15 +11408,18 @@ module.exports = {
   buildGraphWarnings,
   buildBranchVisiblePersonIds,
   buildPersonRecord,
+  buildCallParticipantIdentity,
   cloneUserWithAuthState,
   createPersonIdentityRecord,
   createTreeChangeRecord,
+  deriveSessionPublicId,
   describeMessagePreview,
   normalizeDbState,
   normalizeParticipantIds,
   normalizePhoneNumber,
   normalizeStoredCall,
   nowIso,
+  parseCallParticipantIdentity,
   parseDirectParticipantsFromChatId,
   SESSION_TOUCH_MIN_INTERVAL_MS,
   verifyPassword,

@@ -18,6 +18,7 @@ class CallInvite {
     this.endedAt,
     this.endedReason,
     this.session,
+    this.joinedOnAnotherDevice = false,
   });
 
   final String id;
@@ -34,6 +35,7 @@ class CallInvite {
   final DateTime? endedAt;
   final String? endedReason;
   final CallSession? session;
+  final bool joinedOnAnotherDevice;
 
   bool isOutgoingFor(String userId) => initiatorId == userId;
   bool isIncomingFor(String userId) {
@@ -55,6 +57,7 @@ class CallInvite {
     DateTime? endedAt,
     String? endedReason,
     CallSession? session,
+    bool? joinedOnAnotherDevice,
   }) {
     return CallInvite(
       id: id,
@@ -71,6 +74,8 @@ class CallInvite {
       endedAt: endedAt ?? this.endedAt,
       endedReason: endedReason ?? this.endedReason,
       session: session ?? this.session,
+      joinedOnAnotherDevice:
+          joinedOnAnotherDevice ?? this.joinedOnAnotherDevice,
     );
   }
 
@@ -97,6 +102,7 @@ class CallInvite {
       session: map['session'] is Map<String, dynamic>
           ? CallSession.fromMap(map['session'] as Map<String, dynamic>)
           : null,
+      joinedOnAnotherDevice: map['joinedOnAnotherDevice'] == true,
     );
   }
 }

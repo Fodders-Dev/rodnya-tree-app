@@ -121,6 +121,7 @@ class CallCoordinatorService extends ChangeNotifier
   Room? _room;
   EventsListener<RoomEvent>? _roomListener;
   String? _connectedRoomName;
+  DateTime? _roomConnectStartedAt;
   bool _isConnectingRoom = false;
   bool _isReconnectingRoom = false;
   bool _microphoneEnabled = true;
@@ -140,6 +141,7 @@ class CallCoordinatorService extends ChangeNotifier
   String? _connectionError;
   bool _hasMediaPermissionIssue = false;
   bool _hasSeenRemoteParticipant = false;
+  bool _joinedOnAnotherDevice = false;
   String? _lastIncomingVibrationCallId;
   final Set<String> _visibleCallScreenIds = <String>{};
 
@@ -148,6 +150,7 @@ class CallCoordinatorService extends ChangeNotifier
   Room? get room => _room;
   bool get isConnectingRoom => _isConnectingRoom;
   bool get isReconnectingRoom => _isReconnectingRoom;
+  bool get joinedOnAnotherDevice => _joinedOnAnotherDevice;
   bool get microphoneEnabled => _microphoneEnabled;
   bool get cameraEnabled => _cameraEnabled;
   bool get isSwitchingCamera => _isSwitchingCamera;
@@ -566,6 +569,7 @@ class CallCoordinatorService extends ChangeNotifier
       _connectionError = null;
       _hasMediaPermissionIssue = false;
       _hasSeenRemoteParticipant = false;
+      _joinedOnAnotherDevice = false;
       _lastIncomingVibrationCallId = null;
       _clearConnectionQualityState();
       notifyListeners();
@@ -593,6 +597,7 @@ class CallCoordinatorService extends ChangeNotifier
       _connectionError = null;
       _hasMediaPermissionIssue = false;
       _hasSeenRemoteParticipant = false;
+      _joinedOnAnotherDevice = false;
       _lastIncomingVibrationCallId = null;
       _clearConnectionQualityState();
       notifyListeners();
@@ -630,9 +635,19 @@ class CallCoordinatorService extends ChangeNotifier
     if (!nextCall.mediaMode.isVideo) {
       _cameraEnabled = false;
     }
+    _joinedOnAnotherDevice = nextCall.joinedOnAnotherDevice;
     notifyListeners();
 
     if (nextCall.state == CallState.active) {
+      if (nextCall.joinedOnAnotherDevice) {
+        _isConnectingRoom = false;
+        _isReconnectingRoom = false;
+        _connectionError = null;
+        _clearReconnectRestoredBanner();
+        notifyListeners();
+        await _disposeRoom();
+        return;
+      }
       if (_hasMediaPermissionIssue &&
           previousCallId == nextCall.id &&
           _room == null) {
@@ -799,16 +814,29 @@ class CallCoordinatorService extends ChangeNotifier
     final room = Room();
     final listener = room.createListener();
     listener
-      ..on<RoomDisconnectedEvent>((_) {
+      ..on<RoomDisconnectedEvent>((event) {
+        debugPrint(
+          '[call] room disconnected reason=${event.reason} '
+          'uptime=${_uptimeSinceConnect()}ms '
+          'localQuality=${room.localParticipant?.connectionQuality} '
+          'remoteCount=${room.remoteParticipants.length}',
+        );
         unawaited(_handleRoomDisconnected());
       })
       ..on<RoomReconnectingEvent>((_) {
+        debugPrint(
+          '[call] room reconnecting uptime=${_uptimeSinceConnect()}ms '
+          'localQuality=${room.localParticipant?.connectionQuality}',
+        );
         _isReconnectingRoom = true;
         _connectionError = 'Связь прервалась. Переподключаем...';
         _clearReconnectRestoredBanner();
         notifyListeners();
       })
       ..on<RoomReconnectedEvent>((_) {
+        debugPrint(
+          '[call] room reconnected uptime=${_uptimeSinceConnect()}ms',
+        );
         _isReconnectingRoom = false;
         _connectionError = null;
         _showReconnectRestoredBannerForMoment();
@@ -839,7 +867,15 @@ class CallCoordinatorService extends ChangeNotifier
       });
 
     try {
+      _roomConnectStartedAt = DateTime.now();
+      debugPrint(
+        '[call] room.connect start url=${session.url} '
+        'roomName=${session.roomName} reconnect=$reconnect',
+      );
       await room.connect(session.url, session.token);
+      debugPrint(
+        '[call] room.connect ok uptime=${_uptimeSinceConnect()}ms',
+      );
       _microphoneEnabled = true;
       _cameraEnabled = call.mediaMode.isVideo;
       await room.localParticipant?.setMicrophoneEnabled(_microphoneEnabled);
@@ -1279,7 +1315,16 @@ class CallCoordinatorService extends ChangeNotifier
     }
     _room = null;
     _connectedRoomName = null;
+    _roomConnectStartedAt = null;
     _hasSeenRemoteParticipant = false;
+  }
+
+  int _uptimeSinceConnect() {
+    final startedAt = _roomConnectStartedAt;
+    if (startedAt == null) {
+      return -1;
+    }
+    return DateTime.now().difference(startedAt).inMilliseconds;
   }
 
   Future<void> reset() async {
@@ -1297,6 +1342,7 @@ class CallCoordinatorService extends ChangeNotifier
     _clearConnectionQualityState();
     _hasMediaPermissionIssue = false;
     _hasSeenRemoteParticipant = false;
+    _joinedOnAnotherDevice = false;
     _lastIncomingVibrationCallId = null;
     await _disposeRoom();
     notifyListeners();

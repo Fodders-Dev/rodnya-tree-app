@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:livekit_client/livekit_client.dart';
 
 import '../models/call_invite.dart';
+import '../models/call_state.dart';
 import '../services/call_coordinator_service.dart';
 import '../utils/photo_url.dart';
 import 'call_connection_quality_badge.dart';
@@ -67,18 +68,31 @@ class _CallFloatingPipState extends State<CallFloatingPip> {
     final theme = Theme.of(context);
     final remoteVideoTrack = _remoteVideoTrack(widget.coordinator.room);
     final isVideo = widget.call.mediaMode.isVideo;
+    final isRinging = widget.call.state == CallState.ringing;
+    final isIncomingRinging = isRinging &&
+        widget.coordinator.currentUserId != null &&
+        widget.call.isIncomingFor(widget.coordinator.currentUserId!);
     final connectionQuality = widget.coordinator.displayedConnectionQuality;
-    final statusColor = callConnectionQualityColor(
-      connectionQuality,
-      isReconnecting: widget.coordinator.isReconnectingRoom,
-    );
-    final statusLabel = connectionQuality == ConnectionQuality.unknown &&
-            !widget.coordinator.isReconnectingRoom
-        ? 'Звонок идет'
-        : callConnectionQualityLabel(
+    final statusColor = isRinging
+        ? const Color(0xFFFFB020)
+        : callConnectionQualityColor(
             connectionQuality,
             isReconnecting: widget.coordinator.isReconnectingRoom,
           );
+    final String statusLabel;
+    if (isRinging) {
+      statusLabel = isIncomingRinging
+          ? (isVideo ? 'Входящий видеозвонок' : 'Входящий аудиозвонок')
+          : 'Вызываем...';
+    } else if (connectionQuality == ConnectionQuality.unknown &&
+        !widget.coordinator.isReconnectingRoom) {
+      statusLabel = 'Звонок идет';
+    } else {
+      statusLabel = callConnectionQualityLabel(
+        connectionQuality,
+        isReconnecting: widget.coordinator.isReconnectingRoom,
+      );
+    }
 
     return Semantics(
       button: true,
@@ -184,34 +198,49 @@ class _CallFloatingPipState extends State<CallFloatingPip> {
                       const SizedBox(height: 8),
                       Row(
                         children: [
-                          _PipActionButton(
-                            tooltip: widget.coordinator.microphoneEnabled
-                                ? 'Выключить микрофон'
-                                : 'Включить микрофон',
-                            icon: widget.coordinator.microphoneEnabled
-                                ? Icons.mic_rounded
-                                : Icons.mic_off_rounded,
-                            onPressed: () => unawaited(
-                              widget.coordinator.toggleMicrophone(),
-                            ),
-                          ),
-                          if (isVideo) ...[
-                            const SizedBox(width: 8),
+                          if (!isRinging) ...[
                             _PipActionButton(
-                              tooltip: widget.coordinator.cameraEnabled
-                                  ? 'Выключить камеру'
-                                  : 'Включить камеру',
-                              icon: widget.coordinator.cameraEnabled
-                                  ? Icons.videocam_rounded
-                                  : Icons.videocam_off_rounded,
+                              tooltip: widget.coordinator.microphoneEnabled
+                                  ? 'Выключить микрофон'
+                                  : 'Включить микрофон',
+                              icon: widget.coordinator.microphoneEnabled
+                                  ? Icons.mic_rounded
+                                  : Icons.mic_off_rounded,
                               onPressed: () => unawaited(
-                                widget.coordinator.toggleCamera(),
+                                widget.coordinator.toggleMicrophone(),
                               ),
                             ),
+                            if (isVideo) ...[
+                              const SizedBox(width: 8),
+                              _PipActionButton(
+                                tooltip: widget.coordinator.cameraEnabled
+                                    ? 'Выключить камеру'
+                                    : 'Включить камеру',
+                                icon: widget.coordinator.cameraEnabled
+                                    ? Icons.videocam_rounded
+                                    : Icons.videocam_off_rounded,
+                                onPressed: () => unawaited(
+                                  widget.coordinator.toggleCamera(),
+                                ),
+                              ),
+                            ],
+                          ],
+                          if (isIncomingRinging) ...[
+                            _PipActionButton(
+                              tooltip: 'Принять звонок',
+                              icon: Icons.call_rounded,
+                              backgroundColor: const Color(0xFF22C55E),
+                              onPressed: () => unawaited(
+                                widget.coordinator.acceptCall(widget.call.id),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
                           ],
                           const Spacer(),
                           _PipActionButton(
-                            tooltip: 'Завершить звонок',
+                            tooltip: isIncomingRinging
+                                ? 'Отклонить звонок'
+                                : 'Завершить звонок',
                             icon: Icons.call_end_rounded,
                             backgroundColor: const Color(0xFFE5484D),
                             onPressed: () => unawaited(

@@ -11,7 +11,6 @@ import '../screens/call_screen.dart';
 import '../services/call_coordinator_service.dart';
 import '../services/custom_api_notification_service.dart';
 import 'call_floating_pip.dart';
-import 'glass_panel.dart';
 
 class CallRuntimeHost extends StatefulWidget {
   const CallRuntimeHost({
@@ -40,7 +39,6 @@ class _CallRuntimeHostState extends State<CallRuntimeHost>
       <String, _CallPresentation>{};
 
   AppLifecycleState _lifecycleState = AppLifecycleState.resumed;
-  CallInvite? _bannerCall;
   CallInvite? _floatingCall;
   String? _presentedCallId;
   String? _suppressedCallId;
@@ -94,12 +92,7 @@ class _CallRuntimeHostState extends State<CallRuntimeHost>
       if (notifiedCallId != null) {
         unawaited(_dismissIncomingCallNotification(notifiedCallId));
       }
-      if (_bannerCall != null) {
-        setState(() {
-          _bannerCall = null;
-          _floatingCall = null;
-        });
-      } else if (_floatingCall != null) {
+      if (_floatingCall != null) {
         setState(() {
           _floatingCall = null;
         });
@@ -118,8 +111,6 @@ class _CallRuntimeHostState extends State<CallRuntimeHost>
       unawaited(_dismissIncomingCallNotification(call.id));
     }
 
-    final shouldShowBanner = _shouldShowBanner(call);
-    final nextBannerCall = shouldShowBanner ? call : null;
     final shouldShowFloatingPip = _shouldShowFloatingPip(call);
     final nextFloatingCall = shouldShowFloatingPip ? call : null;
     if (nextFloatingCall != null && !_presentations.containsKey(call.chatId)) {
@@ -129,14 +120,10 @@ class _CallRuntimeHostState extends State<CallRuntimeHost>
         }
       }));
     }
-    if (_bannerCall?.id != nextBannerCall?.id ||
-        _bannerCall?.state != nextBannerCall?.state ||
-        _bannerCall?.updatedAt != nextBannerCall?.updatedAt ||
-        _floatingCall?.id != nextFloatingCall?.id ||
+    if (_floatingCall?.id != nextFloatingCall?.id ||
         _floatingCall?.state != nextFloatingCall?.state ||
         _floatingCall?.updatedAt != nextFloatingCall?.updatedAt) {
       setState(() {
-        _bannerCall = nextBannerCall;
         _floatingCall = nextFloatingCall;
       });
     }
@@ -158,18 +145,11 @@ class _CallRuntimeHostState extends State<CallRuntimeHost>
         _notifiedCallId != call.id;
   }
 
-  bool _shouldShowBanner(CallInvite call) {
-    if (_coordinator.isCallScreenVisible(call.id)) {
-      return false;
-    }
-    if (_isPresentingCallScreen || _presentedCallId == call.id) {
-      return false;
-    }
-    return call.state == CallState.ringing;
-  }
-
   bool _shouldShowFloatingPip(CallInvite call) {
-    if (call.state != CallState.active) {
+    if (call.state != CallState.ringing && call.state != CallState.active) {
+      return false;
+    }
+    if (call.joinedOnAnotherDevice) {
       return false;
     }
     if (_coordinator.isCallScreenVisible(call.id)) {
@@ -182,7 +162,10 @@ class _CallRuntimeHostState extends State<CallRuntimeHost>
   }
 
   bool _shouldAutoPresent(CallInvite call) {
-    if (!_isIncoming(call) || _lifecycleState != AppLifecycleState.resumed) {
+    if (_lifecycleState != AppLifecycleState.resumed) {
+      return false;
+    }
+    if (call.joinedOnAnotherDevice) {
       return false;
     }
     if (_coordinator.isCallScreenVisible(call.id)) {
@@ -225,9 +208,8 @@ class _CallRuntimeHostState extends State<CallRuntimeHost>
       unawaited(_dismissIncomingCallNotification(notifiedCallId));
     }
 
-    if (_bannerCall != null || _floatingCall != null) {
+    if (_floatingCall != null) {
       setState(() {
-        _bannerCall = null;
         _floatingCall = null;
       });
     }
@@ -326,110 +308,34 @@ class _CallRuntimeHostState extends State<CallRuntimeHost>
     }
   }
 
-  String _bannerStatusLabel(CallInvite call) {
-    if (_coordinator.isReconnectingRoom && call.state == CallState.active) {
-      return 'Восстанавливаем соединение...';
-    }
-    if (_coordinator.isConnectingRoom && call.state == CallState.active) {
-      return 'Подключаем звонок...';
-    }
-    switch (call.state) {
-      case CallState.ringing:
-        return _isIncoming(call)
-            ? 'Входящий ${call.mediaMode.isVideo ? 'видеозвонок' : 'аудиозвонок'}'
-            : 'Вызываем...';
-      case CallState.active:
-        return call.mediaMode.isVideo ? 'Идет видеозвонок' : 'Идет аудиозвонок';
-      case CallState.rejected:
-      case CallState.cancelled:
-      case CallState.ended:
-      case CallState.missed:
-      case CallState.failed:
-        return 'Звонок';
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
-    final bannerCall = _bannerCall;
     final floatingCall = _floatingCall;
-    if (bannerCall == null && floatingCall == null) {
+    if (floatingCall == null) {
       return widget.child;
     }
 
-    final theme = Theme.of(context);
-    final floatingPresentation = floatingCall == null
-        ? null
-        : (_presentations[floatingCall.chatId] ??
-            _CallPresentation(
-              title: floatingCall.mediaMode.isVideo ? 'Видеозвонок' : 'Звонок',
-            ));
+    final floatingPresentation = _presentations[floatingCall.chatId] ??
+        _CallPresentation(
+          title: floatingCall.mediaMode.isVideo ? 'Видеозвонок' : 'Звонок',
+        );
     return Stack(
       fit: StackFit.expand,
       children: [
         widget.child,
-        if (bannerCall != null)
-          SafeArea(
-            child: Align(
-              alignment: Alignment.topCenter,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
-                child: GlassPanel(
-                  borderRadius: BorderRadius.circular(24),
-                  padding: const EdgeInsets.fromLTRB(16, 14, 10, 14),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              _bannerStatusLabel(bannerCall),
-                              style: theme.textTheme.labelLarge?.copyWith(
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              'Открыть экран звонка',
-                              style: theme.textTheme.bodySmall?.copyWith(
-                                color: theme.colorScheme.onSurfaceVariant,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      TextButton(
-                        onPressed: () => unawaited(
-                          _openCallScreen(bannerCall, force: true),
-                        ),
-                        child: Text(
-                          bannerCall.state == CallState.active
-                              ? 'Вернуться'
-                              : 'Открыть',
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+        Positioned.fill(
+          child: SafeArea(
+            child: CallFloatingPip(
+              call: floatingCall,
+              title: floatingPresentation.title,
+              photoUrl: floatingPresentation.photoUrl,
+              coordinator: _coordinator,
+              onRestore: () => unawaited(
+                _openCallScreen(floatingCall, force: true),
               ),
             ),
           ),
-        if (floatingCall != null && floatingPresentation != null)
-          Positioned.fill(
-            child: SafeArea(
-              child: CallFloatingPip(
-                call: floatingCall,
-                title: floatingPresentation.title,
-                photoUrl: floatingPresentation.photoUrl,
-                coordinator: _coordinator,
-                onRestore: () => unawaited(
-                  _openCallScreen(floatingCall, force: true),
-                ),
-              ),
-            ),
-          ),
+        ),
       ],
     );
   }

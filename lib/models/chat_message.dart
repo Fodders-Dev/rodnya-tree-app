@@ -7,6 +7,68 @@ import '../utils/url_utils.dart';
 
 part 'chat_message.g.dart';
 
+class ChatMessageCall {
+  const ChatMessageCall({
+    required this.callId,
+    required this.state,
+    required this.mediaMode,
+    this.durationMs,
+    this.initiatorId,
+    this.direction = 'outgoing',
+  });
+
+  final String callId;
+  final String state;
+  final String mediaMode;
+  final int? durationMs;
+  final String? initiatorId;
+  final String direction;
+
+  bool get isVideo => mediaMode == 'video';
+  bool get isMissed => state == 'missed';
+  bool get isRejected => state == 'rejected';
+  bool get isCancelled => state == 'cancelled';
+  bool get isEnded => state == 'ended';
+  bool get isFailed => state == 'failed';
+  bool get isTerminal =>
+      isMissed || isRejected || isCancelled || isEnded || isFailed;
+
+  factory ChatMessageCall.fromMap(Map<String, dynamic> map) {
+    final rawDuration = map['durationMs'];
+    int? duration;
+    if (rawDuration is int) {
+      duration = rawDuration;
+    } else if (rawDuration is num) {
+      duration = rawDuration.toInt();
+    } else if (rawDuration is String) {
+      duration = int.tryParse(rawDuration);
+    }
+    return ChatMessageCall(
+      callId: map['callId']?.toString() ?? '',
+      state: map['state']?.toString() ?? 'ended',
+      mediaMode: map['mediaMode']?.toString() == 'video' ? 'video' : 'audio',
+      durationMs: duration != null && duration > 0 ? duration : null,
+      initiatorId: (map['initiatorId']?.toString().trim().isNotEmpty ?? false)
+          ? map['initiatorId'].toString()
+          : null,
+      direction: map['direction']?.toString() == 'incoming'
+          ? 'incoming'
+          : 'outgoing',
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return <String, dynamic>{
+      'callId': callId,
+      'state': state,
+      'mediaMode': mediaMode,
+      if (durationMs != null) 'durationMs': durationMs,
+      if (initiatorId != null) 'initiatorId': initiatorId,
+      'direction': direction,
+    };
+  }
+}
+
 class ChatReplyReference {
   const ChatReplyReference({
     required this.messageId,
@@ -127,6 +189,7 @@ class ChatMessage extends HiveObject {
   final String? clientMessageId;
   final DateTime? expiresAt;
   final DateTime? updatedAt;
+  final ChatMessageCall? call;
 
   ChatMessage({
     required this.id,
@@ -145,6 +208,7 @@ class ChatMessage extends HiveObject {
     this.clientMessageId,
     this.expiresAt,
     this.updatedAt,
+    this.call,
   });
 
   String? get imageUrl {
@@ -192,6 +256,7 @@ class ChatMessage extends HiveObject {
     String? clientMessageId,
     DateTime? expiresAt,
     DateTime? updatedAt,
+    ChatMessageCall? call,
   }) {
     return ChatMessage(
       id: id ?? this.id,
@@ -210,6 +275,7 @@ class ChatMessage extends HiveObject {
       clientMessageId: clientMessageId ?? this.clientMessageId,
       expiresAt: expiresAt ?? this.expiresAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      call: call ?? this.call,
     );
   }
 
@@ -233,6 +299,7 @@ class ChatMessage extends HiveObject {
       clientMessageId: map['clientMessageId']?.toString(),
       expiresAt: parseDateTime(map['expiresAt']),
       updatedAt: parseDateTime(map['updatedAt']),
+      call: _callFromMap(map['call']),
     );
   }
 
@@ -257,6 +324,7 @@ class ChatMessage extends HiveObject {
       'expiresAt': expiresAt?.toIso8601String(),
       'updatedAt': updatedAt?.toIso8601String(),
       if (replyTo != null) 'replyTo': replyTo!.toMap(),
+      if (call != null) 'call': call!.toMap(),
     };
   }
 
@@ -282,6 +350,7 @@ class ChatMessage extends HiveObject {
       clientMessageId: data['clientMessageId']?.toString(),
       expiresAt: parseDateTime(data['expiresAt']),
       updatedAt: parseDateTime(data['updatedAt']),
+      call: _callFromMap(data['call']),
     );
   }
 
@@ -318,6 +387,18 @@ class ChatMessage extends HiveObject {
       clientMessageId: clientMessageId,
       expiresAt: expiresAt,
     );
+  }
+
+  static ChatMessageCall? _callFromMap(dynamic raw) {
+    if (raw is Map<String, dynamic>) {
+      final call = ChatMessageCall.fromMap(raw);
+      return call.callId.isEmpty ? null : call;
+    }
+    if (raw is Map) {
+      final call = ChatMessageCall.fromMap(Map<String, dynamic>.from(raw));
+      return call.callId.isEmpty ? null : call;
+    }
+    return null;
   }
 
   static ChatReplyReference? _replyReferenceFromMap(Map<String, dynamic> map) {

@@ -18,7 +18,12 @@ const {createGoogleTokenVerifier} = require("./google-auth");
 const {createVkAuthClient} = require("./vk-auth");
 const {createMaxAuthClient} = require("./max-auth");
 const {createLiveKitService} = require("./livekit-service");
-const {buildBranchVisiblePersonIds, normalizeParticipantIds} = require("./store");
+const {
+  buildBranchVisiblePersonIds,
+  buildCallParticipantIdentity,
+  deriveSessionPublicId,
+  normalizeParticipantIds,
+} = require("./store");
 const {createOperationalStatus} = require("./operational-status");
 const {registerAdminRoutes} = require("./routes/admin-routes");
 const {registerAuthSessionRoutes} = require("./routes/auth-session-routes");
@@ -112,16 +117,175 @@ function createApp({
     }
   }
 
-  function publishCallState(call) {
+  async function publishCallState(call) {
     if (!call || typeof call !== "object") {
       return;
     }
 
     for (const participantId of call.participantIds || []) {
-      realtimeHub?.publishToUser(participantId, {
+      realtimeHub?.publishToUser(participantId, ({sessionPublicId}) => ({
         type: "call.state.updated",
-        call: mapCallRecord(call, {viewerUserId: participantId}),
+        call: mapCallRecord(call, {
+          viewerUserId: participantId,
+          viewerSessionId: sessionPublicId,
+        }),
+      }));
+    }
+
+    if (isCallTerminalForSummary(call)) {
+      try {
+        await appendCallSummaryMessage(call);
+      } catch (error) {
+        console.warn(
+          "[backend] failed to append call summary message",
+          JSON.stringify({
+            callId: call.id || null,
+            chatId: call.chatId || null,
+            message: String(error?.message || error || "unknown_error"),
+          }),
+        );
+      }
+    }
+  }
+
+  function isCallTerminalForSummary(call) {
+    const state = String(call?.state || "").trim();
+    return (
+      state === "ended" ||
+      state === "rejected" ||
+      state === "cancelled" ||
+      state === "missed" ||
+      state === "failed"
+    );
+  }
+
+  function describeCallSummaryText(call) {
+    const isVideo = call?.mediaMode === "video";
+    const kindLabel = isVideo ? "Видеозвонок" : "Аудиозвонок";
+    const state = String(call?.state || "").trim();
+    if (state === "ended") {
+      const startedAtMs = call.acceptedAt
+        ? new Date(call.acceptedAt).getTime()
+        : null;
+      const endedAtMs = call.endedAt
+        ? new Date(call.endedAt).getTime()
+        : null;
+      const durationMs =
+        Number.isFinite(startedAtMs) && Number.isFinite(endedAtMs)
+          ? Math.max(0, endedAtMs - startedAtMs)
+          : null;
+      const formatted = formatCallDurationLabel(durationMs);
+      return formatted ? `📞 ${kindLabel} · ${formatted}` : `📞 ${kindLabel}`;
+    }
+    if (state === "missed") {
+      return isVideo ? "📞 Пропущенный видеозвонок" : "📞 Пропущенный звонок";
+    }
+    if (state === "rejected") {
+      return isVideo ? "📞 Видеозвонок отклонён" : "📞 Звонок отклонён";
+    }
+    if (state === "cancelled") {
+      return isVideo ? "📞 Видеозвонок отменён" : "📞 Звонок отменён";
+    }
+    if (state === "failed") {
+      return "📞 Не удалось позвонить";
+    }
+    return `📞 ${kindLabel}`;
+  }
+
+  function formatCallDurationLabel(durationMs) {
+    if (!Number.isFinite(durationMs) || durationMs <= 0) {
+      return null;
+    }
+    const totalSeconds = Math.floor(durationMs / 1000);
+    const seconds = totalSeconds % 60;
+    const totalMinutes = Math.floor(totalSeconds / 60);
+    const minutes = totalMinutes % 60;
+    const hours = Math.floor(totalMinutes / 60);
+    const padded = (value) => String(value).padStart(2, "0");
+    if (hours > 0) {
+      return `${hours}:${padded(minutes)}:${padded(seconds)}`;
+    }
+    return `${minutes}:${padded(seconds)}`;
+  }
+
+  async function appendCallSummaryMessage(call) {
+    if (!call || !call.chatId || !call.initiatorId) {
+      return;
+    }
+    if (typeof store.findChat === "function") {
+      const chat = await store.findChat(call.chatId);
+      if (!chat) {
+        return;
+      }
+    }
+
+    const startedAtMs = call.acceptedAt
+      ? new Date(call.acceptedAt).getTime()
+      : null;
+    const endedAtMs = call.endedAt
+      ? new Date(call.endedAt).getTime()
+      : null;
+    const durationMs =
+      Number.isFinite(startedAtMs) && Number.isFinite(endedAtMs)
+        ? Math.max(0, endedAtMs - startedAtMs)
+        : null;
+
+    const message = await store.addChatMessage({
+      chatId: call.chatId,
+      senderId: call.initiatorId,
+      text: describeCallSummaryText(call),
+      attachments: [],
+      mediaUrls: [],
+      imageUrl: null,
+      clientMessageId: `call_summary_${call.id}`,
+      replyTo: null,
+      call: {
+        callId: call.id,
+        state: call.state,
+        mediaMode: call.mediaMode,
+        durationMs,
+        initiatorId: call.initiatorId,
+        direction: "outgoing",
+      },
+    });
+
+    if (!message || message._deduplicated === true) {
+      return;
+    }
+
+    const chat =
+      typeof store.findChat === "function"
+        ? await store.findChat(call.chatId)
+        : null;
+    const mappedMessage = mapChatMessage(message);
+    const mappedChat = chat ? mapChatRecord(chat) : null;
+
+    if (typeof realtimeHub?.publishToChat === "function") {
+      await realtimeHub.publishToChat(message.chatId, {
+        type: "chat.updated",
+        chatId: message.chatId,
+        chat: mappedChat,
       });
+      await realtimeHub.publishToChat(message.chatId, {
+        type: "chat.message.created",
+        chatId: message.chatId,
+        chat: mappedChat,
+        message: mappedMessage,
+      });
+    } else if (chat && Array.isArray(chat.participantIds)) {
+      for (const participantId of chat.participantIds) {
+        realtimeHub?.publishToUser(participantId, {
+          type: "chat.updated",
+          chatId: message.chatId,
+          chat: mappedChat,
+        });
+        realtimeHub?.publishToUser(participantId, {
+          type: "chat.message.created",
+          chatId: message.chatId,
+          chat: mappedChat,
+          message: mappedMessage,
+        });
+      }
     }
   }
 
@@ -157,7 +321,7 @@ function createApp({
         logCallEvent("invite.missed", expiredCall, {
           timeoutMs: callInviteTimeoutMs,
         });
-        publishCallState(expiredCall);
+        await publishCallState(expiredCall);
       } catch (error) {
         console.error(
           "[backend] call timeout",
@@ -220,7 +384,7 @@ function createApp({
       lazyExpired: true,
       ...extra,
     });
-    publishCallState(expiredCall);
+    await publishCallState(expiredCall);
     return expiredCall;
   }
 
@@ -404,7 +568,7 @@ function createApp({
             participantIdentity: participantIdentity || null,
             roomName: roomName || null,
           });
-          publishCallState(call);
+          await publishCallState(call);
         }
         res.json({ok: true});
       } catch (error) {
@@ -558,7 +722,12 @@ function createApp({
       return;
     }
 
-    req.auth = {token, session, user};
+    req.auth = {
+      token,
+      session,
+      user,
+      sessionPublicId: deriveSessionPublicId(token),
+    };
     scheduleSessionTouch(res, token, {
       requestId: req.requestId,
       userId: user.id,
@@ -1150,6 +1319,29 @@ function createApp({
       expiresAt: message.expiresAt || null,
       replyTo: message.replyTo || null,
       reactions,
+      call: mapChatMessageCall(message.call),
+    };
+  }
+
+  function mapChatMessageCall(value) {
+    if (!value || typeof value !== "object") {
+      return null;
+    }
+    const callId = String(value.callId || "").trim();
+    if (!callId) {
+      return null;
+    }
+    return {
+      callId,
+      state: String(value.state || "").trim() || "ended",
+      mediaMode: String(value.mediaMode || "").trim() === "video"
+        ? "video"
+        : "audio",
+      durationMs: Number.isFinite(Number(value.durationMs))
+        ? Math.max(0, Math.floor(Number(value.durationMs)))
+        : null,
+      initiatorId: value.initiatorId ? String(value.initiatorId).trim() : null,
+      direction: value.direction === "incoming" ? "incoming" : "outgoing",
     };
   }
 
@@ -1238,7 +1430,36 @@ function createApp({
     );
   }
 
-  function mapCallRecord(call, {viewerUserId = null} = {}) {
+  function ownerSessionIdForViewer(call, viewerUserId) {
+    if (!call || !viewerUserId) {
+      return "";
+    }
+    if (call.initiatorId === viewerUserId) {
+      return String(call.originatedBySessionId || "").trim();
+    }
+    if (call.acceptedByUserId === viewerUserId) {
+      return String(call.acceptedBySessionId || "").trim();
+    }
+    return "";
+  }
+
+  function mapCallRecord(
+    call,
+    {viewerUserId = null, viewerSessionId = null} = {},
+  ) {
+    const ownerSessionId = ownerSessionIdForViewer(call, viewerUserId);
+    const normalizedViewerSessionId = String(viewerSessionId || "").trim();
+    const isOwningDevice =
+      Boolean(ownerSessionId) &&
+      Boolean(normalizedViewerSessionId) &&
+      ownerSessionId === normalizedViewerSessionId;
+    const callIsActive = (call.state || "ringing") === "active";
+    const otherDeviceJoined =
+      callIsActive && Boolean(ownerSessionId) && !isOwningDevice;
+    const session =
+      isOwningDevice && viewerUserId && call.sessionByUserId
+        ? mapCallSession(call.sessionByUserId[viewerUserId])
+        : null;
     return {
       id: call.id,
       chatId: call.chatId,
@@ -1256,10 +1477,8 @@ function createApp({
       endedAt: call.endedAt || null,
       endedReason: call.endedReason || null,
       metrics: mapCallMetrics(call.metrics),
-      session:
-        viewerUserId && call.sessionByUserId
-          ? mapCallSession(call.sessionByUserId[viewerUserId])
-          : null,
+      session,
+      joinedOnAnotherDevice: otherDeviceJoined,
     };
   }
 
@@ -1393,25 +1612,38 @@ function createApp({
     call,
     roomName,
     participantIds,
+    ownerSessionByUserId = {},
   }) {
     const sessionEntries = await Promise.all(
       participantIds.map(async (participantId) => {
+        const ownerSessionId = String(
+          ownerSessionByUserId[participantId] || "",
+        ).trim();
+        if (!ownerSessionId) {
+          return [participantId, null];
+        }
         const participant = await store.findUserById(participantId);
         const session = await resolvedLiveKitService.createSession({
           roomName,
-          participantIdentity: participantId,
+          participantIdentity: buildCallParticipantIdentity(
+            participantId,
+            ownerSessionId,
+          ),
           participantName: displayNameForCallParticipant(participant),
           metadata: {
             callId: call.id,
             chatId: call.chatId,
             userId: participantId,
+            sessionPublicId: ownerSessionId,
             mediaMode: call.mediaMode,
           },
         });
         return [participantId, session];
       }),
     );
-    return Object.fromEntries(sessionEntries);
+    return Object.fromEntries(
+      sessionEntries.filter(([, session]) => session != null),
+    );
   }
 
   function resolvePublicAppUrl() {
@@ -2052,6 +2284,7 @@ function createApp({
       recipientId,
       participantIds,
       mediaMode,
+      originatedBySessionId: req.auth.sessionPublicId,
     });
     if (call === null) {
       res.status(404).json({message: "Чат не найден"});
@@ -2106,10 +2339,13 @@ function createApp({
     }
 
     for (const participantId of call.participantIds || []) {
-      realtimeHub?.publishToUser(participantId, {
+      realtimeHub?.publishToUser(participantId, ({sessionPublicId}) => ({
         type: "call.invite.created",
-        call: mapCallRecord(call, {viewerUserId: participantId}),
-      });
+        call: mapCallRecord(call, {
+          viewerUserId: participantId,
+          viewerSessionId: sessionPublicId,
+        }),
+      }));
     }
 
     logCallEvent("invite.created", call, {
@@ -2119,7 +2355,10 @@ function createApp({
     scheduleCallInviteTimeout(call);
 
     res.status(201).json({
-      call: mapCallRecord(call, {viewerUserId: req.auth.user.id}),
+      call: mapCallRecord(call, {
+        viewerUserId: req.auth.user.id,
+        viewerSessionId: req.auth.sessionPublicId,
+      }),
     });
   });
 
@@ -2131,7 +2370,10 @@ function createApp({
     });
     res.json({
       call: activeCall
-        ? mapCallRecord(activeCall, {viewerUserId: req.auth.user.id})
+        ? mapCallRecord(activeCall, {
+            viewerUserId: req.auth.user.id,
+            viewerSessionId: req.auth.sessionPublicId,
+          })
         : null,
     });
   });
@@ -2143,7 +2385,10 @@ function createApp({
     }
 
     res.json({
-      call: mapCallRecord(call, {viewerUserId: req.auth.user.id}),
+      call: mapCallRecord(call, {
+        viewerUserId: req.auth.user.id,
+        viewerSessionId: req.auth.sessionPublicId,
+      }),
     });
   });
 
@@ -2163,7 +2408,10 @@ function createApp({
     }
     if (call.state === "active") {
       res.json({
-        call: mapCallRecord(call, {viewerUserId: req.auth.user.id}),
+        call: mapCallRecord(call, {
+          viewerUserId: req.auth.user.id,
+          viewerSessionId: req.auth.sessionPublicId,
+        }),
       });
       return;
     }
@@ -2174,6 +2422,11 @@ function createApp({
 
     const roomName = call.roomName || `call_${call.id}`;
     const callParticipantIds = normalizeParticipantIds(call.participantIds || []);
+    const accepterSessionId = req.auth.sessionPublicId;
+    const ownerSessionByUserId = {
+      [call.initiatorId]: String(call.originatedBySessionId || "").trim(),
+      [req.auth.user.id]: accepterSessionId,
+    };
     try {
       await resolvedLiveKitService.ensureRoom(roomName, {
         maxParticipants: callParticipantIds.length,
@@ -2182,12 +2435,14 @@ function createApp({
         call,
         roomName,
         participantIds: callParticipantIds,
+        ownerSessionByUserId,
       });
       const acceptedCall = await store.acceptCall({
         callId: call.id,
         userId: req.auth.user.id,
         roomName,
         sessionByUserId,
+        acceptedBySessionId: accepterSessionId,
       });
       if (!acceptedCall) {
         res.status(409).json({message: "Не удалось принять звонок"});
@@ -2195,14 +2450,17 @@ function createApp({
       }
       clearCallInviteTimeout(acceptedCall.id);
 
-      publishCallState(acceptedCall);
+      await publishCallState(acceptedCall);
 
       logCallEvent("accept.succeeded", acceptedCall, {
         viewerUserId: req.auth.user.id,
       });
 
       res.json({
-        call: mapCallRecord(acceptedCall, {viewerUserId: req.auth.user.id}),
+        call: mapCallRecord(acceptedCall, {
+          viewerUserId: req.auth.user.id,
+          viewerSessionId: req.auth.sessionPublicId,
+        }),
       });
     } catch (error) {
       const failedCall =
@@ -2242,11 +2500,16 @@ function createApp({
       return;
     }
     clearCallInviteTimeout(rejectedCall.id);
-    publishCallState(rejectedCall);
+    await publishCallState(rejectedCall);
     logCallEvent("reject.completed", rejectedCall, {
       viewerUserId: req.auth.user.id,
     });
-    res.json({call: mapCallRecord(rejectedCall, {viewerUserId: req.auth.user.id})});
+    res.json({
+      call: mapCallRecord(rejectedCall, {
+        viewerUserId: req.auth.user.id,
+        viewerSessionId: req.auth.sessionPublicId,
+      }),
+    });
   });
 
   app.post("/v1/calls/:callId/cancel", requireAuth, async (req, res) => {
@@ -2271,11 +2534,16 @@ function createApp({
       return;
     }
     clearCallInviteTimeout(cancelledCall.id);
-    publishCallState(cancelledCall);
+    await publishCallState(cancelledCall);
     logCallEvent("cancel.completed", cancelledCall, {
       viewerUserId: req.auth.user.id,
     });
-    res.json({call: mapCallRecord(cancelledCall, {viewerUserId: req.auth.user.id})});
+    res.json({
+      call: mapCallRecord(cancelledCall, {
+        viewerUserId: req.auth.user.id,
+        viewerSessionId: req.auth.sessionPublicId,
+      }),
+    });
   });
 
   app.post("/v1/calls/:callId/hangup", requireAuth, async (req, res) => {
@@ -2300,11 +2568,16 @@ function createApp({
       return;
     }
     clearCallInviteTimeout(endedCall.id);
-    publishCallState(endedCall);
+    await publishCallState(endedCall);
     logCallEvent("hangup.completed", endedCall, {
       viewerUserId: req.auth.user.id,
     });
-    res.json({call: mapCallRecord(endedCall, {viewerUserId: req.auth.user.id})});
+    res.json({
+      call: mapCallRecord(endedCall, {
+        viewerUserId: req.auth.user.id,
+        viewerSessionId: req.auth.sessionPublicId,
+      }),
+    });
   });
 
   registerUserRoutes(app, {

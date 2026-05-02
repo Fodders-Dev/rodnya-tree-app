@@ -99,6 +99,21 @@ class _CallScreenState extends State<CallScreen> {
     setState(() {
       _call = coordinatorCall;
     });
+    if (coordinatorCall.joinedOnAnotherDevice &&
+        coordinatorCall.state == CallState.active) {
+      Future<void>.microtask(() {
+        if (!mounted) {
+          return;
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Звонок принят на другом устройстве'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+        Navigator.of(context).maybePop(coordinatorCall);
+      });
+    }
   }
 
   Future<void> _acceptIncomingCall() async {

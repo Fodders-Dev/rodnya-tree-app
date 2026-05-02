@@ -462,7 +462,12 @@ test("direct call lifecycle works with backend signaling and webhook updates", a
     const fetchedAcceptedCall = await getAcceptedCallResponse.json();
     assert.equal(fetchedAcceptedCall.call.id, startedCall.call.id);
     assert.equal(fetchedAcceptedCall.call.state, "active");
-    assert.equal(fetchedAcceptedCall.call.session.participantIdentity, callee.user.id);
+    const calleeIdentity = fetchedAcceptedCall.call.session.participantIdentity;
+    assert.ok(
+      calleeIdentity.startsWith(`${callee.user.id}#`),
+      `expected callee identity to start with ${callee.user.id}#, got ${calleeIdentity}`,
+    );
+    assert.equal(fetchedAcceptedCall.call.joinedOnAnotherDevice, false);
 
     const webhookResponse = await fetch(`${ctx.baseUrl}/v1/livekit/webhook`, {
       method: "POST",
@@ -475,7 +480,7 @@ test("direct call lifecycle works with backend signaling and webhook updates", a
           name: `call_${startedCall.call.id}`,
         },
         participant: {
-          identity: callee.user.id,
+          identity: calleeIdentity,
         },
       }),
     });
@@ -483,7 +488,7 @@ test("direct call lifecycle works with backend signaling and webhook updates", a
 
     const endedCall = await ctx.store.findCall(startedCall.call.id);
     assert.equal(endedCall.state, "ended");
-    assert.equal(endedCall.endedReason, callee.user.id);
+    assert.equal(endedCall.endedReason, calleeIdentity);
   } finally {
     await stopTestServer(ctx);
   }
@@ -593,14 +598,25 @@ test("group call starts from group chat and creates LiveKit sessions for every p
     assert.equal(acceptResponse.status, 200);
     const acceptedCall = await acceptResponse.json();
     assert.equal(acceptedCall.call.state, "active");
-    assert.equal(acceptedCall.call.session.participantIdentity, bob.user.id);
+    const bobIdentity = acceptedCall.call.session.participantIdentity;
+    assert.ok(
+      bobIdentity.startsWith(`${bob.user.id}#`),
+      `expected bob identity to start with ${bob.user.id}#, got ${bobIdentity}`,
+    );
+    assert.equal(acceptedCall.call.joinedOnAnotherDevice, false);
     assert.equal(ensuredRooms.length, 1);
     assert.equal(ensuredRooms[0].options.maxParticipants, 3);
-    assert.equal(createdSessions.length, 3);
-    assert.deepEqual(
-      createdSessions.map((session) => session.participantIdentity).sort(),
-      [caller.user.id, bob.user.id, carol.user.id].sort(),
-    );
+    // Per-session ownership: tokens are issued only to the originating session
+    // and to the accepting session — never blanket-issued to all participants.
+    assert.equal(createdSessions.length, 2);
+    const sortedIdentityPrefixes = createdSessions
+      .map((session) => session.participantIdentity.split("#")[0])
+      .sort();
+    assert.deepEqual(sortedIdentityPrefixes, [bob.user.id, caller.user.id].sort());
+    const callerIdentity = createdSessions
+      .map((session) => session.participantIdentity)
+      .find((identity) => identity.startsWith(`${caller.user.id}#`));
+    assert.ok(callerIdentity, "expected caller to have a participantIdentity");
 
     const carolCallResponse = await fetch(
       `${ctx.baseUrl}/v1/calls/${startedCall.call.id}`,
@@ -613,9 +629,13 @@ test("group call starts from group chat and creates LiveKit sessions for every p
     assert.equal(carolCallResponse.status, 200);
     const carolCall = await carolCallResponse.json();
     assert.equal(carolCall.call.state, "active");
-    assert.equal(carolCall.call.session.participantIdentity, carol.user.id);
+    // Carol is a group participant who has not accepted on this device, so she
+    // gets no LiveKit session and is not flagged as "answered elsewhere"
+    // (joinedOnAnotherDevice is for the participant who DID answer — bob).
+    assert.equal(carolCall.call.session, null);
+    assert.equal(carolCall.call.joinedOnAnotherDevice, false);
 
-    for (const participant of [bob.user, carol.user]) {
+    for (const identity of [callerIdentity, bobIdentity]) {
       const joinedResponse = await fetch(`${ctx.baseUrl}/v1/livekit/webhook`, {
         method: "POST",
         headers: {
@@ -627,7 +647,7 @@ test("group call starts from group chat and creates LiveKit sessions for every p
             name: `call_${startedCall.call.id}`,
           },
           participant: {
-            identity: participant.id,
+            identity,
           },
         }),
       });
@@ -645,7 +665,7 @@ test("group call starts from group chat and creates LiveKit sessions for every p
           name: `call_${startedCall.call.id}`,
         },
         participant: {
-          identity: bob.user.id,
+          identity: bobIdentity,
         },
       }),
     });
@@ -654,7 +674,7 @@ test("group call starts from group chat and creates LiveKit sessions for every p
     const stillActiveCall = await ctx.store.findCall(startedCall.call.id);
     assert.equal(stillActiveCall.state, "active");
     assert.deepEqual(stillActiveCall.metrics.connectedParticipantIds, [
-      carol.user.id,
+      callerIdentity,
     ]);
   } finally {
     await stopTestServer(ctx);

@@ -1,4 +1,5 @@
 const {WebSocketServer} = require("ws");
+const {deriveSessionPublicId} = require("./store");
 
 class RealtimeHub {
   constructor({store, logger = console}) {
@@ -57,6 +58,7 @@ class RealtimeHub {
         }
 
         userId = user.id;
+        socket.publicSessionId = deriveSessionPublicId(token);
         this._registerSocket(userId, socket);
         this._scheduleSessionTouch(token, {userId});
         const onlineUserIds = await this._collectOnlineParticipants(userId);
@@ -97,13 +99,28 @@ class RealtimeHub {
       return false;
     }
 
-    const serializedPayload = JSON.stringify(payload);
+    const isPerSocketBuilder = typeof payload === "function";
+    const staticSerializedPayload = isPerSocketBuilder
+      ? null
+      : JSON.stringify(payload);
     let sent = false;
     for (const socket of sockets) {
-      if (socket.readyState === socket.OPEN) {
-        socket.send(serializedPayload);
-        sent = true;
+      if (socket.readyState !== socket.OPEN) {
+        continue;
       }
+      let serializedPayload = staticSerializedPayload;
+      if (isPerSocketBuilder) {
+        const builtPayload = payload({
+          userId,
+          sessionPublicId: socket.publicSessionId || "",
+        });
+        if (!builtPayload) {
+          continue;
+        }
+        serializedPayload = JSON.stringify(builtPayload);
+      }
+      socket.send(serializedPayload);
+      sent = true;
     }
     return sent;
   }
