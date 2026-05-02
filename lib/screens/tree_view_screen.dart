@@ -98,6 +98,10 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
   String? _branchRootPersonId;
   String? _selectedPersonSheetId;
   String? _selectedEditPersonId;
+  // Reference design pattern: bottom sheet starts collapsed (peek bar with
+  // avatar + name + meta + chevron) and expands on tap to reveal action row
+  // and full info. Reset to collapsed whenever selection changes.
+  bool _personSheetExpanded = false;
   FamilyTree? _currentTreeMeta;
   Map<String, Offset> _manualNodePositions = <String, Offset>{};
   TreeGraphSnapshot? _graphSnapshot;
@@ -162,14 +166,27 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
 
   void _selectTreePerson(FamilyPerson person) {
     setState(() {
-      _selectedPersonSheetId =
-          _selectedPersonSheetId == person.id ? null : person.id;
+      if (_selectedPersonSheetId == person.id) {
+        // Same node tapped twice — close sheet entirely.
+        _selectedPersonSheetId = null;
+        _personSheetExpanded = false;
+      } else {
+        _selectedPersonSheetId = person.id;
+        _personSheetExpanded = false; // Always start collapsed.
+      }
     });
   }
 
   void _clearSelectedTreePerson() {
     setState(() {
       _selectedPersonSheetId = null;
+      _personSheetExpanded = false;
+    });
+  }
+
+  void _togglePersonSheetExpansion() {
+    setState(() {
+      _personSheetExpanded = !_personSheetExpanded;
     });
   }
 

@@ -1379,13 +1379,230 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
             ? RodnyaDesignTokens.dark
             : RodnyaDesignTokens.light);
     final avatarImage = buildAvatarImageProvider(person.primaryPhotoUrl);
-    final metaParts = <String>[
-      if ((person.birthDate?.year ?? 0) > 0) 'р. ${person.birthDate!.year}',
-      if (person.isAlive == false && (person.deathDate?.year ?? 0) > 0)
-        'память ${person.deathDate!.year}',
-      if ((person.birthPlace ?? '').trim().isNotEmpty)
-        person.birthPlace!.trim(),
-    ];
+
+    // Reference style sheet: collapsed peek bar (avatar + Lora fname + small
+    // meta + chevron) that expands on tap to reveal full info + action row.
+    final birthYear = person.birthDate?.year;
+    final deathYear = person.deathDate?.year;
+    final age = (birthYear != null && birthYear > 0)
+        ? ((deathYear != null && deathYear > 0
+                ? deathYear
+                : DateTime.now().year) -
+            birthYear)
+        : null;
+    final lifeRange = birthYear != null && birthYear > 0
+        ? (deathYear != null && deathYear > 0
+            ? '$birthYear–$deathYear'
+            : '$birthYear · ${age ?? '?'} лет')
+        : null;
+    final place = (person.birthPlace ?? '').trim();
+    final hasWarnings =
+        _graphSnapshot?.warningsForPerson(person.id).isNotEmpty == true;
+
+    final nameParts = person.displayName.trim().split(RegExp(r'\s+'));
+    final fname = nameParts.isNotEmpty ? nameParts.first : person.displayName;
+    final lname =
+        nameParts.length > 1 ? nameParts.sublist(1).join(' ') : null;
+
+    // Peek row — always visible. Tapping it toggles expansion. Drag handle
+    // sits centered above so the surface reads as a sheet, not a card.
+    final peekRow = Padding(
+      padding: const EdgeInsets.fromLTRB(14, 10, 8, 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          CircleAvatar(
+            radius: 22,
+            backgroundColor: accent.withValues(alpha: 0.14),
+            backgroundImage: avatarImage,
+            child: avatarImage == null
+                ? Text(
+                    person.initials,
+                    style: AppTheme.sans(
+                      color: accent,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  )
+                : null,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                RichText(
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  text: TextSpan(
+                    children: [
+                      TextSpan(
+                        text: fname,
+                        style: AppTheme.serif(
+                          color: tokens.ink,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: -0.2,
+                        ),
+                      ),
+                      if (lname != null)
+                        TextSpan(
+                          text: ' $lname',
+                          style: AppTheme.sans(
+                            color: tokens.inkSecondary,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  [
+                    if (lifeRange != null) lifeRange,
+                    if (place.isNotEmpty) place,
+                    if (hasWarnings && lifeRange == null && place.isEmpty)
+                      'Нужна проверка',
+                  ].whereType<String>().take(2).join(' · ').isEmpty
+                      ? (_isFriendsTree
+                          ? 'Карточка круга'
+                          : 'Карточка дерева')
+                      : [
+                          if (lifeRange != null) lifeRange,
+                          if (place.isNotEmpty) place,
+                        ].join(' · '),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTheme.sans(
+                    color: tokens.inkMuted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          AnimatedRotation(
+            turns: _personSheetExpanded ? 0.5 : 0.0,
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOut,
+            child: Icon(
+              Icons.keyboard_arrow_up_rounded,
+              size: 20,
+              color: tokens.inkSecondary,
+            ),
+          ),
+          IconButton(
+            tooltip: 'Закрыть карточку',
+            iconSize: 18,
+            visualDensity: VisualDensity.compact,
+            icon: Icon(Icons.close, color: tokens.inkSecondary),
+            onPressed: _clearSelectedTreePerson,
+          ),
+        ],
+      ),
+    );
+
+    // Expanded body — shown when sheet is expanded. Action row + sundries.
+    final expandedBody = AnimatedSize(
+      duration: const Duration(milliseconds: 240),
+      curve: Curves.easeOut,
+      alignment: Alignment.topCenter,
+      child: !_personSheetExpanded
+          ? const SizedBox.shrink()
+          : Padding(
+              padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    height: 0.6,
+                    color: tokens.surfaceLine.withValues(alpha: 0.6),
+                  ),
+                  const SizedBox(height: 12),
+                  if (age != null) ...[
+                    Text(
+                      person.isAlive == false
+                          ? 'Прожил${person.gender == Gender.female ? 'а' : ''} $age ${_yearsLabel(age)}'
+                          : '$age ${_yearsLabel(age)}',
+                      style: AppTheme.sans(
+                        color: tokens.inkSecondary,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        _buildTreeSheetAction(
+                          icon: Icons.open_in_new,
+                          label: 'Профиль',
+                          onPressed: () => _openPersonDetails(person),
+                          emphasized: true,
+                        ),
+                        const SizedBox(width: 8),
+                        _buildTreeSheetAction(
+                          icon: Icons.chat_bubble_outline_rounded,
+                          label: 'Написать',
+                          onPressed: () => _openPersonDetails(
+                            person,
+                            action: 'chat',
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        _buildTreeSheetAction(
+                          icon: Icons.history_outlined,
+                          label: 'История',
+                          onPressed: () => _showPersonHistorySheet(person),
+                        ),
+                        const SizedBox(width: 8),
+                        _buildTreeSheetAction(
+                          icon: Icons.alt_route_outlined,
+                          label: _isFriendsTree ? 'Круг' : 'Ветка',
+                          onPressed: () => _focusBranch(person),
+                        ),
+                        const SizedBox(width: 8),
+                        _buildTreeSheetAction(
+                          icon: Icons.person_add_alt_1_outlined,
+                          label: 'Связь',
+                          onPressed: () =>
+                              _showTreePersonRelationSheet(person),
+                        ),
+                        if (hasWarnings) ...[
+                          const SizedBox(width: 8),
+                          _buildTreeSheetAction(
+                            icon: Icons.report_problem_outlined,
+                            label: 'Проверить',
+                            onPressed: () =>
+                                _openPersonDetails(person, action: 'relations'),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+    );
+
+    // Drag handle pill — minimal indicator that the sheet is interactive.
+    final dragHandle = Padding(
+      padding: const EdgeInsets.only(top: 8, bottom: 4),
+      child: Container(
+        width: 38,
+        height: 4,
+        decoration: BoxDecoration(
+          color: tokens.inkMuted.withValues(alpha: 0.42),
+          borderRadius: BorderRadius.circular(999),
+        ),
+      ),
+    );
 
     return Align(
       key: key,
@@ -1395,7 +1612,7 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 620),
           child: GlassPanel(
-            padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
+            padding: EdgeInsets.zero,
             borderRadius: BorderRadius.circular(tokens.radiusLg),
             color: tokens.surfaceStrong.withValues(alpha: 0.94),
             borderColor: accent.withValues(alpha: 0.20),
@@ -1403,111 +1620,49 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    CircleAvatar(
-                      radius: 26,
-                      backgroundColor: accent.withValues(alpha: 0.14),
-                      backgroundImage: avatarImage,
-                      child: avatarImage == null
-                          ? Text(
-                              person.initials,
-                              style: theme.textTheme.titleSmall?.copyWith(
-                                color: accent,
-                                fontWeight: FontWeight.w900,
-                              ),
-                            )
-                          : null,
+                // Tap-to-toggle header (handle + peek row).
+                Material(
+                  color: Colors.transparent,
+                  borderRadius: BorderRadius.vertical(
+                    top: Radius.circular(tokens.radiusLg),
+                    bottom: Radius.circular(_personSheetExpanded
+                        ? 0
+                        : tokens.radiusLg),
+                  ),
+                  child: InkWell(
+                    onTap: _togglePersonSheetExpansion,
+                    borderRadius: BorderRadius.vertical(
+                      top: Radius.circular(tokens.radiusLg),
+                      bottom: Radius.circular(_personSheetExpanded
+                          ? 0
+                          : tokens.radiusLg),
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            person.displayName,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.titleMedium?.copyWith(
-                              fontWeight: FontWeight.w900,
-                              color: tokens.ink,
-                            ),
-                          ),
-                          const SizedBox(height: 3),
-                          Text(
-                            metaParts.isEmpty
-                                ? (_isFriendsTree
-                                    ? 'Карточка круга'
-                                    : 'Карточка дерева')
-                                : metaParts.join(' · '),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: tokens.inkSecondary,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    IconButton(
-                      tooltip: 'Закрыть карточку',
-                      icon: const Icon(Icons.close),
-                      onPressed: _clearSelectedTreePerson,
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
-                      _buildTreeSheetAction(
-                        icon: Icons.open_in_new,
-                        label: 'Профиль',
-                        onPressed: () => _openPersonDetails(person),
-                        emphasized: true,
-                      ),
-                      const SizedBox(width: 8),
-                      _buildTreeSheetAction(
-                        icon: Icons.alt_route_outlined,
-                        label: _isFriendsTree ? 'Круг' : 'Ветка',
-                        onPressed: () => _focusBranch(person),
-                      ),
-                      const SizedBox(width: 8),
-                      _buildTreeSheetAction(
-                        icon: Icons.person_add_alt_1_outlined,
-                        label: 'Связь',
-                        onPressed: () => _showTreePersonRelationSheet(person),
-                      ),
-                      if (_graphSnapshot
-                              ?.warningsForPerson(person.id)
-                              .isNotEmpty ==
-                          true) ...[
-                        const SizedBox(width: 8),
-                        _buildTreeSheetAction(
-                          icon: Icons.report_problem_outlined,
-                          label: 'Проверить',
-                          onPressed: () =>
-                              _openPersonDetails(person, action: 'relations'),
-                        ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        dragHandle,
+                        peekRow,
                       ],
-                      const SizedBox(width: 8),
-                      _buildTreeSheetAction(
-                        icon: Icons.history_outlined,
-                        label: 'История',
-                        onPressed: () => _showPersonHistorySheet(person),
-                      ),
-                    ],
+                    ),
                   ),
                 ),
+                expandedBody,
               ],
             ),
           ),
         ),
       ),
     );
+  }
+
+  String _yearsLabel(int years) {
+    final mod10 = years % 10;
+    final mod100 = years % 100;
+    if (mod10 == 1 && mod100 != 11) return 'год';
+    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) {
+      return 'года';
+    }
+    return 'лет';
   }
 
   Widget _buildTreeSheetAction({

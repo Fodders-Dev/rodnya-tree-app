@@ -727,6 +727,15 @@ void main() {
     treeWidget.onPersonTap(person);
     await tester.pumpAndSettle();
 
+    // Sheet now starts collapsed (reference design): peek bar shows
+    // avatar + name + meta + chevron only. The chevron up/down icon is
+    // unique to the peek bar — tap that to expand the sheet.
+    await tester.tap(
+      find.byIcon(Icons.keyboard_arrow_up_rounded),
+      warnIfMissed: false,
+    );
+    await tester.pumpAndSettle();
+
     expect(find.text('Профиль'), findsOneWidget);
     expect(find.text('Ветка'), findsOneWidget);
     expect(find.text('Связь'), findsOneWidget);
