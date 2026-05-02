@@ -115,34 +115,55 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
                 .toDouble()
             : (isCompact ? 210.0 : 260.0);
 
-        return Padding(
-          padding: EdgeInsets.fromLTRB(
-            isCompact ? 10 : 16,
-            isCompact ? 8 : 12,
-            isCompact ? 10 : 16,
-            isCompact ? 12 : 16,
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              topToolbar,
-              const SizedBox(height: 10),
-              SizedBox(
-                height: compactContextHeight,
-                child: SingleChildScrollView(
-                  child: _buildTreeContextColumn(
-                    selectedTreeId: selectedTreeId,
-                    branchRootPerson: branchRootPerson,
-                    selectedEditPerson: selectedEditPerson,
-                    warnings: treeWarnings,
-                    compact: true,
-                  ),
+        // Mobile / compact: tree canvas fills the whole body and the
+        // toolbar / context column float above it. The user asked for the
+        // tree to read as the page background, not as a contained card —
+        // matching the Claude Design reference where the family graph IS
+        // the canvas and only thin chrome floats over it.
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            // Tree canvas painted behind everything else, edge-to-edge.
+            Positioned.fill(child: treeCanvas),
+            // Floating chrome on top of the canvas. The headers sit in
+            // their own column at the top, leaving the canvas clear in
+            // the bottom 70% of the screen for the actual graph.
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(
+                  isCompact ? 10 : 16,
+                  isCompact ? 8 : 12,
+                  isCompact ? 10 : 16,
+                  0,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    topToolbar,
+                    const SizedBox(height: 10),
+                    ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxHeight: compactContextHeight,
+                      ),
+                      child: SingleChildScrollView(
+                        child: _buildTreeContextColumn(
+                          selectedTreeId: selectedTreeId,
+                          branchRootPerson: branchRootPerson,
+                          selectedEditPerson: selectedEditPerson,
+                          warnings: treeWarnings,
+                          compact: true,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(height: 12),
-              Expanded(child: treeCanvas),
-            ],
-          ),
+            ),
+          ],
         );
       },
     );
@@ -1184,67 +1205,37 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
     final selectedPerson = _selectedPersonSheetPerson;
     final canvasAccent =
         _isFriendsTree ? const Color(0xFF0F9D8A) : theme.colorScheme.primary;
-    return GlassPanel(
-      padding: EdgeInsets.zero,
-      borderRadius: BorderRadius.circular(30),
-      blur: 14,
-      color: theme.colorScheme.surface.withValues(alpha: 0.72),
-      borderColor: canvasAccent.withValues(alpha: 0.18),
-      boxShadow: [
-        BoxShadow(
-          color: theme.colorScheme.shadow.withValues(alpha: 0.08),
-          blurRadius: 28,
-          offset: const Offset(0, 18),
-        ),
-      ],
-      child: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              theme.colorScheme.surface.withValues(alpha: 0.88),
-              canvasAccent.withValues(alpha: _isFriendsTree ? 0.05 : 0.03),
-            ],
+    // Full-bleed canvas: drop the GlassPanel wrapper that used to box the
+    // tree inside a 30-radius card. The tree now paints directly on the
+    // app backdrop (warm cream + radial highlights from `AppBackdrop`),
+    // matching the reference design where the family graph IS the
+    // background, not a contained widget. Toolbar / sidebar / sheet
+    // float over this canvas.
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        // Soft accent halo behind the tree — pulls focus to the canvas
+        // center without putting a hard frame around it.
+        IgnorePointer(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: RadialGradient(
+                center: const Alignment(0, -0.05),
+                radius: 0.95,
+                colors: [
+                  canvasAccent.withValues(
+                    alpha: _isFriendsTree ? 0.07 : 0.05,
+                  ),
+                  Colors.transparent,
+                ],
+                stops: const [0.0, 0.75],
+              ),
+            ),
           ),
-          borderRadius: BorderRadius.circular(30),
         ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(30),
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              IgnorePointer(
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    gradient: RadialGradient(
-                      center: const Alignment(0, 0.04),
-                      radius: 0.72,
-                      colors: [
-                        canvasAccent.withValues(
-                          alpha: _isFriendsTree ? 0.14 : 0.10,
-                        ),
-                        theme.colorScheme.surface.withValues(alpha: 0),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-              IgnorePointer(
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        theme.colorScheme.surface.withValues(alpha: 0.16),
-                        theme.colorScheme.surface.withValues(alpha: 0),
-                        canvasAccent.withValues(alpha: 0.04),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
+        Stack(
+          fit: StackFit.expand,
+          children: [
               InteractiveFamilyTree(
                 peopleData: _relativesData,
                 relations: _relationsData,
@@ -1286,6 +1277,13 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
                 onAddRelativeTapWithType: _handleAddRelativeFromTree,
                 currentUserIsInTree: _currentUserIsInTree,
                 onAddSelfTapWithType: _handleAddSelfFromTree,
+                // Reserve vertical space for the floating chrome stacked
+                // above the canvas — toolbar (~60) + context column
+                // (up to ~210) on mobile compact, much less on desktop
+                // where the sidebar lives in its own column.
+                viewportReservedTop:
+                    MediaQuery.of(context).size.width < 1180 ? 290 : 96,
+                viewportReservedBottom: 120,
               ),
               Positioned(
                 left: 12,
@@ -1373,8 +1371,7 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
               ),
             ],
           ),
-        ),
-      ),
+        ],
     );
   }
 

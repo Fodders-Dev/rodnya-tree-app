@@ -48,6 +48,13 @@ class InteractiveFamilyTree extends StatefulWidget {
   final bool hasManualLayout;
   final VoidCallback? onResetLayout;
 
+  /// Vertical pixels reserved at the top of the viewport for floating
+  /// chrome (toolbar / context column on mobile). Defaults to 64.
+  final double viewportReservedTop;
+
+  /// Vertical pixels reserved at the bottom for the bottom sheet / dock.
+  final double viewportReservedBottom;
+
   // Константы для размеров узлов и отступов - понадобятся для расчета layout
   static const double nodeWidth = 132; // Примерная ширина карточки
   static const double nodeHeight = 112; // Примерная высота карточки
@@ -88,6 +95,8 @@ class InteractiveFamilyTree extends StatefulWidget {
     this.graphLabel = 'дерева',
     this.hasManualLayout = false,
     this.onResetLayout,
+    this.viewportReservedTop = 64,
+    this.viewportReservedBottom = 28,
   });
 
   @override
@@ -95,8 +104,11 @@ class InteractiveFamilyTree extends StatefulWidget {
 }
 
 class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
-  static const double _viewportReservedTop = 64;
-  static const double _viewportReservedBottom = 28;
+  // Space reserved at the top/bottom of the viewport when fitting/focusing
+  // the tree — keeps cards from appearing under floating chrome (toolbar,
+  // sidebar, bottom sheet).
+  double get _viewportReservedTop => widget.viewportReservedTop;
+  double get _viewportReservedBottom => widget.viewportReservedBottom;
 
   // Данные для CustomPainter
   Map<String, Offset> nodePositions = {}; // ID человека -> его позиция (центр)
