@@ -591,7 +591,10 @@ void main() {
     await tester.tap(find.text('Сохранить человека'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Иван Петров'), findsOneWidget);
+    // Card splits the displayed name: fname 'Иван' (Lora big) + lname
+    // 'Петров' (Manrope small). Both must render after add-relative reload.
+    expect(find.text('Иван'), findsOneWidget);
+    expect(find.text('Петров'), findsOneWidget);
     expect(
       familyService.requestedTreeIds.where((id) => id == 'tree-1').length,
       greaterThanOrEqualTo(2),
@@ -899,7 +902,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('История изменений'), findsOneWidget);
-    expect(find.text('Иван Петров'), findsWidgets);
+    // Tree card splits name; 'Иван' renders in the card (and may also appear
+    // in the history sheet header).
+    expect(find.text('Иван'), findsWidgets);
     expect(find.text('Обновлён профиль'), findsOneWidget);
   });
 

@@ -113,12 +113,17 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
   String? _hoveredPersonId;
   Offset? _dragStartNodePosition;
 
+  /// Person ids on the active path (selected + parents + children + spouse +
+  /// siblings) — used to dim everyone else when something is selected.
+  Set<String>? _activePathPersonIds;
+
   @override
   void initState() {
     super.initState();
     _selectedEditPersonId = widget.selectedEditPersonId;
     _transformationController.addListener(_handleTransformChanged);
     _calculateLayout(); // Вызываем расчет layout
+    _activePathPersonIds = _computeActivePath(widget.selectedPersonId);
   }
 
   @override
@@ -146,6 +151,81 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
     if (!widget.isEditMode && _selectedEditPersonId != null) {
       _selectedEditPersonId = null;
     }
+
+    // Recompute the highlighted active path whenever selection or graph
+    // structure changes.
+    if (oldWidget.selectedPersonId != widget.selectedPersonId ||
+        oldWidget.relations != widget.relations) {
+      _activePathPersonIds = _computeActivePath(widget.selectedPersonId);
+    }
+  }
+
+  /// Returns the set of person ids that are on the active path of [selectedId]:
+  /// the selected person, their direct parents, their direct children, their
+  /// spouse, and their siblings (children of the same parents). Anyone outside
+  /// this set is dimmed in the canvas.
+  Set<String>? _computeActivePath(String? selectedId) {
+    if (selectedId == null || selectedId.isEmpty) return null;
+    final result = <String>{selectedId};
+    final parents = <String>{};
+    bool isParentRel(RelationType t) => t == RelationType.parent;
+    bool isChildRel(RelationType t) =>
+        t == RelationType.child ||
+        t == RelationType.grandchild ||
+        t == RelationType.greatGrandchild;
+    bool isSpousal(RelationType t) =>
+        t == RelationType.spouse || t == RelationType.partner;
+
+    for (final relation in widget.relations) {
+      final r12 = relation.relation1to2;
+      final r21 = relation.relation2to1;
+      if (relation.person1Id == selectedId) {
+        if (isParentRel(r12)) {
+          // person2 is selected's child (selected is parent of person2)
+          // — wait: r12 says how person1 relates to person2. If r12==parent,
+          // person1 is parent of person2.
+          result.add(relation.person2Id);
+        }
+        if (isChildRel(r12)) {
+          // person1 is child of person2 → person2 is parent
+          parents.add(relation.person2Id);
+          result.add(relation.person2Id);
+        }
+        if (isSpousal(r12)) {
+          result.add(relation.person2Id);
+        }
+      }
+      if (relation.person2Id == selectedId) {
+        if (isParentRel(r12)) {
+          // person1 is parent of person2 (selected) → add person1 as parent
+          parents.add(relation.person1Id);
+          result.add(relation.person1Id);
+        }
+        if (isChildRel(r12)) {
+          // person1 is child of person2 (selected) → add person1 as child
+          result.add(relation.person1Id);
+        }
+        if (isSpousal(r21)) {
+          result.add(relation.person1Id);
+        }
+      }
+    }
+    // Siblings: anyone whose parent set intersects mine.
+    if (parents.isNotEmpty) {
+      for (final relation in widget.relations) {
+        if (relation.relation1to2 == RelationType.parent &&
+            parents.contains(relation.person1Id) &&
+            relation.person2Id != selectedId) {
+          result.add(relation.person2Id);
+        }
+        if (relation.relation1to2 == RelationType.child &&
+            parents.contains(relation.person2Id) &&
+            relation.person1Id != selectedId) {
+          result.add(relation.person1Id);
+        }
+      }
+    }
+    return result;
   }
 
   @override
@@ -1274,6 +1354,20 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
     final prefersTouchQuickAdd = !supportsHoverActions && !widget.isEditMode;
     final canUseLongPressQuickAdd = prefersTouchQuickAdd;
 
+    // Reference design states for the card:
+    // - deceased = saturate-down + † overlay on avatar
+    // - pending  = warm dot on avatar (no userId linked yet)
+    // - dimmed   = a different node is selected and this one is not on the
+    //              active path → fade to ~32% so the path stands out
+    final isDeceasedPerson =
+        person.deathDate != null || person.isAlive == false;
+    final isPendingPerson =
+        (person.userId == null || person.userId!.isEmpty) && !isDeceasedPerson;
+    final hasActivePath = widget.selectedPersonId != null;
+    final isOnActivePath = hasActivePath &&
+        (_activePathPersonIds?.contains(person.id) ?? false);
+    final isDimmed = hasActivePath && !isOnActivePath && !isSelectedPerson;
+
     final cardContent = FamilyTreeNodeCard(
       key: ValueKey<String>('tree-node-${person.id}'),
       displayName: displayName,
@@ -1286,6 +1380,9 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
       isSelectedInEditMode: isSelectedInEditMode || isSelectedPerson,
       isDraggingNode: isDraggingNode,
       isHovered: isHoveredNode,
+      isDeceased: isDeceasedPerson,
+      isPending: isPendingPerson,
+      isDimmed: isDimmed,
     );
 
     return MouseRegion(

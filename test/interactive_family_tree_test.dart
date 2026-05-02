@@ -163,7 +163,10 @@ void main() {
 
     expect(find.byType(Scaffold), findsOneWidget);
     expect(find.byType(InteractiveViewer), findsOneWidget);
-    expect(find.text('Иван Петров'), findsOneWidget);
+    // Card now splits the name: 'Иван' (first name, Lora) + 'Петров' (last
+    // name, Manrope smaller). Assert both pieces render.
+    expect(find.text('Иван'), findsOneWidget);
+    expect(find.text('Петров'), findsOneWidget);
     expect(find.byTooltip('Вписать дерево'), findsOneWidget);
     expect(find.byTooltip('Ко мне'), findsOneWidget);
     expect(find.byTooltip('Увеличить'), findsOneWidget);
@@ -518,9 +521,14 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    expect(find.text('Иванов Иван'), findsOneWidget);
-    expect(find.text('Иванова Мария'), findsOneWidget);
-    expect(find.text('Иванов Пётр'), findsOneWidget);
+    // Card splits name: lname (first word) + fname (rest). For "Иванов Иван":
+    // 'Иванов' big (Lora), 'Иван' small (Manrope). Assert by first-word
+    // segments which are unique within this fixture.
+    expect(find.text('Иванов'), findsNWidgets(2)); // Иванов Иван + Иванов Пётр
+    expect(find.text('Иванова'), findsOneWidget);
+    expect(find.text('Иван'), findsOneWidget);
+    expect(find.text('Мария'), findsOneWidget);
+    expect(find.text('Пётр'), findsOneWidget);
     expect(find.text('Ветка Иванов'), findsNothing);
   });
 
