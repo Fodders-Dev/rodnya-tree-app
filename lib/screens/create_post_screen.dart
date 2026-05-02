@@ -837,30 +837,39 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
           const SizedBox(height: 14),
           _buildAudienceStrip(),
           const SizedBox(height: 18),
-          DecoratedBox(
-            decoration: BoxDecoration(
-              color: tokens.surface.withValues(alpha: 0.78),
-              borderRadius: BorderRadius.circular(tokens.radiusLg),
-              border: Border.all(color: tokens.surfaceLine),
+          // Reference compose textarea is transparent — no border, no bg, just
+          // text inside the outer card. Drop the inner DecoratedBox so the
+          // input reads like the jsx prototype (placeholder font 17px, fluid
+          // line-height 1.45, accent cursor).
+          Padding(
+            padding: EdgeInsets.symmetric(
+              horizontal: compact ? 4 : 6,
+              vertical: compact ? 4 : 6,
             ),
             child: TextField(
               controller: _contentController,
               decoration: InputDecoration(
                 hintText: 'О чём хотите рассказать родне?',
                 border: InputBorder.none,
-                contentPadding: EdgeInsets.all(compact ? 16 : 18),
-                hintStyle: theme.textTheme.titleMedium?.copyWith(
+                contentPadding: EdgeInsets.zero,
+                isCollapsed: true,
+                hintStyle: AppTheme.sans(
                   color: tokens.inkMuted,
-                  fontWeight: FontWeight.w700,
+                  fontSize: 17,
+                  fontWeight: FontWeight.w500,
+                  height: 1.45,
                 ),
               ),
               keyboardType: TextInputType.multiline,
               textCapitalization: TextCapitalization.sentences,
               maxLines: compact ? 9 : 12,
               minLines: compact ? 7 : 10,
-              style: theme.textTheme.titleMedium?.copyWith(
+              cursorColor: tokens.accent,
+              style: AppTheme.sans(
                 color: tokens.ink,
-                height: 1.35,
+                fontSize: 17,
+                fontWeight: FontWeight.w500,
+                height: 1.45,
               ),
             ),
           ),
