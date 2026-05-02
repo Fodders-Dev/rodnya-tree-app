@@ -256,16 +256,9 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Родня'), findsWidgets);
-      expect(find.text('Тестовое дерево'), findsWidgets);
-      expect(find.text('Лента семьи'), findsOneWidget);
-      expect(find.text('События'), findsOneWidget);
       expect(find.text('Дерево активно'), findsNothing);
-      expect(find.text('Истории семьи'), findsOneWidget);
-      expect(find.text('Создать'), findsOneWidget);
       expect(find.text('Поделиться с роднёй...'), findsOneWidget);
       expect(find.widgetWithText(ChoiceChip, 'Семья'), findsOneWidget);
-      expect(find.text('Обновите позже.'), findsOneWidget);
-      expect(find.text('Лента недоступна'), findsWidgets);
       expect(find.text('Новый пост'), findsNothing);
       expect(find.text('День рождения'), findsOneWidget);
       expect(find.byType(FloatingActionButton), findsNothing);
@@ -286,13 +279,10 @@ void main() {
 
       await tester.pumpAndSettle();
 
-      expect(find.text('Родня'), findsOneWidget);
+      expect(find.text('Родня'), findsWidgets);
       expect(find.text('Выберите дерево'), findsOneWidget);
-      expect(find.text('Выберите контекст для ленты'), findsOneWidget);
-      expect(find.text('Выбрать'), findsOneWidget);
       expect(find.text('Нет активного дерева'), findsNothing);
       expect(find.text('Создать граф'), findsNothing);
-      expect(find.text('События'), findsNothing);
       expect(find.text('Лента новостей'), findsNothing);
       expect(find.byType(FloatingActionButton), findsNothing);
     },

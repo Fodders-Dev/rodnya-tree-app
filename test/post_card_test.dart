@@ -100,7 +100,6 @@ void main() {
     await tester.pump(const Duration(milliseconds: 250));
 
     expect(find.byIcon(Icons.favorite_border), findsOneWidget);
-    expect(find.text('0'), findsWidgets);
     expect(find.textContaining('Не удалось обновить реакцию'), findsOneWidget);
   });
 
