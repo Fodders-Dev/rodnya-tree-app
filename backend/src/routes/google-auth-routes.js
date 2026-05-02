@@ -6,6 +6,7 @@ function registerGoogleAuthRoutes(
     googleTokenVerifier,
     buildGoogleIdentityFromPayload,
     authResponse,
+    readDeviceContext = () => ({}),
   },
 ) {
   app.post("/v1/auth/google", async (req, res) => {
@@ -48,7 +49,10 @@ function registerGoogleAuthRoutes(
         });
       }
 
-      const sessionTokens = await store.createSession(user.id);
+      const sessionTokens = await store.createSession(
+        user.id,
+        readDeviceContext(req),
+      );
       res.json(authResponse(user, sessionTokens));
     } catch (error) {
       if (error?.message === "GOOGLE_AUTH_NOT_CONFIGURED") {

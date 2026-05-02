@@ -45,8 +45,17 @@ class PushGateway {
     }
   }
 
-  async dispatchNotification(notification) {
-    const devices = await this.store.listPushDevices(notification.userId);
+  async dispatchNotification(notification, {targetSessionPublicId = null} = {}) {
+    const allDevices = await this.store.listPushDevices(notification.userId);
+    const normalizedTargetSessionPublicId = targetSessionPublicId
+      ? String(targetSessionPublicId).trim()
+      : "";
+    const devices = normalizedTargetSessionPublicId
+      ? allDevices.filter(
+          (entry) =>
+            (entry.sessionPublicId || "") === normalizedTargetSessionPublicId,
+        )
+      : allDevices;
     const deliveries = [];
 
     for (const device of devices) {

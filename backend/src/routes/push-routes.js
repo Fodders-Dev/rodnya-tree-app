@@ -26,11 +26,18 @@ function registerPushRoutes(
       return;
     }
 
+    const sessionPublicId = req.auth?.sessionPublicId || null;
+    const instanceId = req.auth?.session?.instanceId
+      ? String(req.auth.session.instanceId).trim()
+      : null;
+
     const device = await store.registerPushDevice({
       userId: req.auth.user.id,
       provider,
       token,
       platform,
+      sessionPublicId,
+      instanceId,
     });
 
     if (device === null) {

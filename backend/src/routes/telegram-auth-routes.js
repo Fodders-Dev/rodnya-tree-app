@@ -78,6 +78,7 @@ function registerTelegramAuthRoutes(
     resolvePublicApiUrl,
     resolvePublicAppUrl,
     authResponse,
+    readDeviceContext = () => ({}),
   },
 ) {
   function verifyTelegramLoginPayload(query) {
@@ -199,7 +200,10 @@ function registerTelegramAuthRoutes(
           linkedUser.id,
           telegramIdentity,
         );
-        const sessionTokens = await store.createSession(refreshedUser.id);
+        const sessionTokens = await store.createSession(
+          refreshedUser.id,
+          readDeviceContext(req),
+        );
         const authHandoff = await store.createAuthHandoff({
           type: "telegram_auth_result",
           userId: refreshedUser.id,

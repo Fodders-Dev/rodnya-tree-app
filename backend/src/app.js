@@ -709,6 +709,28 @@ function createApp({
     return String(raw || "").trim();
   }
 
+  function readDeviceContext(req) {
+    const deviceInfo =
+      req?.body && typeof req.body === "object" && req.body.deviceInfo
+        ? req.body.deviceInfo
+        : {};
+    return {
+      instanceId: readClientInstanceId(req) || null,
+      deviceName:
+        typeof deviceInfo.deviceName === "string"
+          ? deviceInfo.deviceName
+          : null,
+      platform:
+        typeof deviceInfo.platform === "string"
+          ? deviceInfo.platform
+          : null,
+      appVersion:
+        typeof deviceInfo.appVersion === "string"
+          ? deviceInfo.appVersion
+          : null,
+    };
+  }
+
   async function requireAuth(req, res, next) {
     const header = req.headers.authorization || "";
     const token = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
@@ -1153,6 +1175,7 @@ function createApp({
       userId: device.userId,
       provider: device.provider,
       platform: device.platform,
+      sessionPublicId: device.sessionPublicId || null,
       createdAt: device.createdAt,
       updatedAt: device.updatedAt,
       lastSeenAt: device.lastSeenAt,
@@ -2051,6 +2074,7 @@ function createApp({
     title,
     body,
     data,
+    targetSessionPublicId = null,
   }) {
     const notification = await store.createNotification({
       userId,
@@ -2065,11 +2089,17 @@ function createApp({
     }
 
     const mappedNotification = mapNotification(notification);
-    realtimeHub?.publishToUser(userId, {
-      type: "notification.created",
-      notification: mappedNotification,
+    realtimeHub?.publishToUser(
+      userId,
+      {
+        type: "notification.created",
+        notification: mappedNotification,
+      },
+      {sessionPublicId: targetSessionPublicId},
+    );
+    await resolvedPushGateway.dispatchNotification(notification, {
+      targetSessionPublicId,
     });
-    await resolvedPushGateway.dispatchNotification(notification);
 
     return mappedNotification;
   }
@@ -2081,6 +2111,9 @@ function createApp({
     authResponse,
     sanitizeProfile,
     computeProfileStatus,
+    readDeviceContext,
+    realtimeHub,
+    deriveSessionPublicId,
   });
 
   registerProfileRoutes(app, {
@@ -2104,6 +2137,7 @@ function createApp({
     googleTokenVerifier: resolvedGoogleTokenVerifier,
     buildGoogleIdentityFromPayload,
     authResponse,
+    readDeviceContext,
   });
 
   registerVkAuthRoutes(app, {
@@ -2113,6 +2147,7 @@ function createApp({
     resolvePublicApiUrl,
     resolvePublicAppUrl,
     authResponse,
+    readDeviceContext,
   });
 
   registerTelegramAuthRoutes(app, {
@@ -2122,6 +2157,7 @@ function createApp({
     resolvePublicApiUrl,
     resolvePublicAppUrl,
     authResponse,
+    readDeviceContext,
   });
 
   registerMaxAuthRoutes(app, {
@@ -2130,6 +2166,7 @@ function createApp({
     maxAuthClient: resolvedMaxAuthClient,
     resolvePublicAppUrl,
     authResponse,
+    readDeviceContext,
   });
   registerAuthenticatedMediaRoutes(app, {
     mediaStorage: resolvedMediaStorage,

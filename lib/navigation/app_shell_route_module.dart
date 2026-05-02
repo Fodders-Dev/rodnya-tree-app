@@ -14,6 +14,8 @@ import '../providers/tree_provider.dart';
 import '../screens/about_screen.dart';
 import '../screens/add_relative_screen.dart';
 import '../screens/blocked_users_screen.dart';
+import '../screens/qr_login_scan_screen.dart';
+import '../screens/sessions_screen.dart';
 import '../screens/chat_screen.dart';
 import '../screens/chats_list_screen.dart';
 import '../screens/create_post_screen.dart';
@@ -452,6 +454,28 @@ class AppShellRouteModule {
                   child: const BlockedUsersScreen(),
                   transitionsBuilder: AppRouteTransitions.slide,
                 ),
+              ),
+              GoRoute(
+                path: 'sessions',
+                parentNavigatorKey: rootNavigatorKey,
+                pageBuilder: (context, state) => RodnyaCustomTransitionPage(
+                  key: state.pageKey,
+                  constrainWidth: true,
+                  child: const SessionsScreen(),
+                  transitionsBuilder: AppRouteTransitions.slide,
+                ),
+                routes: [
+                  GoRoute(
+                    path: 'scan',
+                    parentNavigatorKey: rootNavigatorKey,
+                    pageBuilder: (context, state) => RodnyaCustomTransitionPage(
+                      key: state.pageKey,
+                      constrainWidth: true,
+                      child: const QrLoginScanScreen(),
+                      transitionsBuilder: AppRouteTransitions.slideUp,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),

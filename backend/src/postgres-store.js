@@ -9,9 +9,11 @@ const {
   buildPersonRecord,
   cloneUserWithAuthState,
   createPersonIdentityRecord,
+  deriveSessionPublicId,
   describeMessagePreview,
   normalizeDbState,
   normalizeParticipantIds,
+  normalizeSessionDeviceContext,
   normalizeStoredCall,
   nowIso,
   parseDirectParticipantsFromChatId,
@@ -713,25 +715,44 @@ class PostgresStore extends FileStore {
     return nextWrite;
   }
 
-  async createSession(userId) {
+  async createSession(userId, deviceContext = {}) {
     const createdAt = nowIso();
     const token = crypto.randomBytes(32).toString("hex");
     const refreshToken = crypto.randomBytes(32).toString("hex");
+    const normalizedDeviceContext = normalizeSessionDeviceContext(deviceContext);
+    const incomingInstanceId = normalizedDeviceContext.instanceId;
 
     const nextWrite = this._enqueueWrite("_sessionWriteQueue", async () => {
       await this.initialize();
       const userSessions = await this._selectProjectedSessionsForUser(userId);
-      const sessionsToKeep = userSessions.slice(-4);
-      const evictedSessions = userSessions.slice(
+
+      const supersededInstanceMatches = incomingInstanceId
+        ? userSessions.filter((s) => s.instanceId === incomingInstanceId)
+        : [];
+      const remainingAfterInstanceMatch = incomingInstanceId
+        ? userSessions.filter((s) => s.instanceId !== incomingInstanceId)
+        : userSessions;
+
+      const sessionsToKeep = remainingAfterInstanceMatch.slice(-4);
+      const overflowEvicted = remainingAfterInstanceMatch.slice(
         0,
-        Math.max(0, userSessions.length - sessionsToKeep.length),
+        Math.max(
+          0,
+          remainingAfterInstanceMatch.length - sessionsToKeep.length,
+        ),
       );
+      const evictedSessions = [
+        ...supersededInstanceMatches,
+        ...overflowEvicted,
+      ];
+
       const createdSession = {
         token,
         refreshToken,
         userId,
         createdAt,
         lastSeenAt: createdAt,
+        ...normalizedDeviceContext,
       };
       for (const session of evictedSessions) {
         const sessionToken = String(session?.token || "").trim();
@@ -752,7 +773,87 @@ class PostgresStore extends FileStore {
       this._forgetSession(session?.token);
     }
     this._rememberSession(createdSession);
-    return {token, refreshToken};
+    return {
+      token,
+      refreshToken,
+      session: structuredClone(createdSession),
+      evictedTokens: evictedSessions
+        .map((entry) => String(entry?.token || "").trim())
+        .filter(Boolean),
+    };
+  }
+
+  async listSessionsForUser(userId) {
+    const normalizedUserId = String(userId || "").trim();
+    if (!normalizedUserId) {
+      return [];
+    }
+    await this.initialize();
+    const sessions = await this._selectProjectedSessionsForUser(normalizedUserId);
+    return sessions
+      .map((session) => structuredClone(session))
+      .sort((left, right) => {
+        const leftAt = String(left.lastSeenAt || left.createdAt || "");
+        const rightAt = String(right.lastSeenAt || right.createdAt || "");
+        return rightAt.localeCompare(leftAt);
+      });
+  }
+
+  async findSessionByPublicId(userId, publicId) {
+    const normalizedUserId = String(userId || "").trim();
+    const normalizedPublicId = String(publicId || "").trim();
+    if (!normalizedUserId || !normalizedPublicId) {
+      return null;
+    }
+    const sessions = await this.listSessionsForUser(normalizedUserId);
+    for (const session of sessions) {
+      const candidate = deriveSessionPublicId(
+        session.token,
+        session.instanceId || "",
+      );
+      if (candidate === normalizedPublicId) {
+        return session;
+      }
+    }
+    return null;
+  }
+
+  async updateSessionMetadata(token, patch = {}) {
+    const normalizedToken = String(token || "").trim();
+    if (!normalizedToken) {
+      return null;
+    }
+
+    const nextWrite = this._enqueueWrite("_sessionWriteQueue", async () => {
+      await this.initialize();
+      const result = await this._pool.query(
+        `SELECT session_data
+           FROM ${this._qualifiedAuthSessionsTableName}
+          WHERE token = $1
+          LIMIT 1`,
+        [normalizedToken],
+      );
+      const storedSession = result.rows[0]?.session_data ?? null;
+      if (!storedSession) {
+        return null;
+      }
+      const session = structuredClone(storedSession);
+      const allowedKeys = ["deviceName", "platform", "appVersion"];
+      for (const key of allowedKeys) {
+        if (patch[key] === undefined) continue;
+        const normalized = String(patch[key] ?? "").trim();
+        session[key] = normalized || null;
+      }
+      await this._upsertProjectedSession(session);
+      return session;
+    });
+
+    const updated = await nextWrite;
+    if (!updated) {
+      return null;
+    }
+    this._rememberSession(updated);
+    return structuredClone(updated);
   }
 
   async findSession(token) {
@@ -859,19 +960,29 @@ class PostgresStore extends FileStore {
   async deleteSession(token) {
     const normalizedToken = String(token || "").trim();
     if (!normalizedToken) {
-      return;
+      return null;
     }
 
     const nextWrite = this._enqueueWrite("_sessionWriteQueue", async () => {
       await this.initialize();
+      const selectResult = await this._pool.query(
+        `SELECT session_data
+           FROM ${this._qualifiedAuthSessionsTableName}
+          WHERE token = $1
+          LIMIT 1`,
+        [normalizedToken],
+      );
+      const removed = selectResult.rows[0]?.session_data ?? null;
       await this._pool.query(
         `DELETE FROM ${this._qualifiedAuthSessionsTableName} WHERE token = $1`,
         [normalizedToken],
-        );
+      );
+      return removed;
     });
 
     this._forgetSession(normalizedToken);
-    await nextWrite;
+    const removed = await nextWrite;
+    return removed ? structuredClone(removed) : null;
   }
 
   async deleteSessionsForUser(userId) {

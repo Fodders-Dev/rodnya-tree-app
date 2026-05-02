@@ -1416,6 +1416,12 @@ class _AuthScreenState extends State<AuthScreen> {
                       _isLoading ? null : () => context.push('/password_reset'),
                   child: const Text('Пароль'),
                 ),
+              if (_isLogin)
+                TextButton.icon(
+                  onPressed: _isLoading ? null : () => context.push('/auth/qr'),
+                  icon: const Icon(Icons.qr_code_2_rounded, size: 18),
+                  label: const Text('Войти по QR с другого устройства'),
+                ),
               const SizedBox(height: 8),
               Wrap(
                 alignment: WrapAlignment.center,

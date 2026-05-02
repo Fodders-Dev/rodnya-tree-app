@@ -11,6 +11,8 @@ import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/models/custom_api_session.dart';
 import 'app_status_service.dart';
 import 'invitation_service.dart';
+import '../utils/client_instance_id.dart';
+import '../utils/device_descriptor.dart';
 import '../utils/url_utils.dart';
 
 class CustomApiException implements Exception {
@@ -340,10 +342,13 @@ class CustomApiAuthService implements AuthServiceInterface {
 
   Future<void> _performRefresh(String refreshToken) async {
     try {
+      final refreshPayload = await _withDeviceInfo({
+        'refreshToken': refreshToken,
+      });
       final response = await _httpClient.post(
         _buildUri('/v1/auth/refresh'),
         headers: _jsonHeaders(authenticated: false),
-        body: jsonEncode({'refreshToken': refreshToken}),
+        body: jsonEncode(refreshPayload),
       );
 
       if (response.statusCode == 401 || response.statusCode == 403) {
@@ -926,16 +931,44 @@ class CustomApiAuthService implements AuthServiceInterface {
     required String path,
     required Map<String, dynamic> payload,
   }) async {
+    final enrichedPayload = await _withDeviceInfo(payload);
     final response = await _requestJson(
       method: 'POST',
       path: path,
-      body: payload,
+      body: enrichedPayload,
     );
     final session = _sessionFromResponse(response);
     await _saveSession(session);
     _authStateController.add(session.userId);
     await processPendingInvitation();
     return session;
+  }
+
+  /// Adopt an auth payload that was minted server-side via QR login (or any
+  /// other handoff): persist the session, fire auth-state listeners, and run
+  /// post-login bookkeeping. Used by [QrLoginDisplayScreen] when the polled
+  /// QR-login response flips to "approved".
+  Future<void> acceptAuthPayload(Map<String, dynamic> authPayload) async {
+    final session = _sessionFromResponse(authPayload);
+    await _saveSession(session);
+    _authStateController.add(session.userId);
+    await processPendingInvitation();
+  }
+
+  Future<Map<String, dynamic>> _withDeviceInfo(
+    Map<String, dynamic> payload,
+  ) async {
+    try {
+      final descriptor = await DeviceDescriptorBuilder.resolve();
+      return {
+        ...payload,
+        'deviceInfo': descriptor.toJson(),
+      };
+    } catch (error) {
+      // Auth must keep working even if the platform channel hiccups; the
+      // backend will simply lack device metadata for this row.
+      return payload;
+    }
   }
 
   Future<Map<String, dynamic>> _requestJson({
@@ -1044,6 +1077,7 @@ class CustomApiAuthService implements AuthServiceInterface {
     return {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
+      'X-Client-Instance-Id': ClientInstanceId.current,
       if (authenticated && accessToken != null)
         'Authorization': 'Bearer ${accessToken!}',
     };

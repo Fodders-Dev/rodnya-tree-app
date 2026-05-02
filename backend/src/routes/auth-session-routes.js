@@ -7,6 +7,9 @@ function registerAuthSessionRoutes(
     authResponse,
     sanitizeProfile,
     computeProfileStatus,
+    readDeviceContext,
+    realtimeHub = null,
+    deriveSessionPublicId,
   },
 ) {
   app.post("/v1/auth/register", async (req, res) => {
@@ -19,7 +22,8 @@ function registerAuthSessionRoutes(
 
     try {
       const user = await store.createUser({email, password, displayName});
-      const sessionTokens = await store.createSession(user.id);
+      const deviceContext = readDeviceContext(req);
+      const sessionTokens = await store.createSession(user.id, deviceContext);
       res.status(201).json(authResponse(user, sessionTokens));
     } catch (error) {
       if (error.message === "EMAIL_ALREADY_EXISTS") {
@@ -43,7 +47,8 @@ function registerAuthSessionRoutes(
       return;
     }
 
-    const sessionTokens = await store.createSession(user.id);
+    const deviceContext = readDeviceContext(req);
+    const sessionTokens = await store.createSession(user.id, deviceContext);
     res.json(authResponse(user, sessionTokens));
   });
 
@@ -70,8 +75,130 @@ function registerAuthSessionRoutes(
       await store.deleteSession(session.token);
     }
 
-    const nextSessionTokens = await store.createSession(user.id);
+    // Inherit prior device context so refresh keeps the same device identity.
+    const requestDeviceContext = readDeviceContext(req);
+    const inheritedDeviceContext = {
+      instanceId:
+        requestDeviceContext.instanceId || session.instanceId || null,
+      deviceName:
+        requestDeviceContext.deviceName || session.deviceName || null,
+      platform: requestDeviceContext.platform || session.platform || null,
+      appVersion:
+        requestDeviceContext.appVersion || session.appVersion || null,
+    };
+    const nextSessionTokens = await store.createSession(
+      user.id,
+      inheritedDeviceContext,
+    );
     res.json(authResponse(user, nextSessionTokens));
+  });
+
+  function describeSession(session, currentSessionPublicId) {
+    const publicId = deriveSessionPublicId(
+      session.token,
+      session.instanceId || "",
+    );
+    return {
+      sessionPublicId: publicId,
+      deviceName: session.deviceName || null,
+      platform: session.platform || null,
+      appVersion: session.appVersion || null,
+      createdAt: session.createdAt || null,
+      lastSeenAt: session.lastSeenAt || null,
+      isCurrent: publicId === currentSessionPublicId,
+    };
+  }
+
+  app.get("/v1/auth/sessions", requireAuth, async (req, res) => {
+    const sessions = await store.listSessionsForUser(req.auth.user.id);
+    res.json({
+      sessions: sessions.map((session) =>
+        describeSession(session, req.auth.sessionPublicId),
+      ),
+      currentSessionPublicId: req.auth.sessionPublicId,
+    });
+  });
+
+  app.patch("/v1/auth/sessions/:publicId", requireAuth, async (req, res) => {
+    const publicId = String(req.params.publicId || "").trim();
+    if (!publicId) {
+      res.status(400).json({message: "Нужен идентификатор сессии"});
+      return;
+    }
+    const session = await store.findSessionByPublicId(
+      req.auth.user.id,
+      publicId,
+    );
+    if (!session) {
+      res.status(404).json({message: "Сессия не найдена"});
+      return;
+    }
+    const deviceName =
+      req.body && Object.prototype.hasOwnProperty.call(req.body, "deviceName")
+        ? req.body.deviceName
+        : undefined;
+    if (deviceName === undefined) {
+      res.status(400).json({message: "Нужно поле deviceName"});
+      return;
+    }
+    const updated = await store.updateSessionMetadata(session.token, {
+      deviceName,
+    });
+    if (!updated) {
+      res.status(404).json({message: "Сессия не найдена"});
+      return;
+    }
+    res.json({session: describeSession(updated, req.auth.sessionPublicId)});
+  });
+
+  app.delete("/v1/auth/sessions/:publicId", requireAuth, async (req, res) => {
+    const publicId = String(req.params.publicId || "").trim();
+    if (!publicId) {
+      res.status(400).json({message: "Нужен идентификатор сессии"});
+      return;
+    }
+    if (publicId === req.auth.sessionPublicId) {
+      res.status(400).json({
+        message:
+          "Чтобы выйти из текущей сессии, используйте /v1/auth/logout",
+      });
+      return;
+    }
+    const session = await store.findSessionByPublicId(
+      req.auth.user.id,
+      publicId,
+    );
+    if (!session) {
+      res.status(404).json({message: "Сессия не найдена"});
+      return;
+    }
+    await store.deleteSession(session.token);
+
+    if (typeof store.unbindPushDevicesForSession === "function") {
+      try {
+        await store.unbindPushDevicesForSession({
+          userId: req.auth.user.id,
+          sessionPublicId: publicId,
+        });
+      } catch (error) {
+        // push cleanup is best-effort; ignore
+      }
+    }
+
+    if (realtimeHub && typeof realtimeHub.disconnectSession === "function") {
+      realtimeHub.disconnectSession(req.auth.user.id, publicId, {
+        reason: "session.revoked.remote",
+      });
+    }
+
+    if (realtimeHub && typeof realtimeHub.publishToUser === "function") {
+      realtimeHub.publishToUser(req.auth.user.id, {
+        type: "session.list.changed",
+        revokedSessionPublicId: publicId,
+      });
+    }
+
+    res.status(204).send();
   });
 
   app.get("/v1/auth/session", requireAuth, async (req, res) => {
@@ -96,8 +223,136 @@ function registerAuthSessionRoutes(
   });
 
   app.post("/v1/auth/logout", requireAuth, async (req, res) => {
+    const sessionPublicId = req.auth.sessionPublicId;
     await store.deleteSession(req.auth.token);
+    if (
+      sessionPublicId &&
+      typeof store.unbindPushDevicesForSession === "function"
+    ) {
+      try {
+        await store.unbindPushDevicesForSession({
+          userId: req.auth.user.id,
+          sessionPublicId,
+        });
+      } catch (_) {
+        // best-effort
+      }
+    }
     res.json({ok: true});
+  });
+
+  const QR_LOGIN_TTL_MS = 60_000;
+
+  app.post("/v1/auth/qr/start", async (req, res) => {
+    const deviceContext = readDeviceContext(req);
+    if (!deviceContext.instanceId) {
+      res.status(400).json({
+        message:
+          "Нужен заголовок X-Client-Instance-Id, чтобы привязать сессию к устройству",
+      });
+      return;
+    }
+    const expiresAt = new Date(Date.now() + QR_LOGIN_TTL_MS).toISOString();
+    const handoff = await store.createAuthHandoff({
+      type: "qr_login",
+      payload: {
+        deviceInfo: deviceContext,
+        status: "pending",
+      },
+      expiresAt,
+    });
+    res.status(201).json({
+      token: handoff.code,
+      expiresAt,
+    });
+  });
+
+  app.get("/v1/auth/qr/poll", async (req, res) => {
+    const token = String(req.query?.token || "").trim();
+    if (!token) {
+      res.status(400).json({message: "Нужен token"});
+      return;
+    }
+    const handoff = await store.findAuthHandoff(token, {type: "qr_login"});
+    if (!handoff) {
+      res.status(410).json({status: "expired"});
+      return;
+    }
+    const status = String(handoff.payload?.status || "pending");
+    if (status !== "approved") {
+      res.json({status});
+      return;
+    }
+    const consumed = await store.consumeAuthHandoff(token, {type: "qr_login"});
+    if (!consumed) {
+      res.status(410).json({status: "expired"});
+      return;
+    }
+    res.json({
+      status: "approved",
+      auth: consumed.payload?.auth || null,
+    });
+  });
+
+  app.post("/v1/auth/qr/approve", requireAuth, async (req, res) => {
+    const token = String(req.body?.token || "").trim();
+    if (!token) {
+      res.status(400).json({message: "Нужен token"});
+      return;
+    }
+    const handoff = await store.findAuthHandoff(token, {type: "qr_login"});
+    if (!handoff) {
+      res.status(410).json({message: "QR-код истёк или не найден"});
+      return;
+    }
+    if (handoff.payload?.status === "approved") {
+      res.status(409).json({message: "QR-код уже подтверждён"});
+      return;
+    }
+
+    const storedDeviceInfo =
+      handoff.payload?.deviceInfo && typeof handoff.payload.deviceInfo === "object"
+        ? handoff.payload.deviceInfo
+        : {};
+    if (!storedDeviceInfo.instanceId) {
+      res.status(400).json({
+        message: "QR-код не содержит данных устройства",
+      });
+      return;
+    }
+
+    const sessionTokens = await store.createSession(req.auth.user.id, {
+      instanceId: storedDeviceInfo.instanceId,
+      deviceName: storedDeviceInfo.deviceName || null,
+      platform: storedDeviceInfo.platform || null,
+      appVersion: storedDeviceInfo.appVersion || null,
+    });
+    const user = await store.findUserById(req.auth.user.id);
+    const auth = authResponse(user, sessionTokens);
+
+    await store.updateAuthHandoffPayload(
+      token,
+      {status: "approved", auth, approvedAt: new Date().toISOString()},
+      {type: "qr_login"},
+    );
+
+    if (realtimeHub && typeof realtimeHub.publishToUser === "function") {
+      realtimeHub.publishToUser(req.auth.user.id, {
+        type: "session.list.changed",
+        addedSessionPublicId: deriveSessionPublicId(
+          sessionTokens.token,
+          storedDeviceInfo.instanceId,
+        ),
+      });
+    }
+
+    res.json({
+      ok: true,
+      sessionPublicId: deriveSessionPublicId(
+        sessionTokens.token,
+        storedDeviceInfo.instanceId,
+      ),
+    });
   });
 
   app.post("/v1/auth/password-reset", async (req, res) => {

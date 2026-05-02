@@ -14,6 +14,7 @@ import '../screens/notifications_screen.dart';
 import '../screens/password_reset_screen.dart';
 import '../screens/privacy_policy_screen.dart';
 import '../screens/public_tree_entry_screen.dart';
+import '../screens/qr_login_display_screen.dart';
 import '../screens/public_tree_viewer_screen.dart';
 import '../screens/relative_details_screen.dart';
 import '../screens/send_relation_request_screen.dart';
@@ -364,6 +365,16 @@ class AppOverlayRouteModule {
             transitionsBuilder: AppRouteTransitions.slide,
           );
         },
+      ),
+      GoRoute(
+        path: '/auth/qr',
+        parentNavigatorKey: rootNavigatorKey,
+        pageBuilder: (context, state) => RodnyaCustomTransitionPage(
+          key: state.pageKey,
+          constrainWidth: true,
+          child: const QrLoginDisplayScreen(),
+          transitionsBuilder: AppRouteTransitions.slideUp,
+        ),
       ),
       GoRoute(
         path: '/relative/details/:personId',

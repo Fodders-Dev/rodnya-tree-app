@@ -1,0 +1,489 @@
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const fs = require("node:fs/promises");
+const path = require("node:path");
+const os = require("node:os");
+
+const {createApp} = require("../src/app");
+const {FileStore} = require("../src/store");
+const {RealtimeHub} = require("../src/realtime-hub");
+const {PushGateway} = require("../src/push-gateway");
+
+async function startServer() {
+  const tempDir = await fs.mkdtemp(
+    path.join(os.tmpdir(), "rodnya-auth-sessions-"),
+  );
+  const dataPath = path.join(tempDir, "dev-db.json");
+  const store = new FileStore(dataPath);
+  await store.initialize();
+
+  const realtimeHub = new RealtimeHub({store});
+  const pushGateway = new PushGateway({store});
+  const app = createApp({
+    store,
+    config: {
+      corsOrigin: "*",
+      dataPath,
+      mediaRootPath: path.join(tempDir, "uploads"),
+    },
+    realtimeHub,
+    pushGateway,
+  });
+
+  const server = await new Promise((resolve) => {
+    const instance = app.listen(0, "127.0.0.1", () => resolve(instance));
+  });
+  realtimeHub.attach(server);
+
+  return {
+    baseUrl: `http://127.0.0.1:${server.address().port}`,
+    server,
+    store,
+    realtimeHub,
+    pushGateway,
+    tempDir,
+  };
+}
+
+async function stopServer(ctx) {
+  await new Promise((resolve, reject) => {
+    ctx.server.close((error) => (error ? reject(error) : resolve()));
+  });
+  await fs.rm(ctx.tempDir, {recursive: true, force: true});
+}
+
+async function registerWithDevice(baseUrl, suffix, deviceInfo, instanceId) {
+  const response = await fetch(`${baseUrl}/v1/auth/register`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-client-instance-id": instanceId,
+    },
+    body: JSON.stringify({
+      email: `user-${suffix}@rodnya.app`,
+      password: "secret123",
+      displayName: `User ${suffix}`,
+      deviceInfo,
+    }),
+  });
+  assert.equal(response.status, 201);
+  return response.json();
+}
+
+async function loginWithDevice(baseUrl, email, password, deviceInfo, instanceId) {
+  const response = await fetch(`${baseUrl}/v1/auth/login`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-client-instance-id": instanceId,
+    },
+    body: JSON.stringify({email, password, deviceInfo}),
+  });
+  assert.equal(response.status, 200);
+  return response.json();
+}
+
+test("login records device info and exposes it via /v1/auth/sessions", async () => {
+  const ctx = await startServer();
+  try {
+    await registerWithDevice(
+      ctx.baseUrl,
+      "alice",
+      {deviceName: "Alice iPhone", platform: "ios", appVersion: "1.0.0"},
+      "instance-alice-1",
+    );
+
+    const session2 = await loginWithDevice(
+      ctx.baseUrl,
+      "user-alice@rodnya.app",
+      "secret123",
+      {deviceName: "Alice MacBook", platform: "macos", appVersion: "1.0.0"},
+      "instance-alice-2",
+    );
+
+    const listResponse = await fetch(`${ctx.baseUrl}/v1/auth/sessions`, {
+      headers: {
+        authorization: `Bearer ${session2.accessToken}`,
+        "x-client-instance-id": "instance-alice-2",
+      },
+    });
+    assert.equal(listResponse.status, 200);
+    const listed = await listResponse.json();
+
+    assert.equal(listed.sessions.length, 2);
+    assert.ok(listed.currentSessionPublicId);
+
+    const current = listed.sessions.find((s) => s.isCurrent);
+    const other = listed.sessions.find((s) => !s.isCurrent);
+    assert.equal(current.deviceName, "Alice MacBook");
+    assert.equal(current.platform, "macos");
+    assert.equal(other.deviceName, "Alice iPhone");
+    assert.equal(other.platform, "ios");
+    assert.notEqual(current.sessionPublicId, other.sessionPublicId);
+  } finally {
+    await stopServer(ctx);
+  }
+});
+
+test("re-login from same instanceId evicts previous session for that device", async () => {
+  const ctx = await startServer();
+  try {
+    const first = await registerWithDevice(
+      ctx.baseUrl,
+      "bob",
+      {deviceName: "Bob iPhone", platform: "ios"},
+      "instance-bob-1",
+    );
+
+    const second = await loginWithDevice(
+      ctx.baseUrl,
+      "user-bob@rodnya.app",
+      "secret123",
+      {deviceName: "Bob iPhone", platform: "ios"},
+      "instance-bob-1",
+    );
+    assert.notEqual(first.accessToken, second.accessToken);
+
+    const listResponse = await fetch(`${ctx.baseUrl}/v1/auth/sessions`, {
+      headers: {
+        authorization: `Bearer ${second.accessToken}`,
+        "x-client-instance-id": "instance-bob-1",
+      },
+    });
+    const listed = await listResponse.json();
+    assert.equal(listed.sessions.length, 1);
+    assert.equal(listed.sessions[0].isCurrent, true);
+
+    // The first token is now invalid
+    const oldSessionResponse = await fetch(`${ctx.baseUrl}/v1/auth/session`, {
+      headers: {authorization: `Bearer ${first.accessToken}`},
+    });
+    assert.equal(oldSessionResponse.status, 401);
+  } finally {
+    await stopServer(ctx);
+  }
+});
+
+test("PATCH /v1/auth/sessions/:publicId renames a session", async () => {
+  const ctx = await startServer();
+  try {
+    await registerWithDevice(
+      ctx.baseUrl,
+      "carol",
+      {deviceName: "Old name", platform: "ios"},
+      "instance-carol-1",
+    );
+    const session2 = await loginWithDevice(
+      ctx.baseUrl,
+      "user-carol@rodnya.app",
+      "secret123",
+      {deviceName: "Carol Mac", platform: "macos"},
+      "instance-carol-2",
+    );
+
+    const listResponse = await fetch(`${ctx.baseUrl}/v1/auth/sessions`, {
+      headers: {
+        authorization: `Bearer ${session2.accessToken}`,
+        "x-client-instance-id": "instance-carol-2",
+      },
+    });
+    const listed = await listResponse.json();
+    const otherPublicId = listed.sessions.find((s) => !s.isCurrent)
+      .sessionPublicId;
+
+    const patchResponse = await fetch(
+      `${ctx.baseUrl}/v1/auth/sessions/${otherPublicId}`,
+      {
+        method: "PATCH",
+        headers: {
+          authorization: `Bearer ${session2.accessToken}`,
+          "x-client-instance-id": "instance-carol-2",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({deviceName: "Renamed iPhone"}),
+      },
+    );
+    assert.equal(patchResponse.status, 200);
+    const patched = await patchResponse.json();
+    assert.equal(patched.session.deviceName, "Renamed iPhone");
+  } finally {
+    await stopServer(ctx);
+  }
+});
+
+test("DELETE /v1/auth/sessions/:publicId revokes a remote session", async () => {
+  const ctx = await startServer();
+  try {
+    const first = await registerWithDevice(
+      ctx.baseUrl,
+      "dave",
+      {deviceName: "Dave iPhone", platform: "ios"},
+      "instance-dave-1",
+    );
+    const second = await loginWithDevice(
+      ctx.baseUrl,
+      "user-dave@rodnya.app",
+      "secret123",
+      {deviceName: "Dave Mac", platform: "macos"},
+      "instance-dave-2",
+    );
+
+    const listResponse = await fetch(`${ctx.baseUrl}/v1/auth/sessions`, {
+      headers: {
+        authorization: `Bearer ${second.accessToken}`,
+        "x-client-instance-id": "instance-dave-2",
+      },
+    });
+    const listed = await listResponse.json();
+    const otherPublicId = listed.sessions.find((s) => !s.isCurrent)
+      .sessionPublicId;
+
+    // Cannot revoke own session via this endpoint
+    const ownPublicId = listed.currentSessionPublicId;
+    const selfResponse = await fetch(
+      `${ctx.baseUrl}/v1/auth/sessions/${ownPublicId}`,
+      {
+        method: "DELETE",
+        headers: {
+          authorization: `Bearer ${second.accessToken}`,
+          "x-client-instance-id": "instance-dave-2",
+        },
+      },
+    );
+    assert.equal(selfResponse.status, 400);
+
+    // Revoke the iPhone session
+    const deleteResponse = await fetch(
+      `${ctx.baseUrl}/v1/auth/sessions/${otherPublicId}`,
+      {
+        method: "DELETE",
+        headers: {
+          authorization: `Bearer ${second.accessToken}`,
+          "x-client-instance-id": "instance-dave-2",
+        },
+      },
+    );
+    assert.equal(deleteResponse.status, 204);
+
+    // First device's token must now fail
+    const firstSession = await fetch(`${ctx.baseUrl}/v1/auth/session`, {
+      headers: {authorization: `Bearer ${first.accessToken}`},
+    });
+    assert.equal(firstSession.status, 401);
+  } finally {
+    await stopServer(ctx);
+  }
+});
+
+test("QR login: device A approves device B's QR token, B polls and gets auth", async () => {
+  const ctx = await startServer();
+  try {
+    // Device A: create user and login normally
+    const deviceA = await registerWithDevice(
+      ctx.baseUrl,
+      "qr",
+      {deviceName: "Old iPhone", platform: "ios"},
+      "instance-qr-A",
+    );
+
+    // Device B (unauth): start QR
+    const startResponse = await fetch(`${ctx.baseUrl}/v1/auth/qr/start`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-client-instance-id": "instance-qr-B",
+      },
+      body: JSON.stringify({
+        deviceInfo: {
+          deviceName: "New Mac",
+          platform: "macos",
+          appVersion: "1.2.3",
+        },
+      }),
+    });
+    assert.equal(startResponse.status, 201);
+    const {token, expiresAt} = await startResponse.json();
+    assert.ok(token);
+    assert.ok(expiresAt);
+
+    // Device B polls — pending
+    const poll1 = await fetch(`${ctx.baseUrl}/v1/auth/qr/poll?token=${token}`);
+    assert.equal(poll1.status, 200);
+    const poll1Body = await poll1.json();
+    assert.equal(poll1Body.status, "pending");
+
+    // Device A approves
+    const approveResponse = await fetch(`${ctx.baseUrl}/v1/auth/qr/approve`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${deviceA.accessToken}`,
+        "content-type": "application/json",
+        "x-client-instance-id": "instance-qr-A",
+      },
+      body: JSON.stringify({token}),
+    });
+    assert.equal(approveResponse.status, 200);
+    const approved = await approveResponse.json();
+    assert.ok(approved.sessionPublicId);
+
+    // Device B polls — approved, gets auth
+    const poll2 = await fetch(`${ctx.baseUrl}/v1/auth/qr/poll?token=${token}`);
+    assert.equal(poll2.status, 200);
+    const poll2Body = await poll2.json();
+    assert.equal(poll2Body.status, "approved");
+    assert.ok(poll2Body.auth.accessToken);
+    assert.equal(poll2Body.auth.user.id, deviceA.user.id);
+
+    // Polling again returns expired (single use)
+    const poll3 = await fetch(`${ctx.baseUrl}/v1/auth/qr/poll?token=${token}`);
+    assert.equal(poll3.status, 410);
+
+    // Device B's new session shows up in /v1/auth/sessions
+    const listResponse = await fetch(`${ctx.baseUrl}/v1/auth/sessions`, {
+      headers: {
+        authorization: `Bearer ${poll2Body.auth.accessToken}`,
+        "x-client-instance-id": "instance-qr-B",
+      },
+    });
+    const listed = await listResponse.json();
+    const newSession = listed.sessions.find((s) => s.isCurrent);
+    assert.equal(newSession.deviceName, "New Mac");
+    assert.equal(newSession.platform, "macos");
+    assert.equal(newSession.appVersion, "1.2.3");
+  } finally {
+    await stopServer(ctx);
+  }
+});
+
+test("QR login: cannot approve without auth, cannot start without instanceId", async () => {
+  const ctx = await startServer();
+  try {
+    // Cannot start without instanceId
+    const noInstance = await fetch(`${ctx.baseUrl}/v1/auth/qr/start`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({deviceInfo: {deviceName: "X"}}),
+    });
+    assert.equal(noInstance.status, 400);
+
+    // Approve without auth
+    const noAuth = await fetch(`${ctx.baseUrl}/v1/auth/qr/approve`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({token: "anything"}),
+    });
+    assert.equal(noAuth.status, 401);
+  } finally {
+    await stopServer(ctx);
+  }
+});
+
+test("registerPushDevice links to current session via sessionPublicId", async () => {
+  const ctx = await startServer();
+  try {
+    const session = await registerWithDevice(
+      ctx.baseUrl,
+      "push",
+      {deviceName: "Push iPhone", platform: "ios"},
+      "instance-push-1",
+    );
+
+    const registerResponse = await fetch(`${ctx.baseUrl}/v1/push/devices`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${session.accessToken}`,
+        "content-type": "application/json",
+        "x-client-instance-id": "instance-push-1",
+      },
+      body: JSON.stringify({
+        provider: "rustore",
+        token: "rustore-token-1",
+        platform: "android",
+      }),
+    });
+    assert.equal(registerResponse.status, 201);
+    const {device} = await registerResponse.json();
+    assert.ok(device.sessionPublicId);
+
+    const sessionsListResponse = await fetch(`${ctx.baseUrl}/v1/auth/sessions`, {
+      headers: {
+        authorization: `Bearer ${session.accessToken}`,
+        "x-client-instance-id": "instance-push-1",
+      },
+    });
+    const listed = await sessionsListResponse.json();
+    assert.equal(device.sessionPublicId, listed.currentSessionPublicId);
+  } finally {
+    await stopServer(ctx);
+  }
+});
+
+test("PushGateway dispatchNotification respects targetSessionPublicId", async () => {
+  const ctx = await startServer();
+  try {
+    // Two device sessions for one user, two push devices.
+    const sessionA = await registerWithDevice(
+      ctx.baseUrl,
+      "fanout",
+      {deviceName: "Mac", platform: "macos"},
+      "instance-fanout-A",
+    );
+    const sessionB = await loginWithDevice(
+      ctx.baseUrl,
+      "user-fanout@rodnya.app",
+      "secret123",
+      {deviceName: "iPhone", platform: "ios"},
+      "instance-fanout-B",
+    );
+
+    await fetch(`${ctx.baseUrl}/v1/push/devices`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${sessionA.accessToken}`,
+        "content-type": "application/json",
+        "x-client-instance-id": "instance-fanout-A",
+      },
+      body: JSON.stringify({
+        provider: "rustore",
+        token: "device-A-push",
+        platform: "macos",
+      }),
+    });
+    await fetch(`${ctx.baseUrl}/v1/push/devices`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${sessionB.accessToken}`,
+        "content-type": "application/json",
+        "x-client-instance-id": "instance-fanout-B",
+      },
+      body: JSON.stringify({
+        provider: "rustore",
+        token: "device-B-push",
+        platform: "ios",
+      }),
+    });
+
+    const sessionsList = await fetch(`${ctx.baseUrl}/v1/auth/sessions`, {
+      headers: {
+        authorization: `Bearer ${sessionB.accessToken}`,
+        "x-client-instance-id": "instance-fanout-B",
+      },
+    }).then((r) => r.json());
+    const sessionBPublicId = sessionsList.currentSessionPublicId;
+
+    const notification = await ctx.store.createNotification({
+      userId: sessionA.user.id,
+      type: "test",
+      title: "t",
+      body: "b",
+      data: {},
+    });
+    const deliveries = await ctx.pushGateway.dispatchNotification(
+      notification,
+      {targetSessionPublicId: sessionBPublicId},
+    );
+    assert.equal(deliveries.length, 1);
+  } finally {
+    await stopServer(ctx);
+  }
+});

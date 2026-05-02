@@ -989,6 +989,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           onTap: () =>
                               GoRouter.of(context).push('/profile/blocks'),
                         ),
+                        _buildActionRow(
+                          icon: Icons.devices_rounded,
+                          title: 'Активные сеансы',
+                          subtitle: 'Управление устройствами и QR-вход',
+                          onTap: () =>
+                              GoRouter.of(context).push('/profile/sessions'),
+                        ),
                       ]),
                       const SizedBox(height: 16),
                       _buildCallSettingsSection(),

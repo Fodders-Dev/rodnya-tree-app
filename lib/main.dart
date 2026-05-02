@@ -9,6 +9,7 @@ import 'providers/theme_provider.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'navigation/app_router.dart';
 import 'services/local_storage_service.dart';
+import 'utils/client_instance_id.dart';
 import 'package:get_it/get_it.dart';
 import 'providers/tree_provider.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
@@ -34,6 +35,10 @@ Object? _e2eSemanticsHandle;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Warm up the persistent device id before any auth call can fire so the
+  // backend always sees the stable id rather than a transient uuid.
+  await ClientInstanceId.ensureInitialized();
 
   // Preload bundled Manrope + Lora before first paint so headlines pick the
   // serif/sans treatment immediately, instead of flashing the system fallback

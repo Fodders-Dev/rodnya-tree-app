@@ -35,6 +35,7 @@ function registerMaxAuthRoutes(
     maxAuthClient,
     resolvePublicAppUrl,
     authResponse,
+    readDeviceContext = () => ({}),
   },
 ) {
   function maxAuthRedirectUrl(code, {intent = "login"} = {}) {
@@ -121,7 +122,10 @@ function registerMaxAuthRoutes(
           linkedUser.id,
           maxIdentity,
         );
-        const sessionTokens = await store.createSession(refreshedUser.id);
+        const sessionTokens = await store.createSession(
+          refreshedUser.id,
+          readDeviceContext(req),
+        );
         const authHandoff = await store.createAuthHandoff({
           type: "max_auth_result",
           userId: refreshedUser.id,

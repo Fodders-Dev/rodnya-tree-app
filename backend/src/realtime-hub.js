@@ -96,12 +96,15 @@ class RealtimeHub {
     });
   }
 
-  publishToUser(userId, payload) {
+  publishToUser(userId, payload, {sessionPublicId = null} = {}) {
     const sockets = this.userSockets.get(userId);
     if (!sockets || sockets.size === 0) {
       return false;
     }
 
+    const targetSessionPublicId = sessionPublicId
+      ? String(sessionPublicId).trim()
+      : "";
     const isPerSocketBuilder = typeof payload === "function";
     const staticSerializedPayload = isPerSocketBuilder
       ? null
@@ -109,6 +112,12 @@ class RealtimeHub {
     let sent = false;
     for (const socket of sockets) {
       if (socket.readyState !== socket.OPEN) {
+        continue;
+      }
+      if (
+        targetSessionPublicId &&
+        (socket.publicSessionId || "") !== targetSessionPublicId
+      ) {
         continue;
       }
       let serializedPayload = staticSerializedPayload;
@@ -126,6 +135,43 @@ class RealtimeHub {
       sent = true;
     }
     return sent;
+  }
+
+  disconnectSession(userId, sessionPublicId, {reason = "session.revoked"} = {}) {
+    const sockets = this.userSockets.get(userId);
+    if (!sockets || sockets.size === 0) {
+      return 0;
+    }
+    const targetSessionPublicId = String(sessionPublicId || "").trim();
+    if (!targetSessionPublicId) {
+      return 0;
+    }
+    let closedCount = 0;
+    for (const socket of Array.from(sockets)) {
+      if ((socket.publicSessionId || "") !== targetSessionPublicId) {
+        continue;
+      }
+      try {
+        if (socket.readyState === socket.OPEN) {
+          socket.send(
+            JSON.stringify({
+              type: "session.revoked",
+              reason,
+              revokedAt: new Date().toISOString(),
+            }),
+          );
+        }
+      } catch (_) {
+        // best-effort notification — close anyway
+      }
+      try {
+        socket.close(4403, reason);
+      } catch (_) {
+        // ignore close failures; socket close handler will clean up
+      }
+      closedCount += 1;
+    }
+    return closedCount;
   }
 
   async publishToChat(chatId, payload, {exceptUserId = null} = {}) {

@@ -765,6 +765,8 @@ function createPushDeviceRecord({
   provider,
   token,
   platform = "unknown",
+  sessionPublicId = null,
+  instanceId = null,
 }) {
   const timestamp = nowIso();
   return {
@@ -773,6 +775,8 @@ function createPushDeviceRecord({
     provider: String(provider || "unknown").trim(),
     token: String(token || "").trim(),
     platform: String(platform || "unknown").trim(),
+    sessionPublicId: normalizeOptionalString(sessionPublicId, 32),
+    instanceId: normalizeOptionalString(instanceId, 80),
     createdAt: timestamp,
     updatedAt: timestamp,
     lastSeenAt: timestamp,
@@ -868,6 +872,27 @@ function deriveSessionPublicId(token, instanceId = "") {
     hasher.update(normalizedInstanceId);
   }
   return hasher.digest("base64url").slice(0, 22);
+}
+
+function normalizeOptionalString(value, maxLength = 80) {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) {
+    return null;
+  }
+  if (Number.isFinite(maxLength) && maxLength > 0 && normalized.length > maxLength) {
+    return normalized.slice(0, maxLength);
+  }
+  return normalized;
+}
+
+function normalizeSessionDeviceContext(context = {}) {
+  const source = context && typeof context === "object" ? context : {};
+  return {
+    instanceId: normalizeOptionalString(source.instanceId, 80),
+    deviceName: normalizeOptionalString(source.deviceName, 80),
+    platform: normalizeOptionalString(source.platform, 40),
+    appVersion: normalizeOptionalString(source.appVersion, 40),
+  };
 }
 
 function buildCallParticipantIdentity(userId, sessionPublicId) {
@@ -5442,29 +5467,43 @@ class FileStore {
     return user ? cloneUserWithAuthState(user) : null;
   }
 
-  async createSession(userId) {
+  async createSession(userId, deviceContext = {}) {
     const db = await this._read();
     const createdAt = nowIso();
     const token = crypto.randomBytes(32).toString("hex");
     const refreshToken = crypto.randomBytes(32).toString("hex");
 
-    // Keep last 5 sessions for this user to allow multiple devices
     const userSessions = db.sessions.filter((s) => s.userId === userId);
     const otherSessions = db.sessions.filter((s) => s.userId !== userId);
-    
-    const sessionsToKeep = userSessions.slice(-4); // Keep 4 previous, total 5 after push
-    const evictedSessions = userSessions.slice(
+
+    const normalizedDeviceContext = normalizeSessionDeviceContext(deviceContext);
+    const incomingInstanceId = normalizedDeviceContext.instanceId;
+
+    // If the same client instance re-authenticates, evict its previous session.
+    // Otherwise keep last 5 sessions for this user.
+    const supersededInstanceMatches = incomingInstanceId
+      ? userSessions.filter((s) => s.instanceId === incomingInstanceId)
+      : [];
+    const remainingAfterInstanceMatch = incomingInstanceId
+      ? userSessions.filter((s) => s.instanceId !== incomingInstanceId)
+      : userSessions;
+
+    const sessionsToKeep = remainingAfterInstanceMatch.slice(-4);
+    const overflowEvicted = remainingAfterInstanceMatch.slice(
       0,
-      Math.max(0, userSessions.length - sessionsToKeep.length),
+      Math.max(0, remainingAfterInstanceMatch.length - sessionsToKeep.length),
     );
+    const evictedSessions = [...supersededInstanceMatches, ...overflowEvicted];
+
     const createdSession = {
       token,
       refreshToken,
       userId,
       createdAt,
       lastSeenAt: createdAt,
+      ...normalizedDeviceContext,
     };
-    
+
     db.sessions = [
       ...otherSessions,
       ...sessionsToKeep,
@@ -5479,7 +5518,72 @@ class FileStore {
     return {
       token,
       refreshToken,
+      session: structuredClone(createdSession),
+      evictedTokens: evictedSessions
+        .map((entry) => String(entry?.token || "").trim())
+        .filter(Boolean),
     };
+  }
+
+  async listSessionsForUser(userId) {
+    const normalizedUserId = String(userId || "").trim();
+    if (!normalizedUserId) {
+      return [];
+    }
+    const db = await this._read();
+    return db.sessions
+      .filter((entry) => entry.userId === normalizedUserId)
+      .map((entry) => structuredClone(entry))
+      .sort((left, right) => {
+        const leftAt = String(left.lastSeenAt || left.createdAt || "");
+        const rightAt = String(right.lastSeenAt || right.createdAt || "");
+        return rightAt.localeCompare(leftAt);
+      });
+  }
+
+  async findSessionByPublicId(userId, publicId) {
+    const normalizedUserId = String(userId || "").trim();
+    const normalizedPublicId = String(publicId || "").trim();
+    if (!normalizedUserId || !normalizedPublicId) {
+      return null;
+    }
+    const sessions = await this.listSessionsForUser(normalizedUserId);
+    for (const session of sessions) {
+      const candidate = deriveSessionPublicId(
+        session.token,
+        session.instanceId || "",
+      );
+      if (candidate === normalizedPublicId) {
+        return session;
+      }
+    }
+    return null;
+  }
+
+  async updateSessionMetadata(token, patch = {}) {
+    const normalizedToken = String(token || "").trim();
+    if (!normalizedToken) {
+      return null;
+    }
+    const db = await this._read();
+    const session = db.sessions.find((entry) => entry.token === normalizedToken);
+    if (!session) {
+      return null;
+    }
+    const allowedPatch = {};
+    if (patch.deviceName !== undefined) {
+      allowedPatch.deviceName = normalizeOptionalString(patch.deviceName, 80);
+    }
+    if (patch.platform !== undefined) {
+      allowedPatch.platform = normalizeOptionalString(patch.platform, 40);
+    }
+    if (patch.appVersion !== undefined) {
+      allowedPatch.appVersion = normalizeOptionalString(patch.appVersion, 40);
+    }
+    Object.assign(session, allowedPatch);
+    await this._write(db);
+    this._rememberSession(session);
+    return structuredClone(session);
   }
 
   async findSessionByRefreshToken(refreshToken) {
@@ -5534,6 +5638,57 @@ class FileStore {
     }
 
     const [handoff] = db.authHandoffs.splice(index, 1);
+    await this._write(db);
+    return structuredClone(handoff);
+  }
+
+  async findAuthHandoff(code, {type = null} = {}) {
+    const db = await this._read();
+    const cleaned = this._cleanupExpiredAuthHandoffs(db);
+    if (cleaned) {
+      await this._write(db);
+    }
+    const normalizedCode = String(code || "").trim();
+    if (!normalizedCode) {
+      return null;
+    }
+    const handoff = db.authHandoffs.find((entry) => {
+      if (entry.code !== normalizedCode) {
+        return false;
+      }
+      if (type && entry.type !== type) {
+        return false;
+      }
+      return true;
+    });
+    return handoff ? structuredClone(handoff) : null;
+  }
+
+  async updateAuthHandoffPayload(code, patch = {}, {type = null} = {}) {
+    const db = await this._read();
+    this._cleanupExpiredAuthHandoffs(db);
+    const normalizedCode = String(code || "").trim();
+    if (!normalizedCode) {
+      return null;
+    }
+    const handoff = db.authHandoffs.find((entry) => {
+      if (entry.code !== normalizedCode) {
+        return false;
+      }
+      if (type && entry.type !== type) {
+        return false;
+      }
+      return true;
+    });
+    if (!handoff) {
+      return null;
+    }
+    handoff.payload = {
+      ...(handoff.payload && typeof handoff.payload === "object"
+        ? handoff.payload
+        : {}),
+      ...(patch && typeof patch === "object" ? patch : {}),
+    };
     await this._write(db);
     return structuredClone(handoff);
   }
@@ -5600,10 +5755,18 @@ class FileStore {
   }
 
   async deleteSession(token) {
+    const normalizedToken = String(token || "").trim();
+    if (!normalizedToken) {
+      return null;
+    }
     const db = await this._read();
-    db.sessions = db.sessions.filter((entry) => entry.token !== token);
-    this._forgetSession(token);
+    const removedSession = db.sessions.find(
+      (entry) => entry.token === normalizedToken,
+    );
+    db.sessions = db.sessions.filter((entry) => entry.token !== normalizedToken);
+    this._forgetSession(normalizedToken);
     await this._write(db);
+    return removedSession ? structuredClone(removedSession) : null;
   }
 
   async deleteSessionsForUser(userId) {
@@ -8695,7 +8858,14 @@ class FileStore {
     return structuredClone(notification);
   }
 
-  async registerPushDevice({userId, provider, token, platform}) {
+  async registerPushDevice({
+    userId,
+    provider,
+    token,
+    platform,
+    sessionPublicId = null,
+    instanceId = null,
+  }) {
     const db = await this._read();
     const user = db.users.find((entry) => entry.id === userId);
     if (!user) {
@@ -8707,6 +8877,9 @@ class FileStore {
     if (!normalizedProvider || !normalizedToken) {
       return false;
     }
+
+    const normalizedSessionPublicId = normalizeOptionalString(sessionPublicId, 32);
+    const normalizedInstanceId = normalizeOptionalString(instanceId, 80);
 
     const existingDevice = db.pushDevices.find((entry) => {
       return (
@@ -8720,6 +8893,12 @@ class FileStore {
       existingDevice.platform = String(platform || existingDevice.platform || "unknown");
       existingDevice.updatedAt = nowIso();
       existingDevice.lastSeenAt = existingDevice.updatedAt;
+      if (normalizedSessionPublicId) {
+        existingDevice.sessionPublicId = normalizedSessionPublicId;
+      }
+      if (normalizedInstanceId) {
+        existingDevice.instanceId = normalizedInstanceId;
+      }
       await this._write(db);
       return structuredClone(existingDevice);
     }
@@ -8729,10 +8908,57 @@ class FileStore {
       provider: normalizedProvider,
       token: normalizedToken,
       platform,
+      sessionPublicId: normalizedSessionPublicId,
+      instanceId: normalizedInstanceId,
     });
     db.pushDevices.push(device);
     await this._write(db);
     return structuredClone(device);
+  }
+
+  async unbindPushDevicesForSession({userId, sessionPublicId}) {
+    const normalizedUserId = String(userId || "").trim();
+    const normalizedSessionPublicId = String(sessionPublicId || "").trim();
+    if (!normalizedUserId || !normalizedSessionPublicId) {
+      return [];
+    }
+    const db = await this._read();
+    const removed = [];
+    db.pushDevices = db.pushDevices.filter((entry) => {
+      if (
+        entry.userId === normalizedUserId &&
+        entry.sessionPublicId === normalizedSessionPublicId
+      ) {
+        removed.push(structuredClone(entry));
+        return false;
+      }
+      return true;
+    });
+    if (removed.length === 0) {
+      return [];
+    }
+    const removedIds = new Set(removed.map((entry) => entry.id));
+    db.pushDeliveries = db.pushDeliveries.filter(
+      (entry) => !removedIds.has(entry.deviceId),
+    );
+    await this._write(db);
+    return removed;
+  }
+
+  async listPushDevicesForSession(userId, sessionPublicId) {
+    const normalizedUserId = String(userId || "").trim();
+    const normalizedSessionPublicId = String(sessionPublicId || "").trim();
+    if (!normalizedUserId) {
+      return [];
+    }
+    const db = await this._read();
+    return db.pushDevices
+      .filter((entry) => {
+        if (entry.userId !== normalizedUserId) return false;
+        if (!normalizedSessionPublicId) return true;
+        return entry.sessionPublicId === normalizedSessionPublicId;
+      })
+      .map((entry) => structuredClone(entry));
   }
 
   async listPushDevices(userId) {
@@ -11417,6 +11643,7 @@ module.exports = {
   deriveSessionPublicId,
   describeMessagePreview,
   normalizeDbState,
+  normalizeSessionDeviceContext,
   normalizeParticipantIds,
   normalizePhoneNumber,
   normalizeStoredCall,

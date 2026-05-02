@@ -56,6 +56,7 @@ function registerVkAuthRoutes(
     resolvePublicApiUrl,
     resolvePublicAppUrl,
     authResponse,
+    readDeviceContext = () => ({}),
   },
 ) {
   function vkAuthRedirectUrl(code, {intent = "login"} = {}) {
@@ -172,7 +173,7 @@ function registerVkAuthRoutes(
           linkedUser.id,
           vkIdentity,
         );
-        const sessionTokens = await store.createSession(refreshedUser.id);
+        const sessionTokens = await store.createSession(refreshedUser.id, readDeviceContext(req));
         const authHandoff = await store.createAuthHandoff({
           type: "vk_auth_result",
           userId: refreshedUser.id,
@@ -226,7 +227,7 @@ function registerVkAuthRoutes(
 
       if (resolution?.user?.id) {
         const user = await store.linkAuthIdentity(resolution.user.id, vkIdentity);
-        const sessionTokens = await store.createSession(user.id);
+        const sessionTokens = await store.createSession(user.id, readDeviceContext(req));
         const authHandoff = await store.createAuthHandoff({
           type: "vk_auth_result",
           userId: user.id,
@@ -270,7 +271,7 @@ function registerVkAuthRoutes(
         authIdentity: vkIdentity,
         photoUrl: vkIdentity.metadata?.avatar || null,
       });
-      const sessionTokens = await store.createSession(user.id);
+      const sessionTokens = await store.createSession(user.id, readDeviceContext(req));
       const authHandoff = await store.createAuthHandoff({
         type: "vk_auth_result",
         userId: user.id,

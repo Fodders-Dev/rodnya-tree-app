@@ -40,7 +40,9 @@ import 'chat_preview_cache.dart';
 import 'chat_draft_store.dart';
 import 'chat_pin_store.dart';
 import 'chat_send_queue.dart';
+import 'auth_sessions_service.dart';
 import 'custom_api_auth_service.dart';
+import 'session_revocation_watcher.dart';
 import 'custom_api_call_service.dart';
 import 'custom_api_chat_service.dart';
 import 'custom_api_circle_service.dart';
@@ -103,6 +105,12 @@ class AppStartupService implements AppStartupServiceInterface {
     );
     _registerOrReplaceSingleton<CustomApiAuthService>(customApiAuthService);
     _registerOrReplaceSingleton<AuthServiceInterface>(customApiAuthService);
+    _registerOrReplaceSingleton<AuthSessionsService>(
+      AuthSessionsService(
+        authService: customApiAuthService,
+        runtimeConfig: runtimeConfig,
+      ),
+    );
 
     // Startup should remain resilient even with a stale persisted session.
     // Live session validation and profile completeness redirects happen later
@@ -114,6 +122,14 @@ class AppStartupService implements AppStartupServiceInterface {
     );
     _registerOrReplaceSingleton<CustomApiRealtimeService>(
       customApiRealtimeService,
+    );
+
+    final sessionRevocationWatcher = SessionRevocationWatcher(
+      authService: customApiAuthService,
+      realtimeService: customApiRealtimeService,
+    )..start();
+    _registerOrReplaceSingleton<SessionRevocationWatcher>(
+      sessionRevocationWatcher,
     );
 
     final customApiStorageService = CustomApiStorageService(
