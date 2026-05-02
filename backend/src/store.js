@@ -856,16 +856,18 @@ function normalizeParticipantIds(participantIds) {
   ).sort((left, right) => left.localeCompare(right));
 }
 
-function deriveSessionPublicId(token) {
+function deriveSessionPublicId(token, instanceId = "") {
   const normalizedToken = String(token || "").trim();
   if (!normalizedToken) {
     return "";
   }
-  return crypto
-    .createHash("sha256")
-    .update(normalizedToken)
-    .digest("base64url")
-    .slice(0, 22);
+  const normalizedInstanceId = String(instanceId || "").trim();
+  const hasher = crypto.createHash("sha256").update(normalizedToken);
+  if (normalizedInstanceId) {
+    hasher.update(":");
+    hasher.update(normalizedInstanceId);
+  }
+  return hasher.digest("base64url").slice(0, 22);
 }
 
 function buildCallParticipantIdentity(userId, sessionPublicId) {

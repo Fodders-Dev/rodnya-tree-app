@@ -69,7 +69,9 @@ class ChatDetails {
   bool get isEditableGroup => type == 'group';
   int get memberCount => participants.length;
 
-  String get displayTitle {
+  String get displayTitle => displayTitleFor(null);
+
+  String displayTitleFor(String? currentUserId) {
     final normalizedTitle = title?.trim();
     if (normalizedTitle != null && normalizedTitle.isNotEmpty) {
       return normalizedTitle;
@@ -80,7 +82,18 @@ class ChatDetails {
     if (isGroup) {
       return 'Групповой чат';
     }
-    return participants.isNotEmpty ? participants.first.displayName : 'Чат';
+    if (participants.isEmpty) {
+      return 'Чат';
+    }
+    final normalizedUserId = currentUserId?.trim();
+    if (normalizedUserId != null && normalizedUserId.isNotEmpty) {
+      final other = participants.firstWhere(
+        (participant) => participant.userId != normalizedUserId,
+        orElse: () => participants.first,
+      );
+      return other.displayName;
+    }
+    return participants.first.displayName;
   }
 
   factory ChatDetails.fromMap(Map<String, dynamic> map) {

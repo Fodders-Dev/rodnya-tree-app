@@ -212,7 +212,9 @@ class _ChatScreenState extends State<ChatScreen> {
     _sendQueue.addListener(_handleSendQueueChanged);
     _attachmentsController.addListener(_handleAttachmentsChanged);
     _chatDetails = widget.initialChatDetails;
-    _resolvedTitle = widget.initialChatDetails?.displayTitle ?? widget.title;
+    _resolvedTitle =
+        widget.initialChatDetails?.displayTitleFor(_currentUserId) ??
+            widget.title;
     _messageController.addListener(_handleDraftChanged);
     _searchController.addListener(_handleSearchChanged);
     // Global key handler — more reliable than Focus.onKeyEvent on Flutter web.
@@ -909,7 +911,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
       setState(() {
         _chatDetails = details;
-        _resolvedTitle = widget.isGroup ? details.displayTitle : _resolvedTitle;
+        _resolvedTitle = details.displayTitleFor(_currentUserId);
         _isLoadingChatDetails = false;
       });
     } catch (_) {
@@ -2710,7 +2712,7 @@ class _ChatScreenState extends State<ChatScreen> {
           }
           setState(() {
             _chatDetails = updatedDetails;
-            _resolvedTitle = updatedDetails.displayTitle;
+            _resolvedTitle = updatedDetails.displayTitleFor(_currentUserId);
           });
           return updatedDetails;
         },
@@ -6217,7 +6219,7 @@ class _ChatInfoSheetState extends State<_ChatInfoSheet> {
               ),
               const SizedBox(height: 8),
               Text(
-                _details.displayTitle,
+                _details.displayTitleFor(widget.currentUserId),
                 style: theme.textTheme.titleMedium?.copyWith(
                   fontWeight: FontWeight.w600,
                 ),
@@ -6631,7 +6633,9 @@ class _ChatInfoSheetState extends State<_ChatInfoSheet> {
   }
 
   Future<void> _renameChat() async {
-    final controller = TextEditingController(text: _details.displayTitle);
+    final controller = TextEditingController(
+      text: _details.displayTitleFor(widget.currentUserId),
+    );
     final nextTitle = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(

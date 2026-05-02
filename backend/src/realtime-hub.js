@@ -39,6 +39,9 @@ class RealtimeHub {
       try {
         const url = new URL(request.url, "http://127.0.0.1");
         const token = String(url.searchParams.get("accessToken") || "").trim();
+        const instanceId = String(
+          url.searchParams.get("instanceId") || "",
+        ).trim();
 
         if (!token) {
           socket.close(4401, "Missing access token");
@@ -58,7 +61,7 @@ class RealtimeHub {
         }
 
         userId = user.id;
-        socket.publicSessionId = deriveSessionPublicId(token);
+        socket.publicSessionId = deriveSessionPublicId(token, instanceId);
         this._registerSocket(userId, socket);
         this._scheduleSessionTouch(token, {userId});
         const onlineUserIds = await this._collectOnlineParticipants(userId);

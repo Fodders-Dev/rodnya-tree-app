@@ -701,6 +701,14 @@ function createApp({
     return tree;
   }
 
+  function readClientInstanceId(req) {
+    const raw = req.headers?.["x-client-instance-id"];
+    if (Array.isArray(raw)) {
+      return String(raw[0] || "").trim();
+    }
+    return String(raw || "").trim();
+  }
+
   async function requireAuth(req, res, next) {
     const header = req.headers.authorization || "";
     const token = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
@@ -726,7 +734,10 @@ function createApp({
       token,
       session,
       user,
-      sessionPublicId: deriveSessionPublicId(token),
+      sessionPublicId: deriveSessionPublicId(
+        token,
+        readClientInstanceId(req),
+      ),
     };
     scheduleSessionTouch(res, token, {
       requestId: req.requestId,

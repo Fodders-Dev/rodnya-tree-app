@@ -5,6 +5,7 @@ import 'dart:math';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../backend/backend_runtime_config.dart';
+import '../utils/client_instance_id.dart';
 import 'custom_api_auth_service.dart';
 
 typedef WebSocketChannelFactory = WebSocketChannel Function(Uri uri);
@@ -219,7 +220,9 @@ class CustomApiRealtimeService {
       '',
     );
     return Uri.parse(
-      '$normalizedBase/v1/realtime?accessToken=$accessToken',
+      '$normalizedBase/v1/realtime'
+      '?accessToken=$accessToken'
+      '&instanceId=${Uri.encodeQueryComponent(ClientInstanceId.current)}',
     );
   }
 

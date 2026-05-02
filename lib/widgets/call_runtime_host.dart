@@ -6,6 +6,7 @@ import 'package:get_it/get_it.dart';
 import '../backend/interfaces/chat_service_interface.dart';
 import '../models/call_invite.dart';
 import '../models/call_state.dart';
+import '../models/chat_details.dart';
 import '../navigation/app_router_shared.dart';
 import '../screens/call_screen.dart';
 import '../services/call_coordinator_service.dart';
@@ -267,13 +268,21 @@ class _CallRuntimeHostState extends State<CallRuntimeHost>
       final details = await chatService
           .getChatDetails(call.chatId)
           .timeout(const Duration(seconds: 2));
-      final photoUrl = details.participants.isNotEmpty
-          ? details.participants.first.photoUrl
+      final currentUserId = _coordinator.currentUserId;
+      final otherParticipant = details.participants.firstWhere(
+        (participant) =>
+            currentUserId == null || participant.userId != currentUserId,
+        orElse: () => details.participants.isEmpty
+            ? const ChatParticipantSummary(userId: '', displayName: '')
+            : details.participants.first,
+      );
+      final photoUrl = otherParticipant.userId.isNotEmpty
+          ? otherParticipant.photoUrl
           : (details.branchRoots.isNotEmpty
               ? details.branchRoots.first.photoUrl
               : null);
       final resolved = _CallPresentation(
-        title: details.displayTitle,
+        title: details.displayTitleFor(currentUserId),
         photoUrl: photoUrl,
       );
       _presentations[call.chatId] = resolved;

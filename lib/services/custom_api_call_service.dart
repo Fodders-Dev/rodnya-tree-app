@@ -8,6 +8,7 @@ import '../backend/interfaces/call_service_interface.dart';
 import '../models/call_event.dart';
 import '../models/call_invite.dart';
 import '../models/call_media_mode.dart';
+import '../utils/client_instance_id.dart';
 import 'custom_api_auth_service.dart';
 import 'custom_api_realtime_service.dart';
 
@@ -213,7 +214,8 @@ class CustomApiCallService implements CallServiceInterface {
         uri ?? Uri.parse('${_runtimeConfig.apiBaseUrl}${path ?? ''}');
     final request = http.Request(method, resolvedUri)
       ..headers['authorization'] = 'Bearer $accessToken'
-      ..headers['content-type'] = 'application/json';
+      ..headers['content-type'] = 'application/json'
+      ..headers['x-client-instance-id'] = ClientInstanceId.current;
     if (body != null) {
       request.body = jsonEncode(body);
     }
