@@ -543,7 +543,7 @@ class _HomeScreenState extends State<HomeScreen> {
             _buildTopbarIconButton(
               tokens: tokens,
               child: _buildNotificationsAction(tokens: tokens),
-              tooltip: 'Уведомления',
+              tooltip: 'Активность',
               onTap: () => context.push('/notifications'),
             ),
             const SizedBox(width: 8),

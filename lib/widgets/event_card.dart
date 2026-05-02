@@ -25,7 +25,7 @@ class EventCard extends StatelessWidget {
     final radius = BorderRadius.circular(compact ? 14 : 20);
 
     return SizedBox(
-      width: width ?? (compact ? null : 220),
+      width: width ?? (compact ? 220 : 220),
       child: Material(
         color: tokens.surfaceStrong,
         shape: RoundedRectangleBorder(
