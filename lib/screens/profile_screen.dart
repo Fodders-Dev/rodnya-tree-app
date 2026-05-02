@@ -615,7 +615,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return Scaffold(
       backgroundColor: Colors.transparent,
       appBar: PreferredSize(
-        preferredSize: const Size.fromHeight(64),
+        preferredSize: const Size.fromHeight(76),
         child: _buildProfileTopbar(theme: theme, tokens: tokens),
       ),
       body: _isLoading

@@ -449,7 +449,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       backgroundColor: Colors.transparent,
       appBar: PreferredSize(
-        preferredSize: const Size.fromHeight(64),
+        preferredSize: const Size.fromHeight(76),
         child: _buildHomeTopbar(theme: theme, tokens: tokens),
       ),
       floatingActionButton: hasSelectedTree

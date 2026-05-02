@@ -359,7 +359,7 @@ class _RelativesScreenState extends State<RelativesScreen> {
     return Scaffold(
       backgroundColor: Colors.transparent,
       appBar: PreferredSize(
-        preferredSize: const Size.fromHeight(64),
+        preferredSize: const Size.fromHeight(76),
         child: _buildRelativesTopbar(
           theme: theme,
           tokens: tokens,

@@ -215,10 +215,11 @@ class AppTheme {
   static const Color warmText = Color(0xFF293327);
   static const Color warmMuted = Color(0xFF66715F);
   static const Color warm = Color(0xFFD7A33A);
-  // Sans fallback chain — Manrope first, then OS UI fonts, then symbol/emoji
-  // catch-alls so the Noto-fallback warning Flutter web emits when Manrope
-  // does not cover a glyph stops triggering for ASCII punctuation and
-  // common Cyrillic ranges.
+  // Fallback chains list ONLY fonts we either bundle (Manrope, Lora) or that
+  // every target browser ships with. Listing Noto entries triggers Flutter
+  // web to issue "Could not find a set of Noto fonts" warnings every time a
+  // glyph misses the active font, even though the warning is benign — keep
+  // the chain Noto-free so the console stays clean.
   static const List<String> _sansFallback = <String>[
     'Manrope',
     'Segoe UI Variable Text',
@@ -227,25 +228,16 @@ class AppTheme {
     'Roboto',
     'Helvetica Neue',
     'Arial',
-    'Arial Unicode MS',
-    'Noto Sans',
-    'Noto Sans Symbols 2',
-    'Noto Sans Symbols',
-    'Noto Emoji',
-    'Segoe UI Emoji',
     'Apple Color Emoji',
-    'Noto Color Emoji',
+    'Segoe UI Emoji',
+    'sans-serif',
   ];
 
-  // Serif fallback chain — Lora first, then platform serif fonts so headlines
-  // render as a serif on every browser even if the variable font fails to
-  // load (network/SW edge cases).
   static const List<String> _serifFallback = <String>[
     'Lora',
     'Georgia',
     'Cambria',
     'Times New Roman',
-    'Noto Serif',
     'serif',
   ];
 

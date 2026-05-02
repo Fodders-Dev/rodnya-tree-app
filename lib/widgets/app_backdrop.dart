@@ -19,14 +19,17 @@ class AppBackdrop extends StatelessWidget {
       child: Stack(
         fit: StackFit.expand,
         children: [
+          // Reference styles.css order: bgBase canvas, then warm at 18% 12%,
+          // honey at 90% 30%, sage at 50% 95%. Light theme uses these as
+          // colour mixing — no separate ink-tinted SVG layer.
           DecoratedBox(decoration: BoxDecoration(color: tokens.bgBase)),
           DecoratedBox(
             decoration: BoxDecoration(
               gradient: RadialGradient(
-                center: const Alignment(-0.85, -0.95),
-                radius: 1.15,
+                center: const Alignment(-0.64, -0.76),
+                radius: 1.20,
                 colors: [
-                  tokens.bgTintWarm.withValues(alpha: isDark ? 0.46 : 0.82),
+                  tokens.bgTintWarm.withValues(alpha: isDark ? 0.46 : 0.92),
                   Colors.transparent,
                 ],
               ),
@@ -35,10 +38,10 @@ class AppBackdrop extends StatelessWidget {
           DecoratedBox(
             decoration: BoxDecoration(
               gradient: RadialGradient(
-                center: const Alignment(0.96, -0.18),
-                radius: 1.08,
+                center: const Alignment(0.80, -0.40),
+                radius: 1.10,
                 colors: [
-                  tokens.bgTintHoney.withValues(alpha: isDark ? 0.30 : 0.52),
+                  tokens.bgTintHoney.withValues(alpha: isDark ? 0.34 : 0.66),
                   Colors.transparent,
                 ],
               ),
@@ -47,10 +50,10 @@ class AppBackdrop extends StatelessWidget {
           DecoratedBox(
             decoration: BoxDecoration(
               gradient: RadialGradient(
-                center: const Alignment(0.18, 1.0),
-                radius: 1.18,
+                center: const Alignment(0.0, 0.92),
+                radius: 1.30,
                 colors: [
-                  tokens.bgTintSage.withValues(alpha: isDark ? 0.44 : 0.64),
+                  tokens.bgTintSage.withValues(alpha: isDark ? 0.40 : 0.40),
                   Colors.transparent,
                 ],
               ),
@@ -60,17 +63,21 @@ class AppBackdrop extends StatelessWidget {
             painter: _LinenWeavePainter(isDark: isDark),
             size: Size.infinite,
           ),
-          Opacity(
-            opacity: isDark ? 0.10 : 0.18,
-            child: SvgPicture.asset(
-              'assets/backgrounds/rodnya_backdrop.svg',
-              fit: BoxFit.cover,
-              colorFilter: ColorFilter.mode(
-                tokens.ink.withValues(alpha: 0.72),
-                BlendMode.srcIn,
+          // SVG overlay disabled in light theme — it was ink-tinted and read as
+          // an olive cast over the warm cream canvas. Keep it only on dark
+          // backgrounds where it adds a needed paper-grain texture.
+          if (isDark)
+            Opacity(
+              opacity: 0.10,
+              child: SvgPicture.asset(
+                'assets/backgrounds/rodnya_backdrop.svg',
+                fit: BoxFit.cover,
+                colorFilter: ColorFilter.mode(
+                  tokens.ink.withValues(alpha: 0.72),
+                  BlendMode.srcIn,
+                ),
               ),
             ),
-          ),
         ],
       ),
     );

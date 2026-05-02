@@ -402,7 +402,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
       data: composeTheme,
       child: Scaffold(
         appBar: PreferredSize(
-          preferredSize: const Size.fromHeight(64),
+          preferredSize: const Size.fromHeight(76),
           child: _buildComposeTopbar(
             theme: composeTheme,
             tokens: composeTokens,

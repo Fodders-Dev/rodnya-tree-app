@@ -690,7 +690,7 @@ class _ChatsListScreenState extends State<ChatsListScreen>
     return Scaffold(
       backgroundColor: Colors.transparent,
       appBar: PreferredSize(
-        preferredSize: const Size.fromHeight(64),
+        preferredSize: const Size.fromHeight(76),
         child: _buildChatsTopbar(theme: theme, tokens: tokens),
       ),
       body: _errorMessage != null && _chatPreviews.isEmpty
@@ -803,6 +803,19 @@ class _ChatsListScreenState extends State<ChatsListScreen>
         ),
       ),
     );
+  }
+
+  String _twoLetterInitials(String name) {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) return '?';
+    final parts =
+        trimmed.split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+    if (parts.length >= 2) {
+      final a = String.fromCharCode(parts[0].runes.first);
+      final b = String.fromCharCode(parts[1].runes.first);
+      return (a + b).toUpperCase();
+    }
+    return String.fromCharCode(parts.first.runes.first).toUpperCase();
   }
 
   void _focusSearch() {
@@ -1399,30 +1412,39 @@ class _ChatsListScreenState extends State<ChatsListScreen>
                 Stack(
                   clipBehavior: Clip.none,
                   children: [
-                    CircleAvatar(
-                      radius: 24,
-                      backgroundImage: avatarImage,
-                      backgroundColor: tokens.accentSoft,
-                      child: avatarImage == null
-                          ? (chat.isGroup
-                              ? Icon(
-                                  chat.isBranch
-                                      ? Icons.account_tree_outlined
-                                      : Icons.group_outlined,
-                                  size: 22,
-                                  color: tokens.accent,
-                                )
-                              : Text(
-                                  chat.displayName.isNotEmpty
-                                      ? chat.displayName[0].toUpperCase()
-                                      : '?',
-                                  style: AppTheme.sans(
-                                    color: tokens.accent,
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w800,
-                                  ),
-                                ))
-                          : null,
+                    Builder(
+                      builder: (_) {
+                        final useWarm = chat.chatId.hashCode.abs() % 2 == 0 &&
+                            !chat.isGroup;
+                        final ring = useWarm ? tokens.warm : tokens.accent;
+                        final ringSoft =
+                            useWarm ? tokens.warmSoft : tokens.accentSoft;
+                        return CircleAvatar(
+                          radius: 24,
+                          backgroundImage: avatarImage,
+                          backgroundColor:
+                              avatarImage == null ? ring : ringSoft,
+                          child: avatarImage == null
+                              ? (chat.isGroup
+                                  ? Icon(
+                                      chat.isBranch
+                                          ? Icons.account_tree_outlined
+                                          : Icons.group_outlined,
+                                      size: 22,
+                                      color: tokens.accentInk,
+                                    )
+                                  : Text(
+                                      _twoLetterInitials(chat.displayName),
+                                      style: AppTheme.sans(
+                                        color: tokens.accentInk,
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w800,
+                                        letterSpacing: 0,
+                                      ),
+                                    ))
+                              : null,
+                        );
+                      },
                     ),
                     if (!chat.isGroup &&
                         chat.otherUserId.isNotEmpty &&
