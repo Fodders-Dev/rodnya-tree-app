@@ -2564,7 +2564,11 @@ class _TreeLayoutEngine {
         }
       }
 
-      // Siblings ↔ shared row. Anchored by their parents' row when known.
+      // Siblings ↔ shared row. Anchored by their parents' row when known,
+      // but bounded BELOW by each sibling's own children — otherwise the
+      // sibling rule can pull a parent up out of their kids' row (e.g.
+      // father is sibling-of-aunt at parent+1=1, but his own son is at
+      // level 3 forcing parent at 2 to stay aligned with the mother).
       for (final personId in component) {
         final siblingIds = (siblingsByPerson[personId] ?? const <String>{})
             .where(component.contains)
@@ -2582,17 +2586,31 @@ class _TreeLayoutEngine {
           }
         }
 
-        int targetLevel;
-        if (sharedParents.isNotEmpty) {
-          // Children go to one below their parents' row.
-          targetLevel = sharedParents
-                  .map((parentId) => levels[parentId] ?? 0)
-                  .reduce(max) +
-              1;
-        } else {
-          targetLevel = pair
-              .map((memberId) => levels[memberId] ?? 0)
-              .reduce(max);
+        // Floor — directly below the highest-level parent.
+        final parentFloor = sharedParents.isNotEmpty
+            ? sharedParents
+                    .map((parentId) => levels[parentId] ?? 0)
+                    .reduce(max) +
+                1
+            : pair.map((memberId) => levels[memberId] ?? 0).reduce(max);
+
+        // Per-sibling floor from their own children, then take the
+        // strongest constraint across the group so spouses with kids
+        // don't drag back to parent+1.
+        int targetLevel = parentFloor;
+        for (final memberId in pair) {
+          final ownChildren = (parentToChildren[memberId] ?? const <String>{})
+              .where(component.contains)
+              .toList(growable: false);
+          if (ownChildren.isNotEmpty) {
+            final childFloor = ownChildren
+                    .map((childId) => levels[childId] ?? 0)
+                    .reduce(min) -
+                1;
+            if (childFloor > targetLevel) {
+              targetLevel = childFloor;
+            }
+          }
         }
 
         for (final memberId in pair) {
