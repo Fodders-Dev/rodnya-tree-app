@@ -734,7 +734,7 @@ class _ChatsListScreenState extends State<ChatsListScreen>
               ),
             ),
           ),
-          padding: const EdgeInsets.fromLTRB(18, 0, 12, 0),
+          padding: const EdgeInsets.fromLTRB(18, 12, 12, 14),
           child: SafeArea(
             bottom: false,
             child: Row(

@@ -645,7 +645,7 @@ extension _HomeScreenSections on _HomeScreenState {
   }
 
   Widget _buildFeedFilterStrip() {
-    final filters = _feedFilters;
+    final filters = _HomeScreenState._feedFilters;
     final selectedFilter =
         filters.contains(_selectedFeedFilter) ? _selectedFeedFilter : 'Семья';
 

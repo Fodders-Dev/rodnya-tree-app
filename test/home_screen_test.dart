@@ -484,16 +484,18 @@ void main() {
       );
       await tester.pumpAndSettle();
 
+      // Reference: feed strip is fixed — Семья / Близкие / Архив / Истории.
       expect(find.widgetWithText(ChoiceChip, 'Семья'), findsOneWidget);
-      expect(find.widgetWithText(ChoiceChip, 'Круги'), findsOneWidget);
-      expect(find.widgetWithText(ChoiceChip, 'Ветки'), findsOneWidget);
-      expect(find.widgetWithText(ChoiceChip, 'Публичные'), findsOneWidget);
+      expect(find.widgetWithText(ChoiceChip, 'Близкие'), findsOneWidget);
+      expect(find.widgetWithText(ChoiceChip, 'Архив'), findsOneWidget);
+      expect(find.widgetWithText(ChoiceChip, 'Истории'), findsOneWidget);
       expect(find.text('Семейная новость'), findsOneWidget);
       expect(find.text('Новость круга'), findsOneWidget);
 
-      await tester.tap(find.widgetWithText(ChoiceChip, 'Круги'));
+      await tester.tap(find.widgetWithText(ChoiceChip, 'Близкие'));
       await tester.pumpAndSettle();
 
+      // "Близкие" filter shows only posts targeted to a non-default circle.
       expect(find.text('Новость круга'), findsOneWidget);
       expect(find.text('Семейная новость'), findsNothing);
       expect(find.text('Новость ветки'), findsNothing);

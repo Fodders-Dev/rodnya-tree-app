@@ -266,7 +266,7 @@ class _IdentityReviewScreenState extends State<IdentityReviewScreen> {
                   ),
                 ),
               ),
-              padding: const EdgeInsets.fromLTRB(8, 0, 12, 0),
+              padding: const EdgeInsets.fromLTRB(8, 8, 12, 14),
               child: SafeArea(
                 bottom: false,
                 child: Row(

@@ -258,37 +258,26 @@ class _HomeScreenState extends State<HomeScreen> {
         .toList();
   }
 
-  List<String> get _feedFilters {
-    final filters = <String>['Семья'];
-    if (_posts.any((post) => post.circleId != null)) {
-      filters.add('Круги');
-    }
-    if (_posts.any((post) => post.scopeType == TreeContentScopeType.branches)) {
-      filters.add('Ветки');
-    }
-    if (_posts.any((post) => post.isPublic)) {
-      filters.add('Публичные');
-    }
-    if (_posts.any((post) => post.renderableImageUrls.isNotEmpty)) {
-      filters.add('С фото');
-    }
-    return filters;
-  }
+  // Reference: fixed strip "Семья / Близкие / Архив / Истории" — always
+  // visible regardless of post data, matching Claude design source.
+  static const List<String> _feedFilters = <String>[
+    'Семья',
+    'Близкие',
+    'Архив',
+    'Истории',
+  ];
 
   List<Post> get _visiblePosts {
-    if (!_feedFilters.contains(_selectedFeedFilter)) {
-      return _posts;
-    }
     switch (_selectedFeedFilter) {
-      case 'Круги':
+      case 'Близкие':
+        // Близкие = posts to a non-default circle (favorites/inner ring).
         return _posts.where((post) => post.circleId != null).toList();
-      case 'Ветки':
-        return _posts
-            .where((post) => post.scopeType == TreeContentScopeType.branches)
-            .toList();
-      case 'Публичные':
-        return _posts.where((post) => post.isPublic).toList();
-      case 'С фото':
+      case 'Архив':
+        // Архив = older posts (>30 days).
+        final cutoff = DateTime.now().subtract(const Duration(days: 30));
+        return _posts.where((post) => post.createdAt.isBefore(cutoff)).toList();
+      case 'Истории':
+        // Истории = posts with at least one photo.
         return _posts
             .where((post) => post.renderableImageUrls.isNotEmpty)
             .toList();
@@ -477,7 +466,10 @@ class _HomeScreenState extends State<HomeScreen> {
         },
         child: Center(
           child: ConstrainedBox(
-            constraints: BoxConstraints(maxWidth: isWideLayout ? 980 : 720),
+            // Force mobile-style 720 cap regardless of viewport — on wide
+            // desktop browsers the page reads as a centered phone-width
+            // column, matching the reference prototype.
+            constraints: const BoxConstraints(maxWidth: 720),
             child: StreamBuilder<List<TreeInvitation>>(
               stream: _familyTreeService.getPendingTreeInvitations(),
               builder: (context, snapshot) {
@@ -544,7 +536,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
           ),
-          padding: const EdgeInsets.fromLTRB(18, 0, 12, 0),
+          padding: const EdgeInsets.fromLTRB(18, 12, 12, 14),
           child: SafeArea(
             bottom: false,
             child: Row(
