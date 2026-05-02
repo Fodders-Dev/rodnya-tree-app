@@ -1446,7 +1446,11 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
                 : () => _showQuickAddRelativeSheet(context, person),
             child: cardContent,
           ),
-          if (!widget.isEditMode && isHoveredNode)
+          // Show the "+" quick-add badge on hover (desktop) AND on the
+          // currently-selected node (so mobile users with no hover can
+          // still trigger the add-relative sheet without going through
+          // the bottom sheet's Связь tab).
+          if (!widget.isEditMode && (isHoveredNode || isSelectedPerson))
             Positioned(
               top: 8,
               right: 8,
