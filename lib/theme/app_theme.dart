@@ -35,9 +35,12 @@ class RodnyaDesignTokens extends ThemeExtension<RodnyaDesignTokens> {
     bgTintWarm: Color(0xFFFCF8EC),
     bgTintSage: Color(0xFFE8EFDC),
     bgTintHoney: Color(0xFFF8E6B5),
-    ink: Color(0xFF293327),
-    inkSecondary: Color(0xFF53624F),
-    inkMuted: Color(0xFF778071),
+    // Ink tones tuned for readability on the warm cream canvas. Reference uses
+    // oklch(0.20 / 0.40 / 0.55) but those values read as washed-out olive on
+    // our brighter bgBase, so we deepen the warm tones a step.
+    ink: Color(0xFF1F2A1C),
+    inkSecondary: Color(0xFF3D4A37),
+    inkMuted: Color(0xFF5C6753),
     inkLine: Color(0x1F293327),
     accent: Color(0xFF3F8E52),
     accentStrong: Color(0xFF2F7644),
@@ -216,8 +219,8 @@ class AppTheme {
   static const Color warmCanvas = Color(0xFFF3ECDB);
   static const Color warmSurface = Color(0xFFFFFCF5);
   static const Color warmLine = Color(0xFFDDD3BE);
-  static const Color warmText = Color(0xFF293327);
-  static const Color warmMuted = Color(0xFF66715F);
+  static const Color warmText = Color(0xFF1F2A1C);
+  static const Color warmMuted = Color(0xFF4D5648);
   static const Color warm = Color(0xFFD7A33A);
   // Fallback chains list ONLY fonts we either bundle (Manrope, Lora) or that
   // every target browser ships with. Listing Noto entries triggers Flutter

@@ -85,12 +85,22 @@ class _RelativesScreenState extends State<RelativesScreen> {
   bool _isRelationsReady = false;
   bool _isChatsReady = false;
   bool _isPendingRequestsLoading = true;
+  String _searchQuery = '';
+  late final TextEditingController _searchController;
 
   @override
   void initState() {
     super.initState();
 
     debugPrint('[_RelativesScreenState initState] called');
+
+    _searchController = TextEditingController();
+    _searchController.addListener(() {
+      final next = _searchController.text;
+      if (next != _searchQuery) {
+        setState(() => _searchQuery = next);
+      }
+    });
 
     _currentUserId = _authService.currentUserId;
     debugPrint(
@@ -124,6 +134,7 @@ class _RelativesScreenState extends State<RelativesScreen> {
   void dispose() {
     _cancelSubscriptions();
     _treeProviderInstance?.removeListener(_handleTreeChange);
+    _searchController.dispose();
     super.dispose();
   }
 
@@ -342,8 +353,17 @@ class _RelativesScreenState extends State<RelativesScreen> {
 
     // --- ФИЛЬТРАЦИЯ СПИСКОВ ---
     final String currentUserId = _authService.currentUserId ?? '';
-    final List<FamilyPerson> visibleRelatives =
+    final List<FamilyPerson> baseRelatives =
         _allRelatives.where((p) => p.userId != currentUserId).toList();
+    final String trimmedQuery = _searchQuery.trim().toLowerCase();
+    final List<FamilyPerson> visibleRelatives = trimmedQuery.isEmpty
+        ? baseRelatives
+        : baseRelatives.where((p) {
+            final name = p.displayName.toLowerCase();
+            final relation = (p.relation ?? '').toLowerCase();
+            return name.contains(trimmedQuery) ||
+                relation.contains(trimmedQuery);
+          }).toList();
     final chatReadyCount =
         visibleRelatives.where((person) => _canStartChat(person)).length;
     final inviteReadyCount =
@@ -391,6 +411,11 @@ class _RelativesScreenState extends State<RelativesScreen> {
                                       const SizedBox(height: 12),
                                       _buildSecondaryLoadingStrip(),
                                     ],
+                                    const SizedBox(height: 12),
+                                    _buildRelativesSearchField(
+                                      theme: theme,
+                                      tokens: tokens,
+                                    ),
                                     const SizedBox(height: 16),
                                     Expanded(
                                       child: Row(
@@ -435,6 +460,11 @@ class _RelativesScreenState extends State<RelativesScreen> {
                                       const SizedBox(height: 10),
                                       _buildSecondaryLoadingStrip(),
                                     ],
+                                    const SizedBox(height: 12),
+                                    _buildRelativesSearchField(
+                                      theme: theme,
+                                      tokens: tokens,
+                                    ),
                                     const SizedBox(height: 12),
                                     Expanded(
                                       child: _buildRelativesList(
@@ -747,6 +777,62 @@ class _RelativesScreenState extends State<RelativesScreen> {
               fontWeight: FontWeight.w700,
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRelativesSearchField({
+    required ThemeData theme,
+    required RodnyaDesignTokens tokens,
+  }) {
+    // Reference styles.css `.card.flat`: surface bg, 14px h-padding, 46 height,
+    // search icon at left, no shadow.
+    return Container(
+      height: 46,
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      decoration: BoxDecoration(
+        color: tokens.surface,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: tokens.surfaceLine),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.search_rounded, size: 18, color: tokens.inkMuted),
+          const SizedBox(width: 10),
+          Expanded(
+            child: TextField(
+              controller: _searchController,
+              decoration: InputDecoration(
+                isDense: true,
+                contentPadding: EdgeInsets.zero,
+                border: InputBorder.none,
+                hintText: 'Поиск среди родных',
+                hintStyle: AppTheme.sans(
+                  color: tokens.inkMuted,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              style: AppTheme.sans(
+                color: tokens.ink,
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+              ),
+              cursorColor: tokens.accent,
+            ),
+          ),
+          if (_searchQuery.isNotEmpty)
+            GestureDetector(
+              onTap: () {
+                _searchController.clear();
+              },
+              child: Icon(
+                Icons.close_rounded,
+                size: 18,
+                color: tokens.inkMuted,
+              ),
+            ),
         ],
       ),
     );
