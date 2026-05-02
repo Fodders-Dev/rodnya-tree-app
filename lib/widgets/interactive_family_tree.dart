@@ -2478,6 +2478,108 @@ class _TreeLayoutEngine {
       }
     }
 
+    // Final spouse-parity pass — runs even when there's no snapshot. The
+    // earlier loops can leave a spouse pair on different rows when one
+    // partner has parents in-tree and the other doesn't, or when adding a
+    // sibling-in-law (e.g. an aunt) re-anchors one partner via a different
+    // family unit.
+    //
+    // Iterate until stable: for each spouse pair, snap both to the row of
+    // their lowest-level child minus one (the row that satisfies the
+    // parent→child constraint), or to the max of their current levels if
+    // they have no children. Sibling pairs follow the same max-rule.
+    var changed = true;
+    var safetyIterations = 0;
+    final maxIterations = component.length * 2 + 8;
+    while (changed && safetyIterations < maxIterations) {
+      changed = false;
+      safetyIterations += 1;
+
+      // Spouses ↔ shared row. Anchored by their kids' row when possible.
+      for (final personId in component) {
+        final spouseIds = (spousesByPerson[personId] ?? const <String>{})
+            .where(component.contains)
+            .toList(growable: false);
+        if (spouseIds.isEmpty) continue;
+
+        final pair = <String>{personId, ...spouseIds};
+        final sharedChildren = <String>{};
+        for (final memberId in pair) {
+          for (final childId
+              in parentToChildren[memberId] ?? const <String>{}) {
+            if (component.contains(childId)) {
+              sharedChildren.add(childId);
+            }
+          }
+        }
+
+        int targetLevel;
+        if (sharedChildren.isNotEmpty) {
+          // Parents go to one above the lowest-level child — that puts
+          // them at the same generation as their kids' other parent set.
+          targetLevel = max(
+            0,
+            sharedChildren
+                    .map((childId) => levels[childId] ?? 0)
+                    .reduce(min) -
+                1,
+          );
+        } else {
+          // No children — fall back to the highest current level among
+          // the spouses (matches reference: spouses must share a row).
+          targetLevel = pair
+              .map((memberId) => levels[memberId] ?? 0)
+              .reduce(max);
+        }
+
+        for (final memberId in pair) {
+          if ((levels[memberId] ?? 0) != targetLevel) {
+            levels[memberId] = targetLevel;
+            changed = true;
+          }
+        }
+      }
+
+      // Siblings ↔ shared row. Anchored by their parents' row when known.
+      for (final personId in component) {
+        final siblingIds = (siblingsByPerson[personId] ?? const <String>{})
+            .where(component.contains)
+            .toList(growable: false);
+        if (siblingIds.isEmpty) continue;
+
+        final pair = <String>{personId, ...siblingIds};
+        final sharedParents = <String>{};
+        for (final memberId in pair) {
+          for (final parentId
+              in childToParents[memberId] ?? const <String>{}) {
+            if (component.contains(parentId)) {
+              sharedParents.add(parentId);
+            }
+          }
+        }
+
+        int targetLevel;
+        if (sharedParents.isNotEmpty) {
+          // Children go to one below their parents' row.
+          targetLevel = sharedParents
+                  .map((parentId) => levels[parentId] ?? 0)
+                  .reduce(max) +
+              1;
+        } else {
+          targetLevel = pair
+              .map((memberId) => levels[memberId] ?? 0)
+              .reduce(max);
+        }
+
+        for (final memberId in pair) {
+          if ((levels[memberId] ?? 0) != targetLevel) {
+            levels[memberId] = targetLevel;
+            changed = true;
+          }
+        }
+      }
+    }
+
     final minLevel = levels.values.reduce(min);
     if (minLevel != 0) {
       for (final entry in levels.entries.toList()) {
