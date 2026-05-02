@@ -1276,82 +1276,84 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     required RodnyaDesignTokens tokens,
   }) {
     final canPublish = !_isLoading && _currentTreeId != null;
-    return ClipRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-        child: Container(
-          decoration: BoxDecoration(
-            color: tokens.surface.withValues(
-              alpha: theme.brightness == Brightness.dark ? 0.74 : 0.78,
-            ),
-            border: Border(
-              bottom: BorderSide(
-                color: tokens.surfaceLine.withValues(alpha: 0.5),
-                width: 0.6,
+    return SizedBox.expand(
+      child: ClipRect(
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+          child: Container(
+            decoration: BoxDecoration(
+              color: tokens.surface.withValues(
+                alpha: theme.brightness == Brightness.dark ? 0.74 : 0.78,
+              ),
+              border: Border(
+                bottom: BorderSide(
+                  color: tokens.surfaceLine.withValues(alpha: 0.5),
+                  width: 0.6,
+                ),
               ),
             ),
-          ),
-          padding: const EdgeInsets.fromLTRB(8, 8, 12, 14),
-          child: SafeArea(
-            bottom: false,
-            child: Row(
-              children: [
-                IconButton(
-                  icon: Icon(Icons.arrow_back_rounded, color: tokens.ink),
-                  tooltip: 'Назад',
-                  onPressed: () {
-                    if (Navigator.of(context).canPop()) {
-                      Navigator.of(context).pop();
-                    }
-                  },
-                ),
-                const SizedBox(width: 4),
-                Text(
-                  'Новый пост',
-                  style: AppTheme.serif(
-                    color: tokens.ink,
-                    fontSize: 22,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: -0.22,
+            padding: const EdgeInsets.fromLTRB(8, 8, 12, 14),
+            child: SafeArea(
+              bottom: false,
+              child: Row(
+                children: [
+                  IconButton(
+                    icon: Icon(Icons.arrow_back_rounded, color: tokens.ink),
+                    tooltip: 'Назад',
+                    onPressed: () {
+                      if (Navigator.of(context).canPop()) {
+                        Navigator.of(context).pop();
+                      }
+                    },
                   ),
-                ),
-                const Spacer(),
-                Material(
-                  color: canPublish ? tokens.accent : tokens.surfaceLine,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(999),
-                    onTap: canPublish ? _createPost : null,
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 9,
-                      ),
-                      child: _isLoading
-                          ? SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: tokens.accentInk,
-                              ),
-                            )
-                          : Text(
-                              'Опубликовать',
-                              style: AppTheme.sans(
-                                color: canPublish
-                                    ? tokens.accentInk
-                                    : tokens.inkMuted,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Новый пост',
+                    style: AppTheme.serif(
+                      color: tokens.ink,
+                      fontSize: 22,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: -0.22,
                     ),
                   ),
-                ),
-              ],
+                  const Spacer(),
+                  Material(
+                    color: canPublish ? tokens.accent : tokens.surfaceLine,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(999),
+                      onTap: canPublish ? _createPost : null,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 9,
+                        ),
+                        child: _isLoading
+                            ? SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: tokens.accentInk,
+                                ),
+                              )
+                            : Text(
+                                'Опубликовать',
+                                style: AppTheme.sans(
+                                  color: canPublish
+                                      ? tokens.accentInk
+                                      : tokens.inkMuted,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),

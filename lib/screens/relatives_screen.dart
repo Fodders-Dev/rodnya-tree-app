@@ -1512,42 +1512,44 @@ class _RelativesScreenState extends State<RelativesScreen> {
     required String? selectedTreeId,
     required bool isFriendsTree,
   }) {
-    return ClipRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-        child: Container(
-          decoration: BoxDecoration(
-            color: tokens.surface.withValues(
-              alpha: theme.brightness == Brightness.dark ? 0.74 : 0.78,
-            ),
-            border: Border(
-              bottom: BorderSide(
-                color: tokens.surfaceLine.withValues(alpha: 0.5),
-                width: 0.6,
+    return SizedBox.expand(
+      child: ClipRect(
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+          child: Container(
+            decoration: BoxDecoration(
+              color: tokens.surface.withValues(
+                alpha: theme.brightness == Brightness.dark ? 0.74 : 0.78,
+              ),
+              border: Border(
+                bottom: BorderSide(
+                  color: tokens.surfaceLine.withValues(alpha: 0.5),
+                  width: 0.6,
+                ),
               ),
             ),
-          ),
-          padding: const EdgeInsets.fromLTRB(18, 12, 12, 14),
-          child: SafeArea(
-            bottom: false,
-            child: Row(
-              children: [
-                Text(
-                  isFriendsTree ? 'Круг' : 'Родные',
-                  style: AppTheme.serif(
-                    color: tokens.ink,
-                    fontSize: 22,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: -0.22,
+            padding: const EdgeInsets.fromLTRB(18, 12, 12, 14),
+            child: SafeArea(
+              bottom: false,
+              child: Row(
+                children: [
+                  Text(
+                    isFriendsTree ? 'Круг' : 'Родные',
+                    style: AppTheme.serif(
+                      color: tokens.ink,
+                      fontSize: 22,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: -0.22,
+                    ),
                   ),
-                ),
-                const Spacer(),
-                ..._buildRelativesAppBarActions(
-                  treeProvider: treeProvider,
-                  selectedTreeId: selectedTreeId,
-                  isFriendsTree: isFriendsTree,
-                ),
-              ],
+                  const Spacer(),
+                  ..._buildRelativesAppBarActions(
+                    treeProvider: treeProvider,
+                    selectedTreeId: selectedTreeId,
+                    isFriendsTree: isFriendsTree,
+                  ),
+                ],
+              ),
             ),
           ),
         ),

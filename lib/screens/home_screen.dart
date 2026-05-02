@@ -521,54 +521,56 @@ class _HomeScreenState extends State<HomeScreen> {
     required ThemeData theme,
     required RodnyaDesignTokens tokens,
   }) {
-    return ClipRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-        child: Container(
-          decoration: BoxDecoration(
-            color: tokens.surface.withValues(
-              alpha: theme.brightness == Brightness.dark ? 0.74 : 0.78,
-            ),
-            border: Border(
-              bottom: BorderSide(
-                color: tokens.surfaceLine.withValues(alpha: 0.5),
-                width: 0.6,
+    return SizedBox.expand(
+      child: ClipRect(
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+          child: Container(
+            decoration: BoxDecoration(
+              color: tokens.surface.withValues(
+                alpha: theme.brightness == Brightness.dark ? 0.74 : 0.78,
+              ),
+              border: Border(
+                bottom: BorderSide(
+                  color: tokens.surfaceLine.withValues(alpha: 0.5),
+                  width: 0.6,
+                ),
               ),
             ),
-          ),
-          padding: const EdgeInsets.fromLTRB(18, 12, 12, 14),
-          child: SafeArea(
-            bottom: false,
-            child: Row(
-              children: [
-                Text(
-                  'Родня',
-                  style: AppTheme.serif(
-                    color: tokens.ink,
-                    fontSize: 22,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: -0.22,
+            padding: const EdgeInsets.fromLTRB(18, 12, 12, 14),
+            child: SafeArea(
+              bottom: false,
+              child: Row(
+                children: [
+                  Text(
+                    'Родня',
+                    style: AppTheme.serif(
+                      color: tokens.ink,
+                      fontSize: 22,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: -0.22,
+                    ),
                   ),
-                ),
-                const Spacer(),
-                _buildTopbarIconButton(
-                  tokens: tokens,
-                  child: _buildNotificationsAction(tokens: tokens),
-                  tooltip: 'Активность',
-                  onTap: () => context.push('/notifications'),
-                ),
-                const SizedBox(width: 8),
-                _buildTopbarIconButton(
-                  tokens: tokens,
-                  tooltip: 'Выбрать дерево',
-                  onTap: () => context.go('/tree?selector=1'),
-                  child: Icon(
-                    Icons.account_tree_outlined,
-                    size: 19,
-                    color: tokens.accent,
+                  const Spacer(),
+                  _buildTopbarIconButton(
+                    tokens: tokens,
+                    child: _buildNotificationsAction(tokens: tokens),
+                    tooltip: 'Активность',
+                    onTap: () => context.push('/notifications'),
                   ),
-                ),
-              ],
+                  const SizedBox(width: 8),
+                  _buildTopbarIconButton(
+                    tokens: tokens,
+                    tooltip: 'Выбрать дерево',
+                    onTap: () => context.go('/tree?selector=1'),
+                    child: Icon(
+                      Icons.account_tree_outlined,
+                      size: 19,
+                      color: tokens.accent,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
