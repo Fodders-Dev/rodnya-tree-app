@@ -72,40 +72,35 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
         );
 
         if (isWideDesktop) {
-          return Center(
-            child: SizedBox(
-              width: constraints.maxWidth,
-              height: constraints.maxHeight,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    topToolbar,
-                    const SizedBox(height: 12),
-                    Expanded(
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          SizedBox(
-                            width: 312,
-                            child: _buildTreeContextColumn(
-                              selectedTreeId: selectedTreeId,
-                              branchRootPerson: branchRootPerson,
-                              selectedEditPerson: selectedEditPerson,
-                              warnings: treeWarnings,
-                              compact: false,
-                            ),
-                          ),
-                          const SizedBox(width: 14),
-                          Expanded(child: treeCanvas),
-                        ],
-                      ),
-                    ),
-                  ],
+          // Desktop: tree canvas fills the whole body (full-bleed), the
+          // toolbar sits across the top, and "Карта рода" sidebar floats
+          // pinned to the left edge as a 312px column. Tree pans behind
+          // both, matching the reference design where the family graph
+          // is the page surface.
+          return Stack(
+            fit: StackFit.expand,
+            children: [
+              Positioned.fill(child: treeCanvas),
+              Positioned(
+                top: 10,
+                left: 14,
+                right: 14,
+                child: topToolbar,
+              ),
+              Positioned(
+                top: 80,
+                bottom: 14,
+                left: 14,
+                width: 312,
+                child: _buildTreeContextColumn(
+                  selectedTreeId: selectedTreeId,
+                  branchRootPerson: branchRootPerson,
+                  selectedEditPerson: selectedEditPerson,
+                  warnings: treeWarnings,
+                  compact: false,
                 ),
               ),
-            ),
+            ],
           );
         }
 
