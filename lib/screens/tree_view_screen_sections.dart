@@ -220,6 +220,13 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
         _isFriendsTree ? const Color(0xFF0F9D8A) : tokens.accentStrong;
     final generationCount = _graphSnapshot?.generationRows.length ?? 0;
 
+    // On compact (mobile) widths the sidebar is collapsed into a 200ish-px
+    // scrollable strip — keep the stat pills in the toolbar so the user
+    // can see counts at a glance. On desktop (`!compact`) the sidebar
+    // shows the canonical "Карта рода" stats card right next to the tree,
+    // so the toolbar duplicates would just be visual noise.
+    final showStatPills = compact;
+
     return GlassPanel(
       padding: EdgeInsets.symmetric(
         horizontal: compact ? 8 : 10,
@@ -236,42 +243,45 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
             compact: compact,
           ),
           SizedBox(width: compact ? 8 : 10),
-          Expanded(
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: [
-                  _buildTreeToolbarStat(
-                    icon: Icons.people_outline,
-                    label: '${_relativesData.length}',
-                    tooltip: 'Люди',
-                    accent: accent,
-                  ),
-                  const SizedBox(width: 6),
-                  _buildTreeToolbarStat(
-                    icon: Icons.alt_route_outlined,
-                    label: '${_relationsData.length}',
-                    tooltip: 'Связи',
-                    accent: accent,
-                  ),
-                  const SizedBox(width: 6),
-                  _buildTreeToolbarStat(
-                    icon: Icons.layers_outlined,
-                    label: generationCount == 0 ? '-' : '$generationCount',
-                    tooltip: 'Поколения',
-                    accent: accent,
-                  ),
-                  const SizedBox(width: 6),
-                  _buildTreeToolbarStat(
-                    icon: Icons.flag_outlined,
-                    label: '${warnings.length}',
-                    tooltip: 'Ждут проверки',
-                    accent: warnings.isEmpty ? accent : tokens.warm,
-                  ),
-                ],
+          if (showStatPills)
+            Expanded(
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    _buildTreeToolbarStat(
+                      icon: Icons.people_outline,
+                      label: '${_relativesData.length}',
+                      tooltip: 'Люди',
+                      accent: accent,
+                    ),
+                    const SizedBox(width: 6),
+                    _buildTreeToolbarStat(
+                      icon: Icons.alt_route_outlined,
+                      label: '${_relationsData.length}',
+                      tooltip: 'Связи',
+                      accent: accent,
+                    ),
+                    const SizedBox(width: 6),
+                    _buildTreeToolbarStat(
+                      icon: Icons.layers_outlined,
+                      label: generationCount == 0 ? '-' : '$generationCount',
+                      tooltip: 'Поколения',
+                      accent: accent,
+                    ),
+                    const SizedBox(width: 6),
+                    _buildTreeToolbarStat(
+                      icon: Icons.flag_outlined,
+                      label: '${warnings.length}',
+                      tooltip: 'Ждут проверки',
+                      accent: warnings.isEmpty ? accent : tokens.warm,
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ),
+            )
+          else
+            const Spacer(),
           SizedBox(width: compact ? 8 : 10),
           _buildTreeToolbarIconButton(
             icon: Icons.person_add_alt_1_outlined,
