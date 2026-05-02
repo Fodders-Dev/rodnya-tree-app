@@ -167,7 +167,8 @@ class _PostCardState extends State<PostCard>
     if (widget.post.isPublic) {
       return Icons.public;
     }
-    return Icons.family_restroom_rounded;
+    // Reference uses a leaf glyph for the family-scope post audience.
+    return Icons.eco_outlined;
   }
 
   Future<void> _showCommentsSheet() async {

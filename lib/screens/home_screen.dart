@@ -450,6 +450,17 @@ class _HomeScreenState extends State<HomeScreen> {
         preferredSize: const Size.fromHeight(56),
         child: _buildHomeTopbar(theme: theme, tokens: tokens),
       ),
+      floatingActionButton: hasSelectedTree
+          ? FloatingActionButton(
+              onPressed: () => context.push('/post/create'),
+              backgroundColor: tokens.accent,
+              foregroundColor: tokens.accentInk,
+              elevation: 4,
+              shape: const CircleBorder(),
+              tooltip: 'Написать пост',
+              child: const Icon(Icons.edit_outlined, size: 22),
+            )
+          : null,
       body: RefreshIndicator(
         onRefresh: () async {
           await _customNotificationService?.refreshUnreadNotificationsCount();

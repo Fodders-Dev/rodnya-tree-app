@@ -261,7 +261,7 @@ void main() {
       expect(find.widgetWithText(ChoiceChip, 'Семья'), findsOneWidget);
       expect(find.text('Новый пост'), findsNothing);
       expect(find.text('День рождения'), findsOneWidget);
-      expect(find.byType(FloatingActionButton), findsNothing);
+      expect(find.byType(FloatingActionButton), findsOneWidget);
     },
   );
 

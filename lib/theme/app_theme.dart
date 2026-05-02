@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 @immutable
 class RodnyaDesignTokens extends ThemeExtension<RodnyaDesignTokens> {
@@ -238,7 +237,8 @@ class AppTheme {
     double letterSpacing = -0.22,
     double? height,
   }) {
-    return GoogleFonts.lora(
+    return TextStyle(
+      fontFamily: 'Lora',
       color: color,
       fontSize: fontSize,
       fontWeight: fontWeight,
@@ -254,7 +254,8 @@ class AppTheme {
     double letterSpacing = -0.07,
     double? height,
   }) {
-    return GoogleFonts.manrope(
+    return TextStyle(
+      fontFamily: 'Manrope',
       color: color,
       fontSize: fontSize,
       fontWeight: fontWeight,
@@ -684,25 +685,26 @@ class AppTheme {
   }
 
   static TextTheme _withFontFallback(TextTheme textTheme) {
-    final base = GoogleFonts.manropeTextTheme(textTheme);
-    TextStyle? withFallback(TextStyle? style) =>
-        style?.copyWith(fontFamilyFallback: _fontFallback);
-    return base.copyWith(
-      displayLarge: withFallback(base.displayLarge),
-      displayMedium: withFallback(base.displayMedium),
-      displaySmall: withFallback(base.displaySmall),
-      headlineLarge: withFallback(base.headlineLarge),
-      headlineMedium: withFallback(base.headlineMedium),
-      headlineSmall: withFallback(base.headlineSmall),
-      titleLarge: withFallback(base.titleLarge),
-      titleMedium: withFallback(base.titleMedium),
-      titleSmall: withFallback(base.titleSmall),
-      bodyLarge: withFallback(base.bodyLarge),
-      bodyMedium: withFallback(base.bodyMedium),
-      bodySmall: withFallback(base.bodySmall),
-      labelLarge: withFallback(base.labelLarge),
-      labelMedium: withFallback(base.labelMedium),
-      labelSmall: withFallback(base.labelSmall),
+    TextStyle? apply(TextStyle? style) => style?.copyWith(
+          fontFamily: 'Manrope',
+          fontFamilyFallback: _fontFallback,
+        );
+    return textTheme.copyWith(
+      displayLarge: apply(textTheme.displayLarge),
+      displayMedium: apply(textTheme.displayMedium),
+      displaySmall: apply(textTheme.displaySmall),
+      headlineLarge: apply(textTheme.headlineLarge),
+      headlineMedium: apply(textTheme.headlineMedium),
+      headlineSmall: apply(textTheme.headlineSmall),
+      titleLarge: apply(textTheme.titleLarge),
+      titleMedium: apply(textTheme.titleMedium),
+      titleSmall: apply(textTheme.titleSmall),
+      bodyLarge: apply(textTheme.bodyLarge),
+      bodyMedium: apply(textTheme.bodyMedium),
+      bodySmall: apply(textTheme.bodySmall),
+      labelLarge: apply(textTheme.labelLarge),
+      labelMedium: apply(textTheme.labelMedium),
+      labelSmall: apply(textTheme.labelSmall),
     );
   }
 }

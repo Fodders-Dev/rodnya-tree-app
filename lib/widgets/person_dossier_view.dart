@@ -6,14 +6,6 @@ import '../models/person_dossier.dart';
 import '../theme/app_theme.dart';
 import 'glass_panel.dart';
 
-// Icon mapping for each dossier section.
-const _kSectionIcons = <String, IconData>{
-  'Основное': Icons.cake_outlined,
-  'О человеке': Icons.auto_stories_outlined,
-  'Путь и дело': Icons.school_outlined,
-  'Взгляды': Icons.spa_outlined,
-};
-
 class PersonDossierView extends StatelessWidget {
   const PersonDossierView({
     super.key,
@@ -599,48 +591,50 @@ class _DossierSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final sectionIcon = _kSectionIcons[data.title] ?? Icons.info_outline;
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
 
-    return GlassPanel(
-      padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
-      borderRadius: BorderRadius.circular(24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Section header: icon + title
-          Row(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Eyebrow: uppercase tracked label, no icon
+        Padding(
+          padding: const EdgeInsets.fromLTRB(4, 4, 4, 8),
+          child: Text(
+            data.title.toUpperCase(),
+            style: AppTheme.sans(
+              color: tokens.inkMuted,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.8,
+            ),
+          ),
+        ),
+        // Field card with rounded surfaceStrong + dividers
+        Container(
+          decoration: BoxDecoration(
+            color: tokens.surfaceStrong,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: tokens.surfaceLine),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Column(
             children: [
-              Container(
-                width: 32,
-                height: 32,
-                decoration: BoxDecoration(
-                  color: scheme.primary.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Icon(sectionIcon, size: 17, color: scheme.primary),
-              ),
-              const SizedBox(width: 10),
-              Text(
-                data.title,
-                style: theme.textTheme.titleSmall?.copyWith(
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: -0.1,
-                ),
-              ),
+              for (var i = 0; i < data.fields.length; i++) ...[
+                _FieldRow(field: data.fields[i]),
+                if (i != data.fields.length - 1)
+                  Container(
+                    height: 0.7,
+                    margin: const EdgeInsets.only(left: 56),
+                    color: tokens.surfaceLine,
+                  ),
+              ],
             ],
           ),
-          const SizedBox(height: 14),
-          // Fields
-          ...data.fields.asMap().entries.map((entry) {
-            final isLast = entry.key == data.fields.length - 1;
-            return Padding(
-              padding: EdgeInsets.only(bottom: isLast ? 0 : 14),
-              child: _FieldRow(field: entry.value),
-            );
-          }),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
@@ -653,36 +647,55 @@ class _FieldRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
 
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(top: 1),
-          child: Icon(field.icon, size: 16, color: scheme.onSurfaceVariant),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                field.label,
-                style: theme.textTheme.labelSmall?.copyWith(
-                  color: scheme.onSurfaceVariant,
-                  letterSpacing: 0.3,
-                ),
-              ),
-              const SizedBox(height: 3),
-              Text(
-                field.value,
-                style: theme.textTheme.bodyMedium?.copyWith(height: 1.4),
-              ),
-            ],
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+              color: tokens.accentSoft,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(field.icon, size: 17, color: tokens.accent),
           ),
-        ),
-      ],
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  field.label,
+                  style: AppTheme.sans(
+                    color: tokens.inkMuted,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                    letterSpacing: 0,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  field.value,
+                  style: AppTheme.sans(
+                    color: tokens.ink,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    height: 1.35,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

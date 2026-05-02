@@ -498,70 +498,82 @@ extension _HomeScreenSections on _HomeScreenState {
     return Semantics(
       button: true,
       label: 'home-identity-review-banner',
-      child: InkWell(
-        borderRadius: BorderRadius.circular(20),
-        onTap: () => context.go('/identity/review'),
-        child: Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                tokens.warmSoft,
-                tokens.accentSoft,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(18),
+          onTap: () => context.go('/identity/review'),
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  tokens.warmSoft,
+                  tokens.accentSoft,
+                ],
+              ),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: tokens.surfaceLine),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: tokens.surfaceStrong,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: tokens.surfaceLine),
+                  ),
+                  child: Icon(
+                    unavailable
+                        ? Icons.sync_problem_outlined
+                        : Icons.merge_type_rounded,
+                    size: 20,
+                    color: tokens.accent,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        title,
+                        style: AppTheme.sans(
+                          color: tokens.ink,
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w700,
+                          height: 1.2,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        message,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppTheme.sans(
+                          color: tokens.inkMuted,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w500,
+                          height: 1.3,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Icon(
+                  Icons.chevron_right_rounded,
+                  size: 16,
+                  color: tokens.inkMuted,
+                ),
               ],
             ),
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: tokens.surfaceLine),
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: tokens.surfaceStrong,
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: tokens.surfaceLine),
-                ),
-                child: Icon(
-                  unavailable
-                      ? Icons.sync_problem_outlined
-                      : Icons.merge_type_rounded,
-                  color: tokens.accent,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: theme.textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      message,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              Icon(
-                Icons.chevron_right_rounded,
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ],
           ),
         ),
       ),
