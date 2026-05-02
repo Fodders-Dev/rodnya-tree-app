@@ -503,120 +503,119 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
     required String? selectedTreeId,
     String? treeName,
   }) {
-    return SizedBox.expand(
-      child: ClipRect(
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-          child: Container(
-            decoration: BoxDecoration(
-              color: tokens.surface.withValues(
-                alpha: theme.brightness == Brightness.dark ? 0.74 : 0.78,
-              ),
-              border: Border(
-                bottom: BorderSide(
-                  color: tokens.surfaceLine.withValues(alpha: 0.5),
-                  width: 0.6,
-                ),
+    return ClipRect(
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+        child: Container(
+          height: 76,
+          decoration: BoxDecoration(
+            color: tokens.surface.withValues(
+              alpha: theme.brightness == Brightness.dark ? 0.74 : 0.78,
+            ),
+            border: Border(
+              bottom: BorderSide(
+                color: tokens.surfaceLine.withValues(alpha: 0.5),
+                width: 0.6,
               ),
             ),
-            padding: const EdgeInsets.fromLTRB(8, 8, 12, 14),
-            child: SafeArea(
-              bottom: false,
-              child: Row(
-                children: [
-                  if (context.canPop())
-                    IconButton(
-                      icon: Icon(Icons.arrow_back_rounded, color: tokens.ink),
-                      tooltip: 'Назад',
-                      onPressed: () => context.pop(),
-                    )
-                  else
-                    const SizedBox(width: 14),
+          ),
+          padding: const EdgeInsets.fromLTRB(8, 8, 12, 14),
+          child: SafeArea(
+            bottom: false,
+            child: Row(
+              children: [
+                if (context.canPop())
+                  IconButton(
+                    icon: Icon(Icons.arrow_back_rounded, color: tokens.ink),
+                    tooltip: 'Назад',
+                    onPressed: () => context.pop(),
+                  )
+                else
+                  const SizedBox(width: 14),
+                Flexible(
+                  child: Text(
+                    _isFriendsTree ? 'Круг' : 'Дерево',
+                    style: AppTheme.serif(
+                      color: tokens.ink,
+                      fontSize: 22,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: -0.22,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                if (treeName != null && treeName.isNotEmpty) ...[
+                  const SizedBox(width: 8),
                   Flexible(
-                    child: Text(
-                      _isFriendsTree ? 'Круг' : 'Дерево',
-                      style: AppTheme.serif(
-                        color: tokens.ink,
-                        fontSize: 22,
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: -0.22,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: tokens.accentSoft,
+                        borderRadius: BorderRadius.circular(999),
                       ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                      child: Text(
+                        treeName,
+                        style: AppTheme.sans(
+                          color: tokens.accent,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
                   ),
-                  if (treeName != null && treeName.isNotEmpty) ...[
-                    const SizedBox(width: 8),
-                    Flexible(
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: tokens.accentSoft,
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: Text(
-                          treeName,
-                          style: AppTheme.sans(
-                            color: tokens.accent,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ),
-                  ],
-                  const Spacer(),
+                ],
+                const Spacer(),
+                _TreeTopbarPill(
+                  tokens: tokens,
+                  tooltip: 'Выбрать дерево',
+                  onTap: () => context.go('/tree?selector=1'),
+                  child: Icon(
+                    Icons.account_tree_outlined,
+                    size: 19,
+                    color: tokens.ink,
+                  ),
+                ),
+                if (selectedTreeId != null) ...[
+                  const SizedBox(width: 8),
                   _TreeTopbarPill(
                     tokens: tokens,
-                    tooltip: 'Выбрать дерево',
-                    onTap: () => context.go('/tree?selector=1'),
+                    tooltip: _isFriendsTree
+                        ? 'Добавить в круг'
+                        : 'Добавить человека',
+                    onTap: () => _navigateToAddRelative(selectedTreeId),
                     child: Icon(
-                      Icons.account_tree_outlined,
+                      Icons.person_add_alt_1_outlined,
                       size: 19,
-                      color: tokens.ink,
+                      color: tokens.accent,
                     ),
                   ),
-                  if (selectedTreeId != null) ...[
-                    const SizedBox(width: 8),
-                    _TreeTopbarPill(
-                      tokens: tokens,
-                      tooltip: _isFriendsTree
-                          ? 'Добавить в круг'
-                          : 'Добавить человека',
-                      onTap: () => _navigateToAddRelative(selectedTreeId),
+                  const SizedBox(width: 8),
+                  PopupMenuButton<_TreeToolbarAction>(
+                    tooltip: 'Действия дерева',
+                    onSelected: (action) =>
+                        _handleTreeToolbarAction(selectedTreeId, action),
+                    itemBuilder: (context) => _buildTreeToolbarMenuItems(),
+                    child: Container(
+                      width: 38,
+                      height: 38,
+                      decoration: BoxDecoration(
+                        color: tokens.surfaceStrong,
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: tokens.surfaceLine),
+                      ),
                       child: Icon(
-                        Icons.person_add_alt_1_outlined,
+                        Icons.more_horiz_rounded,
                         size: 19,
-                        color: tokens.accent,
+                        color: tokens.ink,
                       ),
                     ),
-                    const SizedBox(width: 8),
-                    PopupMenuButton<_TreeToolbarAction>(
-                      tooltip: 'Действия дерева',
-                      onSelected: (action) =>
-                          _handleTreeToolbarAction(selectedTreeId, action),
-                      itemBuilder: (context) => _buildTreeToolbarMenuItems(),
-                      child: Container(
-                        width: 38,
-                        height: 38,
-                        decoration: BoxDecoration(
-                          color: tokens.surfaceStrong,
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(color: tokens.surfaceLine),
-                        ),
-                        child: Icon(
-                          Icons.more_horiz_rounded,
-                          size: 19,
-                          color: tokens.ink,
-                        ),
-                      ),
-                    ),
-                  ],
+                  ),
                 ],
-              ),
+              ],
             ),
           ),
         ),

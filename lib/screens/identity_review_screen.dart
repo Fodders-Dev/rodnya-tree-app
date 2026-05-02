@@ -251,85 +251,84 @@ class _IdentityReviewScreenState extends State<IdentityReviewScreen> {
       backgroundColor: Colors.transparent,
       appBar: PreferredSize(
         preferredSize: const Size.fromHeight(76),
-        child: SizedBox.expand(
-          child: ClipRect(
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-              child: Container(
-                decoration: BoxDecoration(
-                  color: tokens.surface.withValues(
-                    alpha: theme.brightness == Brightness.dark ? 0.74 : 0.78,
-                  ),
-                  border: Border(
-                    bottom: BorderSide(
-                      color: tokens.surfaceLine.withValues(alpha: 0.5),
-                      width: 0.6,
-                    ),
+        child: ClipRect(
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+            child: Container(
+              height: 76,
+              decoration: BoxDecoration(
+                color: tokens.surface.withValues(
+                  alpha: theme.brightness == Brightness.dark ? 0.74 : 0.78,
+                ),
+                border: Border(
+                  bottom: BorderSide(
+                    color: tokens.surfaceLine.withValues(alpha: 0.5),
+                    width: 0.6,
                   ),
                 ),
-                padding: const EdgeInsets.fromLTRB(8, 8, 12, 14),
-                child: SafeArea(
-                  bottom: false,
-                  child: Row(
-                    children: [
-                      IconButton(
-                        onPressed: _leaveScreen,
-                        icon: Icon(Icons.arrow_back_rounded, color: tokens.ink),
-                        tooltip: 'Назад',
+              ),
+              padding: const EdgeInsets.fromLTRB(8, 8, 12, 14),
+              child: SafeArea(
+                bottom: false,
+                child: Row(
+                  children: [
+                    IconButton(
+                      onPressed: _leaveScreen,
+                      icon: Icon(Icons.arrow_back_rounded, color: tokens.ink),
+                      tooltip: 'Назад',
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      'Один человек?',
+                      style: AppTheme.serif(
+                        color: tokens.ink,
+                        fontSize: 22,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: -0.22,
                       ),
-                      const SizedBox(width: 4),
-                      Text(
-                        'Один человек?',
-                        style: AppTheme.serif(
-                          color: tokens.ink,
-                          fontSize: 22,
-                          fontWeight: FontWeight.w600,
-                          letterSpacing: -0.22,
+                    ),
+                    const Spacer(),
+                    if (totalPending > 0)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 9,
+                          vertical: 5,
                         ),
-                      ),
-                      const Spacer(),
-                      if (totalPending > 0)
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 9,
-                            vertical: 5,
-                          ),
-                          margin: const EdgeInsets.only(right: 8),
-                          decoration: BoxDecoration(
-                            color: tokens.warmSoft,
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                          child: Text(
-                            '$totalPending на проверку',
-                            style: AppTheme.sans(
-                              color: tokens.warm,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
+                        margin: const EdgeInsets.only(right: 8),
+                        decoration: BoxDecoration(
+                          color: tokens.warmSoft,
+                          borderRadius: BorderRadius.circular(999),
                         ),
-                      Material(
-                        color: tokens.surfaceStrong,
-                        shape: RoundedRectangleBorder(
-                          side: BorderSide(color: tokens.surfaceLine),
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                        child: InkWell(
-                          onTap: _isMutating ? null : _load,
-                          borderRadius: BorderRadius.circular(14),
-                          child: SizedBox(
-                            width: 38,
-                            height: 38,
-                            child: Icon(
-                              Icons.refresh_rounded,
-                              size: 19,
-                              color: tokens.ink,
-                            ),
+                        child: Text(
+                          '$totalPending на проверку',
+                          style: AppTheme.sans(
+                            color: tokens.warm,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
                           ),
                         ),
                       ),
-                    ],
-                  ),
+                    Material(
+                      color: tokens.surfaceStrong,
+                      shape: RoundedRectangleBorder(
+                        side: BorderSide(color: tokens.surfaceLine),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: InkWell(
+                        onTap: _isMutating ? null : _load,
+                        borderRadius: BorderRadius.circular(14),
+                        child: SizedBox(
+                          width: 38,
+                          height: 38,
+                          child: Icon(
+                            Icons.refresh_rounded,
+                            size: 19,
+                            color: tokens.ink,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
