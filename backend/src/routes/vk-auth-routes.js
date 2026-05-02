@@ -78,12 +78,14 @@ function registerVkAuthRoutes(
       : "login";
     const callbackUrl = `${resolvePublicApiUrl(req).replace(/\/$/, "")}/v1/auth/vk/callback`;
     const {codeVerifier, codeChallenge} = createVkPkcePair();
+    const deviceContext = readDeviceContext(req);
     const authFlowHandoff = await store.createAuthHandoff({
       type: "vk_auth_flow",
       payload: {
         intent,
         codeVerifier,
         redirectUri: callbackUrl,
+        deviceContext,
       },
     });
 
@@ -138,6 +140,20 @@ function registerVkAuthRoutes(
         throw new Error("VK_AUTH_STATE_INVALID");
       }
 
+      // Prefer the device context that was stashed when /start was loaded
+      // by the original device — the callback is hit by the OAuth provider
+      // and so does not carry the Flutter X-Client-Instance-Id header.
+      const stashedDeviceContext =
+        authFlowHandoff.payload?.deviceContext &&
+        typeof authFlowHandoff.payload.deviceContext === "object"
+          ? authFlowHandoff.payload.deviceContext
+          : null;
+      const effectiveDeviceContext =
+        stashedDeviceContext &&
+        Object.values(stashedDeviceContext).some((value) => value)
+          ? stashedDeviceContext
+          : readDeviceContext(req);
+
       const vkTokenResult = await vkAuthClient.exchangeCode({
         code,
         deviceId,
@@ -173,7 +189,7 @@ function registerVkAuthRoutes(
           linkedUser.id,
           vkIdentity,
         );
-        const sessionTokens = await store.createSession(refreshedUser.id, readDeviceContext(req));
+        const sessionTokens = await store.createSession(refreshedUser.id, effectiveDeviceContext);
         const authHandoff = await store.createAuthHandoff({
           type: "vk_auth_result",
           userId: refreshedUser.id,
@@ -227,7 +243,7 @@ function registerVkAuthRoutes(
 
       if (resolution?.user?.id) {
         const user = await store.linkAuthIdentity(resolution.user.id, vkIdentity);
-        const sessionTokens = await store.createSession(user.id, readDeviceContext(req));
+        const sessionTokens = await store.createSession(user.id, effectiveDeviceContext);
         const authHandoff = await store.createAuthHandoff({
           type: "vk_auth_result",
           userId: user.id,
@@ -271,7 +287,7 @@ function registerVkAuthRoutes(
         authIdentity: vkIdentity,
         photoUrl: vkIdentity.metadata?.avatar || null,
       });
-      const sessionTokens = await store.createSession(user.id, readDeviceContext(req));
+      const sessionTokens = await store.createSession(user.id, effectiveDeviceContext);
       const authHandoff = await store.createAuthHandoff({
         type: "vk_auth_result",
         userId: user.id,

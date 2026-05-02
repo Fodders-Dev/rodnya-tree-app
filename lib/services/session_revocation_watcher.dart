@@ -38,6 +38,14 @@ class SessionRevocationWatcher {
     } catch (error) {
       debugPrint('SessionRevocationWatcher: clearSession failed: $error');
     }
+    // Stop the WS auto-reconnect loop so we don't burn battery hammering the
+    // server with a stale token.  connect() will be called again the next
+    // time the user signs in and a screen that needs realtime opens.
+    try {
+      await _realtimeService.disconnect();
+    } catch (error) {
+      debugPrint('SessionRevocationWatcher: disconnect failed: $error');
+    }
   }
 
   Future<void> dispose() async {

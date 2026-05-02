@@ -595,7 +595,9 @@ function createApp({
       if (
         pathName === "/v1/auth/login" ||
         pathName === "/v1/auth/register" ||
-        pathName === "/v1/auth/password-reset"
+        pathName === "/v1/auth/password-reset" ||
+        pathName === "/v1/auth/qr/start" ||
+        pathName === "/v1/auth/qr/approve"
       ) {
         return {bucket: "auth", limit: config.authRateLimitMax};
       }
@@ -710,24 +712,44 @@ function createApp({
   }
 
   function readDeviceContext(req) {
-    const deviceInfo =
+    const deviceInfoFromBody =
       req?.body && typeof req.body === "object" && req.body.deviceInfo
         ? req.body.deviceInfo
         : {};
+    const deviceInfoFromQuery =
+      req?.query && typeof req.query === "object" ? req.query : {};
+
+    function pickString(...candidates) {
+      for (const candidate of candidates) {
+        if (typeof candidate === "string" && candidate.trim()) {
+          return candidate.trim();
+        }
+      }
+      return null;
+    }
+
     return {
-      instanceId: readClientInstanceId(req) || null,
-      deviceName:
-        typeof deviceInfo.deviceName === "string"
-          ? deviceInfo.deviceName
-          : null,
-      platform:
-        typeof deviceInfo.platform === "string"
-          ? deviceInfo.platform
-          : null,
-      appVersion:
-        typeof deviceInfo.appVersion === "string"
-          ? deviceInfo.appVersion
-          : null,
+      // Header takes priority (set by the Flutter HTTP client). For OAuth
+      // start endpoints — which are loaded by an in-app browser, not the
+      // Flutter HTTP client — fall back to a query param so the start URL
+      // can carry the instance id forward into the callback's handoff.
+      instanceId:
+        readClientInstanceId(req) ||
+        pickString(deviceInfoFromQuery.instanceId, deviceInfoFromQuery.instance_id),
+      deviceName: pickString(
+        deviceInfoFromBody.deviceName,
+        deviceInfoFromQuery.deviceName,
+        deviceInfoFromQuery.device_name,
+      ),
+      platform: pickString(
+        deviceInfoFromBody.platform,
+        deviceInfoFromQuery.platform,
+      ),
+      appVersion: pickString(
+        deviceInfoFromBody.appVersion,
+        deviceInfoFromQuery.appVersion,
+        deviceInfoFromQuery.app_version,
+      ),
     };
   }
 

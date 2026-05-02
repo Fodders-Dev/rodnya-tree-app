@@ -55,9 +55,10 @@ function registerMaxAuthRoutes(
     const intent = String(req.query?.intent || "").trim().toLowerCase() === "link"
       ? "link"
       : "login";
+    const deviceContext = readDeviceContext(req);
     const authFlowHandoff = await store.createAuthHandoff({
       type: "max_auth_flow",
-      payload: {intent},
+      payload: {intent, deviceContext},
     });
 
     res.setHeader("cache-control", "no-store");
@@ -90,6 +91,19 @@ function registerMaxAuthRoutes(
       const effectiveIntent = String(authFlowHandoff.payload?.intent || "").trim().toLowerCase() === "link"
         ? "link"
         : intent;
+      // /max/complete is hit by the MAX webview rather than the Flutter HTTP
+      // client, so prefer the device context that was stashed when the
+      // Flutter app loaded /max/start.
+      const stashedDeviceContext =
+        authFlowHandoff.payload?.deviceContext &&
+        typeof authFlowHandoff.payload.deviceContext === "object"
+          ? authFlowHandoff.payload.deviceContext
+          : null;
+      const effectiveDeviceContext =
+        stashedDeviceContext &&
+        Object.values(stashedDeviceContext).some((value) => value)
+          ? stashedDeviceContext
+          : readDeviceContext(req);
       const maxIdentity = buildMaxIdentityFromLaunch(launchData);
       const linkedUser = await store.findUserByAuthIdentity(
         maxIdentity.provider,
@@ -124,7 +138,7 @@ function registerMaxAuthRoutes(
         );
         const sessionTokens = await store.createSession(
           refreshedUser.id,
-          readDeviceContext(req),
+          effectiveDeviceContext,
         );
         const authHandoff = await store.createAuthHandoff({
           type: "max_auth_result",

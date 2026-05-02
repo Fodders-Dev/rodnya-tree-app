@@ -260,8 +260,10 @@ class _AuthScreenState extends State<AuthScreen> {
     });
 
     try {
+      final telegramStartUrl =
+          await authService.resolveTelegramLoginStartUrl();
       final started = await launchUrl(
-        Uri.parse(authService.telegramLoginStartUrl),
+        Uri.parse(telegramStartUrl),
         mode: LaunchMode.platformDefault,
         webOnlyWindowName: '_self',
       );
@@ -299,8 +301,9 @@ class _AuthScreenState extends State<AuthScreen> {
     });
 
     try {
+      final vkStartUrl = await authService.resolveVkLoginStartUrl();
       final started = await launchUrl(
-        Uri.parse(authService.vkLoginStartUrl),
+        Uri.parse(vkStartUrl),
         mode: LaunchMode.platformDefault,
         webOnlyWindowName: '_self',
       );
@@ -607,8 +610,9 @@ class _AuthScreenState extends State<AuthScreen> {
     });
 
     try {
+      final maxStartUrl = await authService.resolveMaxLoginStartUrl();
       final started = await launchUrl(
-        Uri.parse(authService.maxLoginStartUrl),
+        Uri.parse(maxStartUrl),
         mode: LaunchMode.platformDefault,
         webOnlyWindowName: '_self',
       );

@@ -9,7 +9,7 @@ const {FileStore} = require("../src/store");
 const {RealtimeHub} = require("../src/realtime-hub");
 const {PushGateway} = require("../src/push-gateway");
 
-async function startServer() {
+async function startServer({configOverrides = {}} = {}) {
   const tempDir = await fs.mkdtemp(
     path.join(os.tmpdir(), "rodnya-auth-sessions-"),
   );
@@ -25,6 +25,7 @@ async function startServer() {
       corsOrigin: "*",
       dataPath,
       mediaRootPath: path.join(tempDir, "uploads"),
+      ...configOverrides,
     },
     realtimeHub,
     pushGateway,
@@ -483,6 +484,105 @@ test("PushGateway dispatchNotification respects targetSessionPublicId", async ()
       {targetSessionPublicId: sessionBPublicId},
     );
     assert.equal(deliveries.length, 1);
+  } finally {
+    await stopServer(ctx);
+  }
+});
+
+test("QR start is rate-limited via the auth bucket", async () => {
+  const ctx = await startServer({
+    configOverrides: {
+      authRateLimitMax: 3,
+      rateLimitWindowMs: 60_000,
+    },
+  });
+  try {
+    async function startOnce(suffix) {
+      const response = await fetch(`${ctx.baseUrl}/v1/auth/qr/start`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-client-instance-id": `instance-rl-${suffix}`,
+        },
+        body: JSON.stringify({deviceInfo: {deviceName: "Rate Limit"}}),
+      });
+      return response.status;
+    }
+
+    assert.equal(await startOnce("1"), 201);
+    assert.equal(await startOnce("2"), 201);
+    assert.equal(await startOnce("3"), 201);
+    // 4th call within the same window for the same IP must be 429.
+    assert.equal(await startOnce("4"), 429);
+  } finally {
+    await stopServer(ctx);
+  }
+});
+
+test("OAuth callback receives device context via query-param fallback (Telegram-style)", async () => {
+  // Telegram callbacks are GET requests hit by the user's browser; the
+  // Flutter app appends device info as query params on the callback URL.
+  // We simulate this by calling /v1/auth/qr/start (which uses the same
+  // readDeviceContext helper) with deviceInfo only in query params, no
+  // headers, no body — and verifying the resulting handoff carries them.
+  const ctx = await startServer();
+  try {
+    const url = new URL(`${ctx.baseUrl}/v1/auth/qr/start`);
+    url.searchParams.set("instanceId", "instance-query-only");
+    url.searchParams.set("deviceName", "Browser-launched device");
+    url.searchParams.set("platform", "windows");
+    url.searchParams.set("appVersion", "9.9.9");
+
+    const response = await fetch(url.toString(), {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({}),
+    });
+    assert.equal(response.status, 201);
+    const {token} = await response.json();
+    assert.ok(token);
+
+    // Now register the user that will approve, then approve, then poll the
+    // resulting session to verify it inherited the query-only device info.
+    const deviceA = await registerWithDevice(
+      ctx.baseUrl,
+      "qr-query",
+      {deviceName: "Approver", platform: "macos"},
+      "instance-qr-query-A",
+    );
+
+    const approveResponse = await fetch(`${ctx.baseUrl}/v1/auth/qr/approve`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${deviceA.accessToken}`,
+        "x-client-instance-id": "instance-qr-query-A",
+      },
+      body: JSON.stringify({token}),
+    });
+    assert.equal(approveResponse.status, 200);
+
+    const pollResponse = await fetch(
+      `${ctx.baseUrl}/v1/auth/qr/poll?token=${token}`,
+    );
+    assert.equal(pollResponse.status, 200);
+    const polled = await pollResponse.json();
+    assert.equal(polled.status, "approved");
+    assert.ok(polled.auth?.accessToken);
+
+    // Confirm the new session shows the query-only device info in the list.
+    const listResponse = await fetch(`${ctx.baseUrl}/v1/auth/sessions`, {
+      headers: {
+        authorization: `Bearer ${polled.auth.accessToken}`,
+        "x-client-instance-id": "instance-query-only",
+      },
+    });
+    const listed = await listResponse.json();
+    const current = listed.sessions.find((s) => s.isCurrent);
+    assert.ok(current, "current session must be present");
+    assert.equal(current.deviceName, "Browser-launched device");
+    assert.equal(current.platform, "windows");
+    assert.equal(current.appVersion, "9.9.9");
   } finally {
     await stopServer(ctx);
   }

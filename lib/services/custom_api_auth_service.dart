@@ -574,6 +574,69 @@ class CustomApiAuthService implements AuthServiceInterface {
     ).toString();
   }
 
+  /// Async variants that pre-resolve the device descriptor and embed it as
+  /// query parameters on the OAuth start URL.  The OAuth in-app browser does
+  /// not carry the X-Client-Instance-Id header that the Flutter HTTP client
+  /// adds, so without these params the resulting session would have no
+  /// device metadata and would land in /v1/auth/sessions as "Безымянное
+  /// устройство".
+  Future<String> resolveTelegramLoginStartUrl({bool linkMode = false}) async {
+    final descriptor = await _resolveOauthDeviceDescriptor();
+    final appUri = Uri.parse(_runtimeConfig.publicAppUrl);
+    final callbackUrl = _buildUri(
+      '/v1/auth/telegram/callback',
+      queryParameters: <String, String>{
+        if (linkMode) 'intent': 'link',
+        ...descriptor,
+      },
+    ).toString();
+    return appUri.replace(
+      path: '/telegram_login.html',
+      queryParameters: <String, String>{
+        'bot': _defaultTelegramBotUsername,
+        'authUrl': callbackUrl,
+      },
+    ).toString();
+  }
+
+  Future<String> resolveVkLoginStartUrl({bool linkMode = false}) async {
+    final descriptor = await _resolveOauthDeviceDescriptor();
+    return _buildUri(
+      '/v1/auth/vk/start',
+      queryParameters: <String, String>{
+        if (linkMode) 'intent': 'link',
+        ...descriptor,
+      },
+    ).toString();
+  }
+
+  Future<String> resolveMaxLoginStartUrl({bool linkMode = false}) async {
+    final descriptor = await _resolveOauthDeviceDescriptor();
+    return _buildUri(
+      '/v1/auth/max/start',
+      queryParameters: <String, String>{
+        if (linkMode) 'intent': 'link',
+        ...descriptor,
+      },
+    ).toString();
+  }
+
+  Future<Map<String, String>> _resolveOauthDeviceDescriptor() async {
+    final result = <String, String>{
+      'instanceId': ClientInstanceId.current,
+    };
+    try {
+      final descriptor = await DeviceDescriptorBuilder.resolve();
+      result['deviceName'] = descriptor.deviceName;
+      result['platform'] = descriptor.platform;
+      result['appVersion'] = descriptor.appVersion;
+    } catch (_) {
+      // Fall through with just instanceId — backend will tolerate the rest
+      // being null.
+    }
+    return result;
+  }
+
   Future<TelegramAuthCompletion> exchangeTelegramAuthCode(String code) async {
     final response = await _requestJson(
       method: 'POST',
