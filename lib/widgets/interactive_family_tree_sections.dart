@@ -115,6 +115,10 @@ extension _InteractiveFamilyTreeSections on _InteractiveFamilyTreeState {
               connections,
               graphSnapshot: widget.graphSnapshot,
               relations: widget.relations,
+              lineColor: tokens.inkSecondary,
+              mutedLineColor: tokens.inkMuted,
+              spouseColor: tokens.warm,
+              junctionColor: tokens.inkSecondary,
             ),
           ),
           if ((widget.selectedPersonId ?? '').isNotEmpty)
@@ -124,7 +128,10 @@ extension _InteractiveFamilyTreeSections on _InteractiveFamilyTreeState {
                 nodePositions: nodePositions,
                 relations: widget.relations,
                 selectedPersonId: widget.selectedPersonId!,
-                accent: tokens.warm,
+                // Reference uses accent (deep teal/green) for active path
+                // highlights — switch from warm so it reads as "selected"
+                // rather than "warning".
+                accent: tokens.accent,
               ),
             ),
           ..._buildPersonWidgets(),

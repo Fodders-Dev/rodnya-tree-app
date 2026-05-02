@@ -3066,30 +3066,53 @@ class _GenerationGuideBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final titleStyle = Theme.of(context).textTheme.labelSmall?.copyWith(
-          fontWeight: FontWeight.w700,
-        );
-    final subtitleStyle = Theme.of(context).textTheme.labelSmall?.copyWith(
-          fontSize: 10,
-          height: 1.15,
-          color: Theme.of(context).colorScheme.onSurfaceVariant,
-        );
+    final theme = Theme.of(context);
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(title, style: titleStyle),
-        if (subtitle != null && subtitle!.trim().isNotEmpty) ...[
-          const SizedBox(height: 2),
+    // Reference `.gs-main`: 11px 700 ink-2; `.gs-sub`: 9.5px 600 ink-3 dimmed.
+    return Container(
+      padding: const EdgeInsets.fromLTRB(10, 7, 12, 8),
+      decoration: BoxDecoration(
+        color: tokens.surface.withValues(alpha: 0.74),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: tokens.surfaceLine.withValues(alpha: 0.55),
+          width: 0.6,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
           Text(
-            subtitle!,
-            style: subtitleStyle,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
+            title,
+            style: AppTheme.sans(
+              color: tokens.inkSecondary,
+              fontSize: 10.5,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.4,
+              height: 1.0,
+            ),
           ),
+          if (subtitle != null && subtitle!.trim().isNotEmpty) ...[
+            const SizedBox(height: 2),
+            Text(
+              subtitle!,
+              style: AppTheme.sans(
+                color: tokens.inkMuted,
+                fontSize: 9.5,
+                fontWeight: FontWeight.w600,
+                height: 1.15,
+              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
         ],
-      ],
+      ),
     );
   }
 }
@@ -3106,40 +3129,53 @@ class FamilyTreePainter extends CustomPainter {
   final Paint mutedFamilyLinePaint;
   final Paint junctionPaint;
   final Paint mutedJunctionPaint;
+  final Color tokenInk;
 
   FamilyTreePainter(
     this.nodePositions,
     this.connections, {
     this.graphSnapshot,
     this.relations = const <FamilyRelation>[],
-  })  : spouseLinePaint = Paint()
-          ..color = Colors.grey.shade500
-          ..strokeWidth = 1.5
+    Color? lineColor,
+    Color? mutedLineColor,
+    Color? spouseColor,
+    Color junctionColor = const Color(0xFF8E9588),
+  })  : tokenInk = lineColor ?? const Color(0xFF6E7766),
+        // Reference lines: ink-muted at ~50% opacity, subtle warm undertone
+        // for spouse vs family. We pull base colors from design tokens via
+        // the section builder; fallbacks keep the painter usable in tests.
+        spouseLinePaint = Paint()
+          ..color = (spouseColor ?? const Color(0xFFB39B5C)).withValues(alpha: 0.55)
+          ..strokeWidth = 1.4
+          ..strokeCap = StrokeCap.round
           ..isAntiAlias = true
           ..style = PaintingStyle.stroke,
         spousePastLinePaint = Paint()
-          ..color = Colors.grey.shade400
-          ..strokeWidth = 1.2
+          ..color = (spouseColor ?? const Color(0xFFB39B5C)).withValues(alpha: 0.32)
+          ..strokeWidth = 1.1
+          ..strokeCap = StrokeCap.round
           ..isAntiAlias = true
           ..style = PaintingStyle.stroke,
         familyLinePaint = Paint()
-          ..color = Colors.grey.shade700
-          ..strokeWidth = 2.0
+          ..color = (lineColor ?? const Color(0xFF6E7766)).withValues(alpha: 0.55)
+          ..strokeWidth = 1.6
           ..strokeCap = StrokeCap.round
+          ..strokeJoin = StrokeJoin.round
           ..isAntiAlias = true
           ..style = PaintingStyle.stroke,
         mutedFamilyLinePaint = Paint()
-          ..color = Colors.grey.shade500
-          ..strokeWidth = 1.6
+          ..color = (mutedLineColor ?? const Color(0xFF8E9588)).withValues(alpha: 0.42)
+          ..strokeWidth = 1.3
           ..strokeCap = StrokeCap.round
+          ..strokeJoin = StrokeJoin.round
           ..isAntiAlias = true
           ..style = PaintingStyle.stroke,
         junctionPaint = Paint()
-          ..color = Colors.grey.shade500
+          ..color = junctionColor.withValues(alpha: 0.55)
           ..isAntiAlias = true
           ..style = PaintingStyle.fill,
         mutedJunctionPaint = Paint()
-          ..color = Colors.grey.shade400
+          ..color = junctionColor.withValues(alpha: 0.32)
           ..isAntiAlias = true
           ..style = PaintingStyle.fill;
 
@@ -3485,7 +3521,9 @@ class FamilyTreePainter extends CustomPainter {
   }
 
   void _drawJunction(Canvas canvas, Offset center, Paint pointPaint) {
-    canvas.drawCircle(center, 4.0, pointPaint);
+    // Smaller, softer junction circles — reference uses tiny dots so the
+    // structure reads as connectors, not bullet points.
+    canvas.drawCircle(center, 2.6, pointPaint);
   }
 
   @override
