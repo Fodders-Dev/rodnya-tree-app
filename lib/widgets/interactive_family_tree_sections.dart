@@ -151,6 +151,10 @@ extension _InteractiveFamilyTreeSections on _InteractiveFamilyTreeState {
             ? RodnyaDesignTokens.dark
             : RodnyaDesignTokens.light);
     final zoomPercent = (_currentScale * 100).round();
+    // Stat duplication cleanup: people/relations counts already render in
+    // the screen-level toolbar AND the "Карта рода" sidebar, so the canvas
+    // overlay only keeps what's actually canvas-local — the tree-vs-circle
+    // mode chip and the live zoom level.
     final chips = <Widget>[
       _buildOverlayChip(
         icon: widget.showGenerationGuides
@@ -158,14 +162,6 @@ extension _InteractiveFamilyTreeSections on _InteractiveFamilyTreeState {
             : Icons.diversity_3_outlined,
         label: widget.showGenerationGuides ? 'Семья' : 'Друзья',
         highlighted: true,
-      ),
-      _buildOverlayChip(
-        icon: Icons.people_alt_outlined,
-        label: '${widget.peopleData.length}',
-      ),
-      _buildOverlayChip(
-        icon: Icons.hub_outlined,
-        label: '${widget.relations.length}',
       ),
       _buildOverlayChip(
         icon: Icons.zoom_in_map_outlined,
