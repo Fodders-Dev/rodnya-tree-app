@@ -1023,34 +1023,37 @@ class _AuthScreenState extends State<AuthScreen> {
               borderRadius: BorderRadius.circular(999),
               border: Border.all(color: Colors.white24),
             ),
-            child: const Text(
-              'Родня',
-              style: TextStyle(
+            child: Text(
+              'РОДНЯ',
+              style: AppTheme.sans(
                 color: Colors.white,
                 fontSize: 12,
                 fontWeight: FontWeight.w700,
-                letterSpacing: 0.3,
+                letterSpacing: 1.6,
               ),
             ),
           ),
           SizedBox(height: compact ? 18 : 24),
           Text(
-            'Семья. Чат. Дерево.',
-            style: theme.textTheme.displaySmall?.copyWith(
+            'Семья — это живое дерево.',
+            style: AppTheme.serif(
               color: Colors.white,
-              fontWeight: FontWeight.w800,
-              height: 1.05,
+              fontSize: compact ? 30 : 38,
+              fontWeight: FontWeight.w600,
+              letterSpacing: -0.3,
+              height: 1.08,
             ),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           Text(
             compact
-                ? 'Один вход для своих.'
-                : 'Вход для семьи, дерева и чатов.',
-            style: theme.textTheme.titleMedium?.copyWith(
-              color: Colors.white.withValues(alpha: 0.9),
-              fontWeight: FontWeight.w400,
-              height: 1.35,
+                ? 'Истории, голоса, лица и даты — в одном пространстве для своих.'
+                : 'Истории, голоса, лица и даты — в одном пространстве для своих.',
+            style: AppTheme.sans(
+              color: Colors.white.withValues(alpha: 0.86),
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              height: 1.45,
             ),
           ),
           const SizedBox(height: 18),
