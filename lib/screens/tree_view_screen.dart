@@ -458,7 +458,7 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
       return Scaffold(
         backgroundColor: Colors.transparent,
         appBar: PreferredSize(
-          preferredSize: const Size.fromHeight(56),
+          preferredSize: const Size.fromHeight(64),
           child: _buildTreeTopbar(
             theme: theme,
             tokens: tokens,
@@ -483,7 +483,7 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
     return Scaffold(
       backgroundColor: Colors.transparent,
       appBar: PreferredSize(
-        preferredSize: const Size.fromHeight(56),
+        preferredSize: const Size.fromHeight(64),
         child: _buildTreeTopbar(
           theme: theme,
           tokens: tokens,

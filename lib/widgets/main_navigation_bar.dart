@@ -199,8 +199,24 @@ class MainNavigationBar extends StatelessWidget {
                       return DecoratedBox(
                         decoration: BoxDecoration(
                           borderRadius: navRadius,
-                          boxShadow: tokens.panelShadow(theme.brightness,
-                              floating: true),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(
+                                alpha: isDark ? 0.42 : 0.18,
+                              ),
+                              blurRadius: 38,
+                              spreadRadius: -8,
+                              offset: const Offset(0, 22),
+                            ),
+                            BoxShadow(
+                              color: Colors.black.withValues(
+                                alpha: isDark ? 0.22 : 0.10,
+                              ),
+                              blurRadius: 14,
+                              spreadRadius: -4,
+                              offset: const Offset(0, 8),
+                            ),
+                          ],
                         ),
                         child: SizedBox(height: navHeight, child: navInner),
                       );

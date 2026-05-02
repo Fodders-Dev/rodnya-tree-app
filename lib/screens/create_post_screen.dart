@@ -402,7 +402,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
       data: composeTheme,
       child: Scaffold(
         appBar: PreferredSize(
-          preferredSize: const Size.fromHeight(56),
+          preferredSize: const Size.fromHeight(64),
           child: _buildComposeTopbar(
             theme: composeTheme,
             tokens: composeTokens,
@@ -1310,9 +1310,9 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
                   'Новый пост',
                   style: AppTheme.serif(
                     color: tokens.ink,
-                    fontSize: 19,
+                    fontSize: 22,
                     fontWeight: FontWeight.w600,
-                    letterSpacing: -0.18,
+                    letterSpacing: -0.22,
                   ),
                 ),
                 const Spacer(),

@@ -690,7 +690,7 @@ class _ChatsListScreenState extends State<ChatsListScreen>
     return Scaffold(
       backgroundColor: Colors.transparent,
       appBar: PreferredSize(
-        preferredSize: const Size.fromHeight(56),
+        preferredSize: const Size.fromHeight(64),
         child: _buildChatsTopbar(theme: theme, tokens: tokens),
       ),
       body: _errorMessage != null && _chatPreviews.isEmpty
@@ -1366,15 +1366,14 @@ class _ChatsListScreenState extends State<ChatsListScreen>
             : RodnyaDesignTokens.light);
     return Padding(
       key: ValueKey<String>('chat-tile-${chat.chatId}'),
-      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
+      padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
       child: Material(
-        color: tokens.surfaceStrong,
+        color: Colors.transparent,
         shape: RoundedRectangleBorder(
-          side: BorderSide(color: tokens.surfaceLine),
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(20),
         ),
         child: InkWell(
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(20),
           onTap: () {
             final titleParam = Uri.encodeComponent(chat.displayName);
             final photoParam =
