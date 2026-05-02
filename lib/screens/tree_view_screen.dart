@@ -597,19 +597,11 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
                   ),
                 ),
                 if (selectedTreeId != null) ...[
-                  const SizedBox(width: 8),
-                  _TreeTopbarPill(
-                    tokens: tokens,
-                    tooltip: _isFriendsTree
-                        ? 'Добавить в круг'
-                        : 'Добавить человека',
-                    onTap: () => _navigateToAddRelative(selectedTreeId),
-                    child: Icon(
-                      Icons.person_add_alt_1_outlined,
-                      size: 19,
-                      color: tokens.accent,
-                    ),
-                  ),
+                  // The "+ Add person" button used to live here too, but it
+                  // duplicated the green circle in the secondary toolbar
+                  // and the "Добавить" tile in the Quick Actions card.
+                  // Keeping just the toolbar copy — that's the primary
+                  // entry point next to the canvas.
                   const SizedBox(width: 8),
                   PopupMenuButton<_TreeToolbarAction>(
                     tooltip: 'Действия дерева',

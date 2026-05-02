@@ -25,14 +25,23 @@ extension _InteractiveFamilyTreeSections on _InteractiveFamilyTreeState {
                 stackHeight: stackHeight,
                 interactionBoundary: interactionBoundary,
               ),
+              // Position canvas-internal overlays below the floating chrome
+              // (toolbar + sidebar context column on mobile). The chrome
+              // height is captured by `viewportReservedTop`; we sit the
+              // overlay just under it so it never lives under the
+              // toolbar pill.
               Positioned(
-                top: 12,
+                top: widget.viewportReservedTop > 96
+                    ? widget.viewportReservedTop + 8
+                    : 12,
                 left: 12,
                 child: _buildViewportStatusBar(),
               ),
               Positioned(
                 right: 12,
-                top: 92,
+                top: widget.viewportReservedTop > 96
+                    ? widget.viewportReservedTop + 8
+                    : 92,
                 child: _buildViewportControlDock(),
               ),
             ],

@@ -639,7 +639,11 @@ void main() {
       findsNothing,
     );
     expect(find.text('Граф готов к просмотру'), findsNothing);
-    expect(find.byTooltip('Добавить человека'), findsOneWidget);
+    // The dedicated "+" pill in the topbar was removed (it duplicated the
+    // toolbar's emphasized green circle below). The toolbar copy now
+    // carries tooltip "Добавить из панели дерева".
+    expect(
+        find.byTooltip('Добавить из панели дерева'), findsOneWidget);
     expect(find.byTooltip('Действия дерева'), findsOneWidget);
   });
 

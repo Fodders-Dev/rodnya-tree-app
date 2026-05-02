@@ -667,16 +667,12 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
     required FamilyPerson? branchRootPerson,
     required bool compact,
   }) {
+    // The "Добавить" tile that used to live here was a third copy of the
+    // same action — top toolbar already has its own "+ Add person" green
+    // circle, which is the primary entry point. The Quick Actions card
+    // now starts with Чаты / Пост / Расставить — actions that DON'T
+    // duplicate buttons from the toolbar.
     final actions = <Widget>[
-      _buildTreeActionButton(
-        icon: Icons.person_add_alt_1_outlined,
-        label: compact
-            ? 'Добавить'
-            : (_isFriendsTree ? 'Добавить в круг' : 'Добавить человека'),
-        emphasized: true,
-        compact: compact,
-        onPressed: () => _navigateToAddRelative(selectedTreeId),
-      ),
       _buildTreeActionButton(
         icon: Icons.forum_outlined,
         label: 'Чаты',
