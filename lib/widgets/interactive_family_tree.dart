@@ -3409,7 +3409,6 @@ class FamilyTreePainter extends CustomPainter {
         familyCenterX: familyCenterX,
         parentBarY: parentBarY,
         anchors: downwardChildren,
-        branchY: downwardChildren.map((anchor) => anchor.dy).reduce(min) - 18,
         linePaint: linePaint,
         pointPaint: pointPaint,
         dashed: dashed,
@@ -3422,7 +3421,6 @@ class FamilyTreePainter extends CustomPainter {
         familyCenterX: familyCenterX,
         parentBarY: parentBarY,
         anchors: upwardChildren,
-        branchY: upwardChildren.map((anchor) => anchor.dy).reduce(max) + 18,
         linePaint: linePaint,
         pointPaint: pointPaint,
         dashed: dashed,
@@ -3435,7 +3433,6 @@ class FamilyTreePainter extends CustomPainter {
     required double familyCenterX,
     required double parentBarY,
     required List<Offset> anchors,
-    required double branchY,
     required Paint linePaint,
     required Paint pointPaint,
     required bool dashed,
@@ -3444,51 +3441,30 @@ class FamilyTreePainter extends CustomPainter {
       return;
     }
 
-    if ((branchY - parentBarY).abs() > 0.1) {
-      _drawSegment(
-        canvas: canvas,
-        start: Offset(familyCenterX, parentBarY),
-        end: Offset(familyCenterX, branchY),
-        linePaint: linePaint,
-        dashed: dashed,
-      );
-    }
-
-    final minChildX = anchors.map((anchor) => anchor.dx).reduce(min);
-    final maxChildX = anchors.map((anchor) => anchor.dx).reduce(max);
-    final branchStartX = min(minChildX, familyCenterX);
-    final branchEndX = max(maxChildX, familyCenterX);
-    if ((branchEndX - branchStartX).abs() > 0.1) {
-      _drawSegment(
-        canvas: canvas,
-        start: Offset(branchStartX, branchY),
-        end: Offset(branchEndX, branchY),
-        linePaint: linePaint,
-        dashed: dashed,
-      );
-    }
-    _drawJunction(canvas, Offset(familyCenterX, branchY), pointPaint);
-
+    // Reference style: each parent→child connection is a single smooth cubic
+    // bezier from the family junction (familyCenterX, parentBarY) to the
+    // child top anchor, with control points at the vertical mid-line — gives
+    // the connectors a soft S-curve instead of H-bus right angles.
+    //
+    // Reference SVG path:
+    //   M${px},${py} C${px},${my} ${cx},${my} ${cx},${cy}
+    final junction = Offset(familyCenterX, parentBarY);
     for (final anchor in anchors) {
-      if ((anchor.dx - familyCenterX).abs() > 0.1) {
-        _drawSegment(
-          canvas: canvas,
-          start: Offset(anchor.dx, branchY),
-          end: anchor,
-          linePaint: linePaint,
-          dashed: dashed,
+      final my = (parentBarY + anchor.dy) / 2;
+      final path = Path()
+        ..moveTo(junction.dx, junction.dy)
+        ..cubicTo(
+          junction.dx, my,
+          anchor.dx, my,
+          anchor.dx, anchor.dy,
         );
+      if (dashed) {
+        _drawDashedPath(canvas, path, linePaint);
       } else {
-        _drawSegment(
-          canvas: canvas,
-          start: Offset(familyCenterX, branchY),
-          end: anchor,
-          linePaint: linePaint,
-          dashed: dashed,
-        );
+        canvas.drawPath(path, linePaint);
       }
-      _drawJunction(canvas, Offset(anchor.dx, branchY), pointPaint);
     }
+    _drawJunction(canvas, junction, pointPaint);
   }
 
   void _drawSegment({
@@ -3524,6 +3500,23 @@ class FamilyTreePainter extends CustomPainter {
     // Smaller, softer junction circles — reference uses tiny dots so the
     // structure reads as connectors, not bullet points.
     canvas.drawCircle(center, 2.6, pointPaint);
+  }
+
+  /// Draws [path] with a dashed stroke by sampling along its [PathMetric] and
+  /// extracting alternating sub-paths. Used for adoptive / non-biological
+  /// parent-child connectors so they read as a softer attachment.
+  void _drawDashedPath(Canvas canvas, Path path, Paint paint) {
+    const dashLength = 6.0;
+    const gapLength = 4.0;
+    for (final metric in path.computeMetrics()) {
+      double distance = 0;
+      while (distance < metric.length) {
+        final next = distance + dashLength;
+        final extracted = metric.extractPath(distance, next);
+        canvas.drawPath(extracted, paint);
+        distance = next + gapLength;
+      }
+    }
   }
 
   @override
