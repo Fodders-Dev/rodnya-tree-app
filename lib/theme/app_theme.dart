@@ -27,10 +27,14 @@ class RodnyaDesignTokens extends ThemeExtension<RodnyaDesignTokens> {
   });
 
   static const light = RodnyaDesignTokens(
-    bgBase: Color(0xFFF3ECDB),
-    bgTintWarm: Color(0xFFF8F2E4),
-    bgTintSage: Color(0xFFDDE8D2),
-    bgTintHoney: Color(0xFFF2DB9A),
+    // Brighter linen — was 0xFFF3ECDB (cream), now 0xFFF8F1E0 (lighter cream).
+    // Reference styles.css uses #f3ecdb but renders inside a phone mock with
+    // surrounding dark backdrop; on a full-bleed web canvas the same hex
+    // reads as too dim, so we lift it a couple of steps.
+    bgBase: Color(0xFFF8F1E0),
+    bgTintWarm: Color(0xFFFCF8EC),
+    bgTintSage: Color(0xFFE8EFDC),
+    bgTintHoney: Color(0xFFF8E6B5),
     ink: Color(0xFF293327),
     inkSecondary: Color(0xFF53624F),
     inkMuted: Color(0xFF778071),
@@ -220,8 +224,13 @@ class AppTheme {
   // web to issue "Could not find a set of Noto fonts" warnings every time a
   // glyph misses the active font, even though the warning is benign — keep
   // the chain Noto-free so the console stays clean.
+  // Manrope first (bundled), then NotoSans (bundled, full Cyrillic / Symbol
+  // coverage) so Flutter web does not try to lazy-fetch Noto from the CDN
+  // and does not emit the "Could not find a set of Noto fonts" warning.
+  // OS-installed fallbacks come after as belt-and-suspenders.
   static const List<String> _sansFallback = <String>[
     'Manrope',
+    'NotoSans',
     'Segoe UI Variable Text',
     'Segoe UI',
     'system-ui',
@@ -238,6 +247,7 @@ class AppTheme {
     'Georgia',
     'Cambria',
     'Times New Roman',
+    'NotoSans',
     'serif',
   ];
 

@@ -50,10 +50,10 @@ class AppBackdrop extends StatelessWidget {
           DecoratedBox(
             decoration: BoxDecoration(
               gradient: RadialGradient(
-                center: const Alignment(0.0, 0.92),
-                radius: 1.30,
+                center: const Alignment(0.0, 1.10),
+                radius: 1.40,
                 colors: [
-                  tokens.bgTintSage.withValues(alpha: isDark ? 0.40 : 0.40),
+                  tokens.bgTintSage.withValues(alpha: isDark ? 0.34 : 0.22),
                   Colors.transparent,
                 ],
               ),

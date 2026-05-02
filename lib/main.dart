@@ -62,6 +62,7 @@ Future<void> _preloadBrandFonts() async {
       'assets/fonts/Lora-VariableFont_wght.ttf',
       'assets/fonts/Lora-Italic-VariableFont_wght.ttf',
     ]),
+    loadOne('NotoSans', const ['assets/fonts/NotoSans-VariableFont.ttf']),
   ]);
 }
 

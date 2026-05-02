@@ -186,6 +186,12 @@ flutter:
         - asset: assets/fonts/Lora-VariableFont_wght.ttf
         - asset: assets/fonts/Lora-Italic-VariableFont_wght.ttf
           style: italic
+    # Bundled fallback for the wide Cyrillic / Symbols / Punctuation ranges
+    # that Manrope misses. Without it Flutter web emits the
+    # "Could not find a set of Noto fonts" warning at runtime.
+    - family: NotoSans
+      fonts:
+        - asset: assets/fonts/NotoSans-VariableFont.ttf
 
 # Конфигурация для flutter_launcher_icons
 flutter_launcher_icons:
