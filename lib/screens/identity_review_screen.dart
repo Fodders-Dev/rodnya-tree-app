@@ -240,28 +240,90 @@ class _IdentityReviewScreenState extends State<IdentityReviewScreen> {
   Widget build(BuildContext context) {
     final totalPending = _mergeProposals.length + _identityClaims.length;
 
+    final theme = Theme.of(context);
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+
     return Scaffold(
-      appBar: AppBar(
-        leading: IconButton(
-          onPressed: _leaveScreen,
-          icon: const Icon(Icons.arrow_back),
-          tooltip: 'Назад',
-        ),
-        title: const Text('Один человек?'),
-        actions: [
-          if (totalPending > 0)
-            Padding(
-              padding: const EdgeInsets.only(right: 2),
-              child: Center(
-                child: _MetaPill(label: '$totalPending на проверку'),
-              ),
+      backgroundColor: Colors.transparent,
+      appBar: PreferredSize(
+        preferredSize: const Size.fromHeight(56),
+        child: Container(
+          decoration: BoxDecoration(
+            color: tokens.surface.withValues(
+              alpha: theme.brightness == Brightness.dark ? 0.62 : 0.66,
             ),
-          IconButton(
-            onPressed: _isMutating ? null : _load,
-            icon: const Icon(Icons.refresh),
-            tooltip: 'Обновить',
+            border: Border(
+              bottom: BorderSide(color: tokens.surfaceLine, width: 0.7),
+            ),
           ),
-        ],
+          padding: const EdgeInsets.fromLTRB(8, 0, 12, 0),
+          child: SafeArea(
+            bottom: false,
+            child: Row(
+              children: [
+                IconButton(
+                  onPressed: _leaveScreen,
+                  icon: Icon(Icons.arrow_back_rounded, color: tokens.ink),
+                  tooltip: 'Назад',
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  'Один человек?',
+                  style: AppTheme.serif(
+                    color: tokens.ink,
+                    fontSize: 19,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: -0.18,
+                  ),
+                ),
+                const Spacer(),
+                if (totalPending > 0)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 5,
+                    ),
+                    margin: const EdgeInsets.only(right: 8),
+                    decoration: BoxDecoration(
+                      color: tokens.warmSoft,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      '$totalPending на проверку',
+                      style: AppTheme.sans(
+                        color: tokens.warm,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                Material(
+                  color: tokens.surfaceStrong,
+                  shape: RoundedRectangleBorder(
+                    side: BorderSide(color: tokens.surfaceLine),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: InkWell(
+                    onTap: _isMutating ? null : _load,
+                    borderRadius: BorderRadius.circular(14),
+                    child: SizedBox(
+                      width: 38,
+                      height: 38,
+                      child: Icon(
+                        Icons.refresh_rounded,
+                        size: 19,
+                        color: tokens.ink,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
       body: RefreshIndicator(
         onRefresh: _load,
