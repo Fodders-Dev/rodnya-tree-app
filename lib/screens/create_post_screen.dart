@@ -392,27 +392,20 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
       splashFactory: InkRipple.splashFactory,
     );
 
+    final composeTokens = composeTheme.extension<RodnyaDesignTokens>() ??
+        (composeTheme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+
     return Theme(
       data: composeTheme,
       child: Scaffold(
-        appBar: AppBar(
-          title: const Text('Новый пост'),
-          actions: [
-            Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: FilledButton.tonal(
-                onPressed:
-                    _isLoading || _currentTreeId == null ? null : _createPost,
-                child: _isLoading
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Text('Опубликовать'),
-              ),
-            ),
-          ],
+        appBar: PreferredSize(
+          preferredSize: const Size.fromHeight(56),
+          child: _buildComposeTopbar(
+            theme: composeTheme,
+            tokens: composeTokens,
+          ),
         ),
         body: _currentTreeId == null
             ? _buildMissingTreeState()
@@ -1274,6 +1267,85 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
           ],
         );
       },
+    );
+  }
+
+  Widget _buildComposeTopbar({
+    required ThemeData theme,
+    required RodnyaDesignTokens tokens,
+  }) {
+    final canPublish = !_isLoading && _currentTreeId != null;
+    return Container(
+      decoration: BoxDecoration(
+        color: tokens.surface.withValues(
+          alpha: theme.brightness == Brightness.dark ? 0.62 : 0.66,
+        ),
+        border: Border(
+          bottom: BorderSide(color: tokens.surfaceLine, width: 0.7),
+        ),
+      ),
+      padding: const EdgeInsets.fromLTRB(8, 0, 12, 0),
+      child: SafeArea(
+        bottom: false,
+        child: Row(
+          children: [
+            IconButton(
+              icon: Icon(Icons.arrow_back_rounded, color: tokens.ink),
+              tooltip: 'Назад',
+              onPressed: () {
+                if (Navigator.of(context).canPop()) {
+                  Navigator.of(context).pop();
+                }
+              },
+            ),
+            const SizedBox(width: 4),
+            Text(
+              'Новый пост',
+              style: AppTheme.serif(
+                color: tokens.ink,
+                fontSize: 19,
+                fontWeight: FontWeight.w600,
+                letterSpacing: -0.18,
+              ),
+            ),
+            const Spacer(),
+            Material(
+              color: canPublish ? tokens.accent : tokens.surfaceLine,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(999),
+                onTap: canPublish ? _createPost : null,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 9,
+                  ),
+                  child: _isLoading
+                      ? SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: tokens.accentInk,
+                          ),
+                        )
+                      : Text(
+                          'Опубликовать',
+                          style: AppTheme.sans(
+                            color:
+                                canPublish ? tokens.accentInk : tokens.inkMuted,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
