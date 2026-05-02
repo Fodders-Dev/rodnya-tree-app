@@ -1,5 +1,6 @@
 // ignore_for_file: unused_field, unused_element
 import 'dart:async';
+import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
@@ -718,52 +719,60 @@ class _ChatsListScreenState extends State<ChatsListScreen>
     required ThemeData theme,
     required RodnyaDesignTokens tokens,
   }) {
-    return Container(
-      decoration: BoxDecoration(
-        color: tokens.surfaceStrong.withValues(
-          alpha: theme.brightness == Brightness.dark ? 0.86 : 0.90,
-        ),
-        border: Border(
-          bottom: BorderSide(color: tokens.surfaceLine, width: 0.7),
-        ),
-      ),
-      padding: const EdgeInsets.fromLTRB(18, 0, 12, 0),
-      child: SafeArea(
-        bottom: false,
-        child: Row(
-          children: [
-            Text(
-              'Чаты',
-              style: AppTheme.serif(
-                color: tokens.ink,
-                fontSize: 22,
-                fontWeight: FontWeight.w600,
-                letterSpacing: -0.22,
+    return ClipRect(
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+        child: Container(
+          decoration: BoxDecoration(
+            color: tokens.surface.withValues(
+              alpha: theme.brightness == Brightness.dark ? 0.74 : 0.78,
+            ),
+            border: Border(
+              bottom: BorderSide(
+                color: tokens.surfaceLine.withValues(alpha: 0.5),
+                width: 0.6,
               ),
             ),
-            const Spacer(),
-            _buildTopbarPillButton(
-              tokens: tokens,
-              tooltip: 'Поиск',
-              onTap: _focusSearch,
-              child: Icon(
-                Icons.search_rounded,
-                size: 19,
-                color: tokens.ink,
-              ),
+          ),
+          padding: const EdgeInsets.fromLTRB(18, 0, 12, 0),
+          child: SafeArea(
+            bottom: false,
+            child: Row(
+              children: [
+                Text(
+                  'Чаты',
+                  style: AppTheme.serif(
+                    color: tokens.ink,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: -0.22,
+                  ),
+                ),
+                const Spacer(),
+                _buildTopbarPillButton(
+                  tokens: tokens,
+                  tooltip: 'Поиск',
+                  onTap: _focusSearch,
+                  child: Icon(
+                    Icons.search_rounded,
+                    size: 19,
+                    color: tokens.ink,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                _buildTopbarPillButton(
+                  tokens: tokens,
+                  tooltip: 'Новый чат',
+                  onTap: _openChatComposer,
+                  child: Icon(
+                    Icons.edit_outlined,
+                    size: 18,
+                    color: tokens.accent,
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(width: 8),
-            _buildTopbarPillButton(
-              tokens: tokens,
-              tooltip: 'Новый чат',
-              onTap: _openChatComposer,
-              child: Icon(
-                Icons.edit_outlined,
-                size: 18,
-                color: tokens.accent,
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -1355,167 +1364,176 @@ class _ChatsListScreenState extends State<ChatsListScreen>
         (theme.brightness == Brightness.dark
             ? RodnyaDesignTokens.dark
             : RodnyaDesignTokens.light);
-    return Material(
+    return Padding(
       key: ValueKey<String>('chat-tile-${chat.chatId}'),
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: () {
-          final titleParam = Uri.encodeComponent(chat.displayName);
-          final photoParam =
-              chat.displayPhotoUrl != null && chat.displayPhotoUrl!.isNotEmpty
-                  ? '&photo=${Uri.encodeComponent(chat.displayPhotoUrl!)}'
-                  : '';
-          final userParam = !chat.isGroup && chat.otherUserId.isNotEmpty
-              ? '&userId=${Uri.encodeComponent(chat.otherUserId)}'
-              : '';
-          context
-              .push(
-            '/chats/view/${chat.chatId}?type=${Uri.encodeComponent(chat.type)}&title=$titleParam$photoParam$userParam',
-          )
-              .then((_) {
-            unawaited(_loadAuxiliaryChatState());
-          });
-        },
-        onLongPress: () => _openChatActions(chat),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
-          child: Row(
-            children: [
-              Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  CircleAvatar(
-                    radius: 24,
-                    backgroundImage: avatarImage,
-                    backgroundColor: tokens.accentSoft,
-                    child: avatarImage == null
-                        ? (chat.isGroup
-                            ? Icon(
-                                chat.isBranch
-                                    ? Icons.account_tree_outlined
-                                    : Icons.group_outlined,
-                                size: 22,
-                                color: tokens.accent,
-                              )
-                            : Text(
-                                chat.displayName.isNotEmpty
-                                    ? chat.displayName[0].toUpperCase()
-                                    : '?',
-                                style: AppTheme.sans(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
+      child: Material(
+        color: tokens.surfaceStrong,
+        shape: RoundedRectangleBorder(
+          side: BorderSide(color: tokens.surfaceLine),
+          borderRadius: BorderRadius.circular(18),
+        ),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(18),
+          onTap: () {
+            final titleParam = Uri.encodeComponent(chat.displayName);
+            final photoParam =
+                chat.displayPhotoUrl != null && chat.displayPhotoUrl!.isNotEmpty
+                    ? '&photo=${Uri.encodeComponent(chat.displayPhotoUrl!)}'
+                    : '';
+            final userParam = !chat.isGroup && chat.otherUserId.isNotEmpty
+                ? '&userId=${Uri.encodeComponent(chat.otherUserId)}'
+                : '';
+            context
+                .push(
+              '/chats/view/${chat.chatId}?type=${Uri.encodeComponent(chat.type)}&title=$titleParam$photoParam$userParam',
+            )
+                .then((_) {
+              unawaited(_loadAuxiliaryChatState());
+            });
+          },
+          onLongPress: () => _openChatActions(chat),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+            child: Row(
+              children: [
+                Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    CircleAvatar(
+                      radius: 24,
+                      backgroundImage: avatarImage,
+                      backgroundColor: tokens.accentSoft,
+                      child: avatarImage == null
+                          ? (chat.isGroup
+                              ? Icon(
+                                  chat.isBranch
+                                      ? Icons.account_tree_outlined
+                                      : Icons.group_outlined,
+                                  size: 22,
                                   color: tokens.accent,
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ))
-                        : null,
-                  ),
-                  if (!chat.isGroup &&
-                      chat.otherUserId.isNotEmpty &&
-                      _onlineUserIds.contains(chat.otherUserId))
-                    Positioned(
-                      right: -1,
-                      bottom: -1,
-                      child: Container(
-                        width: 12,
-                        height: 12,
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF5BC176),
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: tokens.bgBase,
-                            width: 2.5,
+                                )
+                              : Text(
+                                  chat.displayName.isNotEmpty
+                                      ? chat.displayName[0].toUpperCase()
+                                      : '?',
+                                  style: AppTheme.sans(
+                                    color: tokens.accent,
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ))
+                          : null,
+                    ),
+                    if (!chat.isGroup &&
+                        chat.otherUserId.isNotEmpty &&
+                        _onlineUserIds.contains(chat.otherUserId))
+                      Positioned(
+                        right: -1,
+                        bottom: -1,
+                        child: Container(
+                          width: 12,
+                          height: 12,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF5BC176),
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: tokens.bgBase,
+                              width: 2.5,
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                ],
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            chat.displayName,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.titleMedium?.copyWith(
-                              fontWeight:
-                                  hasUnread ? FontWeight.w800 : FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          timeLabel,
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: hasUnread
-                                ? theme.colorScheme.primary
-                                : theme.colorScheme.onSurfaceVariant,
-                            fontWeight:
-                                hasUnread ? FontWeight.w700 : FontWeight.w500,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 5),
-                    Row(
-                      children: [
-                        if (isLastFromMe && !hasDraft) ...[
-                          Icon(
-                            Icons.done_all_rounded,
-                            size: 14,
-                            color: theme.colorScheme.onSurfaceVariant,
-                          ),
-                          const SizedBox(width: 4),
-                        ],
-                        Expanded(
-                          child: Text(
-                            '$previewPrefix$previewText',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.bodyMedium?.copyWith(
-                              color: previewColor,
-                              fontWeight: previewWeight,
-                            ),
-                          ),
-                        ),
-                        if (hasUnread)
-                          Container(
-                            margin: const EdgeInsets.only(left: 8),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 3,
-                            ),
-                            decoration: BoxDecoration(
-                              color: theme.colorScheme.primary,
-                              borderRadius: BorderRadius.circular(999),
-                            ),
+                  ],
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
                             child: Text(
-                              chat.unreadCount.toString(),
-                              style: theme.textTheme.labelSmall?.copyWith(
-                                color: theme.colorScheme.onPrimary,
-                                fontWeight: FontWeight.w800,
+                              chat.displayName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                fontWeight: hasUnread
+                                    ? FontWeight.w800
+                                    : FontWeight.w700,
                               ),
                             ),
                           ),
-                      ],
-                    ),
-                    if (metaPills.isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 6,
-                        runSpacing: 6,
-                        children: metaPills,
+                          const SizedBox(width: 8),
+                          Text(
+                            timeLabel,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: hasUnread
+                                  ? theme.colorScheme.primary
+                                  : theme.colorScheme.onSurfaceVariant,
+                              fontWeight:
+                                  hasUnread ? FontWeight.w700 : FontWeight.w500,
+                            ),
+                          ),
+                        ],
                       ),
+                      const SizedBox(height: 5),
+                      Row(
+                        children: [
+                          if (isLastFromMe && !hasDraft) ...[
+                            Icon(
+                              Icons.done_all_rounded,
+                              size: 14,
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                            const SizedBox(width: 4),
+                          ],
+                          Expanded(
+                            child: Text(
+                              '$previewPrefix$previewText',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                color: previewColor,
+                                fontWeight: previewWeight,
+                              ),
+                            ),
+                          ),
+                          if (hasUnread)
+                            Container(
+                              margin: const EdgeInsets.only(left: 8),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 3,
+                              ),
+                              decoration: BoxDecoration(
+                                color: theme.colorScheme.primary,
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              child: Text(
+                                chat.unreadCount.toString(),
+                                style: theme.textTheme.labelSmall?.copyWith(
+                                  color: theme.colorScheme.onPrimary,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                      if (metaPills.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          children: metaPills,
+                        ),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

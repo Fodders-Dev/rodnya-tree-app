@@ -1,4 +1,6 @@
 // ignore_for_file: library_private_types_in_public_api
+import 'dart:ui';
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -527,48 +529,56 @@ class _HomeScreenState extends State<HomeScreen> {
     required ThemeData theme,
     required RodnyaDesignTokens tokens,
   }) {
-    return Container(
-      decoration: BoxDecoration(
-        color: tokens.surfaceStrong.withValues(
-          alpha: theme.brightness == Brightness.dark ? 0.86 : 0.90,
-        ),
-        border: Border(
-          bottom: BorderSide(color: tokens.surfaceLine, width: 0.7),
-        ),
-      ),
-      padding: const EdgeInsets.fromLTRB(18, 0, 12, 0),
-      child: SafeArea(
-        bottom: false,
-        child: Row(
-          children: [
-            Text(
-              'Родня',
-              style: AppTheme.serif(
-                color: tokens.ink,
-                fontSize: 22,
-                fontWeight: FontWeight.w600,
-                letterSpacing: -0.22,
+    return ClipRect(
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+        child: Container(
+          decoration: BoxDecoration(
+            color: tokens.surface.withValues(
+              alpha: theme.brightness == Brightness.dark ? 0.74 : 0.78,
+            ),
+            border: Border(
+              bottom: BorderSide(
+                color: tokens.surfaceLine.withValues(alpha: 0.5),
+                width: 0.6,
               ),
             ),
-            const Spacer(),
-            _buildTopbarIconButton(
-              tokens: tokens,
-              child: _buildNotificationsAction(tokens: tokens),
-              tooltip: 'Активность',
-              onTap: () => context.push('/notifications'),
+          ),
+          padding: const EdgeInsets.fromLTRB(18, 0, 12, 0),
+          child: SafeArea(
+            bottom: false,
+            child: Row(
+              children: [
+                Text(
+                  'Родня',
+                  style: AppTheme.serif(
+                    color: tokens.ink,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: -0.22,
+                  ),
+                ),
+                const Spacer(),
+                _buildTopbarIconButton(
+                  tokens: tokens,
+                  child: _buildNotificationsAction(tokens: tokens),
+                  tooltip: 'Активность',
+                  onTap: () => context.push('/notifications'),
+                ),
+                const SizedBox(width: 8),
+                _buildTopbarIconButton(
+                  tokens: tokens,
+                  tooltip: 'Выбрать дерево',
+                  onTap: () => context.go('/tree?selector=1'),
+                  child: Icon(
+                    Icons.account_tree_outlined,
+                    size: 19,
+                    color: tokens.accent,
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(width: 8),
-            _buildTopbarIconButton(
-              tokens: tokens,
-              tooltip: 'Выбрать дерево',
-              onTap: () => context.go('/tree?selector=1'),
-              child: Icon(
-                Icons.account_tree_outlined,
-                size: 19,
-                color: tokens.accent,
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );
