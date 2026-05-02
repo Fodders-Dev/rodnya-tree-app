@@ -1242,6 +1242,15 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
                 onPersonTap: (person) {
                   debugPrint('Нажатие на узел: ${person.name} (${person.id})');
                   _selectTreePerson(person);
+                  // In edit mode the same single tap also routes through
+                  // the inline edit selection so the bottom sheet's edit
+                  // action row knows which node to operate on.
+                  if (_isEditMode) {
+                    _updateSectionState(() {
+                      _selectedEditPersonId = person.id;
+                      _personSheetExpanded = true;
+                    });
+                  }
                 },
                 onPersonDoubleTap: (person) {
                   // Double-click on a card = drill into full profile.
@@ -1285,6 +1294,10 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
                 viewportReservedTop:
                     MediaQuery.of(context).size.width < 1180 ? 290 : 96,
                 viewportReservedBottom: 120,
+                // Edit actions live in the bottom sheet now — suppress
+                // the floating inline panel so we don't have two action
+                // surfaces over the same node.
+                showInlineEditPanel: false,
               ),
               Positioned(
                 left: 12,
@@ -1544,56 +1557,68 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
                     ),
                     const SizedBox(height: 8),
                   ],
-                  SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      children: [
-                        _buildTreeSheetAction(
-                          icon: Icons.open_in_new,
-                          label: 'Профиль',
-                          onPressed: () => _openPersonDetails(person),
-                          emphasized: true,
-                        ),
-                        const SizedBox(width: 8),
-                        _buildTreeSheetAction(
-                          icon: Icons.chat_bubble_outline_rounded,
-                          label: 'Написать',
-                          onPressed: () => _openPersonDetails(
-                            person,
-                            action: 'chat',
+                  // Edit-mode shows a different action set focused on
+                  // tree-editor flows: add parent / spouse / child / sibling
+                  // shortcuts, plus profile + history. View-mode keeps the
+                  // social actions (Профиль / Написать / История / Ветка /
+                  // Связь). The split keeps each context surface clean.
+                  if (_isEditMode) ...[
+                    _buildEditModeActionBlock(
+                      person: person,
+                      hasWarnings: hasWarnings,
+                    ),
+                  ] else ...[
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          _buildTreeSheetAction(
+                            icon: Icons.open_in_new,
+                            label: 'Профиль',
+                            onPressed: () => _openPersonDetails(person),
+                            emphasized: true,
                           ),
-                        ),
-                        const SizedBox(width: 8),
-                        _buildTreeSheetAction(
-                          icon: Icons.history_outlined,
-                          label: 'История',
-                          onPressed: () => _showPersonHistorySheet(person),
-                        ),
-                        const SizedBox(width: 8),
-                        _buildTreeSheetAction(
-                          icon: Icons.alt_route_outlined,
-                          label: _isFriendsTree ? 'Круг' : 'Ветка',
-                          onPressed: () => _focusBranch(person),
-                        ),
-                        const SizedBox(width: 8),
-                        _buildTreeSheetAction(
-                          icon: Icons.person_add_alt_1_outlined,
-                          label: 'Связь',
-                          onPressed: () =>
-                              _showTreePersonRelationSheet(person),
-                        ),
-                        if (hasWarnings) ...[
                           const SizedBox(width: 8),
                           _buildTreeSheetAction(
-                            icon: Icons.report_problem_outlined,
-                            label: 'Проверить',
-                            onPressed: () =>
-                                _openPersonDetails(person, action: 'relations'),
+                            icon: Icons.chat_bubble_outline_rounded,
+                            label: 'Написать',
+                            onPressed: () => _openPersonDetails(
+                              person,
+                              action: 'chat',
+                            ),
                           ),
+                          const SizedBox(width: 8),
+                          _buildTreeSheetAction(
+                            icon: Icons.history_outlined,
+                            label: 'История',
+                            onPressed: () => _showPersonHistorySheet(person),
+                          ),
+                          const SizedBox(width: 8),
+                          _buildTreeSheetAction(
+                            icon: Icons.alt_route_outlined,
+                            label: _isFriendsTree ? 'Круг' : 'Ветка',
+                            onPressed: () => _focusBranch(person),
+                          ),
+                          const SizedBox(width: 8),
+                          _buildTreeSheetAction(
+                            icon: Icons.person_add_alt_1_outlined,
+                            label: 'Связь',
+                            onPressed: () =>
+                                _showTreePersonRelationSheet(person),
+                          ),
+                          if (hasWarnings) ...[
+                            const SizedBox(width: 8),
+                            _buildTreeSheetAction(
+                              icon: Icons.report_problem_outlined,
+                              label: 'Проверить',
+                              onPressed: () => _openPersonDetails(person,
+                                  action: 'relations'),
+                            ),
+                          ],
                         ],
-                      ],
+                      ),
                     ),
-                  ),
+                  ],
                 ],
               ),
             ),
@@ -1673,10 +1698,128 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
     return 'лет';
   }
 
+  /// Edit-mode action block: when the user has tapped "Расставить" in the
+  /// toolbar, the bottom sheet replaces the social action row with this
+  /// edit-focused view. The four primary relation-add buttons sit on top,
+  /// then a row of secondary actions (profile / photos / history / fix).
+  /// Replaces the floating inline edit panel that used to live next to
+  /// each card and consumed canvas real-estate.
+  Widget _buildEditModeActionBlock({
+    required FamilyPerson person,
+    required bool hasWarnings,
+  }) {
+    final theme = Theme.of(context);
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+    final hasGallery = person.photoGallery.isNotEmpty;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          'Добавить связь',
+          style: AppTheme.sans(
+            color: tokens.inkSecondary,
+            fontSize: 11,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 0.6,
+          ),
+        ),
+        const SizedBox(height: 8),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              _buildTreeSheetAction(
+                icon: Icons.north_outlined,
+                label: 'Родитель',
+                emphasized: true,
+                onPressed: () =>
+                    _handleAddRelativeFromTree(person, RelationType.parent),
+              ),
+              const SizedBox(width: 8),
+              _buildTreeSheetAction(
+                icon: Icons.favorite_border,
+                label: 'Супруг',
+                onPressed: () =>
+                    _handleAddRelativeFromTree(person, RelationType.spouse),
+              ),
+              const SizedBox(width: 8),
+              _buildTreeSheetAction(
+                icon: Icons.south_outlined,
+                label: 'Ребёнок',
+                onPressed: () =>
+                    _handleAddRelativeFromTree(person, RelationType.child),
+              ),
+              const SizedBox(width: 8),
+              _buildTreeSheetAction(
+                icon: Icons.people_outline,
+                label: 'Сиблинг',
+                onPressed: () =>
+                    _handleAddRelativeFromTree(person, RelationType.sibling),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 14),
+        Text(
+          'Карточка',
+          style: AppTheme.sans(
+            color: tokens.inkSecondary,
+            fontSize: 11,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 0.6,
+          ),
+        ),
+        const SizedBox(height: 8),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              _buildTreeSheetAction(
+                icon: Icons.open_in_new,
+                label: 'Открыть',
+                onPressed: () => _openPersonDetails(person),
+              ),
+              const SizedBox(width: 8),
+              _buildTreeSheetAction(
+                icon: Icons.photo_library_outlined,
+                label: hasGallery
+                    ? 'Фото (${person.photoGallery.length})'
+                    : 'Фото',
+                onPressed: hasGallery
+                    ? () => _openPersonDetails(person, action: 'gallery')
+                    : null,
+              ),
+              const SizedBox(width: 8),
+              _buildTreeSheetAction(
+                icon: Icons.history_outlined,
+                label: 'История',
+                onPressed: () => _showPersonHistorySheet(person),
+              ),
+              if (hasWarnings) ...[
+                const SizedBox(width: 8),
+                _buildTreeSheetAction(
+                  icon: Icons.report_problem_outlined,
+                  label: 'Починить',
+                  onPressed: () =>
+                      _openPersonDetails(person, action: 'relations'),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildTreeSheetAction({
     required IconData icon,
     required String label,
-    required VoidCallback onPressed,
+    required VoidCallback? onPressed,
     bool emphasized = false,
   }) {
     final theme = Theme.of(context);
@@ -1684,9 +1827,15 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
         (theme.brightness == Brightness.dark
             ? RodnyaDesignTokens.dark
             : RodnyaDesignTokens.light);
-    final background =
-        emphasized ? tokens.accent : tokens.surface.withValues(alpha: 0.95);
-    final foreground = emphasized ? tokens.accentInk : tokens.accentStrong;
+    final isEnabled = onPressed != null;
+    final background = emphasized
+        ? tokens.accent
+        : tokens.surface.withValues(alpha: isEnabled ? 0.95 : 0.5);
+    final foreground = emphasized
+        ? tokens.accentInk
+        : (isEnabled
+            ? tokens.accentStrong
+            : tokens.accentStrong.withValues(alpha: 0.5));
 
     return Material(
       color: background,

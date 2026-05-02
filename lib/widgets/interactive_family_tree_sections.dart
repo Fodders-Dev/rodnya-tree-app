@@ -135,7 +135,7 @@ extension _InteractiveFamilyTreeSections on _InteractiveFamilyTreeState {
               ),
             ),
           ..._buildPersonWidgets(),
-          if (widget.isEditMode)
+          if (widget.isEditMode && widget.showInlineEditPanel)
             _buildInlineEditPanel(
               stackWidth: stackWidth,
               stackHeight: stackHeight,

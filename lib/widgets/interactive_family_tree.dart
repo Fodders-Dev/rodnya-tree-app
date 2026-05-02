@@ -57,6 +57,12 @@ class InteractiveFamilyTree extends StatefulWidget {
   /// Vertical pixels reserved at the bottom for the bottom sheet / dock.
   final double viewportReservedBottom;
 
+  /// When false, suppress the inline edit panel that floats next to the
+  /// selected node in edit mode. Use this when the consumer is rendering
+  /// edit actions inside its own bottom sheet to avoid two surfaces
+  /// fighting for the same screen real-estate.
+  final bool showInlineEditPanel;
+
   // Константы для размеров узлов и отступов - понадобятся для расчета layout
   static const double nodeWidth = 132; // Примерная ширина карточки
   static const double nodeHeight = 112; // Примерная высота карточки
@@ -100,6 +106,7 @@ class InteractiveFamilyTree extends StatefulWidget {
     this.onResetLayout,
     this.viewportReservedTop = 64,
     this.viewportReservedBottom = 28,
+    this.showInlineEditPanel = true,
   });
 
   @override
