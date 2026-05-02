@@ -73,4 +73,24 @@ class ChatPreview {
       lastMessageSenderId: map['lastMessageSenderId'] ?? '',
     );
   }
+
+  /// Serialize for Hive cache. Round-trips through [ChatPreview.fromMap].
+  Map<String, dynamic> toMap() {
+    return <String, dynamic>{
+      'id': id,
+      'chatId': chatId,
+      'userId': userId,
+      'type': type,
+      'title': title,
+      'photoUrl': photoUrl,
+      'participantIds': participantIds,
+      'otherUserId': otherUserId,
+      'otherUserName': otherUserName,
+      'otherUserPhotoUrl': otherUserPhotoUrl,
+      'lastMessage': lastMessage,
+      'lastMessageTime': lastMessageTime.toIso8601String(),
+      'unreadCount': unreadCount,
+      'lastMessageSenderId': lastMessageSenderId,
+    };
+  }
 }

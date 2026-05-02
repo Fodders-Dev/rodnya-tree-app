@@ -36,6 +36,7 @@ import 'app_status_service.dart';
 import 'android_incoming_call_service.dart';
 import 'audio_route_service.dart';
 import 'chat_message_cache.dart';
+import 'chat_preview_cache.dart';
 import 'chat_draft_store.dart';
 import 'chat_pin_store.dart';
 import 'chat_send_queue.dart';
@@ -153,6 +154,8 @@ class AppStartupService implements AppStartupServiceInterface {
 
     final chatMessageCache = HiveChatMessageCache();
     _registerOrReplaceSingleton<ChatMessageCache>(chatMessageCache);
+    final chatPreviewCache = HiveChatPreviewCache();
+    _registerOrReplaceSingleton<ChatPreviewCache>(chatPreviewCache);
 
     final customApiChatService = CustomApiChatService(
       authService: customApiAuthService,
@@ -160,6 +163,7 @@ class AppStartupService implements AppStartupServiceInterface {
       realtimeService: customApiRealtimeService,
       storageService: customApiStorageService,
       messageCache: chatMessageCache,
+      previewCache: chatPreviewCache,
       appStatusService: appStatusService,
     );
     _registerOrReplaceSingleton<CustomApiChatService>(customApiChatService);

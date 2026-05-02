@@ -20,6 +20,7 @@ import '../utils/voice_waveform.dart';
 import 'app_status_service.dart';
 import 'chat_draft_store.dart';
 import 'chat_message_cache.dart';
+import 'chat_preview_cache.dart';
 import 'chat_pin_store.dart';
 import 'custom_api_auth_service.dart';
 import 'custom_api_realtime_service.dart';
@@ -64,6 +65,7 @@ class CustomApiChatService
     CustomApiRealtimeService? realtimeService,
     StorageServiceInterface? storageService,
     ChatMessageCache? messageCache,
+    ChatPreviewCache? previewCache,
     AppStatusService? appStatusService,
     Duration? pollInterval,
     Duration? overviewPollInterval,
@@ -74,6 +76,7 @@ class CustomApiChatService
         _realtimeService = realtimeService,
         _storageService = storageService,
         _messageCache = messageCache,
+        _previewCache = previewCache,
         _appStatusService = appStatusService,
         _pollInterval = pollInterval ?? const Duration(seconds: 3),
         _realtimeFallbackPollInterval = realtimeFallbackPollInterval ??
@@ -86,9 +89,13 @@ class CustomApiChatService
   final CustomApiRealtimeService? _realtimeService;
   final StorageServiceInterface? _storageService;
   final ChatMessageCache? _messageCache;
+  final ChatPreviewCache? _previewCache;
   final AppStatusService? _appStatusService;
   final Duration _pollInterval;
   final Duration _realtimeFallbackPollInterval;
+  /// Snapshot of the most recently emitted previews — keeps us from
+  /// re-hydrating the cache on every realtime tick when nothing changed.
+  List<ChatPreview>? _lastEmittedPreviews;
   StreamController<List<ChatPreview>>? _chatPreviewsController;
   Timer? _chatPreviewsFallbackTimer;
   Timer? _chatPreviewsRealtimeDebounce;
@@ -723,6 +730,9 @@ class CustomApiChatService
     }
 
     _chatPreviewsUpdatesActive = true;
+    // Stale-while-revalidate: hydrate from Hive synchronously so the list
+    // appears immediately, then trigger the API refresh in the background.
+    unawaited(_hydrateChatPreviewsFromCache());
     unawaited(_emitChatPreviews());
 
     if (_realtimeService != null) {
@@ -791,7 +801,13 @@ class CustomApiChatService
     }
 
     try {
-      controller.add(await _fetchChatPreviews());
+      final previews = await _fetchChatPreviews();
+      _lastEmittedPreviews = previews;
+      // Persist to cache so the next cold start can show the list before
+      // the network round-trip finishes. Failures are non-fatal — caching
+      // is a UX optimization, not a source of truth.
+      unawaited(_writeChatPreviewsCache(previews));
+      controller.add(previews);
     } on CustomApiException catch (error, stackTrace) {
       if (await _handleSessionError(error)) {
         await _stopChatPreviewsUpdates();
@@ -818,6 +834,34 @@ class CustomApiChatService
         fallbackMessage: 'Не удалось обновить список чатов.',
       );
       controller.addError(error, stackTrace);
+    }
+  }
+
+  Future<void> _hydrateChatPreviewsFromCache() async {
+    final cache = _previewCache;
+    if (cache == null) return;
+    try {
+      final cached = await cache.read();
+      if (cached.isEmpty) return;
+      final controller = _chatPreviewsController;
+      if (controller == null || controller.isClosed) return;
+      // Only emit cached data if we haven't already produced a fresher
+      // result during the cache read — race avoidance.
+      if (_lastEmittedPreviews != null) return;
+      _lastEmittedPreviews = cached;
+      controller.add(cached);
+    } catch (_) {
+      // Cache corruption is non-fatal; let the API refresh repopulate.
+    }
+  }
+
+  Future<void> _writeChatPreviewsCache(List<ChatPreview> previews) async {
+    final cache = _previewCache;
+    if (cache == null) return;
+    try {
+      await cache.write(previews);
+    } catch (_) {
+      // Best-effort — never fail the foreground stream because of cache.
     }
   }
 
@@ -1145,6 +1189,14 @@ class CustomApiChatService
     }
 
     state.refreshDebounce?.cancel();
+    // Flush any pending debounced cache write so the next cold read sees
+    // the freshest known state — then cancel the timer.
+    final pendingFlush = _dirtyMessageCacheFlushTimers.remove(chatId);
+    if (pendingFlush != null) {
+      pendingFlush.cancel();
+      final snapshot = List<ChatMessage>.unmodifiable(state.messages);
+      _cacheMessages((cache) => cache.write(chatId, snapshot));
+    }
     await state.realtimeSubscription?.cancel();
     await state.controller.close();
   }
@@ -1328,9 +1380,9 @@ class CustomApiChatService
     );
     nextMessages[messageIndex] = nextMessage;
     state.messages = nextMessages;
-    _cacheMessages(
-      (cache) => cache.appendOne(state.chatId, nextMessage),
-    );
+    // Reactions arrive in bursts — debounce the Hive write instead of
+    // flushing on every event.
+    _scheduleDebouncedMessageCacheFlush(state);
     if (!state.controller.isClosed) {
       state.controller.add(List<ChatMessage>.unmodifiable(nextMessages));
     }
@@ -1362,9 +1414,9 @@ class CustomApiChatService
     final nextMessage = message.copyWith(deliveredTo: deliveredTo);
     nextMessages[messageIndex] = nextMessage;
     state.messages = nextMessages;
-    _cacheMessages(
-      (cache) => cache.appendOne(state.chatId, nextMessage),
-    );
+    // Delivery receipts can arrive several times per second when a chat
+    // catches up after a reconnect — coalesce into a single Hive write.
+    _scheduleDebouncedMessageCacheFlush(state);
     if (!state.controller.isClosed) {
       state.controller.add(List<ChatMessage>.unmodifiable(nextMessages));
     }
@@ -1395,9 +1447,9 @@ class CustomApiChatService
       );
     }).toList(growable: false);
     state.messages = nextMessages;
-    _cacheMessages(
-      (cache) => cache.write(state.chatId, nextMessages),
-    );
+    // Read markers can fire for every visible message on focus — debounce
+    // the Hive flush so a single chat-open doesn't translate into N writes.
+    _scheduleDebouncedMessageCacheFlush(state);
     if (!state.controller.isClosed) {
       state.controller.add(List<ChatMessage>.unmodifiable(nextMessages));
     }
@@ -1454,6 +1506,33 @@ class CustomApiChatService
         // Cache failures should not break chat rendering or delivery.
       }
     }());
+  }
+
+  /// Coalesce cache writes that come from rapid-fire metadata updates
+  /// (reactions, delivery receipts, read markers). Each of these used to
+  /// trigger an immediate full Hive read+modify+write of the 200-message
+  /// window — fine for one event, expensive when 20 reactions land in
+  /// half a second. Now we mark the chat dirty and flush at most once
+  /// every ~800 ms, which keeps the offline cache eventually consistent
+  /// without the I/O storm.
+  final Map<String, Timer> _dirtyMessageCacheFlushTimers = <String, Timer>{};
+
+  void _scheduleDebouncedMessageCacheFlush(_ChatMessageStreamState state) {
+    if (_messageCache == null) return;
+    _dirtyMessageCacheFlushTimers[state.chatId]?.cancel();
+    _dirtyMessageCacheFlushTimers[state.chatId] = Timer(
+      const Duration(milliseconds: 800),
+      () {
+        _dirtyMessageCacheFlushTimers.remove(state.chatId);
+        // Snapshot the current message list at flush time — captures any
+        // updates that arrived during the debounce window in a single
+        // write rather than N separate ones.
+        final snapshot = List<ChatMessage>.unmodifiable(state.messages);
+        _cacheMessages(
+          (cache) => cache.write(state.chatId, snapshot),
+        );
+      },
+    );
   }
 
   int _sortMessagesDescending(ChatMessage left, ChatMessage right) {
