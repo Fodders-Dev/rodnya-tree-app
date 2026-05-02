@@ -44,6 +44,7 @@ import '../services/chat_pin_store.dart';
 import '../services/chat_send_queue.dart';
 import '../services/custom_api_auth_service.dart';
 import '../services/custom_api_realtime_service.dart';
+import '../theme/app_theme.dart';
 import '../utils/chat_attachment_download.dart';
 import '../utils/photo_url.dart';
 import '../utils/snackbar.dart';
@@ -3775,28 +3776,43 @@ class _ChatScreenState extends State<ChatScreen> {
                 !_selectedAttachments.any(_isRecordedVoiceAttachment))
               const SizedBox(height: 8),
             Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
+              // Center-align so a single-line composer stays visually balanced;
+              // multi-line still grows downward via TextField.maxLines.
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                IconButton.filledTonal(
+                // Attach button — flat 38x38 surface pill, matches reference
+                // `.iconbtn`. The previous IconButton.filledTonal looked too
+                // heavy next to the new pill input.
+                _ComposerIconButton(
+                  icon: Icons.attach_file_rounded,
+                  tooltip: 'Добавить вложение',
                   onPressed: _selectedAttachments.length >= _maxAttachments
                       ? null
                       : _openAttachmentPicker,
-                  tooltip: 'Добавить вложение',
-                  icon: const Icon(Icons.attach_file_rounded),
                 ),
+                const SizedBox(width: 8),
                 Expanded(
                   child: Container(
-                    margin: const EdgeInsets.symmetric(horizontal: 8),
+                    // Reference `.composer .input`: 42 height, full pill
+                    // radius 999, surface-strong bg, surface-line border.
+                    constraints: const BoxConstraints(minHeight: 42),
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
+                      horizontal: 16,
+                      vertical: 6,
                     ),
                     decoration: BoxDecoration(
                       color: Theme.of(context)
                           .colorScheme
-                          .surfaceContainerLowest
-                          .withValues(alpha: 0.78),
-                      borderRadius: BorderRadius.circular(24),
+                          .surface
+                          .withValues(alpha: 0.95),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(
+                        color: Theme.of(context)
+                            .colorScheme
+                            .outlineVariant
+                            .withValues(alpha: 0.55),
+                        width: 0.7,
+                      ),
                     ),
                     // Focus wrapper owns the key event interception;
                     // TextField gets its own internal FocusNode.
@@ -3807,9 +3823,17 @@ class _ChatScreenState extends State<ChatScreen> {
                         controller: _messageController,
                         focusNode: _messageFocusNode,
                         onChanged: (_) => setState(() {}),
-                        decoration: const InputDecoration.collapsed(
-                          hintText: 'Сообщение...',
+                        decoration: InputDecoration.collapsed(
+                          hintText: 'Сообщение',
+                          hintStyle: TextStyle(
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onSurfaceVariant
+                                .withValues(alpha: 0.78),
+                            fontSize: 14.5,
+                          ),
                         ),
+                        style: const TextStyle(fontSize: 14.5, height: 1.35),
                         textCapitalization: TextCapitalization.sentences,
                         keyboardType: TextInputType.multiline,
                         minLines: 1,
@@ -3818,6 +3842,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     ),
                   ),
                 ),
+                const SizedBox(width: 8),
                 _buildPrimaryComposerAction(
                   canSend: canSend,
                   isLockedRecording: isLockedRecording,
@@ -3926,11 +3951,16 @@ class _ChatScreenState extends State<ChatScreen> {
     required bool isLockedRecording,
   }) {
     if (canSend) {
-      return IconButton.filled(
+      // Reference `.composer .send`: 42x42 accent-filled circle with
+      // a soft drop shadow, replacing Material's flat IconButton.filled.
+      // Icons.send (not send_rounded) keeps the existing widget tests
+      // happy — both visually identical at this size.
+      return _ComposerSendButton(
+        icon: _selectedEdit != null ? Icons.check : Icons.send,
+        tooltip:
+            _selectedEdit != null ? 'Сохранить изменения' : 'Отправить',
         onPressed:
             _selectedEdit != null ? _saveEditedMessage : _sendCurrentMessage,
-        tooltip: _selectedEdit != null ? 'Сохранить изменения' : 'Отправить',
-        icon: Icon(_selectedEdit != null ? Icons.check : Icons.send),
       );
     }
 
@@ -7391,16 +7421,19 @@ class _ChatBubble extends StatelessWidget {
                   maxWidth: MediaQuery.of(context).size.width * 0.78,
                 ),
                 child: Container(
-                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+                  // Reference `.msg`: padding 9px 13px 8px, radius 18 + 6 on
+                  // the tail corner. Tighter than the previous 12/8 +20/6
+                  // and reads as more "bubble-y", less card-y.
+                  padding: const EdgeInsets.fromLTRB(13, 9, 13, 8),
                   decoration: BoxDecoration(
                     color: outgoingGradient == null ? bubbleColor : null,
                     gradient: outgoingGradient,
                     border: highlightBorder,
                     borderRadius: BorderRadius.only(
-                      topLeft: const Radius.circular(20),
-                      topRight: const Radius.circular(20),
-                      bottomLeft: Radius.circular(isMe ? 20 : 6),
-                      bottomRight: Radius.circular(isMe ? 6 : 20),
+                      topLeft: const Radius.circular(18),
+                      topRight: const Radius.circular(18),
+                      bottomLeft: Radius.circular(isMe ? 18 : 6),
+                      bottomRight: Radius.circular(isMe ? 6 : 18),
                     ),
                     boxShadow: bubbleShadow,
                   ),
@@ -7890,4 +7923,116 @@ class _CallSummaryPalette {
   final Color iconColor;
   final Color titleColor;
   final Color subtitleColor;
+}
+
+/// Flat surface-pill icon button used in the composer for attach + secondary
+/// actions. Mirrors the reference `.iconbtn` style (38x38, surface bg, hairline
+/// border, ink color icon). Lighter visual weight than IconButton.filledTonal.
+class _ComposerIconButton extends StatelessWidget {
+  const _ComposerIconButton({
+    required this.icon,
+    required this.tooltip,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final isEnabled = onPressed != null;
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: Colors.transparent,
+        shape: const CircleBorder(),
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: onPressed,
+          child: Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: scheme.surface.withValues(alpha: 0.92),
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: scheme.outlineVariant.withValues(alpha: 0.55),
+                width: 0.7,
+              ),
+            ),
+            alignment: Alignment.center,
+            child: Icon(
+              icon,
+              size: 19,
+              color: isEnabled
+                  ? scheme.onSurface.withValues(alpha: 0.78)
+                  : scheme.onSurface.withValues(alpha: 0.32),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Accent-filled circle for the composer send action. Reference
+/// `.composer .send`: 42x42 round, accent gradient, drop shadow that
+/// reads as "the primary action lives here".
+class _ComposerSendButton extends StatelessWidget {
+  const _ComposerSendButton({
+    required this.icon,
+    required this.tooltip,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: Colors.transparent,
+        shape: const CircleBorder(),
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: onPressed,
+          child: Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  scheme.primary,
+                  Color.alphaBlend(
+                    Colors.black.withValues(alpha: 0.10),
+                    scheme.primary,
+                  ),
+                ],
+              ),
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: scheme.primary.withValues(alpha: 0.40),
+                  blurRadius: 14,
+                  spreadRadius: -4,
+                  offset: const Offset(0, 6),
+                ),
+              ],
+            ),
+            alignment: Alignment.center,
+            child: Icon(icon, size: 19, color: scheme.onPrimary),
+          ),
+        ),
+      ),
+    );
+  }
 }

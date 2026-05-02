@@ -499,9 +499,12 @@ class _HighlightedMessageText extends StatelessWidget {
     if (normalizedQuery.isEmpty) {
       return Text(
         text,
+        // Reference `.msg`: 14.5/1.35 — slightly tighter than Material's
+        // bodyLarge (16/1.5) so chat reads as conversational not formal.
         style: TextStyle(
           color: color,
-          fontSize: 16,
+          fontSize: 14.5,
+          height: 1.35,
         ),
       );
     }
@@ -546,7 +549,7 @@ class _HighlightedMessageText extends StatelessWidget {
 
     return RichText(
       text: TextSpan(
-        style: const TextStyle(fontSize: 16),
+        style: const TextStyle(fontSize: 14.5, height: 1.35),
         children: spans,
       ),
     );

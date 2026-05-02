@@ -63,21 +63,35 @@ extension _ChatScreenScaffoldSections on _ChatScreenState {
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
             children: [
+              // Reference `.subhead h2`: Lora 19px / 600 / -0.01em letter
+              // spacing — gives the chat title elegance vs the previous
+              // 16px Manrope-default.
               Text(
                 _resolvedTitle,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 16,
+                style: AppTheme.serif(
+                  color: Theme.of(context).colorScheme.onSurface,
+                  fontSize: 18,
                   fontWeight: FontWeight.w600,
+                  letterSpacing: -0.18,
+                  height: 1.1,
                 ),
               ),
               const SizedBox(height: 2),
+              // Reference `.subhead .meta`: 12px ink-3 — secondary,
+              // calmer than the previous bodySmall default.
               Text(
                 _chatSubtitle(),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.bodySmall,
+                style: AppTheme.sans(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  height: 1.2,
+                ),
               ),
             ],
           ),
