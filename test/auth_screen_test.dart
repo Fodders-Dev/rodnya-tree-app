@@ -79,7 +79,9 @@ void main() {
     expect(find.text('Email'), findsOneWidget);
     expect(find.text('Telegram'), findsOneWidget);
     expect(find.text('VK ID'), findsOneWidget);
-    expect(find.text('MAX'), findsOneWidget);
+    // MAX provider is hidden until the OAuth handshake actually
+    // ships — see auth_screen.dart row of social buttons.
+    expect(find.text('MAX'), findsNothing);
   });
 
   testWidgets('wide CTA switches auth screen into registration mode',

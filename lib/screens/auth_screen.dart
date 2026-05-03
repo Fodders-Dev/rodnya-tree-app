@@ -592,6 +592,7 @@ class _AuthScreenState extends State<AuthScreen> {
     }
   }
 
+  // ignore: unused_element
   Future<void> _startMaxSignIn() async {
     if (!kIsWeb) {
       _showSocialAuthWebOnlyMessage('MAX');
@@ -1464,16 +1465,20 @@ class _AuthScreenState extends State<AuthScreen> {
                 ],
               ),
               const SizedBox(height: 16),
+              // Google web button is a fixed-width native pill (242x40).
+              // Centering it (was: right-aligned) lines it up with the
+              // equal-width Telegram + VK ID row below — the asymmetric
+              // layout the previous version had came from one
+              // right-aligned Google pill on top of three center-wrapped
+              // OutlinedButtons of varying widths.
               if (kIsWeb) ...[
-                Align(
-                  alignment: Alignment.centerRight,
+                Center(
                   child: buildGoogleSignInAction(
                     theme: theme,
                     isLoading: _isGoogleLoading,
                     enabled: !_isLoading &&
                         !_isTelegramLoading &&
                         !_isVkLoading &&
-                        !_isMaxLoading &&
                         _supportsGoogleAuth,
                     onPressed: _supportsGoogleAuth
                         ? _signInWithGoogle
@@ -1483,71 +1488,64 @@ class _AuthScreenState extends State<AuthScreen> {
                 ),
                 const SizedBox(height: 10),
               ],
-              Wrap(
-                alignment: WrapAlignment.center,
-                spacing: 10,
-                runSpacing: 10,
+              // Two equal-width buttons in a Row gives a clean grid the
+              // way the reference does. MAX is intentionally hidden until
+              // the MAX OAuth handshake actually lands — the variable
+              // _startMaxSignIn / _isMaxLoading are kept for when that
+              // ships.
+              Row(
                 children: [
                   if (!kIsWeb)
-                    buildGoogleSignInAction(
-                      theme: theme,
-                      isLoading: _isGoogleLoading,
-                      enabled: !_isLoading &&
-                          !_isTelegramLoading &&
-                          !_isVkLoading &&
-                          !_isMaxLoading &&
-                          _supportsGoogleAuth,
-                      onPressed: _supportsGoogleAuth
-                          ? _signInWithGoogle
-                          : () => _showPlannedSocialAuthMessage('Google'),
+                    Expanded(
+                      child: buildGoogleSignInAction(
+                        theme: theme,
+                        isLoading: _isGoogleLoading,
+                        enabled: !_isLoading &&
+                            !_isTelegramLoading &&
+                            !_isVkLoading &&
+                            _supportsGoogleAuth,
+                        onPressed: _supportsGoogleAuth
+                            ? _signInWithGoogle
+                            : () => _showPlannedSocialAuthMessage('Google'),
+                      ),
                     ),
-                  OutlinedButton.icon(
-                    onPressed: _isLoading || _isAnySocialLoading
-                        ? null
-                        : _startTelegramSignIn,
-                    icon: _isTelegramLoading
-                        ? SizedBox(
-                            height: 18,
-                            width: 18,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: theme.colorScheme.primary,
-                            ),
-                          )
-                        : const Icon(Icons.send_outlined),
-                    label: const Text('Telegram'),
+                  if (!kIsWeb) const SizedBox(width: 10),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: _isLoading || _isAnySocialLoading
+                          ? null
+                          : _startTelegramSignIn,
+                      icon: _isTelegramLoading
+                          ? SizedBox(
+                              height: 18,
+                              width: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: theme.colorScheme.primary,
+                              ),
+                            )
+                          : const Icon(Icons.send_outlined),
+                      label: const Text('Telegram'),
+                    ),
                   ),
-                  OutlinedButton.icon(
-                    onPressed: _isLoading || _isAnySocialLoading
-                        ? null
-                        : _startVkSignIn,
-                    icon: _isVkLoading
-                        ? SizedBox(
-                            height: 18,
-                            width: 18,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: theme.colorScheme.primary,
-                            ),
-                          )
-                        : const Icon(Icons.alternate_email_outlined),
-                    label: const Text('VK ID'),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: _isLoading || _isAnySocialLoading
-                        ? null
-                        : _startMaxSignIn,
-                    icon: _isMaxLoading
-                        ? SizedBox(
-                            height: 18,
-                            width: 18,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: theme.colorScheme.primary,
-                            ),
-                          )
-                        : const Icon(Icons.forum_outlined),
-                    label: const Text('MAX'),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: _isLoading || _isAnySocialLoading
+                          ? null
+                          : _startVkSignIn,
+                      icon: _isVkLoading
+                          ? SizedBox(
+                              height: 18,
+                              width: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: theme.colorScheme.primary,
+                              ),
+                            )
+                          : const Icon(Icons.alternate_email_outlined),
+                      label: const Text('VK ID'),
+                    ),
                   ),
                 ],
               ),
