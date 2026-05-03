@@ -12,6 +12,7 @@ import '../models/post.dart';
 import '../theme/app_theme.dart';
 import 'comment_sheet.dart';
 import 'glass_panel.dart';
+import 'media_lightbox.dart';
 
 class PostCard extends StatefulWidget {
   const PostCard({super.key, required this.post, this.onDeleted});
@@ -413,6 +414,18 @@ class _PostCardState extends State<PostCard>
 
   Widget _buildPostImages(List<String> images) {
     final borderRadius = BorderRadius.circular(18);
+    final lightboxItems = images
+        .map((url) => MediaLightboxItem(imageUrl: url))
+        .toList(growable: false);
+
+    void openLightbox(int initialIndex) {
+      MediaLightbox.show(
+        context,
+        items: lightboxItems,
+        initialIndex: initialIndex,
+      );
+    }
+
     if (images.length == 1) {
       return Padding(
         padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
@@ -420,11 +433,15 @@ class _PostCardState extends State<PostCard>
           aspectRatio: 16 / 9,
           child: ClipRRect(
             borderRadius: borderRadius,
-            child: CachedNetworkImage(
-              imageUrl: images.first,
-              fit: BoxFit.cover,
-              placeholder: (_, __) => _buildPostImagePlaceholder(),
-              errorWidget: (_, __, ___) => _buildPostImageFallback(),
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => openLightbox(0),
+              child: CachedNetworkImage(
+                imageUrl: images.first,
+                fit: BoxFit.cover,
+                placeholder: (_, __) => _buildPostImagePlaceholder(),
+                errorWidget: (_, __, ___) => _buildPostImageFallback(),
+              ),
             ),
           ),
         ),
@@ -438,14 +455,18 @@ class _PostCardState extends State<PostCard>
         itemBuilder: (context, index, _) {
           return ClipRRect(
             borderRadius: borderRadius,
-            child: CachedNetworkImage(
-              imageUrl: images[index],
-              imageBuilder: (_, imageProvider) =>
-                  Image(image: imageProvider, fit: BoxFit.cover),
-              fit: BoxFit.cover,
-              placeholder: (_, __) => _buildPostImagePlaceholder(),
-              errorWidget: (_, __, ___) => _buildPostImageFallback(),
-              width: MediaQuery.of(context).size.width,
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => openLightbox(index),
+              child: CachedNetworkImage(
+                imageUrl: images[index],
+                imageBuilder: (_, imageProvider) =>
+                    Image(image: imageProvider, fit: BoxFit.cover),
+                fit: BoxFit.cover,
+                placeholder: (_, __) => _buildPostImagePlaceholder(),
+                errorWidget: (_, __, ___) => _buildPostImageFallback(),
+                width: MediaQuery.of(context).size.width,
+              ),
             ),
           );
         },
