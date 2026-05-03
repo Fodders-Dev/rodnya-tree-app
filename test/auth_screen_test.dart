@@ -66,7 +66,12 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    expect(find.text('Семья — это живое дерево.'), findsOneWidget);
+    // Tagline now rendered as Text("Семья —") + RichText("это живое")
+    // + Text("дерево.") so the italic accent on "живое" works. The
+    // RichText's TextSpan isn't matched by find.text — use the bare
+    // Text pieces as the smoke proof.
+    expect(find.text('Семья —'), findsOneWidget);
+    expect(find.text('дерево.'), findsOneWidget);
     expect(find.text('Войти'), findsWidgets);
     expect(find.text('Создать аккаунт'), findsWidgets);
     expect(find.text('Stories'), findsWidgets);
@@ -110,21 +115,30 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    expect(find.text('Семья — это живое дерево.'), findsOneWidget);
+    // Tagline now rendered as Text("Семья —") + RichText("это живое")
+    // + Text("дерево.") so the italic accent on "живое" works. The
+    // RichText's TextSpan isn't matched by find.text — use the bare
+    // Text pieces as the smoke proof.
+    expect(find.text('Семья —'), findsOneWidget);
+    expect(find.text('дерево.'), findsOneWidget);
     expect(find.text('Вход'), findsWidgets);
     expect(find.text('Регистрация'), findsOneWidget);
     expect(find.text('Email'), findsOneWidget);
+    // Subtitle now uses an explicit newline split so the auth hero
+    // breaks at a natural rhythm point ("даты" / "в одном…"). Drop the
+    // dash-separator wording.
     expect(
       find.text(
-        'Истории, голоса, лица и даты — в одном пространстве для своих.',
+        'Истории, голоса, лица и даты\nв одном пространстве для своих.',
       ),
       findsOneWidget,
     );
     expect(find.text('Дерево, родные и чат в одном аккаунте.'), findsNothing);
-    expect(find.text('Дерево'), findsWidgets);
-    expect(find.text('Родные'), findsOneWidget);
-    expect(find.text('Чат'), findsOneWidget);
-    expect(find.text('Stories'), findsWidgets);
+    // Feature cards (Дерево / Родные / Чат / Stories) used to live in
+    // the compact hero too. Reference design intentionally keeps the
+    // mobile hero minimal — just brand + tagline + subtitle — so they
+    // are now wide-layout only. The auth form below carries the social
+    // CTAs which are the actionable surface.
     expect(find.text('Google'), findsOneWidget);
     expect(find.text('Telegram'), findsOneWidget);
   });

@@ -980,12 +980,27 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 
   Widget _buildCompactLayout(ThemeData theme) {
+    // Reference layout: hero owns ~52% of viewport, the auth sheet pulls
+    // up over it by 28px with a 32-radius top corner. Feature cards moved
+    // into a single subtitle line — the hero is meant to deliver brand
+    // gravity, not feature inventory. The sheet is where the user
+    // actually does work.
     return SingleChildScrollView(
+      padding: EdgeInsets.zero,
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _buildHeroPanel(theme, compact: true),
-          const SizedBox(height: 16),
-          _buildAuthCard(theme, compact: true),
+          Transform.translate(
+            offset: const Offset(0, -28),
+            child: Container(
+              decoration: const BoxDecoration(
+                color: Colors.transparent,
+              ),
+              padding: const EdgeInsets.fromLTRB(0, 0, 0, 16),
+              child: _buildAuthCard(theme, compact: true),
+            ),
+          ),
         ],
       ),
     );
@@ -993,131 +1008,244 @@ class _AuthScreenState extends State<AuthScreen> {
 
   Widget _buildHeroPanel(ThemeData theme, {required bool compact}) {
     final colorScheme = theme.colorScheme;
-
+    // Reference hero: sage gradient + decorative tree silhouette, the big
+    // Lora tagline anchored to the bottom-left. Compact layout drops the
+    // feature inventory — the sheet below has all the action surface.
     return Container(
       width: double.infinity,
-      padding: EdgeInsets.all(compact ? 20 : 28),
+      // Compact hero takes a generous ~360 minimum so the wordmark + tagline
+      // breathe properly. Desktop wide retains the prior padded card.
+      constraints: compact
+          ? const BoxConstraints(minHeight: 380)
+          : const BoxConstraints(),
+      padding: EdgeInsets.fromLTRB(
+        compact ? 22 : 28,
+        compact ? 50 : 28,
+        compact ? 22 : 28,
+        compact ? 60 : 28,
+      ),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+        gradient: const LinearGradient(
+          begin: Alignment(-0.6, -1.0),
+          end: Alignment(0.4, 1.0),
           colors: [
-            colorScheme.primary,
-            const Color(0xFF155B52),
-            const Color(0xFF2F7A63),
+            Color(0xFF4F8A6E), // light sage top
+            Color(0xFF2F6F58), // mid teal
+            Color(0xFF1F4F40), // deep forest at bottom
           ],
         ),
-        borderRadius: BorderRadius.circular(32),
-        boxShadow: [
-          BoxShadow(
-            color: colorScheme.primary.withValues(alpha: 0.18),
-            blurRadius: 30,
-            offset: const Offset(0, 18),
-          ),
-        ],
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(999),
-              border: Border.all(color: Colors.white24),
-            ),
-            child: Text(
-              'РОДНЯ',
-              style: AppTheme.sans(
-                color: Colors.white,
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 1.6,
-              ),
-            ),
-          ),
-          SizedBox(height: compact ? 18 : 24),
-          Text(
-            'Семья — это живое дерево.',
-            style: AppTheme.serif(
-              color: Colors.white,
-              fontSize: compact ? 30 : 38,
-              fontWeight: FontWeight.w600,
-              letterSpacing: -0.3,
-              height: 1.08,
-            ),
-          ),
-          const SizedBox(height: 12),
-          Text(
-            compact
-                ? 'Истории, голоса, лица и даты — в одном пространстве для своих.'
-                : 'Истории, голоса, лица и даты — в одном пространстве для своих.',
-            style: AppTheme.sans(
-              color: Colors.white.withValues(alpha: 0.86),
-              fontSize: 14,
-              fontWeight: FontWeight.w500,
-              height: 1.45,
-            ),
-          ),
-          const SizedBox(height: 18),
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: _mvpHighlights
-                .map(
-                  (feature) => _FeatureCard(
-                    feature: feature,
-                    compact: true,
-                  ),
-                )
-                .toList(),
-          ),
-          if (!compact) ...[
-            const SizedBox(height: 22),
-            Wrap(
-              spacing: 12,
-              runSpacing: 12,
-              children: [
-                FilledButton.icon(
-                  onPressed: _isLoading || _isAnySocialLoading
-                      ? null
-                      : () {
-                          _setMode(true);
-                          _focusPrimaryField();
-                        },
-                  icon: const Icon(Icons.login),
-                  label: const Text('Войти'),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: Colors.white,
-                    foregroundColor: colorScheme.primary,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 18,
-                      vertical: 16,
-                    ),
-                  ),
-                ),
-                OutlinedButton.icon(
-                  onPressed: _isLoading || _isAnySocialLoading
-                      ? null
-                      : () {
-                          _setMode(false);
-                          _focusPrimaryField();
-                        },
-                  icon: const Icon(Icons.family_restroom_outlined),
-                  label: const Text('Создать аккаунт'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.white,
-                    side: const BorderSide(color: Colors.white38),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 18,
-                      vertical: 16,
-                    ),
-                  ),
+        // Compact: only top corners are radiused; the sheet below sits
+        // flush with no border-radius on the bottom of the hero. Wide:
+        // a full 32-radius card with shadow.
+        borderRadius: compact
+            ? BorderRadius.zero
+            : BorderRadius.circular(32),
+        boxShadow: compact
+            ? null
+            : [
+                BoxShadow(
+                  color: colorScheme.primary.withValues(alpha: 0.18),
+                  blurRadius: 30,
+                  offset: const Offset(0, 18),
                 ),
               ],
+      ),
+      child: Stack(
+        clipBehavior: Clip.hardEdge,
+        children: [
+          // Decorative tree silhouette per reference. Painted at low
+          // opacity behind the text so the gradient still owns the eye.
+          if (compact)
+            Positioned.fill(
+              child: IgnorePointer(
+                child: Opacity(
+                  opacity: 0.18,
+                  child: CustomPaint(painter: const _AuthHeroTreePainter()),
+                ),
+              ),
+            ),
+          // Soft warm + sage glows in the corners, also from reference.
+          if (compact) ...[
+            Positioned(
+              top: -60,
+              right: -50,
+              child: IgnorePointer(
+                child: Container(
+                  width: 220,
+                  height: 220,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: RadialGradient(
+                      colors: [
+                        const Color(0xFFEBC678).withValues(alpha: 0.40),
+                        Colors.transparent,
+                      ],
+                      stops: const [0.0, 0.7],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            Positioned(
+              bottom: -80,
+              left: -60,
+              child: IgnorePointer(
+                child: Container(
+                  width: 240,
+                  height: 240,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: RadialGradient(
+                      colors: [
+                        const Color(0xFF9DD8B5).withValues(alpha: 0.36),
+                        Colors.transparent,
+                      ],
+                      stops: const [0.0, 0.7],
+                    ),
+                  ),
+                ),
+              ),
             ),
           ],
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.eco_outlined,
+                      size: 18, color: Colors.white),
+                  const SizedBox(width: 8),
+                  Text(
+                    'РОДНЯ',
+                    style: AppTheme.sans(
+                      color: Colors.white.withValues(alpha: 0.92),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 2.0,
+                    ),
+                  ),
+                ],
+              ),
+              SizedBox(height: compact ? 70 : 24),
+              Text(
+                'Семья —',
+                style: AppTheme.serif(
+                  color: Colors.white,
+                  fontSize: compact ? 38 : 38,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: -0.4,
+                  height: 1.05,
+                ),
+              ),
+              RichText(
+                text: TextSpan(
+                  children: [
+                    TextSpan(
+                      text: 'это ',
+                      style: AppTheme.serif(
+                        color: Colors.white,
+                        fontSize: compact ? 38 : 38,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: -0.4,
+                        height: 1.05,
+                      ),
+                    ),
+                    TextSpan(
+                      text: 'живое',
+                      style: AppTheme.serif(
+                        color: const Color(0xFFE9C273),
+                        fontSize: compact ? 38 : 38,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: -0.4,
+                        height: 1.05,
+                      ).copyWith(fontStyle: FontStyle.italic),
+                    ),
+                  ],
+                ),
+              ),
+              Text(
+                'дерево.',
+                style: AppTheme.serif(
+                  color: Colors.white,
+                  fontSize: compact ? 38 : 38,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: -0.4,
+                  height: 1.05,
+                ),
+              ),
+              const SizedBox(height: 14),
+              Text(
+                'Истории, голоса, лица и даты\nв одном пространстве для своих.',
+                style: AppTheme.sans(
+                  color: Colors.white.withValues(alpha: 0.85),
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  height: 1.5,
+                ),
+              ),
+              if (!compact) ...[
+                const SizedBox(height: 18),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
+                  children: _mvpHighlights
+                      .map(
+                        (feature) => _FeatureCard(
+                          feature: feature,
+                          compact: true,
+                        ),
+                      )
+                      .toList(),
+                ),
+              ],
+              if (!compact) ...[
+                const SizedBox(height: 22),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
+                  children: [
+                    FilledButton.icon(
+                      onPressed: _isLoading || _isAnySocialLoading
+                          ? null
+                          : () {
+                              _setMode(true);
+                              _focusPrimaryField();
+                            },
+                      icon: const Icon(Icons.login),
+                      label: const Text('Войти'),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: Colors.white,
+                        foregroundColor: colorScheme.primary,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 18,
+                          vertical: 16,
+                        ),
+                      ),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: _isLoading || _isAnySocialLoading
+                          ? null
+                          : () {
+                              _setMode(false);
+                              _focusPrimaryField();
+                            },
+                      icon: const Icon(Icons.family_restroom_outlined),
+                      label: const Text('Создать аккаунт'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.white,
+                        side: const BorderSide(color: Colors.white38),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 18,
+                          vertical: 16,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ],
+          ),
         ],
       ),
     );
@@ -1630,4 +1758,96 @@ class _AuthFeature {
   final IconData icon;
   final String title;
   final String description;
+}
+
+/// Decorative tree silhouette painted into the auth hero, behind the
+/// tagline. Lifted from the reference jsx SVG path: a single trunk that
+/// branches in symmetric pairs upward, with small dots marking the
+/// branch terminals — reads as a stylized family graph.
+class _AuthHeroTreePainter extends CustomPainter {
+  const _AuthHeroTreePainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width;
+    final h = size.height;
+    // Reference uses a 360x380 viewbox aligned to the bottom-center.
+    // Project that into our actual canvas.
+    final cx = w * 0.5;
+    final baseY = h;
+    final trunkTop = h * 0.37;
+
+    final stroke = Paint()
+      ..color = Colors.white
+      ..strokeWidth = 1.4
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
+    final dot = Paint()..color = Colors.white;
+
+    // Main trunk.
+    canvas.drawLine(Offset(cx, baseY), Offset(cx, trunkTop), stroke);
+
+    // Three pairs of branches, each going further up + outward.
+    // pair 1 — wide spread, lowest branch fork
+    final l1 = Offset(cx - w * 0.25, h * 0.42);
+    final r1 = Offset(cx + w * 0.25, h * 0.42);
+    canvas.drawPath(
+      Path()
+        ..moveTo(cx, h * 0.58)
+        ..cubicTo(cx - w * 0.08, h * 0.53, l1.dx + w * 0.04, l1.dy + 12, l1.dx,
+            l1.dy),
+      stroke,
+    );
+    canvas.drawPath(
+      Path()
+        ..moveTo(cx, h * 0.58)
+        ..cubicTo(cx + w * 0.08, h * 0.53, r1.dx - w * 0.04, r1.dy + 12, r1.dx,
+            r1.dy),
+      stroke,
+    );
+
+    // pair 2
+    final l2 = Offset(cx - w * 0.17, h * 0.29);
+    final r2 = Offset(cx + w * 0.17, h * 0.29);
+    canvas.drawPath(
+      Path()
+        ..moveTo(cx, h * 0.45)
+        ..cubicTo(cx - w * 0.06, h * 0.40, l2.dx + w * 0.03, l2.dy + 10, l2.dx,
+            l2.dy),
+      stroke,
+    );
+    canvas.drawPath(
+      Path()
+        ..moveTo(cx, h * 0.45)
+        ..cubicTo(cx + w * 0.06, h * 0.40, r2.dx - w * 0.03, r2.dy + 10, r2.dx,
+            r2.dy),
+      stroke,
+    );
+
+    // pair 3 — top
+    final l3 = Offset(cx - w * 0.085, h * 0.24);
+    final r3 = Offset(cx + w * 0.085, h * 0.24);
+    canvas.drawPath(
+      Path()
+        ..moveTo(cx, trunkTop)
+        ..cubicTo(cx - w * 0.04, h * 0.33, l3.dx + w * 0.015, l3.dy + 8, l3.dx,
+            l3.dy),
+      stroke,
+    );
+    canvas.drawPath(
+      Path()
+        ..moveTo(cx, trunkTop)
+        ..cubicTo(cx + w * 0.04, h * 0.33, r3.dx - w * 0.015, r3.dy + 8, r3.dx,
+            r3.dy),
+      stroke,
+    );
+
+    // Branch terminal dots.
+    for (final node in [l1, r1, l2, r2, l3, r3, Offset(cx, trunkTop)]) {
+      canvas.drawCircle(node, 5, dot);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _AuthHeroTreePainter oldDelegate) => false;
 }
