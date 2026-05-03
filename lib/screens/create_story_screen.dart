@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
+
+import '../widgets/attachment_picker_sheet.dart';
 import 'package:provider/provider.dart';
 
 import '../backend/interfaces/circle_service_interface.dart';
@@ -84,6 +86,66 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
   void _handleDraftChanged() {
     if (mounted) {
       setState(() {});
+    }
+  }
+
+  Future<void> _openMediaPicker() async {
+    // Big-app pattern: launch a colored-icon picker grid that lets the
+    // user choose between gallery (photo), camera (snap now), and video.
+    // Direct OS-jump per type kills discoverability.
+    final choice = await showAttachmentPickerSheet(
+      context,
+      title: 'ДОБАВИТЬ МЕДИА',
+      actions: const [
+        AttachmentPickerAction(
+          id: 'photo_gallery',
+          icon: Icons.photo_library_rounded,
+          label: 'Галерея',
+          color: Color(0xFFE05A8B),
+        ),
+        AttachmentPickerAction(
+          id: 'photo_camera',
+          icon: Icons.photo_camera_rounded,
+          label: 'Камера',
+          color: Color(0xFF3D8DFF),
+        ),
+        AttachmentPickerAction(
+          id: 'video_gallery',
+          icon: Icons.video_library_rounded,
+          label: 'Видео',
+          color: Color(0xFFE85A40),
+        ),
+      ],
+    );
+    if (!mounted || choice == null) return;
+    switch (choice) {
+      case 'photo_camera':
+        await _takeStoryPhoto();
+        return;
+      case 'video_gallery':
+        await _pickVideo();
+        return;
+      case 'photo_gallery':
+      default:
+        await _pickImage();
+        return;
+    }
+  }
+
+  Future<void> _takeStoryPhoto() async {
+    try {
+      final picked = await _picker.pickImage(
+        source: ImageSource.camera,
+        imageQuality: 85,
+        maxWidth: 1440,
+      );
+      if (picked == null || !mounted) return;
+      setState(() {
+        _storyType = StoryType.image;
+        _selectedMedia = picked;
+      });
+    } catch (error) {
+      _showError('Не удалось сделать фото: $error');
     }
   }
 
@@ -626,14 +688,11 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
                 runSpacing: 10,
                 children: [
                   FilledButton.tonalIcon(
-                    onPressed: _pickImage,
-                    icon: const Icon(Icons.photo_library_outlined),
-                    label: const Text('Фото'),
-                  ),
-                  FilledButton.tonalIcon(
-                    onPressed: _pickVideo,
-                    icon: const Icon(Icons.video_library_outlined),
-                    label: const Text('Видео'),
+                    onPressed: _openMediaPicker,
+                    icon: const Icon(Icons.add_photo_alternate_rounded),
+                    label: Text(_selectedMedia == null
+                        ? 'Добавить медиа'
+                        : 'Заменить'),
                   ),
                   if (_selectedMedia != null)
                     OutlinedButton.icon(

@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
+
+import '../widgets/attachment_picker_sheet.dart';
 import 'package:provider/provider.dart';
 
 import '../backend/interfaces/auth_service_interface.dart';
@@ -285,6 +287,57 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     return circles.isEmpty ? null : circles.first.id;
   }
 
+  Future<void> _openMediaPicker() async {
+    // Big-app pattern: a colored-icon picker sheet rather than jumping
+    // straight into the OS gallery. Lets the user pick "сделать фото"
+    // (camera) without scrolling all the way to the camera app.
+    final choice = await showAttachmentPickerSheet(
+      context,
+      title: 'ДОБАВИТЬ ФОТО',
+      actions: const [
+        AttachmentPickerAction(
+          id: 'gallery',
+          icon: Icons.photo_library_rounded,
+          label: 'Галерея',
+          color: Color(0xFFE05A8B),
+        ),
+        AttachmentPickerAction(
+          id: 'camera',
+          icon: Icons.photo_camera_rounded,
+          label: 'Камера',
+          color: Color(0xFF3D8DFF),
+        ),
+      ],
+    );
+    if (!mounted || choice == null) return;
+    if (choice == 'camera') {
+      await _takePhoto();
+      return;
+    }
+    await _pickImages();
+  }
+
+  Future<void> _takePhoto() async {
+    try {
+      final shot = await _picker.pickImage(
+        source: ImageSource.camera,
+        imageQuality: 80,
+        maxWidth: 1080,
+      );
+      if (shot == null || !mounted) return;
+      if (_selectedImages.length >= 5) {
+        _showMessage('Можно прикрепить не более 5 изображений.');
+        return;
+      }
+      setState(() {
+        _selectedImages = <XFile>[..._selectedImages, shot];
+      });
+    } catch (e) {
+      debugPrint('Ошибка камеры: $e');
+      if (mounted) _showMessage('Не удалось сделать фото.');
+    }
+  }
+
   Future<void> _pickImages() async {
     try {
       final pickedFiles = await _picker.pickMultiImage(
@@ -487,7 +540,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
                     ? 'Фото'
                     : '${_selectedImages.length}/5',
                 active: _selectedImages.isNotEmpty,
-                onPressed: _pickImages,
+                onPressed: _openMediaPicker,
               ),
               _buildToolButton(
                 icon: Icons.group_work_outlined,

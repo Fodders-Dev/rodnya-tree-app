@@ -45,6 +45,7 @@ import '../services/chat_send_queue.dart';
 import '../services/custom_api_auth_service.dart';
 import '../services/custom_api_realtime_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/attachment_picker_sheet.dart';
 import '../utils/chat_attachment_download.dart';
 import '../utils/photo_url.dart';
 import '../utils/snackbar.dart';
@@ -1132,77 +1133,58 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _openAttachmentPicker() async {
-    final choice = await showModalBottomSheet<_AttachmentPickerChoice>(
-      context: context,
-      showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                leading: const Icon(Icons.photo_library_outlined),
-                title: const Text('Фото'),
-                subtitle:
-                    const Text('Сожмём перед отправкой, чтобы быстрее дошло'),
-                onTap: () => Navigator.of(context).pop(
-                  _AttachmentPickerChoice.images,
-                ),
-              ),
-              ListTile(
-                leading: const Icon(Icons.videocam_outlined),
-                title: const Text('Видео'),
-                subtitle: const Text('Добавится как вложение в чат'),
-                onTap: () => Navigator.of(context).pop(
-                  _AttachmentPickerChoice.video,
-                ),
-              ),
-              ListTile(
-                leading: const Icon(Icons.radio_button_checked_outlined),
-                title: const Text('Кружок'),
-                subtitle: Text(
-                  kIsWeb
-                      ? 'Подготовим видеосообщение из файла или камеры'
-                      : 'Короткое круглое видеосообщение',
-                ),
-                onTap: () => Navigator.of(context).pop(
-                  _AttachmentPickerChoice.videoNote,
-                ),
-              ),
-              ListTile(
-                leading: const Icon(Icons.insert_drive_file_outlined),
-                title: const Text('Файл'),
-                subtitle: const Text('Документы, архивы и другие файлы'),
-                onTap: () => Navigator.of(context).pop(
-                  _AttachmentPickerChoice.file,
-                ),
-              ),
-            ],
-          ),
+    // Telegram-style attachment grid: vivid colored icon-tiles in a 4-up
+    // layout. Replaces the previous vertical ListTile menu which the
+    // user described as "колхоз".
+    final choice = await showAttachmentPickerSheet(
+      context,
+      title: 'ПРИКРЕПИТЬ',
+      actions: const [
+        AttachmentPickerAction(
+          id: 'images',
+          icon: Icons.photo_library_rounded,
+          label: 'Галерея',
+          color: Color(0xFFE05A8B), // pink — "photos"
         ),
-      ),
+        AttachmentPickerAction(
+          id: 'video',
+          icon: Icons.videocam_rounded,
+          label: 'Видео',
+          color: Color(0xFFE85A40), // orange — "video"
+        ),
+        AttachmentPickerAction(
+          id: 'video_note',
+          icon: Icons.radio_button_checked_rounded,
+          label: 'Кружок',
+          color: Color(0xFF7B5BD6), // purple — "video note"
+        ),
+        AttachmentPickerAction(
+          id: 'file',
+          icon: Icons.insert_drive_file_rounded,
+          label: 'Файл',
+          color: Color(0xFF3D8DFF), // blue — "file"
+        ),
+      ],
     );
 
     if (!mounted || choice == null) {
       return;
     }
 
-    if (choice == _AttachmentPickerChoice.images) {
-      await _pickImageAttachments();
-      return;
+    switch (choice) {
+      case 'images':
+        await _pickImageAttachments();
+        return;
+      case 'video':
+        await _pickVideoAttachment();
+        return;
+      case 'video_note':
+        await _pickVideoNote();
+        return;
+      case 'file':
+        await _pickGenericFile();
+        return;
     }
-
-    if (choice == _AttachmentPickerChoice.video) {
-      await _pickVideoAttachment();
-      return;
-    }
-
-    if (choice == _AttachmentPickerChoice.videoNote) {
-      await _pickVideoNote();
-      return;
-    }
-
-    await _pickGenericFile();
   }
 
   /// Global hardware keyboard handler — registered on HardwareKeyboard directly.
@@ -7260,7 +7242,9 @@ class _AddParticipantsSheetState extends State<_AddParticipantsSheet> {
   }
 }
 
-enum _AttachmentPickerChoice { images, video, videoNote, file }
+// _AttachmentPickerChoice enum removed — the picker now returns the
+// AttachmentPickerAction.id string directly, so the call site switches
+// on plain `'images'` / `'video'` / `'video_note'` / `'file'`.
 
 bool _isVoiceNoteFileName(String value) {
   final normalizedValue = value.trim().toLowerCase();
