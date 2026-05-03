@@ -1155,6 +1155,54 @@ async function main() {
             );
           },
         },
+        {
+          // Telegram-style multi-device session management screen.
+          // Shipped in commit b9eb0d8 — landing route for the
+          // "Профиль → Безопасность → Активные сеансы" entry.
+          name: "sessions",
+          path: "/profile/sessions",
+          verify: async () => {
+            await page.waitForFunction(
+              () => window.location.hash.startsWith("#/profile/sessions"),
+              undefined,
+              {timeout: 15_000},
+            );
+            // Sessions screen lazy-loads via API — give it a beat to
+            // hydrate before the next route navigates away.
+            await page.waitForTimeout(800);
+          },
+        },
+        {
+          // QR-login display screen for the "log in by QR" flow on a
+          // device that's already authenticated. Shipped in b9eb0d8.
+          name: "qr-login-display",
+          path: "/auth/qr",
+          verify: async () => {
+            await page.waitForFunction(
+              () => window.location.hash.startsWith("#/auth/qr"),
+              undefined,
+              {timeout: 15_000},
+            );
+            await page.waitForTimeout(800);
+          },
+        },
+        {
+          // QR scanner screen — entered from the sessions screen to
+          // bind a new device. Smoke just verifies it loads (the camera
+          // permission prompt happens browser-side and is harmless on
+          // headless CI).
+          name: "qr-login-scan",
+          path: "/profile/sessions/scan",
+          verify: async () => {
+            await page.waitForFunction(
+              () =>
+                window.location.hash.startsWith("#/profile/sessions/scan"),
+              undefined,
+              {timeout: 15_000},
+            );
+            await page.waitForTimeout(800);
+          },
+        },
       ];
 
       if (primaryTree?.id) {
