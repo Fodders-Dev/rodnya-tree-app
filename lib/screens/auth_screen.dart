@@ -1378,6 +1378,35 @@ class _AuthScreenState extends State<AuthScreen> {
                 },
               ),
               const SizedBox(height: 16),
+              if (_isLogin)
+                // Inline "забыли?" link sits flush-right above the password
+                // field — the same pattern the reference uses, so the
+                // standalone "Пароль" link below the providers can go.
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 6, right: 4),
+                  child: Align(
+                    alignment: Alignment.centerRight,
+                    child: InkWell(
+                      onTap: _isLoading || _isAnySocialLoading
+                          ? null
+                          : () => context.push('/password_reset'),
+                      borderRadius: BorderRadius.circular(8),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 4,
+                        ),
+                        child: Text(
+                          'Забыли?',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.primary,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
               TextFormField(
                 controller: _passwordController,
                 decoration: _fieldDecoration(
@@ -1522,38 +1551,29 @@ class _AuthScreenState extends State<AuthScreen> {
                   ),
                 ],
               ),
-              const SizedBox(height: 10),
-              Text(
-                'Основной подтверждённый канал поможет объединять входы без дублей аккаунтов.',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: secondaryTextColor,
+              // The mode toggle above the form already switches to register,
+              // and "Забыли?" sits inline with the password field — so the
+              // duplicate "Создать аккаунт / У меня уже есть вход" and
+              // standalone "Пароль" links the previous layout had are gone.
+              // Keeping only the QR-login link, compact and icon-led.
+              if (_isLogin) ...[
+                const SizedBox(height: 12),
+                Center(
+                  child: TextButton.icon(
+                    onPressed:
+                        _isLoading ? null : () => context.push('/auth/qr'),
+                    icon: const Icon(Icons.qr_code_2_rounded, size: 16),
+                    label: const Text('Войти по QR'),
+                    style: TextButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
+                    ),
+                  ),
                 ),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 12),
-              TextButton(
-                onPressed: _isLoading || _isAnySocialLoading
-                    ? null
-                    : () {
-                        _setMode(!_isLogin);
-                        _focusPrimaryField();
-                      },
-                child: Text(
-                  _isLogin ? 'Создать аккаунт' : 'У меня уже есть вход',
-                ),
-              ),
-              if (_isLogin)
-                TextButton(
-                  onPressed:
-                      _isLoading ? null : () => context.push('/password_reset'),
-                  child: const Text('Пароль'),
-                ),
-              if (_isLogin)
-                TextButton.icon(
-                  onPressed: _isLoading ? null : () => context.push('/auth/qr'),
-                  icon: const Icon(Icons.qr_code_2_rounded, size: 18),
-                  label: const Text('Войти по QR с другого устройства'),
-                ),
+              ],
               const SizedBox(height: 8),
               Wrap(
                 alignment: WrapAlignment.center,
