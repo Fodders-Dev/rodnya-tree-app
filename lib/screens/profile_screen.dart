@@ -666,20 +666,87 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     )
                   : RefreshIndicator(
                       onRefresh: _loadUserData,
-                      // Cap outer width on desktop. Without this the
-                      // posts list would stretch the full viewport
-                      // (~1500px on a wide monitor) which is awful for
-                      // reading. The dossier card is already capped
-                      // internally at 680; other sections use
-                      // horizontal padding only, so the outer
-                      // constraint is what keeps the whole column
-                      // phone-shaped on desktop. A sidebar-driven
-                      // wide-profile layout is the next iteration.
-                      child: Center(
-                        child: ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 760),
-                          child: CustomScrollView(
-                            slivers: [
+                      // Wide layout (>= 1180): Stack with the main
+                      // CustomScrollView padded on the right + a
+                      // floating sidebar holding tree-card / completion
+                      // meter / stories rail / connection card. Narrow
+                      // keeps everything in a single capped column.
+                      child: _buildProfileBody(
+                        theme: theme,
+                        scheme: scheme,
+                        tokens: tokens,
+                        selectedTreeId: selectedTreeId,
+                        selectedTreeName: selectedTreeName,
+                        isFriendsTree: isFriendsTree,
+                      ),
+                    ),
+    );
+  }
+
+  Widget _buildProfileBody({
+    required ThemeData theme,
+    required ColorScheme scheme,
+    required RodnyaDesignTokens tokens,
+    required String? selectedTreeId,
+    required String? selectedTreeName,
+    required bool isFriendsTree,
+  }) {
+    final isWide = MediaQuery.of(context).size.width >= 1180;
+    return Center(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: isWide ? 1180 : 760),
+        child: Stack(
+          children: [
+            Padding(
+              // On wide we leave 340dp on the right for the sidebar
+              // overlay below. Sidebar is positioned with a 16dp
+              // gutter — the offset stays in sync with that.
+              padding: EdgeInsets.only(right: isWide ? 356 : 0),
+              child: CustomScrollView(
+                slivers: _buildProfileSlivers(
+                  theme: theme,
+                  scheme: scheme,
+                  tokens: tokens,
+                  isWide: isWide,
+                  selectedTreeId: selectedTreeId,
+                  selectedTreeName: selectedTreeName,
+                  isFriendsTree: isFriendsTree,
+                ),
+              ),
+            ),
+            if (isWide)
+              Positioned(
+                top: 16,
+                right: 0,
+                bottom: 0,
+                width: 340,
+                child: SingleChildScrollView(
+                  child: _buildProfileSidebarColumn(
+                    theme: theme,
+                    scheme: scheme,
+                    tokens: tokens,
+                    selectedTreeId: selectedTreeId,
+                    selectedTreeName: selectedTreeName,
+                    isFriendsTree: isFriendsTree,
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _buildProfileSlivers({
+    required ThemeData theme,
+    required ColorScheme scheme,
+    required RodnyaDesignTokens tokens,
+    required bool isWide,
+    required String? selectedTreeId,
+    required String? selectedTreeName,
+    required bool isFriendsTree,
+  }) {
+    return [
                           SliverToBoxAdapter(
                             child: Padding(
                               padding: const EdgeInsets.all(16),
@@ -755,8 +822,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               ),
                             ),
                           ),
-                          // Tree card — compact, only when linked to a node.
-                          if (_selectedTreePerson != null)
+                          // The next four sections move to the right
+                          // sidebar when we're in wide layout — they're
+                          // about *the user* (their tree slot, their
+                          // account, their completion progress, their
+                          // stories) rather than *their content*, so
+                          // they read better as a contextual rail
+                          // beside the posts feed.
+                          if (!isWide && _selectedTreePerson != null)
                             SliverToBoxAdapter(
                               child: Padding(
                                 padding: const EdgeInsets.fromLTRB(
@@ -772,9 +845,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 ),
                               ),
                             ),
-                          // Auth/trust section → moved to Settings.
-                          // Small shortcut card shown here instead.
-                          if (_accountLinkingStatus != null)
+                          if (!isWide && _accountLinkingStatus != null)
                             SliverToBoxAdapter(
                               child: Padding(
                                 padding: const EdgeInsets.fromLTRB(
@@ -786,10 +857,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 child: _buildAccountSettingsLink(scheme, theme),
                               ),
                             ),
-                          // Onboarding nudge — vanishes once the user
-                          // fills the five tracked fields (avatar /
-                          // name / DOB / city / bio).
-                          if (_userProfile != null)
+                          if (!isWide && _userProfile != null)
                             SliverToBoxAdapter(
                               child: Padding(
                                 padding: const EdgeInsets.fromLTRB(
@@ -809,18 +877,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 ),
                               ),
                             ),
-                          SliverToBoxAdapter(
-                            child: Padding(
-                              padding: const EdgeInsets.fromLTRB(
-                                16.0,
-                                16.0,
-                                16.0,
-                                0,
+                          if (!isWide)
+                            SliverToBoxAdapter(
+                              child: Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  16.0,
+                                  16.0,
+                                  16.0,
+                                  0,
+                                ),
+                                child: _buildStoriesRailSection(),
                               ),
-                              child: _buildStoriesRailSection(),
                             ),
-                          ),
-                          if (_profileCodeLabel() != null)
+                          if (!isWide && _profileCodeLabel() != null)
                             SliverToBoxAdapter(
                               child: Padding(
                                 padding: const EdgeInsets.fromLTRB(
@@ -977,12 +1046,60 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 childCount: _userPosts.length,
                               ),
                             ),
-                          const SliverToBoxAdapter(child: SizedBox(height: 40)),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
+      const SliverToBoxAdapter(child: SizedBox(height: 40)),
+    ];
+  }
+
+  /// Right-side sticky-feeling column used on the wide-layout profile.
+  /// Content mirrors the slivers we hide from the main column on wide:
+  /// tree-card → completion meter → stories rail → connection card.
+  Widget _buildProfileSidebarColumn({
+    required ThemeData theme,
+    required ColorScheme scheme,
+    required RodnyaDesignTokens tokens,
+    required String? selectedTreeId,
+    required String? selectedTreeName,
+    required bool isFriendsTree,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(0, 0, 16, 32),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (_selectedTreePerson != null) ...[
+            _buildTreeCardCompact(
+              context,
+              person: _selectedTreePerson!,
+              isFriendsTree: isFriendsTree,
+            ),
+            const SizedBox(height: 12),
+          ],
+          if (_accountLinkingStatus != null) ...[
+            _buildAccountSettingsLink(scheme, theme),
+            const SizedBox(height: 12),
+          ],
+          if (_userProfile != null) ...[
+            ProfileCompletionMeter(
+              profile: _userProfile!,
+              onTap: () async {
+                await context.push('/profile/edit');
+                if (mounted) {
+                  unawaited(_loadUserData());
+                }
+              },
+            ),
+            const SizedBox(height: 12),
+          ],
+          _buildStoriesRailSection(),
+          const SizedBox(height: 12),
+          if (_profileCodeLabel() != null) ...[
+            _buildProfileConnectionSection(
+              selectedTreeId: selectedTreeId,
+              selectedTreeName: selectedTreeName,
+            ),
+          ],
+        ],
+      ),
     );
   }
 
