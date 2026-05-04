@@ -1,5 +1,6 @@
 import 'package:image_picker/image_picker.dart';
 
+import '../../models/reaction_summary.dart';
 import '../../models/story.dart';
 
 abstract class StoryServiceInterface {
@@ -28,4 +29,15 @@ abstract class StoryServiceInterface {
   Future<Story> markViewed(String storyId);
 
   Future<void> deleteStory(String storyId);
+
+  /// Toggle the current user's emoji reaction on a story. Mirrors the
+  /// post / comment / chat-message reaction shape so the same
+  /// [ReactionPicker] / chip-strip UI works across surfaces. Returns
+  /// the updated reaction summaries straight from the server.
+  Future<List<ReactionSummary>> toggleStoryReaction({
+    required String storyId,
+    required String emoji,
+  }) {
+    throw UnsupportedError('toggleStoryReaction is not supported');
+  }
 }

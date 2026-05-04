@@ -1,6 +1,7 @@
 import '../utils/date_parser.dart';
 import '../utils/url_utils.dart';
 import 'post.dart';
+import 'reaction_summary.dart';
 
 enum StoryType { text, image, video }
 
@@ -23,12 +24,14 @@ class Story {
     this.scopeType = TreeContentScopeType.wholeTree,
     List<String>? anchorPersonIds,
     this.circleId,
+    List<ReactionSummary>? reactions,
   })  : _authorPhotoUrl = UrlUtils.normalizeImageUrl(authorPhotoUrl),
         _mediaUrl = UrlUtils.normalizeImageUrl(mediaUrl),
         _thumbnailUrl = UrlUtils.normalizeImageUrl(thumbnailUrl),
         updatedAt = updatedAt ?? createdAt,
         viewedBy = viewedBy ?? const <String>[],
-        anchorPersonIds = anchorPersonIds ?? const <String>[];
+        anchorPersonIds = anchorPersonIds ?? const <String>[],
+        reactions = reactions ?? const <ReactionSummary>[];
 
   final String id;
   final String treeId;
@@ -47,6 +50,7 @@ class Story {
   final TreeContentScopeType scopeType;
   final List<String> anchorPersonIds;
   final String? circleId;
+  final List<ReactionSummary> reactions;
 
   String? get authorPhotoUrl => _authorPhotoUrl;
   String? get mediaUrl => _mediaUrl;
@@ -85,6 +89,7 @@ class Story {
               .map((entry) => entry.toString())
               .toList(),
       circleId: json['circleId']?.toString(),
+      reactions: ReactionSummary.listFromDynamic(json['reactions']),
     );
   }
 
@@ -116,10 +121,34 @@ class Story {
       'scopeType': _scopeTypeToString(scopeType),
       'anchorPersonIds': anchorPersonIds,
       'circleId': circleId,
+      'reactions': reactions.map((r) => r.toMap()).toList(),
     };
   }
 
   Map<String, dynamic> toMap() => toJson();
+
+  Story copyWithReactions(List<ReactionSummary> next) {
+    return Story(
+      id: id,
+      treeId: treeId,
+      authorId: authorId,
+      authorName: authorName,
+      authorPhotoUrl: authorPhotoUrl,
+      type: type,
+      text: text,
+      mediaUrl: mediaUrl,
+      thumbnailUrl: thumbnailUrl,
+      createdAt: createdAt,
+      updatedAt: updatedAt,
+      expiresAt: expiresAt,
+      viewedBy: viewedBy,
+      isPublic: isPublic,
+      scopeType: scopeType,
+      anchorPersonIds: anchorPersonIds,
+      circleId: circleId,
+      reactions: next,
+    );
+  }
 
   Story copyWith({
     String? id,
@@ -139,6 +168,7 @@ class Story {
     TreeContentScopeType? scopeType,
     List<String>? anchorPersonIds,
     String? circleId,
+    List<ReactionSummary>? reactions,
   }) {
     return Story(
       id: id ?? this.id,
@@ -158,6 +188,7 @@ class Story {
       scopeType: scopeType ?? this.scopeType,
       anchorPersonIds: anchorPersonIds ?? this.anchorPersonIds,
       circleId: circleId ?? this.circleId,
+      reactions: reactions ?? this.reactions,
     );
   }
 

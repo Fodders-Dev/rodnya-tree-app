@@ -68,6 +68,7 @@ const EMPTY_DB = {
   comments: [],
   postReactions: [],
   postCommentReactions: [],
+  storyReactions: [],
   reports: [],
   blocks: [],
   profileContributions: [],
@@ -129,6 +130,9 @@ function normalizeDbState(parsed) {
       : [],
     postCommentReactions: Array.isArray(parsed?.postCommentReactions)
       ? parsed.postCommentReactions
+      : [],
+    storyReactions: Array.isArray(parsed?.storyReactions)
+      ? parsed.storyReactions
       : [],
     reports: Array.isArray(parsed?.reports) ? parsed.reports : [],
     blocks: Array.isArray(parsed?.blocks) ? parsed.blocks : [],
@@ -4889,6 +4893,22 @@ function attachCommentReactions(db, comment) {
   return clone;
 }
 
+function ensureStoryReactions(db) {
+  db.storyReactions = Array.isArray(db.storyReactions) ? db.storyReactions : [];
+  return db.storyReactions;
+}
+
+function aggregateStoryReactions(db, storyId) {
+  return _aggregateReactionsByKey(ensureStoryReactions(db), "storyId", storyId);
+}
+
+function attachStoryReactions(db, story) {
+  if (!story) return story;
+  const clone = structuredClone(story);
+  clone.reactions = aggregateStoryReactions(db, clone.id);
+  return clone;
+}
+
 function isMessageReadByUser(message, userId) {
   const readBy = normalizeParticipantIds(message?.readBy);
   if (readBy.length > 0) {
@@ -9514,7 +9534,7 @@ class FileStore {
       .sort((left, right) =>
         String(right.createdAt || "").localeCompare(String(left.createdAt || "")),
       )
-      .map((entry) => structuredClone(entry));
+      .map((entry) => attachStoryReactions(db, entry));
   }
 
   async findStory(storyId) {
@@ -9528,7 +9548,7 @@ class FileStore {
       await this._write(db);
       return null;
     }
-    return structuredClone(story);
+    return attachStoryReactions(db, story);
   }
 
   async createStory({
@@ -9619,8 +9639,100 @@ class FileStore {
     }
 
     db.stories.splice(storyIndex, 1);
+    db.storyReactions = ensureStoryReactions(db).filter(
+      (entry) => String(entry?.storyId || "").trim() !== storyId,
+    );
     await this._write(db);
     return structuredClone(story);
+  }
+
+  async toggleStoryReaction({storyId, userId, emoji}) {
+    const db = await this._read();
+    db.stories = db.stories.filter((entry) => !isExpiredAt(entry.expiresAt));
+    const story = db.stories.find((entry) => entry.id === storyId);
+    if (!story) {
+      return null;
+    }
+    const normalizedEmoji = normalizeReactionEmoji(emoji);
+    if (!normalizedEmoji) {
+      return "INVALID_EMOJI";
+    }
+    const reactions = ensureStoryReactions(db);
+    const existingIndex = reactions.findIndex(
+      (entry) =>
+        String(entry?.storyId || "").trim() === story.id &&
+        String(entry?.userId || "").trim() === userId &&
+        normalizeReactionEmoji(entry?.emoji) === normalizedEmoji,
+    );
+    let added = false;
+    if (existingIndex >= 0) {
+      reactions.splice(existingIndex, 1);
+    } else {
+      reactions.push({
+        storyId: story.id,
+        userId,
+        emoji: normalizedEmoji,
+        createdAt: nowIso(),
+      });
+      added = true;
+    }
+    story.updatedAt = nowIso();
+    await this._write(db);
+    return {
+      storyId: story.id,
+      authorId: story.authorId,
+      reactions: aggregateStoryReactions(db, story.id),
+      added,
+    };
+  }
+
+  async addStoryReactionNotification({
+    storyId,
+    storyAuthorId,
+    actorUserId,
+    actorName,
+    emoji,
+    storySnippet,
+  }) {
+    if (
+      !storyAuthorId ||
+      !actorUserId ||
+      String(storyAuthorId).trim() === String(actorUserId).trim()
+    ) {
+      return null;
+    }
+    const db = await this._read();
+    db.notifications = Array.isArray(db.notifications)
+      ? db.notifications
+      : [];
+    const existing = db.notifications.find(
+      (entry) =>
+        entry.userId === storyAuthorId &&
+        entry.type === "story_reaction" &&
+        !entry.readAt &&
+        entry.data?.storyId === storyId &&
+        entry.data?.actorUserId === actorUserId,
+    );
+    if (existing) {
+      existing.data = {...existing.data, emoji};
+      existing.body = `${actorName || "Кто-то"} отреагировал ${emoji}`;
+      existing.createdAt = nowIso();
+      existing.readAt = null;
+      await this._write(db);
+      return structuredClone(existing);
+    }
+    const notification = createNotificationRecord({
+      userId: storyAuthorId,
+      type: "story_reaction",
+      title: actorName
+        ? `${actorName} отреагировал ${emoji}`
+        : `Реакция ${emoji} на историю`,
+      body: storySnippet || "",
+      data: {storyId, actorUserId, emoji},
+    });
+    db.notifications.push(notification);
+    await this._write(db);
+    return structuredClone(notification);
   }
 
   async findPost(postId) {

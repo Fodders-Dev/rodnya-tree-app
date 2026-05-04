@@ -109,6 +109,66 @@ function registerStoryRoutes(
     res.json(mapStory(updatedStory));
   });
 
+  app.post("/v1/stories/:storyId/reactions", requireAuth, async (req, res) => {
+    const story = await store.findStory(req.params.storyId);
+    if (!story) {
+      res.status(404).json({message: "Story не найдена"});
+      return;
+    }
+
+    const tree = await requireTreeAccess(req, res, story.treeId);
+    if (!tree) {
+      return;
+    }
+
+    const emoji = String(req.body?.emoji || "").trim();
+    if (!emoji) {
+      res.status(400).json({message: "Нужна реакция"});
+      return;
+    }
+
+    const result = await store.toggleStoryReaction({
+      storyId: req.params.storyId,
+      userId: req.auth.user.id,
+      emoji,
+    });
+    if (result === null) {
+      res.status(404).json({message: "Story не найдена"});
+      return;
+    }
+    if (result === "INVALID_EMOJI") {
+      res.status(400).json({message: "Нужна реакция"});
+      return;
+    }
+
+    if (result.added) {
+      try {
+        const actorName =
+          req.auth.user.profile?.displayName ||
+          composeDisplayName(req.auth.user.profile) ||
+          req.auth.user.email ||
+          null;
+        const snippet = (story.text || "").trim().slice(0, 96);
+        await store.addStoryReactionNotification({
+          storyId: story.id,
+          storyAuthorId: result.authorId,
+          actorUserId: req.auth.user.id,
+          actorName,
+          emoji,
+          storySnippet: snippet,
+        });
+      } catch (error) {
+        console.warn("story reaction notification failed", error);
+      }
+    }
+
+    res.json({
+      storyId: result.storyId,
+      reactions: result.reactions,
+      added: result.added === true,
+    });
+  });
+
   app.delete("/v1/stories/:storyId", requireAuth, async (req, res) => {
     const story = await store.findStory(req.params.storyId);
     if (!story) {

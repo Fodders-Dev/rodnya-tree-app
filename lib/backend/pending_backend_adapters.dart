@@ -861,6 +861,14 @@ class PendingBackendStoryService implements StoryServiceInterface {
   }
 
   @override
+  Future<List<ReactionSummary>> toggleStoryReaction({
+    required String storyId,
+    required String emoji,
+  }) {
+    throw UnsupportedError(_pendingProviderMessage('story'));
+  }
+
+  @override
   Future<Story> createStory({
     required String treeId,
     required StoryType type,

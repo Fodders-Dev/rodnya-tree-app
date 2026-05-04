@@ -31,6 +31,7 @@ IconData _notificationIconForType(String type) {
       return Icons.verified_user_outlined;
     case 'post_reaction':
     case 'comment_reaction':
+    case 'story_reaction':
       return Icons.favorite_border;
     default:
       return Icons.notifications_none;
@@ -58,6 +59,8 @@ String _notificationLabelForType(String type) {
       return 'Реакция на пост';
     case 'comment_reaction':
       return 'Реакция на комментарий';
+    case 'story_reaction':
+      return 'Реакция на историю';
     default:
       return 'Уведомление';
   }

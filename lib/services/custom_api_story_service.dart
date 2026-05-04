@@ -8,6 +8,7 @@ import 'package:uuid/uuid.dart';
 import '../backend/backend_runtime_config.dart';
 import '../backend/interfaces/storage_service_interface.dart';
 import '../backend/interfaces/story_service_interface.dart';
+import '../models/reaction_summary.dart';
 import '../models/story.dart';
 import 'custom_api_auth_service.dart';
 
@@ -108,6 +109,21 @@ class CustomApiStoryService implements StoryServiceInterface {
       method: 'DELETE',
       path: '/v1/stories/$storyId',
     );
+  }
+
+  @override
+  Future<List<ReactionSummary>> toggleStoryReaction({
+    required String storyId,
+    required String emoji,
+  }) async {
+    final normalized = emoji.trim();
+    if (normalized.isEmpty) return const <ReactionSummary>[];
+    final response = await _requestJson(
+      method: 'POST',
+      path: '/v1/stories/$storyId/reactions',
+      body: <String, dynamic>{'emoji': normalized},
+    );
+    return ReactionSummary.listFromDynamic(response['reactions']);
   }
 
   Future<String?> _uploadStoryMedia({

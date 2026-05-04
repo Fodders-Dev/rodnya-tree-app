@@ -7,9 +7,12 @@ import 'package:video_player/video_player.dart';
 
 import '../backend/interfaces/story_service_interface.dart';
 import '../backend/backend_runtime_config.dart';
+import '../models/reaction_summary.dart';
 import '../models/story.dart';
 import '../utils/e2e_state_bridge.dart';
 import '../utils/photo_url.dart';
+import '../widgets/reaction_chip_strip.dart';
+import '../widgets/reaction_picker.dart';
 import '../widgets/story_visuals.dart';
 
 class StoryViewerEntryScreen extends StatefulWidget {
@@ -352,6 +355,81 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
     unawaited(_prepareCurrentStory());
   }
 
+  Future<void> _openReactionPickerForCurrentStory() async {
+    final emoji = await ReactionPicker.show(context);
+    if (emoji == null || !mounted) return;
+    await _toggleStoryReaction(emoji);
+  }
+
+  Future<void> _toggleStoryReaction(String emoji) async {
+    final userId = widget.currentUserId;
+    if (userId.isEmpty) return;
+    final original = _currentStory;
+    final originalReactions = List<ReactionSummary>.from(original.reactions);
+    // Optimistic toggle so the chip appears immediately. Server result
+    // reconciles the count once it lands.
+    final next = _applyOptimisticReaction(originalReactions, emoji, userId);
+    setState(() {
+      _stories[_currentIndex] = original.copyWithReactions(next);
+    });
+    try {
+      final fromServer = await _storyService.toggleStoryReaction(
+        storyId: original.id,
+        emoji: emoji,
+      );
+      if (!mounted) return;
+      setState(() {
+        _stories[_currentIndex] = original.copyWithReactions(fromServer);
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _stories[_currentIndex] = original.copyWithReactions(originalReactions);
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Не удалось сохранить реакцию: $error')),
+      );
+    }
+  }
+
+  /// Optimistic toggle (mirror of post_card / comment_sheet logic) —
+  /// flips the current user's pick on/off, removing the entry when
+  /// the count drops to zero.
+  List<ReactionSummary> _applyOptimisticReaction(
+    List<ReactionSummary> input,
+    String emoji,
+    String userId,
+  ) {
+    final next = List<ReactionSummary>.from(input);
+    final existingIndex = next.indexWhere((r) => r.emoji == emoji);
+    if (existingIndex == -1) {
+      next.add(ReactionSummary(
+        emoji: emoji,
+        userIds: <String>[userId],
+        count: 1,
+      ));
+      return next;
+    }
+    final entry = next[existingIndex];
+    final wasMine = entry.userIds.contains(userId);
+    final updatedUsers = List<String>.from(entry.userIds);
+    if (wasMine) {
+      updatedUsers.remove(userId);
+    } else {
+      updatedUsers.add(userId);
+    }
+    if (updatedUsers.isEmpty) {
+      next.removeAt(existingIndex);
+    } else {
+      next[existingIndex] = ReactionSummary(
+        emoji: emoji,
+        userIds: updatedUsers,
+        count: updatedUsers.length,
+      );
+    }
+    return next;
+  }
+
   Future<void> _deleteCurrentStory() async {
     if (_isDeleting) {
       return;
@@ -631,49 +709,86 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
   Widget _buildBottomTray(Story story) {
     final theme = Theme.of(context);
     final hasCaption = story.type != StoryType.text && story.hasText;
+    final hasReactions = story.reactions.isNotEmpty;
 
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.22),
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          Expanded(
-            child: hasCaption
-                ? Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        story.text!.trim(),
-                        maxLines: 4,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.bodyLarge?.copyWith(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w600,
-                          height: 1.25,
-                        ),
-                      ),
-                    ],
-                  )
-                : const SizedBox.shrink(),
-          ),
-          if (hasCaption) const SizedBox(width: 12),
-          StoryMediaBadge(
-            icon: _isOwnStory
-                ? Icons.remove_red_eye_outlined
-                : _currentStory.isViewedBy(widget.currentUserId)
-                    ? Icons.check_circle_outline
-                    : Icons.fiber_manual_record_rounded,
-            label: _statusLabel,
-            emphasized: true,
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (hasReactions) ...[
+          // Reaction chips above the tray, left-aligned. Tap toggles
+          // the user's pick; optimistic state covers the server
+          // round-trip.
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8, left: 4, right: 4),
+            child: ReactionChipStrip(
+              reactions: story.reactions,
+              currentUserId: widget.currentUserId,
+              onToggle: _toggleStoryReaction,
+            ),
           ),
         ],
-      ),
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.22),
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Expanded(
+                child: hasCaption
+                    ? Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            story.text!.trim(),
+                            maxLines: 4,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.bodyLarge?.copyWith(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w600,
+                              height: 1.25,
+                            ),
+                          ),
+                        ],
+                      )
+                    : const SizedBox.shrink(),
+              ),
+              if (hasCaption) const SizedBox(width: 12),
+              // Reaction button — only on others' stories. Own stories
+              // show the viewer-count badge instead, since reacting to
+              // your own story doesn't make sense.
+              if (!_isOwnStory) ...[
+                Semantics(
+                  button: true,
+                  label: 'story-viewer-react',
+                  child: _buildIconAction(
+                    onTap: _openReactionPickerForCurrentStory,
+                    child: const Icon(
+                      Icons.add_reaction_outlined,
+                      color: Colors.white,
+                      size: 20,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+              ],
+              StoryMediaBadge(
+                icon: _isOwnStory
+                    ? Icons.remove_red_eye_outlined
+                    : _currentStory.isViewedBy(widget.currentUserId)
+                        ? Icons.check_circle_outline
+                        : Icons.fiber_manual_record_rounded,
+                label: _statusLabel,
+                emphasized: true,
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
