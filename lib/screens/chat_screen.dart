@@ -47,6 +47,7 @@ import '../services/custom_api_realtime_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/attachment_picker_sheet.dart';
 import '../widgets/kruzhok_recorder_screen.dart';
+import '../widgets/swipe_to_reply.dart';
 import '../utils/chat_attachment_download.dart';
 import '../utils/photo_url.dart';
 import '../utils/snackbar.dart';
@@ -202,6 +203,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _typingHeartbeatActive = false;
   final Map<String, DateTime> _typingUsers = <String, DateTime>{};
   final Set<String> _onlineUserIds = <String>{};
+
   /// Last-seen timestamps per peer userId. Populated from chat-details
   /// participants on chat open and updated by realtime `presence.updated`
   /// events when a peer goes offline. Drives the "был(а) N минут назад"
@@ -2204,9 +2206,8 @@ class _ChatScreenState extends State<ChatScreen> {
       // for that broadcast). For online events lastSeenAt is null —
       // because the user IS online, the timestamp would be misleading.
       final lastSeenRaw = event.lastSeenAt ?? event.updatedAt;
-      final parsedLastSeen = lastSeenRaw == null
-          ? null
-          : DateTime.tryParse(lastSeenRaw);
+      final parsedLastSeen =
+          lastSeenRaw == null ? null : DateTime.tryParse(lastSeenRaw);
       setState(() {
         if (event.isOnline == true) {
           _onlineUserIds.add(userId);
@@ -4093,8 +4094,7 @@ class _ChatScreenState extends State<ChatScreen> {
       // happy — both visually identical at this size.
       return _ComposerSendButton(
         icon: _selectedEdit != null ? Icons.check : Icons.send,
-        tooltip:
-            _selectedEdit != null ? 'Сохранить изменения' : 'Отправить',
+        tooltip: _selectedEdit != null ? 'Сохранить изменения' : 'Отправить',
         onPressed:
             _selectedEdit != null ? _saveEditedMessage : _sendCurrentMessage,
       );
@@ -4179,8 +4179,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (total == 0) {
       return null;
     }
-    final readCount =
-        recipients.where(message.readBy.contains).length;
+    final readCount = recipients.where(message.readBy.contains).length;
     if (readCount >= total) {
       return 'Прочитали все';
     }
@@ -4259,55 +4258,63 @@ class _ChatScreenState extends State<ChatScreen> {
         child: _buildCallSummaryBubble(message, callMetadata, isMe),
       );
     }
-    return GestureDetector(
+    return SwipeToReply(
       key: messageKey,
-      onTap: _isSelectionMode
-          ? () => _toggleRemoteMessageSelection(message)
-          : null,
-      onLongPressStart: (details) {
-        if (_isSelectionMode) {
-          _toggleRemoteMessageSelection(message);
-          return;
-        }
-        _openRemoteMessageActions(
-          message,
-          anchorPosition: details.globalPosition,
-        );
-      },
-      onSecondaryTapDown: (details) {
-        if (_isSelectionMode) {
-          _toggleRemoteMessageSelection(message);
-          return;
-        }
-        _openRemoteMessageActions(
-          message,
-          anchorPosition: details.globalPosition,
-        );
-      },
-      child: _ChatBubble(
-        isMe: isMe,
-        senderLabel: widget.isGroup && !isMe
-            ? _groupSenderLabel(message.senderName, message.senderId)
+      isMe: isMe,
+      // Selection mode uses long-press / tap on the bubble for
+      // multi-select — the swipe gesture would conflict, so disable
+      // it via a no-op callback while in selection mode.
+      onReply:
+          _isSelectionMode ? () {} : () => _selectReplyFromMessage(message),
+      child: GestureDetector(
+        onTap: _isSelectionMode
+            ? () => _toggleRemoteMessageSelection(message)
             : null,
-        text: message.text,
-        highlightQuery: _searchController.query,
-        timeLabel: DateFormat.Hm('ru').format(message.timestamp),
-        isRead: isMe && _messageReadByAnyRecipient(message),
-        isDelivered: isMe && _messageDeliveredToAnyRecipient(message),
-        remoteAttachments: message.attachments,
-        replyTo: message.replyTo,
-        onReplyTap: message.replyTo == null
-            ? null
-            : () => unawaited(_focusMessageById(message.replyTo!.messageId)),
-        isPinned: _pinnedMessage?.messageId == message.id,
-        isHighlighted: _highlightedPinnedMessageId == message.id,
-        footerLabel: footerLabel,
-        reactionGroups: _reactionGroupsForMessage(message),
-        onReactionTap: (emoji) => _toggleReactionForMessage(message, emoji),
-        showSelectionMarker: _isSelectionMode,
-        isSelected: _selectionController.isRemoteSelected(message.id),
-        onOpenRemoteAttachment: (attachments, attachment) =>
-            _openRemoteAttachmentPreview(message, attachments, attachment),
+        onLongPressStart: (details) {
+          if (_isSelectionMode) {
+            _toggleRemoteMessageSelection(message);
+            return;
+          }
+          _openRemoteMessageActions(
+            message,
+            anchorPosition: details.globalPosition,
+          );
+        },
+        onSecondaryTapDown: (details) {
+          if (_isSelectionMode) {
+            _toggleRemoteMessageSelection(message);
+            return;
+          }
+          _openRemoteMessageActions(
+            message,
+            anchorPosition: details.globalPosition,
+          );
+        },
+        child: _ChatBubble(
+          isMe: isMe,
+          senderLabel: widget.isGroup && !isMe
+              ? _groupSenderLabel(message.senderName, message.senderId)
+              : null,
+          text: message.text,
+          highlightQuery: _searchController.query,
+          timeLabel: DateFormat.Hm('ru').format(message.timestamp),
+          isRead: isMe && _messageReadByAnyRecipient(message),
+          isDelivered: isMe && _messageDeliveredToAnyRecipient(message),
+          remoteAttachments: message.attachments,
+          replyTo: message.replyTo,
+          onReplyTap: message.replyTo == null
+              ? null
+              : () => unawaited(_focusMessageById(message.replyTo!.messageId)),
+          isPinned: _pinnedMessage?.messageId == message.id,
+          isHighlighted: _highlightedPinnedMessageId == message.id,
+          footerLabel: footerLabel,
+          reactionGroups: _reactionGroupsForMessage(message),
+          onReactionTap: (emoji) => _toggleReactionForMessage(message, emoji),
+          showSelectionMarker: _isSelectionMode,
+          isSelected: _selectionController.isRemoteSelected(message.id),
+          onOpenRemoteAttachment: (attachments, attachment) =>
+              _openRemoteAttachmentPreview(message, attachments, attachment),
+        ),
       ),
     );
   }
@@ -4325,9 +4332,8 @@ class _ChatScreenState extends State<ChatScreen> {
         callMetadata.isVideo ? Icons.videocam_rounded : Icons.call_rounded;
     final summaryLabel = _callSummaryLabel(callMetadata);
     final secondaryLabel = _callSummarySecondaryLabel(callMetadata);
-    final tapMode = callMetadata.isVideo
-        ? CallMediaMode.video
-        : CallMediaMode.audio;
+    final tapMode =
+        callMetadata.isVideo ? CallMediaMode.video : CallMediaMode.audio;
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 16),
@@ -4463,8 +4469,7 @@ class _ChatScreenState extends State<ChatScreen> {
     ColorScheme scheme,
     ChatMessageCall callMetadata,
   ) {
-    final isMissedLike =
-        callMetadata.isMissed || callMetadata.isRejected;
+    final isMissedLike = callMetadata.isMissed || callMetadata.isRejected;
     if (isMissedLike) {
       final accent = scheme.error;
       return _CallSummaryPalette(
@@ -4584,58 +4589,64 @@ class _ChatScreenState extends State<ChatScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            GestureDetector(
+            SwipeToReply(
               key: bubbleKey,
-              onTap: _isSelectionMode
-                  ? () => _toggleOutgoingMessageSelection(message)
-                  : null,
-              onLongPressStart: (details) {
-                if (_isSelectionMode) {
-                  _toggleOutgoingMessageSelection(message);
-                  return;
-                }
-                _openOutgoingMessageActions(
-                  message,
-                  anchorPosition: details.globalPosition,
-                );
-              },
-              onSecondaryTapDown: (details) {
-                if (_isSelectionMode) {
-                  _toggleOutgoingMessageSelection(message);
-                  return;
-                }
-                _openOutgoingMessageActions(
-                  message,
-                  anchorPosition: details.globalPosition,
-                );
-              },
-              child: _ChatBubble(
-                isMe: true,
-                text: message.text,
-                highlightQuery: _searchController.query,
-                timeLabel: timeLabel,
-                isRead: false,
-                isDelivered: false,
-                remoteAttachments: message.forwardedAttachments,
-                localAttachments: message.attachments,
-                replyTo: message.replyTo,
-                onReplyTap: message.replyTo == null
-                    ? null
-                    : () => unawaited(
-                          _focusMessageById(message.replyTo!.messageId),
-                        ),
-                isPinned: false,
-                isHighlighted: false,
-                reactionGroups: const <_ReactionGroup>[],
-                showSelectionMarker: _isSelectionMode,
-                isSelected:
-                    _selectionController.isOutgoingSelected(message.localId),
-                onOpenLocalAttachment: (files, file) =>
-                    _openLocalAttachmentPreview(files, file),
-                footerLabel:
-                    _autoDeleteSettings.option == ChatAutoDeleteOption.off
-                        ? null
-                        : 'Автоудаление: ${_autoDeleteSettings.option.label}',
+              isMe: true,
+              onReply: _isSelectionMode
+                  ? () {}
+                  : () => _selectReplyFromOutgoingMessage(message),
+              child: GestureDetector(
+                onTap: _isSelectionMode
+                    ? () => _toggleOutgoingMessageSelection(message)
+                    : null,
+                onLongPressStart: (details) {
+                  if (_isSelectionMode) {
+                    _toggleOutgoingMessageSelection(message);
+                    return;
+                  }
+                  _openOutgoingMessageActions(
+                    message,
+                    anchorPosition: details.globalPosition,
+                  );
+                },
+                onSecondaryTapDown: (details) {
+                  if (_isSelectionMode) {
+                    _toggleOutgoingMessageSelection(message);
+                    return;
+                  }
+                  _openOutgoingMessageActions(
+                    message,
+                    anchorPosition: details.globalPosition,
+                  );
+                },
+                child: _ChatBubble(
+                  isMe: true,
+                  text: message.text,
+                  highlightQuery: _searchController.query,
+                  timeLabel: timeLabel,
+                  isRead: false,
+                  isDelivered: false,
+                  remoteAttachments: message.forwardedAttachments,
+                  localAttachments: message.attachments,
+                  replyTo: message.replyTo,
+                  onReplyTap: message.replyTo == null
+                      ? null
+                      : () => unawaited(
+                            _focusMessageById(message.replyTo!.messageId),
+                          ),
+                  isPinned: false,
+                  isHighlighted: false,
+                  reactionGroups: const <_ReactionGroup>[],
+                  showSelectionMarker: _isSelectionMode,
+                  isSelected:
+                      _selectionController.isOutgoingSelected(message.localId),
+                  onOpenLocalAttachment: (files, file) =>
+                      _openLocalAttachmentPreview(files, file),
+                  footerLabel:
+                      _autoDeleteSettings.option == ChatAutoDeleteOption.off
+                          ? null
+                          : 'Автоудаление: ${_autoDeleteSettings.option.label}',
+                ),
               ),
             ),
             const SizedBox(height: 2),
