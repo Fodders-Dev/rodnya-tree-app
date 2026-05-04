@@ -76,6 +76,7 @@ class _CommentSheetState extends State<CommentSheet> {
     final text = _commentController.text.trim();
     if (text.isEmpty || _isSending) return;
 
+    HapticFeedback.lightImpact();
     setState(() => _isSending = true);
 
     try {

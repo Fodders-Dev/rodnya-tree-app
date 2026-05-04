@@ -17,6 +17,7 @@ import 'glass_panel.dart';
 import 'media_lightbox.dart';
 import 'reaction_chip_strip.dart';
 import 'reaction_picker.dart';
+import 'rodnya_avatar.dart';
 
 class PostCard extends StatefulWidget {
   const PostCard({super.key, required this.post, this.onDeleted});
@@ -362,7 +363,6 @@ class _PostCardState extends State<PostCard>
 
   Widget _buildPostHeader() {
     final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
     final tokens = _tokensFor(theme);
     final authorPhotoUrl = widget.post.renderableAuthorPhotoUrl;
     const String? relativeRel = null;
@@ -378,34 +378,10 @@ class _PostCardState extends State<PostCard>
           InkWell(
             borderRadius: BorderRadius.circular(999),
             onTap: _openAuthorProfile,
-            child: Container(
-              width: 40,
-              height: 40,
-              padding: const EdgeInsets.all(1.5),
-              decoration: BoxDecoration(
-                gradient: authorPhotoUrl == null ? tokens.accentGradient : null,
-                shape: BoxShape.circle,
-              ),
-              child: CircleAvatar(
-                backgroundImage: authorPhotoUrl != null
-                    ? CachedNetworkImageProvider(authorPhotoUrl)
-                    : null,
-                backgroundColor: authorPhotoUrl == null
-                    ? Colors.transparent
-                    : scheme.primary.withValues(alpha: 0.12),
-                foregroundColor:
-                    authorPhotoUrl == null ? tokens.accentInk : scheme.primary,
-                child: authorPhotoUrl == null
-                    ? Text(
-                        _shortInitial(widget.post.authorName),
-                        style: AppTheme.sans(
-                          color: tokens.accentInk,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      )
-                    : null,
-              ),
+            child: RodnyaAvatar(
+              photoUrl: authorPhotoUrl,
+              name: widget.post.authorName,
+              size: 40,
             ),
           ),
           const SizedBox(width: 10),
@@ -500,12 +476,6 @@ class _PostCardState extends State<PostCard>
         ],
       ),
     );
-  }
-
-  String _shortInitial(String name) {
-    final t = name.trim();
-    if (t.isEmpty) return '?';
-    return String.fromCharCode(t.runes.first).toUpperCase();
   }
 
   /// Sniff a server URL for video — same pattern composer uses to tag

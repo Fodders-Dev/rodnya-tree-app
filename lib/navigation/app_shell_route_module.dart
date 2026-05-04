@@ -65,15 +65,14 @@ class AppShellRouteModule {
 
         return LayoutBuilder(
           builder: (context, constraints) {
-            // Force the mobile reference layout (bottom dock, no side nav)
-            // on every breakpoint per Claude design source. The desktop
-            // navigation rail / 1400-wide centered shell are intentionally
-            // disabled — the prototype is mobile-first and the user wants
-            // that look on web too. Legacy gate was
-            // constraints.maxWidth >= 900.
-            const bool isDesktop = false;
-            // Reference the parameter so the analyzer does not complain.
-            constraints.toString();
+            // Earlier this was hard-coded to false — the design
+            // reference is mobile-first and we forced that layout on
+            // web. User feedback after live testing reversed course:
+            // the centered narrow column on a wide browser felt like
+            // "stretched phone with empty voids". Restore the proper
+            // tablet / desktop shell at 900+ — sidebar nav rail
+            // replaces the bottom dock, content centered at 1400 max.
+            final bool isDesktop = constraints.maxWidth >= 900;
             final isTreeBranch = navigationShell.currentIndex == 2;
 
             Widget bodyContent = Column(
@@ -83,9 +82,6 @@ class AppShellRouteModule {
               ],
             );
 
-            // Desktop nav rail / 1400-wide centered shell are disabled
-            // intentionally per Claude design source. See isDesktop above.
-            // ignore: dead_code
             if (isDesktop) {
               bodyContent = Center(
                 child: ConstrainedBox(
@@ -97,7 +93,6 @@ class AppShellRouteModule {
               );
             }
 
-            // ignore: dead_code
             if (isDesktop) {
               return Scaffold(
                 backgroundColor: Colors.transparent,
