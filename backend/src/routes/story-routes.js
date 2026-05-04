@@ -35,6 +35,10 @@ function registerStoryRoutes(
     const thumbnailUrl = req.body?.thumbnailUrl;
     const expiresAt = req.body?.expiresAt;
     const circleId = String(req.body?.circleId || "").trim() || null;
+    const scopeType = String(req.body?.scopeType || "wholeTree").trim();
+    const anchorPersonIds = Array.isArray(req.body?.anchorPersonIds)
+      ? req.body.anchorPersonIds
+      : [];
 
     if (!treeId) {
       res.status(400).json({message: "Нужен treeId"});
@@ -69,6 +73,8 @@ function registerStoryRoutes(
       thumbnailUrl,
       expiresAt,
       circleId,
+      scopeType,
+      anchorPersonIds,
     });
 
     if (story === false) {

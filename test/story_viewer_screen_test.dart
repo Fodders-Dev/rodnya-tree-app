@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get_it/get_it.dart';
 import 'package:rodnya/backend/interfaces/story_service_interface.dart';
+import 'package:rodnya/models/post.dart' show TreeContentScopeType;
 import 'package:rodnya/models/reaction_summary.dart';
 import 'package:rodnya/models/story.dart';
 import 'package:rodnya/screens/story_viewer_screen.dart';
@@ -30,6 +31,8 @@ class _FakeStoryService implements StoryServiceInterface {
     String? thumbnailUrl,
     DateTime? expiresAt,
     String? circleId,
+    TreeContentScopeType scopeType = TreeContentScopeType.wholeTree,
+    List<String> anchorPersonIds = const <String>[],
   }) {
     throw UnimplementedError();
   }

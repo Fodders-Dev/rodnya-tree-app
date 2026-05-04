@@ -1,5 +1,6 @@
 import 'package:image_picker/image_picker.dart';
 
+import '../../models/post.dart' show TreeContentScopeType;
 import '../../models/reaction_summary.dart';
 import '../../models/story.dart';
 
@@ -24,6 +25,8 @@ abstract class StoryServiceInterface {
     String? thumbnailUrl,
     DateTime? expiresAt,
     String? circleId,
+    TreeContentScopeType scopeType = TreeContentScopeType.wholeTree,
+    List<String> anchorPersonIds = const <String>[],
   });
 
   Future<Story> markViewed(String storyId);

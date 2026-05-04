@@ -163,6 +163,8 @@ class _FakeStoryService implements StoryServiceInterface {
     String? thumbnailUrl,
     DateTime? expiresAt,
     String? circleId,
+    TreeContentScopeType scopeType = TreeContentScopeType.wholeTree,
+    List<String> anchorPersonIds = const <String>[],
   }) async =>
       Story(
         id: 'story-1',

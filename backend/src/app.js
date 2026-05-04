@@ -1267,6 +1267,10 @@ function createApp({
       expiresAt: story.expiresAt,
       viewedBy: Array.isArray(story.viewedBy) ? story.viewedBy : [],
       circleId: story.circleId || null,
+      scopeType: story.scopeType === "branches" ? "branches" : "wholeTree",
+      anchorPersonIds: Array.isArray(story.anchorPersonIds)
+        ? story.anchorPersonIds
+        : [],
       reactions: Array.isArray(story.reactions) ? story.reactions : [],
     };
   }

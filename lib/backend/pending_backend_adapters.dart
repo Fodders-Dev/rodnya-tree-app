@@ -883,6 +883,8 @@ class PendingBackendStoryService implements StoryServiceInterface {
     String? thumbnailUrl,
     DateTime? expiresAt,
     String? circleId,
+    TreeContentScopeType scopeType = TreeContentScopeType.wholeTree,
+    List<String> anchorPersonIds = const <String>[],
   }) {
     throw UnsupportedError(_pendingProviderMessage('story'));
   }

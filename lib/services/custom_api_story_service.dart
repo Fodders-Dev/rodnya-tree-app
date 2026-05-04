@@ -8,6 +8,7 @@ import 'package:uuid/uuid.dart';
 import '../backend/backend_runtime_config.dart';
 import '../backend/interfaces/storage_service_interface.dart';
 import '../backend/interfaces/story_service_interface.dart';
+import '../models/post.dart' show TreeContentScopeType;
 import '../models/reaction_summary.dart';
 import '../models/story.dart';
 import 'custom_api_auth_service.dart';
@@ -69,6 +70,8 @@ class CustomApiStoryService implements StoryServiceInterface {
     String? thumbnailUrl,
     DateTime? expiresAt,
     String? circleId,
+    TreeContentScopeType scopeType = TreeContentScopeType.wholeTree,
+    List<String> anchorPersonIds = const <String>[],
   }) async {
     String? uploadedMediaUrl;
     if (media != null) {
@@ -87,6 +90,9 @@ class CustomApiStoryService implements StoryServiceInterface {
         'expiresAt': expiresAt?.toIso8601String(),
         if (circleId != null && circleId.trim().isNotEmpty)
           'circleId': circleId.trim(),
+        'scopeType':
+            scopeType == TreeContentScopeType.branches ? 'branches' : 'wholeTree',
+        if (anchorPersonIds.isNotEmpty) 'anchorPersonIds': anchorPersonIds,
       },
     );
 

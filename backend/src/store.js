@@ -728,11 +728,22 @@ function createStoryRecord({
   thumbnailUrl = null,
   expiresAt = null,
   circleId = null,
+  scopeType = "wholeTree",
+  anchorPersonIds = [],
 }) {
   const createdAt = nowIso();
   const normalizedExpiresAt =
     normalizeOptionalIsoTimestamp(expiresAt) ||
     new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+  const normalizedScope =
+    String(scopeType || "wholeTree").trim() === "branches"
+      ? "branches"
+      : "wholeTree";
+  const normalizedAnchorIds = Array.isArray(anchorPersonIds)
+    ? anchorPersonIds
+        .map((id) => String(id || "").trim())
+        .filter(Boolean)
+    : [];
   return {
     id: crypto.randomUUID(),
     treeId,
@@ -744,6 +755,8 @@ function createStoryRecord({
     mediaUrl: normalizeNullableString(mediaUrl),
     thumbnailUrl: normalizeNullableString(thumbnailUrl),
     circleId: normalizeNullableString(circleId),
+    scopeType: normalizedScope,
+    anchorPersonIds: normalizedAnchorIds,
     createdAt,
     updatedAt: createdAt,
     expiresAt: normalizedExpiresAt,
@@ -9577,6 +9590,8 @@ class FileStore {
     thumbnailUrl = null,
     expiresAt = null,
     circleId = null,
+    scopeType = "wholeTree",
+    anchorPersonIds = [],
   }) {
     const db = await this._read();
     db.stories = db.stories.filter((entry) => !isExpiredAt(entry.expiresAt));
@@ -9595,6 +9610,20 @@ class FileStore {
       return null;
     }
 
+    // Validate that submitted anchorPersonIds actually live on this
+    // tree — drop stragglers silently rather than 400ing, so the
+    // client can be a bit sloppy.
+    const treePersonIds = new Set(
+      db.persons
+        .filter((p) => p.treeId === treeId)
+        .map((p) => String(p.id || "")),
+    );
+    const sanitizedAnchorIds = Array.isArray(anchorPersonIds)
+      ? anchorPersonIds
+          .map((id) => String(id || "").trim())
+          .filter((id) => treePersonIds.has(id))
+      : [];
+
     const story = createStoryRecord({
       treeId,
       authorId,
@@ -9606,6 +9635,8 @@ class FileStore {
       thumbnailUrl,
       expiresAt,
       circleId: targetCircle.id,
+      scopeType,
+      anchorPersonIds: sanitizedAnchorIds,
     });
     if (story.type === "text" && !story.text) {
       return false;

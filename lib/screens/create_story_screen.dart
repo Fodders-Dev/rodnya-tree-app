@@ -9,12 +9,18 @@ import '../widgets/kruzhok_recorder_screen.dart';
 import 'package:provider/provider.dart';
 
 import '../backend/interfaces/circle_service_interface.dart';
+import '../backend/interfaces/family_tree_service_interface.dart';
 import '../backend/interfaces/story_service_interface.dart';
+import '../models/audience_preset.dart';
 import '../models/circle.dart';
+import '../models/family_person.dart';
+import '../models/post.dart' show TreeContentScopeType;
 import '../models/story.dart';
 import '../providers/tree_provider.dart';
+import '../theme/app_theme.dart';
 import '../widgets/audience_picker.dart';
 import '../widgets/glass_panel.dart';
+import '../widgets/person_multi_picker_sheet.dart';
 import '../widgets/story_visuals.dart';
 
 class CreateStoryScreen extends StatefulWidget {
@@ -39,6 +45,11 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
   String? _currentTreeName;
   String? _selectedCircleId;
   List<FamilyCircle> _audienceCircles = <FamilyCircle>[];
+  AudiencePresetsResponse _audiencePresets = AudiencePresetsResponse.empty;
+  String? _selectedPresetKey;
+  final Set<String> _selectedBranchPersonIds = <String>{};
+  TreeContentScopeType _scopeType = TreeContentScopeType.wholeTree;
+  List<FamilyPerson> _availablePeople = <FamilyPerson>[];
   bool _isSubmitting = false;
   bool _isLoadingCircles = false;
   bool _circlesUnavailable = false;
@@ -249,12 +260,20 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
     });
 
     try {
+      // When a preset / manual person-list is active we hand
+      // anchorPersonIds + scopeType=branches to the server. Without
+      // that the API ignores the audience narrowing and the story
+      // shows up to the whole tree.
       await _storyService.createStory(
         treeId: _currentTreeId!,
         type: _storyType,
         text: text.isEmpty ? null : text,
         media: _selectedMedia,
-        circleId: _selectedCircleId,
+        circleId: _selectedBranchPersonIds.isEmpty
+            ? _selectedCircleId
+            : null,
+        scopeType: _scopeType,
+        anchorPersonIds: _selectedBranchPersonIds.toList(growable: false),
       );
       if (!mounted) {
         return;
@@ -306,11 +325,30 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
 
     try {
       final circles = await circleService.getCircles(treeId);
+      AudiencePresetsResponse presets = AudiencePresetsResponse.empty;
+      try {
+        presets = await circleService.getAudiencePresets(treeId);
+      } catch (_) {
+        // Older backend without /audience-presets — picker just won't
+        // surface smart tiles, no error toast for the user.
+      }
+      // Tree people for the manual picker. Best-effort — failure
+      // here just hides the "Выбрать людей" affordance.
+      List<FamilyPerson> people = const <FamilyPerson>[];
+      try {
+        final familyTreeService =
+            GetIt.I<FamilyTreeServiceInterface>();
+        people = await familyTreeService.getRelatives(treeId);
+      } catch (_) {
+        // ignored
+      }
       if (!mounted) {
         return;
       }
       setState(() {
         _audienceCircles = circles;
+        _audiencePresets = presets;
+        _availablePeople = people;
         _selectedCircleId = _resolveSelectedCircleId(circles);
         _circlesUnavailable = false;
       });
@@ -328,6 +366,194 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
         });
       }
     }
+  }
+
+  AudiencePreset? get _activeStoryPreset {
+    final key = _selectedPresetKey;
+    if (key == null) return null;
+    for (final p in _audiencePresets.presets) {
+      if (p.key == key) return p;
+    }
+    return null;
+  }
+
+  Widget _buildStoryPresetTilesRow(ThemeData theme) {
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: _audiencePresets.presets.map((preset) {
+        final selected = _selectedPresetKey == preset.key;
+        return InkWell(
+          borderRadius: BorderRadius.circular(tokens.radiusMd),
+          onTap: () => _applyStoryPreset(preset),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 140),
+            constraints: const BoxConstraints(minWidth: 140),
+            padding: const EdgeInsets.symmetric(
+              horizontal: 14,
+              vertical: 10,
+            ),
+            decoration: BoxDecoration(
+              color: selected ? tokens.accentSoft : tokens.surfaceStrong,
+              borderRadius: BorderRadius.circular(tokens.radiusMd),
+              border: Border.all(
+                color: selected ? tokens.accent : tokens.surfaceLine,
+                width: selected ? 1.4 : 0.8,
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  preset.key == 'core_family'
+                      ? Icons.diversity_3_outlined
+                      : Icons.groups_2_outlined,
+                  color: selected ? tokens.accent : tokens.inkSecondary,
+                  size: 20,
+                ),
+                const SizedBox(width: 10),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      preset.label,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: tokens.ink,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${preset.personIds.length} чел.',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: tokens.inkSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  Widget _buildStoryBranchPickerSummary(ThemeData theme) {
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+    final selectedCount = _selectedBranchPersonIds.length;
+    final selectedPeople = _availablePeople
+        .where((p) => _selectedBranchPersonIds.contains(p.id))
+        .take(3)
+        .toList();
+    return InkWell(
+      onTap: _openStoryBranchMultiPicker,
+      borderRadius: BorderRadius.circular(tokens.radiusMd),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
+        decoration: BoxDecoration(
+          color: selectedCount > 0
+              ? tokens.accentSoft
+              : tokens.surfaceStrong.withValues(alpha: 0.7),
+          borderRadius: BorderRadius.circular(tokens.radiusMd),
+          border: Border.all(
+            color: selectedCount > 0 ? tokens.accent : tokens.surfaceLine,
+            width: selectedCount > 0 ? 1.2 : 0.7,
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              Icons.alt_route_outlined,
+              color: selectedCount > 0 ? tokens.accent : tokens.inkSecondary,
+              size: 20,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    selectedCount > 0
+                        ? 'Выбрано: $selectedCount чел.'
+                        : 'Выбрать людей вручную',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: tokens.ink,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    selectedCount == 0
+                        ? 'Поиск по имени · доступно ${_availablePeople.length}'
+                        : selectedPeople
+                                .map((p) => p.displayName)
+                                .join(', ') +
+                            (selectedCount > selectedPeople.length
+                                ? ' и ещё ${selectedCount - selectedPeople.length}'
+                                : ''),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: tokens.inkSecondary,
+                      height: 1.3,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Icon(Icons.chevron_right_rounded, color: tokens.inkSecondary),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _applyStoryPreset(AudiencePreset preset) {
+    setState(() {
+      if (_selectedPresetKey == preset.key) {
+        // Toggle off — back to "Всё дерево" / circle default.
+        _selectedPresetKey = null;
+        _selectedBranchPersonIds.clear();
+        _scopeType = TreeContentScopeType.wholeTree;
+        return;
+      }
+      _selectedPresetKey = preset.key;
+      _selectedCircleId = null;
+      _scopeType = TreeContentScopeType.branches;
+      _selectedBranchPersonIds
+        ..clear()
+        ..addAll(preset.personIds);
+    });
+  }
+
+  Future<void> _openStoryBranchMultiPicker() async {
+    final result = await PersonMultiPickerSheet.show(
+      context,
+      people: _availablePeople,
+      initialSelection: Set<String>.from(_selectedBranchPersonIds),
+      title: 'Выбрать людей',
+    );
+    if (result == null || !mounted) return;
+    setState(() {
+      _selectedPresetKey = null;
+      _selectedCircleId = null;
+      _selectedBranchPersonIds
+        ..clear()
+        ..addAll(result);
+      _scopeType = _selectedBranchPersonIds.isEmpty
+          ? TreeContentScopeType.wholeTree
+          : TreeContentScopeType.branches;
+    });
   }
 
   String? _resolveSelectedCircleId(List<FamilyCircle> circles) {
@@ -627,11 +853,22 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
                 ),
               ),
               const SizedBox(height: 12),
+              if (_audiencePresets.presets.isNotEmpty) ...[
+                _buildStoryPresetTilesRow(theme),
+                const SizedBox(height: 12),
+              ],
               AudiencePicker(
                 circles: _audienceCircles,
-                selectedCircleId: _selectedCircleId,
+                selectedCircleId:
+                    _activeStoryPreset == null ? _selectedCircleId : null,
                 onChanged: (circleId) {
                   setState(() {
+                    // Picking a circle clears any active preset /
+                    // manual-people selection so the three paths
+                    // stay mutually exclusive.
+                    _selectedPresetKey = null;
+                    _selectedBranchPersonIds.clear();
+                    _scopeType = TreeContentScopeType.wholeTree;
                     _selectedCircleId = circleId;
                   });
                 },
@@ -639,6 +876,10 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
                 isUnavailable: _circlesUnavailable,
                 onRetry: _loadAudienceCircles,
               ),
+              if (_availablePeople.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                _buildStoryBranchPickerSummary(theme),
+              ],
             ],
           ),
         ),
