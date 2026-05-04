@@ -1,11 +1,11 @@
-import 'dart:typed_data';
-
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../widgets/attachment_picker_sheet.dart';
+import '../widgets/kruzhok_recorder_screen.dart';
 import 'package:provider/provider.dart';
 
 import '../backend/interfaces/circle_service_interface.dart';
@@ -91,30 +91,41 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
 
   Future<void> _openMediaPicker() async {
     // Big-app pattern: launch a colored-icon picker grid that lets the
-    // user choose between gallery (photo), camera (snap now), and video.
-    // Direct OS-jump per type kills discoverability.
+    // user choose between gallery (photo), camera (snap now), gallery
+    // video, and "snap video now" via the in-app camera plugin —
+    // bypasses image_picker's medium-quality default which the user
+    // reported as a visible drop on iPhone.
     final choice = await showAttachmentPickerSheet(
       context,
       title: 'ДОБАВИТЬ МЕДИА',
-      actions: const [
-        AttachmentPickerAction(
+      actions: [
+        const AttachmentPickerAction(
           id: 'photo_gallery',
           icon: Icons.photo_library_rounded,
           label: 'Галерея',
           color: Color(0xFFE05A8B),
         ),
-        AttachmentPickerAction(
+        const AttachmentPickerAction(
           id: 'photo_camera',
           icon: Icons.photo_camera_rounded,
-          label: 'Камера',
+          label: 'Снять фото',
           color: Color(0xFF3D8DFF),
         ),
-        AttachmentPickerAction(
+        const AttachmentPickerAction(
           id: 'video_gallery',
           icon: Icons.video_library_rounded,
           label: 'Видео',
           color: Color(0xFFE85A40),
         ),
+        // Native camera capture (mobile only — web's <input type=file>
+        // can't drive a live preview loop).
+        if (!kIsWeb)
+          const AttachmentPickerAction(
+            id: 'video_camera',
+            icon: Icons.video_call_rounded,
+            label: 'Снять видео',
+            color: Color(0xFF7B5BD6),
+          ),
       ],
     );
     if (!mounted || choice == null) return;
@@ -124,6 +135,9 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
         return;
       case 'video_gallery':
         await _pickVideo();
+        return;
+      case 'video_camera':
+        await _recordStoryVideo();
         return;
       case 'photo_gallery':
       default:
@@ -174,6 +188,24 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
       });
     } catch (error) {
       _showError('Не удалось выбрать изображение: $error');
+    }
+  }
+
+  /// Native-camera-plugin capture path. Bypasses image_picker's
+  /// medium-quality default (the source of "качество съемки на айфоне
+  /// упало" that the user reported). The recorder writes the file
+  /// with a `story_video_*` prefix so any future per-source detection
+  /// can branch on it.
+  Future<void> _recordStoryVideo() async {
+    try {
+      final picked = await KruzhokRecorderScreen.showStory(context);
+      if (picked == null || !mounted) return;
+      setState(() {
+        _storyType = StoryType.video;
+        _selectedMedia = picked;
+      });
+    } catch (error) {
+      _showError('Не удалось записать видео: $error');
     }
   }
 

@@ -194,7 +194,13 @@ void main() {
 
       if (request.url.path == '/v1/auth/refresh') {
         expect(request.method, 'POST');
-        expect(jsonDecode(request.body), {'refreshToken': 'refresh-token'});
+        // Multi-device session work (commit b9eb0d8) appended a
+        // deviceInfo block to refresh-token requests so the server
+        // can attribute sessions to specific devices. We only assert
+        // refreshToken here — deviceInfo content is platform-derived
+        // and tested separately.
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        expect(body['refreshToken'], 'refresh-token');
         return http.Response(
           jsonEncode({
             'accessToken': 'new-token',

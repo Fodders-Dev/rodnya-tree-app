@@ -1,30 +1,56 @@
 import 'dart:async';
 import 'dart:io';
 
+// camera re-exports XFile (via cross_file), so no separate
+// image_picker / cross_file import needed here.
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
-/// Telegram-style in-app кружок recorder.
+/// In-app video recorder. Originally the Telegram-style кружок recorder
+/// (round preview + 60s + video_note_* filename), now parameterised so
+/// the same UI can serve other capture surfaces — most importantly
+/// stories, where the OS native camera handoff via image_picker sits at
+/// medium iOS quality and the user reported "качество съемки на айфоне
+/// упало при снятия видео". The camera plugin defaults to high.
 ///
-/// User feedback: "почему у нас кружочки пишутся не так, как в телеграм,
-/// а через файл отдельный?". The OS-native [ImagePicker.pickVideo] hands
-/// off to the system camera — it works but feels disconnected from the
-/// chat. This screen replaces that with an inline experience: round
-/// front-camera preview, big record button, 60-second cap, drag-down
-/// to dismiss.
-///
-/// Push via [show] — returns the captured [XFile] (with a `video_note_*`
-/// filename so [ChatScreen._isVideoNoteFile] picks it up downstream),
-/// or null if cancelled / no permission / no camera.
+/// Push via [show] (default options = кружок) or
+/// [showWithOptions] / [showStory] for a rectangular story recorder.
+/// Resolves to the captured [XFile], or null if cancelled / no
+/// permission / no camera.
 class KruzhokRecorderScreen extends StatefulWidget {
-  const KruzhokRecorderScreen({super.key});
+  const KruzhokRecorderScreen({
+    super.key,
+    this.circularPreview = true,
+    this.maxDuration = const Duration(seconds: 60),
+    this.filenamePrefix = 'video_note',
+    this.titleLabel = 'Кружок',
+    this.idleHint = 'Нажмите, чтобы начать запись · до 60 сек',
+  });
+
+  /// Whether to clip the live preview to a circle (true = кружок,
+  /// false = rectangular for stories).
+  final bool circularPreview;
+
+  /// Hard cap on recording length. Hitting this auto-stops + returns.
+  final Duration maxDuration;
+
+  /// Filename prefix written into the resulting XFile name. The chat
+  /// side uses `video_note_*` to recognise кружочки; the story side
+  /// uses `story_video_*` so feed code paths can keep their own
+  /// detection.
+  final String filenamePrefix;
+
+  /// Label shown in the header before recording starts.
+  final String titleLabel;
+
+  /// One-line hint shown under the record button while idle.
+  final String idleHint;
 
   /// Push the recorder above the current screen and resolve to the
-  /// captured XFile (or null if cancelled / no hardware). Caller is
-  /// responsible for routing the file into the chat send queue.
+  /// captured XFile. Defaults match the chat кружок (round, 60s,
+  /// video_note prefix).
   static Future<XFile?> show(BuildContext context) {
     return Navigator.of(context, rootNavigator: true).push<XFile>(
       MaterialPageRoute<XFile>(
@@ -34,13 +60,31 @@ class KruzhokRecorderScreen extends StatefulWidget {
     );
   }
 
+  /// Story-flavoured version: rectangular preview, 60s cap, filename
+  /// prefixed `story_video_` so the upload path can tag it correctly.
+  static Future<XFile?> showStory(BuildContext context) {
+    return Navigator.of(context, rootNavigator: true).push<XFile>(
+      MaterialPageRoute<XFile>(
+        fullscreenDialog: true,
+        builder: (_) => const KruzhokRecorderScreen(
+          circularPreview: false,
+          maxDuration: Duration(seconds: 60),
+          filenamePrefix: 'story_video',
+          titleLabel: 'История',
+          idleHint: 'Нажмите, чтобы записать · до 60 сек',
+        ),
+      ),
+    );
+  }
+
   @override
   State<KruzhokRecorderScreen> createState() => _KruzhokRecorderScreenState();
 }
 
 class _KruzhokRecorderScreenState extends State<KruzhokRecorderScreen> {
-  static const Duration _maxDuration = Duration(seconds: 60);
   static const Duration _tickInterval = Duration(milliseconds: 100);
+
+  Duration get _maxDuration => widget.maxDuration;
 
   CameraController? _controller;
   Future<void>? _initialization;
@@ -166,22 +210,23 @@ class _KruzhokRecorderScreenState extends State<KruzhokRecorderScreen> {
   }
 
   Future<XFile> _renameToVideoNote(XFile raw) async {
+    final prefix = widget.filenamePrefix;
     try {
       final dir = await getTemporaryDirectory();
       final extension = p.extension(raw.path).isNotEmpty
           ? p.extension(raw.path)
           : '.mp4';
       final newName =
-          'video_note_${DateTime.now().millisecondsSinceEpoch}$extension';
+          '${prefix}_${DateTime.now().millisecondsSinceEpoch}$extension';
       final newPath = p.join(dir.path, newName);
       final newFile = await File(raw.path).rename(newPath);
       return XFile(newFile.path, name: newName, mimeType: raw.mimeType);
     } catch (_) {
       // Rename can fail across volumes (e.g. cache vs tmp) — fall back
-      // to wrapping the original path under a video_note_* name. The
-      // filename string is what the chat side checks.
+      // to wrapping the original path under a prefixed name. The
+      // chat / story side check the filename string, not the path.
       final fallbackName =
-          'video_note_${DateTime.now().millisecondsSinceEpoch}'
+          '${prefix}_${DateTime.now().millisecondsSinceEpoch}'
           '${p.extension(raw.path).isEmpty ? '.mp4' : p.extension(raw.path)}';
       return XFile(raw.path, name: fallbackName, mimeType: raw.mimeType);
     }
@@ -267,6 +312,37 @@ class _KruzhokRecorderScreenState extends State<KruzhokRecorderScreen> {
           child: LayoutBuilder(
             builder: (context, constraints) {
               final size = constraints.biggest.shortestSide.clamp(0.0, 320.0);
+              // Story preview is full-screen 9:16 portrait; кружок
+              // preview is a centered square clipped to a circle.
+              if (!widget.circularPreview) {
+                return Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Positioned.fill(
+                      child: FittedBox(
+                        fit: BoxFit.cover,
+                        child: SizedBox(
+                          width: controller.value.previewSize?.height ?? 1,
+                          height: controller.value.previewSize?.width ?? 1,
+                          child: CameraPreview(controller),
+                        ),
+                      ),
+                    ),
+                    if (_isRecording)
+                      Positioned(
+                        left: 16,
+                        right: 16,
+                        bottom: 140,
+                        child: LinearProgressIndicator(
+                          value: progress,
+                          backgroundColor: Colors.white24,
+                          color: const Color(0xFFE85A40),
+                          minHeight: 4,
+                        ),
+                      ),
+                  ],
+                );
+              }
               return SizedBox(
                 width: size,
                 height: size,
@@ -310,7 +386,9 @@ class _KruzhokRecorderScreenState extends State<KruzhokRecorderScreen> {
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: Text(
-                  _isRecording ? _formatDuration(_elapsed) : 'Кружок',
+                  _isRecording
+                      ? _formatDuration(_elapsed)
+                      : widget.titleLabel,
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 16,
@@ -375,8 +453,8 @@ class _KruzhokRecorderScreenState extends State<KruzhokRecorderScreen> {
           bottom: 16,
           child: Text(
             _isRecording
-                ? 'Нажмите ещё раз, чтобы отправить'
-                : 'Нажмите, чтобы начать запись · до 60 сек',
+                ? 'Нажмите ещё раз, чтобы остановить'
+                : widget.idleHint,
             textAlign: TextAlign.center,
             style: TextStyle(
               color: Colors.white.withValues(alpha: 0.72),
