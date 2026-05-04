@@ -66,6 +66,8 @@ const EMPTY_DB = {
   posts: [],
   stories: [],
   comments: [],
+  postReactions: [],
+  postCommentReactions: [],
   reports: [],
   blocks: [],
   profileContributions: [],
@@ -122,6 +124,12 @@ function normalizeDbState(parsed) {
     posts: Array.isArray(parsed?.posts) ? parsed.posts : [],
     stories: Array.isArray(parsed?.stories) ? parsed.stories : [],
     comments: Array.isArray(parsed?.comments) ? parsed.comments : [],
+    postReactions: Array.isArray(parsed?.postReactions)
+      ? parsed.postReactions
+      : [],
+    postCommentReactions: Array.isArray(parsed?.postCommentReactions)
+      ? parsed.postCommentReactions
+      : [],
     reports: Array.isArray(parsed?.reports) ? parsed.reports : [],
     blocks: Array.isArray(parsed?.blocks) ? parsed.blocks : [],
     profileContributions: Array.isArray(parsed?.profileContributions)
@@ -4808,6 +4816,79 @@ function attachMessageReactions(db, message) {
   return clone;
 }
 
+// Posts and comments share the reaction shape with chat messages but
+// live in separate pools so unrelated chat-side logic (delivery /
+// read-receipts / push) can't cross over by accident.
+
+function ensurePostReactions(db) {
+  db.postReactions = Array.isArray(db.postReactions) ? db.postReactions : [];
+  return db.postReactions;
+}
+
+function ensurePostCommentReactions(db) {
+  db.postCommentReactions = Array.isArray(db.postCommentReactions)
+    ? db.postCommentReactions
+    : [];
+  return db.postCommentReactions;
+}
+
+function _aggregateReactionsByKey(entries, keyField, targetId) {
+  const normalizedTarget = String(targetId || "").trim();
+  if (!normalizedTarget) {
+    return [];
+  }
+  const grouped = new Map();
+  for (const reaction of entries) {
+    if (String(reaction?.[keyField] || "").trim() !== normalizedTarget) {
+      continue;
+    }
+    const emoji = normalizeReactionEmoji(reaction?.emoji);
+    const userId = String(reaction?.userId || "").trim();
+    if (!emoji || !userId) {
+      continue;
+    }
+    const existing = grouped.get(emoji) || {
+      emoji,
+      userIds: [],
+      count: 0,
+    };
+    if (!existing.userIds.includes(userId)) {
+      existing.userIds.push(userId);
+      existing.count = existing.userIds.length;
+    }
+    grouped.set(emoji, existing);
+  }
+  return Array.from(grouped.values()).sort((left, right) =>
+    String(left.emoji || "").localeCompare(String(right.emoji || "")),
+  );
+}
+
+function aggregatePostReactions(db, postId) {
+  return _aggregateReactionsByKey(ensurePostReactions(db), "postId", postId);
+}
+
+function aggregatePostCommentReactions(db, commentId) {
+  return _aggregateReactionsByKey(
+    ensurePostCommentReactions(db),
+    "commentId",
+    commentId,
+  );
+}
+
+function attachPostReactions(db, post) {
+  if (!post) return post;
+  const clone = structuredClone(post);
+  clone.reactions = aggregatePostReactions(db, clone.id);
+  return clone;
+}
+
+function attachCommentReactions(db, comment) {
+  if (!comment) return comment;
+  const clone = structuredClone(comment);
+  clone.reactions = aggregatePostCommentReactions(db, clone.id);
+  return clone;
+}
+
 function isMessageReadByUser(message, userId) {
   const readBy = normalizeParticipantIds(message?.readBy);
   if (readBy.length > 0) {
@@ -9387,7 +9468,7 @@ class FileStore {
       .sort((left, right) =>
         String(right.createdAt || "").localeCompare(String(left.createdAt || "")),
       )
-      .map((entry) => structuredClone(entry));
+      .map((entry) => attachPostReactions(db, entry));
   }
 
   async listStories({treeId = null, authorId = null, viewerUserId = null} = {}) {
@@ -9545,7 +9626,7 @@ class FileStore {
   async findPost(postId) {
     const db = await this._read();
     const post = db.posts.find((entry) => entry.id === postId);
-    return post ? structuredClone(post) : null;
+    return post ? attachPostReactions(db, post) : null;
   }
 
   async createPost({
@@ -9593,7 +9674,7 @@ class FileStore {
 
     db.posts.push(post);
     await this._write(db);
-    return structuredClone(post);
+    return attachPostReactions(db, post);
   }
 
   async deletePost(postId, actorUserId) {
@@ -9609,7 +9690,21 @@ class FileStore {
     }
 
     db.posts.splice(postIndex, 1);
+    const removedCommentIds = db.comments
+      .filter((entry) => entry.postId === postId)
+      .map((entry) => entry.id);
     db.comments = db.comments.filter((entry) => entry.postId !== postId);
+    // Cleanup reaction rows so they don't outlive their post / comment.
+    db.postReactions = ensurePostReactions(db).filter(
+      (entry) => String(entry?.postId || "").trim() !== postId,
+    );
+    if (removedCommentIds.length > 0) {
+      const removedSet = new Set(removedCommentIds);
+      db.postCommentReactions = ensurePostCommentReactions(db).filter(
+        (entry) =>
+          !removedSet.has(String(entry?.commentId || "").trim()),
+      );
+    }
     await this._write(db);
     return structuredClone(post);
   }
@@ -9629,7 +9724,85 @@ class FileStore {
     }
     post.updatedAt = nowIso();
     await this._write(db);
-    return structuredClone(post);
+    return attachPostReactions(db, post);
+  }
+
+  async togglePostReaction({postId, userId, emoji}) {
+    const db = await this._read();
+    const post = db.posts.find((entry) => entry.id === postId);
+    if (!post) {
+      return null;
+    }
+    const normalizedEmoji = normalizeReactionEmoji(emoji);
+    if (!normalizedEmoji) {
+      return "INVALID_EMOJI";
+    }
+    const reactions = ensurePostReactions(db);
+    const existingIndex = reactions.findIndex(
+      (entry) =>
+        String(entry?.postId || "").trim() === post.id &&
+        String(entry?.userId || "").trim() === userId &&
+        normalizeReactionEmoji(entry?.emoji) === normalizedEmoji,
+    );
+    let added = false;
+    if (existingIndex >= 0) {
+      reactions.splice(existingIndex, 1);
+    } else {
+      reactions.push({
+        postId: post.id,
+        userId,
+        emoji: normalizedEmoji,
+        createdAt: nowIso(),
+      });
+      added = true;
+    }
+    post.updatedAt = nowIso();
+    await this._write(db);
+    return {
+      postId: post.id,
+      reactions: aggregatePostReactions(db, post.id),
+      added,
+    };
+  }
+
+  async togglePostCommentReaction({postId, commentId, userId, emoji}) {
+    const db = await this._read();
+    const comment = db.comments.find(
+      (entry) => entry.id === commentId && entry.postId === postId,
+    );
+    if (!comment) {
+      return null;
+    }
+    const normalizedEmoji = normalizeReactionEmoji(emoji);
+    if (!normalizedEmoji) {
+      return "INVALID_EMOJI";
+    }
+    const reactions = ensurePostCommentReactions(db);
+    const existingIndex = reactions.findIndex(
+      (entry) =>
+        String(entry?.commentId || "").trim() === comment.id &&
+        String(entry?.userId || "").trim() === userId &&
+        normalizeReactionEmoji(entry?.emoji) === normalizedEmoji,
+    );
+    let added = false;
+    if (existingIndex >= 0) {
+      reactions.splice(existingIndex, 1);
+    } else {
+      reactions.push({
+        commentId: comment.id,
+        userId,
+        emoji: normalizedEmoji,
+        createdAt: nowIso(),
+      });
+      added = true;
+    }
+    await this._write(db);
+    return {
+      commentId: comment.id,
+      postId: comment.postId,
+      reactions: aggregatePostCommentReactions(db, comment.id),
+      added,
+    };
   }
 
   async listPostComments(postId) {
@@ -9639,7 +9812,7 @@ class FileStore {
       .sort((left, right) =>
         String(left.createdAt || "").localeCompare(String(right.createdAt || "")),
       )
-      .map((entry) => structuredClone(entry));
+      .map((entry) => attachCommentReactions(db, entry));
   }
 
   async addPostComment({
@@ -9669,7 +9842,7 @@ class FileStore {
 
     db.comments.push(comment);
     await this._write(db);
-    return structuredClone(comment);
+    return attachCommentReactions(db, comment);
   }
 
   async deletePostComment({postId, commentId, actorUserId}) {
@@ -9694,6 +9867,9 @@ class FileStore {
     }
 
     db.comments.splice(commentIndex, 1);
+    db.postCommentReactions = ensurePostCommentReactions(db).filter(
+      (entry) => String(entry?.commentId || "").trim() !== commentId,
+    );
     await this._write(db);
     return structuredClone(comment);
   }

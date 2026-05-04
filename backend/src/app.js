@@ -1238,6 +1238,7 @@ function createApp({
       anchorPersonIds: Array.isArray(post.anchorPersonIds)
         ? post.anchorPersonIds
         : [],
+      reactions: Array.isArray(post.reactions) ? post.reactions : [],
     };
   }
 
@@ -1272,6 +1273,7 @@ function createApp({
       createdAt: comment.createdAt,
       likeCount: likedBy.length,
       likedBy,
+      reactions: Array.isArray(comment.reactions) ? comment.reactions : [],
     };
   }
 

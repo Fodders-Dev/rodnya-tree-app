@@ -4866,6 +4866,229 @@ test("post endpoints cover feed, likes and comments", async () => {
   }
 });
 
+test("post and comment emoji reactions toggle and surface in feed", async () => {
+  const ctx = await startTestServer();
+
+  try {
+    const register = async (email, displayName) => {
+      const response = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+        method: "POST",
+        headers: {"content-type": "application/json"},
+        body: JSON.stringify({
+          email,
+          password: "secret123",
+          displayName,
+        }),
+      });
+      assert.equal(response.status, 201);
+      return response.json();
+    };
+
+    const alice = await register("react-alice@rodnya.app", "Alice React");
+    const bob = await register("react-bob@rodnya.app", "Bob React");
+
+    const treeResponse = await fetch(`${ctx.baseUrl}/v1/trees`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${alice.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({name: "Reaction tree"}),
+    });
+    assert.equal(treeResponse.status, 201);
+    const treePayload = await treeResponse.json();
+    const treeId = treePayload.tree.id;
+
+    // Bob joins via invite-and-accept flow (no public-join endpoint).
+    const inviteResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeId}/invitations`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${alice.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          recipientUserId: bob.user.id,
+          relationToTree: "Родственник",
+        }),
+      },
+    );
+    assert.equal(inviteResponse.status, 201);
+    const invitationPayload = await inviteResponse.json();
+    const acceptInviteResponse = await fetch(
+      `${ctx.baseUrl}/v1/tree-invitations/${invitationPayload.invitation.invitationId}/respond`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${bob.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({accept: true}),
+      },
+    );
+    assert.equal(acceptInviteResponse.status, 200);
+
+    const createPostResponse = await fetch(`${ctx.baseUrl}/v1/posts`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${alice.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({treeId: treeId, content: "Тестим реакции"}),
+    });
+    assert.equal(createPostResponse.status, 201);
+    const post = await createPostResponse.json();
+    assert.deepEqual(post.reactions, []);
+
+    // Bob reacts with ❤
+    const heartResponse = await fetch(
+      `${ctx.baseUrl}/v1/posts/${post.id}/reactions`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${bob.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({emoji: "❤"}),
+      },
+    );
+    assert.equal(heartResponse.status, 200);
+    const heartPayload = await heartResponse.json();
+    assert.equal(heartPayload.added, true);
+    assert.deepEqual(heartPayload.reactions, [
+      {emoji: "❤", userIds: [bob.user.id], count: 1},
+    ]);
+
+    // Alice reacts with 🔥 — independent emoji, both should accumulate.
+    const fireResponse = await fetch(
+      `${ctx.baseUrl}/v1/posts/${post.id}/reactions`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${alice.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({emoji: "🔥"}),
+      },
+    );
+    assert.equal(fireResponse.status, 200);
+    const firePayload = await fireResponse.json();
+    assert.equal(firePayload.reactions.length, 2);
+    const fireEntry = firePayload.reactions.find((r) => r.emoji === "🔥");
+    assert.deepEqual(fireEntry.userIds, [alice.user.id]);
+
+    // Feed exposes the reactions on the post.
+    const feedResponse = await fetch(
+      `${ctx.baseUrl}/v1/posts?treeId=${treeId}`,
+      {
+        headers: {authorization: `Bearer ${alice.accessToken}`},
+      },
+    );
+    assert.equal(feedResponse.status, 200);
+    const feed = await feedResponse.json();
+    assert.equal(feed.length, 1);
+    assert.equal(feed[0].reactions.length, 2);
+
+    // Bob toggles ❤ off — only Alice's 🔥 remains.
+    const heartOffResponse = await fetch(
+      `${ctx.baseUrl}/v1/posts/${post.id}/reactions`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${bob.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({emoji: "❤"}),
+      },
+    );
+    assert.equal(heartOffResponse.status, 200);
+    const heartOffPayload = await heartOffResponse.json();
+    assert.equal(heartOffPayload.added, false);
+    assert.equal(heartOffPayload.reactions.length, 1);
+    assert.equal(heartOffPayload.reactions[0].emoji, "🔥");
+
+    // Comment reactions follow the same shape under the comments
+    // sub-resource. Adding a comment, reacting, and toggling.
+    const commentResponse = await fetch(
+      `${ctx.baseUrl}/v1/posts/${post.id}/comments`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${bob.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({content: "А что я"}),
+      },
+    );
+    assert.equal(commentResponse.status, 201);
+    const comment = await commentResponse.json();
+    assert.deepEqual(comment.reactions, []);
+
+    const commentReactResponse = await fetch(
+      `${ctx.baseUrl}/v1/posts/${post.id}/comments/${comment.id}/reactions`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${alice.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({emoji: "👍"}),
+      },
+    );
+    assert.equal(commentReactResponse.status, 200);
+    const commentReactPayload = await commentReactResponse.json();
+    assert.equal(commentReactPayload.added, true);
+    assert.deepEqual(commentReactPayload.reactions, [
+      {emoji: "👍", userIds: [alice.user.id], count: 1},
+    ]);
+
+    // Comments list rebuilds with the reaction surfaced.
+    const commentsListResponse = await fetch(
+      `${ctx.baseUrl}/v1/posts/${post.id}/comments`,
+      {
+        headers: {authorization: `Bearer ${bob.accessToken}`},
+      },
+    );
+    assert.equal(commentsListResponse.status, 200);
+    const commentsList = await commentsListResponse.json();
+    assert.equal(commentsList.length, 1);
+    assert.deepEqual(commentsList[0].reactions, [
+      {emoji: "👍", userIds: [alice.user.id], count: 1},
+    ]);
+
+    // Empty emoji rejected.
+    const emptyEmojiResponse = await fetch(
+      `${ctx.baseUrl}/v1/posts/${post.id}/reactions`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${alice.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({emoji: ""}),
+      },
+    );
+    assert.equal(emptyEmojiResponse.status, 400);
+
+    // Reacting on a missing post is 404.
+    const ghostResponse = await fetch(
+      `${ctx.baseUrl}/v1/posts/does-not-exist/reactions`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${alice.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({emoji: "❤"}),
+      },
+    );
+    assert.equal(ghostResponse.status, 404);
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
 test("auto circles follow tree relations and filter audience content", async () => {
   const ctx = await startTestServer();
 

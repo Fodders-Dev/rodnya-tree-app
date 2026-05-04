@@ -125,6 +125,90 @@ function registerPostRoutes(
     res.status(204).send();
   });
 
+  app.post("/v1/posts/:postId/reactions", requireAuth, async (req, res) => {
+    const post = await store.findPost(req.params.postId);
+    if (!post) {
+      res.status(404).json({message: "Публикация не найдена"});
+      return;
+    }
+
+    const tree = await requireTreeAccess(req, res, post.treeId);
+    if (!tree) {
+      return;
+    }
+
+    const emoji = String(req.body?.emoji || "").trim();
+    if (!emoji) {
+      res.status(400).json({message: "Нужна реакция"});
+      return;
+    }
+
+    const result = await store.togglePostReaction({
+      postId: req.params.postId,
+      userId: req.auth.user.id,
+      emoji,
+    });
+    if (result === null) {
+      res.status(404).json({message: "Публикация не найдена"});
+      return;
+    }
+    if (result === "INVALID_EMOJI") {
+      res.status(400).json({message: "Нужна реакция"});
+      return;
+    }
+
+    res.json({
+      postId: result.postId,
+      reactions: result.reactions,
+      added: result.added === true,
+    });
+  });
+
+  app.post(
+    "/v1/posts/:postId/comments/:commentId/reactions",
+    requireAuth,
+    async (req, res) => {
+      const post = await store.findPost(req.params.postId);
+      if (!post) {
+        res.status(404).json({message: "Публикация не найдена"});
+        return;
+      }
+
+      const tree = await requireTreeAccess(req, res, post.treeId);
+      if (!tree) {
+        return;
+      }
+
+      const emoji = String(req.body?.emoji || "").trim();
+      if (!emoji) {
+        res.status(400).json({message: "Нужна реакция"});
+        return;
+      }
+
+      const result = await store.togglePostCommentReaction({
+        postId: req.params.postId,
+        commentId: req.params.commentId,
+        userId: req.auth.user.id,
+        emoji,
+      });
+      if (result === null) {
+        res.status(404).json({message: "Комментарий не найден"});
+        return;
+      }
+      if (result === "INVALID_EMOJI") {
+        res.status(400).json({message: "Нужна реакция"});
+        return;
+      }
+
+      res.json({
+        commentId: result.commentId,
+        postId: result.postId,
+        reactions: result.reactions,
+        added: result.added === true,
+      });
+    },
+  );
+
   app.post("/v1/posts/:postId/like", requireAuth, async (req, res) => {
     const post = await store.findPost(req.params.postId);
     if (!post) {
