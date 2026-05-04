@@ -50,16 +50,34 @@ class MediaLightbox extends StatefulWidget {
     this.initialIndex = 0,
     this.onDownload,
     this.onShare,
+    this.onLike,
+    this.onComment,
+    this.initialLiked = false,
+    this.likeCount = 0,
+    this.commentCount = 0,
   });
 
   final List<MediaLightboxItem> items;
   final int initialIndex;
 
   /// Optional callbacks. When null, the corresponding action button is
-  /// hidden. Hosts wire these to their existing download/share flows so
-  /// the lightbox itself stays platform-agnostic.
+  /// hidden. Hosts wire these to their existing flows so the lightbox
+  /// itself stays platform-agnostic.
   final ValueChanged<MediaLightboxItem>? onDownload;
   final ValueChanged<MediaLightboxItem>? onShare;
+
+  /// User feedback was: "при просмотра фото не хватает, чтобы можно
+  /// было лайк тут же поставить, комментарии почитать, переслать". So
+  /// the lightbox now exposes a like/comment/share row. The parent
+  /// (post_card) wires these to the post-level handlers; the lightbox
+  /// keeps its own optimistic isLiked state so a tap shows the heart
+  /// fill immediately even though the server round-trip happens in the
+  /// background.
+  final VoidCallback? onLike;
+  final VoidCallback? onComment;
+  final bool initialLiked;
+  final int likeCount;
+  final int commentCount;
 
   /// Convenience — push a fullscreen lightbox above the current screen.
   static Future<void> show(
@@ -68,6 +86,11 @@ class MediaLightbox extends StatefulWidget {
     int initialIndex = 0,
     ValueChanged<MediaLightboxItem>? onDownload,
     ValueChanged<MediaLightboxItem>? onShare,
+    VoidCallback? onLike,
+    VoidCallback? onComment,
+    bool initialLiked = false,
+    int likeCount = 0,
+    int commentCount = 0,
   }) {
     if (items.isEmpty) return Future.value();
     return Navigator.of(context, rootNavigator: true).push(
@@ -84,6 +107,11 @@ class MediaLightbox extends StatefulWidget {
             initialIndex: initialIndex,
             onDownload: onDownload,
             onShare: onShare,
+            onLike: onLike,
+            onComment: onComment,
+            initialLiked: initialLiked,
+            likeCount: likeCount,
+            commentCount: commentCount,
           ),
         ),
       ),
@@ -98,12 +126,29 @@ class _MediaLightboxState extends State<MediaLightbox> {
   late final PageController _pageController;
   late int _currentIndex;
   bool _showChrome = true;
+  // Optimistic local copy. The parent post_card hits the server when
+  // onLike fires, but the lightbox lives in a different element tree —
+  // so we mirror the state here for instant feedback. Diverges from
+  // the parent only briefly until the user dismisses.
+  late bool _liked;
+  late int _likeCount;
 
   @override
   void initState() {
     super.initState();
     _currentIndex = widget.initialIndex.clamp(0, widget.items.length - 1);
     _pageController = PageController(initialPage: _currentIndex);
+    _liked = widget.initialLiked;
+    _likeCount = widget.likeCount;
+  }
+
+  void _handleLikeTap() {
+    if (widget.onLike == null) return;
+    setState(() {
+      _liked = !_liked;
+      _likeCount = (_likeCount + (_liked ? 1 : -1)).clamp(0, 1 << 31);
+    });
+    widget.onLike!();
   }
 
   @override
@@ -185,6 +230,25 @@ class _MediaLightboxState extends State<MediaLightbox> {
                       if ((currentItem.caption ?? '').isNotEmpty)
                         _LightboxCaption(
                           caption: currentItem.caption!,
+                          bottomPadding: 0,
+                        ),
+                      // Action bar at the bottom — only renders if the
+                      // host actually wired at least one callback. For
+                      // the chat attachment viewer (no onLike/onComment
+                      // wired) this stays invisible, preserving the
+                      // existing minimal chrome there.
+                      if (widget.onLike != null ||
+                          widget.onComment != null ||
+                          widget.onShare != null)
+                        _LightboxActionBar(
+                          isLiked: _liked,
+                          likeCount: _likeCount,
+                          commentCount: widget.commentCount,
+                          onLike: widget.onLike == null ? null : _handleLikeTap,
+                          onComment: widget.onComment,
+                          onShare: widget.onShare == null
+                              ? null
+                              : () => widget.onShare!(currentItem),
                           bottomPadding: mediaQuery.padding.bottom,
                         ),
                     ],
@@ -193,6 +257,128 @@ class _MediaLightboxState extends State<MediaLightbox> {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _LightboxActionBar extends StatelessWidget {
+  const _LightboxActionBar({
+    required this.isLiked,
+    required this.likeCount,
+    required this.commentCount,
+    required this.onLike,
+    required this.onComment,
+    required this.onShare,
+    required this.bottomPadding,
+  });
+
+  final bool isLiked;
+  final int likeCount;
+  final int commentCount;
+  final VoidCallback? onLike;
+  final VoidCallback? onComment;
+  final VoidCallback? onShare;
+  final double bottomPadding;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.fromLTRB(16, 14, 16, 14 + bottomPadding),
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0x00000000), Color(0xCC000000)],
+        ),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: [
+          if (onLike != null)
+            _LightboxAction(
+              icon: isLiked ? Icons.favorite : Icons.favorite_border,
+              activeColor: const Color(0xFFFF7E91),
+              active: isLiked,
+              count: likeCount,
+              label: 'Тепло',
+              onTap: onLike!,
+            ),
+          if (onComment != null)
+            _LightboxAction(
+              icon: Icons.chat_bubble_outline_rounded,
+              count: commentCount,
+              label: 'Комменты',
+              onTap: onComment!,
+            ),
+          if (onShare != null)
+            _LightboxAction(
+              icon: Icons.share_outlined,
+              label: 'Переслать',
+              onTap: onShare!,
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LightboxAction extends StatelessWidget {
+  const _LightboxAction({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.count = 0,
+    this.active = false,
+    this.activeColor,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final int count;
+  final bool active;
+  final Color? activeColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = active ? (activeColor ?? Colors.white) : Colors.white;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, color: color, size: 24),
+              if (count > 0) ...[
+                const SizedBox(height: 4),
+                Text(
+                  '$count',
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ] else ...[
+                const SizedBox(height: 4),
+                Text(
+                  label,
+                  style: TextStyle(
+                    color: color.withValues(alpha: 0.78),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ],
+          ),
         ),
       ),
     );

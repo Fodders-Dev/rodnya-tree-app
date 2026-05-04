@@ -442,6 +442,22 @@ class _PostCardState extends State<PostCard>
         context,
         items: lightboxItems,
         initialIndex: initialIndex,
+        // Surface post-level actions inside the fullscreen viewer so
+        // the user can like / read comments / forward without bouncing
+        // back to the feed. The parent (this PostCard) is the source
+        // of truth for like/count state — the lightbox keeps an
+        // optimistic local copy until it's dismissed.
+        initialLiked: _isLikedByCurrentUser,
+        likeCount: _likeCount,
+        commentCount: _commentCount,
+        onLike: _toggleLike,
+        onComment: () {
+          // Pop the lightbox first so the comments bottom sheet sits
+          // on the post (not on top of a black scrim).
+          Navigator.of(context, rootNavigator: true).pop();
+          _showCommentsSheet();
+        },
+        onShare: (_) => _sharePost(),
       );
     }
 
