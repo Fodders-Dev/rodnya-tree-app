@@ -26,6 +26,7 @@ import '../widgets/post_card.dart';
 import '../widgets/post_card_shimmer.dart';
 import '../widgets/person_dossier_view.dart';
 import '../widgets/empty_state_widget.dart';
+import '../widgets/profile_completion_meter.dart';
 import '../widgets/story_rail.dart';
 import '../widgets/tree_history_sheet.dart';
 import '../widgets/glass_panel.dart';
@@ -771,6 +772,29 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                   0,
                                 ),
                                 child: _buildAccountSettingsLink(scheme, theme),
+                              ),
+                            ),
+                          // Onboarding nudge — vanishes once the user
+                          // fills the five tracked fields (avatar /
+                          // name / DOB / city / bio).
+                          if (_userProfile != null)
+                            SliverToBoxAdapter(
+                              child: Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  16,
+                                  12,
+                                  16,
+                                  0,
+                                ),
+                                child: ProfileCompletionMeter(
+                                  profile: _userProfile!,
+                                  onTap: () async {
+                                    await context.push('/profile/edit');
+                                    if (mounted) {
+                                      unawaited(_loadUserData());
+                                    }
+                                  },
+                                ),
                               ),
                             ),
                           SliverToBoxAdapter(
