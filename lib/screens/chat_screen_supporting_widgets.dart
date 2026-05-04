@@ -917,6 +917,10 @@ class _VideoNoteTile extends StatelessWidget {
     this.onTap,
   });
 
+  // Telegram chat круглые видео сидят на ~200px iOS / 180dp Android.
+  // 168 — комфортная середина для плотности нашего бабла.
+  static const double _diameter = 168;
+
   final String label;
   final String? previewUrl;
   final String? durationLabel;
@@ -927,73 +931,84 @@ class _VideoNoteTile extends StatelessWidget {
     return Semantics(
       label: label,
       button: onTap != null,
-      child: ClipOval(
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
-            onTap: onTap,
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                if (previewUrl != null && previewUrl!.trim().isNotEmpty)
-                  _AttachmentImage(
-                    url: previewUrl,
-                    fit: BoxFit.cover,
-                  ),
-                DecoratedBox(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [
-                        Colors.black.withValues(alpha: 0.18),
-                        Colors.black.withValues(alpha: 0.42),
-                      ],
+      // SizedBox обязателен: Stack(fit: StackFit.expand) внутри Wrap
+      // получает unbounded constraints и валит layout с null-check'ом.
+      // Раньше это рушило весь чат в момент когда в сообщении появлялся
+      // кружок. Размер впихнут в сам тайл, чтобы новые callers не
+      // забыли обернуть.
+      child: SizedBox(
+        width: _diameter,
+        height: _diameter,
+        child: ClipOval(
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: onTap,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  if (previewUrl != null && previewUrl!.trim().isNotEmpty)
+                    _AttachmentImage(
+                      url: previewUrl,
+                      fit: BoxFit.cover,
                     ),
-                  ),
-                ),
-                Center(
-                  child: DecoratedBox(
+                  DecoratedBox(
                     decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.42),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Padding(
-                      padding: EdgeInsets.all(10),
-                      child: Icon(
-                        Icons.play_arrow_rounded,
-                        color: Colors.white,
-                        size: 28,
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          Colors.black.withValues(alpha: 0.18),
+                          Colors.black.withValues(alpha: 0.42),
+                        ],
                       ),
                     ),
                   ),
-                ),
-                if (durationLabel != null && durationLabel!.isNotEmpty)
-                  Positioned(
-                    right: 10,
-                    bottom: 10,
+                  Center(
                     child: DecoratedBox(
                       decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: 0.58),
-                        borderRadius: BorderRadius.circular(999),
+                        color: Colors.black.withValues(alpha: 0.42),
+                        shape: BoxShape.circle,
                       ),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 4,
-                        ),
-                        child: Text(
-                          durationLabel!,
-                          style:
-                              Theme.of(context).textTheme.labelSmall?.copyWith(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w700,
-                                  ),
+                      child: const Padding(
+                        padding: EdgeInsets.all(10),
+                        child: Icon(
+                          Icons.play_arrow_rounded,
+                          color: Colors.white,
+                          size: 28,
                         ),
                       ),
                     ),
                   ),
-              ],
+                  if (durationLabel != null && durationLabel!.isNotEmpty)
+                    Positioned(
+                      right: 10,
+                      bottom: 10,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.58),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          child: Text(
+                            durationLabel!,
+                            style: Theme.of(context)
+                                .textTheme
+                                .labelSmall
+                                ?.copyWith(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
             ),
           ),
         ),
