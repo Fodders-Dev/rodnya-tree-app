@@ -46,6 +46,7 @@ import '../services/custom_api_auth_service.dart';
 import '../services/custom_api_realtime_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/attachment_picker_sheet.dart';
+import '../widgets/kruzhok_recorder_screen.dart';
 import '../utils/chat_attachment_download.dart';
 import '../utils/photo_url.dart';
 import '../utils/snackbar.dart';
@@ -1084,12 +1085,51 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  Future<void> _pickVideoNote() {
-    return _pickVideoAttachment(
-      source: kIsWeb ? ImageSource.gallery : ImageSource.camera,
-      asVideoNote: true,
-      maxDuration: const Duration(minutes: 2),
-    );
+  Future<void> _pickVideoNote() async {
+    // On native (iOS/Android) we now push an in-app Telegram-style
+    // recorder with a round live preview — user complaint was "почему
+    // у нас кружочки пишутся не так, как в телеграм, а через файл
+    // отдельный?". The OS-native ImagePicker camera flow stays as the
+    // web fallback because <input type=file> can't drive a live
+    // preview loop in the browser.
+    if (kIsWeb) {
+      return _pickVideoAttachment(
+        source: ImageSource.gallery,
+        asVideoNote: true,
+        maxDuration: const Duration(minutes: 2),
+      );
+    }
+    if (_selectedEdit != null) {
+      setState(() => _selectedEdit = null);
+    }
+    if (_selectedAttachments.any(
+      (file) => _attachmentKindFromXFile(file) == _ChatAttachmentKind.audio,
+    )) {
+      _attachmentsController.clear();
+    }
+    try {
+      final picked = await KruzhokRecorderScreen.show(context);
+      if (picked == null || !mounted) return;
+      final size = await picked.length();
+      if (size > 50 * 1024 * 1024) {
+        if (mounted) {
+          showAppSnackBar(
+            context,
+            'Видео слишком большое (макс. 50 МБ).',
+            isError: true,
+          );
+        }
+        return;
+      }
+      _attachmentsController.replaceAll(<XFile>[picked]);
+    } catch (_) {
+      if (!mounted) return;
+      showAppSnackBar(
+        context,
+        'Не удалось подготовить кружок.',
+        isError: true,
+      );
+    }
   }
 
   Future<void> _pickGenericFile() async {

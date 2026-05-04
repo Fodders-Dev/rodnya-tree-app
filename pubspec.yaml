@@ -103,6 +103,12 @@ dependencies:
   record: ^6.2.0
   audioplayers: ^6.6.0
   video_player: ^2.9.2
+  # Telegram-style in-app кружок recording. The OS native camera UI
+  # (image_picker.pickVideo) felt detached — the user described it as
+  # "файл отдельный". We only use it on mobile; web stays on the
+  # gallery picker because <input type=file> can't drive a live
+  # preview round capture loop.
+  camera: ^0.11.0+2
   file_picker: ^8.0.0+1
   open_filex: ^4.5.0
   qr_flutter: ^4.1.0
