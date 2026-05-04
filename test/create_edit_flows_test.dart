@@ -326,7 +326,9 @@ void main() {
     expect(find.text('Новый пост'), findsOneWidget);
     expect(find.text('О чём хотите рассказать родне?'), findsOneWidget);
     expect(find.text('Кому'), findsOneWidget);
-    expect(find.text('Фото'), findsOneWidget);
+    // The Photo button was renamed "Медиа" once the picker started
+    // accepting video files alongside photos.
+    expect(find.text('Медиа'), findsOneWidget);
     expect(find.text('Опубликовать'), findsOneWidget);
     expect(find.text('Всё дерево'), findsWidgets);
   });

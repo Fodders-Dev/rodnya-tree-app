@@ -53,7 +53,12 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
   bool _isLoadingPeople = false;
   bool _circlesUnavailable = false;
   bool _branchCandidatesUnavailable = false;
-  List<XFile> _selectedImages = <XFile>[];
+  // Mixed photos + videos. The Post model still stores everything as
+  // imageUrls (server-side blob, no schema change needed), but locally
+  // we track the kind so the preview tile can render a video poster
+  // with a play overlay instead of trying to decode an image header
+  // out of an .mp4.
+  List<_PostMedia> _selectedMedia = <_PostMedia>[];
   List<FamilyCircle> _audienceCircles = <FamilyCircle>[];
   List<FamilyPerson> _availablePeople = <FamilyPerson>[];
   final Set<String> _selectedBranchPersonIds = <String>{};
@@ -289,11 +294,13 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
 
   Future<void> _openMediaPicker() async {
     // Big-app pattern: a colored-icon picker sheet rather than jumping
-    // straight into the OS gallery. Lets the user pick "сделать фото"
-    // (camera) without scrolling all the way to the camera app.
+    // straight into the OS gallery. Now also surfaces video — user
+    // complained "а видео нельзя что-ли?" — and the camera tile splits
+    // photo / video so the user can record without scrolling out of
+    // the app.
     final choice = await showAttachmentPickerSheet(
       context,
-      title: 'ДОБАВИТЬ ФОТО',
+      title: 'ДОБАВИТЬ МЕДИА',
       actions: const [
         AttachmentPickerAction(
           id: 'gallery',
@@ -304,17 +311,39 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
         AttachmentPickerAction(
           id: 'camera',
           icon: Icons.photo_camera_rounded,
-          label: 'Камера',
+          label: 'Снять фото',
           color: Color(0xFF3D8DFF),
+        ),
+        AttachmentPickerAction(
+          id: 'video',
+          icon: Icons.videocam_rounded,
+          label: 'Видео',
+          color: Color(0xFFE85A40),
+        ),
+        AttachmentPickerAction(
+          id: 'video_camera',
+          icon: Icons.video_call_rounded,
+          label: 'Снять видео',
+          color: Color(0xFF7B5BD6),
         ),
       ],
     );
     if (!mounted || choice == null) return;
-    if (choice == 'camera') {
-      await _takePhoto();
-      return;
+    switch (choice) {
+      case 'camera':
+        await _takePhoto();
+        break;
+      case 'video':
+        await _pickVideoFromGallery();
+        break;
+      case 'video_camera':
+        await _recordVideo();
+        break;
+      case 'gallery':
+      default:
+        await _pickImages();
+        break;
     }
-    await _pickImages();
   }
 
   Future<void> _takePhoto() async {
@@ -325,13 +354,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
         maxWidth: 1080,
       );
       if (shot == null || !mounted) return;
-      if (_selectedImages.length >= 5) {
-        _showMessage('Можно прикрепить не более 5 изображений.');
-        return;
-      }
-      setState(() {
-        _selectedImages = <XFile>[..._selectedImages, shot];
-      });
+      _appendMedia(_PostMedia(file: shot, isVideo: false));
     } catch (e) {
       debugPrint('Ошибка камеры: $e');
       if (mounted) _showMessage('Не удалось сделать фото.');
@@ -340,38 +363,107 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
 
   Future<void> _pickImages() async {
     try {
-      final pickedFiles = await _picker.pickMultiImage(
-        imageQuality: 80,
-        maxWidth: 1080,
-      );
-      if (pickedFiles.isEmpty || !mounted) {
-        return;
-      }
-
-      final willBeTrimmed = _selectedImages.length + pickedFiles.length > 5;
-      setState(() {
-        final nextImages = <XFile>[..._selectedImages, ...pickedFiles];
-        _selectedImages = nextImages.take(5).toList();
-      });
-      if (willBeTrimmed && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Можно прикрепить не более 5 изображений.'),
-          ),
+      // pickMultipleMedia lets the user pick photos AND videos in one
+      // gallery pass — closer to what Telegram / Instagram do. Falls
+      // back to image-only on platforms where the API isn't available
+      // (currently macOS, web).
+      List<XFile> picked;
+      try {
+        picked = await _picker.pickMultipleMedia(
+          imageQuality: 80,
+          maxWidth: 1080,
+        );
+      } on UnsupportedError {
+        // pickMultipleMedia is unsupported on macOS / web — fall back
+        // to the image-only path. Catches MissingPluginException too
+        // (it's a subtype on platforms that haven't wired the channel).
+        picked = await _picker.pickMultiImage(
+          imageQuality: 80,
+          maxWidth: 1080,
         );
       }
+      if (picked.isEmpty || !mounted) {
+        return;
+      }
+      final mapped = picked
+          .map((file) => _PostMedia(file: file, isVideo: _looksLikeVideo(file)))
+          .toList();
+      _appendMediaBatch(mapped);
     } catch (e) {
-      debugPrint('Ошибка выбора изображений: $e');
+      debugPrint('Ошибка выбора медиа: $e');
       if (mounted) {
-        _showMessage('Не удалось выбрать изображения.');
+        _showMessage('Не удалось выбрать медиа.');
       }
     }
   }
 
+  Future<void> _pickVideoFromGallery() async {
+    try {
+      final clip = await _picker.pickVideo(source: ImageSource.gallery);
+      if (clip == null || !mounted) return;
+      _appendMedia(_PostMedia(file: clip, isVideo: true));
+    } catch (e) {
+      debugPrint('Ошибка выбора видео: $e');
+      if (mounted) _showMessage('Не удалось выбрать видео.');
+    }
+  }
+
+  Future<void> _recordVideo() async {
+    try {
+      final clip = await _picker.pickVideo(source: ImageSource.camera);
+      if (clip == null || !mounted) return;
+      _appendMedia(_PostMedia(file: clip, isVideo: true));
+    } catch (e) {
+      debugPrint('Ошибка записи видео: $e');
+      if (mounted) _showMessage('Не удалось записать видео.');
+    }
+  }
+
+  /// Push one media item, respecting the 5-item cap.
+  void _appendMedia(_PostMedia media) {
+    if (_selectedMedia.length >= 5) {
+      _showMessage('Можно прикрепить не более 5 файлов.');
+      return;
+    }
+    setState(() {
+      _selectedMedia = <_PostMedia>[..._selectedMedia, media];
+    });
+  }
+
+  /// Push a batch (gallery multi-pick), capping at 5 with a snackbar
+  /// notice if it had to trim.
+  void _appendMediaBatch(List<_PostMedia> batch) {
+    final willBeTrimmed = _selectedMedia.length + batch.length > 5;
+    setState(() {
+      final next = <_PostMedia>[..._selectedMedia, ...batch];
+      _selectedMedia = next.take(5).toList();
+    });
+    if (willBeTrimmed && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Можно прикрепить не более 5 файлов.'),
+        ),
+      );
+    }
+  }
+
+  /// pickMultipleMedia returns XFile but doesn't tell us which entries
+  /// are video — sniff via mime then file extension as a fallback.
+  bool _looksLikeVideo(XFile file) {
+    final mime = file.mimeType?.toLowerCase();
+    if (mime != null && mime.startsWith('video/')) return true;
+    final name = file.name.toLowerCase();
+    return name.endsWith('.mp4') ||
+        name.endsWith('.mov') ||
+        name.endsWith('.webm') ||
+        name.endsWith('.m4v') ||
+        name.endsWith('.avi');
+  }
+
   Future<void> _createPost() async {
     final content = _contentController.text.trim();
-    if (content.isEmpty && _selectedImages.isEmpty) {
-      _showMessage('Добавьте текст или хотя бы одно фото.');
+    if (content.isEmpty && _selectedMedia.isEmpty) {
+      _showMessage('Добавьте текст или хотя бы один файл.');
       return;
     }
     if (_scopeType == TreeContentScopeType.branches &&
@@ -392,7 +484,11 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
       await _postService.createPost(
         treeId: _currentTreeId!,
         content: content,
-        images: _selectedImages,
+        // The Post model still surfaces everything as imageUrls — the
+        // video items go through the same upload pipe (storage service
+        // already handles video MIME) and post_card.dart sniffs the
+        // URL extension at render time to pick the right tile.
+        images: _selectedMedia.map((m) => m.file).toList(),
         isPublic: _isPublic,
         scopeType: _scopeType,
         anchorPersonIds: _selectedBranchPersonIds.toList(),
@@ -535,11 +631,11 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
           child: Row(
             children: [
               _buildToolButton(
-                icon: Icons.photo_library_outlined,
-                label: _selectedImages.isEmpty
-                    ? 'Фото'
-                    : '${_selectedImages.length}/5',
-                active: _selectedImages.isNotEmpty,
+                icon: Icons.add_photo_alternate_outlined,
+                label: _selectedMedia.isEmpty
+                    ? 'Медиа'
+                    : '${_selectedMedia.length}/5',
+                active: _selectedMedia.isNotEmpty,
                 onPressed: _openMediaPicker,
               ),
               _buildToolButton(
@@ -926,10 +1022,18 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
               ),
             ),
           ),
-          if (_selectedImages.isNotEmpty) ...[
-            const SizedBox(height: 16),
-            _buildImagePreviews(),
-          ],
+          // Visible media slot. Was previously rendered only when the
+          // user had attached something, which made the "Фото"/"Медиа"
+          // toolbar button feel disconnected — user said: "не
+          // интуитивно понятно где фото то прикладывается". The empty
+          // hint card reserves the space and re-opens the picker on
+          // tap, so the user can see ahead of time where media will
+          // land.
+          const SizedBox(height: 16),
+          if (_selectedMedia.isEmpty)
+            _buildMediaEmptyHint()
+          else
+            _buildMediaPreviews(),
         ],
       ),
     );
@@ -1292,7 +1396,75 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     );
   }
 
-  Widget _buildImagePreviews() {
+  Widget _buildMediaEmptyHint() {
+    final theme = Theme.of(context);
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+    return InkWell(
+      onTap: _openMediaPicker,
+      borderRadius: BorderRadius.circular(tokens.radiusMd),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 18),
+        decoration: BoxDecoration(
+          color: tokens.surfaceStrong.withValues(alpha: 0.5),
+          borderRadius: BorderRadius.circular(tokens.radiusMd),
+          border: Border.all(
+            color: tokens.surfaceLine,
+            style: BorderStyle.solid,
+          ),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                color: tokens.accentSoft,
+                borderRadius: BorderRadius.circular(tokens.radiusSm),
+              ),
+              child: Icon(
+                Icons.add_photo_alternate_outlined,
+                color: tokens.accent,
+                size: 22,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Добавить фото или видео',
+                    style: AppTheme.sans(
+                      color: tokens.ink,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    'Можно прикрепить до 5 файлов',
+                    style: AppTheme.sans(
+                      color: tokens.inkSecondary,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Icon(
+              Icons.chevron_right_rounded,
+              color: tokens.inkSecondary,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMediaPreviews() {
     return GridView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
@@ -1301,16 +1473,16 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
         crossAxisSpacing: 8,
         mainAxisSpacing: 8,
       ),
-      itemCount: _selectedImages.length,
+      itemCount: _selectedMedia.length,
       itemBuilder: (context, index) {
-        final image = _selectedImages[index];
+        final media = _selectedMedia[index];
         return Stack(
           alignment: Alignment.topRight,
           children: [
             ClipRRect(
               borderRadius: BorderRadius.circular(12),
               child: SizedBox.expand(
-                child: _PickedImagePreview(image: image),
+                child: _PickedMediaPreview(media: media),
               ),
             ),
             IconButton(
@@ -1323,7 +1495,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
               ),
               onPressed: () {
                 setState(() {
-                  _selectedImages.removeAt(index);
+                  _selectedMedia.removeAt(index);
                 });
               },
             ),
@@ -1423,15 +1595,29 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
   }
 }
 
-class _PickedImagePreview extends StatelessWidget {
-  const _PickedImagePreview({required this.image});
+/// Local media item attached to a draft post — XFile + a video flag.
+/// Lives outside Post (which is the server-shaped model) because the
+/// preview widget needs to know whether to even attempt to decode the
+/// bytes as an image.
+class _PostMedia {
+  const _PostMedia({required this.file, required this.isVideo});
 
-  final XFile image;
+  final XFile file;
+  final bool isVideo;
+}
+
+class _PickedMediaPreview extends StatelessWidget {
+  const _PickedMediaPreview({required this.media});
+
+  final _PostMedia media;
 
   @override
   Widget build(BuildContext context) {
+    if (media.isVideo) {
+      return _VideoTilePoster(file: media.file);
+    }
     return FutureBuilder<Uint8List>(
-      future: image.readAsBytes(),
+      future: media.file.readAsBytes(),
       builder: (context, snapshot) {
         if (!snapshot.hasData) {
           return const ColoredBox(
@@ -1451,6 +1637,66 @@ class _PickedImagePreview extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+/// Composer-side video poster. We don't pull a real frame here because
+/// that would mean importing video_thumbnail just for the draft state —
+/// the published post does it server-side / via the lightbox. A dark
+/// gradient + filename + play overlay is enough to confirm "this is the
+/// video I just attached" before publishing.
+class _VideoTilePoster extends StatelessWidget {
+  const _VideoTilePoster({required this.file});
+
+  final XFile file;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        DecoratedBox(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0xFF332B45), Color(0xFF181522)],
+            ),
+          ),
+        ),
+        Center(
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.45),
+              shape: BoxShape.circle,
+            ),
+            padding: const EdgeInsets.all(10),
+            child: const Icon(
+              Icons.play_arrow_rounded,
+              color: Colors.white,
+              size: 32,
+            ),
+          ),
+        ),
+        Positioned(
+          left: 6,
+          right: 6,
+          bottom: 6,
+          child: Text(
+            file.name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+              shadows: [Shadow(color: Colors.black45, blurRadius: 4)],
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

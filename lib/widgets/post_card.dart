@@ -412,10 +412,29 @@ class _PostCardState extends State<PostCard>
     return String.fromCharCode(t.runes.first).toUpperCase();
   }
 
+  /// Sniff a server URL for video — same pattern composer uses to tag
+  /// uploads. Posts store everything inside `imageUrls` (no schema
+  /// change needed for videos), so the feed has to detect the kind by
+  /// extension before deciding which tile / lightbox-item to render.
+  bool _isVideoUrl(String url) {
+    final lower = url.toLowerCase();
+    final qIndex = lower.indexOf('?');
+    final pathOnly = qIndex >= 0 ? lower.substring(0, qIndex) : lower;
+    return pathOnly.endsWith('.mp4') ||
+        pathOnly.endsWith('.mov') ||
+        pathOnly.endsWith('.webm') ||
+        pathOnly.endsWith('.m4v') ||
+        pathOnly.endsWith('.avi');
+  }
+
   Widget _buildPostImages(List<String> images) {
     final borderRadius = BorderRadius.circular(18);
     final lightboxItems = images
-        .map((url) => MediaLightboxItem(imageUrl: url))
+        .map(
+          (url) => _isVideoUrl(url)
+              ? MediaLightboxItem(videoUrl: url)
+              : MediaLightboxItem(imageUrl: url),
+        )
         .toList(growable: false);
 
     void openLightbox(int initialIndex) {
@@ -423,6 +442,18 @@ class _PostCardState extends State<PostCard>
         context,
         items: lightboxItems,
         initialIndex: initialIndex,
+      );
+    }
+
+    Widget tileFor(String url) {
+      if (_isVideoUrl(url)) {
+        return _PostVideoTile(url: url);
+      }
+      return CachedNetworkImage(
+        imageUrl: url,
+        fit: BoxFit.cover,
+        placeholder: (_, __) => _buildPostImagePlaceholder(),
+        errorWidget: (_, __, ___) => _buildPostImageFallback(),
       );
     }
 
@@ -436,12 +467,7 @@ class _PostCardState extends State<PostCard>
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTap: () => openLightbox(0),
-              child: CachedNetworkImage(
-                imageUrl: images.first,
-                fit: BoxFit.cover,
-                placeholder: (_, __) => _buildPostImagePlaceholder(),
-                errorWidget: (_, __, ___) => _buildPostImageFallback(),
-              ),
+              child: tileFor(images.first),
             ),
           ),
         ),
@@ -458,14 +484,9 @@ class _PostCardState extends State<PostCard>
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTap: () => openLightbox(index),
-              child: CachedNetworkImage(
-                imageUrl: images[index],
-                imageBuilder: (_, imageProvider) =>
-                    Image(image: imageProvider, fit: BoxFit.cover),
-                fit: BoxFit.cover,
-                placeholder: (_, __) => _buildPostImagePlaceholder(),
-                errorWidget: (_, __, ___) => _buildPostImageFallback(),
+              child: SizedBox(
                 width: MediaQuery.of(context).size.width,
+                child: tileFor(images[index]),
               ),
             ),
           );
@@ -673,6 +694,93 @@ class _PostActionButton extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Feed-side video tile. The backend doesn't generate poster frames, so
+/// we render a dark gradient + a centered play affordance — tapping
+/// opens [MediaLightbox] which spins up a real video_player and streams
+/// the file. Same shape post_card uses for invalid-image fallback, just
+/// with the play badge on top.
+class _PostVideoTile extends StatelessWidget {
+  const _PostVideoTile({required this.url});
+
+  final String url;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        const DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0xFF332B45), Color(0xFF181522)],
+            ),
+          ),
+        ),
+        Center(
+          child: Container(
+            width: 64,
+            height: 64,
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.45),
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.32),
+                  blurRadius: 16,
+                  spreadRadius: -2,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: const Icon(
+              Icons.play_arrow_rounded,
+              color: Colors.white,
+              size: 36,
+            ),
+          ),
+        ),
+        const Positioned(
+          top: 12,
+          right: 12,
+          child: _VideoBadge(),
+        ),
+      ],
+    );
+  }
+}
+
+class _VideoBadge extends StatelessWidget {
+  const _VideoBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.55),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: const Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.videocam_rounded, color: Colors.white, size: 14),
+          SizedBox(width: 4),
+          Text(
+            'Видео',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
       ),
     );
   }
