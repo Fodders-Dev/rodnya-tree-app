@@ -173,16 +173,17 @@ class _PostCardState extends State<PostCard>
   }
 
   Future<void> _showCommentsSheet() async {
-    final result = await showModalBottomSheet<bool>(
+    // CommentSheet now pops with the final loaded count (int?) so we
+    // can sync the inline counter without a server round-trip.
+    final finalCount = await showModalBottomSheet<int>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => CommentSheet(post: widget.post),
     );
 
-    if (result == true) {
-      // If comments were added/deleted, we might want to refresh counts
-      // For now, we assume the parent feed will refresh or we just keep local count if possible
+    if (finalCount != null && mounted && finalCount != _commentCount) {
+      setState(() => _commentCount = finalCount);
     }
   }
 

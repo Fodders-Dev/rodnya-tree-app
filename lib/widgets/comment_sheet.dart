@@ -3,9 +3,11 @@ import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
 import 'package:intl/intl.dart';
 
+import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/post_service_interface.dart';
 import '../models/comment.dart';
 import '../models/post.dart';
+import '../theme/app_theme.dart';
 import 'loading_indicator.dart';
 
 class CommentSheet extends StatefulWidget {
@@ -19,6 +21,7 @@ class CommentSheet extends StatefulWidget {
 
 class _CommentSheetState extends State<CommentSheet> {
   final PostServiceInterface _postService = GetIt.I<PostServiceInterface>();
+  final AuthServiceInterface _authService = GetIt.I<AuthServiceInterface>();
   final TextEditingController _commentController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
 
@@ -143,20 +146,58 @@ class _CommentSheetState extends State<CommentSheet> {
   }
 
   Widget _buildHeader() {
+    final theme = Theme.of(context);
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+
+    // User feedback was: "в комментариях нет счетчика комметариев". The
+    // count comes from the loaded list once the sheet has its data; while
+    // loading we fall back to the post's stored commentCount so the
+    // header doesn't flicker between empty and the real number.
+    final loadedCount = _comments?.length;
+    final displayCount = loadedCount ?? widget.post.commentCount;
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(
-            'Комментарии',
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
+          Row(
+            children: [
+              Text(
+                'Комментарии',
+                style: theme.textTheme.titleLarge?.copyWith(
                   fontWeight: FontWeight.bold,
                 ),
+              ),
+              if (displayCount > 0) ...[
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: tokens.accentSoft,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    '$displayCount',
+                    style: TextStyle(
+                      color: tokens.accent,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
+            ],
           ),
           IconButton(
             icon: const Icon(Icons.close),
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(context, _comments?.length),
           ),
         ],
       ),
@@ -203,17 +244,7 @@ class _CommentSheetState extends State<CommentSheet> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          CircleAvatar(
-            radius: 18,
-            backgroundImage: comment.authorPhotoUrl != null &&
-                    comment.authorPhotoUrl!.isNotEmpty
-                ? CachedNetworkImageProvider(comment.authorPhotoUrl!)
-                : null,
-            child: comment.authorPhotoUrl == null ||
-                    comment.authorPhotoUrl!.isEmpty
-                ? const Icon(Icons.person, size: 18)
-                : null,
-          ),
+          _buildAuthorAvatar(comment),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -244,6 +275,63 @@ class _CommentSheetState extends State<CommentSheet> {
         ],
       ),
     );
+  }
+
+  /// Avatar fallback chain for a comment author:
+  /// 1. comment.authorPhotoUrl (server-provided)
+  /// 2. authService.currentUserPhotoUrl if comment.authorId == self —
+  ///    the backend sometimes omits the photo on freshly-created
+  ///    comments, this catches "your own avatar isn't pulling from
+  ///    your profile" which the user reported.
+  /// 3. First letter of authorName in a tinted circle (more
+  ///    identifiable than a generic person icon).
+  Widget _buildAuthorAvatar(Comment comment) {
+    final theme = Theme.of(context);
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+
+    String? photoUrl = (comment.authorPhotoUrl ?? '').trim().isEmpty
+        ? null
+        : comment.authorPhotoUrl;
+    if (photoUrl == null && comment.authorId == _authService.currentUserId) {
+      final selfPhoto = _authService.currentUserPhotoUrl?.trim();
+      if (selfPhoto != null && selfPhoto.isNotEmpty) {
+        photoUrl = selfPhoto;
+      }
+    }
+
+    if (photoUrl != null) {
+      return CircleAvatar(
+        radius: 18,
+        backgroundColor: tokens.accentSoft,
+        backgroundImage: CachedNetworkImageProvider(photoUrl),
+        // Reuse the initial fallback if the network image fails to
+        // resolve — onBackgroundImageError fires on 404 / TLS errors.
+        onBackgroundImageError: (_, __) {},
+        child: const SizedBox.shrink(),
+      );
+    }
+
+    return CircleAvatar(
+      radius: 18,
+      backgroundColor: tokens.accentSoft,
+      child: Text(
+        _initialFor(comment.authorName ?? ''),
+        style: TextStyle(
+          color: tokens.accent,
+          fontSize: 14,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+    );
+  }
+
+  String _initialFor(String name) {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) return '?';
+    return String.fromCharCode(trimmed.runes.first).toUpperCase();
   }
 
   Widget _buildInputArea() {
