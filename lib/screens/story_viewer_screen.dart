@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:get_it/get_it.dart';
 import 'package:video_player/video_player.dart';
 
@@ -368,6 +369,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
     final originalReactions = List<ReactionSummary>.from(original.reactions);
     // Optimistic toggle so the chip appears immediately. Server result
     // reconciles the count once it lands.
+    HapticFeedback.lightImpact();
     final next = _applyOptimisticReaction(originalReactions, emoji, userId);
     setState(() {
       _stories[_currentIndex] = original.copyWithReactions(next);

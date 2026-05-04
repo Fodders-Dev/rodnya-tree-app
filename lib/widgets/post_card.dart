@@ -1,6 +1,7 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:carousel_slider/carousel_slider.dart';
 import 'package:flutter/material.dart' hide CarouselController;
+import 'package:flutter/services.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
@@ -89,6 +90,7 @@ class _PostCardState extends State<PostCard>
     // Optimistic update — add or remove the current user's reaction
     // locally, then reconcile with server response. Mirrors what the
     // chat-side reaction handler does.
+    HapticFeedback.lightImpact();
     final next = _applyOptimisticReaction(beforeReactions, emoji);
     setState(() => _reactions = next);
     try {
@@ -151,6 +153,9 @@ class _PostCardState extends State<PostCard>
 
     final wasLiked = _isLikedByCurrentUser;
     final previousLikeCount = _likeCount;
+    // Tactile blip on every like — keeps the action feeling alive
+    // even when the network is slow.
+    HapticFeedback.lightImpact();
     setState(() {
       _isLikedByCurrentUser = !wasLiked;
       _likeCount = (previousLikeCount + (wasLiked ? -1 : 1)).clamp(0, 1 << 30);

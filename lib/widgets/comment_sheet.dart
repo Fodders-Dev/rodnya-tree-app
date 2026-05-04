@@ -1,5 +1,5 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:get_it/get_it.dart';
 import 'package:intl/intl.dart';
 
@@ -9,9 +9,11 @@ import '../models/comment.dart';
 import '../models/post.dart';
 import '../models/reaction_summary.dart';
 import '../theme/app_theme.dart';
+import 'empty_state_widget.dart';
 import 'loading_indicator.dart';
 import 'reaction_chip_strip.dart';
 import 'reaction_picker.dart';
+import 'rodnya_avatar.dart';
 
 class CommentSheet extends StatefulWidget {
   const CommentSheet({super.key, required this.post});
@@ -225,8 +227,13 @@ class _CommentSheetState extends State<CommentSheet> {
 
   Widget _buildCommentsList() {
     if (_comments == null || _comments!.isEmpty) {
-      return const Center(
-        child: Text('Комментариев пока нет. Будьте первым!'),
+      return EmptyStateWidget(
+        icon: Icons.chat_bubble_outline_rounded,
+        title: 'Пока тишина',
+        message: 'Никто ещё не написал. Самое время задать тон —\n'
+            'оставьте первый комментарий.',
+        actionLabel: null,
+        onAction: null,
       );
     }
 
@@ -307,6 +314,7 @@ class _CommentSheetState extends State<CommentSheet> {
     final originalReactions =
         List<ReactionSummary>.from(comment.reactions);
     // Optimistic local toggle so the chip flickers in immediately.
+    HapticFeedback.lightImpact();
     final next = _applyOptimisticReaction(originalReactions, emoji, userId);
     setState(() {
       _comments = _comments?.map((c) {
@@ -381,21 +389,13 @@ class _CommentSheetState extends State<CommentSheet> {
     return next;
   }
 
-  /// Avatar fallback chain for a comment author:
-  /// 1. comment.authorPhotoUrl (server-provided)
-  /// 2. authService.currentUserPhotoUrl if comment.authorId == self —
-  ///    the backend sometimes omits the photo on freshly-created
-  ///    comments, this catches "your own avatar isn't pulling from
-  ///    your profile" which the user reported.
-  /// 3. First letter of authorName in a tinted circle (more
-  ///    identifiable than a generic person icon).
+  /// Avatar with the same fallback chain that lived inline before:
+  /// 1. comment.authorPhotoUrl
+  /// 2. authService.currentUserPhotoUrl when the author is the self
+  ///    (backend sometimes omits the photo on freshly-created
+  ///    comments — this catches "ава не подсасывается с профиля")
+  /// 3. First letter / generic icon (handled inside RodnyaAvatar)
   Widget _buildAuthorAvatar(Comment comment) {
-    final theme = Theme.of(context);
-    final tokens = theme.extension<RodnyaDesignTokens>() ??
-        (theme.brightness == Brightness.dark
-            ? RodnyaDesignTokens.dark
-            : RodnyaDesignTokens.light);
-
     String? photoUrl = (comment.authorPhotoUrl ?? '').trim().isEmpty
         ? null
         : comment.authorPhotoUrl;
@@ -405,37 +405,11 @@ class _CommentSheetState extends State<CommentSheet> {
         photoUrl = selfPhoto;
       }
     }
-
-    if (photoUrl != null) {
-      return CircleAvatar(
-        radius: 18,
-        backgroundColor: tokens.accentSoft,
-        backgroundImage: CachedNetworkImageProvider(photoUrl),
-        // Reuse the initial fallback if the network image fails to
-        // resolve — onBackgroundImageError fires on 404 / TLS errors.
-        onBackgroundImageError: (_, __) {},
-        child: const SizedBox.shrink(),
-      );
-    }
-
-    return CircleAvatar(
-      radius: 18,
-      backgroundColor: tokens.accentSoft,
-      child: Text(
-        _initialFor(comment.authorName ?? ''),
-        style: TextStyle(
-          color: tokens.accent,
-          fontSize: 14,
-          fontWeight: FontWeight.w800,
-        ),
-      ),
+    return RodnyaAvatar(
+      photoUrl: photoUrl,
+      name: comment.authorName,
+      size: 36,
     );
-  }
-
-  String _initialFor(String name) {
-    final trimmed = name.trim();
-    if (trimmed.isEmpty) return '?';
-    return String.fromCharCode(trimmed.runes.first).toUpperCase();
   }
 
   Widget _buildInputArea() {
