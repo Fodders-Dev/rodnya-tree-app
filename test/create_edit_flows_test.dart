@@ -8,6 +8,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:rodnya/backend/interfaces/auth_service_interface.dart';
 import 'package:rodnya/backend/interfaces/circle_service_interface.dart';
+import 'package:rodnya/models/audience_preset.dart';
 import 'package:rodnya/backend/interfaces/family_tree_service_interface.dart';
 import 'package:rodnya/backend/interfaces/post_service_interface.dart';
 import 'package:rodnya/backend/interfaces/profile_service_interface.dart';
@@ -125,6 +126,10 @@ class _FakePostService implements PostServiceInterface {
 }
 
 class _FakeCircleService implements CircleServiceInterface {
+  @override
+  Future<AudiencePresetsResponse> getAudiencePresets(String treeId) async =>
+      AudiencePresetsResponse.empty;
+
   @override
   Future<List<FamilyCircle>> getCircles(String treeId) async => [
         FamilyCircle(

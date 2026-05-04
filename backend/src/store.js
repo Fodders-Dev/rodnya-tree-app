@@ -4909,6 +4909,21 @@ function attachStoryReactions(db, story) {
   return clone;
 }
 
+/// Resolve the user's primary person-card in a given tree. Smart-set
+/// computation needs an anchor on the graph — we look for the first
+/// person on the tree whose `userId` matches. Returns null if the
+/// user isn't on the tree at all (guest, viewer, or hasn't claimed
+/// their card yet).
+function _resolveAnchorPerson(db, treeId, userId) {
+  const normalizedUserId = String(userId || "").trim();
+  if (!normalizedUserId) return null;
+  return (
+    (Array.isArray(db.persons) ? db.persons : []).find(
+      (person) => person.treeId === treeId && person.userId === normalizedUserId,
+    ) || null
+  );
+}
+
 function isMessageReadByUser(message, userId) {
   const readBy = normalizeParticipantIds(message?.readBy);
   if (readBy.length > 0) {
@@ -9837,6 +9852,143 @@ class FileStore {
     post.updatedAt = nowIso();
     await this._write(db);
     return attachPostReactions(db, post);
+  }
+
+  /// Audience presets — pre-computed smart-set personId lists for the
+  /// current user in a given tree. Lets the picker offer "Моя семья",
+  /// "Близкие" as one-tap shortcuts instead of forcing the user to
+  /// build a custom branch list. Resolved at request time so the
+  /// numbers stay in sync with the current tree state.
+  ///
+  /// Returns null when the user has no person-card in the tree (anchor
+  /// can't be resolved). The route handler turns that into a graceful
+  /// empty-presets response so the UI degrades to "Всё дерево" only.
+  async computeAudiencePresets({treeId, userId}) {
+    const db = await this._read();
+    const tree = db.trees.find((entry) => entry.id === treeId);
+    if (!tree) {
+      return null;
+    }
+    const treePersons = db.persons.filter(
+      (person) => person.treeId === treeId,
+    );
+    const anchor = _resolveAnchorPerson(db, treeId, userId);
+    if (!anchor) {
+      return {
+        anchorPersonId: null,
+        presets: [],
+      };
+    }
+
+    // Build adjacency: personId → list of {otherId, relType}
+    const treePersonIds = new Set(treePersons.map((p) => p.id));
+    const treeRelations = db.relations.filter(
+      (rel) =>
+        treePersonIds.has(String(rel.person1Id || "")) &&
+        treePersonIds.has(String(rel.person2Id || "")),
+    );
+    // adjacency[p] entries describe roles OTHERS play toward p, e.g.
+    // {otherId: dadId, relType: "parent"} means "dad is my parent".
+    // For a relation (person1, person2, relation1to2='parent') —
+    // person1 is parent of person2 — we record:
+    //   adjacency[person2] += {otherId: person1, relType: 'parent'}
+    //   adjacency[person1] += {otherId: person2, relType: 'child'}
+    // So we always use the mirror relation when populating.
+    const adjacency = new Map();
+    for (const id of treePersonIds) {
+      adjacency.set(id, []);
+    }
+    for (const rel of treeRelations) {
+      const a = String(rel.person1Id || "");
+      const b = String(rel.person2Id || "");
+      const aToB = String(rel.relation1to2 || "").trim().toLowerCase();
+      const bToA =
+        String(rel.relation2to1 || "").trim().toLowerCase() ||
+        relationMirror(aToB);
+      if (a && b && aToB) {
+        // person2 sees person1 in role `aToB`.
+        adjacency.get(b).push({otherId: a, relType: aToB});
+      }
+      if (a && b && bToA) {
+        // person1 sees person2 in role `bToA`.
+        adjacency.get(a).push({otherId: b, relType: bToA});
+      }
+    }
+
+    const neighborsByType = (personId, types) => {
+      const set = new Set(
+        types.map((t) => String(t).toLowerCase()),
+      );
+      return (adjacency.get(personId) || [])
+        .filter((edge) => set.has(edge.relType))
+        .map((edge) => edge.otherId);
+    };
+
+    // core_family: anchor + parents + spouse/partner + siblings +
+    // siblings' partners + nieces/nephews (siblings' children) +
+    // children + children's partners.
+    const coreSet = new Set([anchor.id]);
+    const parents = neighborsByType(anchor.id, ["parent"]);
+    parents.forEach((id) => coreSet.add(id));
+    const partners = neighborsByType(anchor.id, ["spouse", "partner"]);
+    partners.forEach((id) => coreSet.add(id));
+    const siblings = neighborsByType(anchor.id, ["sibling"]);
+    siblings.forEach((sib) => {
+      coreSet.add(sib);
+      neighborsByType(sib, ["spouse", "partner"]).forEach((id) =>
+        coreSet.add(id),
+      );
+      neighborsByType(sib, ["child"]).forEach((id) => coreSet.add(id));
+    });
+    const children = neighborsByType(anchor.id, ["child"]);
+    children.forEach((kid) => {
+      coreSet.add(kid);
+      neighborsByType(kid, ["spouse", "partner"]).forEach((id) =>
+        coreSet.add(id),
+      );
+    });
+
+    // close: core_family + grandparents + grandparents' partners +
+    // aunts/uncles + first cousins + grandchildren.
+    const closeSet = new Set(coreSet);
+    parents.forEach((p) => {
+      neighborsByType(p, ["parent"]).forEach((gp) => {
+        closeSet.add(gp);
+        neighborsByType(gp, ["spouse", "partner"]).forEach((id) =>
+          closeSet.add(id),
+        );
+      });
+      neighborsByType(p, ["sibling"]).forEach((auntUncle) => {
+        closeSet.add(auntUncle);
+        neighborsByType(auntUncle, ["spouse", "partner"]).forEach((id) =>
+          closeSet.add(id),
+        );
+        neighborsByType(auntUncle, ["child"]).forEach((cousin) =>
+          closeSet.add(cousin),
+        );
+      });
+    });
+    children.forEach((kid) => {
+      neighborsByType(kid, ["child"]).forEach((id) => closeSet.add(id));
+    });
+
+    return {
+      anchorPersonId: anchor.id,
+      presets: [
+        {
+          key: "core_family",
+          label: "Моя семья",
+          description: "Родители, партнёр, сёстры/братья и племянники",
+          personIds: Array.from(coreSet),
+        },
+        {
+          key: "close",
+          label: "Близкие",
+          description: "Семья и круг тех, с кем общаетесь чаще остальных",
+          personIds: Array.from(closeSet),
+        },
+      ],
+    };
   }
 
   /// Push a "X reacted to your post" notification, coalescing unread

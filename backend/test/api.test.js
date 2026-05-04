@@ -5127,6 +5127,133 @@ test("post and comment emoji reactions toggle and surface in feed", async () => 
   }
 });
 
+test("audience-presets compute core_family and close from relations", async () => {
+  const ctx = await startTestServer();
+
+  try {
+    const registerResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "presets@rodnya.app",
+        password: "secret123",
+        displayName: "Артём",
+      }),
+    });
+    assert.equal(registerResponse.status, 201);
+    const me = await registerResponse.json();
+
+    const treeResponse = await fetch(`${ctx.baseUrl}/v1/trees`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${me.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({name: "Семья"}),
+    });
+    assert.equal(treeResponse.status, 201);
+    const treePayload = await treeResponse.json();
+    const treeId = treePayload.tree.id;
+
+    // Find anchor — the auto-created person for the creator.
+    const personsResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeId}/persons`,
+      {headers: {authorization: `Bearer ${me.accessToken}`}},
+    );
+    const personsPayload = await personsResponse.json();
+    const anchor = personsPayload.persons.find((p) => p.userId === me.user.id);
+    assert.ok(anchor, "anchor person resolved");
+
+    const createPerson = async (firstName, lastName) => {
+      const r = await fetch(`${ctx.baseUrl}/v1/trees/${treeId}/persons`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${me.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({firstName, lastName}),
+      });
+      assert.equal(r.status, 201);
+      return (await r.json()).person;
+    };
+    const link = async (a, b, type) => {
+      const r = await fetch(`${ctx.baseUrl}/v1/trees/${treeId}/relations`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${me.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          person1Id: a,
+          person2Id: b,
+          relation1to2: type,
+          isConfirmed: true,
+        }),
+      });
+      assert.equal(r.status, 201);
+    };
+
+    // Build a small graph that mirrors the user's example:
+    // папа, мама, я, сестра, муж сестры, племянник, моя девушка
+    const dad = await createPerson("Андрей", "Кузнецов");
+    const mom = await createPerson("Наталья", "Кузнецова");
+    const sister = await createPerson("Дарья", "Понькина");
+    const sisterHusband = await createPerson("Сергей", "Понькин");
+    const nephew = await createPerson("Павел", "Понькин");
+    const partner = await createPerson("Анастасия", "Шуфляк");
+    // Plus a more distant relative who should be in close but NOT
+    // core_family (grandfather).
+    const grandpa = await createPerson("Анатолий", "Кузнецов");
+
+    await link(dad.id, anchor.id, "parent");
+    await link(mom.id, anchor.id, "parent");
+    await link(sister.id, anchor.id, "sibling");
+    await link(sister.id, sisterHusband.id, "spouse");
+    await link(sister.id, nephew.id, "parent");
+    await link(anchor.id, partner.id, "spouse");
+    await link(grandpa.id, dad.id, "parent");
+
+    const presetsResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeId}/audience-presets`,
+      {headers: {authorization: `Bearer ${me.accessToken}`}},
+    );
+    assert.equal(presetsResponse.status, 200);
+    const presets = await presetsResponse.json();
+
+    assert.equal(presets.anchorPersonId, anchor.id);
+    const core = presets.presets.find((p) => p.key === "core_family");
+    const close = presets.presets.find((p) => p.key === "close");
+    assert.ok(core);
+    assert.ok(close);
+
+    // core_family must include the seven faces the user listed.
+    const coreIds = new Set(core.personIds);
+    const coreExpected = [
+      anchor.id,
+      dad.id,
+      mom.id,
+      sister.id,
+      sisterHusband.id,
+      nephew.id,
+      partner.id,
+    ];
+    for (const id of coreExpected) {
+      assert.ok(coreIds.has(id), `core_family missing ${id}`);
+    }
+    // grandpa is a level out — should NOT be in core_family.
+    assert.equal(coreIds.has(grandpa.id), false);
+
+    // close must include core_family + grandpa (parent's parent).
+    const closeIds = new Set(close.personIds);
+    for (const id of coreExpected) {
+      assert.ok(closeIds.has(id));
+    }
+    assert.ok(closeIds.has(grandpa.id), "close should pull in grandparents");
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
 test("auto circles follow tree relations and filter audience content", async () => {
   const ctx = await startTestServer();
 

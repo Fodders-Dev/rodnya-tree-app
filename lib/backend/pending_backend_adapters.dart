@@ -24,6 +24,7 @@ import '../models/profile_contribution.dart';
 import '../models/profile_note.dart';
 import '../models/relation_request.dart';
 import '../models/user_profile.dart';
+import '../models/audience_preset.dart';
 import '../models/post.dart';
 import '../models/comment.dart';
 import '../models/reaction_summary.dart';
@@ -708,6 +709,11 @@ class PendingBackendCircleService implements CircleServiceInterface {
   @override
   Future<List<FamilyCircle>> getCircles(String treeId) async {
     return const <FamilyCircle>[];
+  }
+
+  @override
+  Future<AudiencePresetsResponse> getAudiencePresets(String treeId) async {
+    return AudiencePresetsResponse.empty;
   }
 }
 

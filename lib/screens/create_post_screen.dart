@@ -13,6 +13,7 @@ import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/circle_service_interface.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
 import '../backend/interfaces/post_service_interface.dart';
+import '../models/audience_preset.dart';
 import '../models/circle.dart';
 import '../models/family_person.dart';
 import '../models/family_tree.dart';
@@ -66,6 +67,11 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
   // out of an .mp4.
   List<_PostMedia> _selectedMedia = <_PostMedia>[];
   List<FamilyCircle> _audienceCircles = <FamilyCircle>[];
+  AudiencePresetsResponse _audiencePresets = AudiencePresetsResponse.empty;
+  /// `'core_family'` / `'close'` while one of the smart-tile presets
+  /// is active. Cleared the moment the user picks any non-preset
+  /// option (a regular circle / their own custom branch list).
+  String? _selectedPresetKey;
   List<FamilyPerson> _availablePeople = <FamilyPerson>[];
   final Set<String> _selectedBranchPersonIds = <String>{};
   TreeContentScopeType _scopeType = TreeContentScopeType.wholeTree;
@@ -76,6 +82,10 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
   bool get _isFriendsTree => _currentTreeMeta?.isFriendsTree == true;
 
   String get _selectedAudienceLabel {
+    final activePreset = _activePreset;
+    if (activePreset != null) {
+      return activePreset.label;
+    }
     final selectedCircle = _selectedCircle;
     if (_scopeType == TreeContentScopeType.branches &&
         _selectedBranchPersonIds.isNotEmpty) {
@@ -87,6 +97,15 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
       return selectedCircle.name;
     }
     return _isFriendsTree ? 'Весь круг' : 'Всё дерево';
+  }
+
+  AudiencePreset? get _activePreset {
+    final key = _selectedPresetKey;
+    if (key == null) return null;
+    for (final p in _audiencePresets.presets) {
+      if (p.key == key) return p;
+    }
+    return null;
   }
 
   String get _selectedAudienceDetail {
@@ -271,11 +290,22 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
 
     try {
       final circles = await circleService.getCircles(treeId);
+      // Audience presets are best-effort — the older backend simply
+      // doesn't have the endpoint and returns 404, which the service
+      // turns into the empty response. Wrap in a separate try so a
+      // presets failure doesn't blank out the regular circles list.
+      AudiencePresetsResponse presets = AudiencePresetsResponse.empty;
+      try {
+        presets = await circleService.getAudiencePresets(treeId);
+      } catch (_) {
+        // ignore — picker just won't show smart tiles
+      }
       if (!mounted) {
         return;
       }
       setState(() {
         _audienceCircles = circles;
+        _audiencePresets = presets;
         _selectedCircleId = _resolveSelectedCircleId(circles);
         _circlesUnavailable = false;
       });
@@ -737,6 +767,96 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     );
   }
 
+  Widget _buildPresetTilesRow(
+    ThemeData theme,
+    RodnyaDesignTokens tokens,
+    StateSetter? sheetSetState,
+  ) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: _audiencePresets.presets.map((preset) {
+        final selected = _selectedPresetKey == preset.key;
+        final memberCount = preset.personIds.length;
+        return InkWell(
+          borderRadius: BorderRadius.circular(tokens.radiusMd),
+          onTap: () => _applyAudiencePreset(preset, sheetSetState),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 140),
+            constraints: const BoxConstraints(minWidth: 140),
+            padding: const EdgeInsets.symmetric(
+              horizontal: 14,
+              vertical: 10,
+            ),
+            decoration: BoxDecoration(
+              color: selected ? tokens.accentSoft : tokens.surfaceStrong,
+              borderRadius: BorderRadius.circular(tokens.radiusMd),
+              border: Border.all(
+                color: selected ? tokens.accent : tokens.surfaceLine,
+                width: selected ? 1.4 : 0.8,
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  preset.key == 'core_family'
+                      ? Icons.diversity_3_outlined
+                      : Icons.groups_2_outlined,
+                  color: selected ? tokens.accent : tokens.inkSecondary,
+                  size: 20,
+                ),
+                const SizedBox(width: 10),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      preset.label,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: tokens.ink,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '$memberCount ${_memberLabel(memberCount).split(' ').last}',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: tokens.inkSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  void _applyAudiencePreset(
+    AudiencePreset preset,
+    StateSetter? sheetSetState,
+  ) {
+    _updateAudienceState(() {
+      if (_selectedPresetKey == preset.key) {
+        // Tapping an already-selected preset clears it (back to "Всё
+        // дерево" or whatever circle was selected before).
+        _selectedPresetKey = null;
+        _selectedBranchPersonIds.clear();
+        _scopeType = TreeContentScopeType.wholeTree;
+        return;
+      }
+      _selectedPresetKey = preset.key;
+      _selectedCircleId = null;
+      _scopeType = TreeContentScopeType.branches;
+      _selectedBranchPersonIds
+        ..clear()
+        ..addAll(preset.personIds);
+    }, sheetSetState);
+  }
+
   Future<void> _showAudienceSheet() async {
     await showModalBottomSheet<void>(
       context: context,
@@ -811,12 +931,23 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
           ),
         ),
         const SizedBox(height: 14),
+        if (_audiencePresets.presets.isNotEmpty) ...[
+          // Smart-tile row above the regular picker. Single tap takes
+          // care of "Мoя семья" / "Близкие" — the 80% case the user
+          // described as "тонна выбора" in the flat list.
+          _buildPresetTilesRow(theme, tokens, sheetSetState),
+          const SizedBox(height: 16),
+        ],
         AudiencePicker(
           circles: _audienceCircles,
-          selectedCircleId: _selectedCircleId,
+          selectedCircleId: _activePreset == null ? _selectedCircleId : null,
           onChanged: (circleId) {
             _updateAudienceState(() {
+              // Picking a regular circle clears any active preset —
+              // they're mutually exclusive selections.
+              _selectedPresetKey = null;
               _selectedCircleId = circleId;
+              _selectedBranchPersonIds.clear();
               if (_scopeType == TreeContentScopeType.branches &&
                   _selectedBranchPersonIds.isEmpty) {
                 _scopeType = TreeContentScopeType.wholeTree;

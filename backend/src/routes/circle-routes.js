@@ -28,6 +28,28 @@ function registerCircleRoutes(app, {store, requireAuth, requireTreeAccess}) {
     res.json({circles: (circles || []).map(mapCircle)});
   });
 
+  // Pre-computed smart-set personId lists for the current user in
+  // the given tree — feeds the audience picker's "Моя семья" /
+  // "Близкие" tiles. Resolved at request time so additions /
+  // removals on the tree show up immediately. Empty presets when
+  // the user has no person-card on the tree (graceful UI fallback).
+  app.get("/v1/trees/:treeId/audience-presets", requireAuth, async (req, res) => {
+    const tree = await requireTreeAccess(req, res, req.params.treeId);
+    if (!tree) {
+      return;
+    }
+
+    const computed = await store.computeAudiencePresets({
+      treeId: tree.id,
+      userId: req.auth.user.id,
+    });
+    if (!computed) {
+      res.status(404).json({message: "Дерево не найдено"});
+      return;
+    }
+    res.json(computed);
+  });
+
   app.post("/v1/trees/:treeId/circles", requireAuth, async (req, res) => {
     const tree = await requireTreeAccess(req, res, req.params.treeId);
     if (!tree) {

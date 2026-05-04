@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 
 import '../backend/backend_runtime_config.dart';
 import '../backend/interfaces/circle_service_interface.dart';
+import '../models/audience_preset.dart';
 import '../models/circle.dart';
 import 'custom_api_auth_service.dart';
 
@@ -51,6 +52,35 @@ class CustomApiCircleService implements CircleServiceInterface {
         .map(FamilyCircle.fromJson)
         .where((circle) => circle.id.isNotEmpty)
         .toList(growable: false);
+  }
+
+  @override
+  Future<AudiencePresetsResponse> getAudiencePresets(String treeId) async {
+    final normalizedTreeId = treeId.trim();
+    if (normalizedTreeId.isEmpty) {
+      return AudiencePresetsResponse.empty;
+    }
+    try {
+      final response = await _httpClient
+          .get(
+            _buildUri('/v1/trees/$normalizedTreeId/audience-presets'),
+            headers: _headers(),
+          )
+          .timeout(_requestTimeout);
+      final decoded = _handleResponse(response);
+      if (decoded is Map<String, dynamic>) {
+        return AudiencePresetsResponse.fromJson(decoded);
+      }
+      return AudiencePresetsResponse.empty;
+    } on CustomApiCircleException catch (error) {
+      // 404 = older backend without the endpoint, or user has no
+      // person on the tree. Either way: graceful degrade to no
+      // presets so the picker doesn't error out.
+      if (error.statusCode == 404) {
+        return AudiencePresetsResponse.empty;
+      }
+      rethrow;
+    }
   }
 
   dynamic _handleResponse(http.Response response) {
