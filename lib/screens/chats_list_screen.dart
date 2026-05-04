@@ -655,9 +655,14 @@ class _ChatsListScreenState extends State<ChatsListScreen>
     return 'Ветки: $previewNames$suffix';
   }
 
-  // Always render the mobile-style chat list flow per Claude reference,
-  // even on desktop — the side "Связь" panel is dropped intentionally.
-  bool _isWideLayout(BuildContext context) => false;
+  // Wide-layout shows the chat list + a "Связь" side panel with quick
+  // actions / suggested relatives. Earlier hard-disabled to mirror the
+  // mobile-style reference, but on a 1100px+ desktop browser that
+  // wasted ~600px of horizontal space — user feedback was "выглядит
+  // как растянутый телефон". Now opt-in via the same threshold the
+  // home screen uses.
+  bool _isWideLayout(BuildContext context) =>
+      MediaQuery.of(context).size.width >= 1100;
 
   void _setSearchQuery(String value) {
     setState(() {
@@ -698,9 +703,13 @@ class _ChatsListScreenState extends State<ChatsListScreen>
           ? _buildErrorState()
           : Center(
               child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 760),
+                // 760 caps narrow viewports at a phone-shaped column;
+                // 1180 lets the side "Связь" panel breathe on desktop.
+                constraints: BoxConstraints(
+                  maxWidth: _isWideLayout(context) ? 1180 : 760,
+                ),
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(0, 6, 0, 12),
+                  padding: const EdgeInsets.fromLTRB(8, 6, 8, 12),
                   child: _buildDesktopShell(
                     theme: theme,
                     currentUserId: currentUserId,

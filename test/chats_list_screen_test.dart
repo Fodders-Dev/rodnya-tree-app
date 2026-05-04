@@ -623,7 +623,7 @@ void main() {
   });
 
   testWidgets(
-    'ChatsListScreen renders the mobile-style flat list on wide screens too',
+    'ChatsListScreen surfaces the wide-layout side panel on desktop',
     (tester) async {
       tester.view.physicalSize = const Size(1600, 1200);
       tester.view.devicePixelRatio = 1.0;
@@ -632,9 +632,11 @@ void main() {
       await tester.pumpWidget(buildApp());
       await tester.pumpAndSettle();
 
-      // Per Claude reference the chats screen no longer renders a desktop
-      // side "Связь" panel — the same flat list reads on every breakpoint.
-      expect(find.text('Связь'), findsNothing);
+      // The earlier mobile-only flow wasted ~600px of desktop space —
+      // user feedback was "выглядит как растянутый телефон". Now wide
+      // viewports (>= 1100) get the chat list on the left and the
+      // "Связь" side panel on the right.
+      expect(find.text('Связь'), findsOneWidget);
       expect(find.text('Семья Кузнецовых'), findsAtLeastNWidgets(1));
     },
   );
