@@ -782,7 +782,14 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
           imageUrl: story.thumbnailUrl ?? story.mediaUrl,
           dimmed: true,
         ),
-        Center(
+        // SizedBox.expand gives FittedBox tight constraints so cover
+        // actually scales. The previous Center wrapper handed FittedBox
+        // unbounded constraints, which made the player render at its
+        // intrinsic size (~640×480 medium-quality iPhone video) inside
+        // a tiny centered rectangle — the "видео в рамке" the user
+        // reported. Now the player fills the screen, preserving aspect
+        // and cropping with BoxFit.cover the way Telegram / IG do.
+        Positioned.fill(
           child: FittedBox(
             fit: BoxFit.cover,
             child: SizedBox(

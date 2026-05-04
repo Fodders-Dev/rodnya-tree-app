@@ -132,12 +132,21 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
     }
   }
 
+  // iPhone захватывает фото в 4032×3024 @ HEIC. Прежние ограничения
+  // imageQuality: 85 + maxWidth: 1440 урезали до 1440×1080 @ 85% JPEG —
+  // при показе на 9:19.5 фуллскрине это видно как "качество упало"
+  // (пользователь так и описал). 1920 ширина = Full HD, 95% — практически
+  // визуально-без-потери JPEG. Stories публикуются один раз, размер на
+  // диске через серверную обработку всё равно будет нормализован.
+  static const int _photoQuality = 95;
+  static const double _photoMaxWidth = 1920;
+
   Future<void> _takeStoryPhoto() async {
     try {
       final picked = await _picker.pickImage(
         source: ImageSource.camera,
-        imageQuality: 85,
-        maxWidth: 1440,
+        imageQuality: _photoQuality,
+        maxWidth: _photoMaxWidth,
       );
       if (picked == null || !mounted) return;
       setState(() {
@@ -153,8 +162,8 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
     try {
       final picked = await _picker.pickImage(
         source: ImageSource.gallery,
-        imageQuality: 85,
-        maxWidth: 1440,
+        imageQuality: _photoQuality,
+        maxWidth: _photoMaxWidth,
       );
       if (picked == null || !mounted) {
         return;
