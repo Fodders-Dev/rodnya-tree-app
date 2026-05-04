@@ -666,8 +666,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     )
                   : RefreshIndicator(
                       onRefresh: _loadUserData,
-                      child: CustomScrollView(
-                        slivers: [
+                      // Cap outer width on desktop. Without this the
+                      // posts list would stretch the full viewport
+                      // (~1500px on a wide monitor) which is awful for
+                      // reading. The dossier card is already capped
+                      // internally at 680; other sections use
+                      // horizontal padding only, so the outer
+                      // constraint is what keeps the whole column
+                      // phone-shaped on desktop. A sidebar-driven
+                      // wide-profile layout is the next iteration.
+                      child: Center(
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 760),
+                          child: CustomScrollView(
+                            slivers: [
                           SliverToBoxAdapter(
                             child: Padding(
                               padding: const EdgeInsets.all(16),
@@ -966,7 +978,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               ),
                             ),
                           const SliverToBoxAdapter(child: SizedBox(height: 40)),
-                        ],
+                            ],
+                          ),
+                        ),
                       ),
                     ),
     );
