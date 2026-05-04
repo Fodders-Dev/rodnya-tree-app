@@ -350,7 +350,11 @@ void main() {
     expect(find.text('Кто увидит пост?'), findsOneWidget);
     expect(find.text('По публичной ссылке'), findsOneWidget);
     expect(find.text('Отдельные ветки'), findsOneWidget);
-    expect(find.text('Ирина Кузнецова'), findsOneWidget);
+    // The flat FilterChip Wrap was replaced by a compact summary
+    // ("Выбрать людей") that opens a fullscreen multi-picker on
+    // tap — virtualized so it scales to 200+ people. The chip with
+    // "Ирина Кузнецова" only shows after opening that picker.
+    expect(find.text('Выбрать людей'), findsOneWidget);
 
     await tester.tap(find.text('Близкие').last);
     await tester.pumpAndSettle();

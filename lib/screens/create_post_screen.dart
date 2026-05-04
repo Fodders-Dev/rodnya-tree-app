@@ -25,6 +25,7 @@ import '../theme/app_theme.dart';
 import '../utils/user_facing_error.dart';
 import '../widgets/audience_picker.dart';
 import '../widgets/glass_panel.dart';
+import '../widgets/person_multi_picker_sheet.dart';
 
 class CreatePostScreen extends StatefulWidget {
   const CreatePostScreen({super.key, this.initialAction});
@@ -1071,44 +1072,126 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
                 : 'Сначала добавьте людей и связи в дерево.',
           )
         else
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: _availablePeople.map((person) {
-              final isSelected = _selectedBranchPersonIds.contains(person.id);
-              return FilterChip(
-                avatar: CircleAvatar(
-                  backgroundColor: isSelected
-                      ? tokens.accent.withValues(alpha: 0.18)
-                      : tokens.surface,
-                  child: Text(
-                    person.initials,
-                    style: theme.textTheme.labelSmall?.copyWith(
-                      color: isSelected ? tokens.accentStrong : tokens.inkMuted,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                ),
-                label: Text(person.displayName),
-                selected: isSelected,
-                onSelected: (selected) {
-                  _updateAudienceState(() {
-                    if (selected) {
-                      _selectedBranchPersonIds.add(person.id);
-                      _scopeType = TreeContentScopeType.branches;
-                    } else {
-                      _selectedBranchPersonIds.remove(person.id);
-                      if (_selectedBranchPersonIds.isEmpty) {
-                        _scopeType = TreeContentScopeType.wholeTree;
-                      }
-                    }
-                  }, sheetSetState);
-                },
-              );
-            }).toList(),
-          ),
+          // Compact summary instead of an N-chip Wrap. The flat
+          // FilterChip list didn't scale past ~30 people and would
+          // become a wall on a 200-person tree (user feedback).
+          // Tapping the card opens a fullscreen multi-picker with
+          // search + virtualized list — that scales linearly.
+          _buildBranchPickerSummary(theme, tokens, sheetSetState),
       ],
     );
+  }
+
+  Widget _buildBranchPickerSummary(
+    ThemeData theme,
+    RodnyaDesignTokens tokens,
+    StateSetter? sheetSetState,
+  ) {
+    final selectedCount = _selectedBranchPersonIds.length;
+    final selectedPeople = _availablePeople
+        .where((p) => _selectedBranchPersonIds.contains(p.id))
+        .take(3)
+        .toList();
+    return InkWell(
+      onTap: () => _openBranchMultiPicker(sheetSetState),
+      borderRadius: BorderRadius.circular(tokens.radiusMd),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
+        decoration: BoxDecoration(
+          color: selectedCount > 0
+              ? tokens.accentSoft
+              : tokens.surfaceStrong.withValues(alpha: 0.7),
+          borderRadius: BorderRadius.circular(tokens.radiusMd),
+          border: Border.all(
+            color: selectedCount > 0 ? tokens.accent : tokens.surfaceLine,
+            width: selectedCount > 0 ? 1.2 : 0.7,
+          ),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                color: selectedCount > 0
+                    ? tokens.accent.withValues(alpha: 0.18)
+                    : tokens.surface,
+                borderRadius: BorderRadius.circular(tokens.radiusSm),
+              ),
+              child: Icon(
+                Icons.alt_route_outlined,
+                color: selectedCount > 0 ? tokens.accent : tokens.inkSecondary,
+                size: 20,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    selectedCount > 0
+                        ? 'Выбрано ${_memberLabel(selectedCount)}'
+                        : 'Выбрать людей',
+                    style: theme.textTheme.bodyLarge?.copyWith(
+                      color: tokens.ink,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    selectedCount == 0
+                        ? 'Поиск по имени · доступно ${_memberLabel(_availablePeople.length)}'
+                        : selectedPeople
+                                .map((p) => p.displayName)
+                                .join(', ') +
+                            (selectedCount > selectedPeople.length
+                                ? ' и ещё ${selectedCount - selectedPeople.length}'
+                                : ''),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: tokens.inkSecondary,
+                      height: 1.3,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 10),
+            Icon(
+              Icons.chevron_right_rounded,
+              color: tokens.inkSecondary,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openBranchMultiPicker(StateSetter? sheetSetState) async {
+    final result = await PersonMultiPickerSheet.show(
+      context,
+      people: _availablePeople,
+      initialSelection: Set<String>.from(_selectedBranchPersonIds),
+      title: _isFriendsTree ? 'Отдельные круги' : 'Отдельные ветки',
+    );
+    if (result == null || !mounted) return;
+    _updateAudienceState(() {
+      // Picking a custom person set always clears the active preset
+      // and circle so the three selection paths stay mutually
+      // exclusive.
+      _selectedPresetKey = null;
+      _selectedCircleId = null;
+      _selectedBranchPersonIds
+        ..clear()
+        ..addAll(result);
+      if (_selectedBranchPersonIds.isEmpty) {
+        _scopeType = TreeContentScopeType.wholeTree;
+      } else {
+        _scopeType = TreeContentScopeType.branches;
+      }
+    }, sheetSetState);
   }
 
   String _memberLabel(int count) {
