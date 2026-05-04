@@ -7,8 +7,11 @@ import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/post_service_interface.dart';
 import '../models/comment.dart';
 import '../models/post.dart';
+import '../models/reaction_summary.dart';
 import '../theme/app_theme.dart';
 import 'loading_indicator.dart';
+import 'reaction_chip_strip.dart';
+import 'reaction_picker.dart';
 
 class CommentSheet extends StatefulWidget {
   const CommentSheet({super.key, required this.post});
@@ -241,40 +244,141 @@ class _CommentSheetState extends State<CommentSheet> {
   Widget _buildCommentItem(Comment comment) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildAuthorAvatar(comment),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Text(
-                      comment.authorName ?? 'Аноним',
-                      style: const TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      DateFormat('d MMM в HH:mm', 'ru')
-                          .format(comment.createdAt),
-                      style: TextStyle(
-                        color: Colors.grey.shade600,
-                        fontSize: 12,
+      child: GestureDetector(
+        // Long-press → reaction picker. Same gesture pattern as the
+        // post card so users build muscle memory across surfaces.
+        behavior: HitTestBehavior.translucent,
+        onLongPress: () => _openCommentReactionPicker(comment),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildAuthorAvatar(comment),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Text(
+                        comment.authorName ?? 'Аноним',
+                        style: const TextStyle(fontWeight: FontWeight.bold),
                       ),
+                      const SizedBox(width: 8),
+                      Text(
+                        DateFormat('d MMM в HH:mm', 'ru')
+                            .format(comment.createdAt),
+                        style: TextStyle(
+                          color: Colors.grey.shade600,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(comment.content),
+                  if (comment.reactions.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    ReactionChipStrip(
+                      reactions: comment.reactions,
+                      currentUserId: _authService.currentUserId,
+                      onToggle: (emoji) =>
+                          _toggleCommentReaction(comment, emoji),
                     ),
                   ],
-                ),
-                const SizedBox(height: 4),
-                Text(comment.content),
-              ],
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
+  }
+
+  Future<void> _openCommentReactionPicker(Comment comment) async {
+    final emoji = await ReactionPicker.show(context);
+    if (emoji == null || !mounted) return;
+    await _toggleCommentReaction(comment, emoji);
+  }
+
+  Future<void> _toggleCommentReaction(Comment comment, String emoji) async {
+    final userId = _authService.currentUserId;
+    if (userId == null || userId.isEmpty) return;
+    final originalReactions =
+        List<ReactionSummary>.from(comment.reactions);
+    // Optimistic local toggle so the chip flickers in immediately.
+    final next = _applyOptimisticReaction(originalReactions, emoji, userId);
+    setState(() {
+      _comments = _comments?.map((c) {
+        if (c.id == comment.id) return c.copyWithReactions(next);
+        return c;
+      }).toList();
+    });
+    try {
+      final fromServer = await _postService.toggleCommentReaction(
+        postId: widget.post.id,
+        commentId: comment.id,
+        emoji: emoji,
+      );
+      if (!mounted) return;
+      setState(() {
+        _comments = _comments?.map((c) {
+          if (c.id == comment.id) return c.copyWithReactions(fromServer);
+          return c;
+        }).toList();
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _comments = _comments?.map((c) {
+          if (c.id == comment.id) return c.copyWithReactions(originalReactions);
+          return c;
+        }).toList();
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Не удалось сохранить реакцию: $e')),
+      );
+    }
+  }
+
+  /// Same shape as the post-card optimistic toggle. Kept here as a
+  /// local copy because pulling it into a shared util would mean
+  /// teaching the util about the (currentUserId) parameter, and the
+  /// Comment / Post call-sites differ enough that the small dupe is
+  /// cheaper than the abstraction.
+  List<ReactionSummary> _applyOptimisticReaction(
+    List<ReactionSummary> input,
+    String emoji,
+    String userId,
+  ) {
+    final next = List<ReactionSummary>.from(input);
+    final existingIndex = next.indexWhere((r) => r.emoji == emoji);
+    if (existingIndex == -1) {
+      next.add(ReactionSummary(
+        emoji: emoji,
+        userIds: <String>[userId],
+        count: 1,
+      ));
+      return next;
+    }
+    final entry = next[existingIndex];
+    final wasMine = entry.userIds.contains(userId);
+    final updatedUsers = List<String>.from(entry.userIds);
+    if (wasMine) {
+      updatedUsers.remove(userId);
+    } else {
+      updatedUsers.add(userId);
+    }
+    if (updatedUsers.isEmpty) {
+      next.removeAt(existingIndex);
+    } else {
+      next[existingIndex] = ReactionSummary(
+        emoji: emoji,
+        userIds: updatedUsers,
+        count: updatedUsers.length,
+      );
+    }
+    return next;
   }
 
   /// Avatar fallback chain for a comment author:

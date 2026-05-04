@@ -26,6 +26,7 @@ import '../models/relation_request.dart';
 import '../models/user_profile.dart';
 import '../models/post.dart';
 import '../models/comment.dart';
+import '../models/reaction_summary.dart';
 import '../models/story.dart';
 import '../models/tree_change_record.dart';
 import '../models/public_identity_result.dart';
@@ -811,6 +812,23 @@ class PendingBackendPostService implements PostServiceInterface {
 
   @override
   Future<Post> toggleLike(String postId) {
+    throw UnsupportedError(_pendingProviderMessage('post'));
+  }
+
+  @override
+  Future<List<ReactionSummary>> togglePostReaction({
+    required String postId,
+    required String emoji,
+  }) {
+    throw UnsupportedError(_pendingProviderMessage('post'));
+  }
+
+  @override
+  Future<List<ReactionSummary>> toggleCommentReaction({
+    required String postId,
+    required String commentId,
+    required String emoji,
+  }) {
     throw UnsupportedError(_pendingProviderMessage('post'));
   }
 

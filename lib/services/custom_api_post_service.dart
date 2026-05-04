@@ -8,6 +8,7 @@ import '../backend/interfaces/post_service_interface.dart';
 import '../backend/interfaces/storage_service_interface.dart';
 import '../models/comment.dart';
 import '../models/post.dart';
+import '../models/reaction_summary.dart';
 import 'custom_api_auth_service.dart';
 
 class CustomApiPostService implements PostServiceInterface {
@@ -102,6 +103,37 @@ class CustomApiPostService implements PostServiceInterface {
       path: '/v1/posts/$postId/like',
     );
     return Post.fromJson(response);
+  }
+
+  @override
+  Future<List<ReactionSummary>> togglePostReaction({
+    required String postId,
+    required String emoji,
+  }) async {
+    final normalized = emoji.trim();
+    if (normalized.isEmpty) return const <ReactionSummary>[];
+    final response = await _requestJson(
+      method: 'POST',
+      path: '/v1/posts/$postId/reactions',
+      body: <String, dynamic>{'emoji': normalized},
+    );
+    return ReactionSummary.listFromDynamic(response['reactions']);
+  }
+
+  @override
+  Future<List<ReactionSummary>> toggleCommentReaction({
+    required String postId,
+    required String commentId,
+    required String emoji,
+  }) async {
+    final normalized = emoji.trim();
+    if (normalized.isEmpty) return const <ReactionSummary>[];
+    final response = await _requestJson(
+      method: 'POST',
+      path: '/v1/posts/$postId/comments/$commentId/reactions',
+      body: <String, dynamic>{'emoji': normalized},
+    );
+    return ReactionSummary.listFromDynamic(response['reactions']);
   }
 
   @override

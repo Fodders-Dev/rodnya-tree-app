@@ -1,4 +1,5 @@
 import '../utils/url_utils.dart';
+import 'reaction_summary.dart';
 
 enum TreeContentScopeType { wholeTree, branches }
 
@@ -17,6 +18,11 @@ class Post {
   final TreeContentScopeType scopeType;
   final List<String> anchorPersonIds;
   final String? circleId;
+  /// Aggregated emoji reactions (each entry = emoji + list of user IDs
+  /// who picked it). Backwards-compatible default empty list — older
+  /// /v1/posts payloads without a reactions field deserialise as no
+  /// reactions, no breakage.
+  final List<ReactionSummary> reactions;
 
   // Геттеры для нормализованных URL
   String? get authorPhotoUrl => _authorPhotoUrl;
@@ -45,13 +51,15 @@ class Post {
     this.scopeType = TreeContentScopeType.wholeTree,
     List<String>? anchorPersonIds,
     this.circleId,
+    List<ReactionSummary>? reactions,
   })  : _authorPhotoUrl = UrlUtils.normalizeImageUrl(authorPhotoUrl),
         _imageUrls = imageUrls
             ?.map((url) => UrlUtils.normalizeImageUrl(url))
             .whereType<String>()
             .toList(),
         likedBy = likedBy ?? [],
-        anchorPersonIds = anchorPersonIds ?? [];
+        anchorPersonIds = anchorPersonIds ?? [],
+        reactions = reactions ?? const <ReactionSummary>[];
 
   factory Post.fromJson(Map<String, dynamic> json) {
     final rawImageUrls = (json['imageUrls'] as List<dynamic>? ?? [])
@@ -79,6 +87,7 @@ class Post {
           .map((e) => e.toString())
           .toList(),
       circleId: json['circleId']?.toString(),
+      reactions: ReactionSummary.listFromDynamic(json['reactions']),
     );
   }
 
@@ -98,6 +107,7 @@ class Post {
       'scopeType': _scopeTypeToString(scopeType),
       'anchorPersonIds': anchorPersonIds,
       'circleId': circleId,
+      'reactions': reactions.map((r) => r.toMap()).toList(),
     };
   }
 

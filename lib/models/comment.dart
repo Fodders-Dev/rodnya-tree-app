@@ -1,4 +1,5 @@
 import '../utils/url_utils.dart';
+import 'reaction_summary.dart';
 
 class Comment {
   final String id;
@@ -10,6 +11,10 @@ class Comment {
   final DateTime createdAt;
   final int likeCount;
   final List<String> likedBy;
+  /// Aggregated emoji reactions on this comment. Backwards-compatible
+  /// default empty list — older /v1/posts/:id/comments payloads
+  /// without a reactions field deserialise as no reactions.
+  final List<ReactionSummary> reactions;
 
   String? get authorPhotoUrl => _authorPhotoUrl;
 
@@ -23,7 +28,9 @@ class Comment {
     required this.createdAt,
     this.likeCount = 0,
     this.likedBy = const [],
-  }) : _authorPhotoUrl = UrlUtils.normalizeImageUrl(authorPhotoUrl);
+    List<ReactionSummary>? reactions,
+  })  : _authorPhotoUrl = UrlUtils.normalizeImageUrl(authorPhotoUrl),
+        reactions = reactions ?? const <ReactionSummary>[];
 
   factory Comment.fromJson(Map<String, dynamic> json) {
     return Comment(
@@ -40,6 +47,7 @@ class Comment {
       likedBy: (json['likedBy'] as List<dynamic>? ?? [])
           .map((e) => e.toString())
           .toList(),
+      reactions: ReactionSummary.listFromDynamic(json['reactions']),
     );
   }
 
@@ -54,6 +62,22 @@ class Comment {
       'createdAt': createdAt.toIso8601String(),
       'likeCount': likeCount,
       'likedBy': likedBy,
+      'reactions': reactions.map((r) => r.toMap()).toList(),
     };
+  }
+
+  Comment copyWithReactions(List<ReactionSummary> next) {
+    return Comment(
+      id: id,
+      postId: postId,
+      authorId: authorId,
+      authorName: authorName,
+      authorPhotoUrl: authorPhotoUrl,
+      content: content,
+      createdAt: createdAt,
+      likeCount: likeCount,
+      likedBy: likedBy,
+      reactions: next,
+    );
   }
 }

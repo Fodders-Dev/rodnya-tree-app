@@ -9,10 +9,13 @@ import 'package:share_plus/share_plus.dart';
 import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/post_service_interface.dart';
 import '../models/post.dart';
+import '../models/reaction_summary.dart';
 import '../theme/app_theme.dart';
 import 'comment_sheet.dart';
 import 'glass_panel.dart';
 import 'media_lightbox.dart';
+import 'reaction_chip_strip.dart';
+import 'reaction_picker.dart';
 
 class PostCard extends StatefulWidget {
   const PostCard({super.key, required this.post, this.onDeleted});
@@ -32,6 +35,7 @@ class _PostCardState extends State<PostCard>
   late bool _isLikedByCurrentUser;
   late int _likeCount;
   late int _commentCount;
+  late List<ReactionSummary> _reactions;
 
   late AnimationController _likeAnimationController;
   late Animation<double> _likeScaleAnimation;
@@ -71,6 +75,75 @@ class _PostCardState extends State<PostCard>
         _currentUserId != null && widget.post.likedBy.contains(_currentUserId!);
     _likeCount = widget.post.likeCount;
     _commentCount = widget.post.commentCount;
+    _reactions = List<ReactionSummary>.from(widget.post.reactions);
+  }
+
+  Future<void> _openReactionPicker() async {
+    final emoji = await ReactionPicker.show(context);
+    if (emoji == null || !mounted) return;
+    await _toggleReaction(emoji);
+  }
+
+  Future<void> _toggleReaction(String emoji) async {
+    final beforeReactions = List<ReactionSummary>.from(_reactions);
+    // Optimistic update — add or remove the current user's reaction
+    // locally, then reconcile with server response. Mirrors what the
+    // chat-side reaction handler does.
+    final next = _applyOptimisticReaction(beforeReactions, emoji);
+    setState(() => _reactions = next);
+    try {
+      final fromServer = await _postService.togglePostReaction(
+        postId: widget.post.id,
+        emoji: emoji,
+      );
+      if (!mounted) return;
+      setState(() => _reactions = fromServer);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _reactions = beforeReactions);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Не удалось сохранить реакцию: $e')),
+      );
+    }
+  }
+
+  /// Optimistic toggle: if the current user already reacted with this
+  /// emoji, remove them; otherwise add them. Removes the entry if its
+  /// count would drop to zero.
+  List<ReactionSummary> _applyOptimisticReaction(
+    List<ReactionSummary> input,
+    String emoji,
+  ) {
+    final userId = _currentUserId;
+    if (userId == null || userId.isEmpty) return input;
+    final next = List<ReactionSummary>.from(input);
+    final existingIndex = next.indexWhere((r) => r.emoji == emoji);
+    if (existingIndex == -1) {
+      next.add(ReactionSummary(
+        emoji: emoji,
+        userIds: <String>[userId],
+        count: 1,
+      ));
+    } else {
+      final entry = next[existingIndex];
+      final wasMine = entry.userIds.contains(userId);
+      final updatedUsers = List<String>.from(entry.userIds);
+      if (wasMine) {
+        updatedUsers.remove(userId);
+      } else {
+        updatedUsers.add(userId);
+      }
+      if (updatedUsers.isEmpty) {
+        next.removeAt(existingIndex);
+      } else {
+        next[existingIndex] = ReactionSummary(
+          emoji: emoji,
+          userIds: updatedUsers,
+          count: updatedUsers.length,
+        );
+      }
+    }
+    return next;
   }
 
   Future<void> _toggleLike() async {
@@ -241,26 +314,43 @@ class _PostCardState extends State<PostCard>
       margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 7),
       borderRadius: BorderRadius.circular(tokens.radiusMd + 2),
       plain: true,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildPostHeader(),
-          if (widget.post.content.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
-              child: Text(
-                widget.post.content,
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  height: 1.45,
+      child: GestureDetector(
+        // Long-press anywhere on the card opens the emoji reaction
+        // picker — IG / FB pattern. Tap behaviour stays delegated to
+        // children (header / images / action buttons) so we don't
+        // intercept their semantics.
+        behavior: HitTestBehavior.translucent,
+        onLongPress: _openReactionPicker,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildPostHeader(),
+            if (widget.post.content.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+                child: Text(
+                  widget.post.content,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    height: 1.45,
+                  ),
                 ),
               ),
-            ),
-          if (renderableImageUrls.isNotEmpty)
-            _buildPostImages(renderableImageUrls)
-          else if (hasInvalidOnlyImages)
-            _buildInvalidPostImageFallback(),
-          _buildPostActions(),
-        ],
+            if (renderableImageUrls.isNotEmpty)
+              _buildPostImages(renderableImageUrls)
+            else if (hasInvalidOnlyImages)
+              _buildInvalidPostImageFallback(),
+            if (_reactions.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 4, 14, 4),
+                child: ReactionChipStrip(
+                  reactions: _reactions,
+                  currentUserId: _currentUserId,
+                  onToggle: _toggleReaction,
+                ),
+              ),
+            _buildPostActions(),
+          ],
+        ),
       ),
     );
   }
