@@ -470,8 +470,14 @@ extension _HomeScreenSections on _HomeScreenState {
     await _loadPosts(treeId);
   }
 
-  Future<void> _openCreatePost() async {
-    final result = await context.push('/post/create');
+  Future<void> _openCreatePost({String? action}) async {
+    // [action] is forwarded to the composer as a query string so the
+    // photo / video icons on the teaser actually do something
+    // distinct — user feedback was that they were decorative and
+    // both led to the same screen. Now: photo icon prefires the
+    // gallery picker, video icon prefires the video picker.
+    final path = action == null ? '/post/create' : '/post/create?action=$action';
+    final result = await context.push(path);
     if (result == true && _currentTreeId != null) {
       await _loadPosts(_currentTreeId!);
     }
@@ -591,6 +597,10 @@ extension _HomeScreenSections on _HomeScreenState {
         ? 'Я'
         : String.fromCharCode(name.runes.first).toUpperCase();
 
+    // The whole row tap opens the composer for plain text. The two
+    // icons on the right are now real CTAs — photo opens the gallery
+    // picker on mount, videocam opens the video picker — wrapped in
+    // separate InkWells so the teaser tap area doesn't intercept them.
     return Semantics(
       button: true,
       label: 'home-compose-teaser',
@@ -598,46 +608,66 @@ extension _HomeScreenSections on _HomeScreenState {
         padding: EdgeInsets.zero,
         borderRadius: BorderRadius.circular(20),
         plain: true,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(20),
-          onTap: _openCreatePost,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-            child: Row(
-              children: [
-                Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    gradient: tokens.accentGradient,
-                    shape: BoxShape.circle,
-                  ),
-                  alignment: Alignment.center,
-                  child: Text(
-                    initials,
-                    style: theme.textTheme.labelLarge?.copyWith(
-                      color: tokens.accentInk,
-                      fontWeight: FontWeight.w800,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          child: Row(
+            children: [
+              Expanded(
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(20),
+                  onTap: () => _openCreatePost(),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 36,
+                          height: 36,
+                          decoration: BoxDecoration(
+                            gradient: tokens.accentGradient,
+                            shape: BoxShape.circle,
+                          ),
+                          alignment: Alignment.center,
+                          child: Text(
+                            initials,
+                            style: theme.textTheme.labelLarge?.copyWith(
+                              color: tokens.accentInk,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            _treeProviderInstance?.selectedTreeKind ==
+                                    TreeKind.friends
+                                ? 'Поделиться с кругом...'
+                                : 'Поделиться с роднёй...',
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    _treeProviderInstance?.selectedTreeKind == TreeKind.friends
-                        ? 'Поделиться с кругом...'
-                        : 'Поделиться с роднёй...',
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-                Icon(Icons.photo_outlined, color: tokens.accent),
-                const SizedBox(width: 10),
-                Icon(Icons.videocam_outlined, color: tokens.warm),
-              ],
-            ),
+              ),
+              const SizedBox(width: 4),
+              IconButton(
+                tooltip: 'Добавить фото',
+                onPressed: () => _openCreatePost(action: 'photo'),
+                icon: Icon(Icons.photo_outlined, color: tokens.accent),
+                visualDensity: VisualDensity.compact,
+              ),
+              IconButton(
+                tooltip: 'Добавить видео',
+                onPressed: () => _openCreatePost(action: 'video'),
+                icon: Icon(Icons.videocam_outlined, color: tokens.warm),
+                visualDensity: VisualDensity.compact,
+              ),
+            ],
           ),
         ),
       ),

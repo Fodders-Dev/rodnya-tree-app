@@ -173,12 +173,17 @@ class AppShellRouteModule {
               GoRoute(
                 path: 'post/create',
                 parentNavigatorKey: rootNavigatorKey,
-                pageBuilder: (context, state) => RodnyaCustomTransitionPage(
-                  key: state.pageKey,
-                  constrainWidth: true,
-                  child: const CreatePostScreen(),
-                  transitionsBuilder: AppRouteTransitions.slideUp,
-                ),
+                pageBuilder: (context, state) {
+                  // ?action=photo|video lets the home-screen teaser
+                  // icons pre-fire the right picker on mount.
+                  final action = state.uri.queryParameters['action'];
+                  return RodnyaCustomTransitionPage(
+                    key: state.pageKey,
+                    constrainWidth: true,
+                    child: CreatePostScreen(initialAction: action),
+                    transitionsBuilder: AppRouteTransitions.slideUp,
+                  );
+                },
               ),
               GoRoute(
                 path: 'user/:userId',

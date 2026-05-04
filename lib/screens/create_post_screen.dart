@@ -26,7 +26,13 @@ import '../widgets/audience_picker.dart';
 import '../widgets/glass_panel.dart';
 
 class CreatePostScreen extends StatefulWidget {
-  const CreatePostScreen({super.key});
+  const CreatePostScreen({super.key, this.initialAction});
+
+  /// Optional CTA passed in via `?action=` from the home-screen
+  /// teaser icons. `'photo'` auto-opens the gallery picker on mount,
+  /// `'video'` auto-opens the video picker. Anything else is a no-op
+  /// (user gets the regular composer).
+  final String? initialAction;
 
   @override
   State<CreatePostScreen> createState() => _CreatePostScreenState();
@@ -177,6 +183,21 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     _loadCurrentTreeMeta();
     _loadAudienceCircles();
     _loadBranchCandidates();
+    // Honor the action hint coming from the home teaser icons. The
+    // post-frame callback gives the navigator a chance to settle so
+    // the picker sheet appears on top of the actually-mounted
+    // composer instead of fighting with the page transition.
+    final action = widget.initialAction;
+    if (action == 'photo' || action == 'video') {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        if (action == 'photo') {
+          _pickImages();
+        } else {
+          _pickVideoFromGallery();
+        }
+      });
+    }
   }
 
   Future<void> _loadCurrentTreeMeta() async {
