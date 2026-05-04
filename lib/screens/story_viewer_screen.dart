@@ -337,6 +337,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
     if (_currentIndex == 0) {
       return;
     }
+    HapticFeedback.selectionClick();
     setState(() {
       _currentIndex -= 1;
     });
@@ -346,10 +347,12 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
   void _goNext() {
     if (_currentIndex >= _stories.length - 1) {
       if (mounted) {
+        HapticFeedback.lightImpact();
         Navigator.of(context).pop();
       }
       return;
     }
+    HapticFeedback.selectionClick();
     setState(() {
       _currentIndex += 1;
     });

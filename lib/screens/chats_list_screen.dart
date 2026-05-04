@@ -26,6 +26,7 @@ import '../theme/app_theme.dart';
 import '../utils/photo_url.dart';
 import '../utils/user_facing_error.dart';
 import '../widgets/glass_panel.dart';
+import '../widgets/rodnya_avatar.dart';
 
 part 'chats_list_screen_create_sheet.dart';
 part 'chats_list_screen_sections.dart';
@@ -1226,7 +1227,6 @@ class _ChatsListScreenState extends State<ChatsListScreen>
     _GroupChatParticipant participant,
   ) {
     final isOpening = _openingPrivateChatUserId == participant.userId;
-    final avatarImage = buildAvatarImageProvider(participant.photoUrl);
     return Padding(
       key: ValueKey<String>('relative-suggestion-${participant.userId}'),
       padding: const EdgeInsets.fromLTRB(4, 4, 4, 4),
@@ -1241,16 +1241,10 @@ class _ChatsListScreenState extends State<ChatsListScreen>
           plain: true,
           child: Row(
             children: [
-              CircleAvatar(
-                radius: 22,
-                backgroundImage: avatarImage,
-                child: avatarImage == null
-                    ? Text(
-                        participant.name.isNotEmpty
-                            ? participant.name[0].toUpperCase()
-                            : '?',
-                      )
-                    : null,
+              RodnyaAvatar(
+                photoUrl: participant.photoUrl,
+                name: participant.name,
+                size: 44,
               ),
               const SizedBox(width: 12),
               Expanded(
