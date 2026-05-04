@@ -1048,6 +1048,79 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  /// Vertical events list for the wide-layout sidebar. Renders the
+  /// same EventCards the horizontal rail uses but stacked instead of
+  /// scrolled sideways — much friendlier on a 340dp column. Caps at
+  /// 5 visible cards to keep the sidebar height reasonable; "Все
+  /// события" link sits below the cap when there's more.
+  Widget _buildSidebarUpcomingEvents() {
+    final visibleEvents = _visibleUpcomingEvents;
+    if (_isLoadingEvents || visibleEvents.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    final categories = _eventCategories;
+    final hasCategories = categories.isNotEmpty;
+    final cap = 5;
+    final displayed = visibleEvents.take(cap).toList();
+    final overflow = visibleEvents.length - displayed.length;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (hasCategories) ...[
+          SizedBox(
+            height: 30,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              children: [
+                _buildEventFilterChip(
+                  label: 'Все',
+                  semanticLabel: 'home-event-filter-all',
+                  selected: _selectedEventCategoryFilter == null,
+                  onTap: () => setState(
+                    () => _selectedEventCategoryFilter = null,
+                  ),
+                ),
+                for (final category in categories) ...[
+                  const SizedBox(width: 6),
+                  _buildEventFilterChip(
+                    label: category,
+                    semanticLabel:
+                        'home-event-filter-${_eventCategoryKey(category)}',
+                    selected: _selectedEventCategoryFilter == category,
+                    onTap: () => setState(
+                      () => _selectedEventCategoryFilter = category,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
+        ],
+        for (var i = 0; i < displayed.length; i++) ...[
+          if (i > 0) const SizedBox(height: 8),
+          EventCard(
+            event: displayed[i],
+            compact: true,
+            width: double.infinity,
+          ),
+        ],
+        if (overflow > 0) ...[
+          const SizedBox(height: 10),
+          Center(
+            child: Text(
+              'и ещё $overflow',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
   void _handleEventRailPointerSignal(PointerSignalEvent event) {
     if (event is! PointerScrollEvent || !_eventRailController.hasClients) {
       return;

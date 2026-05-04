@@ -261,7 +261,7 @@ extension _HomeScreenSections on _HomeScreenState {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.only(bottom: 10),
                   child: Text(
                     'События',
                     style: theme.textTheme.titleSmall?.copyWith(
@@ -270,7 +270,11 @@ extension _HomeScreenSections on _HomeScreenState {
                     ),
                   ),
                 ),
-                _buildUpcomingEventsSection(isWideLayout: true),
+                // Sidebar uses a vertical stack instead of the
+                // horizontal rail rendered on the home column —
+                // 340dp is too narrow for a horizontal scroll to
+                // feel useful, and stacked cards read at a glance.
+                _buildSidebarUpcomingEvents(),
               ],
             ),
           ),
