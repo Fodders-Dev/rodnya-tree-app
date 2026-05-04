@@ -86,28 +86,45 @@ extension _ChatsListScreenSections on _ChatsListScreenState {
                       (isFriendsTree ? 'Круг друзей' : 'Семейное дерево'),
                 ),
                 const SizedBox(height: 16),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    FilledButton.icon(
-                      onPressed: _openChatComposer,
-                      icon: const Icon(Icons.add_comment_outlined),
-                      label: const Text('Создать чат'),
-                    ),
-                    FilledButton.tonalIcon(
-                      onPressed: () => context.go('/relatives'),
-                      icon: const Icon(Icons.people_outline),
-                      label: Text(
-                        isFriendsTree ? 'Открыть связи' : 'Открыть родных',
-                      ),
-                    ),
-                    FilledButton.tonalIcon(
-                      onPressed: () => context.go('/tree'),
-                      icon: const Icon(Icons.account_tree_outlined),
-                      label: const Text('Открыть дерево'),
-                    ),
-                  ],
+                // Quick actions. Live deploy showed the previous
+                // FilledButton.icon + FilledButton.tonalIcon mix
+                // rendering as three indistinguishable green
+                // rectangles — the warm sage palette fuses primary
+                // and secondaryContainer at low contrast against
+                // the panel's tinted glass backdrop. One filled
+                // accent CTA + two outlined buttons gives a clear
+                // visual hierarchy and readable labels on both
+                // light and dark themes.
+                FilledButton.icon(
+                  onPressed: _openChatComposer,
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size.fromHeight(40),
+                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                  ),
+                  icon: const Icon(Icons.add_comment_outlined, size: 18),
+                  label: const Text('Создать чат'),
+                ),
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  onPressed: () => context.go('/relatives'),
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size.fromHeight(40),
+                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                  ),
+                  icon: const Icon(Icons.people_outline, size: 18),
+                  label: Text(
+                    isFriendsTree ? 'Открыть связи' : 'Открыть родных',
+                  ),
+                ),
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  onPressed: () => context.go('/tree'),
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size.fromHeight(40),
+                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                  ),
+                  icon: const Icon(Icons.account_tree_outlined, size: 18),
+                  label: const Text('Открыть дерево'),
                 ),
                 const SizedBox(height: 18),
                 _buildDesktopHint(
