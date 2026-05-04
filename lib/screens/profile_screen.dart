@@ -1015,6 +1015,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   tooltip: 'Меню',
                   onSelected: (value) {
                     switch (value) {
+                      case 'archive':
+                        context.push('/profile/stories/archive');
+                        break;
                       case 'settings':
                         context.push('/profile/settings');
                         break;
@@ -1027,6 +1030,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     }
                   },
                   itemBuilder: (_) => [
+                    const PopupMenuItem(
+                        value: 'archive',
+                        child: Text('Архив историй')),
                     const PopupMenuItem(
                         value: 'settings', child: Text('Настройки')),
                     const PopupMenuItem(

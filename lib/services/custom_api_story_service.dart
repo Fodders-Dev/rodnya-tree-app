@@ -29,13 +29,23 @@ class CustomApiStoryService implements StoryServiceInterface {
   final Uuid _uuid = const Uuid();
 
   @override
-  Future<List<Story>> getStories({String? treeId, String? authorId}) async {
+  Future<List<Story>> getStories({
+    String? treeId,
+    String? authorId,
+    bool includeArchive = false,
+  }) async {
     final queryParams = <String, String>{};
     if (treeId != null && treeId.trim().isNotEmpty) {
       queryParams['treeId'] = treeId.trim();
     }
     if (authorId != null && authorId.trim().isNotEmpty) {
       queryParams['authorId'] = authorId.trim();
+    }
+    if (includeArchive) {
+      // Server hint — when the backend implements archive support this
+      // surfaces expired entries as well. Until then it's harmless: the
+      // current handler just ignores unknown query params.
+      queryParams['includeArchive'] = 'true';
     }
 
     final response = await _requestList(

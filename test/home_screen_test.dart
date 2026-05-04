@@ -127,7 +127,11 @@ class _FakePostService implements PostServiceInterface {
 
 class _FakeStoryService implements StoryServiceInterface {
   @override
-  Future<List<Story>> getStories({String? treeId, String? authorId}) async =>
+  Future<List<Story>> getStories({
+    String? treeId,
+    String? authorId,
+    bool includeArchive = false,
+  }) async =>
       const <Story>[];
 
   @override

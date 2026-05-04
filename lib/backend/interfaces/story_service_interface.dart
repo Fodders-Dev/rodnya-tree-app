@@ -3,7 +3,17 @@ import 'package:image_picker/image_picker.dart';
 import '../../models/story.dart';
 
 abstract class StoryServiceInterface {
-  Future<List<Story>> getStories({String? treeId, String? authorId});
+  /// When [includeArchive] is true the backend should return stories
+  /// whose `expiresAt` is in the past as well as currently-active ones —
+  /// used by the archive screen so users can revisit their old stories
+  /// (the IG/TG model). When the backend doesn't support the flag yet
+  /// the call still succeeds and just returns the active set, which
+  /// makes the archive page render an empty state rather than error.
+  Future<List<Story>> getStories({
+    String? treeId,
+    String? authorId,
+    bool includeArchive = false,
+  });
 
   Future<Story> createStory({
     required String treeId,

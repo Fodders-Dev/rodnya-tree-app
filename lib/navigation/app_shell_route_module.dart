@@ -24,6 +24,7 @@ import '../screens/home_screen.dart';
 import '../screens/offline_profiles_screen.dart';
 import '../screens/profile_edit_screen.dart';
 import '../screens/profile_screen.dart';
+import '../screens/story_archive_screen.dart';
 import '../screens/relatives_screen.dart';
 import '../screens/relation_requests_screen.dart';
 import '../screens/send_relation_request_screen.dart';
@@ -412,6 +413,19 @@ class AppShellRouteModule {
                   key: state.pageKey,
                   constrainWidth: true,
                   child: const ProfileEditScreen(),
+                  transitionsBuilder: AppRouteTransitions.slide,
+                ),
+              ),
+              GoRoute(
+                // Archive of the user's expired stories — IG / TG model.
+                // Backend doesn't surface expired entries yet, so the
+                // page may render an empty state until that lands.
+                path: 'stories/archive',
+                parentNavigatorKey: rootNavigatorKey,
+                pageBuilder: (context, state) => RodnyaCustomTransitionPage(
+                  key: state.pageKey,
+                  constrainWidth: true,
+                  child: const StoryArchiveScreen(),
                   transitionsBuilder: AppRouteTransitions.slide,
                 ),
               ),

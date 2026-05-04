@@ -834,7 +834,11 @@ class PendingBackendStoryService implements StoryServiceInterface {
   const PendingBackendStoryService();
 
   @override
-  Future<List<Story>> getStories({String? treeId, String? authorId}) async {
+  Future<List<Story>> getStories({
+    String? treeId,
+    String? authorId,
+    bool includeArchive = false,
+  }) async {
     return const <Story>[];
   }
 

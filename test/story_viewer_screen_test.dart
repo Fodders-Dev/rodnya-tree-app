@@ -13,7 +13,11 @@ class _FakeStoryService implements StoryServiceInterface {
   _FakeStoryService(this.storiesById);
 
   @override
-  Future<List<Story>> getStories({String? treeId, String? authorId}) async =>
+  Future<List<Story>> getStories({
+    String? treeId,
+    String? authorId,
+    bool includeArchive = false,
+  }) async =>
       storiesById.values.toList(growable: false);
 
   @override
