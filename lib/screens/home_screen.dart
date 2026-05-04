@@ -464,54 +464,19 @@ class _HomeScreenState extends State<HomeScreen> {
             ]);
           }
         },
-        child: Center(
-          child: ConstrainedBox(
-            // Force mobile-style 720 cap regardless of viewport — on wide
-            // desktop browsers the page reads as a centered phone-width
-            // column, matching the reference prototype.
-            constraints: const BoxConstraints(maxWidth: 720),
-            child: StreamBuilder<List<TreeInvitation>>(
-              stream: _familyTreeService.getPendingTreeInvitations(),
-              builder: (context, snapshot) {
-                final pendingInvitations =
-                    snapshot.data ?? const <TreeInvitation>[];
-                return CustomScrollView(
-                  slivers: [
-                    if (pendingInvitations.isNotEmpty)
-                      SliverToBoxAdapter(
-                        child: _buildPendingInvitationsBanner(
-                          pendingInvitations,
-                        ),
-                      ),
-                    if (_shouldShowOperationalBanner(hasSelectedTree))
-                      SliverToBoxAdapter(
-                        child: _buildOperationalBanner(
-                          hasSelectedTree: hasSelectedTree,
-                        ),
-                      ),
-                    if (!hasSelectedTree)
-                      SliverToBoxAdapter(
-                        child: _buildHomeHeader(
-                          hasSelectedTree: hasSelectedTree,
-                          selectedTreeName: selectedTreeName,
-                          isFriendsTree: isFriendsTree,
-                        ),
-                      ),
-                    if (hasSelectedTree) ...[
-                      SliverToBoxAdapter(
-                        child: _buildHomeContentSections(
-                          isWideLayout: isWideLayout,
-                        ),
-                      ),
-                      const SliverToBoxAdapter(child: SizedBox(height: 80)),
-                    ] else ...[
-                      const SliverToBoxAdapter(child: SizedBox(height: 40)),
-                    ],
-                  ],
-                );
-              },
-            ),
-          ),
+        child: StreamBuilder<List<TreeInvitation>>(
+          stream: _familyTreeService.getPendingTreeInvitations(),
+          builder: (context, snapshot) {
+            final pendingInvitations =
+                snapshot.data ?? const <TreeInvitation>[];
+            return _buildHomeBody(
+              pendingInvitations: pendingInvitations,
+              hasSelectedTree: hasSelectedTree,
+              isWideLayout: isWideLayout,
+              selectedTreeName: selectedTreeName,
+              isFriendsTree: isFriendsTree,
+            );
+          },
         ),
       ),
     );
@@ -661,6 +626,125 @@ class _HomeScreenState extends State<HomeScreen> {
 
   bool _isWideHomeLayout(BuildContext context) =>
       MediaQuery.of(context).size.width >= 1180;
+
+  /// Wraps the home body. On narrow viewports we keep the legacy
+  /// single-column phone layout (capped at 720). On wide desktop
+  /// browsers we split into a feed + sidebar layout so the empty
+  /// left/right margins ("выглядит как растянутый телефон") finally
+  /// get used. Pending invitations / operational banner / no-tree
+  /// state stay above the split as a top strip — they target the full
+  /// width of the inner column either way.
+  Widget _buildHomeBody({
+    required List<TreeInvitation> pendingInvitations,
+    required bool hasSelectedTree,
+    required bool isWideLayout,
+    required String? selectedTreeName,
+    required bool isFriendsTree,
+  }) {
+    if (!isWideLayout) {
+      return Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 720),
+          child: CustomScrollView(
+            slivers: [
+              if (pendingInvitations.isNotEmpty)
+                SliverToBoxAdapter(
+                  child: _buildPendingInvitationsBanner(pendingInvitations),
+                ),
+              if (_shouldShowOperationalBanner(hasSelectedTree))
+                SliverToBoxAdapter(
+                  child: _buildOperationalBanner(
+                    hasSelectedTree: hasSelectedTree,
+                  ),
+                ),
+              if (!hasSelectedTree)
+                SliverToBoxAdapter(
+                  child: _buildHomeHeader(
+                    hasSelectedTree: hasSelectedTree,
+                    selectedTreeName: selectedTreeName,
+                    isFriendsTree: isFriendsTree,
+                  ),
+                ),
+              if (hasSelectedTree) ...[
+                SliverToBoxAdapter(
+                  child: _buildHomeContentSections(isWideLayout: false),
+                ),
+                const SliverToBoxAdapter(child: SizedBox(height: 80)),
+              ] else
+                const SliverToBoxAdapter(child: SizedBox(height: 40)),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // Wide-layout: feed column (~720) + contextual sidebar (~340)
+    // anchored to the top. Banners + identity-review banner pin to a
+    // strip across the top so they don't get swallowed by the sidebar.
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 1180),
+        child: CustomScrollView(
+          slivers: [
+            if (pendingInvitations.isNotEmpty)
+              SliverToBoxAdapter(
+                child: _buildPendingInvitationsBanner(pendingInvitations),
+              ),
+            if (_shouldShowOperationalBanner(hasSelectedTree))
+              SliverToBoxAdapter(
+                child: _buildOperationalBanner(
+                  hasSelectedTree: hasSelectedTree,
+                ),
+              ),
+            if (!hasSelectedTree)
+              SliverToBoxAdapter(
+                child: _buildHomeHeader(
+                  hasSelectedTree: hasSelectedTree,
+                  selectedTreeName: selectedTreeName,
+                  isFriendsTree: isFriendsTree,
+                ),
+              ),
+            if (hasSelectedTree) ...[
+              SliverToBoxAdapter(
+                child: _buildWideHomeColumns(),
+              ),
+              const SliverToBoxAdapter(child: SizedBox(height: 80)),
+            ] else
+              const SliverToBoxAdapter(child: SizedBox(height: 40)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Two-column layout for wide viewports. Left = feed-shaped column
+  /// (compose teaser, filters, posts) capped at ~720 so post media
+  /// stays readable. Right = sidebar with stories rail and the events
+  /// digest, sticky-feeling because it's positioned next to (rather
+  /// than above) the feed.
+  Widget _buildWideHomeColumns() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Feed column.
+          Expanded(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 720),
+              child: _buildHomeFeedColumn(),
+            ),
+          ),
+          const SizedBox(width: 24),
+          // Sidebar column.
+          SizedBox(
+            width: 340,
+            child: _buildHomeSidebarColumn(),
+          ),
+        ],
+      ),
+    );
+  }
 
   bool _shouldShowOperationalBanner(bool hasSelectedTree) {
     if (_appStatusService.hasVisibleStatus) {

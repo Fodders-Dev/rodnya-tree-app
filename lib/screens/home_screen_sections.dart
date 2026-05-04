@@ -181,6 +181,104 @@ extension _HomeScreenSections on _HomeScreenState {
     );
   }
 
+  /// Wide-layout left column. Mirrors the narrow stack but only the
+  /// feed-related parts — stories rail / events live in the right
+  /// sidebar instead, so the user reads the feed without scrolling
+  /// past them every time.
+  Widget _buildHomeFeedColumn() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 8),
+        if (_pendingIdentityReviewCount > 0 || _identityReviewsUnavailable)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 4, 14, 10),
+            child: _buildIdentityReviewBanner(),
+          ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(18, 6, 18, 12),
+          child: _buildComposeTeaser(),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(18, 0, 18, 10),
+          child: _buildFeedFilterStrip(),
+        ),
+        const SizedBox(height: 4),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(14, 0, 14, 0),
+          // Wide-layout flag is false here on purpose — _buildFeedContent
+          // adapts spacing for narrow when the host column is column-
+          // shaped (which is exactly what the feed column is).
+          child: _buildHomeFeedStage(isWideLayout: false),
+        ),
+      ],
+    );
+  }
+
+  /// Wide-layout right column. Always 340dp; contains stories rail +
+  /// the events digest. Surfaces what the user wants in their
+  /// peripheral vision while reading the feed. Sticky-feeling because
+  /// it sits beside (not above) the feed — same reason Instagram /
+  /// X put their right rail there.
+  Widget _buildHomeSidebarColumn() {
+    final theme = Theme.of(context);
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(0, 8, 8, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Stories rail wrapped in a panel so it reads as a discrete
+          // module rather than a free-floating row in dead space.
+          GlassPanel(
+            padding: const EdgeInsets.fromLTRB(8, 14, 8, 12),
+            borderRadius: BorderRadius.circular(22),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+                  child: Text(
+                    'Истории',
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      color: tokens.ink,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                _buildStoriesSection(),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          GlassPanel(
+            padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+            borderRadius: BorderRadius.circular(22),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Text(
+                    'События',
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      color: tokens.ink,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                _buildUpcomingEventsSection(isWideLayout: true),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildHomeHeader({
     required bool hasSelectedTree,
     required bool isFriendsTree,
