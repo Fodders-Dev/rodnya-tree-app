@@ -145,7 +145,25 @@ class _StoryArchiveScreenState extends State<StoryArchiveScreen> {
 
   Widget _buildBody(RodnyaDesignTokens tokens) {
     if (_loading) {
-      return const Center(child: CircularProgressIndicator());
+      // Skeleton grid — same shape as the loaded archive (3 cols,
+      // 9:16) so the user sees the layout before the data lands
+      // instead of a blank circular spinner.
+      return GridView.builder(
+        padding: const EdgeInsets.all(12),
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 3,
+          crossAxisSpacing: 8,
+          mainAxisSpacing: 8,
+          childAspectRatio: 9 / 16,
+        ),
+        itemCount: 6,
+        itemBuilder: (_, __) => Container(
+          decoration: BoxDecoration(
+            color: tokens.surfaceStrong.withValues(alpha: 0.6),
+            borderRadius: BorderRadius.circular(14),
+          ),
+        ),
+      );
     }
     if (_error != null) {
       return ListView(
