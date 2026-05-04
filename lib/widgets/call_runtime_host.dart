@@ -177,7 +177,13 @@ class _CallRuntimeHostState extends State<CallRuntimeHost>
         _suppressedCallId == call.id) {
       return false;
     }
-    return call.state == CallState.ringing || call.state == CallState.active;
+    // Auto-pop the full CallScreen ONLY for incoming-ringing calls —
+    // those need an immediate answer/decline UI. Active calls (already
+    // accepted, e.g. resumed from background or accepted on another
+    // device) should land in the floating pip instead so the user can
+    // choose to restore. The accept flow (ringing → active mid-screen)
+    // is already protected via _isPresentingCallScreen above.
+    return call.state == CallState.ringing;
   }
 
   Future<void> _openCallScreen(

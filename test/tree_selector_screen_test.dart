@@ -218,7 +218,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Активное'), findsOneWidget);
+    // "Активное" appears twice: once as the section header above the
+    // currently-open tree card, once as a chip inside that card.
+    expect(find.text('Активное'), findsNWidgets(2));
     expect(find.text('Моё дерево'), findsOneWidget);
     expect(find.text('Сейчас открыто'), findsWidgets);
     expect(find.text('Моё второе дерево'), findsOneWidget);
