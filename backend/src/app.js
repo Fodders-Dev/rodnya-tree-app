@@ -1108,6 +1108,13 @@ function createApp({
       "messageId",
       "callId",
       "mediaMode",
+      // Post / comment reaction notifications carry the post id, the
+      // actor that reacted, and the emoji so the client can deep-link
+      // to the post and render the right glyph in the inbox.
+      "postId",
+      "commentId",
+      "actorUserId",
+      "emoji",
     ];
 
     const sanitized = {};

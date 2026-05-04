@@ -5084,6 +5084,44 @@ test("post and comment emoji reactions toggle and surface in feed", async () => 
       },
     );
     assert.equal(ghostResponse.status, 404);
+
+    // The post-reaction notification should have landed in Alice's
+    // inbox (Bob reacted with ❤ and 🔥 above; the heart was toggled
+    // off, so we expect a single coalesced post_reaction record from
+    // Bob — coalesce-on-toggle-off is a follow-up; for now the
+    // unread record may show ❤ even after Bob detoggled, that's
+    // acceptable inbox behaviour).
+    const notificationsResponse = await fetch(
+      `${ctx.baseUrl}/v1/notifications`,
+      {
+        headers: {authorization: `Bearer ${alice.accessToken}`},
+      },
+    );
+    assert.equal(notificationsResponse.status, 200);
+    const notificationsPayload = await notificationsResponse.json();
+    const reactionNotifications = notificationsPayload.notifications.filter(
+      (n) => n.type === "post_reaction",
+    );
+    assert.equal(reactionNotifications.length, 1);
+    assert.equal(reactionNotifications[0].data.postId, post.id);
+    assert.equal(reactionNotifications[0].data.actorUserId, bob.user.id);
+
+    // Bob receives a comment_reaction notification because Alice
+    // reacted on his comment with 👍.
+    const bobNotifsResponse = await fetch(
+      `${ctx.baseUrl}/v1/notifications`,
+      {
+        headers: {authorization: `Bearer ${bob.accessToken}`},
+      },
+    );
+    assert.equal(bobNotifsResponse.status, 200);
+    const bobNotifsPayload = await bobNotifsResponse.json();
+    const bobCommentReactions = bobNotifsPayload.notifications.filter(
+      (n) => n.type === "comment_reaction",
+    );
+    assert.equal(bobCommentReactions.length, 1);
+    assert.equal(bobCommentReactions[0].data.commentId, comment.id);
+    assert.equal(bobCommentReactions[0].data.actorUserId, alice.user.id);
   } finally {
     await stopTestServer(ctx);
   }

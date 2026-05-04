@@ -157,6 +157,32 @@ function registerPostRoutes(
       return;
     }
 
+    if (result.added) {
+      // Notify the post author. coalesces with any earlier unread
+      // post_reaction from the same actor so spam-tapping the picker
+      // doesn't fan out into a wall of inbox entries.
+      try {
+        const actorName =
+          req.auth.user.profile?.displayName ||
+          composeDisplayName(req.auth.user.profile) ||
+          req.auth.user.email ||
+          null;
+        const snippet = (post.content || "").trim().slice(0, 96);
+        await store.addPostReactionNotification({
+          postId: post.id,
+          postAuthorId: post.authorId,
+          actorUserId: req.auth.user.id,
+          actorName,
+          emoji,
+          postSnippet: snippet,
+        });
+      } catch (error) {
+        // Notification is best-effort — don't fail the reaction if the
+        // notification write hits a transient error.
+        console.warn("post reaction notification failed", error);
+      }
+    }
+
     res.json({
       postId: result.postId,
       reactions: result.reactions,
@@ -198,6 +224,34 @@ function registerPostRoutes(
       if (result === "INVALID_EMOJI") {
         res.status(400).json({message: "Нужна реакция"});
         return;
+      }
+
+      if (result.added) {
+        try {
+          const comments = await store.listPostComments(req.params.postId);
+          const targetComment = comments.find(
+            (c) => c.id === req.params.commentId,
+          );
+          if (targetComment) {
+            const actorName =
+              req.auth.user.profile?.displayName ||
+              composeDisplayName(req.auth.user.profile) ||
+              req.auth.user.email ||
+              null;
+            const snippet = (targetComment.content || "").trim().slice(0, 96);
+            await store.addCommentReactionNotification({
+              postId: targetComment.postId,
+              commentId: targetComment.id,
+              commentAuthorId: targetComment.authorId,
+              actorUserId: req.auth.user.id,
+              actorName,
+              emoji,
+              commentSnippet: snippet,
+            });
+          }
+        } catch (error) {
+          console.warn("comment reaction notification failed", error);
+        }
       }
 
       res.json({

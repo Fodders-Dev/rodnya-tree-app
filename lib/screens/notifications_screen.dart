@@ -29,6 +29,9 @@ IconData _notificationIconForType(String type) {
       return Icons.merge_type_outlined;
     case 'identity_claim':
       return Icons.verified_user_outlined;
+    case 'post_reaction':
+    case 'comment_reaction':
+      return Icons.favorite_border;
     default:
       return Icons.notifications_none;
   }
@@ -51,6 +54,10 @@ String _notificationLabelForType(String type) {
       return 'Возможное совпадение';
     case 'identity_claim':
       return 'Запрос личности';
+    case 'post_reaction':
+      return 'Реакция на пост';
+    case 'comment_reaction':
+      return 'Реакция на комментарий';
     default:
       return 'Уведомление';
   }

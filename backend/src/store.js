@@ -9727,6 +9727,126 @@ class FileStore {
     return attachPostReactions(db, post);
   }
 
+  /// Push a "X reacted to your post" notification, coalescing unread
+  /// entries for the same (recipient, post, actor) tuple — multiple
+  /// reactions don't spam the inbox. Returns the notification record
+  /// or null if skipped (self-react or already-unread).
+  async addPostReactionNotification({
+    postId,
+    postAuthorId,
+    actorUserId,
+    actorName,
+    emoji,
+    postSnippet,
+  }) {
+    if (
+      !postAuthorId ||
+      !actorUserId ||
+      String(postAuthorId).trim() === String(actorUserId).trim()
+    ) {
+      return null;
+    }
+    const db = await this._read();
+    db.notifications = Array.isArray(db.notifications)
+      ? db.notifications
+      : [];
+    const existing = db.notifications.find(
+      (entry) =>
+        entry.userId === postAuthorId &&
+        entry.type === "post_reaction" &&
+        !entry.readAt &&
+        entry.data?.postId === postId &&
+        entry.data?.actorUserId === actorUserId,
+    );
+    if (existing) {
+      // Bump emoji + timestamp on the existing record so it floats up.
+      existing.data = {
+        ...existing.data,
+        emoji,
+      };
+      existing.body = `${actorName || "Кто-то"} отреагировал ${emoji}`;
+      existing.createdAt = nowIso();
+      existing.readAt = null;
+      await this._write(db);
+      return structuredClone(existing);
+    }
+    const notification = createNotificationRecord({
+      userId: postAuthorId,
+      type: "post_reaction",
+      title: actorName
+        ? `${actorName} отреагировал ${emoji}`
+        : `Новая реакция ${emoji}`,
+      body: postSnippet || "",
+      data: {
+        postId,
+        actorUserId,
+        emoji,
+      },
+    });
+    db.notifications.push(notification);
+    await this._write(db);
+    return structuredClone(notification);
+  }
+
+  /// Same shape as [addPostReactionNotification] but scoped to a
+  /// comment. Notifies the comment author. Post author is left alone
+  /// — they already get a notification stream when their own comments
+  /// get reacted to (separate flow).
+  async addCommentReactionNotification({
+    postId,
+    commentId,
+    commentAuthorId,
+    actorUserId,
+    actorName,
+    emoji,
+    commentSnippet,
+  }) {
+    if (
+      !commentAuthorId ||
+      !actorUserId ||
+      String(commentAuthorId).trim() === String(actorUserId).trim()
+    ) {
+      return null;
+    }
+    const db = await this._read();
+    db.notifications = Array.isArray(db.notifications)
+      ? db.notifications
+      : [];
+    const existing = db.notifications.find(
+      (entry) =>
+        entry.userId === commentAuthorId &&
+        entry.type === "comment_reaction" &&
+        !entry.readAt &&
+        entry.data?.commentId === commentId &&
+        entry.data?.actorUserId === actorUserId,
+    );
+    if (existing) {
+      existing.data = {...existing.data, emoji};
+      existing.body = `${actorName || "Кто-то"} отреагировал ${emoji}`;
+      existing.createdAt = nowIso();
+      existing.readAt = null;
+      await this._write(db);
+      return structuredClone(existing);
+    }
+    const notification = createNotificationRecord({
+      userId: commentAuthorId,
+      type: "comment_reaction",
+      title: actorName
+        ? `${actorName} отреагировал ${emoji}`
+        : `Новая реакция ${emoji}`,
+      body: commentSnippet || "",
+      data: {
+        postId,
+        commentId,
+        actorUserId,
+        emoji,
+      },
+    });
+    db.notifications.push(notification);
+    await this._write(db);
+    return structuredClone(notification);
+  }
+
   async togglePostReaction({postId, userId, emoji}) {
     const db = await this._read();
     const post = db.posts.find((entry) => entry.id === postId);
