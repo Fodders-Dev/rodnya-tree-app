@@ -81,7 +81,11 @@ void main() {
 
   testWidgets('MainNavigationBar скрывает подписи на узких мобильных экранах',
       (tester) async {
-    await tester.binding.setSurfaceSize(const Size(320, 800));
+    // Threshold lowered from 340 → 280 (Samsung-mid mobiles were
+    // tripping the hide path and losing labels). Test now sets a
+    // genuinely narrow viewport (260dp) so labels still hide on
+    // truly cramped layouts (split-screen tablets, smartwatches).
+    await tester.binding.setSurfaceSize(const Size(260, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
     await tester.pumpWidget(

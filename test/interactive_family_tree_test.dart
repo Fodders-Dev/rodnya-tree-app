@@ -167,6 +167,10 @@ void main() {
     // name, Manrope smaller). Assert both pieces render.
     expect(find.text('Иван'), findsOneWidget);
     expect(find.text('Петров'), findsOneWidget);
+    // Control dock is now collapsed by default — tap the chevron to
+    // expand it before asserting individual zoom buttons render.
+    await tester.tap(find.byTooltip('Настройки вида'));
+    await tester.pumpAndSettle();
     expect(find.byTooltip('Вписать дерево'), findsOneWidget);
     expect(find.byTooltip('Ко мне'), findsOneWidget);
     expect(find.byTooltip('Увеличить'), findsOneWidget);
@@ -1671,6 +1675,10 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Фокус'), findsNothing);
+    // Control dock starts collapsed — expand before checking the
+    // branch-focus tooltip.
+    await tester.tap(find.byTooltip('Настройки вида'));
+    await tester.pumpAndSettle();
     expect(find.byTooltip('К ветке'), findsOneWidget);
   });
 
@@ -1743,6 +1751,9 @@ void main() {
     expect(find.text('Старшее поколение'), findsOneWidget);
     expect(find.text('Младшее поколение'), findsOneWidget);
     expect(zoomIndicatorFinder, findsOneWidget);
+    // Expand the dock to access "Сбросить ветку".
+    await tester.tap(find.byTooltip('Настройки вида'));
+    await tester.pumpAndSettle();
     expect(find.byTooltip('Сбросить ветку'), findsOneWidget);
     expect(
       tester.getTopLeft(find.text('Старшее поколение')).dx,

@@ -133,6 +133,19 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
   double _currentScale = 1.0;
   String? _draggingPersonId;
   String? _hoveredPersonId;
+  // Floating zoom dock starts collapsed on compact viewports so it
+  // doesn't overlap person cards (user feedback "все мешается").
+  // Tap on the chevron expands the column.
+  bool _controlDockExpanded = false;
+
+  /// Public toggle for the control-dock state, callable from the
+  /// extension methods in interactive_family_tree_sections.dart.
+  /// Direct `setState` from extensions trips the protected-member
+  /// analyzer rule, so we hop through this helper.
+  void _setControlDockExpanded(bool value) {
+    if (_controlDockExpanded == value) return;
+    setState(() => _controlDockExpanded = value);
+  }
   Offset? _dragStartNodePosition;
 
   /// Person ids on the active path (selected + parents + children + spouse +

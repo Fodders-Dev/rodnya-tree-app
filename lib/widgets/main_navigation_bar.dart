@@ -81,7 +81,15 @@ class MainNavigationBar extends StatelessWidget {
                   minimum: const EdgeInsets.fromLTRB(14, 0, 14, 14),
                   child: LayoutBuilder(
                     builder: (context, constraints) {
-                      final showLabels = constraints.maxWidth >= 340;
+                      // Was `>= 340` — too strict; on Samsung Galaxy
+                      // S20 / mid-range phones the SafeArea + outer
+                      // 14dp padding pulled effective width to ~330dp
+                      // and labels disappeared. The five short labels
+                      // (Лента / Родные / Дерево / Чаты / Я) fit even
+                      // at 280dp so we lower the threshold; a 240dp
+                      // floor still trips for very narrow tablets in
+                      // weird split-screen layouts.
+                      final showLabels = constraints.maxWidth >= 280;
                       final navHeight = showLabels ? 70.0 : 62.0;
                       final slotWidth = constraints.maxWidth / items.length;
                       final pillLeft = (slotWidth * currentIndex) + 6;

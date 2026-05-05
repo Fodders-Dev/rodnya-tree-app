@@ -218,66 +218,113 @@ extension _InteractiveFamilyTreeSections on _InteractiveFamilyTreeState {
             : RodnyaDesignTokens.light);
     final currentUserNodeId = _findCurrentUserNodeId();
     final branchRootPersonId = widget.branchRootPersonId;
-    return Container(
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
+
+    // Collapsed state: single chevron-pill that expands on tap. This
+    // way the dock doesn't overlap person cards by default — the
+    // canvas stays clean. Tap the chevron → animated expand to the
+    // full vertical button column. Tap the close pill → collapse
+    // back. Same TG / Maps "tools FAB" pattern.
+    final expanded = _controlDockExpanded;
+    final collapsedToggle = Tooltip(
+      message: 'Настройки вида',
+      child: Material(
         color: tokens.surfaceStrong.withValues(alpha: 0.92),
-        borderRadius: BorderRadius.circular(tokens.radiusMd),
-        border: Border.all(
-          color: tokens.surfaceLine.withValues(alpha: 0.9),
-        ),
-        boxShadow: tokens.panelShadow(
-          Theme.of(context).brightness,
-          floating: true,
+        shape: const CircleBorder(),
+        elevation: 1.5,
+        shadowColor: Colors.black.withValues(alpha: 0.18),
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: () => _setControlDockExpanded(!expanded),
+          child: SizedBox(
+            width: 40,
+            height: 40,
+            child: Icon(
+              expanded ? Icons.close_rounded : Icons.tune_rounded,
+              size: 20,
+              color: tokens.accentStrong,
+            ),
+          ),
         ),
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _buildDockButton(
-            icon: Icons.add,
-            tooltip: 'Увеличить',
-            onPressed: () => _zoomBy(1.2),
+    );
+
+    if (!expanded) {
+      return collapsedToggle;
+    }
+
+    return AnimatedSize(
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
+      alignment: Alignment.topCenter,
+      child: Container(
+        padding: const EdgeInsets.all(6),
+        decoration: BoxDecoration(
+          color: tokens.surfaceStrong.withValues(alpha: 0.92),
+          borderRadius: BorderRadius.circular(tokens.radiusMd),
+          border: Border.all(
+            color: tokens.surfaceLine.withValues(alpha: 0.9),
           ),
-          const SizedBox(height: 6),
-          _buildDockButton(
-            icon: Icons.remove,
-            tooltip: 'Уменьшить',
-            onPressed: () => _zoomBy(1 / 1.2),
+          boxShadow: tokens.panelShadow(
+            Theme.of(context).brightness,
+            floating: true,
           ),
-          const SizedBox(height: 6),
-          _buildDockButton(
-            icon: Icons.fit_screen_outlined,
-            tooltip: 'Вписать дерево',
-            onPressed: _fitTreeToViewport,
-          ),
-          if (currentUserNodeId != null) ...[
-            const SizedBox(height: 6),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
             _buildDockButton(
-              icon: Icons.my_location_outlined,
-              tooltip: 'Ко мне',
-              onPressed: () => _focusOnPerson(currentUserNodeId),
+              icon: Icons.close_rounded,
+              tooltip: 'Свернуть',
+              onPressed: () => _setControlDockExpanded(false),
             ),
-          ],
-          if (branchRootPersonId != null && branchRootPersonId.isNotEmpty) ...[
-            const SizedBox(height: 6),
+            const SizedBox(height: 4),
             _buildDockButton(
-              icon: Icons.alt_route_outlined,
-              tooltip: widget.showGenerationGuides ? 'К ветке' : 'К кругу',
-              onPressed: () => _focusOnPerson(branchRootPersonId),
+              icon: Icons.add,
+              tooltip: 'Увеличить',
+              onPressed: () => _zoomBy(1.2),
             ),
-            if (widget.onBranchFocusCleared != null) ...[
-              const SizedBox(height: 6),
+            const SizedBox(height: 4),
+            _buildDockButton(
+              icon: Icons.remove,
+              tooltip: 'Уменьшить',
+              onPressed: () => _zoomBy(1 / 1.2),
+            ),
+            const SizedBox(height: 4),
+            _buildDockButton(
+              icon: Icons.fit_screen_outlined,
+              tooltip: 'Вписать дерево',
+              onPressed: _fitTreeToViewport,
+            ),
+            if (currentUserNodeId != null) ...[
+              const SizedBox(height: 4),
               _buildDockButton(
-                icon: Icons.clear_all,
-                tooltip: widget.showGenerationGuides
-                    ? 'Сбросить ветку'
-                    : 'Сбросить круг',
-                onPressed: widget.onBranchFocusCleared!,
+                icon: Icons.my_location_outlined,
+                tooltip: 'Ко мне',
+                onPressed: () => _focusOnPerson(currentUserNodeId),
               ),
             ],
+            if (branchRootPersonId != null &&
+                branchRootPersonId.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              _buildDockButton(
+                icon: Icons.alt_route_outlined,
+                tooltip:
+                    widget.showGenerationGuides ? 'К ветке' : 'К кругу',
+                onPressed: () => _focusOnPerson(branchRootPersonId),
+              ),
+              if (widget.onBranchFocusCleared != null) ...[
+                const SizedBox(height: 4),
+                _buildDockButton(
+                  icon: Icons.clear_all,
+                  tooltip: widget.showGenerationGuides
+                      ? 'Сбросить ветку'
+                      : 'Сбросить круг',
+                  onPressed: widget.onBranchFocusCleared!,
+                ),
+              ],
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
@@ -299,10 +346,14 @@ extension _InteractiveFamilyTreeSections on _InteractiveFamilyTreeState {
         child: InkWell(
           customBorder: const CircleBorder(),
           onTap: onPressed,
+          // Tighter button — was 44dp which made the vertical dock
+          // ~280dp tall on mobile and overlapped person cards. 38dp
+          // satisfies Android's 36dp tap-target floor + reads as a
+          // quick action pill rather than a full FAB.
           child: SizedBox(
-            width: 44,
-            height: 44,
-            child: Icon(icon, color: tokens.accentStrong),
+            width: 38,
+            height: 38,
+            child: Icon(icon, size: 18, color: tokens.accentStrong),
           ),
         ),
       ),
