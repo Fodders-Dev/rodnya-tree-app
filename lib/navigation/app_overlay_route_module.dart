@@ -408,28 +408,90 @@ class AppOverlayRouteModule {
   Page<void> buildErrorPage(BuildContext context, GoRouterState state) {
     return MaterialPage<void>(
       key: state.pageKey,
-      child: Scaffold(
-        appBar: AppBar(title: const Text('Страница не найдена')),
-        body: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text(
-                'Ошибка 404: Страница не найдена\n${state.error}',
-                style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
+      // Friendly 404. Earlier version exposed the raw GoException
+      // ("no routes for location: /auth") directly to the user —
+      // tech jargon leaking through to Bаба Маша. Now we show a
+      // centered card with a friendly icon, an explanation that
+      // doesn't mention frameworks, a Назад action, and a Главная
+      // fallback. The raw error is logged via debugPrint for
+      // engineers but not surfaced.
+      child: Builder(
+        builder: (context) {
+          final theme = Theme.of(context);
+          final scheme = theme.colorScheme;
+          assert(() {
+            // ignore: avoid_print
+            debugPrint('[router] 404: ${state.uri} — ${state.error}');
+            return true;
+          }());
+          return Scaffold(
+            appBar: AppBar(),
+            body: SafeArea(
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 480),
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Container(
+                          width: 72,
+                          height: 72,
+                          decoration: BoxDecoration(
+                            color: scheme.primary.withValues(alpha: 0.12),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(
+                            Icons.travel_explore_outlined,
+                            size: 34,
+                            color: scheme.primary,
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+                        Text(
+                          'Такой страницы нет',
+                          textAlign: TextAlign.center,
+                          style: theme.textTheme.headlineSmall?.copyWith(
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        Text(
+                          'Адрес мог измениться или ссылка устарела.\n'
+                          'Вернёмся на главную и продолжим оттуда.',
+                          textAlign: TextAlign.center,
+                          style: theme.textTheme.bodyLarge?.copyWith(
+                            color: scheme.onSurfaceVariant,
+                            height: 1.4,
+                          ),
+                        ),
+                        const SizedBox(height: 24),
+                        Wrap(
+                          spacing: 8,
+                          alignment: WrapAlignment.center,
+                          children: [
+                            if (Navigator.of(context).canPop())
+                              OutlinedButton.icon(
+                                onPressed: () => Navigator.of(context).pop(),
+                                icon: const Icon(Icons.arrow_back_rounded),
+                                label: const Text('Назад'),
+                              ),
+                            FilledButton.icon(
+                              onPressed: () => context.go('/'),
+                              icon: const Icon(Icons.home_outlined),
+                              label: const Text('На главную'),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
-                textAlign: TextAlign.center,
               ),
-              const SizedBox(height: 16),
-              ElevatedButton(
-                onPressed: () => context.go('/'),
-                child: const Text('Вернуться на главную'),
-              ),
-            ],
-          ),
-        ),
+            ),
+          );
+        },
       ),
     );
   }

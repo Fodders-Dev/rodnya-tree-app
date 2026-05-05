@@ -424,16 +424,25 @@ class _AuthScreenState extends State<AuthScreen> {
         _nameController.text = displayName;
       }
 
+      // Don't force _isLogin=true — that traps a brand-new user
+      // (no Rodnya account yet) in the login form they can't satisfy.
+      // If we got a name from Telegram, default to register mode so
+      // the user just picks an email + password and the link runs
+      // automatically inside _submit() via _tryLinkPendingTelegramIdentity.
+      // The mode toggle stays visible so existing users can flip
+      // back to login and the link still attaches afterwards.
       setState(() {
-        _isLogin = true;
+        if (displayName.isNotEmpty) {
+          _isLogin = false;
+        }
         _pendingTelegramLinkCode = completion.linkCode;
         _pendingTelegramMessage = completion.message;
       });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            completion.message ??
-                'Telegram подтверждён. Теперь войдите в существующий аккаунт Родни, чтобы привязать его.',
+            'Telegram подтверждён. Войдите в аккаунт или создайте новый — '
+            'Telegram привяжется автоматически.',
           ),
         ),
       );
@@ -555,16 +564,21 @@ class _AuthScreenState extends State<AuthScreen> {
         _nameController.text = displayName;
       }
 
+      // See _exchangeTelegramAuthCode for the rationale — same
+      // pattern: don't trap a new user in login mode if we got
+      // a usable name from VK ID.
       setState(() {
-        _isLogin = true;
+        if (displayName.isNotEmpty) {
+          _isLogin = false;
+        }
         _pendingVkLinkCode = completion.linkCode;
         _pendingVkMessage = completion.message;
       });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            completion.message ??
-                'VK ID подтверждён. Теперь войдите в существующий аккаунт Родни, чтобы привязать его.',
+            'VK ID подтверждён. Войдите в аккаунт или создайте новый — '
+            'VK ID привяжется автоматически.',
           ),
         ),
       );
@@ -727,16 +741,20 @@ class _AuthScreenState extends State<AuthScreen> {
         _nameController.text = displayName;
       }
 
+      // Same pattern as Telegram / VK ID — see _exchangeTelegramAuthCode
+      // for rationale.
       setState(() {
-        _isLogin = true;
+        if (displayName.isNotEmpty) {
+          _isLogin = false;
+        }
         _pendingMaxLinkCode = completion.linkCode;
         _pendingMaxMessage = completion.message;
       });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            completion.message ??
-                'MAX подтверждён. Теперь войдите в существующий аккаунт Родни, чтобы привязать его.',
+            'MAX подтверждён. Войдите в аккаунт или создайте новый — '
+            'MAX привяжется автоматически.',
           ),
         ),
       );
