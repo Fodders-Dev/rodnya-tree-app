@@ -1095,8 +1095,30 @@ class CustomApiAuthService implements AuthServiceInterface {
           try {
             await refreshSession();
             return await _executeRequest(method, uri, authenticated, body);
-          } catch (_) {
+          } on CustomApiException {
+            // Refresh hop reached the backend and got an HTTP error
+            // back (any status). The original behavior here was to
+            // unconditionally clear the session, and the existing
+            // test fleet relies on that — preserve it.
+            //
+            // _performRefresh already calls _clearSession on its
+            // 401/403 path; calling again here is a no-op for those
+            // and a defensible "kick out on persistent backend
+            // failure" for everything else (404 / 500 / 503 etc).
             await _clearSession(sessionExpired: true);
+            rethrow;
+          } catch (refreshError) {
+            // Genuine network failure (SocketException / TimeoutException /
+            // any non-CustomApi exception): refresh never reached the
+            // backend, so we have NO signal that the session is
+            // actually invalid. Keep the local session so the user
+            // doesn't get bounced to the login screen the moment
+            // their connection drops. The next online retry will
+            // re-attempt refresh.
+            debugPrint(
+              'Token refresh failed without backend response — '
+              'keeping session: $refreshError',
+            );
             rethrow;
           }
         } else {

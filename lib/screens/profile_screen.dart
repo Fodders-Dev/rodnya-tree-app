@@ -275,7 +275,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
       Future<List<ProfileContribution>> contributionsFuture() async {
         try {
-          return await _profileService.getPendingProfileContributions();
+          // Hard 8 s timeout. _isLoadingContributions is on the
+          // hot path of the profile chrome; if the endpoint hangs
+          // the badge spinner spins forever. Empty list on timeout
+          // is the right fallback because contributions are
+          // optional and the user can pull-to-refresh.
+          return await _profileService
+              .getPendingProfileContributions()
+              .timeout(
+            const Duration(seconds: 8),
+            onTimeout: () {
+              debugPrint(
+                'Profile contributions request timed out — '
+                'returning empty list.',
+              );
+              return const <ProfileContribution>[];
+            },
+          );
         } catch (error) {
           debugPrint('Не удалось загрузить предложения по профилю: $error');
           return const <ProfileContribution>[];
@@ -284,7 +300,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
       Future<AccountLinkingStatus?> linkingFuture() async {
         try {
-          return await _profileService.getCurrentAccountLinkingStatus();
+          // Same reasoning as contributions — small endpoint, must
+          // not block the profile chrome forever. The underlying
+          // Future is non-nullable, so we wrap the timeout in a
+          // try/catch on TimeoutException rather than using the
+          // onTimeout callback (which would have to return a real
+          // AccountLinkingStatus instance).
+          return await _profileService
+              .getCurrentAccountLinkingStatus()
+              .timeout(const Duration(seconds: 8));
+        } on TimeoutException {
+          debugPrint('Trusted-channel summary request timed out.');
+          return null;
         } catch (error) {
           debugPrint('Не удалось загрузить trusted-channel summary: $error');
           return null;

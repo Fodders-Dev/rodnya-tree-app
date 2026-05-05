@@ -980,20 +980,44 @@ class _CallStage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (isGroupCall && remoteVideoTracks.length > 1) {
+      // Adaptive grid: scales the column count and aspect ratio so 3,
+      // 4, 5+ participants all fit visibly. Was hard-coded to 2-col +
+      // 0.88 aspect with `NeverScrollableScrollPhysics`, which dropped
+      // tiles 5+ off the bottom of the viewport with no scroll.
+      // Bottom padding tightened from 220 → 160 to claw back vertical
+      // room for the bigger grids. We keep scrolling enabled when
+      // we'd otherwise overflow.
+      final count = remoteVideoTracks.length;
+      final crossAxisCount = count <= 2
+          ? 1
+          : count <= 4
+              ? 2
+              : count <= 9
+                  ? 3
+                  : 4;
+      final childAspectRatio = count <= 2
+          ? 1.5
+          : count <= 4
+              ? 0.95
+              : count <= 9
+                  ? 0.85
+                  : 0.7;
       return DecoratedBox(
         decoration: _stageDecoration,
         child: SafeArea(
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 84, 12, 220),
+            padding: const EdgeInsets.fromLTRB(12, 84, 12, 160),
             child: GridView.builder(
-              physics: const NeverScrollableScrollPhysics(),
+              physics: count <= 4
+                  ? const NeverScrollableScrollPhysics()
+                  : const ClampingScrollPhysics(),
               gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: remoteVideoTracks.length <= 2 ? 1 : 2,
+                crossAxisCount: crossAxisCount,
                 crossAxisSpacing: 10,
                 mainAxisSpacing: 10,
-                childAspectRatio: remoteVideoTracks.length <= 2 ? 1.7 : 0.88,
+                childAspectRatio: childAspectRatio,
               ),
-              itemCount: remoteVideoTracks.length,
+              itemCount: count,
               itemBuilder: (context, index) => _RemoteVideoTile(
                 track: remoteVideoTracks[index],
                 index: index,

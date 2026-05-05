@@ -33,6 +33,13 @@ class _VoicePlayerWidgetState extends State<_VoicePlayerWidget> {
   StreamSubscription? _posSub;
   StreamSubscription? _compSub;
 
+  // One-at-a-time global playback. Without this, tapping multiple
+  // voice bubbles plays them all simultaneously — TG / iOS / WA all
+  // pause the previous voice when a new one starts. We track the
+  // currently-playing widget's pause callback in a static field so
+  // the next _play() in any voice widget can call it before starting.
+  static VoidCallback? _pauseActive;
+
   @override
   void initState() {
     super.initState();
@@ -54,11 +61,25 @@ class _VoicePlayerWidgetState extends State<_VoicePlayerWidget> {
           _position = Duration.zero;
         });
       }
+      // Clear the global pointer if we were the active one — keeps
+      // a stale callback from being invoked by the next bubble.
+      if (identical(_pauseActive, _pauseSelf)) {
+        _pauseActive = null;
+      }
     });
+  }
+
+  void _pauseSelf() {
+    if (mounted && _playerState == PlayerState.playing) {
+      unawaited(_player.pause());
+    }
   }
 
   @override
   void dispose() {
+    if (identical(_pauseActive, _pauseSelf)) {
+      _pauseActive = null;
+    }
     _stateSub?.cancel();
     _durationSub?.cancel();
     _posSub?.cancel();
@@ -69,6 +90,15 @@ class _VoicePlayerWidgetState extends State<_VoicePlayerWidget> {
 
   Future<void> _play() async {
     try {
+      // Stop whichever voice bubble is currently playing across the
+      // app. Without this the tapped bubble overlaps the previous one
+      // and the user hears two voices at once.
+      final previousPause = _pauseActive;
+      if (previousPause != null && !identical(previousPause, _pauseSelf)) {
+        previousPause();
+      }
+      _pauseActive = _pauseSelf;
+
       if (widget.url != null) {
         await _player.play(UrlSource(widget.url!));
       } else if (widget.path != null) {
