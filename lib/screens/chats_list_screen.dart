@@ -1176,7 +1176,18 @@ class _ChatsListScreenState extends State<ChatsListScreen>
         (showArchiveSummary ? 1 : 0) +
         (showRelatives ? filteredRelatives.length + 1 : 0);
 
-    return ListView.builder(
+    return RefreshIndicator(
+      // Chats use a stream subscription, but a visible pull-to-refresh
+      // helps confirm "yes, I just got a fresh batch" — same UX cue
+      // as TG / WA. We re-subscribe (cancel + restart) so the stream
+      // re-emits its current snapshot, which feels like a refresh.
+      onRefresh: () async {
+        _loadChats();
+        // Hold the spinner for ~600ms so the indicator doesn't snap
+        // back instantly even when data arrives in <50ms.
+        await Future<void>.delayed(const Duration(milliseconds: 600));
+      },
+      child: ListView.builder(
       padding: const EdgeInsets.fromLTRB(10, 2, 10, 12),
       itemCount: totalCount,
       // Each tile gets its own RepaintBoundary so repaints triggered by
@@ -1228,6 +1239,7 @@ class _ChatsListScreenState extends State<ChatsListScreen>
         }
         return const SizedBox.shrink();
       },
+      ),
     );
   }
 
