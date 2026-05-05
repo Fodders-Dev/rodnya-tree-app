@@ -55,11 +55,45 @@ Future<String?> showAttachmentPickerSheet(
   );
 }
 
-class _AttachmentPickerSheet extends StatelessWidget {
+class _AttachmentPickerSheet extends StatefulWidget {
   const _AttachmentPickerSheet({required this.actions, this.title});
 
   final List<AttachmentPickerAction> actions;
   final String? title;
+
+  @override
+  State<_AttachmentPickerSheet> createState() => _AttachmentPickerSheetState();
+}
+
+class _AttachmentPickerSheetState extends State<_AttachmentPickerSheet>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _entryController;
+
+  @override
+  void initState() {
+    super.initState();
+    // Telegram-style staggered tile entry: tiles fade + scale + slide
+    // from below in sequence. Total controller duration covers the
+    // whole stagger so the LAST tile's animation lines up with the
+    // controller end. Per-tile sub-tweens are derived in [_PickerTile]
+    // via Interval so we drive everything off one controller.
+    _entryController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 360),
+    );
+    // Forward on the next frame so the sheet's own slide-in animation
+    // gets ~50ms of head start — tiles arrive after the panel has
+    // landed, not while it's still moving.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _entryController.forward();
+    });
+  }
+
+  @override
+  void dispose() {
+    _entryController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -77,11 +111,11 @@ class _AttachmentPickerSheet extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            if ((title ?? '').isNotEmpty)
+            if ((widget.title ?? '').isNotEmpty)
               Padding(
                 padding: const EdgeInsets.fromLTRB(20, 4, 20, 16),
                 child: Text(
-                  title!,
+                  widget.title!,
                   style: AppTheme.sans(
                     color: tokens.inkSecondary,
                     fontSize: 11,
@@ -101,14 +135,18 @@ class _AttachmentPickerSheet extends StatelessWidget {
                   alignment: WrapAlignment.start,
                   spacing: 0,
                   runSpacing: 8,
-                  children: actions
-                      .map(
-                        (action) => SizedBox(
-                          width: tileWidth,
-                          child: _PickerTile(action: action),
+                  children: [
+                    for (var i = 0; i < widget.actions.length; i++)
+                      SizedBox(
+                        width: tileWidth,
+                        child: _PickerTile(
+                          action: widget.actions[i],
+                          entry: _entryController,
+                          index: i,
+                          total: widget.actions.length,
                         ),
-                      )
-                      .toList(),
+                      ),
+                  ],
                 );
               },
             ),
@@ -120,9 +158,17 @@ class _AttachmentPickerSheet extends StatelessWidget {
 }
 
 class _PickerTile extends StatelessWidget {
-  const _PickerTile({required this.action});
+  const _PickerTile({
+    required this.action,
+    required this.entry,
+    required this.index,
+    required this.total,
+  });
 
   final AttachmentPickerAction action;
+  final Animation<double> entry;
+  final int index;
+  final int total;
 
   @override
   Widget build(BuildContext context) {
@@ -132,12 +178,39 @@ class _PickerTile extends StatelessWidget {
             ? RodnyaDesignTokens.dark
             : RodnyaDesignTokens.light);
 
+    // Each tile starts ~80ms after its left neighbour so the row
+    // "rolls in" left-to-right. We cap the per-tile duration at 0.55
+    // of the overall window so the last tile still fits inside the
+    // controller without rushing.
+    final stride = total <= 1 ? 0.0 : 0.45 / (total - 1).clamp(1, 999);
+    final start = (index * stride).clamp(0.0, 0.45);
+    final tween = CurvedAnimation(
+      parent: entry,
+      curve: Interval(start, (start + 0.55).clamp(0.0, 1.0),
+          curve: Curves.easeOutCubic),
+    );
+
     return Material(
       color: Colors.transparent,
       child: InkWell(
         borderRadius: BorderRadius.circular(18),
         onTap: () => Navigator.of(context).pop(action.id),
-        child: Padding(
+        child: AnimatedBuilder(
+          animation: tween,
+          builder: (context, child) {
+            final t = tween.value;
+            return Opacity(
+              opacity: t,
+              child: Transform.translate(
+                offset: Offset(0, (1 - t) * 14),
+                child: Transform.scale(
+                  scale: 0.86 + 0.14 * t,
+                  child: child,
+                ),
+              ),
+            );
+          },
+          child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 10),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -187,6 +260,7 @@ class _PickerTile extends StatelessWidget {
               ),
             ],
           ),
+        ),
         ),
       ),
     );

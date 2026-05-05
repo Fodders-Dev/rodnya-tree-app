@@ -3930,19 +3930,30 @@ class _ChatScreenState extends State<ChatScreen> {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Container(
-                    // Reference `.composer .input`: 42 height, full pill
-                    // radius 999, surface-strong bg, surface-line border.
+                    // Reference `.composer .input`: 42 height, soft
+                    // 22dp rounded corners, surface-strong bg,
+                    // surface-line border.
+                    //
+                    // Was `borderRadius: 999` (full stadium) — that
+                    // looked great single-line but on multi-line the
+                    // pill stayed stadium-shaped which pulled the
+                    // rounded corners INTO the text area. Letters at
+                    // the start of the first / last lines visually
+                    // clipped against the curve ("буквы убегают за
+                    // рамки"). Telegram / WhatsApp use a fixed
+                    // medium-rounded shape that stays consistent as
+                    // the composer grows — same approach here.
                     constraints: const BoxConstraints(minHeight: 42),
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 6,
+                      horizontal: 18,
+                      vertical: 10,
                     ),
                     decoration: BoxDecoration(
                       color: Theme.of(context)
                           .colorScheme
                           .surface
                           .withValues(alpha: 0.95),
-                      borderRadius: BorderRadius.circular(999),
+                      borderRadius: BorderRadius.circular(22),
                       border: Border.all(
                         color: Theme.of(context)
                             .colorScheme
@@ -3967,10 +3978,13 @@ class _ChatScreenState extends State<ChatScreen> {
                                 .colorScheme
                                 .onSurfaceVariant
                                 .withValues(alpha: 0.78),
-                            fontSize: 14.5,
+                            fontSize: 15,
                           ),
                         ),
-                        style: const TextStyle(fontSize: 14.5, height: 1.35),
+                        // Slightly bigger font + larger line-height so
+                        // descenders (д / р / у / щ) don't visually
+                        // butt against the next line on Cyrillic text.
+                        style: const TextStyle(fontSize: 15, height: 1.4),
                         textCapitalization: TextCapitalization.sentences,
                         keyboardType: TextInputType.multiline,
                         minLines: 1,
@@ -4582,9 +4596,27 @@ class _ChatScreenState extends State<ChatScreen> {
         message.attachments.isNotEmpty;
     final bubbleKey = ValueKey<String>('outgoing-bubble-${message.localId}');
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 8),
-      child: Align(
+    // Telegram-style send animation: the optimistic bubble slides up
+    // 14dp + fades in over 220ms. Keyed by localId so the tween only
+    // plays once per message — re-renders during status flips
+    // (pending → sent → failed) keep the bubble in its rest state.
+    return TweenAnimationBuilder<double>(
+      key: ValueKey<String>('outgoing-bubble-anim-${message.localId}'),
+      tween: Tween<double>(begin: 0, end: 1),
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
+      builder: (context, t, child) {
+        return Opacity(
+          opacity: t,
+          child: Transform.translate(
+            offset: Offset(0, (1 - t) * 14),
+            child: child,
+          ),
+        );
+      },
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 8),
+        child: Align(
         alignment: Alignment.centerRight,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.end,
@@ -4688,6 +4720,7 @@ class _ChatScreenState extends State<ChatScreen> {
             ],
           ],
         ),
+      ),
       ),
     );
   }
