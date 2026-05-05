@@ -4320,24 +4320,45 @@ class _ChatScreenState extends State<ChatScreen> {
       );
     }
 
+    // Mic button: long-press to record (Telegram style), tap to swap
+    // to кружочек capture (the user's request "одним нажатием на
+    // кнопку голосовухи она менялась на кружочек").
+    //
+    // We render the visual via a plain Material+Container instead of
+    // IconButton + GestureDetector — the previous combo had IconButton's
+    // own onPressed competing with our long-press in the gesture
+    // arena, which on some Android devices made long-press never fire
+    // ("на телефоне зажимаешь голосовуху — а появляется уведа
+    // 'зажмите чтобы записать'"). With a non-interactive child the
+    // GestureDetector owns the gesture cleanly.
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () {
+        // Single tap → record a kruzhok. Same one-press feel TG's
+        // mic-button has when you tap-swap to video-note.
+        HapticFeedback.lightImpact();
+        unawaited(_pickVideoNote());
+      },
       onLongPressStart: _handleRecordingLongPressStart,
       onLongPressMoveUpdate: _handleRecordingLongPressMoveUpdate,
       onLongPressEnd: _handleRecordingLongPressEnd,
-      child: IconButton.filled(
-        onPressed: recordingState == ChatRecordingState.recording
-            ? null
-            : () {
-                showAppSnackBar(
-                  context,
-                  'Зажмите кнопку, чтобы записать голосовое.',
-                );
-              },
-        tooltip: 'Зажмите для голосового сообщения',
-        icon: Icon(
-          recordingState == ChatRecordingState.recording
-              ? Icons.lock_open_rounded
-              : Icons.mic_none_rounded,
+      child: Tooltip(
+        message: 'Зажмите для голосового, тап для кружочка',
+        child: Container(
+          width: 48,
+          height: 48,
+          decoration: BoxDecoration(
+            color: scheme.primary,
+            shape: BoxShape.circle,
+          ),
+          child: Icon(
+            recordingState == ChatRecordingState.recording
+                ? Icons.lock_open_rounded
+                : Icons.mic_none_rounded,
+            color: scheme.onPrimary,
+          ),
         ),
       ),
     );
@@ -7882,6 +7903,31 @@ class _ChatBubble extends StatelessWidget {
       onOpenRemoteAttachment;
   final void Function(List<XFile> files, XFile file)? onOpenLocalAttachment;
 
+  /// True when the message is a "naked" video note — single circular
+  /// kruzhok and nothing else. In TG / WhatsApp such messages render
+  /// as a free-floating circle with no bubble background, time stamp,
+  /// or border. Detection: empty text + no reply + a single video-note
+  /// attachment on either remote or local side.
+  bool get _isVideoNoteOnly {
+    if (text.trim().isNotEmpty) return false;
+    if (replyTo != null) return false;
+    if (remoteAttachments.length == 1 &&
+        localAttachments.isEmpty &&
+        remoteAttachments.first.isVideoNote) {
+      return true;
+    }
+    if (localAttachments.length == 1 && remoteAttachments.isEmpty) {
+      // Detect by file name prefix — same heuristic the host state
+      // uses for `_isVideoNoteFile` but inlined here so the bubble
+      // doesn't depend on the parent state class.
+      final raw = localAttachments.first.name.trim().toLowerCase();
+      if (raw.startsWith('video_note_') || raw.startsWith('video-note-')) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -8026,8 +8072,17 @@ class _ChatBubble extends StatelessWidget {
                   // Reference `.msg`: padding 9px 13px 8px, radius 18 + 6 on
                   // the tail corner. Tighter than the previous 12/8 +20/6
                   // and reads as more "bubble-y", less card-y.
-                  padding: const EdgeInsets.fromLTRB(13, 9, 13, 8),
-                  decoration: BoxDecoration(
+                  //
+                  // Special case: a "naked" кружочек skips the bubble
+                  // entirely (no padding, no background, no border) and
+                  // renders just the round video tile — same TG / WA
+                  // behaviour where video notes float on the canvas.
+                  padding: _isVideoNoteOnly
+                      ? EdgeInsets.zero
+                      : const EdgeInsets.fromLTRB(13, 9, 13, 8),
+                  decoration: _isVideoNoteOnly
+                      ? null
+                      : BoxDecoration(
                     color: outgoingGradient == null ? bubbleColor : null,
                     gradient: outgoingGradient,
                     border: highlightBorder,

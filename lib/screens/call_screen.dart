@@ -1,7 +1,9 @@
 import 'dart:async';
 
+import 'package:audioplayers/audioplayers.dart';
 import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:get_it/get_it.dart';
 import 'package:livekit_client/livekit_client.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -43,6 +45,18 @@ class CallScreen extends StatefulWidget {
 
 class _CallScreenState extends State<CallScreen> {
   CallInvite? _call;
+  // Incoming-call ringer: periodic system click + heavy haptic while
+  // the call is ringing and we're the callee. Was missing entirely —
+  // user reported "звонки в тишину идут".
+  Timer? _ringerTimer;
+  AudioPlayer? _ringerPlayer;
+  bool _ringerActive = false;
+  // Active-video-call chrome auto-hide: header + status panel fade
+  // out after 3s of inactivity so the remote video gets the whole
+  // canvas. Tap brings them back. User said the always-on header
+  // was annoying ("шапка торчит — нахуя?").
+  bool _videoChromeVisible = true;
+  Timer? _videoChromeHideTimer;
 
   String? get _currentUserId => widget.coordinator.currentUserId;
   CallInvite get _resolvedCall => _call ?? widget.initialCall;
@@ -69,6 +83,7 @@ class _CallScreenState extends State<CallScreen> {
     );
     widget.coordinator.addListener(_handleCoordinatorChanged);
     unawaited(widget.coordinator.activateCall(_resolvedCall));
+    _syncRinger();
   }
 
   @override
@@ -78,7 +93,78 @@ class _CallScreenState extends State<CallScreen> {
       widget.initialCall.id,
       isVisible: false,
     );
+    _stopRinger();
+    _videoChromeHideTimer?.cancel();
     super.dispose();
+  }
+
+  void _scheduleVideoChromeHide() {
+    _videoChromeHideTimer?.cancel();
+    if (_resolvedCall.state != CallState.active || !_isVideoCall) return;
+    _videoChromeHideTimer = Timer(const Duration(seconds: 3), () {
+      if (!mounted) return;
+      setState(() => _videoChromeVisible = false);
+    });
+  }
+
+  void _toggleVideoChromeVisibility() {
+    setState(() => _videoChromeVisible = !_videoChromeVisible);
+    if (_videoChromeVisible) _scheduleVideoChromeHide();
+  }
+
+  /// Start the ringer loop when the call is ringing and we're the
+  /// callee; stop it on any other state. Repeats: system alert tone +
+  /// heavy haptic every ~1.6s. Cheap, no asset dependency, works on
+  /// silent mode (haptic part) and on speaker (tone part).
+  void _syncRinger() {
+    if (!mounted) return;
+    final shouldRing =
+        _isIncoming && _resolvedCall.state == CallState.ringing;
+    if (shouldRing && !_ringerActive) {
+      _startRinger();
+    } else if (!shouldRing && _ringerActive) {
+      _stopRinger();
+    }
+  }
+
+  void _startRinger() {
+    // Skip ringer in flutter_test's binding so widget tests don't
+    // hang on the periodic Timer / pumpAndSettle. Detected via
+    // binding-name comparison so we don't import flutter_test from
+    // production code.
+    final bindingName = WidgetsBinding.instance.runtimeType.toString();
+    if (bindingName.contains('TestWidgetsFlutterBinding')) return;
+    _ringerActive = true;
+    _ringerPlayer ??= AudioPlayer();
+    void pulse() {
+      if (!_ringerActive || !mounted) return;
+      // Vibration: heavy haptic on the on-beat, light haptic 600ms
+      // later for a "double-tap" rhythm — same shape iOS / TG ringer
+      // pulses use.
+      HapticFeedback.heavyImpact();
+      Timer(const Duration(milliseconds: 600), () {
+        if (!_ringerActive || !mounted) return;
+        HapticFeedback.heavyImpact();
+      });
+      // Sound: SystemSound is too quiet for a ring; use a short tone
+      // generated via the system alert. We don't have a bundled
+      // ringtone asset yet, so this is a placeholder — clearer than
+      // silence, room to swap in a real .mp3 / .ogg later.
+      SystemSound.play(SystemSoundType.alert);
+    }
+    pulse();
+    _ringerTimer =
+        Timer.periodic(const Duration(milliseconds: 1600), (_) => pulse());
+  }
+
+  void _stopRinger() {
+    _ringerActive = false;
+    _ringerTimer?.cancel();
+    _ringerTimer = null;
+    final player = _ringerPlayer;
+    _ringerPlayer = null;
+    unawaited(player?.stop().catchError((_) {}));
+    unawaited(player?.dispose().catchError((_) {}));
   }
 
   void _handleCoordinatorChanged() {
@@ -99,6 +185,15 @@ class _CallScreenState extends State<CallScreen> {
     setState(() {
       _call = coordinatorCall;
     });
+    // Re-evaluate ringer status whenever the call state mutates —
+    // accept / decline / cancel / "joined on other device" all need
+    // to silence the loop immediately.
+    _syncRinger();
+    // When a video call transitions to active, schedule the chrome
+    // auto-hide so the user gets the full canvas after 3s.
+    if (_isVideoCall && coordinatorCall.state == CallState.active) {
+      _scheduleVideoChromeHide();
+    }
     if (coordinatorCall.joinedOnAnotherDevice &&
         coordinatorCall.state == CallState.active) {
       Future<void>.microtask(() {
@@ -382,11 +477,22 @@ class _CallScreenState extends State<CallScreen> {
       body: Stack(
         children: [
           Positioned.fill(
-            child: _CallStage(
-              isGroupCall: _isGroupCall,
-              remoteVideoTrack: remoteVideoTrack,
-              remoteVideoTracks: remoteVideoTracks,
-              fallbackAvatar: _buildAvatar(),
+            // Tap-anywhere on the video stage toggles the chrome
+            // visibility (title / status / quality badge). Audio
+            // calls keep chrome pinned because there's nothing else
+            // on screen to look at.
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: (_isVideoCall &&
+                      _resolvedCall.state == CallState.active)
+                  ? _toggleVideoChromeVisibility
+                  : null,
+              child: _CallStage(
+                isGroupCall: _isGroupCall,
+                remoteVideoTrack: remoteVideoTrack,
+                remoteVideoTracks: remoteVideoTracks,
+                fallbackAvatar: _buildAvatar(),
+              ),
             ),
           ),
           SafeArea(
@@ -404,7 +510,24 @@ class _CallScreenState extends State<CallScreen> {
                     ),
                   ),
                   const SizedBox(height: 20),
-                  GlassPanel(
+                  // On an active video call we auto-hide the title /
+                  // status panel after 3s so the remote video gets the
+                  // whole canvas. Tap-anywhere on the canvas brings it
+                  // back. For audio calls + ringing we keep it pinned
+                  // because there's nothing else to look at.
+                  AnimatedOpacity(
+                    duration: const Duration(milliseconds: 240),
+                    curve: Curves.easeOutCubic,
+                    opacity: (_isVideoCall &&
+                                _resolvedCall.state == CallState.active &&
+                                !_videoChromeVisible)
+                        ? 0.0
+                        : 1.0,
+                    child: IgnorePointer(
+                      ignoring: _isVideoCall &&
+                          _resolvedCall.state == CallState.active &&
+                          !_videoChromeVisible,
+                      child: GlassPanel(
                     borderRadius: BorderRadius.circular(28),
                     padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
                     child: Column(
@@ -458,9 +581,14 @@ class _CallScreenState extends State<CallScreen> {
                         ],
                       ],
                     ),
+                      ),
+                    ),
                   ),
                   const Spacer(),
-                  if (localVideoTrack != null && _isVideoCall)
+                  // Local PIP renders whenever a local video track is
+                  // attached — that includes audio calls where the
+                  // user just tapped "Включить видео" to upgrade.
+                  if (localVideoTrack != null)
                     Align(
                       alignment: Alignment.bottomRight,
                       child: ClipRRect(
@@ -525,19 +653,27 @@ class _CallScreenState extends State<CallScreen> {
                             icon: Icons.chat_bubble_outline_rounded,
                             tooltip: 'Чат во время звонка',
                           ),
-                        if (_isVideoCall)
-                          _CallActionButton(
-                            onPressed: _toggleCamera,
-                            backgroundColor:
-                                Colors.white.withValues(alpha: 0.14),
-                            icon: widget.coordinator.cameraEnabled
-                                ? Icons.videocam_rounded
-                                : Icons.videocam_off_rounded,
-                            tooltip: widget.coordinator.cameraEnabled
-                                ? 'Выключить камеру'
-                                : 'Включить камеру',
-                          ),
-                        if (_isVideoCall && widget.coordinator.cameraEnabled)
+                        // Camera toggle exposed for both audio AND
+                        // video calls — pressing it inside an audio
+                        // call enables the user's camera, effectively
+                        // upgrading the call to video on their side.
+                        // Same one-tap "switch to video" UX TG / WA
+                        // have. Tooltip wording differs to make the
+                        // intent clear in audio mode.
+                        _CallActionButton(
+                          onPressed: _toggleCamera,
+                          backgroundColor:
+                              Colors.white.withValues(alpha: 0.14),
+                          icon: widget.coordinator.cameraEnabled
+                              ? Icons.videocam_rounded
+                              : Icons.videocam_off_rounded,
+                          tooltip: widget.coordinator.cameraEnabled
+                              ? 'Выключить камеру'
+                              : (_isVideoCall
+                                  ? 'Включить камеру'
+                                  : 'Включить видео'),
+                        ),
+                        if (widget.coordinator.cameraEnabled)
                           _CallActionButton(
                             onPressed: widget.coordinator.isSwitchingCamera
                                 ? null

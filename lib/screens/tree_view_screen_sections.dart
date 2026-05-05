@@ -115,6 +115,12 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
         // tree to read as the page background, not as a contained card —
         // matching the Claude Design reference where the family graph IS
         // the canvas and only thin chrome floats over it.
+        //
+        // Context column (info card + quick actions + health) starts
+        // COLLAPSED so the canvas gets ~85% of the viewport (was ~60%
+        // — user feedback "дерево всего лишь 60% экрана занимает").
+        // Toggling via the chevron in the top toolbar slides it down.
+        final showContextColumn = !_compactChromeCollapsed;
         return Stack(
           fit: StackFit.expand,
           children: [
@@ -139,19 +145,50 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     topToolbar,
-                    const SizedBox(height: 10),
-                    ConstrainedBox(
-                      constraints: BoxConstraints(
-                        maxHeight: compactContextHeight,
-                      ),
-                      child: SingleChildScrollView(
-                        child: _buildTreeContextColumn(
-                          selectedTreeId: selectedTreeId,
-                          branchRootPerson: branchRootPerson,
-                          selectedEditPerson: selectedEditPerson,
-                          warnings: treeWarnings,
-                          compact: true,
-                        ),
+                    AnimatedSize(
+                      duration: const Duration(milliseconds: 240),
+                      curve: Curves.easeOutCubic,
+                      alignment: Alignment.topCenter,
+                      child: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 240),
+                        switchInCurve: Curves.easeOutCubic,
+                        switchOutCurve: Curves.easeInCubic,
+                        transitionBuilder: (child, animation) {
+                          return ClipRect(
+                            child: SlideTransition(
+                              position: Tween<Offset>(
+                                begin: const Offset(0, -0.25),
+                                end: Offset.zero,
+                              ).animate(animation),
+                              child: FadeTransition(
+                                  opacity: animation, child: child),
+                            ),
+                          );
+                        },
+                        child: showContextColumn
+                            ? Padding(
+                                key: const ValueKey('tree-chrome-shown'),
+                                padding: const EdgeInsets.only(top: 10),
+                                child: ConstrainedBox(
+                                  constraints: BoxConstraints(
+                                    maxHeight: compactContextHeight,
+                                  ),
+                                  child: SingleChildScrollView(
+                                    child: _buildTreeContextColumn(
+                                      selectedTreeId: selectedTreeId,
+                                      branchRootPerson: branchRootPerson,
+                                      selectedEditPerson: selectedEditPerson,
+                                      warnings: treeWarnings,
+                                      compact: true,
+                                    ),
+                                  ),
+                                ),
+                              )
+                            : const SizedBox(
+                                key: ValueKey('tree-chrome-hidden'),
+                                height: 0,
+                                width: double.infinity,
+                              ),
                       ),
                     ),
                   ],
@@ -325,6 +362,24 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
               });
             },
           ),
+          // Compact chrome toggle — only shown on phone widths so the
+          // user can pull the tree-info / quick-actions panel down when
+          // they need it, hide it again to give the canvas the whole
+          // viewport. Chevron flips direction with state.
+          if (compact)
+            _buildTreeToolbarIconButton(
+              icon: _compactChromeCollapsed
+                  ? Icons.expand_more_rounded
+                  : Icons.expand_less_rounded,
+              tooltip: _compactChromeCollapsed
+                  ? 'Показать панель дерева'
+                  : 'Свернуть панель дерева',
+              onPressed: () {
+                _updateSectionState(() {
+                  _compactChromeCollapsed = !_compactChromeCollapsed;
+                });
+              },
+            ),
         ],
       ),
     );

@@ -102,6 +102,10 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
   // avatar + name + meta + chevron) and expands on tap to reveal action row
   // and full info. Reset to collapsed whenever selection changes.
   bool _personSheetExpanded = false;
+  // Compact (mobile) chrome — info card / quick actions / health panel —
+  // is collapsed by default so the canvas takes ~85% of the viewport.
+  // Tap on the chevron in the top toolbar toggles it open.
+  bool _compactChromeCollapsed = true;
   FamilyTree? _currentTreeMeta;
   Map<String, Offset> _manualNodePositions = <String, Offset>{};
   TreeGraphSnapshot? _graphSnapshot;

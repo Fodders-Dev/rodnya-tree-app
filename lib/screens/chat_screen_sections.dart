@@ -189,28 +189,39 @@ extension _ChatScreenScaffoldSections on _ChatScreenState {
       return null;
     }
 
+    // Phone AppBar gets squeezed by 4 icons + avatar + long titles
+    // ("Анастасия Эдуардовна Шуфляк"). Use compact visualDensity on
+    // narrow widths so the icon buttons shrink from 48dp → ~40dp,
+    // freeing ~32dp horizontal for the title text. Wide layouts keep
+    // standard density.
+    final isWide = _isWideLayout(context);
+    final infoEnabled = !_isLoadingChatDetails && _chatDetails != null;
+    final density =
+        isWide ? VisualDensity.standard : VisualDensity.compact;
     return [
       if (_canStartCallInChat) ...[
         IconButton(
+          visualDensity: density,
           onPressed: () => _startCall(CallMediaMode.audio),
           tooltip: widget.isGroup ? 'Групповой аудиозвонок' : 'Аудиозвонок',
           icon: const Icon(Icons.call_outlined),
         ),
         IconButton(
+          visualDensity: density,
           onPressed: () => _startCall(CallMediaMode.video),
           tooltip: widget.isGroup ? 'Групповой видеозвонок' : 'Видеозвонок',
           icon: const Icon(Icons.videocam_outlined),
         ),
       ],
       IconButton(
+        visualDensity: density,
         onPressed: _openSearch,
         tooltip: 'Поиск по чату',
         icon: const Icon(Icons.search),
       ),
       IconButton(
-        onPressed: _isLoadingChatDetails || _chatDetails == null
-            ? null
-            : _openChatInfo,
+        visualDensity: density,
+        onPressed: infoEnabled ? _openChatInfo : null,
         tooltip: 'О чате',
         icon: const Icon(Icons.info_outline),
       ),
