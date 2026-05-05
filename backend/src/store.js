@@ -9781,6 +9781,62 @@ class FileStore {
     return structuredClone(notification);
   }
 
+  /// Substring search across post content + author name. Query is
+  /// tokenised using the same Russian-locale shape as chat search,
+  /// AND-matched against the lowercased haystack so multi-word
+  /// queries like "детский сад" only match posts containing both
+  /// terms. Filters to trees the requesting user can access. Returns
+  /// the posts ordered newest-first up to `limit`.
+  async searchPosts({userId, query, treeId = null, limit = 50} = {}) {
+    const db = await this._read();
+    const normalizedUserId = String(userId || "").trim();
+    const terms = normalizeChatSearchQuery(query);
+    if (!normalizedUserId || terms.length === 0) {
+      return [];
+    }
+    const normalizedLimit = Math.min(
+      Math.max(1, Number.parseInt(String(limit || "50"), 10) || 50),
+      100,
+    );
+    const normalizedTreeId = normalizeNullableString(treeId);
+
+    // Resolve which trees the user can read content from. Mirrors
+    // listPosts visibility — filter happens up front so we don't
+    // even score posts the viewer can't open.
+    const accessibleTreeIds = new Set(
+      (Array.isArray(db.trees) ? db.trees : [])
+        .filter((tree) => this._userCanAccessTreeRecord(tree, normalizedUserId))
+        .map((tree) => tree.id),
+    );
+    if (normalizedTreeId && !accessibleTreeIds.has(normalizedTreeId)) {
+      return [];
+    }
+
+    const candidates = (Array.isArray(db.posts) ? db.posts : [])
+      .filter((post) => {
+        if (!accessibleTreeIds.has(post.treeId)) return false;
+        if (normalizedTreeId && post.treeId !== normalizedTreeId) return false;
+        return this._canUserViewCirclePost(db, post, normalizedUserId);
+      })
+      .sort((left, right) =>
+        String(right.createdAt || "").localeCompare(
+          String(left.createdAt || ""),
+        ),
+      );
+
+    const results = [];
+    for (const post of candidates) {
+      if (results.length >= normalizedLimit) break;
+      const haystack = normalizeSearchText(
+        [post.content, post.authorName].filter(Boolean).join(" "),
+      );
+      if (terms.every((term) => haystack.includes(term))) {
+        results.push(attachPostReactions(db, post));
+      }
+    }
+    return results;
+  }
+
   async findPost(postId) {
     const db = await this._read();
     const post = db.posts.find((entry) => entry.id === postId);

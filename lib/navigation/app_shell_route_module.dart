@@ -22,6 +22,7 @@ import '../screens/create_post_screen.dart';
 import '../screens/find_relative_screen.dart';
 import '../screens/home_screen.dart';
 import '../screens/offline_profiles_screen.dart';
+import '../screens/post_search_screen.dart';
 import '../screens/profile_edit_screen.dart';
 import '../screens/profile_screen.dart';
 import '../screens/story_archive_screen.dart';
@@ -165,6 +166,16 @@ class AppShellRouteModule {
               child: HomeScreen(),
             ),
             routes: [
+              GoRoute(
+                path: 'post/search',
+                parentNavigatorKey: rootNavigatorKey,
+                pageBuilder: (context, state) => RodnyaCustomTransitionPage(
+                  key: state.pageKey,
+                  constrainWidth: true,
+                  child: const PostSearchScreen(),
+                  transitionsBuilder: AppRouteTransitions.slide,
+                ),
+              ),
               GoRoute(
                 path: 'post/create',
                 parentNavigatorKey: rootNavigatorKey,

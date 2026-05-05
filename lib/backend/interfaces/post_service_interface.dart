@@ -27,6 +27,18 @@ abstract class PostServiceInterface {
   /// Toggle like status for a post and return the server-truth snapshot.
   Future<Post> toggleLike(String postId);
 
+  /// Substring search across post content + author name. Returns
+  /// posts the current user can see, ordered newest-first. Default
+  /// impl returns empty so older adapters compile without a search
+  /// backend.
+  Future<List<Post>> searchPosts({
+    required String query,
+    String? treeId,
+    int limit = 50,
+  }) async {
+    return const <Post>[];
+  }
+
   /// Toggle the current user's emoji reaction on a post. Mirrors the
   /// chat-side `toggleMessageReaction` shape so frontend code can
   /// share the picker UI. Returns the updated reaction summaries

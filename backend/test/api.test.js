@@ -5127,6 +5127,114 @@ test("post and comment emoji reactions toggle and surface in feed", async () => 
   }
 });
 
+test("post search filters by content + author + tree access", async () => {
+  const ctx = await startTestServer();
+
+  try {
+    const register = async (email, displayName) => {
+      const response = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+        method: "POST",
+        headers: {"content-type": "application/json"},
+        body: JSON.stringify({
+          email,
+          password: "secret123",
+          displayName,
+        }),
+      });
+      assert.equal(response.status, 201);
+      return response.json();
+    };
+
+    const author = await register("search-author@rodnya.app", "Дядя Витя");
+    const stranger = await register("search-stranger@rodnya.app", "Чужой");
+
+    const treeResponse = await fetch(`${ctx.baseUrl}/v1/trees`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${author.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({name: "Поисковое дерево"}),
+    });
+    assert.equal(treeResponse.status, 201);
+    const treePayload = await treeResponse.json();
+    const treeId = treePayload.tree.id;
+
+    const createPost = async (content) => {
+      const r = await fetch(`${ctx.baseUrl}/v1/posts`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${author.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({treeId, content}),
+      });
+      assert.equal(r.status, 201);
+      return r.json();
+    };
+
+    await createPost("Сегодня были в зоопарке");
+    await createPost("Завтра идём в детский сад");
+    await createPost("Просто отдыхаем дома");
+
+    // Single-term search hits one post.
+    const zooResponse = await fetch(
+      `${ctx.baseUrl}/v1/posts/search?q=зоопарке&treeId=${treeId}`,
+      {headers: {authorization: `Bearer ${author.accessToken}`}},
+    );
+    assert.equal(zooResponse.status, 200);
+    const zooHits = await zooResponse.json();
+    assert.equal(zooHits.length, 1);
+    assert.match(zooHits[0].content, /зоопарке/);
+
+    // Multi-term query is AND-matched. "детский сад" matches one post.
+    const kindergartenResponse = await fetch(
+      `${ctx.baseUrl}/v1/posts/search?q=${encodeURIComponent("детский сад")}&treeId=${treeId}`,
+      {headers: {authorization: `Bearer ${author.accessToken}`}},
+    );
+    assert.equal(kindergartenResponse.status, 200);
+    const kindergartenHits = await kindergartenResponse.json();
+    assert.equal(kindergartenHits.length, 1);
+    assert.match(kindergartenHits[0].content, /детский сад/);
+
+    // Term-mismatch ("вчера" not present) returns empty rather than
+    // accidentally matching one post.
+    const ghostResponse = await fetch(
+      `${ctx.baseUrl}/v1/posts/search?q=вчера&treeId=${treeId}`,
+      {headers: {authorization: `Bearer ${author.accessToken}`}},
+    );
+    assert.equal(ghostResponse.status, 200);
+    assert.deepEqual(await ghostResponse.json(), []);
+
+    // Empty query returns empty without erroring.
+    const blankResponse = await fetch(
+      `${ctx.baseUrl}/v1/posts/search?q=`,
+      {headers: {authorization: `Bearer ${author.accessToken}`}},
+    );
+    assert.equal(blankResponse.status, 200);
+    assert.deepEqual(await blankResponse.json(), []);
+
+    // Stranger has no access to author's tree — should see no hits.
+    const strangerResponse = await fetch(
+      `${ctx.baseUrl}/v1/posts/search?q=зоопарке`,
+      {headers: {authorization: `Bearer ${stranger.accessToken}`}},
+    );
+    assert.equal(strangerResponse.status, 200);
+    assert.deepEqual(await strangerResponse.json(), []);
+
+    // Author-name match — querying Витя returns all three posts.
+    const authorMatchResponse = await fetch(
+      `${ctx.baseUrl}/v1/posts/search?q=Витя&treeId=${treeId}`,
+      {headers: {authorization: `Bearer ${author.accessToken}`}},
+    );
+    assert.equal(authorMatchResponse.status, 200);
+    const authorHits = await authorMatchResponse.json();
+    assert.equal(authorHits.length, 3);
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
 test("audience-presets compute core_family and close from relations", async () => {
   const ctx = await startTestServer();
 

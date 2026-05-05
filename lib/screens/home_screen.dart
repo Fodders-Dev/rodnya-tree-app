@@ -519,6 +519,17 @@ class _HomeScreenState extends State<HomeScreen> {
                 const Spacer(),
                 _buildTopbarIconButton(
                   tokens: tokens,
+                  tooltip: 'Поиск по постам',
+                  onTap: () => context.push('/post/search'),
+                  child: Icon(
+                    Icons.search_rounded,
+                    size: 20,
+                    color: tokens.accent,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                _buildTopbarIconButton(
+                  tokens: tokens,
                   child: _buildNotificationsAction(tokens: tokens),
                   tooltip: 'Активность',
                   onTap: () => context.push('/notifications'),

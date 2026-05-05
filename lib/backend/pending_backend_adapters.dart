@@ -830,6 +830,15 @@ class PendingBackendPostService implements PostServiceInterface {
   }
 
   @override
+  Future<List<Post>> searchPosts({
+    required String query,
+    String? treeId,
+    int limit = 50,
+  }) async {
+    return const <Post>[];
+  }
+
+  @override
   Future<List<ReactionSummary>> toggleCommentReaction({
     required String postId,
     required String commentId,

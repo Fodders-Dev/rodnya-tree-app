@@ -97,6 +97,27 @@ class CustomApiPostService implements PostServiceInterface {
   }
 
   @override
+  Future<List<Post>> searchPosts({
+    required String query,
+    String? treeId,
+    int limit = 50,
+  }) async {
+    final trimmed = query.trim();
+    if (trimmed.isEmpty) return const <Post>[];
+    final params = <String, String>{
+      'q': trimmed,
+      if (treeId != null && treeId.trim().isNotEmpty) 'treeId': treeId.trim(),
+      'limit': limit.toString(),
+    };
+    final response = await _requestList(
+      method: 'GET',
+      path: '/v1/posts/search',
+      queryParams: params,
+    );
+    return response.map((json) => Post.fromJson(json)).toList();
+  }
+
+  @override
   Future<Post> toggleLike(String postId) async {
     final response = await _requestJson(
       method: 'POST',

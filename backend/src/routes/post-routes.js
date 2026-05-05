@@ -9,6 +9,38 @@ function registerPostRoutes(
     mapComment,
   },
 ) {
+  app.get("/v1/posts/search", requireAuth, async (req, res) => {
+    const query = String(req.query.q || req.query.query || "").trim();
+    const treeId = String(req.query.treeId || "").trim() || null;
+    const limit = Number.parseInt(String(req.query.limit || "50"), 10) || 50;
+
+    if (treeId) {
+      const tree = await requireTreeAccess(req, res, treeId);
+      if (!tree) {
+        return;
+      }
+    }
+
+    if (query.length === 0) {
+      res.json([]);
+      return;
+    }
+
+    const posts = await store.searchPosts({
+      userId: req.auth.user.id,
+      query,
+      treeId,
+      limit,
+    });
+    const payload = await Promise.all(
+      posts.map(async (post) => {
+        const comments = await store.listPostComments(post.id);
+        return mapPost(post, comments.length);
+      }),
+    );
+    res.json(payload);
+  });
+
   app.get("/v1/posts", requireAuth, async (req, res) => {
     const treeId = String(req.query.treeId || "").trim() || null;
     const authorId = String(req.query.authorId || "").trim() || null;
