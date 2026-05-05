@@ -11,6 +11,7 @@ import '../screens/chat_screen.dart';
 import '../screens/family_tree/create_tree_screen.dart';
 import '../screens/identity_review_screen.dart';
 import '../screens/notifications_screen.dart';
+import '../screens/onboarding_screen.dart';
 import '../screens/password_reset_screen.dart';
 import '../screens/privacy_policy_screen.dart';
 import '../screens/public_tree_entry_screen.dart';
@@ -152,6 +153,15 @@ class AppOverlayRouteModule {
         pageBuilder: (context, state) => RodnyaCustomTransitionPage(
           key: state.pageKey,
           child: const PasswordResetScreen(),
+          transitionsBuilder: AppRouteTransitions.fade,
+        ),
+      ),
+      GoRoute(
+        path: '/onboarding',
+        parentNavigatorKey: rootNavigatorKey,
+        pageBuilder: (context, state) => RodnyaCustomTransitionPage(
+          key: state.pageKey,
+          child: const OnboardingScreen(),
           transitionsBuilder: AppRouteTransitions.fade,
         ),
       ),
