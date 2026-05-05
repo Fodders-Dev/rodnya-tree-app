@@ -191,6 +191,13 @@ class _ChatScreenState extends State<ChatScreen> {
   List<ChatMessage> _latestRemoteMessages = const <ChatMessage>[];
   final Map<String, GlobalKey> _remoteMessageKeys = <String, GlobalKey>{};
 
+  /// Day of the topmost-visible message — drives the floating
+  /// "Сегодня / Вчера / 12 марта" pill at the top of the messages
+  /// area while the user is scrolling history.
+  DateTime? _floatingDayHeader;
+  bool _floatingHeaderVisible = false;
+  Timer? _floatingHeaderHideTimer;
+
   /// Message ids that have already been rendered at least once. Used
   /// to gate the bubble enter animation: ids in this set render in
   /// their rest state, ids NOT in the set get a one-shot
@@ -252,6 +259,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _draftSaveTimer?.cancel();
     _pinnedMessageHighlightTimer?.cancel();
     _serverSearchDebounce?.cancel();
+    _floatingHeaderHideTimer?.cancel();
     _messageController.removeListener(_handleDraftChanged);
     _searchController.removeListener(_handleSearchChanged);
     HardwareKeyboard.instance.removeHandler(_handleGlobalKeyEvent);
@@ -2684,6 +2692,57 @@ class _ChatScreenState extends State<ChatScreen> {
         _showJumpToLatestButton = shouldShow;
       });
     }
+    _updateFloatingDayHeader();
+  }
+
+  /// Walks the live remote-bubble GlobalKeys and finds the one closest
+  /// to the top edge of the messages viewport. The day of that message
+  /// is the floating-header value. We also bring the header in for ~1.2s
+  /// after each scroll event, then fade it back out — same TG / iOS
+  /// "show date while scrolling" pattern.
+  void _updateFloatingDayHeader() {
+    if (!mounted) return;
+    DateTime? bestDay;
+    double bestDy = double.infinity;
+    for (final entry in _remoteMessageKeys.entries) {
+      final ctx = entry.value.currentContext;
+      if (ctx == null) continue;
+      final box = ctx.findRenderObject();
+      if (box is! RenderBox || !box.attached) continue;
+      final pos = box.localToGlobal(Offset.zero);
+      // Items that scrolled above the viewport have negative dy. We
+      // pick the highest one that is still within the visible area
+      // (smallest non-negative dy) — that's the one whose day pill
+      // should anchor at the top.
+      if (pos.dy >= -8 && pos.dy < bestDy) {
+        bestDy = pos.dy;
+        final msg = _findMessageById(entry.key);
+        if (msg != null) bestDay = msg.timestamp;
+      }
+    }
+    if (bestDay != null && bestDay != _floatingDayHeader) {
+      setState(() => _floatingDayHeader = bestDay);
+    }
+    // Visibility timer: header fades in immediately on scroll, fades
+    // out 1.2s after the user stops scrolling.
+    if (!_floatingHeaderVisible && mounted) {
+      setState(() => _floatingHeaderVisible = true);
+    }
+    _floatingHeaderHideTimer?.cancel();
+    _floatingHeaderHideTimer = Timer(
+      const Duration(milliseconds: 1200),
+      () {
+        if (!mounted) return;
+        setState(() => _floatingHeaderVisible = false);
+      },
+    );
+  }
+
+  ChatMessage? _findMessageById(String id) {
+    for (final m in _latestRemoteMessages) {
+      if (m.id == id) return m;
+    }
+    return null;
   }
 
   Future<void> _jumpToLatestMessages() async {
@@ -3497,9 +3556,22 @@ class _ChatScreenState extends State<ChatScreen> {
         );
         final searchStatusLabel = _searchStatusLabel(searchMatchCount);
 
+        // When the peer starts typing, lift the message column by 20dp
+        // so the most-recent bubble visually "anticipates" the
+        // incoming message — same TG / iMessage subtle move that
+        // tells you "hey, something's coming". Reverse ListView's
+        // bottom-padding lives at the literal bottom of the viewport,
+        // so growing it pushes the newest bubble up.
+        final isPeerTyping = _typingUsers.isNotEmpty;
         return Stack(
           children: [
-            ListView.builder(
+            AnimatedPadding(
+              duration: const Duration(milliseconds: 220),
+              curve: Curves.easeOutCubic,
+              padding: EdgeInsets.only(
+                bottom: isPeerTyping ? 20 : 0,
+              ),
+              child: ListView.builder(
               controller: _messagesScrollController,
               reverse: true,
               padding: EdgeInsets.fromLTRB(
@@ -3581,6 +3653,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 );
               },
             ),
+            ),
             if (hasActiveSearch)
               Positioned(
                 left: 12,
@@ -3602,6 +3675,25 @@ class _ChatScreenState extends State<ChatScreen> {
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                             fontWeight: FontWeight.w600,
                           ),
+                    ),
+                  ),
+                ),
+              ),
+            // Floating date header — pill at the top of the viewport
+            // showing the day of the topmost-visible message. Fades in
+            // on scroll, fades out 1.2s after scrolling stops.
+            if (_floatingDayHeader != null && !hasActiveSearch)
+              Positioned(
+                top: 8,
+                left: 0,
+                right: 0,
+                child: IgnorePointer(
+                  child: AnimatedOpacity(
+                    duration: const Duration(milliseconds: 220),
+                    curve: Curves.easeOutCubic,
+                    opacity: _floatingHeaderVisible ? 1.0 : 0.0,
+                    child: Center(
+                      child: _buildDateDivider(_floatingDayHeader!),
                     ),
                   ),
                 ),

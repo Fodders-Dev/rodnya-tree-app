@@ -103,8 +103,20 @@ class _SwipeToReplyState extends State<SwipeToReply>
   Widget build(BuildContext context) {
     final progress =
         (_dragOffset.abs() / widget.triggerOffset).clamp(0.0, 1.0);
+    // Past threshold? Icon flips into "loaded" state — accent color +
+    // full background. Below threshold it's a hint, above it's a
+    // commitment signal.
+    final passedTrigger = progress >= 1.0;
     final iconOpacity = progress;
     final iconScale = 0.5 + 0.5 * progress;
+    // Slight rotation as user pulls — adds a "winding up" hint that
+    // the icon is responding to the gesture.
+    final iconRotation = (1 - progress) * (widget.isMe ? 0.4 : -0.4);
+    final scheme = Theme.of(context).colorScheme;
+    final iconColor = passedTrigger ? scheme.primary : Colors.grey;
+    final haloColor = passedTrigger
+        ? scheme.primary.withValues(alpha: 0.18)
+        : scheme.outline.withValues(alpha: 0.12 * progress);
 
     return GestureDetector(
       // dragStart: 'down' lets us pick up the gesture before the
@@ -119,10 +131,11 @@ class _SwipeToReplyState extends State<SwipeToReply>
         clipBehavior: Clip.none,
         alignment: widget.isMe ? Alignment.centerRight : Alignment.centerLeft,
         children: [
-          // Reply icon revealing as the user drags. Sits at the edge
-          // the bubble is leaving — so on incoming bubbles it's on
-          // the leading (left) side, on own bubbles it's trailing
-          // (right).
+          // Reply icon + tinted halo revealing as the user drags. Halo
+          // fills in proportional to drag progress; once the threshold
+          // is passed the icon snaps to accent color so the user reads
+          // "release here will reply" without having to remember the
+          // exact pull distance.
           Positioned(
             left: widget.isMe ? null : 8,
             right: widget.isMe ? 8 : null,
@@ -130,10 +143,23 @@ class _SwipeToReplyState extends State<SwipeToReply>
               opacity: iconOpacity,
               child: Transform.scale(
                 scale: iconScale,
-                child: const Icon(
-                  Icons.reply_rounded,
-                  size: 20,
-                  color: Colors.grey,
+                child: Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    color: haloColor,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Center(
+                    child: Transform.rotate(
+                      angle: iconRotation,
+                      child: Icon(
+                        Icons.reply_rounded,
+                        size: 18,
+                        color: iconColor,
+                      ),
+                    ),
+                  ),
                 ),
               ),
             ),
