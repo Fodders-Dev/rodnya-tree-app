@@ -1233,6 +1233,7 @@ class _AttachmentPreviewItem {
     this.senderLabel,
     this.timestamp,
     this.caption,
+    this.isVideoNote = false,
   })  : file = null,
         isRemote = true;
 
@@ -1244,6 +1245,7 @@ class _AttachmentPreviewItem {
     this.senderLabel,
     this.timestamp,
     this.caption,
+    this.isVideoNote = false,
   })  : source = null,
         thumbnailUrl = null,
         isRemote = false;
@@ -1258,6 +1260,11 @@ class _AttachmentPreviewItem {
   final String? senderLabel;
   final DateTime? timestamp;
   final String? caption;
+
+  /// True when this video item should render as a Telegram-style
+  /// circular video note (auto-play, loop, tap-mute, no controls)
+  /// instead of a regular video file player.
+  final bool isVideoNote;
 
   bool get isVisual =>
       kind == _ChatAttachmentKind.image || kind == _ChatAttachmentKind.video;
@@ -1704,13 +1711,24 @@ class _AttachmentViewerPage extends StatelessWidget {
         break;
       case _ChatAttachmentKind.video:
         final source = item.isRemote ? item.source! : item.file?.path;
-        content = source == null || source.trim().isEmpty
-            ? _AttachmentViewerPlaceholder(item: item)
-            : _AttachmentVideoPlayer(
-                source: source,
-                isRemoteSource: item.isRemote,
-                posterUrl: item.thumbnailUrl,
-              );
+        if (source == null || source.trim().isEmpty) {
+          content = _AttachmentViewerPlaceholder(item: item);
+        } else if (item.isVideoNote) {
+          // Кружочки рисуем как у TG: круглый плеер, авто-плей, tap
+          // переключает звук, луп. Без полосы перемотки и громкости —
+          // именно так юзеры ожидают воспроизведения video note.
+          content = _VideoNotePlayer(
+            source: source,
+            isRemoteSource: item.isRemote,
+            posterUrl: item.thumbnailUrl,
+          );
+        } else {
+          content = _AttachmentVideoPlayer(
+            source: source,
+            isRemoteSource: item.isRemote,
+            posterUrl: item.thumbnailUrl,
+          );
+        }
         break;
       case _ChatAttachmentKind.audio:
       case _ChatAttachmentKind.other:
@@ -2038,37 +2056,108 @@ class _AttachmentVideoPlayer extends StatefulWidget {
 class _AttachmentVideoPlayerState extends State<_AttachmentVideoPlayer> {
   VideoPlayerController? _controller;
   Future<void>? _initializeFuture;
+  bool _isMuted = false;
+  bool _seeking = false;
+  // Position the user is currently dragging the seek bar to. We commit
+  // to the controller on drag-end so the playback head doesn't fight
+  // the live position updates while the thumb is in motion.
+  Duration _scrubPosition = Duration.zero;
+  bool _showControls = true;
+  Timer? _hideControlsTimer;
 
   @override
   void initState() {
     super.initState();
     final uri = _videoSourceUri(widget.source);
-    _controller = widget.isRemoteSource
+    final controller = widget.isRemoteSource
         ? VideoPlayerController.networkUrl(uri)
         : VideoPlayerController.contentUri(uri);
-    _initializeFuture = _controller!.initialize();
-    _controller!.setLooping(true);
+    _controller = controller;
+    // Listener pulls live position / playing state into setState so the
+    // seek bar + time labels actually follow playback. Was missing
+    // before — that's why the slider looked frozen.
+    controller.addListener(_handleControllerUpdate);
+    _initializeFuture = controller.initialize().then((_) {
+      if (!mounted) return;
+      // Don't auto-loop video files — TG / WA stop at end-of-file and
+      // wait for user to scrub or restart.
+      controller.setLooping(false);
+    });
   }
 
   @override
   void dispose() {
+    _hideControlsTimer?.cancel();
+    _controller?.removeListener(_handleControllerUpdate);
     _controller?.dispose();
     super.dispose();
   }
 
+  void _handleControllerUpdate() {
+    if (!mounted) return;
+    setState(() {});
+  }
+
   Future<void> _togglePlayback() async {
     final controller = _controller;
-    if (controller == null) {
-      return;
-    }
+    if (controller == null) return;
+    HapticFeedback.lightImpact();
     if (controller.value.isPlaying) {
       await controller.pause();
     } else {
+      // If we're at the end of the file, restart from 0.
+      final pos = controller.value.position;
+      final dur = controller.value.duration;
+      if (dur > Duration.zero && pos >= dur - const Duration(milliseconds: 250)) {
+        await controller.seekTo(Duration.zero);
+      }
       await controller.play();
+      _scheduleControlsHide();
     }
-    if (mounted) {
-      setState(() {});
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _toggleMute() async {
+    final controller = _controller;
+    if (controller == null) return;
+    HapticFeedback.lightImpact();
+    final next = !_isMuted;
+    await controller.setVolume(next ? 0 : 1);
+    if (!mounted) return;
+    setState(() => _isMuted = next);
+  }
+
+  void _scheduleControlsHide() {
+    _hideControlsTimer?.cancel();
+    _hideControlsTimer = Timer(const Duration(seconds: 3), () {
+      if (!mounted) return;
+      final controller = _controller;
+      if (controller == null) return;
+      // Don't auto-hide while paused — controls only fade out during
+      // active playback so the user can still tap to resume.
+      if (controller.value.isPlaying) {
+        setState(() => _showControls = false);
+      }
+    });
+  }
+
+  void _toggleControlsVisibility() {
+    setState(() => _showControls = !_showControls);
+    if (_showControls) {
+      _scheduleControlsHide();
+    } else {
+      _hideControlsTimer?.cancel();
     }
+  }
+
+  String _formatDuration(Duration d) {
+    final h = d.inHours;
+    final m = d.inMinutes.remainder(60);
+    final s = d.inSeconds.remainder(60);
+    final mm = m.toString().padLeft(2, '0');
+    final ss = s.toString().padLeft(2, '0');
+    if (h > 0) return '$h:$mm:$ss';
+    return '$mm:$ss';
   }
 
   @override
@@ -2089,66 +2178,391 @@ class _AttachmentVideoPlayerState extends State<_AttachmentVideoPlayer> {
                   url: widget.posterUrl,
                   fit: BoxFit.contain,
                 ),
-              const CircularProgressIndicator(),
+              const CircularProgressIndicator(color: Colors.white),
             ],
           );
         }
-        return Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxHeight: 560),
-              child: AspectRatio(
-                aspectRatio: controller.value.aspectRatio == 0
-                    ? 16 / 9
-                    : controller.value.aspectRatio,
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(20),
-                    color: Colors.black,
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(20),
-                    child: Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        VideoPlayer(controller),
-                        DecoratedBox(
-                          decoration: BoxDecoration(
-                            color: Colors.black.withValues(
-                              alpha: controller.value.isPlaying ? 0.06 : 0.22,
-                            ),
+        if (snapshot.hasError) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Text(
+                'Не удалось загрузить видео',
+                style: TextStyle(color: Colors.white.withValues(alpha: 0.78)),
+              ),
+            ),
+          );
+        }
+        final duration = controller.value.duration;
+        final position = _seeking ? _scrubPosition : controller.value.position;
+        final maxMs = duration.inMilliseconds <= 0 ? 1 : duration.inMilliseconds;
+        final scrubMs = position.inMilliseconds.clamp(0, maxMs).toDouble();
+        return Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 720),
+            child: AspectRatio(
+              aspectRatio: controller.value.aspectRatio == 0
+                  ? 16 / 9
+                  : controller.value.aspectRatio,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(20),
+                child: ColoredBox(
+                  color: Colors.black,
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      // Tap on the canvas toggles controls visibility,
+                      // play/pause stays on the dedicated button so we
+                      // don't fight gesture intent.
+                      GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: _toggleControlsVisibility,
+                        child: VideoPlayer(controller),
+                      ),
+                      AnimatedOpacity(
+                        opacity: _showControls ? 1 : 0,
+                        duration: const Duration(milliseconds: 220),
+                        child: IgnorePointer(
+                          ignoring: !_showControls,
+                          child: _buildControlsOverlay(
+                            controller: controller,
+                            position: position,
+                            duration: duration,
+                            scrubMs: scrubMs,
+                            maxMs: maxMs.toDouble(),
                           ),
-                          child: const SizedBox.expand(),
                         ),
-                        IconButton.filledTonal(
-                          onPressed: _togglePlayback,
-                          icon: Icon(
-                            controller.value.isPlaying
-                                ? Icons.pause_rounded
-                                : Icons.play_arrow_rounded,
-                            size: 28,
-                          ),
-                        ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
                 ),
               ),
             ),
-            const SizedBox(height: 12),
-            Slider(
-              value: controller.value.position.inMilliseconds
-                  .clamp(0, controller.value.duration.inMilliseconds)
-                  .toDouble(),
-              max: controller.value.duration.inMilliseconds <= 0
-                  ? 1
-                  : controller.value.duration.inMilliseconds.toDouble(),
-              onChanged: (value) {
-                controller.seekTo(Duration(milliseconds: value.round()));
-              },
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildControlsOverlay({
+    required VideoPlayerController controller,
+    required Duration position,
+    required Duration duration,
+    required double scrubMs,
+    required double maxMs,
+  }) {
+    return Stack(
+      children: [
+        // Soft gradient at top + bottom so white controls stay legible
+        // over bright video content. Same look as TG / iOS player.
+        Positioned.fill(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Colors.black.withValues(alpha: 0.42),
+                  Colors.transparent,
+                  Colors.black.withValues(alpha: 0.55),
+                ],
+                stops: const [0.0, 0.5, 1.0],
+              ),
             ),
-          ],
+          ),
+        ),
+        // Center play / pause — big, hit-testable.
+        Center(
+          child: Material(
+            color: Colors.black.withValues(alpha: 0.42),
+            shape: const CircleBorder(),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              onTap: _togglePlayback,
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Icon(
+                  controller.value.isPlaying
+                      ? Icons.pause_rounded
+                      : Icons.play_arrow_rounded,
+                  color: Colors.white,
+                  size: 40,
+                ),
+              ),
+            ),
+          ),
+        ),
+        // Bottom strip: time labels + seek bar + mute toggle.
+        Positioned(
+          left: 8,
+          right: 8,
+          bottom: 4,
+          child: Row(
+            children: [
+              const SizedBox(width: 8),
+              Text(
+                _formatDuration(position),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  fontFeatures: [FontFeature.tabularFigures()],
+                ),
+              ),
+              Expanded(
+                child: SliderTheme(
+                  data: SliderTheme.of(context).copyWith(
+                    trackHeight: 3,
+                    activeTrackColor: Colors.white,
+                    inactiveTrackColor: Colors.white.withValues(alpha: 0.32),
+                    thumbColor: Colors.white,
+                    overlayColor: Colors.white.withValues(alpha: 0.12),
+                    thumbShape: const RoundSliderThumbShape(
+                      enabledThumbRadius: 7,
+                    ),
+                  ),
+                  child: Slider(
+                    value: scrubMs,
+                    max: maxMs,
+                    onChangeStart: (_) {
+                      setState(() => _seeking = true);
+                    },
+                    onChanged: (value) {
+                      setState(() {
+                        _scrubPosition =
+                            Duration(milliseconds: value.round());
+                      });
+                    },
+                    onChangeEnd: (value) async {
+                      await controller.seekTo(
+                        Duration(milliseconds: value.round()),
+                      );
+                      if (mounted) setState(() => _seeking = false);
+                    },
+                  ),
+                ),
+              ),
+              Text(
+                _formatDuration(duration),
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.78),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
+              const SizedBox(width: 4),
+              IconButton(
+                onPressed: _toggleMute,
+                tooltip: _isMuted ? 'Включить звук' : 'Выключить звук',
+                icon: Icon(
+                  _isMuted
+                      ? Icons.volume_off_rounded
+                      : Icons.volume_up_rounded,
+                  color: Colors.white,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Uri _videoSourceUri(String value) {
+    final parsed = Uri.tryParse(value);
+    if (parsed != null && parsed.hasScheme) {
+      return parsed;
+    }
+    return Uri.file(value);
+  }
+}
+
+/// Telegram-style circular video-note (кружок) player. Auto-plays on
+/// open with sound on, loops forever, tap toggles mute. No seek bar,
+/// no volume slider, no save button — those don't make sense for a
+/// 60-second video note. Save is still available from the dialog
+/// header (download icon at top-right).
+class _VideoNotePlayer extends StatefulWidget {
+  const _VideoNotePlayer({
+    required this.source,
+    required this.isRemoteSource,
+    this.posterUrl,
+  });
+
+  final String source;
+  final bool isRemoteSource;
+  final String? posterUrl;
+
+  @override
+  State<_VideoNotePlayer> createState() => _VideoNotePlayerState();
+}
+
+class _VideoNotePlayerState extends State<_VideoNotePlayer> {
+  VideoPlayerController? _controller;
+  Future<void>? _initializeFuture;
+  bool _isMuted = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final uri = _videoSourceUri(widget.source);
+    final controller = widget.isRemoteSource
+        ? VideoPlayerController.networkUrl(uri)
+        : VideoPlayerController.contentUri(uri);
+    _controller = controller;
+    controller.addListener(_handleUpdate);
+    _initializeFuture = controller.initialize().then((_) async {
+      if (!mounted) return;
+      await controller.setLooping(true);
+      await controller.setVolume(1);
+      await controller.play();
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller?.removeListener(_handleUpdate);
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  void _handleUpdate() {
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  Future<void> _toggleMute() async {
+    final controller = _controller;
+    if (controller == null) return;
+    HapticFeedback.lightImpact();
+    final next = !_isMuted;
+    await controller.setVolume(next ? 0 : 1);
+    if (!mounted) return;
+    setState(() => _isMuted = next);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = _controller;
+    if (controller == null) {
+      return const SizedBox.shrink();
+    }
+    return FutureBuilder<void>(
+      future: _initializeFuture,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return Center(
+            child: ClipOval(
+              child: Container(
+                width: 320,
+                height: 320,
+                color: Colors.black,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    if (widget.posterUrl != null && widget.posterUrl!.isNotEmpty)
+                      _AttachmentImage(
+                        url: widget.posterUrl,
+                        fit: BoxFit.cover,
+                      ),
+                    const CircularProgressIndicator(color: Colors.white),
+                  ],
+                ),
+              ),
+            ),
+          );
+        }
+        // Кружочек — фиксированный квадрат-в-круг. Клипуем в Oval
+        // независимо от исходного aspect ratio: video note по
+        // протоколу TG всегда квадратный, но даже если бэкенд отдаст
+        // 16:9, мы аккуратно центрируем + кропаем.
+        return Center(
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: _toggleMute,
+            child: SizedBox(
+              width: 320,
+              height: 320,
+              child: ClipOval(
+                child: Stack(
+                  alignment: Alignment.center,
+                  fit: StackFit.expand,
+                  children: [
+                    FittedBox(
+                      fit: BoxFit.cover,
+                      child: SizedBox(
+                        width: controller.value.size.width <= 0
+                            ? 320
+                            : controller.value.size.width,
+                        height: controller.value.size.height <= 0
+                            ? 320
+                            : controller.value.size.height,
+                        child: VideoPlayer(controller),
+                      ),
+                    ),
+                    // Subtle bottom dim so the volume hint reads.
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      height: 56,
+                      child: IgnorePointer(
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: [
+                                Colors.transparent,
+                                Colors.black.withValues(alpha: 0.4),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      bottom: 14,
+                      child: AnimatedOpacity(
+                        opacity: _isMuted ? 1.0 : 0.0,
+                        duration: const Duration(milliseconds: 220),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 6,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.55),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.volume_off_rounded,
+                                color: Colors.white,
+                                size: 14,
+                              ),
+                              SizedBox(width: 6),
+                              Text(
+                                'Без звука',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
         );
       },
     );

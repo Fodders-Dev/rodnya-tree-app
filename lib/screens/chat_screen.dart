@@ -5971,6 +5971,7 @@ class _ChatScreenState extends State<ChatScreen> {
       senderLabel: senderLabel,
       timestamp: timestamp,
       caption: caption,
+      isVideoNote: attachment.isVideoNote,
     );
   }
 
@@ -5986,6 +5987,7 @@ class _ChatScreenState extends State<ChatScreen> {
       senderLabel: 'Вы',
       timestamp: DateTime.now(),
       caption: '',
+      isVideoNote: _isVideoNoteFile(file),
     );
   }
 
