@@ -77,6 +77,26 @@ class KruzhokRecorderScreen extends StatefulWidget {
     );
   }
 
+  /// Post-attachment version: rectangular preview, 3-minute cap,
+  /// filename prefixed `post_video_`. Bypasses
+  /// image_picker.pickVideo's medium-quality default on iOS — the
+  /// camera plugin records at high quality by default, which is
+  /// what users expect when they capture for a feed post.
+  static Future<XFile?> showPost(BuildContext context) {
+    return Navigator.of(context, rootNavigator: true).push<XFile>(
+      MaterialPageRoute<XFile>(
+        fullscreenDialog: true,
+        builder: (_) => const KruzhokRecorderScreen(
+          circularPreview: false,
+          maxDuration: Duration(minutes: 3),
+          filenamePrefix: 'post_video',
+          titleLabel: 'Видео для поста',
+          idleHint: 'Нажмите, чтобы записать · до 3 минут',
+        ),
+      ),
+    );
+  }
+
   @override
   State<KruzhokRecorderScreen> createState() => _KruzhokRecorderScreenState();
 }

@@ -1,12 +1,14 @@
 import 'dart:typed_data';
 import 'dart:ui';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../widgets/attachment_picker_sheet.dart';
+import '../widgets/kruzhok_recorder_screen.dart';
 import 'package:provider/provider.dart';
 
 import '../backend/interfaces/auth_service_interface.dart';
@@ -462,7 +464,18 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
 
   Future<void> _recordVideo() async {
     try {
-      final clip = await _picker.pickVideo(source: ImageSource.camera);
+      // On native (iOS / Android) we use the in-app camera-plugin
+      // recorder to bypass image_picker's medium-quality default
+      // (the source of "качество съёмки на айфоне упало" the user
+      // reported earlier — same issue stories had until commit
+      // 365efb5). Web stays on image_picker because <input
+      // type=file capture> can't drive a live preview loop.
+      final XFile? clip;
+      if (kIsWeb) {
+        clip = await _picker.pickVideo(source: ImageSource.camera);
+      } else {
+        clip = await KruzhokRecorderScreen.showPost(context);
+      }
       if (clip == null || !mounted) return;
       _appendMedia(_PostMedia(file: clip, isVideo: true));
     } catch (e) {
