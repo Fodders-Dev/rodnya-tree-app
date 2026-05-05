@@ -32,9 +32,19 @@ void showAppSnackBar(
       // 1500px of a desktop monitor — feels like a tooltip card, not
       // a wall.
       width: MediaQuery.of(context).size.width >= 720 ? 480 : null,
+      // On edge-to-edge Android the system gesture-nav inset needs
+      // to be added to the toast margin or the snackbar sits behind
+      // the gesture pill. viewPadding.bottom is whatever the OS
+      // reserves for nav UI; we add 12dp on top so the toast still
+      // floats above it cleanly.
       margin: MediaQuery.of(context).size.width >= 720
           ? null
-          : const EdgeInsets.fromLTRB(12, 0, 12, 12),
+          : EdgeInsets.fromLTRB(
+              12,
+              0,
+              12,
+              MediaQuery.of(context).viewPadding.bottom + 12,
+            ),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(tokens.radiusMd),
         side: BorderSide(
