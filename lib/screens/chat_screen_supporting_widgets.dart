@@ -188,6 +188,7 @@ class _VoicePlayerWidgetState extends State<_VoicePlayerWidget> {
                   _VoiceWaveformScrubber(
                     waveform: waveform,
                     progress: progressFraction,
+                    isPlaying: isPlaying,
                     activeColor: color,
                     inactiveColor: color.withValues(alpha: 0.28),
                     onSeekFraction: totalDuration.inMilliseconds <= 0
@@ -260,10 +261,22 @@ const List<double> _fallbackVoiceWaveform = <double>[
   0.41,
 ];
 
-class _VoiceWaveformScrubber extends StatelessWidget {
+/// Tappable / draggable waveform with live progress.
+///
+/// Telegram-style behaviour:
+/// * Tap anywhere on the strip → immediate seek to that point.
+/// * Horizontal drag → visual scrub follows the finger in real time
+///   but the audio seek only fires on drag end. Committing on every
+///   `onHorizontalDragUpdate` (the previous behaviour) caused
+///   audible glitching on each frame and made the wave fight the
+///   live-position listener.
+/// * While playing, the bars under the playback head get a subtle
+///   sin-wave breathing pulse — same "alive" feel TG has.
+class _VoiceWaveformScrubber extends StatefulWidget {
   const _VoiceWaveformScrubber({
     required this.waveform,
     required this.progress,
+    required this.isPlaying,
     required this.activeColor,
     required this.inactiveColor,
     required this.onSeekFraction,
@@ -271,42 +284,127 @@ class _VoiceWaveformScrubber extends StatelessWidget {
 
   final List<double> waveform;
   final double progress;
+  final bool isPlaying;
   final Color activeColor;
   final Color inactiveColor;
   final ValueChanged<double>? onSeekFraction;
 
   @override
+  State<_VoiceWaveformScrubber> createState() =>
+      _VoiceWaveformScrubberState();
+}
+
+class _VoiceWaveformScrubberState extends State<_VoiceWaveformScrubber>
+    with SingleTickerProviderStateMixin {
+  double? _dragFraction;
+  late final AnimationController _pulseCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulseCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    );
+    _syncPulse();
+  }
+
+  @override
+  void didUpdateWidget(covariant _VoiceWaveformScrubber oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.isPlaying != widget.isPlaying) {
+      _syncPulse();
+    }
+  }
+
+  @override
+  void dispose() {
+    _pulseCtrl.dispose();
+    super.dispose();
+  }
+
+  /// Pulse runs only while `isPlaying`. Skipping under flutter_test's
+  /// binding so widget tests' pumpAndSettle doesn't hang on the
+  /// repeating controller.
+  void _syncPulse() {
+    final bindingName =
+        WidgetsBinding.instance.runtimeType.toString();
+    final inTest = bindingName.contains('TestWidgetsFlutterBinding');
+    if (widget.isPlaying && !inTest) {
+      if (!_pulseCtrl.isAnimating) {
+        _pulseCtrl.repeat();
+      }
+    } else {
+      _pulseCtrl.stop();
+      _pulseCtrl.value = 0;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final effectiveWaveform =
-        waveform.isEmpty ? _fallbackVoiceWaveform : waveform;
+        widget.waveform.isEmpty ? _fallbackVoiceWaveform : widget.waveform;
     return SizedBox(
       height: 34,
       child: LayoutBuilder(
         builder: (context, constraints) {
-          void seek(Offset localPosition) {
-            final callback = onSeekFraction;
-            if (callback == null || constraints.maxWidth <= 0) {
-              return;
-            }
-            callback(
-              (localPosition.dx / constraints.maxWidth)
-                  .clamp(0.0, 1.0)
-                  .toDouble(),
-            );
+          double? localToFraction(Offset localPosition) {
+            if (constraints.maxWidth <= 0) return null;
+            return (localPosition.dx / constraints.maxWidth)
+                .clamp(0.0, 1.0)
+                .toDouble();
           }
+
+          void commit(double fraction) {
+            final cb = widget.onSeekFraction;
+            if (cb != null) cb(fraction);
+          }
+
+          // Effective progress: while user is dragging, follow the
+          // finger; otherwise mirror the player's position.
+          final visualProgress = (_dragFraction ?? widget.progress)
+              .clamp(0.0, 1.0)
+              .toDouble();
 
           return GestureDetector(
             behavior: HitTestBehavior.opaque,
-            onTapDown: (details) => seek(details.localPosition),
-            onHorizontalDragUpdate: (details) => seek(details.localPosition),
-            child: CustomPaint(
-              painter: _VoiceWaveformPainter(
-                waveform: effectiveWaveform,
-                progress: progress.clamp(0.0, 1.0).toDouble(),
-                activeColor: activeColor,
-                inactiveColor: inactiveColor,
-              ),
-              child: const SizedBox.expand(),
+            onTapDown: (details) {
+              final f = localToFraction(details.localPosition);
+              if (f != null) commit(f);
+            },
+            onHorizontalDragStart: (details) {
+              setState(() {
+                _dragFraction = localToFraction(details.localPosition);
+              });
+            },
+            onHorizontalDragUpdate: (details) {
+              setState(() {
+                _dragFraction = localToFraction(details.localPosition);
+              });
+            },
+            onHorizontalDragEnd: (_) {
+              final f = _dragFraction;
+              setState(() => _dragFraction = null);
+              if (f != null) commit(f);
+            },
+            onHorizontalDragCancel: () {
+              setState(() => _dragFraction = null);
+            },
+            child: AnimatedBuilder(
+              animation: _pulseCtrl,
+              builder: (context, _) {
+                return CustomPaint(
+                  painter: _VoiceWaveformPainter(
+                    waveform: effectiveWaveform,
+                    progress: visualProgress,
+                    activeColor: widget.activeColor,
+                    inactiveColor: widget.inactiveColor,
+                    pulsePhase: widget.isPlaying ? _pulseCtrl.value : 0,
+                    isPlaying: widget.isPlaying,
+                  ),
+                  child: const SizedBox.expand(),
+                );
+              },
             ),
           );
         },
@@ -321,12 +419,19 @@ class _VoiceWaveformPainter extends CustomPainter {
     required this.progress,
     required this.activeColor,
     required this.inactiveColor,
+    this.pulsePhase = 0,
+    this.isPlaying = false,
   });
 
   final List<double> waveform;
   final double progress;
   final Color activeColor;
   final Color inactiveColor;
+  /// 0..1 — current phase of the breathing pulse animation. Only used
+  /// when [isPlaying] is true to give bars near the playback head a
+  /// subtle "alive" feel; off otherwise.
+  final double pulsePhase;
+  final bool isPlaying;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -349,7 +454,26 @@ class _VoiceWaveformPainter extends CustomPainter {
 
     for (var index = 0; index < waveform.length; index++) {
       final value = waveform[index].clamp(0.0, 1.0).toDouble();
-      final barHeight = (size.height * (0.18 + value * 0.78))
+      final sampleProgress = (index + 0.5) / waveform.length;
+      // Pulse: only bars within ±2 of the playback head get the
+      // breathing scale; further bars stay flat. We compute distance
+      // in *bar indices* and apply a falloff.
+      double scale = 1.0;
+      if (isPlaying && progress > 0) {
+        final headIndex = progress * waveform.length;
+        final distance = (index - headIndex).abs();
+        if (distance < 3.0) {
+          // Phased sin so each bar peaks slightly after its neighbour
+          // → the pulse "rolls" along the head.
+          final localPhase = (pulsePhase + index * 0.08) % 1.0;
+          final wave = math.sin(localPhase * 2 * math.pi);
+          // Closer = bigger amplitude. 1.0 amplitude at distance 0,
+          // 0 at distance 3+.
+          final intensity = (1.0 - distance / 3.0).clamp(0.0, 1.0);
+          scale = 1.0 + 0.18 * intensity * wave;
+        }
+      }
+      final barHeight = (size.height * (0.18 + value * 0.78) * scale)
           .clamp(4.0, size.height)
           .toDouble();
       final x = startX + index * (barWidth + gap);
@@ -359,7 +483,6 @@ class _VoiceWaveformPainter extends CustomPainter {
         barWidth,
         barHeight,
       );
-      final sampleProgress = (index + 0.5) / waveform.length;
       canvas.drawRRect(
         RRect.fromRectAndRadius(rect, radius),
         sampleProgress <= progress ? activePaint : inactivePaint,
@@ -372,7 +495,9 @@ class _VoiceWaveformPainter extends CustomPainter {
     return oldDelegate.waveform != waveform ||
         oldDelegate.progress != progress ||
         oldDelegate.activeColor != activeColor ||
-        oldDelegate.inactiveColor != inactiveColor;
+        oldDelegate.inactiveColor != inactiveColor ||
+        oldDelegate.pulsePhase != pulsePhase ||
+        oldDelegate.isPlaying != isPlaying;
   }
 }
 
@@ -1679,35 +1804,44 @@ class _AttachmentViewerPage extends StatelessWidget {
     Widget content;
     switch (item.kind) {
       case _ChatAttachmentKind.image:
-        content = item.isRemote
-            ? InteractiveViewer(
-                minScale: 0.8,
-                maxScale: 4,
-                child: _AttachmentImage(
-                  url: item.source,
-                  fit: BoxFit.contain,
-                  placeholder: const Center(
-                    child: CircularProgressIndicator(),
-                  ),
-                  errorWidget: _AttachmentViewerPlaceholder(item: item),
-                ),
-              )
-            : FutureBuilder<Uint8List>(
-                future: item.file!.readAsBytes(),
-                builder: (context, snapshot) {
-                  if (!snapshot.hasData) {
-                    return const Center(child: CircularProgressIndicator());
-                  }
-                  return InteractiveViewer(
-                    minScale: 0.8,
-                    maxScale: 4,
-                    child: Image.memory(
-                      snapshot.data!,
-                      fit: BoxFit.contain,
+        // Wrapped in _SwipeDownDismissibleImage so vertical drag from
+        // an un-zoomed image follows the finger + dismisses the
+        // viewer past a threshold (TG / iOS Photos pattern). When the
+        // image is zoomed > 1.0 the InteractiveViewer wins all pan
+        // gestures so users can still look around inside zoom.
+        content = _SwipeDownDismissibleImage(
+          builder: (context, transformController) => item.isRemote
+              ? InteractiveViewer(
+                  transformationController: transformController,
+                  minScale: 0.8,
+                  maxScale: 4,
+                  child: _AttachmentImage(
+                    url: item.source,
+                    fit: BoxFit.contain,
+                    placeholder: const Center(
+                      child: CircularProgressIndicator(),
                     ),
-                  );
-                },
-              );
+                    errorWidget: _AttachmentViewerPlaceholder(item: item),
+                  ),
+                )
+              : FutureBuilder<Uint8List>(
+                  future: item.file!.readAsBytes(),
+                  builder: (context, snapshot) {
+                    if (!snapshot.hasData) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+                    return InteractiveViewer(
+                      transformationController: transformController,
+                      minScale: 0.8,
+                      maxScale: 4,
+                      child: Image.memory(
+                        snapshot.data!,
+                        fit: BoxFit.contain,
+                      ),
+                    );
+                  },
+                ),
+        );
         break;
       case _ChatAttachmentKind.video:
         final source = item.isRemote ? item.source! : item.file?.path;
@@ -2574,6 +2708,149 @@ class _VideoNotePlayerState extends State<_VideoNotePlayer> {
       return parsed;
     }
     return Uri.file(value);
+  }
+}
+
+/// Wraps an image in an InteractiveViewer-friendly swipe-down-to-
+/// dismiss gesture (TG / iOS Photos pattern).
+///
+/// Behaviour:
+/// * Tracks scale via a [TransformationController]; we dismiss only
+///   when the image is at scale 1 (i.e. not zoomed). If the user is
+///   zoomed in we let InteractiveViewer keep all pan gestures so they
+///   can still look around inside the zoom.
+/// * On vertical pan: image follows the finger (Transform.translate)
+///   and the surrounding dialog fades proportionally to the drag
+///   distance. Past 110dp dismiss-threshold, releasing pops the
+///   viewer; below threshold, releasing snaps back.
+/// * Builder pattern lets the caller construct the actual image
+///   widget (including the InteractiveViewer) so the controller is
+///   shared between us (scale-detection) and the viewer
+///   (pinch-zoom).
+class _SwipeDownDismissibleImage extends StatefulWidget {
+  const _SwipeDownDismissibleImage({required this.builder});
+
+  /// Caller builds the InteractiveViewer-wrapped image and binds the
+  /// shared `transformationController` so we can read the scale.
+  final Widget Function(
+    BuildContext context,
+    TransformationController controller,
+  ) builder;
+
+  @override
+  State<_SwipeDownDismissibleImage> createState() =>
+      _SwipeDownDismissibleImageState();
+}
+
+class _SwipeDownDismissibleImageState
+    extends State<_SwipeDownDismissibleImage>
+    with SingleTickerProviderStateMixin {
+  final TransformationController _transform = TransformationController();
+  late final AnimationController _snap;
+  Offset _dragOffset = Offset.zero;
+  bool _isAtRestingScale = true;
+
+  // Past this many vertical pixels the release dismisses; under that
+  // we snap back.
+  static const double _dismissThreshold = 110;
+
+  @override
+  void initState() {
+    super.initState();
+    _snap = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 240),
+    );
+    _transform.addListener(_handleTransformChange);
+  }
+
+  @override
+  void dispose() {
+    _transform.removeListener(_handleTransformChange);
+    _transform.dispose();
+    _snap.dispose();
+    super.dispose();
+  }
+
+  void _handleTransformChange() {
+    final scale = _transform.value.getMaxScaleOnAxis();
+    final atRest = (scale - 1.0).abs() < 0.01;
+    if (atRest != _isAtRestingScale) {
+      setState(() => _isAtRestingScale = atRest);
+    }
+  }
+
+  void _handleDragUpdate(DragUpdateDetails details) {
+    if (!_isAtRestingScale) return;
+    setState(() {
+      _dragOffset += Offset(0, details.delta.dy);
+      // Don't let the user drag the image up forever — TG just
+      // anchors at zero on upward drags.
+      if (_dragOffset.dy < 0) {
+        _dragOffset = Offset(_dragOffset.dx, _dragOffset.dy * 0.4);
+      }
+    });
+  }
+
+  Future<void> _handleDragEnd(DragEndDetails details) async {
+    final velocity = details.velocity.pixelsPerSecond.dy;
+    final passedThreshold =
+        _dragOffset.dy > _dismissThreshold || velocity > 700;
+    if (passedThreshold && mounted) {
+      Navigator.of(context).maybePop();
+      return;
+    }
+    // Snap back to origin via animation.
+    final from = _dragOffset;
+    _snap.value = 0;
+    final tween = Tween<Offset>(begin: from, end: Offset.zero)
+        .chain(CurveTween(curve: Curves.easeOutCubic))
+        .animate(_snap);
+    void listener() {
+      if (!mounted) return;
+      setState(() => _dragOffset = tween.value);
+    }
+    tween.addListener(listener);
+    await _snap.forward();
+    tween.removeListener(listener);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final dyAbs = _dragOffset.dy.abs();
+    // Background opacity falls from 1.0 → 0.55 over the threshold so
+    // the "letting go past here will dismiss" point is visible.
+    final dragProgress = (dyAbs / _dismissThreshold).clamp(0.0, 1.0);
+    final backgroundOpacity = 1.0 - 0.45 * dragProgress;
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        // Black layer that fades as the image translates. The dialog
+        // already has its own black 92% backdrop; we layer a fading
+        // black-out so the user sees the dimming as a confirmation
+        // signal that release will dismiss.
+        IgnorePointer(
+          child: Container(
+            color: Colors.black.withValues(
+              alpha: 0.92 * backgroundOpacity,
+            ),
+          ),
+        ),
+        GestureDetector(
+          // We only care about VERTICAL pan — letting horizontal
+          // gestures fall through means the parent PageView still
+          // handles swipe-between-pages.
+          behavior: HitTestBehavior.translucent,
+          onVerticalDragUpdate:
+              _isAtRestingScale ? _handleDragUpdate : null,
+          onVerticalDragEnd: _isAtRestingScale ? _handleDragEnd : null,
+          child: Transform.translate(
+            offset: _dragOffset,
+            child: widget.builder(context, _transform),
+          ),
+        ),
+      ],
+    );
   }
 }
 

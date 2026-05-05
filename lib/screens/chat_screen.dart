@@ -190,6 +190,16 @@ class _ChatScreenState extends State<ChatScreen> {
   String? _lastPersistedPinKey;
   List<ChatMessage> _latestRemoteMessages = const <ChatMessage>[];
   final Map<String, GlobalKey> _remoteMessageKeys = <String, GlobalKey>{};
+
+  /// Message ids that have already been rendered at least once. Used
+  /// to gate the bubble enter animation: ids in this set render in
+  /// their rest state, ids NOT in the set get a one-shot
+  /// slide-up + fade-in TweenAnimationBuilder. We populate the set
+  /// with the entire first history batch (so opening a chat doesn't
+  /// animate every message) and only skip-add on subsequent
+  /// snapshots — meaning only newly arrived messages animate.
+  final Set<String> _seenRemoteMessageIds = <String>{};
+  bool _remoteHistoryHydrated = false;
   Timer? _pinnedMessageHighlightTimer;
   String? _highlightedPinnedMessageId;
   Timer? _serverSearchDebounce;
@@ -3362,6 +3372,16 @@ class _ChatScreenState extends State<ChatScreen> {
 
         final remoteMessages = snapshot.data ?? const <ChatMessage>[];
         _latestRemoteMessages = remoteMessages;
+        // First snapshot: hydrate _seenRemoteMessageIds with everything
+        // we just got from the server so opening a chat doesn't animate
+        // hundreds of messages at once. Subsequent snapshots will only
+        // contain *new* ids that aren't in the set yet — those are the
+        // ones the bubble enter animation should fire on.
+        if (!_remoteHistoryHydrated && remoteMessages.isNotEmpty) {
+          _seenRemoteMessageIds
+              .addAll(remoteMessages.map((m) => m.id));
+          _remoteHistoryHydrated = true;
+        }
         _schedulePinnedSync(remoteMessages);
         final currentChatId = _chatId;
         if (currentChatId != null && currentChatId.isNotEmpty) {
@@ -4339,14 +4359,31 @@ class _ChatScreenState extends State<ChatScreen> {
       message.id,
       () => GlobalKey(),
     );
+    // Mark this id as seen on the next frame so the next time we build
+    // we skip the animation. We do it post-frame instead of inline
+    // because TweenAnimationBuilder needs the "not in set" signal to
+    // be true for the entire first build pass.
+    final isFirstAppearance = !_seenRemoteMessageIds.contains(message.id);
+    if (isFirstAppearance) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _seenRemoteMessageIds.add(message.id);
+      });
+    }
     final callMetadata = message.call;
     if (callMetadata != null) {
-      return KeyedSubtree(
-        key: messageKey,
-        child: _buildCallSummaryBubble(message, callMetadata, isMe),
+      return _wrapInEnterAnimation(
+        animate: isFirstAppearance,
+        isMe: isMe,
+        child: KeyedSubtree(
+          key: messageKey,
+          child: _buildCallSummaryBubble(message, callMetadata, isMe),
+        ),
       );
     }
-    return SwipeToReply(
+    return _wrapInEnterAnimation(
+      animate: isFirstAppearance,
+      isMe: isMe,
+      child: SwipeToReply(
       key: messageKey,
       isMe: isMe,
       // Selection mode uses long-press / tap on the bubble for
@@ -4404,6 +4441,38 @@ class _ChatScreenState extends State<ChatScreen> {
               _openRemoteAttachmentPreview(message, attachments, attachment),
         ),
       ),
+      ),
+    );
+  }
+
+  /// Wraps a remote bubble in a slide-up + fade-in tween that runs
+  /// once on first appearance. Direction depends on isMe so own
+  /// echoed-back messages enter from the right side, peer messages
+  /// from the left — same TG asymmetry. Returns the child unchanged
+  /// when [animate] is false (existing messages, history scroll).
+  Widget _wrapInEnterAnimation({
+    required bool animate,
+    required bool isMe,
+    required Widget child,
+  }) {
+    if (!animate) return child;
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(begin: 0, end: 1),
+      duration: const Duration(milliseconds: 240),
+      curve: Curves.easeOutCubic,
+      builder: (context, t, c) {
+        return Opacity(
+          opacity: t,
+          child: Transform.translate(
+            // Vertical slide up + horizontal nudge from the side the
+            // bubble belongs to. Small horizontal offset (8dp) reads
+            // as "arriving from there" without being distracting.
+            offset: Offset((1 - t) * (isMe ? 12 : -12), (1 - t) * 14),
+            child: c,
+          ),
+        );
+      },
+      child: child,
     );
   }
 
