@@ -36,6 +36,7 @@ import 'app_status_service.dart';
 import 'android_incoming_call_service.dart';
 import 'audio_route_service.dart';
 import 'chat_message_cache.dart';
+import 'chat_details_cache.dart';
 import 'chat_preview_cache.dart';
 import 'chat_draft_store.dart';
 import 'chat_pin_store.dart';
@@ -172,6 +173,8 @@ class AppStartupService implements AppStartupServiceInterface {
     _registerOrReplaceSingleton<ChatMessageCache>(chatMessageCache);
     final chatPreviewCache = HiveChatPreviewCache();
     _registerOrReplaceSingleton<ChatPreviewCache>(chatPreviewCache);
+    final chatDetailsCache = HiveChatDetailsCache();
+    _registerOrReplaceSingleton<ChatDetailsCache>(chatDetailsCache);
 
     final customApiChatService = CustomApiChatService(
       authService: customApiAuthService,
@@ -185,7 +188,14 @@ class AppStartupService implements AppStartupServiceInterface {
     _registerOrReplaceSingleton<CustomApiChatService>(customApiChatService);
     _registerOrReplaceSingleton<ChatServiceInterface>(customApiChatService);
     _registerOrReplaceSingleton<ChatSendQueue>(
-      ChatSendQueue(chatService: customApiChatService),
+      ChatSendQueue(
+        chatService: customApiChatService,
+        // Listen to AppStatusService so the queue auto-retries
+        // failed messages the moment connectivity is restored,
+        // instead of leaving the user to tap "Повторить" on each
+        // failed bubble.
+        appStatusService: appStatusService,
+      ),
     );
     _registerOrReplaceSingleton<ChatDraftStore>(
       HybridChatDraftStore(

@@ -40,6 +40,7 @@ import '../providers/tree_provider.dart';
 import '../services/app_status_service.dart';
 import '../services/call_coordinator_service.dart';
 import '../services/chat_auto_delete_store.dart';
+import '../services/chat_details_cache.dart';
 import '../services/chat_draft_store.dart';
 import '../services/chat_notification_settings_store.dart';
 import '../services/chat_pin_store.dart';
@@ -119,6 +120,13 @@ class _ChatScreenState extends State<ChatScreen> {
   final CallCoordinatorService _callCoordinator =
       GetIt.I<CallCoordinatorService>();
   final ChatServiceInterface _chatService = GetIt.I<ChatServiceInterface>();
+  // Optional details cache — when registered we hydrate the chat
+  // header (title / participants / branch roots) from disk so the
+  // user sees the chat fully populated even if the API is offline.
+  ChatDetailsCache? get _chatDetailsCache =>
+      GetIt.I.isRegistered<ChatDetailsCache>()
+          ? GetIt.I<ChatDetailsCache>()
+          : null;
   final AppStatusService _appStatusService = GetIt.I<AppStatusService>();
   final SafetyServiceInterface? _safetyService =
       GetIt.I.isRegistered<SafetyServiceInterface>()
@@ -933,11 +941,33 @@ class _ChatScreenState extends State<ChatScreen> {
       _isLoadingChatDetails = true;
     });
 
+    // Cache-first hydrate: if we have a cached snapshot of this
+    // chat's details, paint it immediately so the user sees a
+    // properly-populated header (title, member count, online dot)
+    // even if the API call below times out / fails on offline.
+    final cache = _chatDetailsCache;
+    if (cache != null && _chatDetails == null) {
+      try {
+        final cached = await cache.read(chatId);
+        if (cached != null && mounted) {
+          setState(() {
+            _chatDetails = cached;
+            _resolvedTitle = cached.displayTitleFor(_currentUserId);
+          });
+        }
+      } catch (_) {
+        // Cache corruption is non-fatal — let the API repopulate.
+      }
+    }
+
     try {
       final details = await _chatService.getChatDetails(chatId);
       if (!mounted) {
         return;
       }
+
+      // Persist to cache for future offline opens.
+      unawaited(cache?.write(chatId, details));
 
       setState(() {
         _chatDetails = details;

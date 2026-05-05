@@ -9,6 +9,7 @@ import '../backend/interfaces/chat_service_interface.dart';
 import '../models/chat_attachment.dart';
 import '../models/chat_message.dart';
 import '../models/chat_send_progress.dart';
+import 'app_status_service.dart';
 import 'custom_api_auth_service.dart';
 
 enum ChatPendingMessageStatus { pending, sent, failed }
@@ -187,15 +188,24 @@ class ChatPendingMessage {
 class ChatSendQueue extends ChangeNotifier {
   ChatSendQueue({
     required ChatServiceInterface chatService,
+    AppStatusService? appStatusService,
     this.boxName = 'chat_send_queue_v1',
-  }) : _chatService = chatService;
+  })  : _chatService = chatService,
+        _appStatusService = appStatusService {
+    _bindAppStatusService();
+  }
 
   ChatSendQueue.memory({
     required ChatServiceInterface chatService,
+    AppStatusService? appStatusService,
   })  : _chatService = chatService,
-        boxName = null;
+        _appStatusService = appStatusService,
+        boxName = null {
+    _bindAppStatusService();
+  }
 
   final ChatServiceInterface _chatService;
+  final AppStatusService? _appStatusService;
   final String? boxName;
   final Map<String, List<ChatPendingMessage>> _messagesByChat =
       <String, List<ChatPendingMessage>>{};
@@ -204,6 +214,40 @@ class ChatSendQueue extends ChangeNotifier {
   Future<Box<String>>? _openTask;
   int _localCounter = 0;
   bool _isDisposed = false;
+  bool _wasOffline = false;
+
+  /// Binds to [AppStatusService] (when supplied) so we can auto-retry
+  /// failed messages the moment connectivity is restored. Without this
+  /// the user has to manually tap "Повторить" on each failed bubble
+  /// after the network returns — which is what the user noticed
+  /// during the offline test.
+  void _bindAppStatusService() {
+    final svc = _appStatusService;
+    if (svc == null) return;
+    _wasOffline = svc.isOffline;
+    svc.addListener(_handleAppStatusChanged);
+  }
+
+  void _handleAppStatusChanged() {
+    final svc = _appStatusService;
+    if (svc == null || _isDisposed) return;
+    final isOffline = svc.isOffline;
+    final cameBackOnline = _wasOffline && !isOffline;
+    _wasOffline = isOffline;
+    if (cameBackOnline) {
+      // Connectivity restored — retry every failed message across
+      // every chat we've touched in this session. _send() handles
+      // the in-flight de-dup, so racing this with a manual retry
+      // is safe.
+      for (final entry in _messagesByChat.entries) {
+        for (final message in entry.value) {
+          if (message.status == ChatPendingMessageStatus.failed) {
+            unawaited(retry(message.chatId, message.localId));
+          }
+        }
+      }
+    }
+  }
 
   Future<Box<String>?> _box() {
     final resolvedBoxName = boxName;
@@ -522,6 +566,7 @@ class ChatSendQueue extends ChangeNotifier {
   @override
   void dispose() {
     _isDisposed = true;
+    _appStatusService?.removeListener(_handleAppStatusChanged);
     super.dispose();
   }
 }

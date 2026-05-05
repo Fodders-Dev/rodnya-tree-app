@@ -43,6 +43,18 @@ class ChatParticipantSummary {
       lastSeenAt: lastSeenAt ?? this.lastSeenAt,
     );
   }
+
+  /// Serialize to a JSON-friendly map. Mirror of [fromMap] so the
+  /// [ChatDetailsCache] can persist details to disk.
+  Map<String, dynamic> toMap() {
+    return {
+      'userId': userId,
+      'displayName': displayName,
+      if (photoUrl != null) 'photoUrl': photoUrl,
+      'isOnline': isOnline,
+      if (lastSeenAt != null) 'lastSeenAt': lastSeenAt!.toIso8601String(),
+    };
+  }
 }
 
 class ChatBranchRootSummary {
@@ -62,6 +74,14 @@ class ChatBranchRootSummary {
       name: map['name']?.toString() ?? 'Без имени',
       photoUrl: map['photoUrl']?.toString(),
     );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'personId': personId,
+      'name': name,
+      if (photoUrl != null) 'photoUrl': photoUrl,
+    };
   }
 }
 
@@ -152,5 +172,20 @@ class ChatDetails {
           .map(ChatBranchRootSummary.fromMap)
           .toList(),
     );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'id': chatId,
+      'type': type,
+      if (title != null) 'title': title,
+      'participantIds': participantIds,
+      if (createdBy != null) 'createdBy': createdBy,
+      if (treeId != null) 'treeId': treeId,
+      if (createdAt != null) 'createdAt': createdAt!.toIso8601String(),
+      if (updatedAt != null) 'updatedAt': updatedAt!.toIso8601String(),
+      'participants': participants.map((p) => p.toMap()).toList(),
+      'branchRoots': branchRoots.map((b) => b.toMap()).toList(),
+    };
   }
 }
