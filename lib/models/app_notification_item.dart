@@ -39,6 +39,25 @@ class AppNotificationItem {
     );
   }
 
+  /// Round-trip-safe persistence map. Mirrors [fromBackendJson] but
+  /// with `createdAt` serialised back to an ISO string. Used by the
+  /// notifications Hive cache so the screen can serve from disk
+  /// while offline / before the API refresh lands.
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'type': type,
+      'title': title,
+      'body': body,
+      if (createdAt != null) 'createdAt': createdAt!.toIso8601String(),
+      'data': data,
+    };
+  }
+
+  factory AppNotificationItem.fromCacheMap(Map<String, dynamic> map) {
+    return AppNotificationItem.fromBackendJson(map);
+  }
+
   static Map<String, dynamic> _asStringDynamicMap(dynamic value) {
     if (value is Map<String, dynamic>) {
       return value;

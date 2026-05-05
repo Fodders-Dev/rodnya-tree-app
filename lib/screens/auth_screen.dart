@@ -11,6 +11,8 @@ import '../providers/tree_provider.dart';
 import '../services/app_status_service.dart';
 import '../services/custom_api_auth_service.dart';
 import '../services/onboarding_service.dart';
+import 'package:app_links/app_links.dart';
+
 import '../theme/app_theme.dart';
 import '../utils/user_facing_error.dart';
 import '../widgets/dismiss_keyboard.dart';
@@ -48,6 +50,7 @@ class _AuthScreenState extends State<AuthScreen> {
   bool _hasSubmitted = false;
   late final bool _supportsGoogleAuth;
   StreamSubscription<void>? _googleWebAuthenticationSubscription;
+  StreamSubscription<Uri>? _appLinkSubscription;
   String? _pendingTelegramLinkCode;
   String? _pendingTelegramMessage;
   String? _pendingVkLinkCode;
@@ -102,6 +105,43 @@ class _AuthScreenState extends State<AuthScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(_handleSocialRedirectResults());
     });
+    _bindAppLinksListener();
+  }
+
+  /// Subscribe to deep-link OAuth callbacks (Android opens the system
+  /// browser for the OAuth dance, the backend redirects to
+  /// rodnya://oauth/callback?xxxAuthCode=... when finalRedirect is
+  /// set, app_links picks the URI up via the manifest intent-filter
+  /// and routes it here). Web runs the same handlers via Uri.base.
+  Future<void> _bindAppLinksListener() async {
+    if (kIsWeb) return;
+    try {
+      final appLinks = AppLinks();
+      // Cold-start case: the app was launched by tapping the deep
+      // link → fetch initial URI and dispatch.
+      final initial = await appLinks.getInitialLink();
+      if (initial != null) {
+        unawaited(_dispatchOauthDeepLink(initial));
+      }
+      _appLinkSubscription = appLinks.uriLinkStream.listen((uri) {
+        unawaited(_dispatchOauthDeepLink(uri));
+      });
+    } catch (error) {
+      debugPrint('Failed to bind app_links listener: $error');
+    }
+  }
+
+  Future<void> _dispatchOauthDeepLink(Uri uri) async {
+    if (uri.scheme != 'rodnya' || uri.host != 'oauth') return;
+    if (!mounted) return;
+    setState(() => _pendingDeepLinkUri = uri);
+    try {
+      await _handleSocialRedirectResults();
+    } finally {
+      if (mounted) {
+        setState(() => _pendingDeepLinkUri = null);
+      }
+    }
   }
 
   @override
@@ -113,6 +153,7 @@ class _AuthScreenState extends State<AuthScreen> {
     _passwordController.dispose();
     _nameController.dispose();
     _googleWebAuthenticationSubscription?.cancel();
+    _appLinkSubscription?.cancel();
     _emailFocusNode.dispose();
     _nameFocusNode.dispose();
     super.dispose();
@@ -264,11 +305,6 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 
   Future<void> _startTelegramSignIn() async {
-    if (!kIsWeb) {
-      _showSocialAuthWebOnlyMessage('Telegram');
-      return;
-    }
-
     final authService = _authService;
     if (authService is! CustomApiAuthService) {
       _showPlannedSocialAuthMessage('Telegram');
@@ -305,11 +341,6 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 
   Future<void> _startVkSignIn() async {
-    if (!kIsWeb) {
-      _showSocialAuthWebOnlyMessage('VK ID');
-      return;
-    }
-
     final authService = _authService;
     if (authService is! CustomApiAuthService) {
       _showPlannedSocialAuthMessage('VK ID');
@@ -629,11 +660,6 @@ class _AuthScreenState extends State<AuthScreen> {
 
   // ignore: unused_element
   Future<void> _startMaxSignIn() async {
-    if (!kIsWeb) {
-      _showSocialAuthWebOnlyMessage('MAX');
-      return;
-    }
-
     final authService = _authService;
     if (authService is! CustomApiAuthService) {
       _showPlannedSocialAuthMessage('MAX');
@@ -803,7 +829,29 @@ class _AuthScreenState extends State<AuthScreen> {
     }
   }
 
+  /// When a deep-link OAuth callback fires (Android: app_links picks up
+  /// rodnya://oauth/callback?...), we set [_pendingDeepLinkUri] so the
+  /// _socialQueryParameter helper reads from there instead of Uri.base
+  /// (which is the web-page URL and meaningless on mobile).
+  Uri? _pendingDeepLinkUri;
+
   String? _socialQueryParameter(String name) {
+    final overrideUri = _pendingDeepLinkUri;
+    if (overrideUri != null) {
+      final fromOverride = overrideUri.queryParameters[name];
+      if (fromOverride != null && fromOverride.isNotEmpty) {
+        return fromOverride;
+      }
+      // Some deep links carry the params in the fragment (#...).
+      final fragment = overrideUri.fragment;
+      if (fragment.isNotEmpty && fragment.contains('?')) {
+        final queryPart = fragment.split('?').skip(1).join('?');
+        final fromFragment = Uri.splitQueryString(queryPart)[name];
+        if (fromFragment != null && fromFragment.isNotEmpty) {
+          return fromFragment;
+        }
+      }
+    }
     final directValue = Uri.base.queryParameters[name];
     if (directValue != null && directValue.isNotEmpty) {
       return directValue;
@@ -885,15 +933,6 @@ class _AuthScreenState extends State<AuthScreen> {
     );
   }
 
-  void _showSocialAuthWebOnlyMessage(String providerLabel) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          '$providerLabel пока доступен на web. Android deep link подключим отдельно.',
-        ),
-      ),
-    );
-  }
 
   String _authError(Object error, {required String fallbackMessage}) {
     return describeUserFacingError(

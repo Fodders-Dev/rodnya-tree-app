@@ -12,6 +12,7 @@ import '../models/family_tree.dart';
 import '../providers/tree_provider.dart';
 import '../services/app_status_service.dart';
 import '../services/custom_api_notification_service.dart';
+import '../services/notifications_cache.dart';
 import '../utils/user_facing_error.dart';
 
 IconData _notificationIconForType(String type) {
@@ -122,10 +123,35 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           ? GetIt.I<CustomApiNotificationService>()
           : null;
 
+  NotificationsCache? get _notificationsCache =>
+      GetIt.I.isRegistered<NotificationsCache>()
+          ? GetIt.I<NotificationsCache>()
+          : null;
+
   @override
   void initState() {
     super.initState();
+    _hydrateFromCache();
     _refresh();
+  }
+
+  /// Cache-first hydrate: paint cached notifications immediately so
+  /// the inbox isn't blank while the API call is in flight (or
+  /// failing offline). The API refresh inside [_refresh] will overwrite
+  /// once it returns.
+  Future<void> _hydrateFromCache() async {
+    final cache = _notificationsCache;
+    if (cache == null) return;
+    try {
+      final cached = await cache.read();
+      if (cached.isEmpty || !mounted) return;
+      setState(() {
+        if (_notifications.isEmpty) _notifications = cached;
+        _isLoading = false;
+      });
+    } catch (_) {
+      // Cache read failure is non-fatal.
+    }
   }
 
   Future<List<AppNotificationItem>> _loadNotifications() {
@@ -153,6 +179,9 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       if (!mounted) {
         return;
       }
+      // Persist to disk so the next cold-start / offline open shows
+      // the latest known list immediately.
+      unawaited(_notificationsCache?.write(notifications));
       setState(() {
         _notifications = notifications;
         _isLoading = false;

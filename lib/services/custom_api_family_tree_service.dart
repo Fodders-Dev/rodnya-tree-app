@@ -21,6 +21,7 @@ import '../models/tree_change_record.dart';
 import '../models/user_profile.dart';
 import 'custom_api_auth_service.dart';
 import 'local_storage_service.dart';
+import 'tree_graph_cache.dart';
 
 class CustomApiFamilyTreeService
     implements
@@ -33,17 +34,20 @@ class CustomApiFamilyTreeService
     http.Client? httpClient,
     LocalStorageService? localStorageService,
     ProfileServiceInterface? profileService,
+    TreeGraphCache? treeGraphCache,
   })  : _authService = authService,
         _runtimeConfig = runtimeConfig,
         _httpClient = httpClient ?? http.Client(),
         _localStorageService = localStorageService,
-        _profileService = profileService;
+        _profileService = profileService,
+        _treeGraphCache = treeGraphCache;
 
   final CustomApiAuthService _authService;
   final BackendRuntimeConfig _runtimeConfig;
   final http.Client _httpClient;
   final LocalStorageService? _localStorageService;
   final ProfileServiceInterface? _profileService;
+  final TreeGraphCache? _treeGraphCache;
   final Map<String, String> _personTreeIds = <String, String>{};
   final Map<String, TreeGraphSnapshot> _graphSnapshotCache =
       <String, TreeGraphSnapshot>{};
@@ -144,29 +148,69 @@ class CustomApiFamilyTreeService
 
   @override
   Future<TreeGraphSnapshot> getTreeGraphSnapshot(String treeId) async {
-    final response = await _requestJson(
-      method: 'GET',
-      path: '/v1/trees/$treeId/graph',
-    );
-    final snapshotJson = response['snapshot'];
-    if (snapshotJson is! Map<String, dynamic>) {
-      throw const CustomApiException(
-        'Backend не вернул graph snapshot дерева',
-      );
+    // Cache-first: try the on-disk snapshot before hitting the API
+    // when nothing is in the in-memory cache yet. We still fall
+    // through to the API call so the caller gets the freshest data,
+    // but the disk cache lets the screen paint a parsed snapshot
+    // even if the API call fails (offline). The API path overwrites
+    // both caches on success.
+    final cache = _treeGraphCache;
+    if (cache != null && _graphSnapshotCache[treeId] == null) {
+      try {
+        final cached = await cache.read(treeId);
+        if (cached != null) {
+          final cachedSnapshot = TreeGraphSnapshot.fromJson(
+            cached,
+            personParser:
+                (json) => _personFromJson(json, fallbackTreeId: treeId),
+            relationParser:
+                (json) => _relationFromJson(json, fallbackTreeId: treeId),
+          );
+          _graphSnapshotCache[treeId] = cachedSnapshot;
+          for (final person in cachedSnapshot.people) {
+            _personTreeIds[person.id] = treeId;
+          }
+        }
+      } catch (_) {
+        // Cache corruption is non-fatal — the API path repopulates.
+      }
     }
 
-    final snapshot = TreeGraphSnapshot.fromJson(
-      snapshotJson,
-      personParser: (json) => _personFromJson(json, fallbackTreeId: treeId),
-      relationParser: (json) => _relationFromJson(json, fallbackTreeId: treeId),
-    );
-    _graphSnapshotCache[treeId] = snapshot;
-    for (final person in snapshot.people) {
-      _personTreeIds[person.id] = treeId;
+    try {
+      final response = await _requestJson(
+        method: 'GET',
+        path: '/v1/trees/$treeId/graph',
+      );
+      final snapshotJson = response['snapshot'];
+      if (snapshotJson is! Map<String, dynamic>) {
+        throw const CustomApiException(
+          'Backend не вернул graph snapshot дерева',
+        );
+      }
+
+      final snapshot = TreeGraphSnapshot.fromJson(
+        snapshotJson,
+        personParser: (json) => _personFromJson(json, fallbackTreeId: treeId),
+        relationParser:
+            (json) => _relationFromJson(json, fallbackTreeId: treeId),
+      );
+      _graphSnapshotCache[treeId] = snapshot;
+      for (final person in snapshot.people) {
+        _personTreeIds[person.id] = treeId;
+      }
+      await _cachePersons(snapshot.people);
+      await _cacheRelations(snapshot.relations);
+      // Persist raw JSON for next cold-start / offline open.
+      unawaited(cache?.write(treeId, snapshotJson));
+      return snapshot;
+    } catch (error) {
+      // Fall back to whatever we hydrated from the cache so the
+      // screen still has a snapshot to paint. Only rethrow when we
+      // genuinely have nothing.
+      final fallback = _graphSnapshotCache[treeId];
+      if (fallback != null) return fallback;
+      rethrow;
     }
-    await _cachePersons(snapshot.people);
-    await _cacheRelations(snapshot.relations);
-    return snapshot;
   }
 
   @override

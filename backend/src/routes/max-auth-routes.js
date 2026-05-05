@@ -38,11 +38,17 @@ function registerMaxAuthRoutes(
     readDeviceContext = () => ({}),
   },
 ) {
-  function maxAuthRedirectUrl(code, {intent = "login"} = {}) {
-    const query = new URLSearchParams({
+  function maxAuthRedirectUrl(code, {intent = "login", finalRedirect} = {}) {
+    const params = {
       maxAuthCode: code,
       ...(intent === "link" ? {maxIntent: "link"} : {}),
-    });
+    };
+    if (finalRedirect && /^[a-z][a-z0-9+.-]*:\/\//.test(String(finalRedirect))) {
+      const sep = String(finalRedirect).includes("?") ? "&" : "?";
+      const query = new URLSearchParams(params).toString();
+      return `${finalRedirect}${sep}${query}`;
+    }
+    const query = new URLSearchParams(params);
     return `${resolvePublicAppUrl()}/#/login?${query.toString()}`;
   }
 
@@ -56,9 +62,16 @@ function registerMaxAuthRoutes(
       ? "link"
       : "login";
     const deviceContext = readDeviceContext(req);
+    const finalRedirectRaw = typeof req.query?.finalRedirect === "string"
+        ? req.query.finalRedirect
+        : null;
+    const finalRedirect =
+        finalRedirectRaw && /^[a-z][a-z0-9+.-]*:\/\//.test(finalRedirectRaw)
+            ? finalRedirectRaw
+            : null;
     const authFlowHandoff = await store.createAuthHandoff({
       type: "max_auth_flow",
-      payload: {intent, deviceContext},
+      payload: {intent, deviceContext, finalRedirect},
     });
 
     res.setHeader("cache-control", "no-store");
@@ -91,6 +104,10 @@ function registerMaxAuthRoutes(
       const effectiveIntent = String(authFlowHandoff.payload?.intent || "").trim().toLowerCase() === "link"
         ? "link"
         : intent;
+      const stashedFinalRedirect =
+        typeof authFlowHandoff.payload?.finalRedirect === "string"
+          ? authFlowHandoff.payload.finalRedirect
+          : null;
       // /max/complete is hit by the MAX webview rather than the Flutter HTTP
       // client, so prefer the device context that was stashed when the
       // Flutter app loaded /max/start.
@@ -125,6 +142,7 @@ function registerMaxAuthRoutes(
             ok: true,
             redirectUrl: maxAuthRedirectUrl(authHandoff.code, {
               intent: effectiveIntent,
+              finalRedirect: stashedFinalRedirect,
             }),
             status: "already_linked",
             handoffCode: authHandoff.code,

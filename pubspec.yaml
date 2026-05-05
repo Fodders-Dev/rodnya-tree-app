@@ -93,6 +93,12 @@ dependencies:
   http: ^1.5.0
   google_sign_in: 6.3.0
   google_sign_in_web: 0.12.4+4
+  # Picks up `rodnya://...` deep-link callbacks so OAuth flows
+  # (Telegram / VK ID / MAX) can return into the Android app from
+  # the system browser. On web we still parse Uri.base query
+  # parameters; on mobile this listener forwards the URI to the
+  # auth-screen handlers.
+  app_links: ^6.4.1
   web_socket_channel: ^3.0.3
   # Старые git зависимости удалены
 

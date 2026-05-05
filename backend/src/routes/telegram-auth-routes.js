@@ -145,11 +145,26 @@ function registerTelegramAuthRoutes(
     };
   }
 
-  function telegramAuthRedirectUrl(code, {intent = "login"} = {}) {
-    const query = new URLSearchParams({
+  /// Build the redirect target for a completed Telegram auth dance.
+  /// Defaults to the web app's `/#/login?telegramAuthCode=...` page.
+  /// Mobile clients pass `finalRedirect=rodnya://oauth/callback` (or
+  /// any registered custom scheme) and we route the auth code there
+  /// instead — the Android app picks it up via app_links and forwards
+  /// to the auth screen handlers.
+  function telegramAuthRedirectUrl(code, {intent = "login", finalRedirect} = {}) {
+    const params = {
       telegramAuthCode: code,
       ...(intent === "link" ? {telegramIntent: "link"} : {}),
-    });
+    };
+    if (finalRedirect && /^[a-z][a-z0-9+.-]*:\/\//.test(String(finalRedirect))) {
+      // Custom scheme path — append the auth code to whatever URI the
+      // mobile client registered. We accept ANY rfc3986-style scheme
+      // so flutter_app_links etc. all work.
+      const sep = String(finalRedirect).includes("?") ? "&" : "?";
+      const query = new URLSearchParams(params).toString();
+      return `${finalRedirect}${sep}${query}`;
+    }
+    const query = new URLSearchParams(params);
     return `${resolvePublicAppUrl()}/#/login?${query.toString()}`;
   }
 
@@ -192,7 +207,12 @@ function registerTelegramAuthRoutes(
                 "Этот Telegram уже привязан к аккаунту Родни. Если это ваш аккаунт, входите через Telegram с экрана входа.",
             },
           });
-          res.redirect(302, telegramAuthRedirectUrl(authHandoff.code, {intent}));
+          res.redirect(302, telegramAuthRedirectUrl(authHandoff.code, {
+          intent,
+          finalRedirect: typeof req.query?.finalRedirect === "string"
+              ? req.query.finalRedirect
+              : null,
+        }));
           return;
         }
 
@@ -212,7 +232,12 @@ function registerTelegramAuthRoutes(
             auth: authResponse(refreshedUser, sessionTokens),
           },
         });
-        res.redirect(302, telegramAuthRedirectUrl(authHandoff.code, {intent}));
+        res.redirect(302, telegramAuthRedirectUrl(authHandoff.code, {
+          intent,
+          finalRedirect: typeof req.query?.finalRedirect === "string"
+              ? req.query.finalRedirect
+              : null,
+        }));
         return;
       }
 
@@ -246,7 +271,12 @@ function registerTelegramAuthRoutes(
         },
       });
 
-      res.redirect(302, telegramAuthRedirectUrl(authHandoff.code, {intent}));
+      res.redirect(302, telegramAuthRedirectUrl(authHandoff.code, {
+          intent,
+          finalRedirect: typeof req.query?.finalRedirect === "string"
+              ? req.query.finalRedirect
+              : null,
+        }));
     } catch (error) {
       console.error("[backend] telegram auth callback failed", error);
       const appUrl = resolvePublicAppUrl();
@@ -262,10 +292,22 @@ function registerTelegramAuthRoutes(
             return "Не удалось завершить вход через Telegram";
         }
       })();
-      res.redirect(
-        302,
-        `${appUrl}/#/login?telegramAuthError=${encodeURIComponent(normalizedMessage)}`,
-      );
+      const finalRedirect = typeof req.query?.finalRedirect === "string" &&
+          /^[a-z][a-z0-9+.-]*:\/\//.test(req.query.finalRedirect)
+        ? req.query.finalRedirect
+        : null;
+      if (finalRedirect) {
+        const sep = finalRedirect.includes("?") ? "&" : "?";
+        res.redirect(
+          302,
+          `${finalRedirect}${sep}telegramAuthError=${encodeURIComponent(normalizedMessage)}`,
+        );
+      } else {
+        res.redirect(
+          302,
+          `${appUrl}/#/login?telegramAuthError=${encodeURIComponent(normalizedMessage)}`,
+        );
+      }
     }
   });
 

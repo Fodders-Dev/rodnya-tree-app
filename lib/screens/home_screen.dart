@@ -1,4 +1,5 @@
 // ignore_for_file: library_private_types_in_public_api
+import 'dart:async';
 import 'dart:ui';
 
 import 'package:flutter/gestures.dart';
@@ -23,6 +24,7 @@ import '../backend/interfaces/story_service_interface.dart';
 import '../models/post.dart';
 import '../models/story.dart';
 import '../services/app_status_service.dart';
+import '../services/posts_cache.dart';
 import '../theme/app_theme.dart';
 import '../widgets/post_card.dart';
 import '../widgets/post_card_shimmer.dart';
@@ -421,6 +423,10 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  PostsCache? get _postsCache => GetIt.I.isRegistered<PostsCache>()
+      ? GetIt.I<PostsCache>()
+      : null;
+
   Future<void> _loadPosts(String treeId) async {
     if (!mounted) return;
     setState(() {
@@ -429,9 +435,26 @@ class _HomeScreenState extends State<HomeScreen> {
       // it'll flicker on every refresh. Only flip back if we actually
       // have no posts to show after the call fails.
     });
+    // Cache-first hydrate: serve disk-cached posts immediately so the
+    // feed paints content even if we're offline / network is slow.
+    final cache = _postsCache;
+    if (cache != null && _posts.isEmpty) {
+      try {
+        final cached = await cache.read(treeId);
+        if (cached.isNotEmpty && mounted && _currentTreeId == treeId) {
+          setState(() {
+            _posts = cached;
+            _postsUnavailable = false;
+          });
+        }
+      } catch (_) {
+        // Cache read failure is non-fatal.
+      }
+    }
     try {
       final posts = await _postService.getPosts(treeId: treeId);
       if (mounted) {
+        unawaited(cache?.write(treeId, posts));
         setState(() {
           _posts = posts;
           _isLoadingPosts = false;

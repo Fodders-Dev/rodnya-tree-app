@@ -580,13 +580,22 @@ class CustomApiAuthService implements AuthServiceInterface {
   /// adds, so without these params the resulting session would have no
   /// device metadata and would land in /v1/auth/sessions as "Безымянное
   /// устройство".
+  /// On Android the OAuth handshake opens the system browser, so the
+  /// app needs the backend to redirect to a custom URI scheme that the
+  /// app's app_links listener picks up. On web we leave it null so the
+  /// backend keeps using the public web URL.
+  static const String _mobileOauthCallback = 'rodnya://oauth/callback';
+  String? _resolveOauthFinalRedirect() => kIsWeb ? null : _mobileOauthCallback;
+
   Future<String> resolveTelegramLoginStartUrl({bool linkMode = false}) async {
     final descriptor = await _resolveOauthDeviceDescriptor();
+    final finalRedirect = _resolveOauthFinalRedirect();
     final appUri = Uri.parse(_runtimeConfig.publicAppUrl);
     final callbackUrl = _buildUri(
       '/v1/auth/telegram/callback',
       queryParameters: <String, String>{
         if (linkMode) 'intent': 'link',
+        if (finalRedirect != null) 'finalRedirect': finalRedirect,
         ...descriptor,
       },
     ).toString();
@@ -601,10 +610,12 @@ class CustomApiAuthService implements AuthServiceInterface {
 
   Future<String> resolveVkLoginStartUrl({bool linkMode = false}) async {
     final descriptor = await _resolveOauthDeviceDescriptor();
+    final finalRedirect = _resolveOauthFinalRedirect();
     return _buildUri(
       '/v1/auth/vk/start',
       queryParameters: <String, String>{
         if (linkMode) 'intent': 'link',
+        if (finalRedirect != null) 'finalRedirect': finalRedirect,
         ...descriptor,
       },
     ).toString();
@@ -612,10 +623,12 @@ class CustomApiAuthService implements AuthServiceInterface {
 
   Future<String> resolveMaxLoginStartUrl({bool linkMode = false}) async {
     final descriptor = await _resolveOauthDeviceDescriptor();
+    final finalRedirect = _resolveOauthFinalRedirect();
     return _buildUri(
       '/v1/auth/max/start',
       queryParameters: <String, String>{
         if (linkMode) 'intent': 'link',
+        if (finalRedirect != null) 'finalRedirect': finalRedirect,
         ...descriptor,
       },
     ).toString();

@@ -38,6 +38,9 @@ import 'audio_route_service.dart';
 import 'chat_message_cache.dart';
 import 'chat_details_cache.dart';
 import 'chat_preview_cache.dart';
+import 'notifications_cache.dart';
+import 'posts_cache.dart';
+import 'tree_graph_cache.dart';
 import 'chat_draft_store.dart';
 import 'chat_pin_store.dart';
 import 'chat_send_queue.dart';
@@ -156,11 +159,15 @@ class AppStartupService implements AppStartupServiceInterface {
       customApiProfileService,
     );
 
+    final treeGraphCache = HiveTreeGraphCache();
+    _registerOrReplaceSingleton<TreeGraphCache>(treeGraphCache);
+
     final customApiTreeService = CustomApiFamilyTreeService(
       authService: customApiAuthService,
       runtimeConfig: runtimeConfig,
       localStorageService: localStorageService,
       profileService: customApiProfileService,
+      treeGraphCache: treeGraphCache,
     );
     _registerOrReplaceSingleton<CustomApiFamilyTreeService>(
       customApiTreeService,
@@ -175,6 +182,10 @@ class AppStartupService implements AppStartupServiceInterface {
     _registerOrReplaceSingleton<ChatPreviewCache>(chatPreviewCache);
     final chatDetailsCache = HiveChatDetailsCache();
     _registerOrReplaceSingleton<ChatDetailsCache>(chatDetailsCache);
+    final notificationsCache = HiveNotificationsCache();
+    _registerOrReplaceSingleton<NotificationsCache>(notificationsCache);
+    final postsCache = HivePostsCache();
+    _registerOrReplaceSingleton<PostsCache>(postsCache);
 
     final customApiChatService = CustomApiChatService(
       authService: customApiAuthService,

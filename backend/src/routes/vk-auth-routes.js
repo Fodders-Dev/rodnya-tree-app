@@ -59,11 +59,17 @@ function registerVkAuthRoutes(
     readDeviceContext = () => ({}),
   },
 ) {
-  function vkAuthRedirectUrl(code, {intent = "login"} = {}) {
-    const query = new URLSearchParams({
+  function vkAuthRedirectUrl(code, {intent = "login", finalRedirect} = {}) {
+    const params = {
       vkAuthCode: code,
       ...(intent === "link" ? {vkIntent: "link"} : {}),
-    });
+    };
+    if (finalRedirect && /^[a-z][a-z0-9+.-]*:\/\//.test(String(finalRedirect))) {
+      const sep = String(finalRedirect).includes("?") ? "&" : "?";
+      const query = new URLSearchParams(params).toString();
+      return `${finalRedirect}${sep}${query}`;
+    }
+    const query = new URLSearchParams(params);
     return `${resolvePublicAppUrl()}/#/login?${query.toString()}`;
   }
 
@@ -79,6 +85,13 @@ function registerVkAuthRoutes(
     const callbackUrl = `${resolvePublicApiUrl(req).replace(/\/$/, "")}/v1/auth/vk/callback`;
     const {codeVerifier, codeChallenge} = createVkPkcePair();
     const deviceContext = readDeviceContext(req);
+    const finalRedirectRaw = typeof req.query?.finalRedirect === "string"
+        ? req.query.finalRedirect
+        : null;
+    const finalRedirect =
+        finalRedirectRaw && /^[a-z][a-z0-9+.-]*:\/\//.test(finalRedirectRaw)
+            ? finalRedirectRaw
+            : null;
     const authFlowHandoff = await store.createAuthHandoff({
       type: "vk_auth_flow",
       payload: {
@@ -86,6 +99,7 @@ function registerVkAuthRoutes(
         codeVerifier,
         redirectUri: callbackUrl,
         deviceContext,
+        finalRedirect,
       },
     });
 
@@ -102,6 +116,7 @@ function registerVkAuthRoutes(
   });
 
   app.get("/v1/auth/vk/callback", async (req, res) => {
+    let stashedFinalRedirect = null;
     try {
       if (!vkAuthClient.isEnabled) {
         throw new Error("VK_AUTH_NOT_CONFIGURED");
@@ -139,6 +154,10 @@ function registerVkAuthRoutes(
       if (!codeVerifier) {
         throw new Error("VK_AUTH_STATE_INVALID");
       }
+      stashedFinalRedirect =
+        typeof authFlowHandoff.payload?.finalRedirect === "string"
+          ? authFlowHandoff.payload.finalRedirect
+          : null;
 
       // Prefer the device context that was stashed when /start was loaded
       // by the original device — the callback is hit by the OAuth provider
@@ -181,7 +200,10 @@ function registerVkAuthRoutes(
                 "Этот VK ID уже привязан к аккаунту Родни. Если это ваш аккаунт, входите через VK ID с экрана входа.",
             },
           });
-          res.redirect(302, vkAuthRedirectUrl(authHandoff.code, {intent}));
+          res.redirect(302, vkAuthRedirectUrl(authHandoff.code, {
+            intent,
+            finalRedirect: stashedFinalRedirect,
+          }));
           return;
         }
 
@@ -198,7 +220,10 @@ function registerVkAuthRoutes(
             auth: authResponse(refreshedUser, sessionTokens),
           },
         });
-        res.redirect(302, vkAuthRedirectUrl(authHandoff.code, {intent}));
+        res.redirect(302, vkAuthRedirectUrl(authHandoff.code, {
+            intent,
+            finalRedirect: stashedFinalRedirect,
+          }));
         return;
       }
 
@@ -237,7 +262,10 @@ function registerVkAuthRoutes(
               "VK ID подтверждён. После возвращения мы привяжем его к текущему аккаунту Родни, если не найдём конфликт по подтверждённому номеру или email.",
           },
         });
-        res.redirect(302, vkAuthRedirectUrl(authHandoff.code, {intent}));
+        res.redirect(302, vkAuthRedirectUrl(authHandoff.code, {
+            intent,
+            finalRedirect: stashedFinalRedirect,
+          }));
         return;
       }
 
@@ -252,7 +280,10 @@ function registerVkAuthRoutes(
             auth: authResponse(user, sessionTokens),
           },
         });
-        res.redirect(302, vkAuthRedirectUrl(authHandoff.code, {intent}));
+        res.redirect(302, vkAuthRedirectUrl(authHandoff.code, {
+            intent,
+            finalRedirect: stashedFinalRedirect,
+          }));
         return;
       }
 
@@ -276,7 +307,10 @@ function registerVkAuthRoutes(
               "VK ID не вернул email для безопасного создания нового аккаунта. Войдите в существующий аккаунт Родни и привяжите VK ID оттуда.",
           },
         });
-        res.redirect(302, vkAuthRedirectUrl(authHandoff.code, {intent}));
+        res.redirect(302, vkAuthRedirectUrl(authHandoff.code, {
+            intent,
+            finalRedirect: stashedFinalRedirect,
+          }));
         return;
       }
 
@@ -296,7 +330,10 @@ function registerVkAuthRoutes(
           auth: authResponse(user, sessionTokens),
         },
       });
-      res.redirect(302, vkAuthRedirectUrl(authHandoff.code, {intent}));
+      res.redirect(302, vkAuthRedirectUrl(authHandoff.code, {
+            intent,
+            finalRedirect: stashedFinalRedirect,
+          }));
     } catch (error) {
       console.error("[backend] vk auth callback failed", error);
       const appUrl = resolvePublicAppUrl();
@@ -318,10 +355,19 @@ function registerVkAuthRoutes(
             return "Не удалось завершить вход через VK ID";
         }
       })();
-      res.redirect(
-        302,
-        `${appUrl}/#/login?vkAuthError=${encodeURIComponent(normalizedMessage)}`,
-      );
+      if (stashedFinalRedirect &&
+          /^[a-z][a-z0-9+.-]*:\/\//.test(stashedFinalRedirect)) {
+        const sep = stashedFinalRedirect.includes("?") ? "&" : "?";
+        res.redirect(
+          302,
+          `${stashedFinalRedirect}${sep}vkAuthError=${encodeURIComponent(normalizedMessage)}`,
+        );
+      } else {
+        res.redirect(
+          302,
+          `${appUrl}/#/login?vkAuthError=${encodeURIComponent(normalizedMessage)}`,
+        );
+      }
     }
   });
 
