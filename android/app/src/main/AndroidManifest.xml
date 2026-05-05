@@ -44,27 +44,23 @@
             </intent-filter>
         </service>
 
-        <!-- Disable the default flutter_rustore_push service so we can
-             swap in our own subclass that builds full-screen incoming
-             call notifications when the app is fully killed. -->
-        <service
-            android:name="ru.rustore.flutter_rustore_push.FlutterRustorePushService"
-            tools:node="remove" />
+        <!-- The flutter_rustore_push plugin's service is auto-registered
+             via its own manifest. We rely on it for both foreground
+             callback delivery (to Dart via the pigeon channel) AND
+             killed-app system tray display: when the backend includes
+             an `android.notification` block with `channel_id: calls`,
+             RuStore's SDK delegates to the OS notification manager,
+             which uses our pre-registered "calls" channel (HIGH
+             importance, ringtone, vibrate, lockscreen-public, bypass
+             DND) to render a heads-up notification.
 
-        <!-- Our push service inherits from the plugin's service so the
-             usual Flutter-side onMessageReceived callback still fires
-             for foreground/background pushes; on top of that it builds
-             a `setFullScreenIntent` notification on the "calls" channel
-             when `data.type == "call_invite"`, which is the only path
-             that lifts the ringer over the lockscreen on Android 13+. -->
-        <service
-            android:name="com.ahjkuio.rodnya_family_app.RodnyaPushService"
-            android:exported="true"
-            tools:ignore="ExportedService">
-            <intent-filter>
-                <action android:name="ru.rustore.sdk.pushclient.MESSAGING_EVENT" />
-            </intent-filter>
-        </service>
+             Native fullscreen-intent (`setFullScreenIntent`) for a
+             true ringer UI on the lockscreen needs a custom service
+             that subclasses `RuStoreMessagingService` directly — that
+             requires adding the RuStore push SDK as an explicit
+             gradle dependency (the plugin keeps it as `implementation`
+             so it's not exposed to app code). Tracked as a follow-up
+             when we go after Android-13 lockscreen ringer behavior. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
