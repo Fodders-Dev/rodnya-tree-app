@@ -21,11 +21,17 @@ class TreeNode extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final avatarImage = buildAvatarImageProvider(person.photoUrl);
-    return GestureDetector(
-      onTap: onNodeTap,
-      child: SizedBox(
-        width: 150,
-        height: 200,
+    // Tree nodes read as tappable cards on phone — on web/desktop a
+    // pointer cursor on hover makes that obvious without changing the
+    // visual; the actual hover effect (shadow / outline) lives on the
+    // Card material below.
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: onNodeTap,
+        child: SizedBox(
+          width: 150,
+          height: 200,
         child: Stack(
           children: [
             // Основная карточка
@@ -172,6 +178,7 @@ class TreeNode extends StatelessWidget {
                 ),
               ),
           ],
+        ),
         ),
       ),
     );

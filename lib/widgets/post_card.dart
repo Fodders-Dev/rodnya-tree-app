@@ -546,10 +546,17 @@ class _PostCardState extends State<PostCard>
           aspectRatio: 16 / 9,
           child: ClipRRect(
             borderRadius: borderRadius,
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: () => openLightbox(0),
-              child: tileFor(images.first),
+            // MouseRegion adds a "click" cursor on web/desktop so the
+            // image reads as interactive on hover. We keep
+            // GestureDetector (vs InkWell) because an ink ripple on a
+            // full-bleed photo looks like a glitch.
+            child: MouseRegion(
+              cursor: SystemMouseCursors.click,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => openLightbox(0),
+                child: tileFor(images.first),
+              ),
             ),
           ),
         ),
@@ -563,12 +570,15 @@ class _PostCardState extends State<PostCard>
         itemBuilder: (context, index, _) {
           return ClipRRect(
             borderRadius: borderRadius,
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: () => openLightbox(index),
-              child: SizedBox(
-                width: MediaQuery.of(context).size.width,
-                child: tileFor(images[index]),
+            child: MouseRegion(
+              cursor: SystemMouseCursors.click,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => openLightbox(index),
+                child: SizedBox(
+                  width: MediaQuery.of(context).size.width,
+                  child: tileFor(images[index]),
+                ),
               ),
             ),
           );

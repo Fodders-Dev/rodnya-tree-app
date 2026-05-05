@@ -823,14 +823,20 @@ class _RelativesScreenState extends State<RelativesScreen> {
             ),
           ),
           if (_searchQuery.isNotEmpty)
-            GestureDetector(
-              onTap: () {
-                _searchController.clear();
-              },
-              child: Icon(
-                Icons.close_rounded,
-                size: 18,
-                color: tokens.inkMuted,
+            // MouseRegion + GestureDetector reads as a clickable icon on
+            // desktop; an InkWell ripple inside a tight search row looks
+            // out of place, so we just light up the cursor.
+            MouseRegion(
+              cursor: SystemMouseCursors.click,
+              child: GestureDetector(
+                onTap: () {
+                  _searchController.clear();
+                },
+                child: Icon(
+                  Icons.close_rounded,
+                  size: 18,
+                  color: tokens.inkMuted,
+                ),
               ),
             ),
         ],
@@ -1153,20 +1159,23 @@ class _RelativesScreenState extends State<RelativesScreen> {
                 ),
               ),
               child: ListTile(
-                leading: GestureDetector(
-                  onTap: () {
-                    debugPrint(
-                      'Avatar tapped for ${relative.displayName}, navigating to details...',
-                    );
-                    context.push('/relative/details/${relative.id}');
-                  },
-                  child: CircleAvatar(
-                    radius: 25,
-                    backgroundImage: avatarImage,
-                    child: avatarImage == null
-                        ? Text(relative.initials,
-                            style: TextStyle(fontSize: 18))
-                        : null,
+                leading: MouseRegion(
+                  cursor: SystemMouseCursors.click,
+                  child: GestureDetector(
+                    onTap: () {
+                      debugPrint(
+                        'Avatar tapped for ${relative.displayName}, navigating to details...',
+                      );
+                      context.push('/relative/details/${relative.id}');
+                    },
+                    child: CircleAvatar(
+                      radius: 25,
+                      backgroundImage: avatarImage,
+                      child: avatarImage == null
+                          ? Text(relative.initials,
+                              style: TextStyle(fontSize: 18))
+                          : null,
+                    ),
                   ),
                 ),
                 title: Text(

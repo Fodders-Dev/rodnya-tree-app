@@ -463,9 +463,15 @@ extension _ProfileScreenSections on _ProfileScreenState {
     required VoidCallback onTap,
   }) {
     final scheme = Theme.of(context).colorScheme;
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
+    // InkWell instead of bare GestureDetector — gets us hover splash +
+    // click cursor on web / desktop for free, and the ripple is shaped
+    // to the chip's pill border via the matching borderRadius.
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(999),
+        child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
           color: scheme.primaryContainer.withValues(alpha: 0.55),
@@ -498,6 +504,7 @@ extension _ProfileScreenSections on _ProfileScreenState {
               ),
             ),
           ],
+        ),
         ),
       ),
     );

@@ -936,183 +936,234 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   'Подтягиваем уведомления, внешний вид и параметры аккаунта.',
               showProgress: true,
             )
-          : Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 980),
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      _buildSettingsHeader(),
-                      const SizedBox(height: 16),
-                      _buildSectionCard('Внешний вид', [
-                        _buildSwitchRow(
-                          icon: themeProvider.isDarkMode
-                              ? Icons.dark_mode
-                              : Icons.light_mode,
-                          title: 'Тёмная тема',
-                          subtitle: themeProvider.isDarkMode
-                              ? 'Тёмная схема'
-                              : 'Светлая схема',
-                          value: themeProvider.isDarkMode,
-                          onChanged: (_) => themeProvider.toggleTheme(),
-                        ),
-                      ]),
-                      const SizedBox(height: 16),
-                      _buildSectionCard('Уведомления и доступ', [
-                        _buildSwitchRow(
-                          icon: Icons.notifications_outlined,
-                          title: 'Уведомления',
-                          subtitle:
-                              _notificationsEnabled ? 'Включены' : 'Выключены',
-                          value: _notificationsEnabled,
-                          onChanged: _toggleNotifications,
-                        ),
-                        _buildSwitchRow(
-                          icon: Icons.lock_outline,
-                          title: 'Приватный профиль',
-                          subtitle: _profilePrivate
-                              ? 'Только по приглашению'
-                              : 'Обычный доступ',
-                          value: _profilePrivate,
-                          onChanged: (value) {
-                            setState(() {
-                              _profilePrivate = value;
-                            });
-                          },
-                        ),
-                        _buildActionRow(
-                          icon: Icons.block_outlined,
-                          title: 'Заблокированные',
-                          subtitle: 'Личные блокировки',
-                          onTap: () =>
-                              GoRouter.of(context).push('/profile/blocks'),
-                        ),
-                        _buildActionRow(
-                          icon: Icons.devices_rounded,
-                          title: 'Активные сеансы',
-                          subtitle: 'Управление устройствами и QR-вход',
-                          onTap: () =>
-                              GoRouter.of(context).push('/profile/sessions'),
-                        ),
-                      ]),
-                      const SizedBox(height: 16),
-                      _buildCallSettingsSection(),
-                      const SizedBox(height: 16),
-                      _buildSectionCard('Документы и поддержка', [
-                        _buildActionRow(
-                          icon: Icons.privacy_tip_outlined,
-                          title: 'Политика',
-                          subtitle: 'Конфиденциальность',
-                          onTap: () => GoRouter.of(context).push('/privacy'),
-                        ),
-                        _buildActionRow(
-                          icon: Icons.description_outlined,
-                          title: 'Условия',
-                          subtitle: 'Использование',
-                          onTap: () => GoRouter.of(context).push('/terms'),
-                        ),
-                        _buildActionRow(
-                          icon: Icons.support_agent_outlined,
-                          title: 'Поддержка',
-                          subtitle: 'Почта и страница',
-                          onTap: () => GoRouter.of(context).push('/support'),
-                        ),
-                        _buildActionRow(
-                          icon: Icons.delete_outline_rounded,
-                          title: 'Как удалить аккаунт',
-                          subtitle: 'Публичная инструкция',
-                          onTap: () =>
-                              GoRouter.of(context).push('/account-deletion'),
-                        ),
-                        _buildActionRow(
-                          icon: Icons.info_outline,
-                          title: 'О приложении',
-                          subtitle: _appVersionLabel,
-                          onTap: () => context.push('/profile/about'),
-                        ),
-                      ]),
-                      if (_showPremiumSection) ...[
-                        const SizedBox(height: 16),
-                        _buildSectionCard('RuStore', [
-                          _billingLoading
-                              ? const Padding(
-                                  padding: EdgeInsets.all(16),
-                                  child: Center(
-                                    child: CircularProgressIndicator(),
+          : LayoutBuilder(
+              builder: (context, constraints) {
+                // 1180 совпадает с home/profile breakpoint — на десктопе
+                // настройки расходятся в 2 колонки (управление слева,
+                // справочные/сервисные секции справа), header остаётся
+                // на всю ширину сверху.
+                final isWide = constraints.maxWidth >= 1180;
+                final primary = _buildPrimarySections(themeProvider);
+                final secondary = _buildSecondarySections();
+                return Center(
+                  child: ConstrainedBox(
+                    constraints:
+                        BoxConstraints(maxWidth: isWide ? 1100 : 980),
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          _buildSettingsHeader(),
+                          const SizedBox(height: 16),
+                          if (isWide)
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.stretch,
+                                    children: _interleaveSpacing(primary),
                                   ),
-                                )
-                              : _buildPremiumRow(),
-                          if (_isPremium && _lastPurchaseId != null)
-                            _buildActionRow(
-                              icon: Icons.restart_alt_rounded,
-                              title: 'Сбросить тестовую покупку',
-                              subtitle: 'Только для dev-проверки',
-                              onTap: _deleteTestPurchase,
+                                ),
+                                const SizedBox(width: 16),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.stretch,
+                                    children: _interleaveSpacing(secondary),
+                                  ),
+                                ),
+                              ],
+                            )
+                          else
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: _interleaveSpacing(
+                                  [...primary, ...secondary]),
                             ),
-                          _buildOneTimePurchaseRow(),
-                        ]),
-                      ],
-                      const SizedBox(height: 16),
-                      _buildSectionCard('Обратная связь', [
-                        if (_showReviewSection)
-                          _checkingRatingStatus
-                              ? const Padding(
-                                  padding: EdgeInsets.all(16),
-                                  child: Center(
-                                    child: CircularProgressIndicator(),
-                                  ),
-                                )
-                              : _buildReviewRow(),
-                        _buildActionRow(
-                          icon: Icons.support_agent_outlined,
-                          title: 'Связаться с поддержкой',
-                          subtitle: 'ahjkuio@gmail.com',
-                          onTap: () => GoRouter.of(context).push('/support'),
-                        ),
-                      ]),
-                      const SizedBox(height: 16),
-                      _buildSectionCard('Аккаунт', [
-                        _buildActionRow(
-                          icon: Icons.logout_rounded,
-                          title: 'Выйти',
-                          subtitle: 'Сменить аккаунт',
-                          onTap: () async {
-                            await _authService.signOut();
-                            if (GetIt.I.isRegistered<TreeProvider>()) {
-                              await GetIt.I<TreeProvider>().clearSelection();
-                            }
-                            if (mounted) {
-                              context.go('/login');
-                            }
-                          },
-                        ),
-                      ]),
-                      const SizedBox(height: 16),
-                      GlassPanel(
-                        color: Theme.of(context)
-                            .colorScheme
-                            .errorContainer
-                            .withValues(alpha: 0.6),
-                        borderColor: Theme.of(context)
-                            .colorScheme
-                            .error
-                            .withValues(alpha: 0.35),
-                        child: _buildActionRow(
-                          icon: Icons.delete_forever,
-                          title: 'Удалить аккаунт',
-                          subtitle: 'Это действие нельзя отменить',
-                          onTap: _showDeleteAccountConfirmation,
-                          destructive: true,
-                        ),
+                        ],
                       ),
-                    ],
+                    ),
                   ),
-                ),
-              ),
+                );
+              },
             ),
     );
+  }
+
+  /// 16dp gaps between sections — duplicated logic factored out so the
+  /// narrow + 2 wide columns all share the same rhythm.
+  List<Widget> _interleaveSpacing(List<Widget> sections) {
+    final out = <Widget>[];
+    for (var i = 0; i < sections.length; i++) {
+      if (i > 0) out.add(const SizedBox(height: 16));
+      out.add(sections[i]);
+    }
+    return out;
+  }
+
+  /// "Управляющие" секции: тема, уведомления, звонки. На wide уходят в
+  /// левую колонку.
+  List<Widget> _buildPrimarySections(ThemeProvider themeProvider) {
+    return [
+      _buildSectionCard('Внешний вид', [
+        _buildSwitchRow(
+          icon: themeProvider.isDarkMode
+              ? Icons.dark_mode
+              : Icons.light_mode,
+          title: 'Тёмная тема',
+          subtitle:
+              themeProvider.isDarkMode ? 'Тёмная схема' : 'Светлая схема',
+          value: themeProvider.isDarkMode,
+          onChanged: (_) => themeProvider.toggleTheme(),
+        ),
+      ]),
+      _buildSectionCard('Уведомления и доступ', [
+        _buildSwitchRow(
+          icon: Icons.notifications_outlined,
+          title: 'Уведомления',
+          subtitle: _notificationsEnabled ? 'Включены' : 'Выключены',
+          value: _notificationsEnabled,
+          onChanged: _toggleNotifications,
+        ),
+        _buildSwitchRow(
+          icon: Icons.lock_outline,
+          title: 'Приватный профиль',
+          subtitle: _profilePrivate
+              ? 'Только по приглашению'
+              : 'Обычный доступ',
+          value: _profilePrivate,
+          onChanged: (value) {
+            setState(() {
+              _profilePrivate = value;
+            });
+          },
+        ),
+        _buildActionRow(
+          icon: Icons.block_outlined,
+          title: 'Заблокированные',
+          subtitle: 'Личные блокировки',
+          onTap: () => GoRouter.of(context).push('/profile/blocks'),
+        ),
+        _buildActionRow(
+          icon: Icons.devices_rounded,
+          title: 'Активные сеансы',
+          subtitle: 'Управление устройствами и QR-вход',
+          onTap: () => GoRouter.of(context).push('/profile/sessions'),
+        ),
+      ]),
+      _buildCallSettingsSection(),
+    ];
+  }
+
+  /// "Сервисные" секции: документы, RuStore, обратная связь, аккаунт,
+  /// удаление. На wide уходят в правую колонку.
+  List<Widget> _buildSecondarySections() {
+    return [
+      _buildSectionCard('Документы и поддержка', [
+        _buildActionRow(
+          icon: Icons.privacy_tip_outlined,
+          title: 'Политика',
+          subtitle: 'Конфиденциальность',
+          onTap: () => GoRouter.of(context).push('/privacy'),
+        ),
+        _buildActionRow(
+          icon: Icons.description_outlined,
+          title: 'Условия',
+          subtitle: 'Использование',
+          onTap: () => GoRouter.of(context).push('/terms'),
+        ),
+        _buildActionRow(
+          icon: Icons.support_agent_outlined,
+          title: 'Поддержка',
+          subtitle: 'Почта и страница',
+          onTap: () => GoRouter.of(context).push('/support'),
+        ),
+        _buildActionRow(
+          icon: Icons.delete_outline_rounded,
+          title: 'Как удалить аккаунт',
+          subtitle: 'Публичная инструкция',
+          onTap: () => GoRouter.of(context).push('/account-deletion'),
+        ),
+        _buildActionRow(
+          icon: Icons.info_outline,
+          title: 'О приложении',
+          subtitle: _appVersionLabel,
+          onTap: () => context.push('/profile/about'),
+        ),
+      ]),
+      if (_showPremiumSection)
+        _buildSectionCard('RuStore', [
+          _billingLoading
+              ? const Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Center(
+                    child: CircularProgressIndicator(),
+                  ),
+                )
+              : _buildPremiumRow(),
+          if (_isPremium && _lastPurchaseId != null)
+            _buildActionRow(
+              icon: Icons.restart_alt_rounded,
+              title: 'Сбросить тестовую покупку',
+              subtitle: 'Только для dev-проверки',
+              onTap: _deleteTestPurchase,
+            ),
+          _buildOneTimePurchaseRow(),
+        ]),
+      _buildSectionCard('Обратная связь', [
+        if (_showReviewSection)
+          _checkingRatingStatus
+              ? const Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Center(
+                    child: CircularProgressIndicator(),
+                  ),
+                )
+              : _buildReviewRow(),
+        _buildActionRow(
+          icon: Icons.support_agent_outlined,
+          title: 'Связаться с поддержкой',
+          subtitle: 'ahjkuio@gmail.com',
+          onTap: () => GoRouter.of(context).push('/support'),
+        ),
+      ]),
+      _buildSectionCard('Аккаунт', [
+        _buildActionRow(
+          icon: Icons.logout_rounded,
+          title: 'Выйти',
+          subtitle: 'Сменить аккаунт',
+          onTap: () async {
+            await _authService.signOut();
+            if (GetIt.I.isRegistered<TreeProvider>()) {
+              await GetIt.I<TreeProvider>().clearSelection();
+            }
+            if (mounted) {
+              context.go('/login');
+            }
+          },
+        ),
+      ]),
+      GlassPanel(
+        color: Theme.of(context)
+            .colorScheme
+            .errorContainer
+            .withValues(alpha: 0.6),
+        borderColor: Theme.of(context)
+            .colorScheme
+            .error
+            .withValues(alpha: 0.35),
+        child: _buildActionRow(
+          icon: Icons.delete_forever,
+          title: 'Удалить аккаунт',
+          subtitle: 'Это действие нельзя отменить',
+          onTap: _showDeleteAccountConfirmation,
+          destructive: true,
+        ),
+      ),
+    ];
   }
 
   Widget _buildSettingsHeader() {
