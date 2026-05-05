@@ -720,14 +720,24 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 right: 0,
                 bottom: 0,
                 width: 340,
-                child: SingleChildScrollView(
-                  child: _buildProfileSidebarColumn(
-                    theme: theme,
-                    scheme: scheme,
-                    tokens: tokens,
-                    selectedTreeId: selectedTreeId,
-                    selectedTreeName: selectedTreeName,
-                    isFriendsTree: isFriendsTree,
+                // Visible-on-scroll Scrollbar so when sidebar overflow
+                // happens (long tree-card / connection block / archive
+                // rail) the user has a visual handle on it. Without
+                // this the sidebar silently clipped at the bottom and
+                // felt broken on the wide layout.
+                child: Scrollbar(
+                  thumbVisibility: false,
+                  child: SingleChildScrollView(
+                    primary: false,
+                    physics: const ClampingScrollPhysics(),
+                    child: _buildProfileSidebarColumn(
+                      theme: theme,
+                      scheme: scheme,
+                      tokens: tokens,
+                      selectedTreeId: selectedTreeId,
+                      selectedTreeName: selectedTreeName,
+                      isFriendsTree: isFriendsTree,
+                    ),
                   ),
                 ),
               ),
@@ -1066,17 +1076,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          // Consistent 16dp rhythm between sidebar cards (was a mix of
+          // 12 and varying gaps that made the column feel busy).
           if (_selectedTreePerson != null) ...[
             _buildTreeCardCompact(
               context,
               person: _selectedTreePerson!,
               isFriendsTree: isFriendsTree,
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 16),
           ],
           if (_accountLinkingStatus != null) ...[
             _buildAccountSettingsLink(scheme, theme),
-            const SizedBox(height: 12),
+            const SizedBox(height: 16),
           ],
           if (_userProfile != null) ...[
             ProfileCompletionMeter(
@@ -1088,10 +1100,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 }
               },
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 16),
           ],
           _buildStoriesRailSection(),
-          const SizedBox(height: 12),
+          const SizedBox(height: 16),
           if (_profileCodeLabel() != null) ...[
             _buildProfileConnectionSection(
               selectedTreeId: selectedTreeId,

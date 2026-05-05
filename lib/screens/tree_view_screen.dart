@@ -248,6 +248,12 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
   @override
   void initState() {
     super.initState();
+    // Desktop convention — ESC clears the branch-focus / edit-selection
+    // state without forcing the user to reach for the toolbar pill.
+    // Same HardwareKeyboard pattern as the home / lightbox shortcuts:
+    // Focus.onKeyEvent is unreliable on Flutter web's CanvasKit, so we
+    // attach to the global handler instead.
+    HardwareKeyboard.instance.addHandler(_handleTreeKeyEvent);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _treeProviderInstance = Provider.of<TreeProvider>(context, listen: false);
       _treeProviderInstance!.addListener(_handleTreeChange); // Подписываемся
@@ -257,8 +263,32 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_handleTreeKeyEvent);
     _treeProviderInstance?.removeListener(_handleTreeChange); // Отписываемся
     super.dispose();
+  }
+
+  /// Returns true to consume the event so it doesn't bubble. We only
+  /// consume Esc when there's actually something to clear — otherwise
+  /// the back gesture / dialog dismissal still works as expected.
+  bool _handleTreeKeyEvent(KeyEvent event) {
+    if (!mounted || event is! KeyDownEvent) return false;
+    if (event.logicalKey != LogicalKeyboardKey.escape) return false;
+    final focused = FocusManager.instance.primaryFocus;
+    final inEditable = focused?.context?.widget is EditableText ||
+        (focused?.context != null &&
+            focused!.context!
+                    .findAncestorWidgetOfExactType<EditableText>() !=
+                null);
+    if (inEditable) return false;
+    final hadEditSelection = _selectedEditPersonId != null;
+    final hadBranchFocus = _branchRootPersonId != null;
+    if (!hadEditSelection && !hadBranchFocus) return false;
+    setState(() {
+      _selectedEditPersonId = null;
+      _branchRootPersonId = null;
+    });
+    return true;
   }
 
   Future<void> _syncTreeFromRouteOrProvider() async {
