@@ -425,7 +425,9 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!mounted) return;
     setState(() {
       _isLoadingPosts = true;
-      _postsUnavailable = false;
+      // Don't surface "feed unavailable" the moment we start loading —
+      // it'll flicker on every refresh. Only flip back if we actually
+      // have no posts to show after the call fails.
     });
     try {
       final posts = await _postService.getPosts(treeId: treeId);
@@ -433,6 +435,7 @@ class _HomeScreenState extends State<HomeScreen> {
         setState(() {
           _posts = posts;
           _isLoadingPosts = false;
+          _postsUnavailable = false;
         });
       }
     } catch (e) {
@@ -443,7 +446,11 @@ class _HomeScreenState extends State<HomeScreen> {
       );
       if (mounted) {
         setState(() {
-          _postsUnavailable = true;
+          // Keep the existing _posts list so the user still sees what
+          // they had cached / fetched previously. Only mark as
+          // unavailable when we have NOTHING to show — that's the
+          // case where the empty-state UI is the right answer.
+          _postsUnavailable = _posts.isEmpty;
           _isLoadingPosts = false;
         });
       }

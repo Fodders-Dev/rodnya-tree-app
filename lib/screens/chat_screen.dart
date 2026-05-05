@@ -3396,7 +3396,15 @@ class _ChatScreenState extends State<ChatScreen> {
           return const Center(child: CircularProgressIndicator());
         }
 
-        if (snapshot.hasError) {
+        // Stream errors fire on every API failure — including a
+        // simple offline state where we already have cached messages
+        // hydrated. If we have data, prefer to keep showing it and
+        // surface the error only via the OfflineIndicator banner +
+        // a quiet status snack on retry; full error screen only
+        // when we have NOTHING to show.
+        final hasCachedData =
+            snapshot.hasData && (snapshot.data?.isNotEmpty ?? false);
+        if (snapshot.hasError && !hasCachedData) {
           return Center(
             child: Padding(
               padding: const EdgeInsets.all(24),
@@ -3409,8 +3417,10 @@ class _ChatScreenState extends State<ChatScreen> {
                     children: [
                       const Icon(Icons.error_outline, size: 40),
                       const SizedBox(height: 12),
-                      const Text(
-                        'Не удалось загрузить сообщения.',
+                      Text(
+                        _appStatusService.isOffline
+                            ? 'Нет соединения. Сообщения появятся, когда интернет вернётся.'
+                            : 'Не удалось загрузить сообщения.',
                         textAlign: TextAlign.center,
                       ),
                       const SizedBox(height: 16),

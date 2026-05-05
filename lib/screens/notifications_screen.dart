@@ -348,7 +348,12 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       );
     }
 
-    if (_loadError != null) {
+    // Only show the full error screen when we have NOTHING to fall
+    // back on. If we already loaded notifications previously the
+    // user prefers to see that list rather than a "couldn't reach
+    // server" panel — the offline banner at the top of the app
+    // already communicates the state.
+    if (_loadError != null && _notifications.isEmpty) {
       return _NotificationsMessageState(
         icon: _appStatusService.isOffline
             ? Icons.cloud_off_outlined
