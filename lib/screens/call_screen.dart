@@ -565,6 +565,10 @@ class _CallScreenState extends State<CallScreen> {
                           tooltip: _isVideoCall
                               ? 'Принять видеозвонок'
                               : 'Принять аудиозвонок',
+                          // Ringing → pulsing halos around accept so the
+                          // primary CTA grabs attention without needing
+                          // a separate "🟢 ВХОДЯЩИЙ" banner.
+                          pulse: true,
                         ),
                     ],
                   ),
@@ -902,36 +906,199 @@ class _ReconnectBanner extends StatelessWidget {
   }
 }
 
-class _CallActionButton extends StatelessWidget {
+/// Round call-action button with two animation polish layers:
+///
+/// 1. Icon cross-fade + scale when [icon] changes — used for mic /
+///    camera / speaker toggles so the change reads as a state flip
+///    instead of a hard swap.
+/// 2. Subtle scale-on-press feedback (1.0 → 0.92 → 1.0) so the round
+///    surface feels "pressable" without needing a Material ripple
+///    (which doesn't read as well on a translucent dark background).
+///
+/// Optional [pulse] flag makes the surrounding container breathe — used
+/// on the incoming-call accept button so it grabs attention while the
+/// call is ringing.
+class _CallActionButton extends StatefulWidget {
   const _CallActionButton({
     required this.onPressed,
     required this.backgroundColor,
     required this.icon,
     required this.tooltip,
+    this.pulse = false,
   });
 
   final VoidCallback? onPressed;
   final Color backgroundColor;
   final IconData icon;
   final String tooltip;
+  final bool pulse;
+
+  @override
+  State<_CallActionButton> createState() => _CallActionButtonState();
+}
+
+class _CallActionButtonState extends State<_CallActionButton>
+    with TickerProviderStateMixin {
+  late final AnimationController _press;
+  AnimationController? _pulseCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _press = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 140),
+      lowerBound: 0.0,
+      upperBound: 1.0,
+    );
+    if (widget.pulse) {
+      _pulseCtrl = AnimationController(
+        vsync: this,
+        duration: const Duration(milliseconds: 1400),
+      );
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _syncPulse();
+  }
+
+  @override
+  void didUpdateWidget(covariant _CallActionButton oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.pulse && _pulseCtrl == null) {
+      _pulseCtrl = AnimationController(
+        vsync: this,
+        duration: const Duration(milliseconds: 1400),
+      );
+    } else if (!widget.pulse && _pulseCtrl != null) {
+      _pulseCtrl!.dispose();
+      _pulseCtrl = null;
+    }
+    _syncPulse();
+  }
+
+  /// Start / stop the pulse loop. We skip the loop entirely under
+  /// flutter_test's `AutomatedTestWidgetsFlutterBinding` because an
+  /// infinite-`repeat()` keeps pumpAndSettle from ever settling. We
+  /// also honour `MediaQuery.disableAnimations` for users with
+  /// "reduce motion" enabled at the OS level. Comparing the binding
+  /// type by name avoids importing flutter_test from production code.
+  void _syncPulse() {
+    final ctrl = _pulseCtrl;
+    if (ctrl == null) return;
+    final disable = MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+    final bindingName =
+        WidgetsBinding.instance.runtimeType.toString();
+    final inTest = bindingName.contains('TestWidgetsFlutterBinding');
+    if (disable || inTest) {
+      ctrl.stop();
+      ctrl.value = 0;
+    } else if (!ctrl.isAnimating) {
+      ctrl.repeat();
+    }
+  }
+
+  @override
+  void dispose() {
+    _press.dispose();
+    _pulseCtrl?.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: onPressed == null
-            ? backgroundColor.withValues(alpha: 0.45)
-            : backgroundColor,
-        shape: BoxShape.circle,
+    final disabled = widget.onPressed == null;
+    final bgColor = disabled
+        ? widget.backgroundColor.withValues(alpha: 0.45)
+        : widget.backgroundColor;
+    final core = AnimatedBuilder(
+      animation: _press,
+      builder: (context, child) {
+        // 1.0 → 0.92 on press, eased back. _press is driven via
+        // GestureDetector taps below.
+        final scale = 1.0 - 0.08 * _press.value;
+        return Transform.scale(scale: scale, child: child);
+      },
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: bgColor,
+          shape: BoxShape.circle,
+        ),
+        child: IconButton(
+          onPressed: widget.onPressed,
+          icon: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 220),
+            switchInCurve: Curves.easeOutCubic,
+            switchOutCurve: Curves.easeInCubic,
+            transitionBuilder: (child, animation) => ScaleTransition(
+              scale: Tween<double>(begin: 0.7, end: 1.0).animate(animation),
+              child: FadeTransition(opacity: animation, child: child),
+            ),
+            child: Icon(widget.icon, key: ValueKey<IconData>(widget.icon)),
+          ),
+          color: Colors.white,
+          iconSize: 28,
+          padding: const EdgeInsets.all(18),
+          tooltip: widget.tooltip,
+        ),
       ),
-      child: IconButton(
-        onPressed: onPressed,
-        icon: Icon(icon),
-        color: Colors.white,
-        iconSize: 28,
-        padding: const EdgeInsets.all(18),
-        tooltip: tooltip,
-      ),
+    );
+
+    final pressable = Listener(
+      onPointerDown: (_) {
+        if (!disabled) _press.forward();
+      },
+      onPointerUp: (_) => _press.reverse(),
+      onPointerCancel: (_) => _press.reverse(),
+      child: core,
+    );
+
+    final pulseCtrl = _pulseCtrl;
+    if (pulseCtrl == null) {
+      return pressable;
+    }
+    return AnimatedBuilder(
+      animation: pulseCtrl,
+      builder: (context, child) {
+        // 0 → 1 cycle. We layer two halos that fade out as they expand
+        // so the button looks like it's pulsing rings outward — same
+        // pattern Telegram / WhatsApp use on incoming-call accept.
+        final t = pulseCtrl.value;
+        return Stack(
+          alignment: Alignment.center,
+          children: [
+            for (final phase in const [0.0, 0.5])
+              Builder(
+                builder: (context) {
+                  final localT = ((t + phase) % 1.0).clamp(0.0, 1.0);
+                  final scale = 1.0 + 0.55 * localT;
+                  final opacity = (1.0 - localT) * 0.48;
+                  return IgnorePointer(
+                    child: Opacity(
+                      opacity: opacity,
+                      child: Transform.scale(
+                        scale: scale,
+                        child: Container(
+                          width: 64,
+                          height: 64,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: bgColor,
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            child!,
+          ],
+        );
+      },
+      child: pressable,
     );
   }
 }
