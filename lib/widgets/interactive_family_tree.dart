@@ -2417,7 +2417,25 @@ class _TreeLayoutEngine {
       ..sort((a, b) => _comparePersons(peopleById[a]!, peopleById[b]!));
     final queue = <String>[...(roots.isNotEmpty ? roots : component)];
 
+    // Cycle / runaway-loop guard. The BFS re-enqueues whenever a
+    // spouse / sibling / child level disagrees, so a malformed graph
+    // (e.g. user accidentally added "X is parent of Y" AND "Y is
+    // parent of X") can loop forever. Worst-case stable BFS visits
+    // each node O(component.size) times — anything beyond that is a
+    // cycle, so we just bail with the levels we have.
+    final maxBfsSteps = component.length * 16 + 16;
+    var bfsSteps = 0;
     while (queue.isNotEmpty) {
+      bfsSteps += 1;
+      if (bfsSteps > maxBfsSteps) {
+        debugPrint(
+          'InteractiveFamilyTree._assignLevels: BFS exceeded '
+          'safety cap ($maxBfsSteps) — likely cyclic relations. '
+          'Falling back to current level assignments.',
+        );
+        break;
+      }
+
       final currentId = queue.removeAt(0);
       final currentLevel = levels[currentId] ?? 0;
       levels[currentId] = currentLevel;

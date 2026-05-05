@@ -24,9 +24,18 @@ abstract class TreeGraphCache {
 }
 
 class HiveTreeGraphCache implements TreeGraphCache {
-  HiveTreeGraphCache({this.boxName = 'tree_graph_v1'});
+  HiveTreeGraphCache({
+    this.boxName = 'tree_graph_v1',
+    this.maxEntries = 12,
+  });
 
   final String boxName;
+
+  /// Soft cap on cached trees. A user typically owns 1–3 trees plus a
+  /// handful they're a member of; 12 is a generous cushion that
+  /// keeps the on-disk size bounded.
+  final int maxEntries;
+
   Future<Box<String>>? _openTask;
 
   Future<Box<String>> _box() {
@@ -56,8 +65,23 @@ class HiveTreeGraphCache implements TreeGraphCache {
     final trimmed = treeId.trim();
     if (trimmed.isEmpty) return;
     try {
-      await (await _box()).put(trimmed, jsonEncode(snapshotJson));
+      final box = await _box();
+      if (box.containsKey(trimmed)) {
+        await box.delete(trimmed);
+      }
+      await box.put(trimmed, jsonEncode(snapshotJson));
+      await _evictExcess(box);
     } catch (_) {}
+  }
+
+  Future<void> _evictExcess(Box<String> box) async {
+    if (maxEntries <= 0) return;
+    final overflow = box.length - maxEntries;
+    if (overflow <= 0) return;
+    final keysToEvict = box.keys.take(overflow).toList(growable: false);
+    for (final key in keysToEvict) {
+      await box.delete(key);
+    }
   }
 
   @override

@@ -232,6 +232,26 @@ class CustomApiAuthService implements AuthServiceInterface {
   Future<void>? _refreshTask;
   GoogleSignIn? _googleSignIn;
   StreamController<void>? _googleWebAuthenticationController;
+
+  /// Hooks fired AFTER the backend has been told the user is signing
+  /// out, but BEFORE the local session is cleared. Lets services
+  /// like push registration drop their backend records while they
+  /// still have a valid access token to authenticate the call.
+  /// `unregisterAllPushDevicesForSignOut()` is the canonical hook.
+  final List<Future<void> Function()> _preSignOutHooks =
+      <Future<void> Function()>[];
+
+  /// Register a pre-sign-out hook. Hooks run sequentially before
+  /// `_clearSession`; failures in one hook do not block the others.
+  void registerPreSignOutHook(Future<void> Function() hook) {
+    if (!_preSignOutHooks.contains(hook)) {
+      _preSignOutHooks.add(hook);
+    }
+  }
+
+  void unregisterPreSignOutHook(Future<void> Function() hook) {
+    _preSignOutHooks.remove(hook);
+  }
   StreamSubscription<GoogleSignInAccount?>? _googleWebAccountSubscription;
 
   static Future<CustomApiAuthService> create({
@@ -861,6 +881,19 @@ class CustomApiAuthService implements AuthServiceInterface {
   @override
   Future<void> signOut() async {
     final currentToken = accessToken;
+
+    // Run any pre-sign-out hooks WHILE we still have a valid access
+    // token. Push-device cleanup is the canonical case: without
+    // this the backend keeps the token registered forever and pushes
+    // for the previous user keep landing on this device.
+    for (final hook in List<Future<void> Function()>.from(_preSignOutHooks)) {
+      try {
+        await hook();
+      } catch (error, stackTrace) {
+        debugPrint('Pre-sign-out hook failed: $error\n$stackTrace');
+      }
+    }
+
     if (currentToken != null && currentToken.isNotEmpty) {
       try {
         await _httpClient.post(

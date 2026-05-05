@@ -142,4 +142,16 @@ flutter {
 
 dependencies {
     coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.5"
+
+    // RuStore push SDK exposed to app code so we can subclass
+    // RuStoreMessagingService directly and build a fullscreen-intent
+    // notification for incoming calls when the app is fully killed.
+    // The flutter_rustore_push plugin keeps the same artifact as
+    // `implementation` (its own use only) — adding it here makes the
+    // service / model classes visible to our own Kotlin sources.
+    // Version pinned to the plugin's bundled version to avoid
+    // duplicate-class errors at merge time.
+    implementation "ru.rustore.sdk:pushclient:6.5.0"
+
+    implementation "androidx.core:core-ktx:1.13.1"
 }

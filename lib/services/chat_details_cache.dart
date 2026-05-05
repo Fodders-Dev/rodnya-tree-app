@@ -23,9 +23,19 @@ abstract class ChatDetailsCache {
 }
 
 class HiveChatDetailsCache implements ChatDetailsCache {
-  HiveChatDetailsCache({this.boxName = 'chat_details_v1'});
+  HiveChatDetailsCache({
+    this.boxName = 'chat_details_v1',
+    this.maxEntries = 80,
+  });
 
   final String boxName;
+
+  /// Soft cap on the number of cached chats. After each write we
+  /// drop the oldest-INSERTED entries beyond this. Approximates LRU
+  /// well enough since chat-details writes happen on chat open, so
+  /// recently opened chats sit at the back of the keyset.
+  final int maxEntries;
+
   Future<Box<String>>? _openTask;
 
   Future<Box<String>> _box() {
@@ -56,9 +66,27 @@ class HiveChatDetailsCache implements ChatDetailsCache {
     final trimmed = chatId.trim();
     if (trimmed.isEmpty) return;
     try {
-      await (await _box()).put(trimmed, jsonEncode(details.toMap()));
+      final box = await _box();
+      // Re-insert puts the entry at the END of the keyset (Hive
+      // returns keys in insertion order). On next eviction this
+      // entry is the freshest so it survives.
+      if (box.containsKey(trimmed)) {
+        await box.delete(trimmed);
+      }
+      await box.put(trimmed, jsonEncode(details.toMap()));
+      await _evictExcess(box);
     } catch (_) {
       // Best-effort — never fail the foreground call because of cache.
+    }
+  }
+
+  Future<void> _evictExcess(Box<String> box) async {
+    if (maxEntries <= 0) return;
+    final overflow = box.length - maxEntries;
+    if (overflow <= 0) return;
+    final keysToEvict = box.keys.take(overflow).toList(growable: false);
+    for (final key in keysToEvict) {
+      await box.delete(key);
     }
   }
 

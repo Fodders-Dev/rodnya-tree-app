@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:intl/date_symbol_data_local.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../backend/backend_provider_config.dart';
 import '../backend/backend_provider_registry.dart';
@@ -42,6 +43,7 @@ import 'notifications_cache.dart';
 import 'posts_cache.dart';
 import 'tree_graph_cache.dart';
 import 'user_profile_cache.dart';
+import 'battery_optimization_advisor.dart';
 import 'chat_draft_store.dart';
 import 'chat_pin_store.dart';
 import 'chat_send_queue.dart';
@@ -275,6 +277,27 @@ class AppStartupService implements AppStartupServiceInterface {
       customApiNotificationService,
     );
 
+    // Drop the device from the backend's push registry the moment
+    // the user signs out — must happen WHILE we still hold a valid
+    // access token, otherwise the DELETE call returns 401 and the
+    // backend keeps stacking devices forever.
+    customApiAuthService.registerPreSignOutHook(
+      customApiNotificationService.unregisterAllPushDevicesForSignOut,
+    );
+
+    // Battery-optimization advisor: detects Xiaomi/Huawei/Oppo etc.
+    // so the UI can prompt the user to whitelist us in autostart.
+    // We register the prepared instance synchronously after
+    // resolving SharedPreferences once, since the advisor itself
+    // doesn't take an async constructor.
+    final batteryAdvisorPreferences =
+        await SharedPreferences.getInstance();
+    _registerOrReplaceSingleton<BatteryOptimizationAdvisor>(
+      BatteryOptimizationAdvisor(
+        preferences: batteryAdvisorPreferences,
+      ),
+    );
+
     final customApiPostService = CustomApiPostService(
       authService: customApiAuthService,
       runtimeConfig: runtimeConfig,
@@ -336,6 +359,17 @@ class AppStartupService implements AppStartupServiceInterface {
             rustoreService: rustoreService,
             storefrontConfig: storefrontConfig,
           ),
+        ),
+        // Initialize the notification plugin EARLY (before auth) so the
+        // POST_NOTIFICATIONS runtime prompt + channel registration
+        // happen on first launch even for users that never sign in.
+        // Without this, Android 13+ never gets the prompt, the
+        // permission stays denied by default, and pushes silently
+        // never display in the system tray.
+        StartupPhaseTask(
+          phase: StartupPhase.featureLazy,
+          label: 'notifications-initialize',
+          run: (_) => customApiNotificationService.initialize(),
         ),
         StartupPhaseTask(
           phase: StartupPhase.authenticatedDeferred,

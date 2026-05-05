@@ -13,6 +13,7 @@ import '../services/event_service.dart';
 import '../models/app_event.dart';
 import '../models/family_tree.dart';
 
+import '../widgets/battery_optimization_card.dart';
 import '../widgets/event_card.dart';
 import 'package:get_it/get_it.dart';
 import '../backend/interfaces/auth_service_interface.dart';
@@ -722,6 +723,7 @@ class _HomeScreenState extends State<HomeScreen> {
           constraints: const BoxConstraints(maxWidth: 720),
           child: CustomScrollView(
             slivers: [
+              const SliverToBoxAdapter(child: BatteryOptimizationCard()),
               if (pendingInvitations.isNotEmpty)
                 SliverToBoxAdapter(
                   child: _buildPendingInvitationsBanner(pendingInvitations),
@@ -761,6 +763,7 @@ class _HomeScreenState extends State<HomeScreen> {
         constraints: const BoxConstraints(maxWidth: 1180),
         child: CustomScrollView(
           slivers: [
+            const SliverToBoxAdapter(child: BatteryOptimizationCard()),
             if (pendingInvitations.isNotEmpty)
               SliverToBoxAdapter(
                 child: _buildPendingInvitationsBanner(pendingInvitations),

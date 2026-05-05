@@ -31,9 +31,19 @@ abstract class UserProfileCache {
 }
 
 class HiveUserProfileCache implements UserProfileCache {
-  HiveUserProfileCache({this.boxName = 'user_profile_v1'});
+  HiveUserProfileCache({
+    this.boxName = 'user_profile_v1',
+    this.maxEntries = 6,
+  });
 
   final String boxName;
+
+  /// Soft cap on cached user profiles. We only ever cache the current
+  /// user's profile, but keep room for a few past users to handle
+  /// account-switching without re-network on the immediate next
+  /// signin to a recently-used account.
+  final int maxEntries;
+
   Future<Box<String>>? _openTask;
 
   Future<Box<String>> _box() {
@@ -65,9 +75,24 @@ class HiveUserProfileCache implements UserProfileCache {
   Future<void> write(UserProfile profile) async {
     if (profile.id.isEmpty) return;
     try {
-      await (await _box()).put(profile.id, jsonEncode(profile.toMap()));
+      final box = await _box();
+      if (box.containsKey(profile.id)) {
+        await box.delete(profile.id);
+      }
+      await box.put(profile.id, jsonEncode(profile.toMap()));
+      await _evictExcess(box);
     } catch (_) {
       // Best-effort.
+    }
+  }
+
+  Future<void> _evictExcess(Box<String> box) async {
+    if (maxEntries <= 0) return;
+    final overflow = box.length - maxEntries;
+    if (overflow <= 0) return;
+    final keysToEvict = box.keys.take(overflow).toList(growable: false);
+    for (final key in keysToEvict) {
+      await box.delete(key);
     }
   }
 

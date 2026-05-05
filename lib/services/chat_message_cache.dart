@@ -36,9 +36,17 @@ abstract class ChatMessageCache {
 class HiveChatMessageCache implements ChatMessageCache {
   HiveChatMessageCache({
     this.boxName = 'chat_messages_v1',
+    this.maxChats = 120,
   });
 
   final String boxName;
+
+  /// Soft cap on the number of distinct chats whose history we keep on
+  /// disk. Each entry already trims to ~200 messages by `keepCount`,
+  /// so the worst case here is ~120 × 200 ≈ 24 000 messages, plenty
+  /// for the UI without unbounded disk growth.
+  final int maxChats;
+
   Future<Box<String>>? _openTask;
 
   Future<Box<String>> _box() {
@@ -89,12 +97,29 @@ class HiveChatMessageCache implements ChatMessageCache {
     }
 
     final normalizedMessages = _trimmedMessages(messages, keepCount: keepCount);
-    await (await _box()).put(
+    final box = await _box();
+    if (box.containsKey(normalizedChatId)) {
+      // Re-insert moves the entry to the back of the keyset so it
+      // survives the next eviction sweep.
+      await box.delete(normalizedChatId);
+    }
+    await box.put(
       normalizedChatId,
       jsonEncode(
         normalizedMessages.map(_messageToJson).toList(growable: false),
       ),
     );
+    await _evictExcess(box);
+  }
+
+  Future<void> _evictExcess(Box<String> box) async {
+    if (maxChats <= 0) return;
+    final overflow = box.length - maxChats;
+    if (overflow <= 0) return;
+    final keysToEvict = box.keys.take(overflow).toList(growable: false);
+    for (final key in keysToEvict) {
+      await box.delete(key);
+    }
   }
 
   @override

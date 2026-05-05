@@ -23,9 +23,18 @@ abstract class PostsCache {
 }
 
 class HivePostsCache implements PostsCache {
-  HivePostsCache({this.boxName = 'posts_v1'});
+  HivePostsCache({
+    this.boxName = 'posts_v1',
+    this.maxKeys = 30,
+  });
 
   final String boxName;
+
+  /// Soft cap on the number of distinct keys (trees + per-user-profile
+  /// scopes). Each key holds up to 100 posts, so the worst case here
+  /// is ~30 × 100 ≈ 3 000 cached posts on disk.
+  final int maxKeys;
+
   Future<Box<String>>? _openTask;
 
   Future<Box<String>> _box() {
@@ -62,11 +71,28 @@ class HivePostsCache implements PostsCache {
       // as the user scrolls, no need to keep an unbounded list on
       // disk.
       final capped = posts.take(100).toList(growable: false);
-      await (await _box()).put(
+      final box = await _box();
+      if (box.containsKey(trimmed)) {
+        // Re-insert: bump this key to the back of the keyset so it
+        // counts as freshest on the next eviction sweep.
+        await box.delete(trimmed);
+      }
+      await box.put(
         trimmed,
         jsonEncode(capped.map((p) => p.toJson()).toList(growable: false)),
       );
+      await _evictExcess(box);
     } catch (_) {}
+  }
+
+  Future<void> _evictExcess(Box<String> box) async {
+    if (maxKeys <= 0) return;
+    final overflow = box.length - maxKeys;
+    if (overflow <= 0) return;
+    final keysToEvict = box.keys.take(overflow).toList(growable: false);
+    for (final key in keysToEvict) {
+      await box.delete(key);
+    }
   }
 
   @override

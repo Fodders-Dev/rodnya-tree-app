@@ -87,6 +87,8 @@ class CustomApiNotificationService implements NotificationServiceInterface {
       'custom_api_delivered_notification_ids_v1';
   static const String _registeredPushTokenStorageKey =
       'custom_api_registered_push_token_v1';
+  static const String _registeredRemotePushDeviceIdStorageKey =
+      'custom_api_registered_remote_push_device_id_v1';
   static const String _notificationsEnabledStorageKey =
       'custom_api_notifications_enabled_v1';
   static const String _registeredBrowserPushDeviceIdStorageKey =
@@ -867,6 +869,23 @@ class CustomApiNotificationService implements NotificationServiceInterface {
       return;
     }
 
+    // Pre-existing device for an OLD user/token combo — drop it from
+    // the backend before registering the fresh one. Otherwise the
+    // backend keeps stacking devices forever (account → re-login →
+    // new userId or token rotation), which is both a privacy leak
+    // and a wasted-quota issue: pushes meant for the previous owner
+    // would still hit this physical device.
+    final previousDeviceId = _preferences.getString(
+      _registeredRemotePushDeviceIdStorageKey,
+    );
+    if (previousDeviceId != null && previousDeviceId.isNotEmpty) {
+      try {
+        await _deletePushDevice(previousDeviceId);
+      } catch (error) {
+        debugPrint('Failed to delete previous push device: $error');
+      }
+    }
+
     final response = await _httpClient.post(
       _buildUri(runtimeConfig, '/v1/push/devices'),
       headers: _headers(accessToken),
@@ -876,7 +895,15 @@ class CustomApiNotificationService implements NotificationServiceInterface {
         'platform': defaultTargetPlatform.name,
       }),
     );
-    _decodeResponse(response);
+    final payload = _decodeResponse(response);
+    final device = _asStringDynamicMap(payload['device']);
+    final deviceId = device['id']?.toString() ?? '';
+    if (deviceId.isNotEmpty) {
+      await _preferences.setString(
+        _registeredRemotePushDeviceIdStorageKey,
+        deviceId,
+      );
+    }
 
     await _preferences.setString(
       _registeredPushTokenStorageKey,
@@ -1020,12 +1047,49 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     await _preferences.remove(_registeredBrowserPushTokenStorageKey);
   }
 
-  Future<void> _deletePushDevice(String deviceId) async {
+  Future<void> _unregisterRemotePushDevice() async {
+    if (kIsWeb) {
+      return;
+    }
+
+    final deviceId =
+        _preferences.getString(_registeredRemotePushDeviceIdStorageKey);
+    if (deviceId != null && deviceId.isNotEmpty) {
+      try {
+        await _deletePushDevice(deviceId);
+      } catch (error) {
+        debugPrint(
+          'Failed to delete remote push device on signOut: $error',
+        );
+      }
+    }
+
+    await _preferences.remove(_registeredRemotePushDeviceIdStorageKey);
+    // Also drop the fingerprint so the next signin re-registers fresh
+    // (registerRemotePushDevice short-circuits when the fingerprint
+    // matches, which would otherwise skip registration after we just
+    // deleted the backend record).
+    await _preferences.remove(_registeredPushTokenStorageKey);
+  }
+
+  /// Public hook called from app startup's auth-state listener when
+  /// the user signs out (or the session is force-revoked). Removes
+  /// THIS device from the backend's push registry on both the mobile
+  /// (RuStore) and web (VAPID) channels — without it the previous
+  /// user's pushes would keep hitting the device until the token
+  /// itself rotated.
+  Future<void> unregisterAllPushDevicesForSignOut() async {
+    await Future.wait<void>([
+      _unregisterRemotePushDevice(),
+      _unregisterBrowserPushDevice(),
+    ]);
+  }
+
+  Future<void> _deletePushDevice(String deviceId, {String? overrideToken}) async {
     final authService = _authService;
     final runtimeConfig = _runtimeConfig;
-    final accessToken = authService?.accessToken;
-    if (authService == null ||
-        runtimeConfig == null ||
+    final accessToken = overrideToken ?? authService?.accessToken;
+    if (runtimeConfig == null ||
         accessToken == null ||
         accessToken.isEmpty) {
       return;
