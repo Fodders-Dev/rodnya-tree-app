@@ -1,5 +1,6 @@
 // ignore_for_file: unused_field
 import 'dart:async';
+import 'dart:ui';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart';
@@ -5375,16 +5376,14 @@ class _ChatScreenState extends State<ChatScreen> {
         ],
       );
     } else {
-      selection = await showModalBottomSheet<_MessageSheetSelection>(
+      selection = await showBlurredActionsSheet<_MessageSheetSelection>(
         context: context,
-        showDragHandle: true,
-        builder: (context) => SafeArea(
-          child: SingleChildScrollView(
+        builder: (context) => SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                   child: Align(
                     alignment: Alignment.centerLeft,
                     child: Text(
@@ -5505,7 +5504,6 @@ class _ChatScreenState extends State<ChatScreen> {
               ],
             ),
           ),
-        ),
       );
     }
     if (!mounted || selection == null) {
@@ -5605,13 +5603,12 @@ class _ChatScreenState extends State<ChatScreen> {
         ],
       );
     } else {
-      action = await showModalBottomSheet<_MessageAction>(
+      action = await showBlurredActionsSheet<_MessageAction>(
         context: context,
-        showDragHandle: true,
-        builder: (context) => SafeArea(
-          child: Column(
+        builder: (context) => Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              const SizedBox(height: 8),
               ListTile(
                 leading: const Icon(Icons.reply_rounded),
                 title: const Text('Ответить'),
@@ -5645,9 +5642,9 @@ class _ChatScreenState extends State<ChatScreen> {
                   title: const Text('Убрать из очереди'),
                   onTap: () => Navigator.of(context).pop(_MessageAction.delete),
                 ),
+              const SizedBox(height: 8),
             ],
           ),
-        ),
       );
     }
     if (!mounted || action == null) {
@@ -7835,14 +7832,19 @@ class _ChatBubble extends StatelessWidget {
                             //   read by anyone  → double tick in a calm
                             //                     blue (cuts through the
                             //                     accent-green bubble bg)
-                            Icon(
-                              isRead || isDelivered
-                                  ? Icons.done_all
-                                  : Icons.done,
-                              size: 14,
-                              color: isRead
-                                  ? const Color(0xFF6FC4FF)
-                                  : scheme.onPrimary.withValues(alpha: 0.72),
+                            //
+                            // AnimatedSwitcher cross-fades + scales the
+                            // icon as the state ladder advances, and
+                            // AnimatedDefaultTextStyle isn't quite the
+                            // right tool for icon-color so we read
+                            // status into a key that the switcher uses
+                            // to decide when to swap.
+                            _ReadReceiptTick(
+                              isRead: isRead,
+                              isDelivered: isDelivered,
+                              readColor: const Color(0xFF6FC4FF),
+                              dimColor: scheme.onPrimary
+                                  .withValues(alpha: 0.72),
                             ),
                           ],
                         ],

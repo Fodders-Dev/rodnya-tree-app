@@ -2163,6 +2163,158 @@ class _AttachmentVideoPlayerState extends State<_AttachmentVideoPlayer> {
   }
 }
 
+/// Telegram-style read receipt that animates as the message walks the
+/// status ladder: pending (no tick — handled in caller) → sent (single
+/// ✓) → delivered (✓✓ faded) → read (✓✓ blue). [AnimatedSwitcher]
+/// cross-fades + scales whenever the state actually changes; identical
+/// repaints (same status) keep the existing icon mounted.
+class _ReadReceiptTick extends StatelessWidget {
+  const _ReadReceiptTick({
+    required this.isRead,
+    required this.isDelivered,
+    required this.readColor,
+    required this.dimColor,
+  });
+
+  final bool isRead;
+  final bool isDelivered;
+  final Color readColor;
+  final Color dimColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final IconData icon;
+    final Color color;
+    final String stateKey;
+    if (isRead) {
+      icon = Icons.done_all;
+      color = readColor;
+      stateKey = 'read';
+    } else if (isDelivered) {
+      icon = Icons.done_all;
+      color = dimColor;
+      stateKey = 'delivered';
+    } else {
+      icon = Icons.done;
+      color = dimColor;
+      stateKey = 'sent';
+    }
+
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 220),
+      switchInCurve: Curves.easeOutCubic,
+      switchOutCurve: Curves.easeInCubic,
+      transitionBuilder: (child, animation) {
+        // Scale-in from 0.6 + fade so the upgrade from ✓ → ✓✓ /
+        // delivered → read reads as a deliberate beat. We set
+        // AlignmentGeometry.center so the icon doesn't slide.
+        return ScaleTransition(
+          scale: Tween<double>(begin: 0.6, end: 1.0).animate(animation),
+          child: FadeTransition(opacity: animation, child: child),
+        );
+      },
+      child: Icon(
+        icon,
+        key: ValueKey<String>('read-receipt-$stateKey'),
+        size: 14,
+        color: color,
+      ),
+    );
+  }
+}
+
+/// Telegram-style "long-press → context menu" route: backdrop blur
+/// grows from 0 to 14, dim grows from 0 to 32% black, the action card
+/// slides up 25% + fades in. Used for both incoming and outgoing
+/// message-action sheets so the touch interaction reads as premium
+/// instead of "yet another bottom sheet".
+///
+/// API mirrors [showModalBottomSheet] — pass a builder, dismiss via
+/// `Navigator.of(context).pop(value)` from inside, await the future.
+/// `padding` controls the gap from the bottom edge so the card lifts
+/// above the system safe-area / bottom nav.
+Future<T?> showBlurredActionsSheet<T>({
+  required BuildContext context,
+  required WidgetBuilder builder,
+}) {
+  return showGeneralDialog<T>(
+    context: context,
+    barrierDismissible: true,
+    barrierLabel: 'Закрыть',
+    barrierColor: Colors.transparent,
+    transitionDuration: const Duration(milliseconds: 240),
+    pageBuilder: (context, animation, secondary) {
+      return SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(8, 0, 8, 12),
+          child: Align(
+            alignment: Alignment.bottomCenter,
+            child: Material(
+              color: Theme.of(context).colorScheme.surface,
+              elevation: 18,
+              shadowColor: Colors.black.withValues(alpha: 0.35),
+              borderRadius: BorderRadius.circular(24),
+              clipBehavior: Clip.antiAlias,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 540),
+                child: builder(context),
+              ),
+            ),
+          ),
+        ),
+      );
+    },
+    transitionBuilder: (context, animation, secondary, child) {
+      // We control three things: backdrop blur sigma, dim alpha, and
+      // the card's slide-up + fade. AnimatedBuilder rebuilds the blur
+      // every frame; the card itself nests cheap transitions.
+      final eased = CurvedAnimation(
+        parent: animation,
+        curve: Curves.easeOutCubic,
+        reverseCurve: Curves.easeInCubic,
+      );
+      return AnimatedBuilder(
+        animation: eased,
+        builder: (context, _) {
+          final t = eased.value;
+          return Stack(
+            children: [
+              // Backdrop blur grows / shrinks with the route — same
+              // pattern Telegram / iMessage use to draw attention to
+              // the floating action card.
+              Positioned.fill(
+                child: IgnorePointer(
+                  ignoring: true,
+                  child: BackdropFilter(
+                    filter: ImageFilter.blur(
+                      sigmaX: 14 * t,
+                      sigmaY: 14 * t,
+                    ),
+                    child: Container(
+                      color: Colors.black.withValues(alpha: 0.32 * t),
+                    ),
+                  ),
+                ),
+              ),
+              FadeTransition(
+                opacity: animation,
+                child: SlideTransition(
+                  position: Tween<Offset>(
+                    begin: const Offset(0, 0.20),
+                    end: Offset.zero,
+                  ).animate(eased),
+                  child: child,
+                ),
+              ),
+            ],
+          );
+        },
+      );
+    },
+  );
+}
+
 /// Composer-bar slot with smooth show / hide. Wraps a reply / edit /
 /// forward bar in [AnimatedSize] (row-height grow) + [AnimatedSwitcher]
 /// (cross-fade + slide-down for the bar itself). When [show] flips on
