@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:hive/hive.dart';
 
 import '../models/app_notification_item.dart';
+import 'hive_box_recovery.dart';
 
 /// On-disk cache for the notifications inbox.
 ///
@@ -29,10 +30,7 @@ class HiveNotificationsCache implements NotificationsCache {
   Future<Box<String>>? _openTask;
 
   Future<Box<String>> _box() {
-    if (Hive.isBoxOpen(boxName)) {
-      return Future<Box<String>>.value(Hive.box<String>(boxName));
-    }
-    return _openTask ??= Hive.openBox<String>(boxName);
+    return _openTask ??= openBoxWithRecovery<String>(boxName);
   }
 
   @override

@@ -3,6 +3,8 @@ import 'dart:convert';
 
 import 'package:hive/hive.dart';
 
+import 'hive_box_recovery.dart';
+
 /// On-disk cache for the family-tree graph snapshot keyed by treeId.
 ///
 /// We persist the raw API JSON map (the value of `response['snapshot']`)
@@ -39,10 +41,7 @@ class HiveTreeGraphCache implements TreeGraphCache {
   Future<Box<String>>? _openTask;
 
   Future<Box<String>> _box() {
-    if (Hive.isBoxOpen(boxName)) {
-      return Future<Box<String>>.value(Hive.box<String>(boxName));
-    }
-    return _openTask ??= Hive.openBox<String>(boxName);
+    return _openTask ??= openBoxWithRecovery<String>(boxName);
   }
 
   @override

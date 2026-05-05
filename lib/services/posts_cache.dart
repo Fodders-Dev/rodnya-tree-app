@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:hive/hive.dart';
 
 import '../models/post.dart';
+import 'hive_box_recovery.dart';
 
 /// Per-tree posts cache.
 ///
@@ -38,10 +39,7 @@ class HivePostsCache implements PostsCache {
   Future<Box<String>>? _openTask;
 
   Future<Box<String>> _box() {
-    if (Hive.isBoxOpen(boxName)) {
-      return Future<Box<String>>.value(Hive.box<String>(boxName));
-    }
-    return _openTask ??= Hive.openBox<String>(boxName);
+    return _openTask ??= openBoxWithRecovery<String>(boxName);
   }
 
   @override

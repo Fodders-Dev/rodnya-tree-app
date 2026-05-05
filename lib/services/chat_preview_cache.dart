@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:hive/hive.dart';
 
 import '../models/chat_preview.dart';
+import 'hive_box_recovery.dart';
 
 /// Cache layer for the chat list previews.
 ///
@@ -26,10 +27,7 @@ class HiveChatPreviewCache implements ChatPreviewCache {
   Future<Box<String>>? _openTask;
 
   Future<Box<String>> _box() {
-    if (Hive.isBoxOpen(boxName)) {
-      return Future<Box<String>>.value(Hive.box<String>(boxName));
-    }
-    return _openTask ??= Hive.openBox<String>(boxName);
+    return _openTask ??= openBoxWithRecovery<String>(boxName);
   }
 
   @override

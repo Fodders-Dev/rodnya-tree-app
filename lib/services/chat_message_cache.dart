@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:hive/hive.dart';
 
 import '../models/chat_message.dart';
+import 'hive_box_recovery.dart';
 
 abstract class ChatMessageCache {
   Future<List<ChatMessage>> read(String chatId);
@@ -50,10 +51,7 @@ class HiveChatMessageCache implements ChatMessageCache {
   Future<Box<String>>? _openTask;
 
   Future<Box<String>> _box() {
-    if (Hive.isBoxOpen(boxName)) {
-      return Future<Box<String>>.value(Hive.box<String>(boxName));
-    }
-    return _openTask ??= Hive.openBox<String>(boxName);
+    return _openTask ??= openBoxWithRecovery<String>(boxName);
   }
 
   @override
