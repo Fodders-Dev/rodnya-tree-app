@@ -1529,64 +1529,49 @@ class _AuthScreenState extends State<AuthScreen> {
                 ),
                 const SizedBox(height: 10),
               ],
-              // Two equal-width buttons in a Row gives a clean grid the
-              // way the reference does. MAX is intentionally hidden until
-              // the MAX OAuth handshake actually lands — the variable
-              // _startMaxSignIn / _isMaxLoading are kept for when that
-              // ships.
+              // Three round social chips with the label *below* the
+              // circle, sized to fit on a Samsung-mid 360dp width
+              // without text wrapping. The previous OutlinedButton.icon
+              // layout squeezed icon + horizontal label into ~96dp
+              // each which broke "Telegram" / "Google" into vertical
+              // letter columns. Circle-on-top keeps text on a single
+              // line at any sane phone width.
               Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
                   if (!kIsWeb)
-                    Expanded(
-                      child: buildGoogleSignInAction(
-                        theme: theme,
-                        isLoading: _isGoogleLoading,
-                        enabled: !_isLoading &&
-                            !_isTelegramLoading &&
-                            !_isVkLoading &&
-                            _supportsGoogleAuth,
-                        onPressed: _supportsGoogleAuth
-                            ? _signInWithGoogle
-                            : () => _showPlannedSocialAuthMessage('Google'),
-                      ),
+                    _SocialAuthChip(
+                      label: 'Google',
+                      icon: Icons.g_mobiledata_rounded,
+                      isLoading: _isGoogleLoading,
+                      onTap: () {
+                        if (_isLoading ||
+                            _isTelegramLoading ||
+                            _isVkLoading) {
+                          return;
+                        }
+                        if (_supportsGoogleAuth) {
+                          _signInWithGoogle();
+                        } else {
+                          _showPlannedSocialAuthMessage('Google');
+                        }
+                      },
                     ),
-                  if (!kIsWeb) const SizedBox(width: 10),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: _isLoading || _isAnySocialLoading
-                          ? null
-                          : _startTelegramSignIn,
-                      icon: _isTelegramLoading
-                          ? SizedBox(
-                              height: 18,
-                              width: 18,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: theme.colorScheme.primary,
-                              ),
-                            )
-                          : const Icon(Icons.send_outlined),
-                      label: const Text('Telegram'),
-                    ),
+                  _SocialAuthChip(
+                    label: 'Telegram',
+                    icon: Icons.send_rounded,
+                    isLoading: _isTelegramLoading,
+                    onTap: _isLoading || _isAnySocialLoading
+                        ? null
+                        : _startTelegramSignIn,
                   ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: _isLoading || _isAnySocialLoading
-                          ? null
-                          : _startVkSignIn,
-                      icon: _isVkLoading
-                          ? SizedBox(
-                              height: 18,
-                              width: 18,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: theme.colorScheme.primary,
-                              ),
-                            )
-                          : const Icon(Icons.alternate_email_outlined),
-                      label: const Text('VK ID'),
-                    ),
+                  _SocialAuthChip(
+                    label: 'VK ID',
+                    icon: Icons.alternate_email_rounded,
+                    isLoading: _isVkLoading,
+                    onTap: _isLoading || _isAnySocialLoading
+                        ? null
+                        : _startVkSignIn,
                   ),
                 ],
               ),
@@ -1909,4 +1894,87 @@ class _AuthHeroTreePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _AuthHeroTreePainter oldDelegate) => false;
+}
+
+/// Round-icon-with-label-below social-auth chip used on the
+/// auth-screen "Быстрый вход" row. Replaces the old
+/// `OutlinedButton.icon` row that wrapped "Telegram" / "Google"
+/// into vertical letter columns on phone widths. 60dp circle keeps
+/// the label on a single line at any sane viewport.
+class _SocialAuthChip extends StatelessWidget {
+  const _SocialAuthChip({
+    required this.label,
+    required this.icon,
+    required this.isLoading,
+    required this.onTap,
+  });
+
+  final String label;
+  final IconData icon;
+  final bool isLoading;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final disabled = onTap == null;
+    final ringColor = disabled
+        ? scheme.outlineVariant.withValues(alpha: 0.45)
+        : scheme.outlineVariant;
+    final iconColor = disabled
+        ? scheme.onSurfaceVariant.withValues(alpha: 0.5)
+        : scheme.onSurface;
+    return Semantics(
+      label: 'Войти через $label',
+      button: true,
+      child: SizedBox(
+        width: 80,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Material(
+              color: Colors.transparent,
+              shape: const CircleBorder(),
+              child: InkWell(
+                customBorder: const CircleBorder(),
+                onTap: onTap,
+                child: Container(
+                  width: 60,
+                  height: 60,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(color: ringColor, width: 1.2),
+                  ),
+                  alignment: Alignment.center,
+                  child: isLoading
+                      ? SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: scheme.primary,
+                          ),
+                        )
+                      : Icon(icon, size: 26, color: iconColor),
+                ),
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: disabled
+                    ? scheme.onSurfaceVariant.withValues(alpha: 0.6)
+                    : scheme.onSurface,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

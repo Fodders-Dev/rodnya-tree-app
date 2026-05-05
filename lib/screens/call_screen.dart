@@ -57,6 +57,16 @@ class _CallScreenState extends State<CallScreen> {
   // was annoying ("шапка торчит — нахуя?").
   bool _videoChromeVisible = true;
   Timer? _videoChromeHideTimer;
+  // Draggable + swappable PIP (picture-in-picture) for local video.
+  // `_pipOffset` is the top-left position of the PIP within the
+  // viewport — null until first frame so we can default-position it
+  // bottom-right (computed in build from MediaQuery). `_pipShowsLocal`
+  // tracks which feed sits in the small tile vs the full stage —
+  // tapping the PIP swaps them.
+  Offset? _pipOffset;
+  bool _pipShowsLocal = true;
+  static const double _pipWidth = 120;
+  static const double _pipHeight = 180;
 
   String? get _currentUserId => widget.coordinator.currentUserId;
   CallInvite get _resolvedCall => _call ?? widget.initialCall;
@@ -487,12 +497,21 @@ class _CallScreenState extends State<CallScreen> {
                       _resolvedCall.state == CallState.active)
                   ? _toggleVideoChromeVisibility
                   : null,
-              child: _CallStage(
-                isGroupCall: _isGroupCall,
-                remoteVideoTrack: remoteVideoTrack,
-                remoteVideoTracks: remoteVideoTracks,
-                fallbackAvatar: _buildAvatar(),
-              ),
+              // Stage normally shows the remote feed; when the user
+              // taps the PIP and we swap, the local feed takes over
+              // the full stage and the remote moves into the PIP.
+              child: _pipShowsLocal || localVideoTrack == null
+                  ? _CallStage(
+                      isGroupCall: _isGroupCall,
+                      remoteVideoTrack: remoteVideoTrack,
+                      remoteVideoTracks: remoteVideoTracks,
+                      fallbackAvatar: _buildAvatar(),
+                    )
+                  : _LocalFullStage(
+                      track: localVideoTrack,
+                      mirror: widget.coordinator.cameraPosition ==
+                          CameraPosition.front,
+                    ),
             ),
           ),
           SafeArea(
@@ -585,28 +604,8 @@ class _CallScreenState extends State<CallScreen> {
                     ),
                   ),
                   const Spacer(),
-                  // Local PIP renders whenever a local video track is
-                  // attached — that includes audio calls where the
-                  // user just tapped "Включить видео" to upgrade.
-                  if (localVideoTrack != null)
-                    Align(
-                      alignment: Alignment.bottomRight,
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(24),
-                        child: SizedBox(
-                          width: 120,
-                          height: 180,
-                          child: VideoTrackRenderer(
-                            localVideoTrack,
-                            fit: VideoViewFit.cover,
-                            mirrorMode: widget.coordinator.cameraPosition ==
-                                    CameraPosition.front
-                                ? VideoViewMirrorMode.mirror
-                                : VideoViewMirrorMode.off,
-                          ),
-                        ),
-                      ),
-                    ),
+                  // PIP moved to a top-level Positioned in the outer
+                  // Stack so it can be dragged + swapped freely.
                   const SizedBox(height: 16),
                   Wrap(
                     alignment: WrapAlignment.center,
@@ -712,7 +711,124 @@ class _CallScreenState extends State<CallScreen> {
               ),
             ),
           ),
+          // Picture-in-picture for the secondary feed (local by
+          // default, remote when swapped). Draggable across the
+          // whole viewport with edge-snap on release; tap to swap
+          // with the main stage.
+          if (localVideoTrack != null)
+            _buildDraggablePip(
+              context: context,
+              localTrack: localVideoTrack,
+              remoteTrack: remoteVideoTrack,
+            ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildDraggablePip({
+    required BuildContext context,
+    required VideoTrack localTrack,
+    required VideoTrack? remoteTrack,
+  }) {
+    final media = MediaQuery.of(context);
+    final size = media.size;
+    final pad = media.padding;
+    // Default position: bottom-right, 16dp inside the safe area.
+    final defaultOffset = Offset(
+      size.width - _pipWidth - 16,
+      size.height - _pipHeight - 16 - pad.bottom - 96,
+    );
+    final offset = _pipOffset ?? defaultOffset;
+    // Currently-rendered feed in the PIP — swap flips this.
+    final showLocal = _pipShowsLocal;
+    final track = showLocal ? localTrack : (remoteTrack ?? localTrack);
+    final mirror = showLocal &&
+        widget.coordinator.cameraPosition == CameraPosition.front;
+    return Positioned(
+      left: offset.dx,
+      top: offset.dy,
+      width: _pipWidth,
+      height: _pipHeight,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () {
+          // Tap → swap which feed lives in the PIP. Only meaningful
+          // when there's a remote track to swap with; otherwise the
+          // tap is a no-op (PIP just shows local).
+          if (remoteTrack == null) return;
+          HapticFeedback.lightImpact();
+          setState(() => _pipShowsLocal = !_pipShowsLocal);
+        },
+        onPanUpdate: (details) {
+          final next = offset + details.delta;
+          // Clamp to viewport (minus PIP size + 8dp gutter so the
+          // tile never disappears off the edge).
+          final clamped = Offset(
+            next.dx.clamp(8.0, size.width - _pipWidth - 8.0),
+            next.dy.clamp(
+              pad.top + 8.0,
+              size.height - _pipHeight - pad.bottom - 8.0,
+            ),
+          );
+          setState(() => _pipOffset = clamped);
+        },
+        onPanEnd: (details) {
+          // Snap to nearest horizontal edge (left or right) for the
+          // TG / WA "magnet" feel — vertical position stays where the
+          // user dropped it.
+          final mid = size.width / 2;
+          final snapX = offset.dx + _pipWidth / 2 < mid
+              ? 8.0
+              : size.width - _pipWidth - 8.0;
+          setState(() => _pipOffset = Offset(snapX, offset.dy));
+        },
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(20),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: Colors.black,
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.42),
+                  blurRadius: 18,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: VideoTrackRenderer(
+              track,
+              fit: VideoViewFit.cover,
+              mirrorMode: mirror
+                  ? VideoViewMirrorMode.mirror
+                  : VideoViewMirrorMode.off,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Full-stage local-camera renderer used when the PIP swap puts the
+/// local track on the main stage. Mirror always on (front camera
+/// case) — back camera swap is rare and would require dynamic
+/// detection here.
+class _LocalFullStage extends StatelessWidget {
+  const _LocalFullStage({required this.track, required this.mirror});
+  final VideoTrack track;
+  final bool mirror;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: const BoxDecoration(color: Colors.black),
+      child: VideoTrackRenderer(
+        track,
+        fit: VideoViewFit.cover,
+        mirrorMode:
+            mirror ? VideoViewMirrorMode.mirror : VideoViewMirrorMode.off,
       ),
     );
   }
