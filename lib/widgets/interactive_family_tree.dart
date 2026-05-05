@@ -2135,6 +2135,71 @@ class _TreeLayoutEngine {
       }
     }
 
+    // Enrich parent/child + spouse adjacency from the backend's family
+    // unit snapshot. Without this, distant relatives the user adds via
+    // their relation type ("cousin", "aunt", "uncle", "niece" ...)
+    // never get parent/child edges in this layout — only the literal
+    // RelationType.parent/child/spouse/partner/sibling kinds are
+    // extracted above. The backend's graph builder already resolves
+    // those distant types into proper family units (adultIds + childIds
+    // = parent edge, two adultIds = couple), so we just have to
+    // re-project them back into adjacency. This is what was breaking
+    // the user's tree the moment a cousin was added: she landed in the
+    // graph but the layout had no idea who her parents were, so her
+    // group's `_desiredCenterForGroup` returned null and she drifted
+    // to the far right of the row.
+    final snapshot = graphSnapshot;
+    if (snapshot != null) {
+      for (final unit in snapshot.familyUnits) {
+        final adultIds = unit.adultIds
+            .where(peopleById.containsKey)
+            .toList(growable: false);
+        final childIds = unit.childIds
+            .where(peopleById.containsKey)
+            .toList(growable: false);
+
+        // Adults of the same family unit form an implicit couple even
+        // when no explicit spouse/partner relation exists (e.g. an
+        // unmarried mother + father the user added independently).
+        for (var i = 0; i < adultIds.length; i++) {
+          for (var j = i + 1; j < adultIds.length; j++) {
+            final a = adultIds[i];
+            final b = adultIds[j];
+            spousesByPerson.putIfAbsent(a, () => <String>{}).add(b);
+            spousesByPerson.putIfAbsent(b, () => <String>{}).add(a);
+            adjacency[a]!.add(b);
+            adjacency[b]!.add(a);
+          }
+        }
+
+        // Each adult is a parent of every child in the unit.
+        for (final adultId in adultIds) {
+          for (final childId in childIds) {
+            parentToChildren
+                .putIfAbsent(adultId, () => <String>{})
+                .add(childId);
+            childToParents
+                .putIfAbsent(childId, () => <String>{})
+                .add(adultId);
+            adjacency[adultId]!.add(childId);
+            adjacency[childId]!.add(adultId);
+          }
+        }
+
+        // Children of the same family unit are siblings of each other.
+        for (var i = 0; i < childIds.length; i++) {
+          for (var j = i + 1; j < childIds.length; j++) {
+            final a = childIds[i];
+            final b = childIds[j];
+            siblingsByPerson.putIfAbsent(a, () => <String>{}).add(b);
+            siblingsByPerson.putIfAbsent(b, () => <String>{}).add(a);
+            adjacency[a]!.add(b);
+            adjacency[b]!.add(a);
+          }
+        }
+      }
+    }
+
     final components = _buildComponents(adjacency, peopleById);
     final nodePositions = <String, Offset>{};
     var offsetX = InteractiveFamilyTree.contentInsetHorizontal +
@@ -2766,6 +2831,31 @@ class _TreeLayoutEngine {
         }
       }
     }
+
+    // Snapshot-based anchor: when none of the explicit parent/child/sibling
+    // edges resolve to a placed position (orphan in the graph — e.g. a
+    // cousin added before her parents were even claimed), fall back to
+    // any already-placed person in the SAME family unit. The backend
+    // groups co-resident family members into a unit so we treat them
+    // as anchors of last resort. This keeps a freshly-added cousin
+    // from drifting to the far right of her row.
+    if (referenceCenters.isEmpty && graphSnapshot != null) {
+      for (final memberId in group.memberIds) {
+        for (final unit in graphSnapshot!.familyUnits) {
+          final inUnit = unit.adultIds.contains(memberId) ||
+              unit.childIds.contains(memberId);
+          if (!inUnit) continue;
+          for (final relativeId in [...unit.adultIds, ...unit.childIds]) {
+            if (relativeId == memberId) continue;
+            final placed = positions[relativeId];
+            if (placed != null) {
+              referenceCenters.add(placed.dx);
+            }
+          }
+        }
+      }
+    }
+
     if (referenceCenters.isEmpty) {
       return null;
     }
@@ -3138,6 +3228,14 @@ class _TreeLayoutEngine {
   ) {
     final connections = <FamilyConnection>[];
     final spousePairs = <String>{};
+    final parentChildPairs = <String>{};
+
+    String parentChildKey(String parentId, String childId) =>
+        '$parentId::$childId';
+    String spousePairKey(String a, String b) {
+      final pair = [a, b]..sort();
+      return pair.join('::');
+    }
 
     for (final relation in relations) {
       final parentId = _parentIdFromRelation(relation);
@@ -3146,21 +3244,24 @@ class _TreeLayoutEngine {
           childId != null &&
           positions.containsKey(parentId) &&
           positions.containsKey(childId)) {
-        connections.add(
-          FamilyConnection(
-            fromId: parentId,
-            toId: childId,
-            type: RelationType.parent,
-          ),
-        );
+        if (parentChildPairs.add(parentChildKey(parentId, childId))) {
+          connections.add(
+            FamilyConnection(
+              fromId: parentId,
+              toId: childId,
+              type: RelationType.parent,
+            ),
+          );
+        }
         continue;
       }
       if (_isSpouseRelation(relation) &&
           positions.containsKey(relation.person1Id) &&
           positions.containsKey(relation.person2Id)) {
-        final pair = [relation.person1Id, relation.person2Id]..sort();
-        final pairKey = pair.join('::');
+        final pairKey =
+            spousePairKey(relation.person1Id, relation.person2Id);
         if (spousePairs.add(pairKey)) {
+          final pair = [relation.person1Id, relation.person2Id]..sort();
           connections.add(
             FamilyConnection(
               fromId: pair.first,
@@ -3171,6 +3272,58 @@ class _TreeLayoutEngine {
         }
       }
     }
+
+    // Enrich connection lines from snapshot family units. Without this,
+    // distant relatives the user adds via "cousin" / "aunt" / "niece"
+    // relation types end up positioned correctly (because we already
+    // enrich the layout adjacency from the same source) but with no
+    // visible line connecting them to their parents — they appear as
+    // floating cards. Drawing the parent → child line from the family
+    // unit closes the loop.
+    final snapshot = graphSnapshot;
+    if (snapshot != null) {
+      for (final unit in snapshot.familyUnits) {
+        final adultIds = unit.adultIds
+            .where(positions.containsKey)
+            .toList(growable: false);
+        final childIds = unit.childIds
+            .where(positions.containsKey)
+            .toList(growable: false);
+
+        for (var i = 0; i < adultIds.length; i++) {
+          for (var j = i + 1; j < adultIds.length; j++) {
+            final a = adultIds[i];
+            final b = adultIds[j];
+            final key = spousePairKey(a, b);
+            if (spousePairs.add(key)) {
+              final pair = [a, b]..sort();
+              connections.add(
+                FamilyConnection(
+                  fromId: pair.first,
+                  toId: pair.last,
+                  type: RelationType.spouse,
+                ),
+              );
+            }
+          }
+        }
+
+        for (final adultId in adultIds) {
+          for (final childId in childIds) {
+            if (parentChildPairs.add(parentChildKey(adultId, childId))) {
+              connections.add(
+                FamilyConnection(
+                  fromId: adultId,
+                  toId: childId,
+                  type: RelationType.parent,
+                ),
+              );
+            }
+          }
+        }
+      }
+    }
+
     return connections;
   }
 
