@@ -628,7 +628,13 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
                 child: Stack(
                   children: [
                     Positioned.fill(
-                      child: Center(
+                      // Align to topCenter (not Center) so the
+                      // composer card anchors to the top of the
+                      // viewport. Center vertically-centred a short
+                      // SingleChildScrollView, which on desktop pushed
+                      // the editor card halfway down the screen.
+                      child: Align(
+                        alignment: Alignment.topCenter,
                         child: ConstrainedBox(
                           constraints: BoxConstraints(
                             maxWidth: isWideLayout ? 1180 : 680,
