@@ -1,5 +1,6 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
 
 /// One photo/video that the [MediaLightbox] can display.
@@ -140,6 +141,38 @@ class _MediaLightboxState extends State<MediaLightbox> {
     _pageController = PageController(initialPage: _currentIndex);
     _liked = widget.initialLiked;
     _likeCount = widget.likeCount;
+    HardwareKeyboard.instance.addHandler(_handleKeyEvent);
+  }
+
+  /// Desktop keyboard nav. ESC closes the lightbox; arrow keys page
+  /// the gallery. Registered globally on HardwareKeyboard so events
+  /// reach us even when the body is a render-painted CanvasKit
+  /// surface that doesn't take Focus by default.
+  bool _handleKeyEvent(KeyEvent event) {
+    if (!mounted || event is! KeyDownEvent) return false;
+    if (event.logicalKey == LogicalKeyboardKey.escape) {
+      Navigator.of(context).pop();
+      return true;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
+      if (_currentIndex > 0) {
+        _pageController.previousPage(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+        );
+      }
+      return true;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
+      if (_currentIndex < widget.items.length - 1) {
+        _pageController.nextPage(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+        );
+      }
+      return true;
+    }
+    return false;
   }
 
   void _handleLikeTap() {
@@ -153,6 +186,7 @@ class _MediaLightboxState extends State<MediaLightbox> {
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_handleKeyEvent);
     _pageController.dispose();
     super.dispose();
   }

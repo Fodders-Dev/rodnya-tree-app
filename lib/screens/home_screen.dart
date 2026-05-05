@@ -4,6 +4,7 @@ import 'dart:ui';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
 import '../providers/tree_provider.dart';
@@ -87,6 +88,9 @@ class _HomeScreenState extends State<HomeScreen> {
       _cancelWebWheelSubscription =
           registerWebWheelListener(_handleWebEventRailWheel);
     }
+    // Twitter / GitHub-style "/" shortcut to focus search. Only on
+    // desktop where physical keyboard is the primary input.
+    HardwareKeyboard.instance.addHandler(_handleHomeKeyEvent);
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _treeProviderInstance = Provider.of<TreeProvider>(context, listen: false);
@@ -110,11 +114,41 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_handleHomeKeyEvent);
     _treeProviderInstance?.removeListener(_handleTreeChange);
     _eventRailController.removeListener(_handleEventRailScrollChanged);
     _cancelWebWheelSubscription?.call();
     _eventRailController.dispose();
     super.dispose();
+  }
+
+  /// Global hotkey handler — registered on HardwareKeyboard directly
+  /// rather than via Focus.onKeyEvent because Flutter web's CanvasKit
+  /// can swallow KeyDown events at the framework Focus layer.
+  ///
+  /// Currently supports:
+  /// - "/" → push the search screen (Twitter / GitHub style). Skipped
+  ///   when any TextField has focus so users typing "/" inside a
+  ///   composer aren't hijacked.
+  bool _handleHomeKeyEvent(KeyEvent event) {
+    if (!mounted || event is! KeyDownEvent) return false;
+    if (event.logicalKey != LogicalKeyboardKey.slash) return false;
+    final focused = FocusManager.instance.primaryFocus;
+    final inEditable =
+        focused?.context?.widget is EditableText ||
+            (focused?.context != null &&
+                focused!.context!.findAncestorWidgetOfExactType<
+                        EditableText>() !=
+                    null);
+    if (inEditable) return false;
+    // Don't fire for ?-shortcut or ctrl/cmd combos.
+    if (HardwareKeyboard.instance.isShiftPressed ||
+        HardwareKeyboard.instance.isControlPressed ||
+        HardwareKeyboard.instance.isMetaPressed) {
+      return false;
+    }
+    context.push('/post/search');
+    return true;
   }
 
   void _handleTreeChange() {
