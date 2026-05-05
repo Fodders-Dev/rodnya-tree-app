@@ -140,6 +140,73 @@ void main() {
     expect(find.textContaining('Отвечаем'), findsNothing);
   });
 
+  testWidgets('long threads collapse to show 2 replies + show-more pill',
+      (tester) async {
+    getIt.registerSingleton<PostServiceInterface>(
+      _FakePostService(
+        comments: [
+          buildComment(id: 'c1', content: 'Тред', authorName: 'Анна'),
+          buildComment(
+            id: 'r1',
+            content: 'Первый',
+            parentId: 'c1',
+            authorName: 'Иван',
+          ),
+          buildComment(
+            id: 'r2',
+            content: 'Второй',
+            parentId: 'c1',
+            authorName: 'Олег',
+          ),
+          buildComment(
+            id: 'r3',
+            content: 'Третий',
+            parentId: 'c1',
+            authorName: 'Маша',
+          ),
+          buildComment(
+            id: 'r4',
+            content: 'Четвёртый',
+            parentId: 'c1',
+            authorName: 'Дима',
+          ),
+        ],
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: CommentSheet(post: buildPost())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Only the first two replies are visible by default; the third &
+    // fourth hide behind the pill.
+    expect(find.text('Первый'), findsOneWidget);
+    expect(find.text('Второй'), findsOneWidget);
+    expect(find.text('Третий'), findsNothing);
+    expect(find.text('Четвёртый'), findsNothing);
+    expect(find.textContaining('Показать ещё'), findsOneWidget);
+
+    await tester.tap(find.textContaining('Показать ещё'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Третий'), findsOneWidget);
+    expect(find.text('Четвёртый'), findsOneWidget);
+    expect(find.text('Свернуть'), findsOneWidget);
+
+    // After expand, the Свернуть pill ends up below the sheet's visible
+    // area in the small test viewport. Scroll it into view before tap
+    // so we test the actual interaction, not just rendering.
+    await tester.ensureVisible(find.text('Свернуть'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Свернуть'));
+    await tester.pumpAndSettle();
+    expect(find.text('Третий'), findsNothing);
+    expect(find.textContaining('Показать ещё'), findsOneWidget);
+  });
+
   testWidgets('cancelling reply restores normal comment send', (tester) async {
     final fake = _FakePostService(
       comments: [

@@ -41,6 +41,14 @@ class _CommentSheetState extends State<CommentSheet> {
   Comment? _replyingTo;
   final FocusNode _commentFocusNode = FocusNode();
 
+  /// Threads with more than [_repliesPreviewLimit] replies are collapsed
+  /// by default — we show the first two and a "Показать ещё N ответов"
+  /// pill. Tapping the pill puts the parent comment id into this set
+  /// and the full chain expands. Brand-new replies the user just posted
+  /// auto-expand their parent thread (handled in [_addComment]).
+  static const int _repliesPreviewLimit = 2;
+  final Set<String> _expandedThreads = <String>{};
+
   @override
   void initState() {
     super.initState();
@@ -145,6 +153,12 @@ class _CommentSheetState extends State<CommentSheet> {
           _commentController.clear();
           _replyingTo = null;
           _isSending = false;
+          // Auto-expand the thread the user just posted into so their
+          // reply doesn't hide behind the collapsed-thread pill.
+          final parentId = newComment.parentCommentId;
+          if (parentId != null && parentId.isNotEmpty) {
+            _expandedThreads.add(parentId);
+          }
         });
         // Scroll to bottom
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -311,25 +325,39 @@ class _CommentSheetState extends State<CommentSheet> {
   }
 
   Widget _buildCommentGroup(_CommentGroup group) {
+    final isExpanded = _expandedThreads.contains(group.parent.id);
+    final allReplies = group.replies;
+    final shouldCollapse =
+        !isExpanded && allReplies.length > _repliesPreviewLimit;
+    final visibleReplies = shouldCollapse
+        ? allReplies.take(_repliesPreviewLimit).toList()
+        : allReplies;
+    final hiddenCount = allReplies.length - visibleReplies.length;
+
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _buildCommentItem(group.parent, isReply: false),
-          if (group.replies.isNotEmpty) ...[
+          if (allReplies.isNotEmpty) ...[
             const SizedBox(height: 12),
-            // Indent + thin guide line so a thread visually attaches to
-            // its parent without screaming for attention.
+            // Indent so a thread visually attaches to its parent
+            // without screaming for attention.
             Padding(
               padding: const EdgeInsets.only(left: 18),
               child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  for (final reply in group.replies)
+                  for (final reply in visibleReplies)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 12),
                       child: _buildCommentItem(reply, isReply: true),
                     ),
+                  if (hiddenCount > 0)
+                    _buildShowMorePill(group.parent.id, hiddenCount),
+                  if (isExpanded && allReplies.length > _repliesPreviewLimit)
+                    _buildCollapsePill(group.parent.id),
                 ],
               ),
             ),
@@ -337,6 +365,108 @@ class _CommentSheetState extends State<CommentSheet> {
         ],
       ),
     );
+  }
+
+  /// Pill at the bottom of a collapsed thread — "Показать ещё N
+  /// ответов". Tap expands the thread permanently for this sheet
+  /// session (state is local so a fresh sheet starts collapsed again).
+  Widget _buildShowMorePill(String parentId, int hiddenCount) {
+    final theme = Theme.of(context);
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () {
+          setState(() {
+            _expandedThreads.add(parentId);
+          });
+        },
+        borderRadius: BorderRadius.circular(999),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.expand_more_rounded,
+                size: 16,
+                color: tokens.accent,
+              ),
+              const SizedBox(width: 4),
+              Text(
+                'Показать ещё ${_pluralizeReplies(hiddenCount)}',
+                style: theme.textTheme.labelMedium?.copyWith(
+                  color: tokens.accent,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Counterpart to the show-more pill: hides expanded replies again.
+  /// Only rendered when the thread had more than the preview limit to
+  /// begin with — short threads never collapse.
+  Widget _buildCollapsePill(String parentId) {
+    final theme = Theme.of(context);
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () {
+          setState(() {
+            _expandedThreads.remove(parentId);
+          });
+        },
+        borderRadius: BorderRadius.circular(999),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.expand_less_rounded,
+                size: 16,
+                color: tokens.inkMuted,
+              ),
+              const SizedBox(width: 4),
+              Text(
+                'Свернуть',
+                style: theme.textTheme.labelMedium?.copyWith(
+                  color: tokens.inkMuted,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// "1 ответ" / "2 ответа" / "5 ответов" — Russian plural forms.
+  /// Same shape as `_activityEventCountLabel` in notifications_screen.
+  String _pluralizeReplies(int count) {
+    final mod10 = count % 10;
+    final mod100 = count % 100;
+    String word;
+    if (mod10 == 1 && mod100 != 11) {
+      word = 'ответ';
+    } else if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) {
+      word = 'ответа';
+    } else {
+      word = 'ответов';
+    }
+    return '$count $word';
   }
 
   Widget _buildCommentItem(Comment comment, {required bool isReply}) {
