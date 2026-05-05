@@ -40,6 +40,13 @@ extension _ChatScreenScaffoldSections on _ChatScreenState {
     }
 
     final peerAvatarImage = buildAvatarImageProvider(widget.photoUrl);
+    // Direct chat → peer online state drives the green dot. We only
+    // show the dot when the peer (the other participant) is actually
+    // online; for groups we skip it because "any of N is online" is
+    // less actionable visually. The pulsing animation lives in
+    // _OnlinePulseDot to keep it scoped.
+    final showOnlineDot = !widget.isGroup &&
+        _otherParticipantIds(_chatDetails).any(_onlineUserIds.contains);
 
     return Row(
       children: [
@@ -47,16 +54,36 @@ extension _ChatScreenScaffoldSections on _ChatScreenState {
           onTap: !widget.isGroup &&
                   widget.relativeId != null &&
                   widget.relativeId!.isNotEmpty
-              ? () => context.push('/relative/details/${widget.relativeId}')
+              ? () {
+                  // Light haptic before navigation — confirms the tap
+                  // hit before the screen swap, same TG / iOS pattern.
+                  HapticFeedback.lightImpact();
+                  context.push('/relative/details/${widget.relativeId}');
+                }
               : null,
-          child: CircleAvatar(
-            radius: 20,
-            backgroundImage: peerAvatarImage,
-            child: peerAvatarImage == null
-                ? widget.isGroup
-                    ? const Icon(Icons.group_outlined)
-                    : Text(widget.title.isNotEmpty ? widget.title[0] : '?')
-                : null,
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              CircleAvatar(
+                radius: 20,
+                backgroundImage: peerAvatarImage,
+                child: peerAvatarImage == null
+                    ? widget.isGroup
+                        ? const Icon(Icons.group_outlined)
+                        : Text(
+                            widget.title.isNotEmpty ? widget.title[0] : '?')
+                    : null,
+              ),
+              if (showOnlineDot)
+                Positioned(
+                  right: -1,
+                  bottom: -1,
+                  child: _OnlinePulseDot(
+                    color: const Color(0xFF2EBD68),
+                    surfaceColor: Theme.of(context).colorScheme.surface,
+                  ),
+                ),
+            ],
           ),
         ),
         const SizedBox(width: 12),

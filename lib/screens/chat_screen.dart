@@ -3521,7 +3521,10 @@ class _ChatScreenState extends State<ChatScreen> {
                 final remoteIndex = index - filteredOptimisticMessages.length;
                 if (hasUnreadDivider && remoteIndex >= 0) {
                   var remoteCursor = 0;
-                  for (final message in filteredRemoteMessages) {
+                  for (var msgIdx = 0;
+                      msgIdx < filteredRemoteMessages.length;
+                      msgIdx++) {
+                    final message = filteredRemoteMessages[msgIdx];
                     if (message.id == unreadAnchorMessageId) {
                       if (remoteCursor == remoteIndex) {
                         return _buildUnreadDivider();
@@ -3531,15 +3534,19 @@ class _ChatScreenState extends State<ChatScreen> {
 
                     if (remoteCursor == remoteIndex) {
                       final isMe = message.senderId == _currentUserId;
-                      return _buildRemoteBubble(
-                        message,
-                        isMe,
-                        footerLabel: _messageFooterLabel(
+                      return _wrapBubbleWithDayHeader(
+                        bubble: _buildRemoteBubble(
                           message,
-                          isMe: isMe,
-                          isLatestOwnDirectMessage:
-                              message.id == latestOutgoingMessageId,
+                          isMe,
+                          footerLabel: _messageFooterLabel(
+                            message,
+                            isMe: isMe,
+                            isLatestOwnDirectMessage:
+                                message.id == latestOutgoingMessageId,
+                          ),
                         ),
+                        messages: filteredRemoteMessages,
+                        messageIndex: msgIdx,
                       );
                     }
                     remoteCursor++;
@@ -3555,18 +3562,22 @@ class _ChatScreenState extends State<ChatScreen> {
                   );
                 }
 
-                final remoteMessage = filteredRemoteMessages[
-                    remoteIndex - (hasUnreadDivider ? 1 : 0)];
+                final messageIdx = remoteIndex - (hasUnreadDivider ? 1 : 0);
+                final remoteMessage = filteredRemoteMessages[messageIdx];
                 final isMe = remoteMessage.senderId == _currentUserId;
-                return _buildRemoteBubble(
-                  remoteMessage,
-                  isMe,
-                  footerLabel: _messageFooterLabel(
+                return _wrapBubbleWithDayHeader(
+                  bubble: _buildRemoteBubble(
                     remoteMessage,
-                    isMe: isMe,
-                    isLatestOwnDirectMessage:
-                        remoteMessage.id == latestOutgoingMessageId,
+                    isMe,
+                    footerLabel: _messageFooterLabel(
+                      remoteMessage,
+                      isMe: isMe,
+                      isLatestOwnDirectMessage:
+                          remoteMessage.id == latestOutgoingMessageId,
+                    ),
                   ),
+                  messages: filteredRemoteMessages,
+                  messageIndex: messageIdx,
                 );
               },
             ),
@@ -4450,6 +4461,86 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  /// Telegram-style date header: a small pill above the *oldest*
+  /// message of each day. Detected by looking at the next-older
+  /// message in the list (since `filteredRemoteMessages[0]` is newest):
+  /// if its day differs, this message is the day-anchor and gets a
+  /// header. Last message in the list (oldest of all) always gets
+  /// one. Optimistic / search-result paths skip the header — they
+  /// don't form a continuous timeline.
+  Widget _wrapBubbleWithDayHeader({
+    required Widget bubble,
+    required List<ChatMessage> messages,
+    required int messageIndex,
+  }) {
+    if (messageIndex < 0 || messageIndex >= messages.length) {
+      return bubble;
+    }
+    final current = messages[messageIndex].timestamp;
+    final hasOlder = messageIndex < messages.length - 1;
+    final isOldestOfDay = !hasOlder ||
+        _differentLocalDay(current, messages[messageIndex + 1].timestamp);
+    if (!isOldestOfDay) return bubble;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _buildDateDivider(current),
+        bubble,
+      ],
+    );
+  }
+
+  bool _differentLocalDay(DateTime a, DateTime b) {
+    return a.year != b.year || a.month != b.month || a.day != b.day;
+  }
+
+  Widget _buildDateDivider(DateTime timestamp) {
+    final theme = Theme.of(context);
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+          decoration: BoxDecoration(
+            color: tokens.surfaceStrong.withValues(alpha: 0.78),
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(
+              color: tokens.surfaceLine.withValues(alpha: 0.45),
+              width: 0.6,
+            ),
+          ),
+          child: Text(
+            _formatDateDividerLabel(timestamp),
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: tokens.inkSecondary,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.1,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// "Сегодня" / "Вчера" / "12 марта" / "12 марта 2025" depending on
+  /// how recent the message is. Same shape as TG date pills.
+  String _formatDateDividerLabel(DateTime timestamp) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final messageDay =
+        DateTime(timestamp.year, timestamp.month, timestamp.day);
+    final diff = today.difference(messageDay).inDays;
+    if (diff == 0) return 'Сегодня';
+    if (diff == 1) return 'Вчера';
+    final pattern =
+        timestamp.year == now.year ? 'd MMMM' : 'd MMMM yyyy';
+    return DateFormat(pattern, 'ru').format(timestamp);
+  }
+
   /// Wraps a remote bubble in a slide-up + fade-in tween that runs
   /// once on first appearance. Direction depends on isMe so own
   /// echoed-back messages enter from the right side, peer messages
@@ -4834,20 +4925,36 @@ class _ChatScreenState extends State<ChatScreen> {
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(
-                  statusMeta.icon,
-                  size: 14,
-                  color: statusMeta.color,
+                // Status icon cross-fades + scales when the message
+                // walks the ladder (pending → sent → failed). Keyed by
+                // icon code so AnimatedSwitcher actually swaps.
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 220),
+                  switchInCurve: Curves.easeOutCubic,
+                  switchOutCurve: Curves.easeInCubic,
+                  transitionBuilder: (child, animation) => ScaleTransition(
+                    scale:
+                        Tween<double>(begin: 0.6, end: 1.0).animate(animation),
+                    child: FadeTransition(opacity: animation, child: child),
+                  ),
+                  child: Icon(
+                    statusMeta.icon,
+                    key: ValueKey<int>(statusMeta.icon.codePoint),
+                    size: 14,
+                    color: statusMeta.color,
+                  ),
                 ),
                 const SizedBox(width: 4),
-                Text(
-                  statusMeta.label,
-                  style: theme.textTheme.bodySmall?.copyWith(
+                AnimatedDefaultTextStyle(
+                  duration: const Duration(milliseconds: 220),
+                  curve: Curves.easeOutCubic,
+                  style: theme.textTheme.bodySmall!.copyWith(
                     color: statusMeta.color,
                     fontWeight: message.status == _OutgoingMessageStatus.failed
                         ? FontWeight.w700
                         : FontWeight.w500,
                   ),
+                  child: Text(statusMeta.label),
                 ),
                 if (message.status == _OutgoingMessageStatus.failed) ...[
                   const SizedBox(width: 6),

@@ -2854,6 +2854,99 @@ class _SwipeDownDismissibleImageState
   }
 }
 
+/// Small green presence dot rendered in the bottom-right corner of
+/// the chat-AppBar avatar when the peer is online. Pulses gently
+/// (1.4s cycle, 0.85 → 1.0 scale + 0.6 → 1.0 opacity on a halo) so
+/// the indicator reads as a live signal rather than a static
+/// notification badge. Skipped under flutter_test's binding so
+/// pumpAndSettle in widget tests doesn't hang on the repeating
+/// controller.
+class _OnlinePulseDot extends StatefulWidget {
+  const _OnlinePulseDot({
+    required this.color,
+    required this.surfaceColor,
+  });
+
+  final Color color;
+  final Color surfaceColor;
+
+  @override
+  State<_OnlinePulseDot> createState() => _OnlinePulseDotState();
+}
+
+class _OnlinePulseDotState extends State<_OnlinePulseDot>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    );
+    final bindingName = WidgetsBinding.instance.runtimeType.toString();
+    final inTest = bindingName.contains('TestWidgetsFlutterBinding');
+    if (!inTest) _ctrl.repeat();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _ctrl,
+      builder: (context, _) {
+        final t = _ctrl.value;
+        // Halo expands + fades over the cycle; core dot stays solid.
+        final haloScale = 1.0 + 0.7 * t;
+        final haloOpacity = (1.0 - t) * 0.55;
+        return SizedBox(
+          width: 14,
+          height: 14,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              IgnorePointer(
+                child: Opacity(
+                  opacity: haloOpacity,
+                  child: Transform.scale(
+                    scale: haloScale,
+                    child: Container(
+                      width: 10,
+                      height: 10,
+                      decoration: BoxDecoration(
+                        color: widget.color,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              Container(
+                width: 10,
+                height: 10,
+                decoration: BoxDecoration(
+                  color: widget.color,
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: widget.surfaceColor,
+                    width: 1.6,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
 /// Animated three-dot typing indicator. Each dot fades + scales in a
 /// 1.2s loop with 200ms phase offset so the row reads as a live
 /// "..." pulse — same pattern Telegram / iMessage use under the
