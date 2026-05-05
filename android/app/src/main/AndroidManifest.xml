@@ -28,7 +28,8 @@
     <application
         android:label="Родня"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:enableOnBackInvokedCallback="true">
         <meta-data
             android:name="rodnya.notification.icon"
             android:resource="@drawable/ic_stat_notification" />

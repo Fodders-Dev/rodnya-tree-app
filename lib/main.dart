@@ -1,7 +1,13 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show FontLoader, rootBundle;
+import 'package:flutter/services.dart'
+    show
+        FontLoader,
+        rootBundle,
+        SystemChrome,
+        SystemUiMode,
+        SystemUiOverlayStyle;
 import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'theme/app_theme.dart';
 import 'package:provider/provider.dart';
@@ -35,6 +41,17 @@ Object? _e2eSemanticsHandle;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Edge-to-edge on Android: transparent system bars overlap the
+  // Flutter canvas, so backgrounds (warm cream / dark olive) reach
+  // the screen edges. Status / nav bar icon brightness is then driven
+  // per-frame via AnnotatedRegion in MaterialApp.builder so it tracks
+  // theme changes without a frame of mismatched icons.
+  if (!kIsWeb) {
+    await SystemChrome.setEnabledSystemUIMode(
+      SystemUiMode.edgeToEdge,
+    );
+  }
 
   // Warm up the persistent device id before any auth call can fire so the
   // backend always sees the stable id rather than a transient uuid.
@@ -471,10 +488,30 @@ class _MyAppState extends State<MyApp> {
       locale: const Locale('ru', 'RU'),
       builder: (context, child) {
         final content = child ?? const SizedBox.shrink();
-        if (!GetIt.I.isRegistered<CallCoordinatorService>()) {
-          return content;
+        // Theme-aligned system bars: transparent status / nav bar so
+        // Flutter's warm cream backdrop reaches the system edges, with
+        // icon brightness flipped against the active Brightness so the
+        // clock + battery stay readable in both light and dark mode.
+        // Same setup TG / iOS-style apps use for edge-to-edge.
+        final brightness = Theme.of(context).brightness;
+        final iconBrightness =
+            brightness == Brightness.light ? Brightness.dark : Brightness.light;
+        final systemBars = SystemUiOverlayStyle(
+          statusBarColor: Colors.transparent,
+          statusBarIconBrightness: iconBrightness,
+          statusBarBrightness: brightness,
+          systemNavigationBarColor: Colors.transparent,
+          systemNavigationBarIconBrightness: iconBrightness,
+          systemNavigationBarDividerColor: Colors.transparent,
+        );
+        Widget wrapped = AnnotatedRegion<SystemUiOverlayStyle>(
+          value: systemBars,
+          child: content,
+        );
+        if (GetIt.I.isRegistered<CallCoordinatorService>()) {
+          wrapped = CallRuntimeHost(child: wrapped);
         }
-        return CallRuntimeHost(child: content);
+        return wrapped;
       },
     );
   }
