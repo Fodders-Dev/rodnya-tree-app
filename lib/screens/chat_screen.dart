@@ -4396,6 +4396,11 @@ class _ChatScreenState extends State<ChatScreen> {
             ? () => _toggleRemoteMessageSelection(message)
             : null,
         onLongPressStart: (details) {
+          // Same TG / iOS pattern: medium-impact haptic confirms the
+          // long-press fired before the action sheet opens. Without it
+          // users hold a beat too long because nothing tells them the
+          // gesture took. Mirrors what reaction-picker already does.
+          HapticFeedback.mediumImpact();
           if (_isSelectionMode) {
             _toggleRemoteMessageSelection(message);
             return;
@@ -4775,6 +4780,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     ? () => _toggleOutgoingMessageSelection(message)
                     : null,
                 onLongPressStart: (details) {
+                  HapticFeedback.mediumImpact();
                   if (_isSelectionMode) {
                     _toggleOutgoingMessageSelection(message);
                     return;
@@ -7748,31 +7754,61 @@ class _ChatBubble extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          if (showSelectionMarker) ...[
-            AnimatedContainer(
-              duration: const Duration(milliseconds: 160),
-              width: 24,
-              height: 24,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: isSelected ? scheme.primary : Colors.transparent,
-                border: Border.all(
-                  color: isSelected
-                      ? scheme.primary
-                      : scheme.outline.withValues(alpha: 0.72),
-                  width: 2,
-                ),
-              ),
-              child: isSelected
-                  ? Icon(
-                      Icons.check_rounded,
-                      size: 16,
-                      color: scheme.onPrimary,
+          // Selection marker slides in/out when selection mode toggles
+          // — AnimatedSize collapses the slot to 0-width when hidden so
+          // bubbles shift back to flush-left without a jump. Inner
+          // ScaleTransition + FadeTransition makes the circle "pop"
+          // instead of just appearing.
+          AnimatedSize(
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOutCubic,
+            alignment: Alignment.centerLeft,
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 220),
+              switchInCurve: Curves.easeOutBack,
+              switchOutCurve: Curves.easeInCubic,
+              transitionBuilder: (child, animation) {
+                return ScaleTransition(
+                  scale: animation,
+                  child: FadeTransition(opacity: animation, child: child),
+                );
+              },
+              child: !showSelectionMarker
+                  ? const SizedBox(
+                      key: ValueKey('selection-marker-hidden'),
+                      width: 0,
+                      height: 24,
                     )
-                  : null,
+                  : Padding(
+                      key: const ValueKey('selection-marker-shown'),
+                      padding: const EdgeInsets.only(right: 8),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 160),
+                        width: 24,
+                        height: 24,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: isSelected
+                              ? scheme.primary
+                              : Colors.transparent,
+                          border: Border.all(
+                            color: isSelected
+                                ? scheme.primary
+                                : scheme.outline.withValues(alpha: 0.72),
+                            width: 2,
+                          ),
+                        ),
+                        child: isSelected
+                            ? Icon(
+                                Icons.check_rounded,
+                                size: 16,
+                                color: scheme.onPrimary,
+                              )
+                            : null,
+                      ),
+                    ),
             ),
-            const SizedBox(width: 8),
-          ],
+          ),
           Expanded(
             child: Align(
               alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
@@ -7780,7 +7816,14 @@ class _ChatBubble extends StatelessWidget {
                 constraints: BoxConstraints(
                   maxWidth: MediaQuery.of(context).size.width * 0.78,
                 ),
-                child: Container(
+                // AnimatedContainer so the highlight border (when the
+                // user taps a reply preview and we focus the original)
+                // fades in / out over 360ms instead of jumping. Picks
+                // up boxShadow + decoration changes too — pinned /
+                // selected transitions look smoother for free.
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 360),
+                  curve: Curves.easeOutCubic,
                   // Reference `.msg`: padding 9px 13px 8px, radius 18 + 6 on
                   // the tail corner. Tighter than the previous 12/8 +20/6
                   // and reads as more "bubble-y", less card-y.

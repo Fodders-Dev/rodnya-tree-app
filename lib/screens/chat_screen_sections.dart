@@ -199,7 +199,44 @@ extension _ChatScreenScaffoldSections on _ChatScreenState {
         child: Column(
           children: [
             const OfflineIndicator(),
-            if (_pinnedMessage != null) _buildPinnedMessageBanner(),
+            // Pinned banner slides down + fades in when a message gets
+            // pinned, slides up + fades out when unpinned. AnimatedSize
+            // collapses the row so the messages list grows / shrinks
+            // smoothly with the banner.
+            AnimatedSize(
+              duration: const Duration(milliseconds: 240),
+              curve: Curves.easeOutCubic,
+              alignment: Alignment.topCenter,
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 240),
+                switchInCurve: Curves.easeOutCubic,
+                switchOutCurve: Curves.easeInCubic,
+                transitionBuilder: (child, animation) {
+                  return ClipRect(
+                    child: SlideTransition(
+                      position: Tween<Offset>(
+                        begin: const Offset(0, -0.3),
+                        end: Offset.zero,
+                      ).animate(animation),
+                      child: FadeTransition(
+                        opacity: animation,
+                        child: child,
+                      ),
+                    ),
+                  );
+                },
+                child: _pinnedMessage == null
+                    ? const SizedBox(
+                        key: ValueKey('pinned-banner-hidden'),
+                        height: 0,
+                        width: double.infinity,
+                      )
+                    : KeyedSubtree(
+                        key: const ValueKey('pinned-banner-shown'),
+                        child: _buildPinnedMessageBanner(),
+                      ),
+              ),
+            ),
             Expanded(child: _buildMessagesBody()),
             if (_recordingController.state == ChatRecordingState.locked &&
                 !_isDirectChatBlocked)
