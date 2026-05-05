@@ -41,6 +41,7 @@ import 'chat_preview_cache.dart';
 import 'notifications_cache.dart';
 import 'posts_cache.dart';
 import 'tree_graph_cache.dart';
+import 'user_profile_cache.dart';
 import 'chat_draft_store.dart';
 import 'chat_pin_store.dart';
 import 'chat_send_queue.dart';
@@ -186,6 +187,8 @@ class AppStartupService implements AppStartupServiceInterface {
     _registerOrReplaceSingleton<NotificationsCache>(notificationsCache);
     final postsCache = HivePostsCache();
     _registerOrReplaceSingleton<PostsCache>(postsCache);
+    final userProfileCache = HiveUserProfileCache();
+    _registerOrReplaceSingleton<UserProfileCache>(userProfileCache);
 
     final customApiChatService = CustomApiChatService(
       authService: customApiAuthService,

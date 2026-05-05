@@ -33,6 +33,8 @@ import '../widgets/glass_panel.dart';
 import '../backend/backend_runtime_config.dart';
 import '../services/app_status_service.dart';
 import '../services/custom_api_post_service.dart';
+import '../services/user_profile_cache.dart';
+import '../services/posts_cache.dart';
 import '../utils/photo_url.dart';
 import '../utils/user_facing_error.dart';
 
@@ -114,6 +116,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
   final PostServiceInterface _postService = GetIt.I<PostServiceInterface>();
   final StoryServiceInterface _storyService = GetIt.I<StoryServiceInterface>();
   final AppStatusService _appStatusService = GetIt.I<AppStatusService>();
+  // Cache-first hydrate: when both caches are registered we paint the
+  // profile chrome (name / avatar / posts strip) from disk immediately
+  // and progressively swap in fresh API data instead of blocking the
+  // whole screen on a serial chain of `getUserProfile + getUserTrees +
+  // getRelatives × N + getPosts + getPendingContributions + ...`.
+  // User reported "профиль как-то долго загружается" — the empirical
+  // wait was 1.5–3 s on a cold start because every roundtrip ladders
+  // sequentially. The cache hop sidesteps the wait entirely on warm
+  // launches.
+  late final UserProfileCache? _userProfileCache =
+      GetIt.I.isRegistered<UserProfileCache>()
+          ? GetIt.I<UserProfileCache>()
+          : null;
+  late final PostsCache? _postsCache =
+      GetIt.I.isRegistered<PostsCache>() ? GetIt.I<PostsCache>() : null;
   UserProfile? _userProfile;
   String? _currentUserId; // Храним ID текущего пользователя
   int _treeCount = 0;
@@ -217,68 +234,124 @@ class _ProfileScreenState extends State<ProfileScreen> {
       }
       _currentUserId = userId; // Сохраняем ID
 
-      // Загружаем профиль пользователя ИСПОЛЬЗУЯ СЕРВИС
-      _userProfile = await _profileService.getUserProfile(_currentUserId!);
-      if (_userProfile == null) {
-        throw Exception("Профиль пользователя не найден");
+      // ── Cache-first hydrate ────────────────────────────────────────
+      // If we have a cached profile + posts blob, paint them now and
+      // drop the spinner. The fresh API data will replace it below
+      // when the network calls return; if the network is offline we
+      // still have a useable screen.
+      final cachedProfile = await _userProfileCache?.read(userId);
+      // Prefix the user-id key so profile posts don't collide with the
+      // home feed's per-tree posts in the shared posts_v1 Hive box.
+      final cachedPostsKey = 'profile:$userId';
+      final cachedPosts = await _postsCache?.read(cachedPostsKey);
+      if (cachedProfile != null && mounted) {
+        _userProfile = cachedProfile;
+        if (cachedPosts != null && cachedPosts.isNotEmpty) {
+          _userPosts = cachedPosts;
+          _postCount = cachedPosts.length;
+        }
+        setState(() {
+          _isLoading = false;
+        });
       }
 
-      // Загружаем количество деревьев
-      final trees = await _familyService.getUserTrees();
-      _treeCount = trees.length;
-      _relativeCount = await _loadRelativeCount(
-        currentUserId: userId,
-        trees: trees,
-      );
-
-      try {
-        _userPosts = await _postService.getPosts(authorId: userId);
-        _postCount = _userPosts.length;
-      } on CustomApiPostException catch (error) {
-        if (error.statusCode == 404) {
-          _userPosts = [];
-          _postCount = 0;
-          _postsUnavailable = true;
-        } else {
+      // ── Parallel fetch ──────────────────────────────────────────────
+      // Was a 7-step ladder (each call awaited the previous one to
+      // finish). Most are independent — fan them out so the wall-clock
+      // wait collapses to the slowest single call. The relative count
+      // still depends on the tree list so it's chained inside its
+      // future.
+      Future<List<Post>> postsFuture() async {
+        try {
+          return await _postService.getPosts(authorId: userId);
+        } on CustomApiPostException catch (error) {
+          if (error.statusCode == 404) {
+            _postsUnavailable = true;
+            return const <Post>[];
+          }
           rethrow;
         }
       }
 
-      try {
-        _pendingContributions =
-            await _profileService.getPendingProfileContributions();
-      } catch (error) {
-        debugPrint('Не удалось загрузить предложения по профилю: $error');
-        _pendingContributions = [];
+      Future<List<ProfileContribution>> contributionsFuture() async {
+        try {
+          return await _profileService.getPendingProfileContributions();
+        } catch (error) {
+          debugPrint('Не удалось загрузить предложения по профилю: $error');
+          return const <ProfileContribution>[];
+        }
       }
 
-      try {
-        _accountLinkingStatus =
-            await _profileService.getCurrentAccountLinkingStatus();
-      } catch (error) {
-        debugPrint('Не удалось загрузить trusted-channel summary: $error');
-        _accountLinkingStatus = null;
+      Future<AccountLinkingStatus?> linkingFuture() async {
+        try {
+          return await _profileService.getCurrentAccountLinkingStatus();
+        } catch (error) {
+          debugPrint('Не удалось загрузить trusted-channel summary: $error');
+          return null;
+        }
       }
+
+      final treesFuture = _familyService.getUserTrees();
+      final relativesFuture = treesFuture.then((trees) async {
+        _treeCount = trees.length;
+        return _loadRelativeCount(
+          currentUserId: userId,
+          trees: trees,
+        );
+      });
+
+      // Run each independent piece in parallel. We capture the values
+      // individually instead of via Future.wait<dynamic> to keep type
+      // inference clean.
+      final profileResult = _profileService.getUserProfile(userId);
+      final postsResult = postsFuture();
+      final contributionsResult = contributionsFuture();
+      final linkingResult = linkingFuture();
+
+      final fetchedProfile = await profileResult;
+      _userPosts = await postsResult;
+      _postCount = _userPosts.length;
+      _pendingContributions = await contributionsResult;
+      _accountLinkingStatus = await linkingResult;
+      _relativeCount = await relativesFuture;
+
+      _userProfile = fetchedProfile;
+      if (_userProfile == null) {
+        throw Exception("Профиль пользователя не найден");
+      }
+
+      // Persist fresh snapshots so the next cold start can paint
+      // immediately. Best-effort — failures don't break the screen.
+      unawaited(_userProfileCache?.write(_userProfile!));
+      unawaited(_postsCache?.write(cachedPostsKey, _userPosts));
 
       if (!mounted) {
         return;
       }
       final selectedTreeId = context.read<TreeProvider>().selectedTreeId;
       _lastStoriesTreeId = selectedTreeId;
-      await _loadSelectedTreePerson(
-        selectedTreeId: selectedTreeId,
-        currentUserId: userId,
-      );
-      await _loadStoriesForContext(
-        selectedTreeId: selectedTreeId,
-        currentUserId: userId,
-      );
+      // These two are independent of each other and of the bulk fetch
+      // above — fan them out too.
+      await Future.wait<void>([
+        _loadSelectedTreePerson(
+          selectedTreeId: selectedTreeId,
+          currentUserId: userId,
+        ),
+        _loadStoriesForContext(
+          selectedTreeId: selectedTreeId,
+          currentUserId: userId,
+        ),
+      ]);
     } catch (e) {
+      // Cache-first soft failure: if we already painted something
+      // from disk, downgrade the error to a quiet log so the screen
+      // doesn't flash an error overlay over data the user can see.
+      final hasUsableCache = _userProfile != null;
       _appStatusService.reportError(
         e,
         fallbackMessage: 'Не удалось загрузить профиль.',
       );
-      if (mounted) {
+      if (mounted && !hasUsableCache) {
         setState(() {
           _errorMessage = describeUserFacingError(
             authService: _authService,
@@ -337,22 +410,30 @@ class _ProfileScreenState extends State<ProfileScreen> {
     required String currentUserId,
     required List<FamilyTree> trees,
   }) async {
-    final relativeIds = <String>{};
-
-    for (final tree in trees) {
-      try {
-        final relatives = await _familyService.getRelatives(tree.id);
-        for (final person in relatives) {
-          if (person.userId == currentUserId) {
-            continue;
-          }
-          relativeIds.add(person.id);
+    if (trees.isEmpty) return 0;
+    // Was a sequential for-loop — N trees → N serial roundtrips while
+    // the user stares at a spinner. Fan them out in parallel; the
+    // wall-clock wait collapses to the single slowest tree.
+    final results = await Future.wait<List<FamilyPerson>>(
+      trees.map((tree) async {
+        try {
+          return await _familyService.getRelatives(tree.id);
+        } catch (e) {
+          debugPrint('Ошибка при загрузке родственников для профиля: $e');
+          return const <FamilyPerson>[];
         }
-      } catch (e) {
-        debugPrint('Ошибка при загрузке родственников для профиля: $e');
+      }),
+    );
+
+    final relativeIds = <String>{};
+    for (final relatives in results) {
+      for (final person in relatives) {
+        if (person.userId == currentUserId) {
+          continue;
+        }
+        relativeIds.add(person.id);
       }
     }
-
     return relativeIds.length;
   }
 

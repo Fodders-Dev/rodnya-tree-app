@@ -11,6 +11,11 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity: FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        // Notification channels must exist before any push can be
+        // displayed in the system tray on Android 8+. Register them
+        // before wiring up the Flutter side so even a push that lands
+        // during cold-start has somewhere to go.
+        RodnyaNotificationChannels.ensureRegistered(applicationContext)
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             "rodnya/call_pip"

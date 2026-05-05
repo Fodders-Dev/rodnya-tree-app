@@ -193,6 +193,35 @@ class PushGateway {
       return;
     }
 
+    // Build the VKPNS message envelope. The `android` block lets the
+    // OS wake the device with the right priority + TTL when the app is
+    // killed; without it, RuStore still delivers but the system can
+    // delay or coalesce the message indefinitely. Calls go on a
+    // dedicated channel ("calls") so the user actually hears the
+    // ringer when the app is in the background.
+    const isIncomingCall = this._isIncomingCallNotification(notification);
+    const androidConfig = {
+      priority: isIncomingCall ? "HIGH" : "NORMAL",
+      ttl: `${this._notificationTtlSeconds(notification)}s`,
+      notification: {
+        title: notification.title || "Родня",
+        body: notification.body || "",
+        channel_id: isIncomingCall ? "calls" : "general",
+        sound: isIncomingCall ? "ringtone" : "default",
+        tag: this._notificationTag(notification),
+        // Calls show a public, fullscreen-eligible notification so the
+        // OS can launch our intent over the lockscreen on Android 13+.
+        ...(isIncomingCall
+          ? {
+              visibility: "PUBLIC",
+              notification_priority: "PRIORITY_MAX",
+              default_sound: false,
+              default_vibrate_timings: false,
+              vibrate_timings: ["0s", "0.6s", "0.4s", "0.6s"],
+            }
+          : {}),
+      },
+    };
     const requestBody = {
       message: {
         token: String(device.token || "").trim(),
@@ -201,6 +230,7 @@ class PushGateway {
           body: notification.body || "",
         },
         data: this._buildRustoreDataPayload(notification),
+        android: androidConfig,
       },
     };
     const requestUrl = `${this.config.rustorePushApiBaseUrl}/v1/projects/${encodeURIComponent(this.config.rustorePushProjectId)}/messages:send`;

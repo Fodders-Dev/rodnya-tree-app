@@ -898,26 +898,29 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _restoreBootstrapUiState() async {
-    await _runBootstrapTask(
-      _restorePinnedMessageIfNeeded,
-      label: 'восстановление закрепа',
-    );
-    await _runBootstrapTask(
-      _restoreDraftIfNeeded,
-      label: 'восстановление черновика',
-    );
-    unawaited(
+    // Was a serial chain — pinned → draft → notifications → autodelete.
+    // Each one hits SharedPreferences (or its custom store) and does a
+    // setState afterwards, so the chat sat with a half-painted header
+    // for ~150–300 ms on Samsung mid-range while the chain laddered.
+    // All four are independent so we fan them out and await once.
+    await Future.wait<void>([
+      _runBootstrapTask(
+        _restorePinnedMessageIfNeeded,
+        label: 'восстановление закрепа',
+      ),
+      _runBootstrapTask(
+        _restoreDraftIfNeeded,
+        label: 'восстановление черновика',
+      ),
       _runBootstrapTask(
         _restoreNotificationSettingsIfNeeded,
         label: 'восстановление настроек уведомлений',
       ),
-    );
-    unawaited(
       _runBootstrapTask(
         _restoreAutoDeleteSettingsIfNeeded,
         label: 'восстановление автоудаления',
       ),
-    );
+    ]);
   }
 
   Future<void> _runBootstrapTask(

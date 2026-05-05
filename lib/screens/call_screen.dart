@@ -58,6 +58,12 @@ class _CallScreenState extends State<CallScreen> {
   // was annoying ("шапка торчит — нахуя?").
   bool _videoChromeVisible = true;
   Timer? _videoChromeHideTimer;
+  // Collapsible action row: lets the user fold the bottom mic / audio /
+  // camera / chat / device controls down to just the end-call button so
+  // the video stage gets more breathing room. Same affordance the user
+  // asked for on the latest device-test pass: "Кнопки нижние при
+  // звонках хотелось бы тоже сворачивать иметь возможность."
+  bool _actionsCollapsed = false;
   // Draggable + swappable PIP (picture-in-picture) for local video.
   // `_pipOffset` is the top-left position of the PIP within the
   // viewport — null until first frame so we can default-position it
@@ -634,105 +640,128 @@ class _CallScreenState extends State<CallScreen> {
                   // PIP moved to a top-level Positioned in the outer
                   // Stack so it can be dragged + swapped freely.
                   const SizedBox(height: 16),
-                  Wrap(
-                    alignment: WrapAlignment.center,
-                    spacing: 16,
-                    runSpacing: 12,
-                    children: [
-                      if (_resolvedCall.state == CallState.active &&
-                          hasConnectedRoom) ...[
-                        AnimatedBuilder(
-                          animation: _audioRouteService,
-                          builder: (context, _) => _CallActionButton(
-                            onPressed: _openAudioRouteSheet,
-                            backgroundColor:
-                                Colors.white.withValues(alpha: 0.14),
-                            icon: _audioRouteIcon(
-                              _audioRouteService.selectedRoute?.type,
-                            ),
-                            tooltip: _audioRouteTooltip(
-                              _audioRouteService.selectedRoute,
+                  // Collapse / expand affordance — only relevant when the
+                  // call is active and we actually have secondary controls
+                  // to fold away. Tap toggles _actionsCollapsed; the
+                  // AnimatedSize below cross-fades the row.
+                  if (_resolvedCall.state == CallState.active &&
+                      hasConnectedRoom)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: _CollapseToggle(
+                        collapsed: _actionsCollapsed,
+                        onTap: () => setState(
+                          () => _actionsCollapsed = !_actionsCollapsed,
+                        ),
+                      ),
+                    ),
+                  AnimatedSize(
+                    duration: const Duration(milliseconds: 220),
+                    curve: Curves.easeOutCubic,
+                    alignment: Alignment.bottomCenter,
+                    child: Wrap(
+                      alignment: WrapAlignment.center,
+                      spacing: 16,
+                      runSpacing: 12,
+                      children: [
+                        if (_resolvedCall.state == CallState.active &&
+                            hasConnectedRoom &&
+                            !_actionsCollapsed) ...[
+                          AnimatedBuilder(
+                            animation: _audioRouteService,
+                            builder: (context, _) => _CallActionButton(
+                              onPressed: _openAudioRouteSheet,
+                              backgroundColor:
+                                  Colors.white.withValues(alpha: 0.14),
+                              icon: _audioRouteIcon(
+                                _audioRouteService.selectedRoute?.type,
+                              ),
+                              tooltip: _audioRouteTooltip(
+                                _audioRouteService.selectedRoute,
+                              ),
                             ),
                           ),
-                        ),
-                        _CallActionButton(
-                          onPressed: _toggleMicrophone,
-                          backgroundColor: Colors.white.withValues(alpha: 0.14),
-                          icon: widget.coordinator.microphoneEnabled
-                              ? Icons.mic_rounded
-                              : Icons.mic_off_rounded,
-                          tooltip: widget.coordinator.microphoneEnabled
-                              ? 'Выключить микрофон'
-                              : 'Включить микрофон',
-                        ),
-                        _CallActionButton(
-                          onPressed: _openDevicePickerSheet,
-                          backgroundColor: Colors.white.withValues(alpha: 0.14),
-                          icon: Icons.tune_rounded,
-                          tooltip: 'Источники звука и видео',
-                        ),
-                        if (_chatService != null)
                           _CallActionButton(
-                            onPressed: _openInCallChatSheet,
+                            onPressed: _toggleMicrophone,
                             backgroundColor:
                                 Colors.white.withValues(alpha: 0.14),
-                            icon: Icons.chat_bubble_outline_rounded,
-                            tooltip: 'Чат во время звонка',
+                            icon: widget.coordinator.microphoneEnabled
+                                ? Icons.mic_rounded
+                                : Icons.mic_off_rounded,
+                            tooltip: widget.coordinator.microphoneEnabled
+                                ? 'Выключить микрофон'
+                                : 'Включить микрофон',
                           ),
-                        // Camera toggle exposed for both audio AND
-                        // video calls — pressing it inside an audio
-                        // call enables the user's camera, effectively
-                        // upgrading the call to video on their side.
-                        // Same one-tap "switch to video" UX TG / WA
-                        // have. Tooltip wording differs to make the
-                        // intent clear in audio mode.
-                        _CallActionButton(
-                          onPressed: _toggleCamera,
-                          backgroundColor:
-                              Colors.white.withValues(alpha: 0.14),
-                          icon: widget.coordinator.cameraEnabled
-                              ? Icons.videocam_rounded
-                              : Icons.videocam_off_rounded,
-                          tooltip: widget.coordinator.cameraEnabled
-                              ? 'Выключить камеру'
-                              : (_isVideoCall
-                                  ? 'Включить камеру'
-                                  : 'Включить видео'),
-                        ),
-                        if (widget.coordinator.cameraEnabled)
                           _CallActionButton(
-                            onPressed: widget.coordinator.isSwitchingCamera
-                                ? null
-                                : _switchCamera,
+                            onPressed: _openDevicePickerSheet,
                             backgroundColor:
                                 Colors.white.withValues(alpha: 0.14),
-                            icon: Icons.cameraswitch_rounded,
-                            tooltip: 'Переключить камеру',
+                            icon: Icons.tune_rounded,
+                            tooltip: 'Источники звука и видео',
+                          ),
+                          if (_chatService != null)
+                            _CallActionButton(
+                              onPressed: _openInCallChatSheet,
+                              backgroundColor:
+                                  Colors.white.withValues(alpha: 0.14),
+                              icon: Icons.chat_bubble_outline_rounded,
+                              tooltip: 'Чат во время звонка',
+                            ),
+                          // Camera toggle exposed for both audio AND
+                          // video calls — pressing it inside an audio
+                          // call enables the user's camera, effectively
+                          // upgrading the call to video on their side.
+                          // Same one-tap "switch to video" UX TG / WA
+                          // have. Tooltip wording differs to make the
+                          // intent clear in audio mode.
+                          _CallActionButton(
+                            onPressed: _toggleCamera,
+                            backgroundColor:
+                                Colors.white.withValues(alpha: 0.14),
+                            icon: widget.coordinator.cameraEnabled
+                                ? Icons.videocam_rounded
+                                : Icons.videocam_off_rounded,
+                            tooltip: widget.coordinator.cameraEnabled
+                                ? 'Выключить камеру'
+                                : (_isVideoCall
+                                    ? 'Включить камеру'
+                                    : 'Включить видео'),
+                          ),
+                          if (widget.coordinator.cameraEnabled)
+                            _CallActionButton(
+                              onPressed: widget.coordinator.isSwitchingCamera
+                                  ? null
+                                  : _switchCamera,
+                              backgroundColor:
+                                  Colors.white.withValues(alpha: 0.14),
+                              icon: Icons.cameraswitch_rounded,
+                              tooltip: 'Переключить камеру',
+                            ),
+                        ],
+                        _CallActionButton(
+                          onPressed: _finishCall,
+                          backgroundColor: const Color(0xFFE5484D),
+                          icon: Icons.call_end_rounded,
+                          tooltip: 'Завершить звонок',
+                        ),
+                        if (_resolvedCall.state == CallState.ringing &&
+                            _isIncoming)
+                          _CallActionButton(
+                            onPressed: _acceptIncomingCall,
+                            backgroundColor: const Color(0xFF2F9E44),
+                            icon: _isVideoCall
+                                ? Icons.videocam_rounded
+                                : Icons.call_rounded,
+                            tooltip: _isVideoCall
+                                ? 'Принять видеозвонок'
+                                : 'Принять аудиозвонок',
+                            // Ringing → pulsing halos around accept so the
+                            // primary CTA grabs attention without needing
+                            // a separate "🟢 ВХОДЯЩИЙ" banner.
+                            pulse: true,
                           ),
                       ],
-                      _CallActionButton(
-                        onPressed: _finishCall,
-                        backgroundColor: const Color(0xFFE5484D),
-                        icon: Icons.call_end_rounded,
-                        tooltip: 'Завершить звонок',
-                      ),
-                      if (_resolvedCall.state == CallState.ringing &&
-                          _isIncoming)
-                        _CallActionButton(
-                          onPressed: _acceptIncomingCall,
-                          backgroundColor: const Color(0xFF2F9E44),
-                          icon: _isVideoCall
-                              ? Icons.videocam_rounded
-                              : Icons.call_rounded,
-                          tooltip: _isVideoCall
-                              ? 'Принять видеозвонок'
-                              : 'Принять аудиозвонок',
-                          // Ringing → pulsing halos around accept so the
-                          // primary CTA grabs attention without needing
-                          // a separate "🟢 ВХОДЯЩИЙ" banner.
-                          pulse: true,
-                        ),
-                    ],
+                    ),
                   ),
                 ],
               ),
@@ -1407,6 +1436,65 @@ class _CallActionButtonState extends State<_CallActionButton>
         );
       },
       child: pressable,
+    );
+  }
+}
+
+/// Slim glassy chevron pill above the call action row. Tapping toggles
+/// the actions row between full (mic / audio / camera / chat / device)
+/// and minimal (just the end-call button + accept if ringing). Lets the
+/// user reclaim canvas height during a video call without sacrificing
+/// the ability to hang up.
+class _CollapseToggle extends StatelessWidget {
+  const _CollapseToggle({
+    required this.collapsed,
+    required this.onTap,
+  });
+
+  final bool collapsed;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      label: collapsed ? 'Показать управление' : 'Скрыть управление',
+      child: Material(
+        color: Colors.white.withValues(alpha: 0.14),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(999),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  collapsed
+                      ? Icons.expand_less_rounded
+                      : Icons.expand_more_rounded,
+                  color: Colors.white,
+                  size: 18,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  collapsed ? 'Управление' : 'Свернуть',
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.92),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.1,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
