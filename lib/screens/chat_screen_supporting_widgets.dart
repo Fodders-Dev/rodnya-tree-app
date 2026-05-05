@@ -2163,6 +2163,93 @@ class _AttachmentVideoPlayerState extends State<_AttachmentVideoPlayer> {
   }
 }
 
+/// Animated three-dot typing indicator. Each dot fades + scales in a
+/// 1.2s loop with 200ms phase offset so the row reads as a live
+/// "..." pulse — same pattern Telegram / iMessage use under the
+/// peer's name when they're composing. Lives in the chat AppBar
+/// subtitle row, sized to fit a 12px text line.
+class _TypingDots extends StatefulWidget {
+  const _TypingDots({required this.color});
+  final Color color;
+
+  @override
+  State<_TypingDots> createState() => _TypingDotsState();
+}
+
+class _TypingDotsState extends State<_TypingDots>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 18,
+      height: 14,
+      child: AnimatedBuilder(
+        animation: _ctrl,
+        builder: (context, _) {
+          return Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              for (var i = 0; i < 3; i++)
+                _Dot(
+                  color: widget.color,
+                  // Phase each dot 1/6 of the cycle apart so the
+                  // sequence reads left-to-right.
+                  phase: (_ctrl.value - i / 6) % 1.0,
+                ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _Dot extends StatelessWidget {
+  const _Dot({required this.color, required this.phase});
+  final Color color;
+  final double phase;
+
+  @override
+  Widget build(BuildContext context) {
+    // Sine-driven opacity + scale so each dot eases up and back down
+    // smoothly. Range 0.35 → 1.0 on opacity keeps the dot always
+    // visible (the row never goes blank), 0.7 → 1.0 on scale gives a
+    // subtle "breathing" feel without jumping.
+    final eased = 0.5 + 0.5 * math.sin(phase * 2 * math.pi);
+    final opacity = (0.35 + 0.65 * eased).clamp(0.0, 1.0);
+    final scale = (0.7 + 0.3 * eased).clamp(0.0, 2.0);
+    return Opacity(
+      opacity: opacity,
+      child: Transform.scale(
+        scale: scale,
+        child: Container(
+          width: 4,
+          height: 4,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+      ),
+    );
+  }
+}
+
 /// Telegram-style read receipt that animates as the message walks the
 /// status ladder: pending (no tick — handled in caller) → sent (single
 /// ✓) → delivered (✓✓ faded) → read (✓✓ blue). [AnimatedSwitcher]

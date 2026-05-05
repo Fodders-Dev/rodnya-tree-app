@@ -81,21 +81,58 @@ extension _ChatScreenScaffoldSections on _ChatScreenState {
               ),
               const SizedBox(height: 2),
               // Reference `.subhead .meta`: 12px ink-3 — secondary,
-              // calmer than the previous bodySmall default.
-              Text(
-                _chatSubtitle(),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: AppTheme.sans(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
-                  height: 1.2,
-                ),
-              ),
+              // calmer than the previous bodySmall default. When the
+              // peer is typing we strip the trailing "…" and append
+              // animated _TypingDots so the indicator reads as live.
+              _buildChatSubtitleRow(context),
             ],
           ),
         ),
+      ],
+    );
+  }
+
+  /// Smart subtitle row: peeks at [_typingUsers] to decide between the
+  /// static text path (presence / member count) and the animated typing
+  /// path (text + three pulsing dots, "печатает" instead of "печатает…").
+  Widget _buildChatSubtitleRow(BuildContext context) {
+    final isTyping = _typingUsers.isNotEmpty;
+    final theme = Theme.of(context);
+    final color = theme.colorScheme.onSurfaceVariant;
+    final textStyle = AppTheme.sans(
+      color: color,
+      fontSize: 12,
+      fontWeight: FontWeight.w500,
+      height: 1.2,
+    );
+    final raw = _chatSubtitle();
+    if (!isTyping) {
+      return Text(
+        raw,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: textStyle,
+      );
+    }
+    // Trim a trailing "…" or "..." so the animated dots take over the
+    // ellipsis role and we don't end up with "печатает… ...".
+    final trimmed = raw
+        .replaceFirst(RegExp(r'\s*[…\.]+\s*$'), '')
+        .trimRight();
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Flexible(
+          child: Text(
+            trimmed,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: textStyle,
+          ),
+        ),
+        const SizedBox(width: 4),
+        _TypingDots(color: color),
       ],
     );
   }
