@@ -7,6 +7,7 @@ import 'package:get_it/get_it.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
 import '../backend/interfaces/profile_service_interface.dart';
 import '../utils/photo_url.dart';
+import '../widgets/dismiss_keyboard.dart';
 
 class SendRelationRequestScreen extends StatefulWidget {
   final String treeId;
@@ -117,7 +118,8 @@ class _SendRelationRequestScreenState extends State<SendRelationRequestScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: Text('Пригласить в дерево')),
-      body: _isLoading
+      body: DismissKeyboardOnTap(
+        child: _isLoading
           ? Center(child: CircularProgressIndicator())
           : SingleChildScrollView(
               padding: EdgeInsets.all(16.0),
@@ -247,6 +249,7 @@ class _SendRelationRequestScreenState extends State<SendRelationRequestScreen> {
                 ],
               ),
             ),
+      ),
     );
   }
 }

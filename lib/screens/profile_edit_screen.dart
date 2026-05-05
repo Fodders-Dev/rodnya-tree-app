@@ -15,6 +15,7 @@ import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/profile_service_interface.dart';
 import '../backend/models/profile_form_data.dart';
 import '../services/custom_api_auth_service.dart';
+import '../widgets/dismiss_keyboard.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/flow_overlays.dart';
 import '../widgets/google_sign_in_action.dart';
@@ -951,7 +952,8 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
 
     return Scaffold(
       appBar: AppBar(title: const Text('Профиль')),
-      body: _isLoading
+      body: DismissKeyboardOnTap(
+        child: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : Center(
               child: ConstrainedBox(
@@ -1008,6 +1010,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                 ),
               ),
             ),
+      ),
       bottomNavigationBar: Padding(
         padding: const EdgeInsets.all(16),
         child: FilledButton(

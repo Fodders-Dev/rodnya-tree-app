@@ -10,6 +10,7 @@ import '../backend/interfaces/profile_service_interface.dart';
 import '../backend/models/profile_form_data.dart';
 import '../models/family_person.dart';
 import '../models/user_profile.dart';
+import '../widgets/dismiss_keyboard.dart';
 import '../widgets/flow_overlays.dart';
 import '../widgets/glass_panel.dart';
 
@@ -173,7 +174,8 @@ class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
 
     return Scaffold(
       appBar: AppBar(title: const Text('Профиль')),
-      body: Container(
+      body: DismissKeyboardOnTap(
+        child: Container(
         decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topLeft,
@@ -245,6 +247,7 @@ class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
                   );
                 },
               ),
+      ),
       ),
     );
   }

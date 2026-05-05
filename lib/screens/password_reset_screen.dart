@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
 
 import '../backend/interfaces/auth_service_interface.dart';
+import '../widgets/dismiss_keyboard.dart';
 import '../widgets/glass_panel.dart';
 
 class PasswordResetScreen extends StatefulWidget {
@@ -62,7 +63,8 @@ class _PasswordResetScreenState extends State<PasswordResetScreen> {
 
     return Scaffold(
       appBar: AppBar(title: const Text('Сброс пароля')),
-      body: Container(
+      body: DismissKeyboardOnTap(
+        child: Container(
         decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topLeft,
@@ -220,6 +222,7 @@ class _PasswordResetScreenState extends State<PasswordResetScreen> {
             ),
           ),
         ),
+      ),
       ),
     );
   }

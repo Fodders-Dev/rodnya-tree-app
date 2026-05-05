@@ -13,6 +13,7 @@ import '../services/custom_api_auth_service.dart';
 import '../services/onboarding_service.dart';
 import '../theme/app_theme.dart';
 import '../utils/user_facing_error.dart';
+import '../widgets/dismiss_keyboard.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/google_sign_in_action.dart';
 import '../widgets/offline_indicator.dart';
@@ -949,7 +950,8 @@ class _AuthScreenState extends State<AuthScreen> {
     final theme = Theme.of(context);
 
     return Scaffold(
-      body: Container(
+      body: DismissKeyboardOnTap(
+        child: Container(
         decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topLeft,
@@ -991,6 +993,7 @@ class _AuthScreenState extends State<AuthScreen> {
             ],
           ),
         ),
+      ),
       ),
     );
   }
