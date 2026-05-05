@@ -168,11 +168,20 @@ class CustomApiPostService implements PostServiceInterface {
   }
 
   @override
-  Future<Comment> addComment(String postId, String content) async {
+  Future<Comment> addComment(
+    String postId,
+    String content, {
+    String? parentCommentId,
+  }) async {
+    final body = <String, dynamic>{'content': content};
+    final trimmedParent = (parentCommentId ?? '').trim();
+    if (trimmedParent.isNotEmpty) {
+      body['parentCommentId'] = trimmedParent;
+    }
     final response = await _requestJson(
       method: 'POST',
       path: '/v1/posts/$postId/comments',
-      body: {'content': content},
+      body: body,
     );
 
     return Comment.fromJson(response);

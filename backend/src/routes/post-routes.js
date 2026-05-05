@@ -340,21 +340,66 @@ function registerPostRoutes(
       return;
     }
 
+    const rawParentCommentId =
+      typeof req.body?.parentCommentId === "string"
+        ? req.body.parentCommentId.trim()
+        : null;
+    const parentCommentId =
+      rawParentCommentId && rawParentCommentId.length > 0
+        ? rawParentCommentId
+        : null;
+
+    const actorName =
+      req.auth.user.profile?.displayName ||
+      composeDisplayName(req.auth.user.profile) ||
+      req.auth.user.email ||
+      "Аноним";
+
     const comment = await store.addPostComment({
       postId: req.params.postId,
       authorId: req.auth.user.id,
-      authorName:
-        req.auth.user.profile?.displayName ||
-        composeDisplayName(req.auth.user.profile) ||
-        req.auth.user.email ||
-        "Аноним",
+      authorName: actorName,
       authorPhotoUrl: req.auth.user.profile?.photoUrl || null,
       content: req.body?.content,
+      parentCommentId,
     });
 
     if (comment === false) {
       res.status(400).json({message: "Комментарий не должен быть пустым"});
       return;
+    }
+    if (comment === null) {
+      res.status(404).json({message: "Публикация не найдена"});
+      return;
+    }
+
+    // If we landed under a parent comment, ping its author. We resolve the
+    // parent on the saved comment (not the request body) because the store
+    // climbs nested replies up to the canonical top-level parent.
+    if (comment.parentCommentId) {
+      try {
+        const parent = await store.findPostComment({
+          postId: req.params.postId,
+          commentId: comment.parentCommentId,
+        });
+        if (parent && parent.authorId) {
+          const snippet = String(comment.content || "").slice(0, 140);
+          await store.addCommentReplyNotification({
+            postId: req.params.postId,
+            parentCommentId: parent.id,
+            parentCommentAuthorId: parent.authorId,
+            replyCommentId: comment.id,
+            actorUserId: req.auth.user.id,
+            actorName,
+            replySnippet: snippet,
+          });
+        }
+      } catch (error) {
+        // Don't fail the comment write on a notification hiccup — the
+        // user-visible action succeeded; this is best-effort fan-out.
+        // eslint-disable-next-line no-console
+        console.warn("[posts] comment reply notification failed", error);
+      }
     }
 
     res.status(201).json(mapComment(comment));

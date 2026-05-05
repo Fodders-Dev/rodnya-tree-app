@@ -16,7 +16,16 @@ class Comment {
   /// without a reactions field deserialise as no reactions.
   final List<ReactionSummary> reactions;
 
+  /// Two-level threading anchor. `null` for top-level comments;
+  /// otherwise points at the id of the top-level comment this reply
+  /// belongs to. Backend collapses replies-to-replies onto the
+  /// canonical top-level parent so this field is always either null
+  /// or a top-level id, never another reply's id.
+  final String? parentCommentId;
+
   String? get authorPhotoUrl => _authorPhotoUrl;
+
+  bool get isReply => parentCommentId != null && parentCommentId!.isNotEmpty;
 
   Comment({
     required this.id,
@@ -29,10 +38,12 @@ class Comment {
     this.likeCount = 0,
     this.likedBy = const [],
     List<ReactionSummary>? reactions,
+    this.parentCommentId,
   })  : _authorPhotoUrl = UrlUtils.normalizeImageUrl(authorPhotoUrl),
         reactions = reactions ?? const <ReactionSummary>[];
 
   factory Comment.fromJson(Map<String, dynamic> json) {
+    final parentRaw = json['parentCommentId']?.toString();
     return Comment(
       id: json['id']?.toString() ?? '',
       postId: json['postId']?.toString() ?? '',
@@ -48,6 +59,8 @@ class Comment {
           .map((e) => e.toString())
           .toList(),
       reactions: ReactionSummary.listFromDynamic(json['reactions']),
+      parentCommentId:
+          (parentRaw == null || parentRaw.isEmpty) ? null : parentRaw,
     );
   }
 
@@ -63,6 +76,7 @@ class Comment {
       'likeCount': likeCount,
       'likedBy': likedBy,
       'reactions': reactions.map((r) => r.toMap()).toList(),
+      'parentCommentId': parentCommentId,
     };
   }
 
@@ -78,6 +92,7 @@ class Comment {
       likeCount: likeCount,
       likedBy: likedBy,
       reactions: next,
+      parentCommentId: parentCommentId,
     );
   }
 }

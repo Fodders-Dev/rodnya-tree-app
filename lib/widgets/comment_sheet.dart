@@ -35,6 +35,12 @@ class _CommentSheetState extends State<CommentSheet> {
   bool _isSending = false;
   String? _error;
 
+  /// When set, the next send goes out as a reply under this top-level
+  /// comment. Cleared after a successful send or by tapping the X in the
+  /// "Отвечаем X" banner above the input.
+  Comment? _replyingTo;
+  final FocusNode _commentFocusNode = FocusNode();
+
   @override
   void initState() {
     super.initState();
@@ -45,7 +51,54 @@ class _CommentSheetState extends State<CommentSheet> {
   void dispose() {
     _commentController.dispose();
     _scrollController.dispose();
+    _commentFocusNode.dispose();
     super.dispose();
+  }
+
+  /// Walk the loaded comments and build top-level → replies groupings
+  /// keeping load order. We look up the top-level parent both by
+  /// matching ids in the same list AND by trusting parentCommentId
+  /// from the server — the server collapses chains, but if the parent
+  /// happens to have been deleted we still want the orphaned reply to
+  /// surface as a top-level entry rather than vanish silently.
+  List<_CommentGroup> _groupComments(List<Comment> comments) {
+    final byId = {for (final c in comments) c.id: c};
+    final groups = <_CommentGroup>[];
+    final indexById = <String, int>{};
+    for (final c in comments) {
+      if (!c.isReply) {
+        indexById[c.id] = groups.length;
+        groups.add(_CommentGroup(parent: c, replies: <Comment>[]));
+      }
+    }
+    for (final c in comments) {
+      if (!c.isReply) continue;
+      final parentId = c.parentCommentId!;
+      final parentIndex = indexById[parentId];
+      if (parentIndex != null) {
+        groups[parentIndex].replies.add(c);
+      } else if (!byId.containsKey(parentId)) {
+        // Orphaned reply (parent deleted): promote to top-level so the
+        // text isn't lost. The user-facing label still reads "Ответил X"
+        // because the metadata is preserved.
+        indexById[c.id] = groups.length;
+        groups.add(_CommentGroup(parent: c, replies: <Comment>[]));
+      }
+    }
+    return groups;
+  }
+
+  void _startReplyTo(Comment comment) {
+    setState(() {
+      _replyingTo = comment;
+    });
+    _commentFocusNode.requestFocus();
+  }
+
+  void _cancelReply() {
+    setState(() {
+      _replyingTo = null;
+    });
   }
 
   Future<void> _loadComments() async {
@@ -77,14 +130,20 @@ class _CommentSheetState extends State<CommentSheet> {
     if (text.isEmpty || _isSending) return;
 
     HapticFeedback.lightImpact();
+    final replyTarget = _replyingTo;
     setState(() => _isSending = true);
 
     try {
-      final newComment = await _postService.addComment(widget.post.id, text);
+      final newComment = await _postService.addComment(
+        widget.post.id,
+        text,
+        parentCommentId: replyTarget?.id,
+      );
       if (mounted) {
         setState(() {
           _comments?.add(newComment);
           _commentController.clear();
+          _replyingTo = null;
           _isSending = false;
         });
         // Scroll to bottom
@@ -238,67 +297,129 @@ class _CommentSheetState extends State<CommentSheet> {
       );
     }
 
+    final groups = _groupComments(_comments!);
+
     return ListView.builder(
       controller: _scrollController,
       padding: const EdgeInsets.all(16),
-      itemCount: _comments!.length,
+      itemCount: groups.length,
       itemBuilder: (context, index) {
-        final comment = _comments![index];
-        return _buildCommentItem(comment);
+        final group = groups[index];
+        return _buildCommentGroup(group);
       },
     );
   }
 
-  Widget _buildCommentItem(Comment comment) {
+  Widget _buildCommentGroup(_CommentGroup group) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
-      child: GestureDetector(
-        // Long-press → reaction picker. Same gesture pattern as the
-        // post card so users build muscle memory across surfaces.
-        behavior: HitTestBehavior.translucent,
-        onLongPress: () => _openCommentReactionPicker(comment),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _buildAuthorAvatar(comment),
-            const SizedBox(width: 12),
-            Expanded(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildCommentItem(group.parent, isReply: false),
+          if (group.replies.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            // Indent + thin guide line so a thread visually attaches to
+            // its parent without screaming for attention.
+            Padding(
+              padding: const EdgeInsets.only(left: 18),
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    children: [
-                      Text(
-                        comment.authorName ?? 'Аноним',
-                        style: const TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        DateFormat('d MMM в HH:mm', 'ru')
-                            .format(comment.createdAt),
-                        style: TextStyle(
-                          color: Colors.grey.shade600,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Text(comment.content),
-                  if (comment.reactions.isNotEmpty) ...[
-                    const SizedBox(height: 6),
-                    ReactionChipStrip(
-                      reactions: comment.reactions,
-                      currentUserId: _authService.currentUserId,
-                      onToggle: (emoji) =>
-                          _toggleCommentReaction(comment, emoji),
+                  for (final reply in group.replies)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: _buildCommentItem(reply, isReply: true),
                     ),
-                  ],
                 ],
               ),
             ),
           ],
-        ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCommentItem(Comment comment, {required bool isReply}) {
+    final theme = Theme.of(context);
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+
+    return GestureDetector(
+      // Long-press → reaction picker. Same gesture pattern as the
+      // post card so users build muscle memory across surfaces.
+      behavior: HitTestBehavior.translucent,
+      onLongPress: () => _openCommentReactionPicker(comment),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildAuthorAvatar(comment, isReply: isReply),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        comment.authorName ?? 'Аноним',
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      DateFormat('d MMM в HH:mm', 'ru')
+                          .format(comment.createdAt),
+                      style: TextStyle(
+                        color: Colors.grey.shade600,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(comment.content),
+                if (comment.reactions.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  ReactionChipStrip(
+                    reactions: comment.reactions,
+                    currentUserId: _authService.currentUserId,
+                    onToggle: (emoji) =>
+                        _toggleCommentReaction(comment, emoji),
+                  ),
+                ],
+                // Inline "Ответить" affordance — shown for any comment
+                // (replies anchor to the top-level parent automatically).
+                // We hide the button on the comment the user is currently
+                // replying to so the "active reply" lives in the input
+                // banner instead.
+                if (_replyingTo?.id != comment.id) ...[
+                  const SizedBox(height: 4),
+                  InkWell(
+                    onTap: () => _startReplyTo(comment),
+                    borderRadius: BorderRadius.circular(8),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 4,
+                        vertical: 4,
+                      ),
+                      child: Text(
+                        'Ответить',
+                        style: theme.textTheme.labelMedium?.copyWith(
+                          color: tokens.accent,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -396,7 +517,7 @@ class _CommentSheetState extends State<CommentSheet> {
   ///    (backend sometimes omits the photo on freshly-created
   ///    comments — this catches "ава не подсасывается с профиля")
   /// 3. First letter / generic icon (handled inside RodnyaAvatar)
-  Widget _buildAuthorAvatar(Comment comment) {
+  Widget _buildAuthorAvatar(Comment comment, {bool isReply = false}) {
     String? photoUrl = (comment.authorPhotoUrl ?? '').trim().isEmpty
         ? null
         : comment.authorPhotoUrl;
@@ -409,56 +530,131 @@ class _CommentSheetState extends State<CommentSheet> {
     return RodnyaAvatar(
       photoUrl: photoUrl,
       name: comment.authorName,
-      size: 36,
+      // Slightly smaller avatars for replies — visual rhythm reinforces
+      // the indent / thread relationship without an explicit guide line.
+      size: isReply ? 28 : 36,
     );
   }
 
   Widget _buildInputArea() {
     final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.all(12),
-      child: Row(
-        children: [
-          Expanded(
-            child: TextField(
-              controller: _commentController,
-              decoration: InputDecoration(
-                hintText: 'Оставьте комментарий...',
-                hintStyle: TextStyle(color: Colors.grey.shade500),
-                fillColor: theme.colorScheme.surfaceContainerHighest,
-                filled: true,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(24),
-                  borderSide: BorderSide.none,
-                ),
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 8,
-                ),
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (_replyingTo != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+              decoration: BoxDecoration(
+                color: tokens.accentSoft,
+                borderRadius: BorderRadius.circular(12),
               ),
-              maxLines: null,
-              textCapitalization: TextCapitalization.sentences,
+              child: Row(
+                children: [
+                  Icon(Icons.reply, size: 16, color: tokens.accentStrong),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text.rich(
+                      TextSpan(
+                        children: [
+                          TextSpan(
+                            text: 'Отвечаем ',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: tokens.inkSecondary,
+                            ),
+                          ),
+                          TextSpan(
+                            text: _replyingTo!.authorName ?? 'Аноним',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              fontWeight: FontWeight.w700,
+                              color: tokens.ink,
+                            ),
+                          ),
+                        ],
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  InkWell(
+                    key: const ValueKey('comment-reply-cancel'),
+                    onTap: _cancelReply,
+                    borderRadius: BorderRadius.circular(999),
+                    child: Padding(
+                      padding: const EdgeInsets.all(4),
+                      child: Icon(
+                        Icons.close,
+                        size: 16,
+                        color: tokens.inkMuted,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
-          const SizedBox(width: 8),
-          _isSending
-              ? const SizedBox(
-                  width: 48,
-                  height: 48,
-                  child: Padding(
-                    padding: EdgeInsets.all(12),
-                    child: CircularProgressIndicator(strokeWidth: 2),
+        Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _commentController,
+                  focusNode: _commentFocusNode,
+                  decoration: InputDecoration(
+                    hintText: _replyingTo != null
+                        ? 'Ваш ответ…'
+                        : 'Оставьте комментарий...',
+                    hintStyle: TextStyle(color: Colors.grey.shade500),
+                    fillColor: theme.colorScheme.surfaceContainerHighest,
+                    filled: true,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(24),
+                      borderSide: BorderSide.none,
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 8,
+                    ),
                   ),
-                )
-              : IconButton(
-                  onPressed: _addComment,
-                  icon: Icon(
-                    Icons.send,
-                    color: theme.colorScheme.primary,
-                  ),
+                  maxLines: null,
+                  textCapitalization: TextCapitalization.sentences,
                 ),
-        ],
-      ),
+              ),
+              const SizedBox(width: 8),
+              _isSending
+                  ? const SizedBox(
+                      width: 48,
+                      height: 48,
+                      child: Padding(
+                        padding: EdgeInsets.all(12),
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    )
+                  : IconButton(
+                      onPressed: _addComment,
+                      icon: Icon(
+                        Icons.send,
+                        color: theme.colorScheme.primary,
+                      ),
+                    ),
+            ],
+          ),
+        ),
+      ],
     );
   }
+}
+
+/// One top-level comment plus its replies, in load order. Used only
+/// internally by [_CommentSheetState] to render threaded groups.
+class _CommentGroup {
+  _CommentGroup({required this.parent, required this.replies});
+  final Comment parent;
+  final List<Comment> replies;
 }

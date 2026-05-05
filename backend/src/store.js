@@ -770,6 +770,7 @@ function createCommentRecord({
   authorName,
   authorPhotoUrl = null,
   content,
+  parentCommentId = null,
 }) {
   const timestamp = nowIso();
   return {
@@ -782,6 +783,13 @@ function createCommentRecord({
     createdAt: timestamp,
     updatedAt: timestamp,
     likedBy: [],
+    // Two-level threading: top-level comments have parentCommentId === null,
+    // replies carry the id of the top-level comment they belong to. We keep
+    // the model flat (no replies-to-replies) so the UI never needs more than
+    // one indent level — same model Twitter / Instagram converged on.
+    parentCommentId: parentCommentId
+      ? String(parentCommentId).trim() || null
+      : null,
   };
 }
 
@@ -10198,6 +10206,73 @@ class FileStore {
     return structuredClone(notification);
   }
 
+  /// Notify the parent comment author that someone replied to their
+  /// comment. Distinct from comment_reaction so the inbox can render a
+  /// dedicated "ответил на ваш комментарий" string and route directly
+  /// to the comment thread instead of the reaction overlay.
+  ///
+  /// We dedupe on (parentCommentId, actorUserId) for unread entries —
+  /// a single user posting two replies in quick succession refreshes
+  /// the existing entry rather than fanning out two pings.
+  async addCommentReplyNotification({
+    postId,
+    parentCommentId,
+    parentCommentAuthorId,
+    replyCommentId,
+    actorUserId,
+    actorName,
+    replySnippet,
+  }) {
+    if (
+      !parentCommentAuthorId ||
+      !actorUserId ||
+      String(parentCommentAuthorId).trim() === String(actorUserId).trim()
+    ) {
+      return null;
+    }
+    const db = await this._read();
+    db.notifications = Array.isArray(db.notifications)
+      ? db.notifications
+      : [];
+    const existing = db.notifications.find(
+      (entry) =>
+        entry.userId === parentCommentAuthorId &&
+        entry.type === "comment_reply" &&
+        !entry.readAt &&
+        entry.data?.parentCommentId === parentCommentId &&
+        entry.data?.actorUserId === actorUserId,
+    );
+    const trimmedSnippet = String(replySnippet || "").trim();
+    if (existing) {
+      existing.data = {
+        ...existing.data,
+        replyCommentId,
+      };
+      existing.body = trimmedSnippet || existing.body || "";
+      existing.createdAt = nowIso();
+      existing.readAt = null;
+      await this._write(db);
+      return structuredClone(existing);
+    }
+    const notification = createNotificationRecord({
+      userId: parentCommentAuthorId,
+      type: "comment_reply",
+      title: actorName
+        ? `${actorName} ответил на ваш комментарий`
+        : "Новый ответ на комментарий",
+      body: trimmedSnippet,
+      data: {
+        postId,
+        parentCommentId,
+        replyCommentId,
+        actorUserId,
+      },
+    });
+    db.notifications.push(notification);
+    await this._write(db);
+    return structuredClone(notification);
+  }
+
   async togglePostReaction({postId, userId, emoji}) {
     const db = await this._read();
     const post = db.posts.find((entry) => entry.id === postId);
@@ -10286,12 +10361,25 @@ class FileStore {
       .map((entry) => attachCommentReactions(db, entry));
   }
 
+  /// Lookup a single comment scoped to a post. Used by the route layer
+  /// to fan out reply notifications without re-fetching the whole list.
+  async findPostComment({postId, commentId}) {
+    const db = await this._read();
+    const trimmedId = String(commentId || "").trim();
+    if (!trimmedId) return null;
+    const comment = db.comments.find(
+      (entry) => entry.id === trimmedId && entry.postId === postId,
+    );
+    return comment ? structuredClone(comment) : null;
+  }
+
   async addPostComment({
     postId,
     authorId,
     authorName,
     authorPhotoUrl = null,
     content,
+    parentCommentId = null,
   }) {
     const db = await this._read();
     const post = db.posts.find((entry) => entry.id === postId);
@@ -10300,12 +10388,32 @@ class FileStore {
       return null;
     }
 
+    // Resolve parent for two-level threading. If the caller pointed at a
+    // reply, climb to the top-level comment so the chain stays flat. If
+    // the parent doesn't exist (or belongs to another post), treat the
+    // comment as top-level rather than rejecting — kinder UX in the
+    // race-condition where the parent was deleted between fetch and post.
+    let resolvedParentId = null;
+    if (parentCommentId) {
+      const parent = db.comments.find(
+        (entry) =>
+          entry.id === String(parentCommentId).trim() &&
+          entry.postId === postId,
+      );
+      if (parent) {
+        resolvedParentId = parent.parentCommentId
+          ? String(parent.parentCommentId).trim() || parent.id
+          : parent.id;
+      }
+    }
+
     const comment = createCommentRecord({
       postId,
       authorId,
       authorName,
       authorPhotoUrl,
       content,
+      parentCommentId: resolvedParentId,
     });
     if (!comment.content) {
       return false;

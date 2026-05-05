@@ -63,8 +63,16 @@ abstract class PostServiceInterface {
   /// Fetch comments for a specific post.
   Future<List<Comment>> getComments(String postId);
 
-  /// Add a comment to a post.
-  Future<Comment> addComment(String postId, String content);
+  /// Add a comment to a post. Pass [parentCommentId] to post a reply
+  /// under an existing top-level comment — the server collapses any
+  /// reply-to-reply chains onto the canonical top-level parent so the
+  /// resulting `parentCommentId` is always either null or a top-level
+  /// comment id.
+  Future<Comment> addComment(
+    String postId,
+    String content, {
+    String? parentCommentId,
+  });
 
   /// Delete a comment.
   Future<void> deleteComment(String postId, String commentId);

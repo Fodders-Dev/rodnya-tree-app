@@ -853,7 +853,11 @@ class PendingBackendPostService implements PostServiceInterface {
   }
 
   @override
-  Future<Comment> addComment(String postId, String content) {
+  Future<Comment> addComment(
+    String postId,
+    String content, {
+    String? parentCommentId,
+  }) {
     throw UnsupportedError(_pendingProviderMessage('post'));
   }
 

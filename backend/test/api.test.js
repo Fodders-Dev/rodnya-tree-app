@@ -4813,6 +4813,85 @@ test("post endpoints cover feed, likes and comments", async () => {
     const comments = await commentsResponse.json();
     assert.equal(comments.length, 1);
     assert.equal(comments[0].content, "Поздравляю!");
+    assert.equal(comments[0].parentCommentId, null);
+
+    // Threaded reply: bob replies to his own top-level comment so we
+    // exercise the parent-resolution path. Reply's parentCommentId must
+    // come back pointing to the top-level id, and a fresh notification
+    // must land for the parent author (alice replying back).
+    const aliceReplyResponse = await fetch(
+      `${ctx.baseUrl}/v1/posts/${createdPost.id}/comments`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${alice.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          content: "Спасибо!",
+          parentCommentId: createdComment.id,
+        }),
+      },
+    );
+    assert.equal(aliceReplyResponse.status, 201);
+    const aliceReply = await aliceReplyResponse.json();
+    assert.equal(aliceReply.parentCommentId, createdComment.id);
+
+    // Reply-to-reply collapses onto the top-level parent (no nested
+    // chains). bob replies to alice's reply — server resolves it back
+    // to createdComment.
+    const bobNestedReplyResponse = await fetch(
+      `${ctx.baseUrl}/v1/posts/${createdPost.id}/comments`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${bob.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          content: "Конечно!",
+          parentCommentId: aliceReply.id,
+        }),
+      },
+    );
+    assert.equal(bobNestedReplyResponse.status, 201);
+    const bobNestedReply = await bobNestedReplyResponse.json();
+    assert.equal(bobNestedReply.parentCommentId, createdComment.id);
+
+    // Bob (parent of the top-level comment) should now have an unread
+    // comment_reply notification for alice's response.
+    const bobNotificationsResponse = await fetch(
+      `${ctx.baseUrl}/v1/notifications`,
+      {
+        headers: {authorization: `Bearer ${bob.accessToken}`},
+      },
+    );
+    assert.equal(bobNotificationsResponse.status, 200);
+    const bobNotifications = await bobNotificationsResponse.json();
+    const notificationsList = Array.isArray(bobNotifications)
+      ? bobNotifications
+      : bobNotifications.notifications || bobNotifications.items || [];
+    const replyNotification = notificationsList.find(
+      (entry) =>
+        entry.type === "comment_reply" &&
+        entry.data?.parentCommentId === createdComment.id,
+    );
+    assert.ok(replyNotification, "bob should be notified of the reply");
+    assert.equal(replyNotification.data?.actorUserId, alice.user.id);
+
+    // Clean up threaded replies before falling through to the existing
+    // delete + cleanup section, otherwise comment-count assertions below
+    // would observe 3 instead of 1.
+    for (const child of [bobNestedReply, aliceReply]) {
+      const cleanupResponse = await fetch(
+        `${ctx.baseUrl}/v1/posts/${createdPost.id}/comments/${child.id}`,
+        {
+          method: "DELETE",
+          headers: {authorization: `Bearer ${alice.accessToken}`},
+        },
+      );
+      assert.equal(cleanupResponse.status, 204);
+    }
 
     const authorFeedResponse = await fetch(
       `${ctx.baseUrl}/v1/posts?authorId=${alice.user.id}`,

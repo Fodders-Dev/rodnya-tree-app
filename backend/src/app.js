@@ -1117,6 +1117,11 @@ function createApp({
       "storyId",
       "actorUserId",
       "emoji",
+      // Threaded comment replies carry the parent + reply ids so the
+      // notifications screen can deep-link straight to the relevant
+      // comment thread.
+      "parentCommentId",
+      "replyCommentId",
     ];
 
     const sanitized = {};
@@ -1277,6 +1282,10 @@ function createApp({
 
   function mapComment(comment) {
     const likedBy = Array.isArray(comment.likedBy) ? comment.likedBy : [];
+    const parentCommentId =
+      comment.parentCommentId === undefined || comment.parentCommentId === null
+        ? null
+        : String(comment.parentCommentId).trim() || null;
     return {
       id: comment.id,
       postId: comment.postId,
@@ -1288,6 +1297,7 @@ function createApp({
       likeCount: likedBy.length,
       likedBy,
       reactions: Array.isArray(comment.reactions) ? comment.reactions : [],
+      parentCommentId,
     };
   }
 
