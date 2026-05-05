@@ -189,6 +189,8 @@ void main() {
     expect(find.text('Четвёртый'), findsNothing);
     expect(find.textContaining('Показать ещё'), findsOneWidget);
 
+    await tester.ensureVisible(find.textContaining('Показать ещё'));
+    await tester.pumpAndSettle();
     await tester.tap(find.textContaining('Показать ещё'));
     await tester.pumpAndSettle();
 

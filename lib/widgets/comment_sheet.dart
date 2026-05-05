@@ -531,10 +531,13 @@ class _CommentSheetState extends State<CommentSheet> {
                   InkWell(
                     onTap: () => _startReplyTo(comment),
                     borderRadius: BorderRadius.circular(8),
+                    // Wider hit area (8 horizontal × 6 vertical) so the
+                    // inline button satisfies Android's recommended
+                    // ~36dp tap-target on a compact comment row.
                     child: Padding(
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 4,
-                        vertical: 4,
+                        horizontal: 8,
+                        vertical: 6,
                       ),
                       child: Text(
                         'Ответить',
