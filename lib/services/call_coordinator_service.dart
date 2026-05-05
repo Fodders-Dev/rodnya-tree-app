@@ -446,7 +446,13 @@ class CallCoordinatorService extends ChangeNotifier
   Future<void> toggleCamera() async {
     final room = _room;
     final activeCall = _currentCall;
-    if (room == null || activeCall == null || !activeCall.mediaMode.isVideo) {
+    // Was: also bailed when `!activeCall.mediaMode.isVideo`. That
+    // turned the camera-toggle button into a no-op inside audio
+    // calls, blocking the "upgrade to video" path the user asked
+    // for. We now allow the toggle in any active call as long as
+    // there's a live room — flipping the local camera on/off is a
+    // pure local-participant operation.
+    if (room == null || activeCall == null) {
       return;
     }
 

@@ -31,18 +31,22 @@ extension _InteractiveFamilyTreeSections on _InteractiveFamilyTreeState {
               // overlay just under it so it never lives under the
               // toolbar pill.
               Positioned(
-                top: widget.viewportReservedTop > 96
-                    ? widget.viewportReservedTop + 8
-                    : 12,
-                left: 12,
-                child: _buildViewportStatusBar(),
-              ),
-              Positioned(
                 right: 12,
                 top: widget.viewportReservedTop > 96
                     ? widget.viewportReservedTop + 8
                     : 92,
                 child: _buildViewportControlDock(),
+              ),
+              // Small unobtrusive zoom indicator at the BOTTOM of the
+              // canvas — replaces the previous "Семья / 250%" pill at
+              // the top-left which the user said was overpowering.
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 12,
+                child: IgnorePointer(
+                  child: Center(child: _buildBottomZoomIndicator()),
+                ),
               ),
             ],
           );
@@ -154,59 +158,35 @@ extension _InteractiveFamilyTreeSections on _InteractiveFamilyTreeState {
     );
   }
 
-  Widget _buildViewportStatusBar() {
+  /// Small "75%" pill at the bottom of the canvas. Replaces the
+  /// previous top-left "Семья / 250%" panel that was bigger than
+  /// the user wanted. Hidden when scale is at the resting 100% to
+  /// keep the canvas clean.
+  Widget _buildBottomZoomIndicator() {
+    final zoomPercent = (_currentScale * 100).round();
+    if (zoomPercent == 100) return const SizedBox.shrink();
     final tokens = Theme.of(context).extension<RodnyaDesignTokens>() ??
         (Theme.of(context).brightness == Brightness.dark
             ? RodnyaDesignTokens.dark
             : RodnyaDesignTokens.light);
-    final zoomPercent = (_currentScale * 100).round();
-    // Stat duplication cleanup: people/relations counts already render in
-    // the screen-level toolbar AND the "Карта рода" sidebar, so the canvas
-    // overlay only keeps what's actually canvas-local — the tree-vs-circle
-    // mode chip and the live zoom level.
-    final chips = <Widget>[
-      _buildOverlayChip(
-        icon: widget.showGenerationGuides
-            ? Icons.account_tree_outlined
-            : Icons.diversity_3_outlined,
-        label: widget.showGenerationGuides ? 'Семья' : 'Друзья',
-        highlighted: true,
-      ),
-      _buildOverlayChip(
-        icon: Icons.zoom_in_map_outlined,
-        label: '$zoomPercent%',
-      ),
-    ];
-
-    return ConstrainedBox(
-      constraints: BoxConstraints(
-        maxWidth: min((_viewportSize?.width ?? 640) - 24, 640),
-      ),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Container(
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            color: tokens.surfaceStrong.withValues(alpha: 0.9),
-            borderRadius: BorderRadius.circular(tokens.radiusMd),
-            border: Border.all(
-              color: tokens.surfaceLine.withValues(alpha: 0.9),
-            ),
-            boxShadow: tokens.panelShadow(
-              Theme.of(context).brightness,
-              floating: true,
-            ),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              for (int i = 0; i < chips.length; i++) ...[
-                if (i > 0) const SizedBox(width: 8),
-                chips[i],
-              ],
-            ],
-          ),
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: tokens.surfaceStrong.withValues(alpha: 0.78),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: tokens.surfaceLine.withValues(alpha: 0.6),
+          width: 0.6,
         ),
+      ),
+      child: Text(
+        '$zoomPercent%',
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: tokens.inkSecondary,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.1,
+              fontSize: 11,
+            ),
       ),
     );
   }
@@ -360,40 +340,4 @@ extension _InteractiveFamilyTreeSections on _InteractiveFamilyTreeState {
     );
   }
 
-  Widget _buildOverlayChip({
-    required IconData icon,
-    required String label,
-    bool highlighted = false,
-  }) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final tokens = Theme.of(context).extension<RodnyaDesignTokens>() ??
-        (Theme.of(context).brightness == Brightness.dark
-            ? RodnyaDesignTokens.dark
-            : RodnyaDesignTokens.light);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: highlighted ? tokens.accentSoft : tokens.surface,
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(
-          color: highlighted ? tokens.accent : tokens.surfaceLine,
-        ),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 14),
-          const SizedBox(width: 6),
-          Text(
-            label,
-            style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                  fontWeight: FontWeight.w700,
-                  color:
-                      highlighted ? tokens.accentStrong : colorScheme.onSurface,
-                ),
-          ),
-        ],
-      ),
-    );
-  }
 }

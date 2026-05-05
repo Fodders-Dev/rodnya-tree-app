@@ -583,22 +583,25 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
                   )
                 else
                   const SizedBox(width: 14),
-                Flexible(
-                  child: Text(
-                    _isFriendsTree ? 'Круг' : 'Дерево',
-                    style: AppTheme.serif(
-                      color: tokens.ink,
-                      fontSize: 22,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: -0.22,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                // "Дерево" / "Круг" gets natural width (short word
+                // — never wraps). The tree-name pill takes the rest
+                // of the row via Expanded so long names like "Семья
+                // Кузнецовых" ellipsise gracefully instead of forcing
+                // the title to "Дер..." and the pill to "Семья Ку...".
+                Text(
+                  _isFriendsTree ? 'Круг' : 'Дерево',
+                  style: AppTheme.serif(
+                    color: tokens.ink,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: -0.22,
                   ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
                 if (treeName != null && treeName.isNotEmpty) ...[
                   const SizedBox(width: 8),
-                  Flexible(
+                  Expanded(
                     child: Container(
                       padding: const EdgeInsets.symmetric(
                           horizontal: 8, vertical: 4),
@@ -618,8 +621,8 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
                       ),
                     ),
                   ),
-                ],
-                const Spacer(),
+                ] else
+                  const Spacer(),
                 _TreeTopbarPill(
                   tokens: tokens,
                   tooltip: 'Выбрать дерево',

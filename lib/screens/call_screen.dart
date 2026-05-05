@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:collection/collection.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get_it/get_it.dart';
@@ -64,6 +65,8 @@ class _CallScreenState extends State<CallScreen> {
   // tracks which feed sits in the small tile vs the full stage —
   // tapping the PIP swaps them.
   Offset? _pipOffset;
+  Offset? _pipDragStartOffset;
+  Offset _pipDragAccumulated = Offset.zero;
   bool _pipShowsLocal = true;
   static const double _pipWidth = 120;
   static const double _pipHeight = 180;
@@ -148,23 +151,29 @@ class _CallScreenState extends State<CallScreen> {
     _ringerPlayer ??= AudioPlayer();
     void pulse() {
       if (!_ringerActive || !mounted) return;
-      // Vibration: heavy haptic on the on-beat, light haptic 600ms
-      // later for a "double-tap" rhythm — same shape iOS / TG ringer
-      // pulses use.
-      HapticFeedback.heavyImpact();
-      Timer(const Duration(milliseconds: 600), () {
+      // Stronger vibration: HapticFeedback.heavyImpact() was barely
+      // perceptible on Samsung mid-range — switched to .vibrate()
+      // which is the heaviest option Flutter exposes (≈500ms buzz).
+      // Combined with .heavyImpact() at the end for a "double-tap"
+      // rhythm.
+      HapticFeedback.vibrate();
+      Timer(const Duration(milliseconds: 700), () {
         if (!_ringerActive || !mounted) return;
         HapticFeedback.heavyImpact();
       });
-      // Sound: SystemSound is too quiet for a ring; use a short tone
-      // generated via the system alert. We don't have a bundled
-      // ringtone asset yet, so this is a placeholder — clearer than
-      // silence, room to swap in a real .mp3 / .ogg later.
+      // Sound: SystemSound.alert is what Android exposes through
+      // Flutter without an extra package. Quieter than a real
+      // ringtone but consistent across devices. A bundled .mp3 +
+      // audioplayers loop would be louder; that's a follow-up.
       SystemSound.play(SystemSoundType.alert);
+      Timer(const Duration(milliseconds: 350), () {
+        if (!_ringerActive || !mounted) return;
+        SystemSound.play(SystemSoundType.alert);
+      });
     }
     pulse();
     _ringerTimer =
-        Timer.periodic(const Duration(milliseconds: 1600), (_) => pulse());
+        Timer.periodic(const Duration(milliseconds: 1400), (_) => pulse());
   }
 
   void _stopRinger() {
@@ -260,10 +269,28 @@ class _CallScreenState extends State<CallScreen> {
 
   Future<void> _toggleMicrophone() async {
     await widget.coordinator.toggleMicrophone();
+    // Force a rebuild — the coordinator notifies its listeners but
+    // edge cases (toggleMicrophone fast-failing, no notifyListeners)
+    // would leave the icon stale.
+    if (mounted) setState(() {});
   }
 
   Future<void> _toggleCamera() async {
-    await widget.coordinator.toggleCamera();
+    HapticFeedback.lightImpact();
+    try {
+      await widget.coordinator.toggleCamera();
+    } catch (error) {
+      debugPrint('toggleCamera failed: $error');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Не удалось переключить камеру. Проверьте разрешение.'),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() {});
+    }
   }
 
   Future<void> _switchCamera() async {
@@ -745,6 +772,11 @@ class _CallScreenState extends State<CallScreen> {
     final track = showLocal ? localTrack : (remoteTrack ?? localTrack);
     final mirror = showLocal &&
         widget.coordinator.cameraPosition == CameraPosition.front;
+    // Track whether the current pointer interaction has moved enough
+    // to count as a drag. Without this, a quick tap that travels even
+    // a few pixels was being claimed by the pan recogniser and the
+    // swap never fired. We snapshot the start offset on pan-down and
+    // only commit a drag when distance > kTouchSlop.
     return Positioned(
       left: offset.dx,
       top: offset.dy,
@@ -752,6 +784,11 @@ class _CallScreenState extends State<CallScreen> {
       height: _pipHeight,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
+        // dragStartBehavior.down → drag begins on touch-down without
+        // the default 18px slop wait. Was the cause of "сначала надо
+        // зажать и тянуть" — slop made the first finger movement
+        // feel unresponsive.
+        dragStartBehavior: DragStartBehavior.down,
         onTap: () {
           // Tap → swap which feed lives in the PIP. Only meaningful
           // when there's a remote track to swap with; otherwise the
@@ -760,8 +797,17 @@ class _CallScreenState extends State<CallScreen> {
           HapticFeedback.lightImpact();
           setState(() => _pipShowsLocal = !_pipShowsLocal);
         },
+        onPanStart: (details) {
+          _pipDragStartOffset = offset;
+          _pipDragAccumulated = Offset.zero;
+        },
         onPanUpdate: (details) {
-          final next = offset + details.delta;
+          _pipDragAccumulated += details.delta;
+          // Quick taps hit a few px of jitter before lifting. Treat
+          // anything under 6dp as "still a tap" — onPanEnd then
+          // routes back through onTap. Past 6dp we commit the drag.
+          if (_pipDragAccumulated.distance < 6.0) return;
+          final next = (_pipDragStartOffset ?? offset) + _pipDragAccumulated;
           // Clamp to viewport (minus PIP size + 8dp gutter so the
           // tile never disappears off the edge).
           final clamped = Offset(
@@ -774,6 +820,15 @@ class _CallScreenState extends State<CallScreen> {
           setState(() => _pipOffset = clamped);
         },
         onPanEnd: (details) {
+          // If the user barely moved, treat as a tap-swap.
+          if (_pipDragAccumulated.distance < 6.0) {
+            if (remoteTrack != null) {
+              HapticFeedback.lightImpact();
+              setState(() => _pipShowsLocal = !_pipShowsLocal);
+            }
+            _pipDragStartOffset = null;
+            return;
+          }
           // Snap to nearest horizontal edge (left or right) for the
           // TG / WA "magnet" feel — vertical position stays where the
           // user dropped it.
@@ -782,6 +837,7 @@ class _CallScreenState extends State<CallScreen> {
               ? 8.0
               : size.width - _pipWidth - 8.0;
           setState(() => _pipOffset = Offset(snapX, offset.dy));
+          _pipDragStartOffset = null;
         },
         child: ClipRRect(
           borderRadius: BorderRadius.circular(20),

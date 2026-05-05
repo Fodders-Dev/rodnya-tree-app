@@ -330,39 +330,46 @@ class _NavItem extends StatelessWidget {
       button: true,
       selected: selected,
       label: data.label,
-      child: Padding(
-        padding: EdgeInsets.symmetric(horizontal: showLabel ? 4 : 2),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(999),
-          onTap: onTap,
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 220),
-            curve: Curves.easeOutCubic,
-            padding: EdgeInsets.symmetric(
-              horizontal: showLabel ? 8 : 4,
-              vertical: showLabel ? 8 : 10,
-            ),
-            decoration: BoxDecoration(borderRadius: BorderRadius.circular(999)),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                iconWithBadge,
-                if (showLabel) ...[
-                  const SizedBox(height: 4),
-                  Text(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(999),
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+          // Was 8/8 horizontal/vertical when labels showed → ate 16dp
+          // off each slot which truncated "Родные" / "Дерево" to
+          // "Родн..." / "Дере..." on Samsung-mid widths. Trimmed to
+          // 4/6 — labels now fit at any sane phone width.
+          padding: EdgeInsets.symmetric(
+            horizontal: showLabel ? 4 : 4,
+            vertical: showLabel ? 6 : 10,
+          ),
+          decoration: BoxDecoration(borderRadius: BorderRadius.circular(999)),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              iconWithBadge,
+              if (showLabel) ...[
+                const SizedBox(height: 3),
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
                     data.label,
                     maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                    overflow: TextOverflow.visible,
                     style: theme.textTheme.labelSmall?.copyWith(
-                      color:
-                          selected ? tokens.accentInk : scheme.onSurfaceVariant,
-                      fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
-                      letterSpacing: 0,
+                      color: selected
+                          ? tokens.accentInk
+                          : scheme.onSurfaceVariant,
+                      fontWeight:
+                          selected ? FontWeight.w800 : FontWeight.w600,
+                      letterSpacing: -0.1,
+                      fontSize: 10.5,
                     ),
                   ),
-                ],
+                ),
               ],
-            ),
+            ],
           ),
         ),
       ),
