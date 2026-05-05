@@ -42,6 +42,17 @@ Object? _e2eSemanticsHandle;
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // Cap the Flutter image cache. Default Flutter limits are 1000 images
+  // / 100 MB, both of which are too generous for a chat-heavy app —
+  // a single conversation with photo attachments easily fills the
+  // bytes cap and OOM-kills mid-range Android devices. 200 images /
+  // 64 MB is roomy enough for one screen of carousels but caps RAM
+  // at a level Samsung Galaxy A-series and similar 3-4 GB devices
+  // can tolerate without GC stalls.
+  PaintingBinding.instance.imageCache
+    ..maximumSize = 200
+    ..maximumSizeBytes = 64 * 1024 * 1024;
+
   // Edge-to-edge on Android: transparent system bars overlap the
   // Flutter canvas, so backgrounds (warm cream / dark olive) reach
   // the screen edges. Status / nav bar icon brightness is then driven

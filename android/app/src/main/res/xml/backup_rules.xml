@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Auto-Backup rules for Android <12.
+
+  We allow Google's auto-backup as a courtesy (so user preferences
+  like theme + nav state survive a re-install), but explicitly
+  exclude every file that contains authenticated state. Without
+  this exclusion the user's session token, push device id, profile
+  cache and chat history would round-trip through Google Drive — at
+  best a privacy leak, at worst a stolen-device replay attack
+  vector if a thief restored a backup on a brand-new device.
+
+  Excludes:
+   * SharedPreferences blobs holding session/refresh tokens, push
+     device ids, registration fingerprints, settings stores.
+   * Every Hive box that ever holds chat / profile / tree data —
+     names match the cache classes' boxName fields.
+-->
+<full-backup-content>
+    <exclude domain="sharedpref" path="FlutterSharedPreferences.xml" />
+    <exclude domain="sharedpref" path="rodnya_android_calls.xml" />
+
+    <!-- Hive box files live under the app's documents dir. -->
+    <exclude domain="file" path="chat_messages_v1.hive" />
+    <exclude domain="file" path="chat_messages_v1.lock" />
+    <exclude domain="file" path="chat_previews_v1.hive" />
+    <exclude domain="file" path="chat_previews_v1.lock" />
+    <exclude domain="file" path="chat_details_v1.hive" />
+    <exclude domain="file" path="chat_details_v1.lock" />
+    <exclude domain="file" path="notifications_v1.hive" />
+    <exclude domain="file" path="notifications_v1.lock" />
+    <exclude domain="file" path="posts_v1.hive" />
+    <exclude domain="file" path="posts_v1.lock" />
+    <exclude domain="file" path="tree_graph_v1.hive" />
+    <exclude domain="file" path="tree_graph_v1.lock" />
+    <exclude domain="file" path="user_profile_v1.hive" />
+    <exclude domain="file" path="user_profile_v1.lock" />
+    <exclude domain="file" path="usersBox.hive" />
+    <exclude domain="file" path="usersBox.lock" />
+    <exclude domain="file" path="treesBox.hive" />
+    <exclude domain="file" path="treesBox.lock" />
+    <exclude domain="file" path="personsBox.hive" />
+    <exclude domain="file" path="personsBox.lock" />
+    <exclude domain="file" path="relationsBox.hive" />
+    <exclude domain="file" path="relationsBox.lock" />
+    <exclude domain="file" path="messagesBox.hive" />
+    <exclude domain="file" path="messagesBox.lock" />
+    <exclude domain="file" path="treeLayoutsBox.hive" />
+    <exclude domain="file" path="treeLayoutsBox.lock" />
+</full-backup-content>

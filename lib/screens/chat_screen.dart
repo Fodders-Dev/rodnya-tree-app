@@ -10,6 +10,8 @@ import 'package:flutter/services.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
+
+import '../utils/date_parser.dart';
 import 'package:intl/intl.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path/path.dart' as path;
@@ -682,7 +684,7 @@ class _ChatScreenState extends State<ChatScreen> {
       final body = message.text.trim().isNotEmpty
           ? message.text.trim()
           : _transcriptAttachmentLabel(message.attachments);
-      return '[${formatter.format(message.timestamp)}] ${message.displayName}: $body';
+      return '[${formatter.format(toLocalForDisplay(message.timestamp))}] ${message.displayName}: $body';
     }).join('\n');
   }
 
@@ -4608,7 +4610,7 @@ class _ChatScreenState extends State<ChatScreen> {
               : null,
           text: message.text,
           highlightQuery: _searchController.query,
-          timeLabel: DateFormat.Hm('ru').format(message.timestamp),
+          timeLabel: DateFormat.Hm('ru').format(toLocalForDisplay(message.timestamp)),
           isRead: isMe && _messageReadByAnyRecipient(message),
           isDelivered: isMe && _messageDeliveredToAnyRecipient(message),
           remoteAttachments: message.attachments,
@@ -4700,15 +4702,20 @@ class _ChatScreenState extends State<ChatScreen> {
   /// how recent the message is. Same shape as TG date pills.
   String _formatDateDividerLabel(DateTime timestamp) {
     final now = DateTime.now();
+    // Normalize source timestamp to LOCAL once — backend pushes
+    // UTC, and `DateTime(timestamp.year, ...)` would otherwise pull
+    // year/month/day from the UTC frame which can flip a date by ±1
+    // day across midnight in the user's zone.
+    final localTimestamp = toLocalForDisplay(timestamp);
     final today = DateTime(now.year, now.month, now.day);
     final messageDay =
-        DateTime(timestamp.year, timestamp.month, timestamp.day);
+        DateTime(localTimestamp.year, localTimestamp.month, localTimestamp.day);
     final diff = today.difference(messageDay).inDays;
     if (diff == 0) return 'Сегодня';
     if (diff == 1) return 'Вчера';
     final pattern =
-        timestamp.year == now.year ? 'd MMMM' : 'd MMMM yyyy';
-    return DateFormat(pattern, 'ru').format(timestamp);
+        localTimestamp.year == now.year ? 'd MMMM' : 'd MMMM yyyy';
+    return DateFormat(pattern, 'ru').format(localTimestamp);
   }
 
   /// Wraps a remote bubble in a slide-up + fade-in tween that runs
@@ -4749,7 +4756,7 @@ class _ChatScreenState extends State<ChatScreen> {
   ) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final timeLabel = DateFormat.Hm('ru').format(message.timestamp);
+    final timeLabel = DateFormat.Hm('ru').format(toLocalForDisplay(message.timestamp));
     final palette = _callSummaryPalette(scheme, callMetadata);
     final mediaIcon =
         callMetadata.isVideo ? Icons.videocam_rounded : Icons.call_rounded;
@@ -4997,7 +5004,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Widget _buildOptimisticBubble(_OutgoingMessage message) {
-    final timeLabel = DateFormat.Hm('ru').format(message.timestamp);
+    final timeLabel = DateFormat.Hm('ru').format(toLocalForDisplay(message.timestamp));
     final theme = Theme.of(context);
     final statusMeta = _statusMetaForOutgoingMessage(theme, message);
     final progressValue = message.progress?.value;

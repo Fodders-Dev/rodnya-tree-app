@@ -31,7 +31,10 @@
         android:label="Родня"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
-        android:enableOnBackInvokedCallback="true">
+        android:enableOnBackInvokedCallback="true"
+        android:fullBackupContent="@xml/backup_rules"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:allowBackup="true">
         <meta-data
             android:name="rodnya.notification.icon"
             android:resource="@drawable/ic_stat_notification" />

@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 12+ data extraction rules. Same exclusion list as
+  backup_rules.xml but in the new schema. Applies to:
+   * cloud-backup (Google Drive)
+   * device-to-device transfer (Quick Switch / Smart Switch)
+
+  Without this both flows would carry the user's session token,
+  Hive caches and push device id over to a different physical
+  device — letting whoever has the new device skip authentication
+  for the original account.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="FlutterSharedPreferences.xml" />
+        <exclude domain="sharedpref" path="rodnya_android_calls.xml" />
+
+        <exclude domain="file" path="chat_messages_v1.hive" />
+        <exclude domain="file" path="chat_messages_v1.lock" />
+        <exclude domain="file" path="chat_previews_v1.hive" />
+        <exclude domain="file" path="chat_previews_v1.lock" />
+        <exclude domain="file" path="chat_details_v1.hive" />
+        <exclude domain="file" path="chat_details_v1.lock" />
+        <exclude domain="file" path="notifications_v1.hive" />
+        <exclude domain="file" path="notifications_v1.lock" />
+        <exclude domain="file" path="posts_v1.hive" />
+        <exclude domain="file" path="posts_v1.lock" />
+        <exclude domain="file" path="tree_graph_v1.hive" />
+        <exclude domain="file" path="tree_graph_v1.lock" />
+        <exclude domain="file" path="user_profile_v1.hive" />
+        <exclude domain="file" path="user_profile_v1.lock" />
+        <exclude domain="file" path="usersBox.hive" />
+        <exclude domain="file" path="usersBox.lock" />
+        <exclude domain="file" path="treesBox.hive" />
+        <exclude domain="file" path="treesBox.lock" />
+        <exclude domain="file" path="personsBox.hive" />
+        <exclude domain="file" path="personsBox.lock" />
+        <exclude domain="file" path="relationsBox.hive" />
+        <exclude domain="file" path="relationsBox.lock" />
+        <exclude domain="file" path="messagesBox.hive" />
+        <exclude domain="file" path="messagesBox.lock" />
+        <exclude domain="file" path="treeLayoutsBox.hive" />
+        <exclude domain="file" path="treeLayoutsBox.lock" />
+    </cloud-backup>
+
+    <device-transfer>
+        <exclude domain="sharedpref" path="FlutterSharedPreferences.xml" />
+        <exclude domain="sharedpref" path="rodnya_android_calls.xml" />
+
+        <exclude domain="file" path="chat_messages_v1.hive" />
+        <exclude domain="file" path="chat_messages_v1.lock" />
+        <exclude domain="file" path="chat_previews_v1.hive" />
+        <exclude domain="file" path="chat_previews_v1.lock" />
+        <exclude domain="file" path="chat_details_v1.hive" />
+        <exclude domain="file" path="chat_details_v1.lock" />
+        <exclude domain="file" path="notifications_v1.hive" />
+        <exclude domain="file" path="notifications_v1.lock" />
+        <exclude domain="file" path="posts_v1.hive" />
+        <exclude domain="file" path="posts_v1.lock" />
+        <exclude domain="file" path="tree_graph_v1.hive" />
+        <exclude domain="file" path="tree_graph_v1.lock" />
+        <exclude domain="file" path="user_profile_v1.hive" />
+        <exclude domain="file" path="user_profile_v1.lock" />
+        <exclude domain="file" path="usersBox.hive" />
+        <exclude domain="file" path="usersBox.lock" />
+        <exclude domain="file" path="treesBox.hive" />
+        <exclude domain="file" path="treesBox.lock" />
+        <exclude domain="file" path="personsBox.hive" />
+        <exclude domain="file" path="personsBox.lock" />
+        <exclude domain="file" path="relationsBox.hive" />
+        <exclude domain="file" path="relationsBox.lock" />
+        <exclude domain="file" path="messagesBox.hive" />
+        <exclude domain="file" path="messagesBox.lock" />
+        <exclude domain="file" path="treeLayoutsBox.hive" />
+        <exclude domain="file" path="treeLayoutsBox.lock" />
+    </device-transfer>
+</data-extraction-rules>
