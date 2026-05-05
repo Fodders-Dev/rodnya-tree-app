@@ -3573,17 +3573,36 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
                 ),
               ),
-            if (_showJumpToLatestButton)
-              Positioned(
-                right: 16,
-                bottom: 18,
-                child: FloatingActionButton.small(
-                  heroTag: 'jump-to-latest',
-                  onPressed: _jumpToLatestMessages,
-                  tooltip: 'К последним сообщениям',
-                  child: const Icon(Icons.keyboard_arrow_down_rounded),
-                ),
+            // Telegram-style entry: scale 0 → 1 with elastic overshoot
+            // + fade. AnimatedSwitcher (vs AnimatedScale) actually
+            // mounts / unmounts the FAB, so the existing test that
+            // asserts findsNothing when there's nothing to scroll keeps
+            // working — only the visual swap is animated.
+            Positioned(
+              right: 16,
+              bottom: 18,
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 240),
+                switchInCurve: Curves.elasticOut,
+                switchOutCurve: Curves.easeInCubic,
+                transitionBuilder: (child, animation) {
+                  return FadeTransition(
+                    opacity: animation,
+                    child: ScaleTransition(scale: animation, child: child),
+                  );
+                },
+                child: _showJumpToLatestButton
+                    ? FloatingActionButton.small(
+                        key: const ValueKey('jump-to-latest-fab'),
+                        heroTag: 'jump-to-latest',
+                        onPressed: _jumpToLatestMessages,
+                        tooltip: 'К последним сообщениям',
+                        child: const Icon(Icons.keyboard_arrow_down_rounded),
+                      )
+                    : const SizedBox.shrink(
+                        key: ValueKey('jump-to-latest-empty')),
               ),
+            ),
           ],
         );
       },
@@ -3712,10 +3731,43 @@ class _ChatScreenState extends State<ChatScreen> {
     // ── Compact Telegram-style recording UI ──
     // While the user is actively holding the mic, replace the whole input
     // area content with a minimal timer row so no big panel pops up.
-    if (recordingState == ChatRecordingState.recording) {
-      return _buildActiveRecordingInputBar();
-    }
+    // We swap via AnimatedSwitcher so the recording bar fades + slides
+    // in over the composer (220ms easeOutCubic) instead of appearing
+    // as a hard cut. Same on the way back when recording stops.
+    final isRecording = recordingState == ChatRecordingState.recording;
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 220),
+      switchInCurve: Curves.easeOutCubic,
+      switchOutCurve: Curves.easeInCubic,
+      transitionBuilder: (child, animation) {
+        return FadeTransition(
+          opacity: animation,
+          child: SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(0, 0.08),
+              end: Offset.zero,
+            ).animate(animation),
+            child: child,
+          ),
+        );
+      },
+      child: isRecording
+          ? KeyedSubtree(
+              key: const ValueKey('composer-recording'),
+              child: _buildActiveRecordingInputBar(),
+            )
+          : KeyedSubtree(
+              key: const ValueKey('composer-idle'),
+              child: _buildIdleComposer(canSend, isLockedRecording),
+            ),
+    );
+  }
 
+  /// Extracted from [_buildMessageInputArea] so the AnimatedSwitcher
+  /// has a stable child key for the non-recording state. No behaviour
+  /// change — this is the composer that used to be inlined.
+  Widget _buildIdleComposer(bool canSend, bool isLockedRecording) {
+    final recordingState = _recordingController.state;
     return Padding(
       padding: EdgeInsets.fromLTRB(
         8,
@@ -3740,21 +3792,41 @@ class _ChatScreenState extends State<ChatScreen> {
             if (recordingState == ChatRecordingState.denied ||
                 recordingState == ChatRecordingState.failed)
               const SizedBox(height: 8),
-            if (_selectedEdit != null)
-              _buildEditComposerBar(Theme.of(context), _selectedEdit!),
-            if (_selectedEdit != null) const SizedBox(height: 8),
-            if (_selectedReply != null)
-              _buildReplyComposerBar(Theme.of(context), _selectedReply!),
-            if (_selectedReply != null) const SizedBox(height: 8),
-            if (_selectedForward != null)
-              _buildForwardComposerBar(Theme.of(context), _selectedForward!),
-            if (_selectedForward != null) const SizedBox(height: 8),
-            if (_selectedForwardBatch != null)
-              _buildForwardBatchComposerBar(
-                Theme.of(context),
-                _selectedForwardBatch!,
-              ),
-            if (_selectedForwardBatch != null) const SizedBox(height: 8),
+            // Composer-bar appearance is animated: AnimatedSize handles
+            // the row-height grow / collapse; AnimatedSwitcher inside
+            // cross-fades + slide-downs the actual bar so toggling
+            // reply / edit / forward feels intentional rather than a
+            // jump. Each helper wraps one conditional so the bars
+            // never animate against each other when the user flips
+            // between modes (e.g. cancel reply → start edit).
+            _AnimatedComposerSlot(
+              show: _selectedEdit != null,
+              child: _selectedEdit == null
+                  ? null
+                  : _buildEditComposerBar(Theme.of(context), _selectedEdit!),
+            ),
+            _AnimatedComposerSlot(
+              show: _selectedReply != null,
+              child: _selectedReply == null
+                  ? null
+                  : _buildReplyComposerBar(Theme.of(context), _selectedReply!),
+            ),
+            _AnimatedComposerSlot(
+              show: _selectedForward != null,
+              child: _selectedForward == null
+                  ? null
+                  : _buildForwardComposerBar(
+                      Theme.of(context), _selectedForward!),
+            ),
+            _AnimatedComposerSlot(
+              show: _selectedForwardBatch != null,
+              child: _selectedForwardBatch == null
+                  ? null
+                  : _buildForwardBatchComposerBar(
+                      Theme.of(context),
+                      _selectedForwardBatch!,
+                    ),
+            ),
             if (_autoDeleteSettings.option != ChatAutoDeleteOption.off)
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),

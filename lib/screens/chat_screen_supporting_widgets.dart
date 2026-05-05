@@ -2162,3 +2162,53 @@ class _AttachmentVideoPlayerState extends State<_AttachmentVideoPlayer> {
     return Uri.file(value);
   }
 }
+
+/// Composer-bar slot with smooth show / hide. Wraps a reply / edit /
+/// forward bar in [AnimatedSize] (row-height grow) + [AnimatedSwitcher]
+/// (cross-fade + slide-down for the bar itself). When [show] flips on
+/// the bar slides down 8dp + fades in over 220ms; when it flips off
+/// the bar fades out and the row collapses to 0 height.
+///
+/// Pass `child: null` when the bar should be hidden so the slot has
+/// nothing to render — same shape Flutter's `AnimatedSwitcher` expects
+/// for the "empty" branch. The 8dp bottom gap is part of the slot
+/// itself so the gap collapses with the bar (no leftover whitespace).
+class _AnimatedComposerSlot extends StatelessWidget {
+  const _AnimatedComposerSlot({required this.show, required this.child});
+
+  final bool show;
+  final Widget? child;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedSize(
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
+      alignment: Alignment.topCenter,
+      child: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 220),
+        switchInCurve: Curves.easeOutCubic,
+        switchOutCurve: Curves.easeInCubic,
+        transitionBuilder: (child, animation) {
+          final slide = Tween<Offset>(
+            begin: const Offset(0, -0.18),
+            end: Offset.zero,
+          ).animate(animation);
+          return ClipRect(
+            child: SlideTransition(
+              position: slide,
+              child: FadeTransition(opacity: animation, child: child),
+            ),
+          );
+        },
+        child: show && child != null
+            ? Padding(
+                key: const ValueKey('composer-slot-shown'),
+                padding: const EdgeInsets.only(bottom: 8),
+                child: child,
+              )
+            : const SizedBox.shrink(key: ValueKey('composer-slot-hidden')),
+      ),
+    );
+  }
+}
