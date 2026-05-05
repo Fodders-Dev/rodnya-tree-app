@@ -26,6 +26,8 @@ abstract class UserProfileCache {
   Future<void> write(UserProfile profile);
 
   Future<void> clear(String userId);
+
+  Future<void> clearAll();
 }
 
 class HiveUserProfileCache implements UserProfileCache {
@@ -76,6 +78,13 @@ class HiveUserProfileCache implements UserProfileCache {
       await (await _box()).delete(userId);
     } catch (_) {}
   }
+
+  @override
+  Future<void> clearAll() async {
+    try {
+      await (await _box()).clear();
+    } catch (_) {}
+  }
 }
 
 class InMemoryUserProfileCache implements UserProfileCache {
@@ -92,5 +101,10 @@ class InMemoryUserProfileCache implements UserProfileCache {
   @override
   Future<void> clear(String userId) async {
     _store.remove(userId);
+  }
+
+  @override
+  Future<void> clearAll() async {
+    _store.clear();
   }
 }

@@ -330,18 +330,22 @@ class _ProfileScreenState extends State<ProfileScreen> {
       }
       final selectedTreeId = context.read<TreeProvider>().selectedTreeId;
       _lastStoriesTreeId = selectedTreeId;
-      // These two are independent of each other and of the bulk fetch
-      // above — fan them out too.
-      await Future.wait<void>([
+      // These two are independent of each other AND of the visible
+      // chrome — kick them off as fire-and-forget so the profile
+      // header can settle into its final state instantly. Each path
+      // does its own setState when its data arrives.
+      unawaited(
         _loadSelectedTreePerson(
           selectedTreeId: selectedTreeId,
           currentUserId: userId,
         ),
+      );
+      unawaited(
         _loadStoriesForContext(
           selectedTreeId: selectedTreeId,
           currentUserId: userId,
         ),
-      ]);
+      );
     } catch (e) {
       // Cache-first soft failure: if we already painted something
       // from disk, downgrade the error to a quiet log so the screen

@@ -353,6 +353,35 @@ class AppStartupService implements AppStartupServiceInterface {
         realtimeService: customApiRealtimeService,
       ),
     );
+
+    // Wire user-scoped cache cleanup to auth state. The moment the
+    // user signs out (or the session is force-revoked) the auth
+    // stream emits null — at that point we wipe every per-user
+    // Hive box so a different account signing in next doesn't see
+    // any leftover messages, profile chrome, posts or tree graph.
+    // Best-effort: failures are logged and do not block sign-out.
+    String? lastUserId;
+    customApiAuthService.authStateChanges.listen((nextUserId) async {
+      try {
+        if (lastUserId != null && nextUserId != lastUserId) {
+          await Future.wait<void>([
+            chatMessageCache.clearAll(),
+            chatPreviewCache.clear(),
+            chatDetailsCache.clearAll(),
+            notificationsCache.clear(),
+            postsCache.clearAll(),
+            userProfileCache.clearAll(),
+            treeGraphCache.clearAll(),
+          ]);
+        }
+      } catch (error, stackTrace) {
+        debugPrint(
+          'AppStartup: cache cleanup on auth change failed: $error\n$stackTrace',
+        );
+      } finally {
+        lastUserId = nextUserId;
+      }
+    });
   }
 
   Future<void> _registerHiveAdapters() async {

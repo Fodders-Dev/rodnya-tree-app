@@ -2812,6 +2812,11 @@ class _MemoryChatMessageCache implements ChatMessageCache {
     return write(chatId, snapshot(chatId), keepCount: keepCount);
   }
 
+  @override
+  Future<void> clearAll() async {
+    _messages.clear();
+  }
+
   List<ChatMessage> _trimmed(
     List<ChatMessage> messages, {
     int keepCount = 200,

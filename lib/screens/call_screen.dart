@@ -374,10 +374,31 @@ class _CallScreenState extends State<CallScreen> {
   }
 
   VideoTrack? get _localVideoTrack {
+    // Camera state has THREE inputs that all need to agree before we
+    // render the local video tile:
+    //   * the user-facing toggle (`coordinator.cameraEnabled`) — the
+    //     intent we just expressed via `_toggleCamera`
+    //   * the publication's `muted` flag — what livekit actually did
+    //     server-side
+    //   * the track being non-null — what's actually paintable
+    //
+    // Before this guard the getter only checked the publication, so
+    // calling `setCameraEnabled(false)` (which mutes the track but
+    // leaves the publication in place) left a frozen last-frame in
+    // the PIP — the user reported "При видеозвонке видео не
+    // отключается". Treating the muted publication or the user-side
+    // disabled state as "no track" hides the tile immediately and
+    // matches what the remote peer sees.
+    if (!widget.coordinator.cameraEnabled) {
+      return null;
+    }
     final publication = widget
         .coordinator.room?.localParticipant?.videoTrackPublications
         .firstWhereOrNull((entry) => entry.source == TrackSource.camera);
-    return publication?.track;
+    if (publication == null || publication.muted) {
+      return null;
+    }
+    return publication.track;
   }
 
   bool get _showReconnectBanner =>

@@ -1,4 +1,6 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <!-- Разрешения -->
     <!-- Разрешение для WorkManager для перезапуска задач после перезагрузки -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
@@ -39,6 +41,28 @@
             android:exported="true">
             <intent-filter>
                 <action android:name="android.telecom.ConnectionService" />
+            </intent-filter>
+        </service>
+
+        <!-- Disable the default flutter_rustore_push service so we can
+             swap in our own subclass that builds full-screen incoming
+             call notifications when the app is fully killed. -->
+        <service
+            android:name="ru.rustore.flutter_rustore_push.FlutterRustorePushService"
+            tools:node="remove" />
+
+        <!-- Our push service inherits from the plugin's service so the
+             usual Flutter-side onMessageReceived callback still fires
+             for foreground/background pushes; on top of that it builds
+             a `setFullScreenIntent` notification on the "calls" channel
+             when `data.type == "call_invite"`, which is the only path
+             that lifts the ringer over the lockscreen on Android 13+. -->
+        <service
+            android:name="com.ahjkuio.rodnya_family_app.RodnyaPushService"
+            android:exported="true"
+            tools:ignore="ExportedService">
+            <intent-filter>
+                <action android:name="ru.rustore.sdk.pushclient.MESSAGING_EVENT" />
             </intent-filter>
         </service>
         <activity

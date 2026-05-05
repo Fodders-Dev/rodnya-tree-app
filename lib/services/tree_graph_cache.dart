@@ -19,6 +19,8 @@ abstract class TreeGraphCache {
   Future<void> write(String treeId, Map<String, dynamic> snapshotJson);
 
   Future<void> remove(String treeId);
+
+  Future<void> clearAll();
 }
 
 class HiveTreeGraphCache implements TreeGraphCache {
@@ -66,6 +68,13 @@ class HiveTreeGraphCache implements TreeGraphCache {
       await (await _box()).delete(trimmed);
     } catch (_) {}
   }
+
+  @override
+  Future<void> clearAll() async {
+    try {
+      await (await _box()).clear();
+    } catch (_) {}
+  }
 }
 
 class InMemoryTreeGraphCache implements TreeGraphCache {
@@ -83,5 +92,10 @@ class InMemoryTreeGraphCache implements TreeGraphCache {
   @override
   Future<void> remove(String treeId) async {
     _store.remove(treeId);
+  }
+
+  @override
+  Future<void> clearAll() async {
+    _store.clear();
   }
 }

@@ -18,6 +18,8 @@ abstract class ChatDetailsCache {
   Future<void> write(String chatId, ChatDetails details);
 
   Future<void> remove(String chatId);
+
+  Future<void> clearAll();
 }
 
 class HiveChatDetailsCache implements ChatDetailsCache {
@@ -68,6 +70,13 @@ class HiveChatDetailsCache implements ChatDetailsCache {
       await (await _box()).delete(trimmed);
     } catch (_) {}
   }
+
+  @override
+  Future<void> clearAll() async {
+    try {
+      await (await _box()).clear();
+    } catch (_) {}
+  }
 }
 
 /// Test helper that keeps everything in memory.
@@ -85,5 +94,10 @@ class InMemoryChatDetailsCache implements ChatDetailsCache {
   @override
   Future<void> remove(String chatId) async {
     _store.remove(chatId);
+  }
+
+  @override
+  Future<void> clearAll() async {
+    _store.clear();
   }
 }

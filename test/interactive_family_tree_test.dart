@@ -2114,4 +2114,231 @@ void main() {
     expect(find.text('Зумеры'), findsOneWidget);
     expect(find.text('Альфа'), findsOneWidget);
   });
+
+  testWidgets(
+    'InteractiveFamilyTree anchors a cousin without explicit parent edges via the family unit',
+    (tester) async {
+      // Regression: adding a cousin (daughter of an aunt that's
+      // already in the tree) used to drift to the far right of her
+      // row with no visible parent line, because the layout only
+      // consumed literal RelationType.parent / spouse / sibling
+      // edges. The fix re-projects the snapshot's family units back
+      // into the adjacency maps so distant relatives — cousin / aunt
+      // / uncle / niece / in-law — get the same parent/child edges
+      // the backend already inferred.
+
+      tester.view.physicalSize = const Size(2000, 1200);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final grandpa = FamilyPerson(
+        id: 'grandpa',
+        treeId: 'tree-1',
+        name: 'Дедушка',
+        gender: Gender.male,
+        isAlive: true,
+        createdAt: DateTime(2024, 1, 1),
+        updatedAt: DateTime(2024, 1, 1),
+      );
+      final grandma = FamilyPerson(
+        id: 'grandma',
+        treeId: 'tree-1',
+        name: 'Бабушка',
+        gender: Gender.female,
+        isAlive: true,
+        createdAt: DateTime(2024, 1, 1),
+        updatedAt: DateTime(2024, 1, 1),
+      );
+      final mother = FamilyPerson(
+        id: 'mother',
+        treeId: 'tree-1',
+        name: 'Мама',
+        gender: Gender.female,
+        isAlive: true,
+        createdAt: DateTime(2024, 1, 1),
+        updatedAt: DateTime(2024, 1, 1),
+      );
+      final aunt = FamilyPerson(
+        id: 'aunt',
+        treeId: 'tree-1',
+        name: 'Тётя',
+        gender: Gender.female,
+        isAlive: true,
+        createdAt: DateTime(2024, 1, 1),
+        updatedAt: DateTime(2024, 1, 1),
+      );
+      final me = FamilyPerson(
+        id: 'me',
+        treeId: 'tree-1',
+        name: 'Я',
+        gender: Gender.male,
+        userId: 'user-1',
+        isAlive: true,
+        createdAt: DateTime(2024, 1, 1),
+        updatedAt: DateTime(2024, 1, 1),
+      );
+      final cousin = FamilyPerson(
+        id: 'cousin',
+        treeId: 'tree-1',
+        name: 'Двоюродная сестра',
+        gender: Gender.female,
+        isAlive: true,
+        createdAt: DateTime(2024, 1, 1),
+        updatedAt: DateTime(2024, 1, 1),
+      );
+
+      // Explicit relations only carry parent edges to mother (the
+      // user's parent) — the cousin and the aunt are anchored
+      // EXCLUSIVELY through the family unit snapshot, mimicking the
+      // shape the backend hands us when the user adds a cousin via
+      // the "Двоюродная сестра" relation type without manually
+      // setting up parent links.
+      final relations = <FamilyRelation>[
+        FamilyRelation(
+          id: 'r1',
+          treeId: 'tree-1',
+          person1Id: mother.id,
+          person2Id: me.id,
+          relation1to2: RelationType.parent,
+          relation2to1: RelationType.child,
+          isConfirmed: true,
+          createdAt: DateTime(2024, 1, 1),
+        ),
+      ];
+
+      final snapshot = TreeGraphSnapshot(
+        treeId: 'tree-1',
+        viewerPersonId: me.id,
+        people: [grandpa, grandma, mother, aunt, me, cousin],
+        relations: relations,
+        familyUnits: [
+          // Grandparents → mother + aunt as siblings.
+          TreeGraphFamilyUnit(
+            id: 'fu-grandparents',
+            rootParentSetId: 'gp-parents',
+            adultIds: [grandpa.id, grandma.id],
+            childIds: [mother.id, aunt.id],
+            relationIds: const [],
+            unionId: null,
+            unionType: 'spouse',
+            unionStatus: 'current',
+            parentSetType: 'biological',
+            isPrimaryParentSet: true,
+            label: 'Семья дедушки и бабушки',
+          ),
+          // Aunt → cousin (single-parent unit, no spouse known).
+          TreeGraphFamilyUnit(
+            id: 'fu-cousin',
+            rootParentSetId: 'cousin-parents',
+            adultIds: [aunt.id],
+            childIds: [cousin.id],
+            relationIds: const [],
+            unionId: null,
+            unionType: null,
+            unionStatus: null,
+            parentSetType: 'biological',
+            isPrimaryParentSet: true,
+            label: 'Семья тёти',
+          ),
+        ],
+        viewerDescriptors: const [],
+        branchBlocks: const [],
+        generationRows: [
+          TreeGraphGenerationRow(
+            row: 0,
+            label: 'Старшее поколение',
+            personIds: [grandpa.id, grandma.id],
+            familyUnitIds: const ['fu-grandparents'],
+          ),
+          TreeGraphGenerationRow(
+            row: 1,
+            label: 'Поколение родителей',
+            personIds: [mother.id, aunt.id],
+            familyUnitIds: const ['fu-grandparents', 'fu-cousin'],
+          ),
+          TreeGraphGenerationRow(
+            row: 2,
+            label: 'Моё поколение',
+            personIds: [me.id, cousin.id],
+            familyUnitIds: const ['fu-cousin'],
+          ),
+        ],
+        warnings: const [],
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: InteractiveFamilyTree(
+              peopleData: [
+                {'person': grandpa, 'userProfile': null},
+                {'person': grandma, 'userProfile': null},
+                {'person': mother, 'userProfile': null},
+                {'person': aunt, 'userProfile': null},
+                {'person': me, 'userProfile': null},
+                {'person': cousin, 'userProfile': null},
+              ],
+              relations: relations,
+              graphSnapshot: snapshot,
+              onPersonTap: (_) {},
+              onAddRelativeTapWithType: (_, __) {},
+              currentUserIsInTree: true,
+              onAddSelfTapWithType: (_, __) async {},
+            ),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      final paint = tester.widget<CustomPaint>(
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is CustomPaint && widget.painter is FamilyTreePainter,
+        ),
+      );
+      final painter = paint.painter! as FamilyTreePainter;
+      final positions = painter.nodePositions;
+
+      final motherY = positions[mother.id]!.dy;
+      final auntY = positions[aunt.id]!.dy;
+      final meY = positions[me.id]!.dy;
+      final cousinY = positions[cousin.id]!.dy;
+      final auntX = positions[aunt.id]!.dx;
+      final cousinX = positions[cousin.id]!.dx;
+      final meX = positions[me.id]!.dx;
+
+      // Mother and aunt share the parent generation row.
+      expect((motherY - auntY).abs(), lessThan(0.1));
+      // The cousin sits a generation below — same Y as the user.
+      expect((meY - cousinY).abs(), lessThan(0.1));
+      expect(cousinY, greaterThan(auntY));
+
+      // The cousin's horizontal position should track her mother
+      // (the aunt) — within roughly two card widths. Without the
+      // family-unit fix she'd drift to far-right of her row with
+      // no anchor.
+      expect((cousinX - auntX).abs(),
+          lessThan(InteractiveFamilyTree.nodeWidth * 2.5));
+
+      // And — crucially — the cousin must NOT collide with the user.
+      // Before the fix the singleton group landed wherever currentLeft
+      // happened to be, sometimes overlapping siblings.
+      expect((cousinX - meX).abs(),
+          greaterThan(InteractiveFamilyTree.nodeWidth * 0.5));
+
+      // Connection line aunt → cousin must be present even though
+      // there's no explicit RelationType.parent relation between
+      // them — _buildConnections has to project it from the family
+      // unit snapshot.
+      final hasAuntCousinLine = painter.connections.any(
+        (connection) =>
+            connection.fromId == aunt.id &&
+            connection.toId == cousin.id &&
+            connection.type == RelationType.parent,
+      );
+      expect(hasAuntCousinLine, isTrue,
+          reason: 'cousin should have a visible parent line to the aunt');
+    },
+  );
 }

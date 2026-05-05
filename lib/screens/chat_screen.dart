@@ -259,7 +259,21 @@ class _ChatScreenState extends State<ChatScreen> {
     _messagesScrollController.addListener(_handleMessagesScroll);
     _recordingController.addListener(_handleRecordingControllerChanged);
     _configureBrowserContextMenu();
-    _bootstrapChat();
+    // Defer the chat bootstrap until AFTER the first frame paints.
+    // The bootstrap awaits getOrCreateChat / SharedPreferences /
+    // notification-settings store reads, all of which compete with
+    // the slide-transition that's animating this screen in. On
+    // Samsung mid-range that competition shows up as a 150–300 ms
+    // freeze where the chat header pops in late. addPostFrameCallback
+    // gives the route transition a clean first frame and starts the
+    // actual data-loading work right after — net latency is the same
+    // but perceived smoothness is much better.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      _bootstrapChat();
+    });
   }
 
   @override

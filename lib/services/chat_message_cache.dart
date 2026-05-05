@@ -29,6 +29,8 @@ abstract class ChatMessageCache {
   Future<void> removeOne(String chatId, String messageId);
 
   Future<void> evictOlder(String chatId, {int keepCount = 200});
+
+  Future<void> clearAll();
 }
 
 class HiveChatMessageCache implements ChatMessageCache {
@@ -139,6 +141,13 @@ class HiveChatMessageCache implements ChatMessageCache {
   @override
   Future<void> evictOlder(String chatId, {int keepCount = 200}) async {
     await write(chatId, await read(chatId), keepCount: keepCount);
+  }
+
+  @override
+  Future<void> clearAll() async {
+    try {
+      await (await _box()).clear();
+    } catch (_) {}
   }
 
   Map<String, dynamic> _messageToJson(ChatMessage message) {

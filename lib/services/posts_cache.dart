@@ -18,6 +18,8 @@ abstract class PostsCache {
   Future<void> write(String treeId, List<Post> posts);
 
   Future<void> remove(String treeId);
+
+  Future<void> clearAll();
 }
 
 class HivePostsCache implements PostsCache {
@@ -75,6 +77,13 @@ class HivePostsCache implements PostsCache {
       await (await _box()).delete(trimmed);
     } catch (_) {}
   }
+
+  @override
+  Future<void> clearAll() async {
+    try {
+      await (await _box()).clear();
+    } catch (_) {}
+  }
 }
 
 class InMemoryPostsCache implements PostsCache {
@@ -92,5 +101,10 @@ class InMemoryPostsCache implements PostsCache {
   @override
   Future<void> remove(String treeId) async {
     _store.remove(treeId);
+  }
+
+  @override
+  Future<void> clearAll() async {
+    _store.clear();
   }
 }
