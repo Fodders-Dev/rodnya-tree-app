@@ -798,7 +798,15 @@ class _LocalMediaGrid extends StatelessWidget {
   }
 }
 
-class _HighlightedMessageText extends StatelessWidget {
+/// Truncation threshold for long chat messages. Above this character
+/// count we collapse the body to the first ~600 chars and surface a
+/// "Показать ещё" affordance — same trick TG and WhatsApp use to
+/// keep the bubble compact, the scroll snappy, and the painted
+/// TextSpan tree shallow even on a 5 000+ char dump (e.g. pasted
+/// log file). On tap the bubble expands to the full text inline.
+const int _kLongMessageCollapseAt = 600;
+
+class _HighlightedMessageText extends StatefulWidget {
   const _HighlightedMessageText({
     required this.text,
     required this.query,
@@ -810,11 +818,54 @@ class _HighlightedMessageText extends StatelessWidget {
   final Color color;
 
   @override
+  State<_HighlightedMessageText> createState() =>
+      _HighlightedMessageTextState();
+}
+
+class _HighlightedMessageTextState extends State<_HighlightedMessageText> {
+  bool _expanded = false;
+
+  bool get _isLong => widget.text.length > _kLongMessageCollapseAt;
+
+  String get _renderedText {
+    if (_expanded || !_isLong) return widget.text;
+    // Trim to a safe character count, then back off to the nearest
+    // whitespace so we don't slice through a word mid-letter.
+    final hardCap = widget.text.substring(0, _kLongMessageCollapseAt);
+    final lastWhitespace = hardCap.lastIndexOf(RegExp(r'\s'));
+    final softCap = lastWhitespace > _kLongMessageCollapseAt - 80
+        ? hardCap.substring(0, lastWhitespace)
+        : hardCap;
+    return '$softCap…';
+  }
+
+  @override
+  void didUpdateWidget(covariant _HighlightedMessageText oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // When the user types into the search bar we want any long
+    // message that contains a hit to expand automatically — otherwise
+    // a match buried past the truncation point is invisible.
+    final query = widget.query.trim();
+    if (!_expanded && query.isNotEmpty && _isLong) {
+      final hit = widget.text
+          .toLowerCase()
+          .indexOf(query.toLowerCase());
+      if (hit >= _kLongMessageCollapseAt) {
+        _expanded = true;
+      }
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final normalizedQuery = query.trim();
+    final normalizedQuery = widget.query.trim();
+    final body = _renderedText;
+    final color = widget.color;
+
+    Widget textWidget;
     if (normalizedQuery.isEmpty) {
-      return Text(
-        text,
+      textWidget = Text(
+        body,
         // Reference `.msg`: 14.5/1.35 — slightly tighter than Material's
         // bodyLarge (16/1.5) so chat reads as conversational not formal.
         style: TextStyle(
@@ -823,51 +874,79 @@ class _HighlightedMessageText extends StatelessWidget {
           height: 1.35,
         ),
       );
-    }
+    } else {
+      final lowerText = body.toLowerCase();
+      final lowerQuery = normalizedQuery.toLowerCase();
+      final spans = <TextSpan>[];
+      var currentIndex = 0;
 
-    final lowerText = text.toLowerCase();
-    final lowerQuery = normalizedQuery.toLowerCase();
-    final spans = <TextSpan>[];
-    var currentIndex = 0;
-
-    while (currentIndex < text.length) {
-      final nextMatch = lowerText.indexOf(lowerQuery, currentIndex);
-      if (nextMatch == -1) {
+      while (currentIndex < body.length) {
+        final nextMatch = lowerText.indexOf(lowerQuery, currentIndex);
+        if (nextMatch == -1) {
+          spans.add(
+            TextSpan(
+              text: body.substring(currentIndex),
+              style: TextStyle(color: color),
+            ),
+          );
+          break;
+        }
+        if (nextMatch > currentIndex) {
+          spans.add(
+            TextSpan(
+              text: body.substring(currentIndex, nextMatch),
+              style: TextStyle(color: color),
+            ),
+          );
+        }
+        final matchEnd = nextMatch + normalizedQuery.length;
         spans.add(
           TextSpan(
-            text: text.substring(currentIndex),
-            style: TextStyle(color: color),
+            text: body.substring(nextMatch, matchEnd),
+            style: TextStyle(
+              color: color,
+              backgroundColor: Colors.amber.withValues(alpha: 0.55),
+              fontWeight: FontWeight.w700,
+            ),
           ),
         );
-        break;
+        currentIndex = matchEnd;
       }
-      if (nextMatch > currentIndex) {
-        spans.add(
-          TextSpan(
-            text: text.substring(currentIndex, nextMatch),
-            style: TextStyle(color: color),
-          ),
-        );
-      }
-      final matchEnd = nextMatch + normalizedQuery.length;
-      spans.add(
-        TextSpan(
-          text: text.substring(nextMatch, matchEnd),
-          style: TextStyle(
-            color: color,
-            backgroundColor: Colors.amber.withValues(alpha: 0.55),
-            fontWeight: FontWeight.w700,
-          ),
+
+      textWidget = RichText(
+        text: TextSpan(
+          style: const TextStyle(fontSize: 14.5, height: 1.35),
+          children: spans,
         ),
       );
-      currentIndex = matchEnd;
     }
 
-    return RichText(
-      text: TextSpan(
-        style: const TextStyle(fontSize: 14.5, height: 1.35),
-        children: spans,
-      ),
+    if (!_isLong) return textWidget;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        textWidget,
+        const SizedBox(height: 4),
+        InkWell(
+          onTap: () => setState(() => _expanded = !_expanded),
+          borderRadius: BorderRadius.circular(6),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 2),
+            child: Text(
+              _expanded ? 'Свернуть' : 'Показать ещё',
+              style: TextStyle(
+                color: color.withValues(alpha: 0.85),
+                fontSize: 12.5,
+                fontWeight: FontWeight.w700,
+                decoration: TextDecoration.underline,
+                decorationColor: color.withValues(alpha: 0.45),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

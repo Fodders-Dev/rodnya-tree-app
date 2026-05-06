@@ -25,6 +25,8 @@ class RodnyaAvatar extends StatelessWidget {
     this.borderWidth = 0,
     this.backgroundColor,
     this.textColor,
+    this.semanticLabel,
+    this.excludeSemantics = false,
   });
 
   final String? photoUrl;
@@ -35,6 +37,19 @@ class RodnyaAvatar extends StatelessWidget {
   final double borderWidth;
   final Color? backgroundColor;
   final Color? textColor;
+
+  /// Override for the screen-reader label. Defaults to `Аватар: ИМЯ`
+  /// or `Аватар без фото` when no name is available. Set to a more
+  /// specific string at call sites where the surrounding row already
+  /// reads the name (e.g. ListTile.title), to avoid the screen reader
+  /// announcing the same name twice.
+  final String? semanticLabel;
+
+  /// True when the surrounding widget already provides full semantic
+  /// context (e.g. a card with the user's name + role) and we want
+  /// the avatar to be invisible to TalkBack/VoiceOver. Defaults to
+  /// false so standalone avatars still get a label.
+  final bool excludeSemantics;
 
   @override
   Widget build(BuildContext context) {
@@ -106,7 +121,22 @@ class RodnyaAvatar extends StatelessWidget {
       );
     }
 
-    return body;
+    if (excludeSemantics) {
+      return ExcludeSemantics(child: body);
+    }
+
+    final trimmedName = (name ?? '').trim();
+    final label = semanticLabel ??
+        (trimmedName.isEmpty
+            ? 'Аватар без фото'
+            : 'Аватар: $trimmedName');
+
+    return Semantics(
+      label: label,
+      image: true,
+      excludeSemantics: true,
+      child: body,
+    );
   }
 
   static String _initialFor(String name) {

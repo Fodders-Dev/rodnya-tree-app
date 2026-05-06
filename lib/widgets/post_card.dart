@@ -533,11 +533,23 @@ class _PostCardState extends State<PostCard>
       if (_isVideoUrl(url)) {
         return _PostVideoTile(url: url);
       }
-      return CachedNetworkImage(
-        imageUrl: url,
-        fit: BoxFit.cover,
-        placeholder: (_, __) => _buildPostImagePlaceholder(),
-        errorWidget: (_, __, ___) => _buildPostImageFallback(),
+      // a11y: a photo without an alt-text label reads as "Image" in
+      // TalkBack which is useless. Use the post body as the closest
+      // approximation of caption — TG and IG do exactly this. Falls
+      // back to a generic "Фото к посту" when content is empty.
+      final caption = widget.post.content.trim();
+      return Semantics(
+        label: caption.isEmpty
+            ? 'Фото к посту'
+            : 'Фото к посту: $caption',
+        image: true,
+        excludeSemantics: true,
+        child: CachedNetworkImage(
+          imageUrl: url,
+          fit: BoxFit.cover,
+          placeholder: (_, __) => _buildPostImagePlaceholder(),
+          errorWidget: (_, __, ___) => _buildPostImageFallback(),
+        ),
       );
     }
 
