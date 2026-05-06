@@ -20,8 +20,75 @@ function registerAuthSessionRoutes(
       return;
     }
 
+    // ── Input shape validation ────────────────────────────────────────
+    // Without these caps an attacker can:
+    //   * register accounts with bogus 64KB display names → DB bloat,
+    //     UI breakage in chat list / push notifications;
+    //   * register trivially-cracked passwords that still pass scrypt
+    //     ("a" / "1");
+    //   * smuggle CRLF / control characters into displayName which
+    //     end up in email subjects / push titles unescaped;
+    //   * register a structurally invalid email → orphan account that
+    //     can never reset password.
+    const trimmedEmail = String(email).trim();
+    const trimmedDisplayName = String(displayName);
+    const passwordValue = String(password);
+
+    if (trimmedEmail.length > 254) {
+      res.status(400).json({
+        message: "Email слишком длинный (максимум 254 символа).",
+      });
+      return;
+    }
+    // Pragmatic format check — handle 99% of real addresses without
+    // trying to be a full RFC-5322 parser. Format failures here just
+    // save us a downstream bounce / orphan-account.
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+      res
+        .status(400)
+        .json({message: "Email указан в некорректном формате."});
+      return;
+    }
+    if (passwordValue.length < 8) {
+      res
+        .status(400)
+        .json({message: "Пароль должен быть минимум 8 символов."});
+      return;
+    }
+    if (passwordValue.length > 1024) {
+      // Upper bound to keep scrypt's wall-clock bounded — attacker
+      // could otherwise submit a 1 MB password and pin a libuv
+      // thread for a second per request. 1024 chars is more than
+      // any realistic password manager generates.
+      res.status(400).json({message: "Пароль слишком длинный."});
+      return;
+    }
+    // Reject control characters (CR, LF, NUL, etc.) so display names
+    // can't break headers / push titles when surfaced.
+    // eslint-disable-next-line no-control-regex
+    if (/[\x00-\x1f\x7f]/.test(trimmedDisplayName)) {
+      res.status(400).json({
+        message: "Имя содержит недопустимые символы.",
+      });
+      return;
+    }
+    if (trimmedDisplayName.trim().length === 0) {
+      res.status(400).json({message: "Имя не может быть пустым."});
+      return;
+    }
+    if (trimmedDisplayName.length > 120) {
+      res.status(400).json({
+        message: "Имя слишком длинное (максимум 120 символов).",
+      });
+      return;
+    }
+
     try {
-      const user = await store.createUser({email, password, displayName});
+      const user = await store.createUser({
+        email: trimmedEmail,
+        password: passwordValue,
+        displayName: trimmedDisplayName,
+      });
       const deviceContext = readDeviceContext(req);
       const sessionTokens = await store.createSession(user.id, deviceContext);
       res.status(201).json(authResponse(user, sessionTokens));

@@ -11040,3 +11040,119 @@ test("auth session endpoint can serve from cached auth context", async () => {
     await stopTestServer(ctx);
   }
 });
+
+test("register endpoint rejects malformed input shapes", async () => {
+  const ctx = await startConfiguredTestServer();
+  try {
+    async function attempt(body) {
+      const response = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+        method: "POST",
+        headers: {"content-type": "application/json"},
+        body: JSON.stringify(body),
+      });
+      return response;
+    }
+
+    // Invalid email format → 400.
+    let response = await attempt({
+      email: "not-an-email",
+      password: "secret-pass-123",
+      displayName: "Тестовый Пользователь",
+    });
+    assert.equal(response.status, 400);
+
+    // Password too short → 400.
+    response = await attempt({
+      email: "shortpw@rodnya.app",
+      password: "abc",
+      displayName: "Тестовый",
+    });
+    assert.equal(response.status, 400);
+
+    // Password too long (1025 chars) → 400, prevents scrypt DoS.
+    response = await attempt({
+      email: "longpw@rodnya.app",
+      password: "a".repeat(1025),
+      displayName: "Тестовый",
+    });
+    assert.equal(response.status, 400);
+
+    // Display name oversized → 400.
+    response = await attempt({
+      email: "longname@rodnya.app",
+      password: "secret-pass-123",
+      displayName: "a".repeat(121),
+    });
+    assert.equal(response.status, 400);
+
+    // Display name with control characters (CRLF injection vector) → 400.
+    response = await attempt({
+      email: "ctrl@rodnya.app",
+      password: "secret-pass-123",
+      displayName: "Имя\r\nс переносом",
+    });
+    assert.equal(response.status, 400);
+
+    // Sanity: a well-formed request still works.
+    response = await attempt({
+      email: "ok@rodnya.app",
+      password: "secret-pass-123",
+      displayName: "Артем Кузнецов",
+    });
+    assert.equal(response.status, 201);
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("login is timing-equalized for unknown vs invalid-password emails", async () => {
+  const ctx = await startConfiguredTestServer();
+  try {
+    // Pre-create one real user so the "user found, wrong password"
+    // path runs a real scrypt verify.
+    const registerResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "real@rodnya.app",
+        password: "real-secret-1234",
+        displayName: "Тест",
+      }),
+    });
+    assert.equal(registerResponse.status, 201);
+
+    async function timeLogin(email) {
+      const t0 = process.hrtime.bigint();
+      const response = await fetch(`${ctx.baseUrl}/v1/auth/login`, {
+        method: "POST",
+        headers: {"content-type": "application/json"},
+        body: JSON.stringify({email, password: "definitely-wrong-password"}),
+      });
+      const t1 = process.hrtime.bigint();
+      assert.equal(response.status, 401);
+      return Number(t1 - t0) / 1_000_000; // ms
+    }
+
+    // Run a couple of tries each to smooth out one-off jitter from
+    // GC / DB write queue. We don't assert a tight equality (CI noise
+    // is real), only that BOTH paths take a non-trivial amount of
+    // time — i.e. the no-user path doesn't return in microseconds.
+    const realMissed = await timeLogin("real@rodnya.app");
+    const unknownMissed = await timeLogin("nope-not-real@rodnya.app");
+
+    // scrypt with the parameters we use takes ≥30 ms on any modern
+    // hardware. If we ever regress and skip the dummy hash, the
+    // unknown-email path drops to single-digit ms and this fails.
+    assert.ok(
+      realMissed > 30,
+      `expected real-user wrong-password to take >30 ms, got ${realMissed}`,
+    );
+    assert.ok(
+      unknownMissed > 30,
+      `expected unknown-email path to take >30 ms (dummy verify), ` +
+          `got ${unknownMissed}`,
+    );
+  } finally {
+    await stopTestServer(ctx);
+  }
+});

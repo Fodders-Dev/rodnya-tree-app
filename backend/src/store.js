@@ -4595,12 +4595,64 @@ function relationDedupKey(relation) {
   return `${relation.treeId}:${rightId}:${leftId}:${rightToLeft}:${leftToRight}`;
 }
 
+// scrypt is memory-hard by design — that's why it's a good password
+// KDF, but the synchronous variant blocks the Node event loop for
+// 100-200 ms on commodity hardware. Under any concurrent login load
+// `scryptSync` would queue every other request behind the hash. The
+// async variant runs on Node's libuv thread pool and lets the loop
+// keep handling other connections. Wrap it once so the rest of the
+// auth path stays a clean async/await chain.
+function hashPasswordAsync(
+  password,
+  salt = crypto.randomBytes(16).toString("hex"),
+) {
+  return new Promise((resolve, reject) => {
+    crypto.scrypt(password, salt, 64, (err, derivedKey) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+      resolve({
+        salt,
+        passwordHash: derivedKey.toString("hex"),
+      });
+    });
+  });
+}
+
+// Sync wrapper kept for migration code paths that already run inside
+// a transaction and can't easily go async. New code should prefer
+// `hashPasswordAsync`.
 function hashPassword(password, salt = crypto.randomBytes(16).toString("hex")) {
   const derivedKey = crypto.scryptSync(password, salt, 64).toString("hex");
   return {
     salt,
     passwordHash: derivedKey,
   };
+}
+
+function verifyPasswordAsync(password, user) {
+  if (!user?.passwordHash || !user?.passwordSalt) {
+    return Promise.resolve(false);
+  }
+
+  return new Promise((resolve, reject) => {
+    crypto.scrypt(password, user.passwordSalt, 64, (err, derivedKey) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+      const userHash = Buffer.from(user.passwordHash, "hex");
+      // timingSafeEqual REQUIRES same-length buffers — guard so a
+      // malformed stored hash can't crash the auth path. Different
+      // lengths obviously don't match anyway.
+      if (derivedKey.length !== userHash.length) {
+        resolve(false);
+        return;
+      }
+      resolve(crypto.timingSafeEqual(derivedKey, userHash));
+    });
+  });
 }
 
 function verifyPassword(password, user) {
@@ -4616,6 +4668,33 @@ function verifyPassword(password, user) {
     Buffer.from(derivedKey, "hex"),
     Buffer.from(user.passwordHash, "hex"),
   );
+}
+
+// Static dummy salt + zero-buffer hash used when authenticate() is
+// called against an email that doesn't exist. Without it the no-user
+// path returns in microseconds while the user-found path takes
+// hundreds of ms for scrypt — the timing difference lets an attacker
+// enumerate which emails are registered. Running a real scrypt against
+// this constant salt takes the same time as a real verify, and
+// timingSafeEqual keeps even that comparison constant-time. The
+// result is always discarded; we never resolve `true`.
+const _dummyAuthSalt = "rodnya-fake-salt-for-timing-equalization-only";
+const _dummyAuthHash = Buffer.alloc(64);
+function dummyVerifyForTimingParity(password) {
+  return new Promise((resolve) => {
+    crypto.scrypt(password, _dummyAuthSalt, 64, (err, derivedKey) => {
+      if (err) {
+        resolve(false);
+        return;
+      }
+      try {
+        crypto.timingSafeEqual(derivedKey, _dummyAuthHash);
+      } catch (_) {
+        // Ignore — only here for timing parity.
+      }
+      resolve(false);
+    });
+  });
 }
 
 /**
@@ -5544,7 +5623,20 @@ class FileStore {
     const normalizedEmail = String(email || "").trim().toLowerCase();
     const user = db.users.find((entry) => entry.email === normalizedEmail);
 
-    if (!user || !verifyPassword(password, user)) {
+    // Always run a real scrypt+timingSafeEqual hop. If the user
+    // doesn't exist, run it against a dummy salt so the response
+    // takes the same wall-clock time as a real verify — closes the
+    // user-enumeration timing oracle. If the user exists, run the
+    // real async verify on the libuv thread pool so the event loop
+    // stays responsive under concurrent logins (the previous
+    // synchronous scrypt blocked for ~150 ms per request).
+    if (!user) {
+      await dummyVerifyForTimingParity(String(password || ""));
+      return null;
+    }
+
+    const isValid = await verifyPasswordAsync(password, user);
+    if (!isValid) {
       return null;
     }
 

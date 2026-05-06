@@ -1,8 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
 
+// google_sign_in_platform_interface.dart owns
+// AuthenticationResults / GoogleSignInUserData / SignOutParams +
+// re-exports GoogleSignInException, which is everything we need to
+// swap a recording fake under GoogleSignInPlatform.instance. The
+// app-facing google_sign_in.dart is a higher-level wrapper that
+// re-exports the same types but isn't required here.
+// ignore_for_file: depend_on_referenced_packages
 import 'package:flutter_test/flutter_test.dart';
-import 'package:google_sign_in/google_sign_in.dart';
 import 'package:google_sign_in_platform_interface/google_sign_in_platform_interface.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';

@@ -596,8 +596,19 @@ function createApp({
         pathName === "/v1/auth/login" ||
         pathName === "/v1/auth/register" ||
         pathName === "/v1/auth/password-reset" ||
+        pathName === "/v1/auth/refresh" ||
         pathName === "/v1/auth/qr/start" ||
-        pathName === "/v1/auth/qr/approve"
+        pathName === "/v1/auth/qr/approve" ||
+        pathName === "/v1/auth/qr/poll" ||
+        // OAuth code-exchange endpoints — same brute-force surface as
+        // /login. An attacker who steals a one-time auth code via a
+        // sniffed SMS or phishing link can replay-attempt at the
+        // exchange route without ever hitting /login, so they need to
+        // sit in the same strict bucket.
+        pathName === "/v1/auth/google" ||
+        pathName === "/v1/auth/vk/exchange" ||
+        pathName === "/v1/auth/telegram/exchange" ||
+        pathName === "/v1/auth/max/exchange"
       ) {
         return {bucket: "auth", limit: config.authRateLimitMax};
       }
