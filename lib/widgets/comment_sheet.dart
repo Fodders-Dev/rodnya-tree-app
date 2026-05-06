@@ -715,16 +715,20 @@ class _CommentSheetState extends State<CommentSheet> {
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
-                  InkWell(
-                    key: const ValueKey('comment-reply-cancel'),
-                    onTap: _cancelReply,
-                    borderRadius: BorderRadius.circular(999),
-                    child: Padding(
-                      padding: const EdgeInsets.all(4),
-                      child: Icon(
-                        Icons.close,
-                        size: 16,
-                        color: tokens.inkMuted,
+                  Semantics(
+                    button: true,
+                    label: 'Отменить ответ',
+                    child: InkWell(
+                      key: const ValueKey('comment-reply-cancel'),
+                      onTap: _cancelReply,
+                      borderRadius: BorderRadius.circular(999),
+                      child: Padding(
+                        padding: const EdgeInsets.all(4),
+                        child: Icon(
+                          Icons.close,
+                          size: 16,
+                          color: tokens.inkMuted,
+                        ),
                       ),
                     ),
                   ),

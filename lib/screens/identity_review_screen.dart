@@ -308,22 +308,25 @@ class _IdentityReviewScreenState extends State<IdentityReviewScreen> {
                           ),
                         ),
                       ),
-                    Material(
-                      color: tokens.surfaceStrong,
-                      shape: RoundedRectangleBorder(
-                        side: BorderSide(color: tokens.surfaceLine),
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      child: InkWell(
-                        onTap: _isMutating ? null : _load,
-                        borderRadius: BorderRadius.circular(14),
-                        child: SizedBox(
-                          width: 38,
-                          height: 38,
-                          child: Icon(
-                            Icons.refresh_rounded,
-                            size: 19,
-                            color: tokens.ink,
+                    Tooltip(
+                      message: 'Обновить',
+                      child: Material(
+                        color: tokens.surfaceStrong,
+                        shape: RoundedRectangleBorder(
+                          side: BorderSide(color: tokens.surfaceLine),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: InkWell(
+                          onTap: _isMutating ? null : _load,
+                          borderRadius: BorderRadius.circular(14),
+                          child: SizedBox(
+                            width: 38,
+                            height: 38,
+                            child: Icon(
+                              Icons.refresh_rounded,
+                              size: 19,
+                              color: tokens.ink,
+                            ),
                           ),
                         ),
                       ),

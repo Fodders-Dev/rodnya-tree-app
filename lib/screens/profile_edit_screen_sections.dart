@@ -7,31 +7,35 @@ extension _ProfileEditScreenSections on _ProfileEditScreenState {
     return GlassPanel(
       child: Row(
         children: [
-          GestureDetector(
-            onTap: _pickImage,
-            child: Stack(
-              alignment: Alignment.bottomRight,
-              children: [
-                CircleAvatar(
-                  radius: 42,
-                  backgroundImage: avatarImage,
-                  child: avatarImage == null
-                      ? const Icon(Icons.person, size: 42)
-                      : null,
-                ),
-                Container(
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.primary,
-                    shape: BoxShape.circle,
+          Semantics(
+            button: true,
+            label: 'Изменить фото профиля',
+            child: GestureDetector(
+              onTap: _pickImage,
+              child: Stack(
+                alignment: Alignment.bottomRight,
+                children: [
+                  CircleAvatar(
+                    radius: 42,
+                    backgroundImage: avatarImage,
+                    child: avatarImage == null
+                        ? const Icon(Icons.person, size: 42)
+                        : null,
                   ),
-                  padding: const EdgeInsets.all(6),
-                  child: Icon(
-                    Icons.camera_alt_outlined,
-                    color: theme.colorScheme.onPrimary,
-                    size: 16,
+                  Container(
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.primary,
+                      shape: BoxShape.circle,
+                    ),
+                    padding: const EdgeInsets.all(6),
+                    child: Icon(
+                      Icons.camera_alt_outlined,
+                      color: theme.colorScheme.onPrimary,
+                      size: 16,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
           const SizedBox(width: 16),

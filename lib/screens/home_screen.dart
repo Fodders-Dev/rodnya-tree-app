@@ -1464,6 +1464,11 @@ class _StoryRing extends StatelessWidget {
                           ? Image.network(
                               photoUrl!,
                               fit: BoxFit.cover,
+                              // Story-strip avatar — the parent
+                              // story tile carries the user's name as
+                              // its semantic label, so the avatar is
+                              // decorative for screen readers.
+                              excludeFromSemantics: true,
                               errorBuilder: (_, __, ___) => Center(
                                 child: Text(
                                   initials ?? '?',

@@ -1196,6 +1196,9 @@ class _PickedStoryImagePreview extends StatelessWidget {
         return Image.memory(
           snapshot.data!,
           fit: BoxFit.cover,
+          // Composer-side preview of the image the user picked for
+          // their story. Confirms the upload to a screen-reader user.
+          semanticLabel: 'Изображение истории',
           errorBuilder: (_, __, ___) => const ColoredBox(
             color: Color(0x11000000),
             child: Center(child: Icon(Icons.broken_image_outlined)),

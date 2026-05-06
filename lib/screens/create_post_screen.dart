@@ -1361,6 +1361,10 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
           ? Image.network(
               photoUrl,
               fit: BoxFit.cover,
+              // Author avatar — the post card's name row already
+              // identifies who's posting, so the image itself is
+              // decorative for a screen-reader user.
+              excludeFromSemantics: true,
               errorBuilder: (_, __, ___) => _buildAuthorInitials(tokens),
             )
           : _buildAuthorInitials(tokens),
@@ -1886,6 +1890,9 @@ class _PickedMediaPreview extends StatelessWidget {
         return Image.memory(
           snapshot.data!,
           fit: BoxFit.cover,
+          // Composer-side preview of an image the user just attached
+          // to their post — confirms the attach worked.
+          semanticLabel: 'Прикреплённое изображение',
           errorBuilder: (_, __, ___) => const ColoredBox(
             color: Color(0x11000000),
             child: Center(child: Icon(Icons.broken_image_outlined)),

@@ -686,29 +686,33 @@ class _VideoControlsOverlayState extends State<_VideoControlsOverlay> {
   @override
   Widget build(BuildContext context) {
     final isPlaying = widget.controller.value.isPlaying;
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: () {
-        if (isPlaying) {
-          widget.controller.pause();
-        } else {
-          widget.controller.play();
-        }
-      },
-      child: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 180),
-        child: isPlaying
-            ? const SizedBox.shrink()
-            : Container(
-                width: 72,
-                height: 72,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Colors.black54,
+    return Semantics(
+      button: true,
+      label: isPlaying ? 'Поставить на паузу' : 'Воспроизвести',
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () {
+          if (isPlaying) {
+            widget.controller.pause();
+          } else {
+            widget.controller.play();
+          }
+        },
+        child: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 180),
+          child: isPlaying
+              ? const SizedBox.shrink()
+              : Container(
+                  width: 72,
+                  height: 72,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.black54,
+                  ),
+                  child: const Icon(Icons.play_arrow_rounded,
+                      color: Colors.white, size: 44),
                 ),
-                child: const Icon(Icons.play_arrow_rounded,
-                    color: Colors.white, size: 44),
-              ),
+        ),
       ),
     );
   }

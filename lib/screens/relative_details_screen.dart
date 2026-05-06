@@ -335,6 +335,7 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
         title: Text(_person?.displayName ?? 'Профиль'),
         leading: IconButton(
           icon: Icon(Icons.arrow_back),
+          tooltip: 'Назад',
           onPressed: () => context.pop(),
         ),
         actions: [
@@ -1956,7 +1957,11 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
                                       normalizePhotoUrl(itemUrl);
                                   final isSelected = index == currentIndex;
 
-                                  return InkWell(
+                                  return Semantics(
+                                    button: true,
+                                    label: 'Перейти к фото ${index + 1} из ${galleryEntries.length}',
+                                    selected: isSelected,
+                                    child: InkWell(
                                     onTap: () {
                                       pageController.jumpToPage(index);
                                       setDialogState(() {
@@ -1998,6 +2003,7 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
                                               ),
                                             ),
                                     ),
+                                  ),
                                   );
                                 },
                               ),

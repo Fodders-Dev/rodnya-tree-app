@@ -430,7 +430,12 @@ class _KruzhokRecorderScreenState extends State<KruzhokRecorderScreen> {
           right: 0,
           bottom: 56,
           child: Center(
-            child: GestureDetector(
+            child: Semantics(
+              button: true,
+              label: _isRecording
+                  ? 'Остановить запись'
+                  : 'Начать запись',
+              child: GestureDetector(
               onTap: _isRecording
                   ? () => _stopRecording()
                   : () => _startRecording(),
@@ -464,6 +469,7 @@ class _KruzhokRecorderScreenState extends State<KruzhokRecorderScreen> {
                         color: _isRecording ? Colors.white : Colors.red,
                       ),
               ),
+            ),
             ),
           ),
         ),

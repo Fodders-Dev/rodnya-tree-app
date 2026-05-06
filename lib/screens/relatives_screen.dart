@@ -831,18 +831,22 @@ class _RelativesScreenState extends State<RelativesScreen> {
             // to keep the search row compact).
             MouseRegion(
               cursor: SystemMouseCursors.click,
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: () {
-                  _searchController.clear();
-                },
-                child: SizedBox(
-                  width: 36,
-                  height: 36,
-                  child: Icon(
-                    Icons.close_rounded,
-                    size: 18,
-                    color: tokens.inkMuted,
+              child: Semantics(
+                button: true,
+                label: 'Очистить поиск',
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () {
+                    _searchController.clear();
+                  },
+                  child: SizedBox(
+                    width: 36,
+                    height: 36,
+                    child: Icon(
+                      Icons.close_rounded,
+                      size: 18,
+                      color: tokens.inkMuted,
+                    ),
                   ),
                 ),
               ),

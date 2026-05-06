@@ -974,6 +974,10 @@ class _LocalImagePreview extends StatelessWidget {
         return Image.memory(
           snapshot.data!,
           fit: BoxFit.cover,
+          // Composer-side preview of an image the USER just picked from
+          // their gallery. They know what it is, but a screen reader
+          // user benefits from confirmation that the attach succeeded.
+          semanticLabel: 'Прикреплённое изображение',
           errorBuilder: (_, __, ___) => const ColoredBox(
             color: Color(0x11000000),
             child: Center(child: Icon(Icons.broken_image_outlined)),
@@ -1959,6 +1963,7 @@ class _AttachmentViewerPage extends StatelessWidget {
                       child: Image.memory(
                         snapshot.data!,
                         fit: BoxFit.contain,
+                        semanticLabel: 'Изображение в просмотрщике',
                       ),
                     );
                   },
@@ -2104,42 +2109,48 @@ class _AttachmentViewerThumbnail extends StatelessWidget {
     final borderColor =
         isSelected ? Colors.white : Colors.white.withValues(alpha: 0.18);
 
-    return InkWell(
-      borderRadius: BorderRadius.circular(16),
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 160),
-        width: 64,
-        height: 64,
-        clipBehavior: Clip.antiAlias,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: borderColor, width: isSelected ? 2 : 1),
-          color: Colors.white.withValues(alpha: 0.08),
-        ),
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            _AttachmentViewerThumbnailPreview(item: item),
-            if (item.kind == _ChatAttachmentKind.video)
-              Align(
-                alignment: Alignment.center,
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: 0.48),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Padding(
-                    padding: EdgeInsets.all(6),
-                    child: Icon(
-                      Icons.play_arrow_rounded,
-                      color: Colors.white,
-                      size: 18,
+    return Semantics(
+      button: true,
+      label: 'Перейти к вложению',
+      selected: isSelected,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          width: 64,
+          height: 64,
+          clipBehavior: Clip.antiAlias,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            border:
+                Border.all(color: borderColor, width: isSelected ? 2 : 1),
+            color: Colors.white.withValues(alpha: 0.08),
+          ),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              _AttachmentViewerThumbnailPreview(item: item),
+              if (item.kind == _ChatAttachmentKind.video)
+                Align(
+                  alignment: Alignment.center,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.48),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Padding(
+                      padding: EdgeInsets.all(6),
+                      child: Icon(
+                        Icons.play_arrow_rounded,
+                        color: Colors.white,
+                        size: 18,
+                      ),
                     ),
                   ),
                 ),
-              ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -2186,6 +2197,7 @@ class _AttachmentViewerThumbnailPreview extends StatelessWidget {
           return Image.memory(
             snapshot.data!,
             fit: BoxFit.cover,
+            semanticLabel: 'Прикреплённое изображение',
           );
         },
       );
@@ -2533,16 +2545,22 @@ class _AttachmentVideoPlayerState extends State<_AttachmentVideoPlayer> {
             color: Colors.black.withValues(alpha: 0.42),
             shape: const CircleBorder(),
             clipBehavior: Clip.antiAlias,
-            child: InkWell(
-              onTap: _togglePlayback,
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Icon(
-                  controller.value.isPlaying
-                      ? Icons.pause_rounded
-                      : Icons.play_arrow_rounded,
-                  color: Colors.white,
-                  size: 40,
+            child: Semantics(
+              button: true,
+              label: controller.value.isPlaying
+                  ? 'Поставить на паузу'
+                  : 'Воспроизвести',
+              child: InkWell(
+                onTap: _togglePlayback,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Icon(
+                    controller.value.isPlaying
+                        ? Icons.pause_rounded
+                        : Icons.play_arrow_rounded,
+                    color: Colors.white,
+                    size: 40,
+                  ),
                 ),
               ),
             ),
