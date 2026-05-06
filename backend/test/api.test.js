@@ -3795,6 +3795,266 @@ test("password reset request issues a single-use token, emails it, and confirm r
   }
 });
 
+// Phase 1.1 of unified-graph migration: identity propagation.
+// When a person updates on tree A, fan canonical-fields-only
+// changes out to every other person record sharing the same
+// identityId (set up by the Phase 0 picker). Tree-local fields
+// (notes, familySummary, bio, visibility) MUST stay isolated —
+// they're the editor's per-tree annotation about how the human
+// fits into THIS family's story.
+test("identity propagation: name/photo/birthDate fan out across trees, but notes/familySummary stay tree-local", async () => {
+  const ctx = await startTestServer();
+
+  try {
+    const owner = await registerTestUser(ctx, "owner@rodnya.app", "Артём");
+    const ownerHeaders = {
+      authorization: `Bearer ${owner.accessToken}`,
+      "content-type": "application/json",
+    };
+
+    // Two trees owned by the same user.
+    async function createTreeForOwner(name) {
+      const response = await fetch(`${ctx.baseUrl}/v1/trees`, {
+        method: "POST",
+        headers: ownerHeaders,
+        body: JSON.stringify({name, isPrivate: true}),
+      });
+      assert.equal(response.status, 201);
+      return (await response.json()).tree.id;
+    }
+    const treeOneId = await createTreeForOwner("Семья (моя)");
+    const treeTwoId = await createTreeForOwner("Родня (мамина)");
+
+    // Add mom on tree #1 with the basics.
+    async function addPerson(treeId, body) {
+      const response = await fetch(
+        `${ctx.baseUrl}/v1/trees/${treeId}/persons`,
+        {
+          method: "POST",
+          headers: ownerHeaders,
+          body: JSON.stringify(body),
+        },
+      );
+      assert.equal(response.status, 201);
+      return (await response.json()).person;
+    }
+    const motherOnTreeOne = await addPerson(treeOneId, {
+      firstName: "Анна",
+      lastName: "Кузнецова",
+      gender: "female",
+      birthDate: "1965-03-12",
+      familySummary: "Хранитель семейных документов",
+      notes: "Любит долго рассказывать про молодость",
+    });
+
+    // Now go through the cross-tree picker flow: create the
+    // same human on tree #2 by passing sourcePersonId. Server
+    // ensures both records share identityId.
+    const motherOnTreeTwoCreate = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeTwoId}/persons`,
+      {
+        method: "POST",
+        headers: ownerHeaders,
+        body: JSON.stringify({
+          sourcePersonId: motherOnTreeOne.id,
+          // Tree-2 editor adds their own annotation — must stay
+          // tree-local even after future updates from tree #1.
+          familySummary: "Бабушкина дочь",
+          notes: "Тут тётины истории про маму",
+        }),
+      },
+    );
+    assert.equal(motherOnTreeTwoCreate.status, 201);
+    const motherOnTreeTwo = (await motherOnTreeTwoCreate.json()).person;
+    assert.equal(
+      motherOnTreeOne.identityId,
+      motherOnTreeTwo.identityId,
+      "Phase 0 picker must have shared identityId",
+    );
+
+    // ── 1. Updating on tree #1 → propagation to tree #2 ──
+    const updateResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeOneId}/persons/${motherOnTreeOne.id}`,
+      {
+        method: "PATCH",
+        headers: ownerHeaders,
+        body: JSON.stringify({
+          // Changed canonical fields (must propagate).
+          firstName: "Анна",
+          middleName: "Петровна",
+          lastName: "Кузнецова",
+          birthPlace: "Тула",
+          photoUrl: "https://example.com/anna-new.jpg",
+          // Changed tree-local field (must NOT propagate to
+          // tree #2, which has its own editor's note).
+          familySummary: "Глава кулинарной династии",
+        }),
+      },
+    );
+    assert.equal(updateResponse.status, 200);
+    const updatePayload = await updateResponse.json();
+    assert.equal(updatePayload.person.name, "Кузнецова Анна Петровна");
+    assert.equal(
+      updatePayload.person.familySummary,
+      "Глава кулинарной династии",
+    );
+    // Response surfaces the propagation so the Flutter client
+    // can invalidate per-tree caches without refetching all.
+    assert.ok(updatePayload.identityPropagation);
+    assert.equal(updatePayload.identityPropagation.affected.length, 1);
+    assert.equal(
+      updatePayload.identityPropagation.affected[0].treeId,
+      treeTwoId,
+    );
+    assert.equal(
+      updatePayload.identityPropagation.affected[0].personId,
+      motherOnTreeTwo.id,
+    );
+
+    // ── 2. Tree #2's record reflects ONLY canonical fields ──
+    const fetchTreeTwoAfter = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeTwoId}/persons/${motherOnTreeTwo.id}`,
+      {headers: {authorization: `Bearer ${owner.accessToken}`}},
+    );
+    assert.equal(fetchTreeTwoAfter.status, 200);
+    const motherOnTreeTwoAfter = (await fetchTreeTwoAfter.json()).person;
+    // Canonical fields propagated:
+    assert.equal(motherOnTreeTwoAfter.name, "Кузнецова Анна Петровна");
+    assert.equal(motherOnTreeTwoAfter.birthPlace, "Тула");
+    assert.equal(
+      motherOnTreeTwoAfter.photoUrl,
+      "https://example.com/anna-new.jpg",
+    );
+    // Tree-local fields preserved — tree #2's editor still
+    // sees their own annotation, NOT tree #1's. (The API
+    // collapses familySummary/notes/bio into one display field
+    // via mapPerson, so we assert against familySummary.)
+    assert.equal(motherOnTreeTwoAfter.familySummary, "Бабушкина дочь");
+
+    // Verify at the storage layer too — propagation must NOT
+    // touch the raw `notes` / `bio` fields the form layer
+    // accepts, so each tree's editorial fields stay isolated
+    // even before mapPerson normalizes them.
+    const rawSnapshot = await ctx.store._read();
+    const rawMotherTreeTwo = rawSnapshot.persons.find(
+      (entry) => entry.id === motherOnTreeTwo.id,
+    );
+    assert.ok(rawMotherTreeTwo);
+    assert.equal(rawMotherTreeTwo.familySummary, "Бабушкина дочь");
+    assert.equal(
+      rawMotherTreeTwo.notes,
+      "Тут тётины истории про маму",
+    );
+    // And the canonical fields really did move on the raw record:
+    assert.equal(rawMotherTreeTwo.name, "Кузнецова Анна Петровна");
+    assert.equal(rawMotherTreeTwo.birthPlace, "Тула");
+
+    // ── 3. Audit trail attribution ──
+    const historyResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeTwoId}/history`,
+      {headers: {authorization: `Bearer ${owner.accessToken}`}},
+    );
+    assert.equal(historyResponse.status, 200);
+    const historyPayload = await historyResponse.json();
+    const propagationRecord = historyPayload.records.find(
+      (record) =>
+        record.type === "person.updated" &&
+        record.personId === motherOnTreeTwo.id &&
+        record.details?.identityPropagation,
+    );
+    assert.ok(
+      propagationRecord,
+      "tree #2's history must show the propagation came from tree #1",
+    );
+    assert.equal(
+      propagationRecord.details.identityPropagation.sourceTreeId,
+      treeOneId,
+    );
+    assert.equal(
+      propagationRecord.details.identityPropagation.sourcePersonId,
+      motherOnTreeOne.id,
+    );
+
+    // ── 4. Tree-local-only update → NO propagation fired ──
+    const localOnlyUpdate = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeOneId}/persons/${motherOnTreeOne.id}`,
+      {
+        method: "PATCH",
+        headers: ownerHeaders,
+        body: JSON.stringify({
+          // Only tree-local fields change.
+          familySummary: "Хранитель семейных рецептов",
+          notes: "Обновленные заметки",
+        }),
+      },
+    );
+    assert.equal(localOnlyUpdate.status, 200);
+    const localOnlyPayload = await localOnlyUpdate.json();
+    // No propagation entry because nothing canonical changed.
+    assert.equal(
+      localOnlyPayload.identityPropagation,
+      undefined,
+      "tree-local-only edits must NOT trigger propagation",
+    );
+
+    // ── 5. Three-way fan-out: add a third tree's record, see all
+    //      three stay in sync after another canonical update on #1.
+    const treeThreeId = await createTreeForOwner("Прабабушка");
+    const motherOnTreeThreeResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeThreeId}/persons`,
+      {
+        method: "POST",
+        headers: ownerHeaders,
+        body: JSON.stringify({sourcePersonId: motherOnTreeOne.id}),
+      },
+    );
+    assert.equal(motherOnTreeThreeResponse.status, 201);
+    const motherOnTreeThree =
+        (await motherOnTreeThreeResponse.json()).person;
+
+    const fanOutUpdate = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeOneId}/persons/${motherOnTreeOne.id}`,
+      {
+        method: "PATCH",
+        headers: ownerHeaders,
+        body: JSON.stringify({
+          // Changed birthDate — should fan to BOTH tree #2 and #3.
+          firstName: "Анна",
+          middleName: "Петровна",
+          lastName: "Кузнецова",
+          birthDate: "1965-03-13",
+        }),
+      },
+    );
+    const fanOutPayload = await fanOutUpdate.json();
+    assert.equal(fanOutPayload.identityPropagation.affected.length, 2);
+    const affectedTreeIds = fanOutPayload.identityPropagation.affected.map(
+      (entry) => entry.treeId,
+    );
+    assert.ok(affectedTreeIds.includes(treeTwoId));
+    assert.ok(affectedTreeIds.includes(treeThreeId));
+
+    // Both downstream records picked up the new birth date.
+    for (const [tree, personRecord] of [
+      [treeTwoId, motherOnTreeTwo],
+      [treeThreeId, motherOnTreeThree],
+    ]) {
+      const verifyResponse = await fetch(
+        `${ctx.baseUrl}/v1/trees/${tree}/persons/${personRecord.id}`,
+        {headers: {authorization: `Bearer ${owner.accessToken}`}},
+      );
+      assert.equal(verifyResponse.status, 200);
+      const verifyPayload = await verifyResponse.json();
+      assert.ok(
+        String(verifyPayload.person.birthDate || "").startsWith("1965-03-13"),
+        "downstream record must reflect the new birth date",
+      );
+    }
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
 test("cross-tree person picker scopes to caller, excludes target tree, and shares identityId on link", async () => {
   const ctx = await startTestServer();
 

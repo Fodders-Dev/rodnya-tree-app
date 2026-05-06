@@ -337,7 +337,25 @@ function registerTreeRoutes(
         return;
       }
 
-      res.json({person: mapPerson(person)});
+      // Phase 1.1 identity propagation: if the update fanned out to
+      // other person records that share the same identityId
+      // (typically: the same human entered into a different tree
+      // by the same user via the cross-tree picker), the store
+      // attaches a `_propagatedTo: [{treeId, personId}, ...]`
+      // hint. We surface it in the response so the Flutter client
+      // can invalidate the affected trees' caches without
+      // refetching everything.
+      const propagatedTo = Array.isArray(person._propagatedTo)
+        ? person._propagatedTo
+        : [];
+
+      const responsePayload = {
+        person: mapPerson(person),
+      };
+      if (propagatedTo.length > 0) {
+        responsePayload.identityPropagation = {affected: propagatedTo};
+      }
+      res.json(responsePayload);
     },
   );
 

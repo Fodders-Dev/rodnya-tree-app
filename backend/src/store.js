@@ -8624,8 +8624,145 @@ class FileStore {
     });
     ensureCirclesForTree(db, treeId);
     upsertPersonAttributesForPerson(db, person, actorId);
+
+    // Phase 1.1 of the unified-graph migration: identity propagation.
+    // When a person record updates, fan the canonical-fields part of
+    // the change out to every OTHER person record that shares the
+    // same identityId (typically: the same human entered into a
+    // different tree by the same user via the cross-tree picker, OR
+    // the same user's auto-card in their own tree).
+    //
+    // Tree-local fields (notes / familySummary / bio / visibility)
+    // are deliberately NOT propagated — those are the editor's
+    // annotation about how this person fits into THIS tree's
+    // story. A field "describing the human" (name, dates, places,
+    // photos, gender) is shared because it's the same human;
+    // editorial fields are per-tree.
+    //
+    // Returns the list of (treeId, personId) tuples that were
+    // touched so the route layer can include it in the response —
+    // the Flutter client uses it to invalidate per-tree caches.
+    const propagatedTo = this._propagateIdentityFields(
+      db,
+      person,
+      previousPerson,
+      actorId,
+    );
+
     await this._write(db);
-    return structuredClone(person);
+    const result = structuredClone(person);
+    if (propagatedTo.length > 0) {
+      // Hidden side-channel for the route layer. Decorating the
+      // returned record with a non-enumerable-style hint keeps
+      // existing callers (which deepEqual-check the return) happy
+      // while letting the route surface the affected trees in
+      // the JSON response. Plain property — `mapPerson` will
+      // ignore it because it pulls a fixed schema.
+      result._propagatedTo = propagatedTo;
+    }
+    return result;
+  }
+
+  // Allowlist for identity propagation. Anything not in this list
+  // stays per-tree. Order matches the field's role in the record:
+  // identity-shape first (name parts → composed name), then
+  // demographics, then media. NEVER add `notes` / `bio` /
+  // `familySummary` / `visibility` here — those are editorial
+  // and per-tree by design.
+  static get _identityPropagationFields() {
+    return Object.freeze([
+      "name",
+      "maidenName",
+      "gender",
+      "birthDate",
+      "deathDate",
+      "isAlive",
+      "birthPlace",
+      "deathPlace",
+      "photoUrl",
+      "primaryPhotoUrl",
+      "photoGallery",
+    ]);
+  }
+
+  _propagateIdentityFields(db, sourcePerson, previousSourcePerson, actorId) {
+    const identityId = normalizeNullableString(sourcePerson?.identityId);
+    if (!identityId) return [];
+
+    // Find sibling person records that share this identityId.
+    // Excludes the source itself (we just updated it) and any
+    // record that's somehow tagged with the identityId but lives
+    // in the same tree+id (defensive — shouldn't exist after
+    // _reconcilePersonIdentities, but a malformed import could).
+    const linked = db.persons.filter(
+      (entry) =>
+        entry.identityId === identityId &&
+        !(entry.treeId === sourcePerson.treeId && entry.id === sourcePerson.id),
+    );
+    if (linked.length === 0) return [];
+
+    const propagated = [];
+    const fields = FileStore._identityPropagationFields;
+    const nowTs = nowIso();
+
+    for (const linkedPerson of linked) {
+      const previousLinked = structuredClone(linkedPerson);
+      let anyChange = false;
+      for (const field of fields) {
+        const sourceValue = sourcePerson[field];
+        if (linkedPerson[field] !== sourceValue) {
+          // Special-case photoGallery — array equality. We only
+          // skip propagation when JSON-serialized snapshots
+          // match; cheap enough and avoids spurious updates
+          // when the order rotated but content is the same.
+          if (
+            field === "photoGallery" &&
+            JSON.stringify(linkedPerson[field] || []) ===
+              JSON.stringify(sourceValue || [])
+          ) {
+            continue;
+          }
+          linkedPerson[field] = structuredClone(sourceValue);
+          anyChange = true;
+        }
+      }
+      if (!anyChange) continue;
+      linkedPerson.updatedAt = nowTs;
+      // Make sure the linked tree's last-modified timestamp also
+      // moves so the Flutter client knows to refetch its data.
+      const linkedTree = db.trees.find(
+        (entry) => entry.id === linkedPerson.treeId,
+      );
+      if (linkedTree) {
+        linkedTree.updatedAt = nowTs;
+      }
+      this._appendTreeChangeRecord(db, {
+        treeId: linkedPerson.treeId,
+        actorId,
+        type: "person.updated",
+        personId: linkedPerson.id,
+        details: {
+          before: previousLinked,
+          after: structuredClone(linkedPerson),
+          // Audit hint: each propagated tree's change-log shows
+          // where the update came from. Crucial for debugging
+          // ("why did mom's birth date change in this tree?
+          // I didn't touch it — oh, came from the other tree").
+          identityPropagation: {
+            sourceTreeId: sourcePerson.treeId,
+            sourcePersonId: sourcePerson.id,
+            sourceVersionAt: sourcePerson.updatedAt,
+            previousSourceUpdatedAt: previousSourcePerson?.updatedAt,
+          },
+        },
+      });
+      upsertPersonAttributesForPerson(db, linkedPerson, actorId);
+      propagated.push({
+        treeId: linkedPerson.treeId,
+        personId: linkedPerson.id,
+      });
+    }
+    return propagated;
   }
 
   async deletePerson(treeId, personId, actorId = null) {

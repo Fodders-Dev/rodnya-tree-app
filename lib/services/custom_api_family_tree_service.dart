@@ -410,6 +410,38 @@ class CustomApiFamilyTreeService
     _personTreeIds[updatedPerson.id] = treeId;
     _graphSnapshotCache.remove(treeId);
     await _cachePerson(updatedPerson);
+
+    // Phase 1.1 unified-graph migration: identity propagation. The
+    // backend may have fanned the change out to other person
+    // records on OTHER trees that share the same identityId
+    // (typically: the same human entered into a different tree
+    // by the same user via the cross-tree picker). Server tells
+    // us which trees got touched in `identityPropagation.affected`;
+    // we invalidate those trees' graph-snapshot caches so the
+    // next read fetches the updated data.
+    //
+    // Backwards-compatible: when the backend response omits the
+    // field (older deploys, non-propagating updates), the loop is
+    // a no-op.
+    final propagation = response['identityPropagation'];
+    if (propagation is Map<String, dynamic>) {
+      final affected = propagation['affected'];
+      if (affected is List) {
+        for (final entry in affected) {
+          if (entry is Map) {
+            final affectedTreeId = entry['treeId']?.toString();
+            if (affectedTreeId != null && affectedTreeId.isNotEmpty) {
+              _graphSnapshotCache.remove(affectedTreeId);
+              // We don't have the freshly-propagated person in
+              // hand without an extra round-trip — clearing the
+              // snapshot cache is enough to force the consumer
+              // to refetch. Per-person cache stays as a stale
+              // hint until the consumer pulls fresh data.
+            }
+          }
+        }
+      }
+    }
   }
 
   @override
