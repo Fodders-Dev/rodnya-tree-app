@@ -52,7 +52,7 @@ dependencies:
   phone_number: ^2.0.1
 
   # Навигация
-  go_router: ^14.8.1  # Используем последнюю стабильную версию
+  go_router: ^17.0.0  # Используем последнюю стабильную версию
   
 
   # Добавляем зависимости для локального хранилища и синхронизации
@@ -98,6 +98,11 @@ dependencies:
   # 11.x is the highest version that still resolves cleanly.
   share_plus: ^11.0.0
   http: ^1.5.0
+  # 7.x is a near-total rewrite (initialize/authenticate/
+  # attemptLightweightAuthentication, GoogleSignIn.instance, sync
+  # authentication, authenticationEvents stream). Migration is a
+  # multi-day surgery on auth_screen + custom_api_auth_service —
+  # tracked separately. Stay on 6.3 until that PR.
   google_sign_in: 6.3.0
   google_sign_in_web: 0.12.4+4
   # Picks up `rodnya://...` deep-link callbacks so OAuth flows
@@ -122,7 +127,7 @@ dependencies:
   # gallery picker because <input type=file> can't drive a live
   # preview round capture loop.
   camera: ^0.12.0
-  file_picker: ^8.0.0+1
+  file_picker: ^11.0.0
   open_filex: ^4.5.0
   qr_flutter: ^4.1.0
   # 13.x requires win32 6; flutter_secure_storage 9.x still pins win32 5,

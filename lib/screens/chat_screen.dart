@@ -1215,7 +1215,9 @@ class _ChatScreenState extends State<ChatScreen> {
       _attachmentsController.clear();
     }
     try {
-      final result = await FilePicker.platform.pickFiles(
+      // file_picker 11.x replaced `FilePicker.platform.pickFiles(...)`
+      // with the static `FilePicker.pickFiles(...)`. Same kwargs.
+      final result = await FilePicker.pickFiles(
         allowMultiple: true,
         type: FileType.any,
       );
