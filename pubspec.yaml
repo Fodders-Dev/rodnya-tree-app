@@ -98,13 +98,8 @@ dependencies:
   # 13.x wants win32 ^6 — same conflict as device_info_plus 13.
   share_plus: ^11.0.0
   http: ^1.5.0
-  # 7.x is a near-total rewrite (initialize/authenticate/
-  # attemptLightweightAuthentication, GoogleSignIn.instance, sync
-  # authentication, authenticationEvents stream). Migration is a
-  # multi-day surgery on auth_screen + custom_api_auth_service —
-  # tracked separately. Stay on 6.3 until that PR.
-  google_sign_in: 6.3.0
-  google_sign_in_web: 0.12.4+4
+  google_sign_in: ^7.2.0
+  google_sign_in_web: ^1.0.0
   # Picks up `rodnya://...` deep-link callbacks so OAuth flows
   # (Telegram / VK ID / MAX) can return into the Android app from
   # the system browser. On web we still parse Uri.base query

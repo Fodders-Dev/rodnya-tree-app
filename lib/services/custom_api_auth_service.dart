@@ -231,7 +231,17 @@ class CustomApiAuthService implements AuthServiceInterface {
   CustomApiSession? _session;
   bool _isRefreshing = false;
   Future<void>? _refreshTask;
-  GoogleSignIn? _googleSignIn;
+
+  /// 7.x replaced the `GoogleSignIn(...)` constructor with a singleton
+  /// + a single `initialize(...)` call. We cache the init future so
+  /// every concurrent caller awaits the same handshake instead of
+  /// kicking off multiple inits.
+  Future<void>? _googleInitFuture;
+
+  /// Latest user the Google plugin reported via the authenticationEvents
+  /// stream. There's no `currentUser` getter in 7.x — apps must subscribe
+  /// to events and remember the last sign-in. Cleared on sign-out.
+  GoogleSignInAccount? _lastGoogleAccount;
   StreamController<void>? _googleWebAuthenticationController;
 
   /// Hooks fired AFTER the backend has been told the user is signing
@@ -253,7 +263,8 @@ class CustomApiAuthService implements AuthServiceInterface {
   void unregisterPreSignOutHook(Future<void> Function() hook) {
     _preSignOutHooks.remove(hook);
   }
-  StreamSubscription<GoogleSignInAccount?>? _googleWebAccountSubscription;
+  StreamSubscription<GoogleSignInAuthenticationEvent>?
+      _googleWebAccountSubscription;
 
   static Future<CustomApiAuthService> create({
     http.Client? httpClient,
@@ -305,13 +316,22 @@ class CustomApiAuthService implements AuthServiceInterface {
       return;
     }
     _ensureGoogleWebAuthenticationListener();
-    await _googleClient.isSignedIn();
+    // 7.x dropped `isSignedIn()`. The corresponding kick-the-tires
+    // call is `attemptLightweightAuthentication()` — it wakes up the
+    // platform side and either restores an existing session via FedCM
+    // (returning a Future) or returns null when the platform handles
+    // the lifecycle via events. We don't care about the result here,
+    // only that initialization runs.
+    await _ensureGoogleInitialized();
+    await GoogleSignIn.instance.attemptLightweightAuthentication();
   }
 
   Future<void> resetGoogleSelection() async {
+    if (_googleInitFuture == null) return;
     try {
-      await _googleSignIn?.signOut();
+      await GoogleSignIn.instance.signOut();
     } catch (_) {}
+    _lastGoogleAccount = null;
   }
 
   @override
@@ -476,51 +496,80 @@ class CustomApiAuthService implements AuthServiceInterface {
     required String interactiveCancelledMessage,
   }) async {
     _ensureGoogleWebAuthenticationListener();
-    final currentAccount = _googleClient.currentUser;
-    if (currentAccount != null) {
-      return currentAccount;
+    await _ensureGoogleInitialized();
+    final cached = _lastGoogleAccount;
+    if (cached != null) {
+      return cached;
     }
 
-    final account = await _googleClient.signInSilently(
-      suppressErrors: true,
-      reAuthenticate: true,
-    );
+    // 7.x replaced signInSilently with attemptLightweightAuthentication.
+    // It can return null synchronously when the platform delivers
+    // results via the events stream rather than the future (FedCM on
+    // web behaves this way). In that case the caller should fall back
+    // to interactive auth — same as the old `signInSilently` returning
+    // null.
+    final pending = GoogleSignIn.instance.attemptLightweightAuthentication();
+    if (pending == null) {
+      throw CustomApiException(interactiveCancelledMessage);
+    }
+    final account = await pending;
     if (account == null) {
       throw CustomApiException(interactiveCancelledMessage);
     }
+    _lastGoogleAccount = account;
     return account;
   }
 
   Future<GoogleSignInAccount> _resolveGoogleAccountForTokenExchange({
     required String interactiveCancelledMessage,
   }) async {
-    // On web, the cached currentUser may not have a valid idToken (the token
-    // is short-lived and tied to the sign-in session).  Always force a fresh
-    // interactive sign-in so that authentication.idToken is guaranteed to be
-    // populated.  This also avoids silent failures where the cached account's
-    // token expired or was never set in the first place.
+    await _ensureGoogleInitialized();
+    // On web, the cached account's id-token is short-lived and tied to
+    // the active GIS session — re-using it leads to silent
+    // "missing idToken" failures when the user picks Google on a stale
+    // tab. Force a fresh sign-out + interactive flow there. On mobile
+    // the cached account remains valid until the user explicitly signs
+    // out, so we keep the fast path.
     if (kIsWeb) {
       try {
-        await _googleClient.signOut();
+        await GoogleSignIn.instance.signOut();
       } catch (_) {
         // Best-effort sign-out; continue even if it fails.
       }
+      _lastGoogleAccount = null;
     } else {
-      final currentAccount = _googleClient.currentUser;
-      if (currentAccount != null) {
-        return currentAccount;
+      final cached = _lastGoogleAccount;
+      if (cached != null) {
+        return cached;
       }
     }
 
-    final account = await _googleClient.signIn();
-    if (account == null) {
-      throw CustomApiException(interactiveCancelledMessage);
+    try {
+      // `authenticate` is the 7.x replacement for `signIn()`. It throws
+      // on cancel rather than returning null, and the user's ID token
+      // is obtained via `account.authentication` (now sync).
+      final account = await GoogleSignIn.instance.authenticate(
+        scopeHint: const ['email'],
+      );
+      _lastGoogleAccount = account;
+      return account;
+    } on GoogleSignInException catch (error) {
+      // Map the canceled / interrupted exception codes to the same
+      // "interactiveCancelledMessage" string the old null-return path
+      // surfaced upstream, so calling code's UX text doesn't change.
+      if (error.code == GoogleSignInExceptionCode.canceled ||
+          error.code == GoogleSignInExceptionCode.interrupted ||
+          error.code == GoogleSignInExceptionCode.uiUnavailable) {
+        throw CustomApiException(interactiveCancelledMessage);
+      }
+      rethrow;
     }
-    return account;
   }
 
   Future<String> _resolveGoogleIdToken(GoogleSignInAccount account) async {
-    final authentication = await account.authentication;
+    // 7.x made `account.authentication` a synchronous getter — drop
+    // the historical `await`.
+    final authentication = account.authentication;
     final idToken = authentication.idToken?.trim() ?? '';
     if (idToken.isEmpty) {
       throw const CustomApiException(
@@ -530,12 +579,16 @@ class CustomApiAuthService implements AuthServiceInterface {
     return idToken;
   }
 
-  GoogleSignIn get _googleClient {
-    return _googleSignIn ??= GoogleSignIn(
-      scopes: const ['email'],
-      // clientId: web-side client that the GIS library authenticates with.
-      // serverClientId is not supported by google_sign_in_web, so web obtains
-      // idToken only through GIS authentication events/renderButton.
+  /// Lazily initialize the Google singleton. Idempotent — every caller
+  /// awaits the same future. Must be called before any other
+  /// GoogleSignIn.instance method per the 7.x contract.
+  Future<void> _ensureGoogleInitialized() {
+    return _googleInitFuture ??= GoogleSignIn.instance.initialize(
+      // clientId: web-side client that the GIS library authenticates
+      // with. serverClientId is not supported by google_sign_in_web,
+      // so web obtains the idToken only through GIS authentication
+      // events / renderButton. On mobile, serverClientId carries our
+      // backend's expected audience for the id-token verification.
       clientId: kIsWeb ? _runtimeConfig.googleWebClientId : null,
       serverClientId: kIsWeb ? null : _runtimeConfig.googleWebClientId,
     );
@@ -546,10 +599,22 @@ class CustomApiAuthService implements AuthServiceInterface {
       return;
     }
     _googleWebAuthenticationController ??= StreamController<void>.broadcast();
-    _googleWebAccountSubscription ??=
-        _googleClient.onCurrentUserChanged.listen((account) {
-      if (account != null) {
+    if (_googleWebAccountSubscription != null) return;
+    // Kick the platform side awake and subscribe to the events stream
+    // it produces on sign-in / sign-out. Replaces `onCurrentUserChanged`.
+    unawaited(_ensureGoogleInitialized());
+    _googleWebAccountSubscription =
+        GoogleSignIn.instance.authenticationEvents.listen((event) {
+      // The event is sealed but its sign-in subclass carries a
+      // required `user` field — pattern-matching with an empty
+      // parens form (`case ...SignIn():`) confuses the analyzer
+      // about the constructor arity. Plain `is`-checks read the
+      // same and avoid the analyzer noise.
+      if (event is GoogleSignInAuthenticationEventSignIn) {
+        _lastGoogleAccount = event.user;
         _googleWebAuthenticationController?.add(null);
+      } else if (event is GoogleSignInAuthenticationEventSignOut) {
+        _lastGoogleAccount = null;
       }
     });
   }
@@ -928,9 +993,15 @@ class CustomApiAuthService implements AuthServiceInterface {
       } catch (_) {}
     }
 
-    try {
-      await _googleSignIn?.signOut();
-    } catch (_) {}
+    // Sign the Google singleton out only if we ever initialized it —
+    // the 7.x contract forbids any other method call before
+    // `initialize` resolves.
+    if (_googleInitFuture != null) {
+      try {
+        await GoogleSignIn.instance.signOut();
+      } catch (_) {}
+    }
+    _lastGoogleAccount = null;
 
     await _clearSession();
   }
