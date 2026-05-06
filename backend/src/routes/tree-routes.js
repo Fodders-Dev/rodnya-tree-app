@@ -233,6 +233,126 @@ function registerTreeRoutes(
     });
   });
 
+  // ── Phase 1.2: voltage-indicator matcher ────────────────────────────
+  // For one specific person, surface medium+high confidence cross-
+  // tree matches the user hasn't linked or dismissed. Drives the
+  // 💡 indicator on each card. The Flutter client batches calls
+  // (one per visible person) and renders the dot when length > 0.
+  app.get(
+    "/v1/trees/:treeId/persons/:personId/identity-suggestions",
+    requireAuth,
+    async (req, res) => {
+      const tree = await requireTreeAccess(req, res, req.params.treeId);
+      if (!tree) return;
+      const requestedLimit = Number(req.query.limit || 10);
+      const limit = Number.isFinite(requestedLimit) && requestedLimit > 0
+        ? Math.min(requestedLimit, 50)
+        : 10;
+      const suggestions = await store.findCrossTreeSuggestionsForPerson({
+        userId: req.auth.user.id,
+        treeId: tree.id,
+        personId: req.params.personId,
+        limit,
+      });
+      res.json({
+        suggestions: suggestions.map((suggestion) => ({
+          sourcePersonId: suggestion.sourcePersonId,
+          sourceTreeId: suggestion.sourceTreeId,
+          targetPersonId: suggestion.targetPersonId,
+          targetTreeId: suggestion.targetTreeId,
+          targetTreeName: suggestion.targetTreeName,
+          targetPerson: mapPerson(suggestion.targetPerson),
+          score: suggestion.score,
+          confidence: suggestion.confidence,
+          reasons: suggestion.reasons,
+        })),
+      });
+    },
+  );
+
+  // Confirm a 💡-suggested match: link both persons under one
+  // PersonIdentity. From this point on, identity propagation
+  // (Phase 1.1) keeps the canonical fields in sync. Caller passes
+  // the target via {targetTreeId, targetPersonId} on the body —
+  // we verify they have access to the target tree before linking
+  // (otherwise an attacker could probe for IDs).
+  app.post(
+    "/v1/trees/:treeId/persons/:personId/link-identity",
+    requireAuth,
+    async (req, res) => {
+      const tree = await requireTreeAccess(req, res, req.params.treeId);
+      if (!tree) return;
+      const targetTreeIdRaw = req.body?.targetTreeId;
+      const targetPersonIdRaw = req.body?.targetPersonId;
+      const targetTreeId =
+        typeof targetTreeIdRaw === "string" ? targetTreeIdRaw.trim() : "";
+      const targetPersonId =
+        typeof targetPersonIdRaw === "string" ? targetPersonIdRaw.trim() : "";
+      if (!targetTreeId || !targetPersonId) {
+        res.status(400).json({
+          message: "Нужны targetTreeId и targetPersonId",
+        });
+        return;
+      }
+      // Auth: verify the user can access the target tree too.
+      const targetTree = await requireTreeAccess(req, res, targetTreeId);
+      if (!targetTree) return;
+
+      try {
+        const result = await store.linkPersonsByIdentity({
+          sourceTreeId: tree.id,
+          sourcePersonId: req.params.personId,
+          targetTreeId: targetTree.id,
+          targetPersonId,
+          actorId: req.auth.user.id,
+        });
+        if (!result) {
+          res.status(404).json({message: "Карточки не найдены"});
+          return;
+        }
+        res.json({
+          identityId: result.identityId,
+          source: mapPerson(result.sourcePerson),
+          target: mapPerson(result.targetPerson),
+        });
+      } catch (error) {
+        if (error?.message === "CONFLICTING_IDENTITIES") {
+          res.status(409).json({
+            message:
+              "Эти карточки уже связаны с разными identityId — сначала объедините их через merge.",
+          });
+          return;
+        }
+        throw error;
+      }
+    },
+  );
+
+  // Dismiss a 💡 suggestion — the user said "these are different
+  // people". We record the per-user dismissal so the same
+  // suggestion doesn't keep surfacing.
+  app.post(
+    "/v1/trees/:treeId/persons/:personId/dismiss-suggestion",
+    requireAuth,
+    async (req, res) => {
+      const tree = await requireTreeAccess(req, res, req.params.treeId);
+      if (!tree) return;
+      const targetPersonIdRaw = req.body?.targetPersonId;
+      const targetPersonId =
+        typeof targetPersonIdRaw === "string" ? targetPersonIdRaw.trim() : "";
+      if (!targetPersonId) {
+        res.status(400).json({message: "Нужен targetPersonId"});
+        return;
+      }
+      await store.dismissIdentitySuggestion({
+        userId: req.auth.user.id,
+        sourcePersonId: req.params.personId,
+        dismissedTargetPersonId: targetPersonId,
+      });
+      res.status(204).send();
+    },
+  );
+
   app.post("/v1/trees/:treeId/persons", requireAuth, async (req, res) => {
     const tree = await requireTreeAccess(req, res, req.params.treeId);
     if (!tree) {

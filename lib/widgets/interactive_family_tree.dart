@@ -53,6 +53,22 @@ class InteractiveFamilyTree extends StatefulWidget {
     RelationType relation1to2,
   )? onConnectExistingPersons;
 
+  /// Phase 1.2 voltage-indicator matcher: per-person counts of
+  /// medium+high confidence cross-tree match suggestions the user
+  /// hasn't linked or dismissed. When count > 0, the canvas
+  /// renders a small 💡 dot on the card; tapping fires
+  /// [onShowIdentitySuggestions] so the host can pop a sheet
+  /// with the actual suggestion details + confirm/dismiss controls.
+  ///
+  /// We pass counts (not the full suggestion list) here because
+  /// the visible information at the canvas-level is "yes there's
+  /// at least one"; the popover fetches details on demand.
+  final Map<String, int>? identitySuggestionCounts;
+
+  /// Tap callback for the 💡 dot. Host fetches the actual list,
+  /// shows a sheet, dispatches link/dismiss on the service.
+  final void Function(String personId)? onShowIdentitySuggestions;
+
   /// Auto-recenter trigger. When this prop's value CHANGES to a
   /// non-null person id, the tree animates / snaps the viewport to
   /// center that person on the next frame. Used after creating a
@@ -140,6 +156,8 @@ class InteractiveFamilyTree extends StatefulWidget {
     this.onConnectExistingPersons,
     this.onAddBlankPerson,
     this.recenterOnPersonId,
+    this.identitySuggestionCounts,
+    this.onShowIdentitySuggestions,
     this.currentUserId,
     this.branchRootPersonId,
     this.selectedPersonId,
@@ -1791,6 +1809,23 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
               ),
             ),
           cardInteractionLayer,
+          // Phase 1.2 voltage-indicator: 💡 dot on the top-LEFT of
+          // any card the matcher found cross-tree duplicate
+          // candidates for. Position deliberately distinct from
+          // the "+" badge on top-RIGHT so they don't compete.
+          // Visible on hover/select (parity with the existing "+"
+          // badge), and ALWAYS visible when the count is high.
+          if (!widget.isEditMode &&
+              (widget.identitySuggestionCounts?[person.id] ?? 0) > 0)
+            Positioned(
+              top: 8,
+              left: 8,
+              child: _IdentitySuggestionsBadge(
+                count: widget.identitySuggestionCounts![person.id]!,
+                onTap: () =>
+                    widget.onShowIdentitySuggestions?.call(person.id),
+              ),
+            ),
           // Show the "+" quick-add badge on hover (desktop) AND on the
           // currently-selected node (so mobile users with no hover can
           // still trigger the add-relative sheet without going through
@@ -5133,6 +5168,72 @@ class _BlankCardGenderRow extends StatelessWidget {
                   ),
                 ),
               ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Voltage-indicator dot — small accent-colored 💡 chip on cards
+/// where the cross-tree matcher found candidates the user hasn't
+/// linked or dismissed yet. Visual is intentionally subtle:
+/// passive nudge, not an alert. Tap → popover with suggestion
+/// list (host responsibility).
+///
+/// Why "voltage indicator" — the user described the feel they
+/// wanted: "small bulb that lights up when there's something
+/// to look at, doesn't pop modals on you 200 times".
+class _IdentitySuggestionsBadge extends StatelessWidget {
+  const _IdentitySuggestionsBadge({
+    required this.count,
+    required this.onTap,
+  });
+
+  final int count;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Semantics(
+      button: true,
+      label: count == 1
+          ? 'Возможный дубликат в другом дереве'
+          : 'Возможные дубликаты в других деревьях ($count)',
+      child: Tooltip(
+        message: count == 1
+            ? 'Похоже, эта карточка есть и в другом вашем дереве'
+            : '$count похожих карточек в других ваших деревьях',
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            customBorder: const CircleBorder(),
+            onTap: onTap,
+            child: Container(
+              width: 26,
+              height: 26,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: scheme.tertiaryContainer.withValues(alpha: 0.95),
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: scheme.tertiary.withValues(alpha: 0.6),
+                  width: 1.2,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: scheme.tertiary.withValues(alpha: 0.18),
+                    blurRadius: 6,
+                  ),
+                ],
+              ),
+              child: Icon(
+                Icons.lightbulb_outline_rounded,
+                size: 15,
+                color: scheme.tertiary,
+              ),
             ),
           ),
         ),

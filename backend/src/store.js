@@ -9,6 +9,7 @@ const {
 const {
   normalizedBirthYear,
   scorePersonPair,
+  findCrossTreeIdentitySuggestions,
 } = require("./identity-matcher");
 const {backfillPersonIdentities} = require("./migration-utils");
 
@@ -45,6 +46,11 @@ const EMPTY_DB = {
   sessions: [],
   authHandoffs: [],
   passwordResetTokens: [],
+  // Phase 1.2 voltage-indicator matcher: per-user records of
+  // suggestion dismissals so the 💡 indicator doesn't keep
+  // re-suggesting pairs the user already said "no, these are
+  // different people" about.
+  dismissedIdentitySuggestions: [],
   trees: [],
   persons: [],
   personIdentities: [],
@@ -84,6 +90,11 @@ function normalizeDbState(parsed) {
     authHandoffs: Array.isArray(parsed?.authHandoffs) ? parsed.authHandoffs : [],
     passwordResetTokens: Array.isArray(parsed?.passwordResetTokens)
       ? parsed.passwordResetTokens
+      : [],
+    dismissedIdentitySuggestions: Array.isArray(
+      parsed?.dismissedIdentitySuggestions,
+    )
+      ? parsed.dismissedIdentitySuggestions
       : [],
     trees: Array.isArray(parsed?.trees) ? parsed.trees : [],
     persons: Array.isArray(parsed?.persons) ? parsed.persons : [],
@@ -6643,6 +6654,10 @@ class FileStore {
     db.passwordResetTokens = (db.passwordResetTokens || []).filter(
       (entry) => entry.userId !== userId,
     );
+    // Drop this user's identity-suggestion dismissals.
+    db.dismissedIdentitySuggestions = (
+      db.dismissedIdentitySuggestions || []
+    ).filter((entry) => entry.userId !== userId);
     db.persons = db.persons.filter((entry) => !removedPersonIds.has(entry.id));
     db.relations = db.relations.filter((entry) => {
       return (
@@ -7722,6 +7737,234 @@ class FileStore {
 
   _isPersonSteward(db, person, userId) {
     return personStewardUserIds(db, person).includes(userId);
+  }
+
+  // ── Phase 1.2 voltage-indicator matcher ─────────────────────────────
+  // For one specific person, find medium+high confidence matches in
+  // OTHER trees the user has access to. Used by the 💡 indicator on
+  // canvas: cards with at least one suggestion get a small dot, tap
+  // it to see the suggestion list, confirm or dismiss.
+
+  async findCrossTreeSuggestionsForPerson({
+    userId,
+    treeId,
+    personId,
+    limit = 10,
+  }) {
+    const db = await this._read();
+    const normalizedUserId = normalizeNullableString(userId);
+    if (!normalizedUserId) return [];
+
+    const sourcePerson = db.persons.find(
+      (entry) => entry.id === personId && entry.treeId === treeId,
+    );
+    if (!sourcePerson) return [];
+
+    const accessibleTrees = db.trees.filter((tree) =>
+      this._userCanAccessTreeRecord(tree, normalizedUserId),
+    );
+    if (accessibleTrees.length <= 1) {
+      // Only one accessible tree → nothing cross-tree to suggest.
+      return [];
+    }
+
+    // Build the per-user dismissal set for this source person.
+    const dismissedTargetPersonIds = new Set(
+      (db.dismissedIdentitySuggestions || [])
+        .filter(
+          (entry) =>
+            entry.userId === normalizedUserId &&
+            entry.sourcePersonId === personId,
+        )
+        .map((entry) => entry.dismissedTargetPersonId),
+    );
+
+    return findCrossTreeIdentitySuggestions({
+      sourcePerson,
+      accessibleTrees,
+      persons: db.persons,
+      dismissedTargetPersonIds,
+      limit,
+    });
+  }
+
+  async dismissIdentitySuggestion({
+    userId,
+    sourcePersonId,
+    dismissedTargetPersonId,
+  }) {
+    const db = await this._read();
+    const normalizedUserId = normalizeNullableString(userId);
+    const normalizedSource = normalizeNullableString(sourcePersonId);
+    const normalizedTarget = normalizeNullableString(dismissedTargetPersonId);
+    if (!normalizedUserId || !normalizedSource || !normalizedTarget) {
+      return false;
+    }
+    db.dismissedIdentitySuggestions = Array.isArray(
+      db.dismissedIdentitySuggestions,
+    )
+      ? db.dismissedIdentitySuggestions
+      : [];
+    // Idempotent: don't pile up duplicate dismissal records.
+    const exists = db.dismissedIdentitySuggestions.some(
+      (entry) =>
+        entry.userId === normalizedUserId &&
+        entry.sourcePersonId === normalizedSource &&
+        entry.dismissedTargetPersonId === normalizedTarget,
+    );
+    if (exists) return true;
+    db.dismissedIdentitySuggestions.push({
+      userId: normalizedUserId,
+      sourcePersonId: normalizedSource,
+      dismissedTargetPersonId: normalizedTarget,
+      dismissedAt: nowIso(),
+    });
+    await this._write(db);
+    return true;
+  }
+
+  // Manually link two persons under one PersonIdentity. Used when
+  // the user confirms a 💡-surfaced suggestion. Idempotent: if both
+  // already share an identity, no-op; if one has identity and the
+  // other doesn't, the unidentified one inherits; if neither has,
+  // a new identity is created and both join.
+  //
+  // Caller is responsible for verifying that BOTH persons live in
+  // trees the userId can access — this method assumes authorization
+  // has already happened at the route layer.
+  async linkPersonsByIdentity({
+    sourceTreeId,
+    sourcePersonId,
+    targetTreeId,
+    targetPersonId,
+    actorId = null,
+  }) {
+    const db = await this._read();
+    const sourcePerson = db.persons.find(
+      (entry) => entry.id === sourcePersonId && entry.treeId === sourceTreeId,
+    );
+    const targetPerson = db.persons.find(
+      (entry) => entry.id === targetPersonId && entry.treeId === targetTreeId,
+    );
+    if (!sourcePerson || !targetPerson) return null;
+
+    // Same identity already → no-op.
+    const sourceIdentityId = normalizeNullableString(sourcePerson.identityId);
+    const targetIdentityId = normalizeNullableString(targetPerson.identityId);
+    if (
+      sourceIdentityId &&
+      targetIdentityId &&
+      sourceIdentityId === targetIdentityId
+    ) {
+      return {sourcePerson, targetPerson, identityId: sourceIdentityId};
+    }
+
+    const identities = this._ensurePersonIdentityCollection(db);
+    const sourceIdentity = sourceIdentityId
+      ? identities.find((entry) => entry.id === sourceIdentityId) || null
+      : null;
+    const targetIdentity = targetIdentityId
+      ? identities.find((entry) => entry.id === targetIdentityId) || null
+      : null;
+
+    // Conflict guard: if BOTH identities are claimed by different
+    // user accounts, that's a destructive merge (would collapse
+    // two real humans' canonical records). Refuse and let the
+    // route surface 409 — the user must reconcile via explicit
+    // merge proposals (`mergeProposals`) instead.
+    const sourceUserClaim = normalizeNullableString(sourceIdentity?.userId);
+    const targetUserClaim = normalizeNullableString(targetIdentity?.userId);
+    if (
+      sourceUserClaim &&
+      targetUserClaim &&
+      sourceUserClaim !== targetUserClaim
+    ) {
+      throw new Error("CONFLICTING_IDENTITIES");
+    }
+
+    // Pick the canonical identity. Prefer the one that's claimed
+    // by a user (it's the "real human"); else either; else create.
+    let identity = null;
+    if (sourceUserClaim) {
+      identity = sourceIdentity;
+    } else if (targetUserClaim) {
+      identity = targetIdentity;
+    } else if (sourceIdentity) {
+      identity = sourceIdentity;
+    } else if (targetIdentity) {
+      identity = targetIdentity;
+    }
+    if (!identity) {
+      identity = createPersonIdentityRecord({
+        personIds: [sourcePersonId, targetPersonId],
+      });
+      identities.push(identity);
+    }
+
+    // The OTHER identity (the one we didn't pick) gets retired —
+    // its persons reattach to the canonical identity. Without
+    // this, both identities would dangle in db.personIdentities
+    // and `_reconcilePersonIdentities` would re-split them on
+    // the next read. We mark `mergedInto` for audit, then drop
+    // the row from the live collection.
+    const retiredIdentity = identity === sourceIdentity ? targetIdentity : sourceIdentity;
+    if (retiredIdentity && retiredIdentity.id !== identity.id) {
+      retiredIdentity.mergedInto = identity.id;
+      retiredIdentity.updatedAt = nowIso();
+      // Reattach any persons that were on the retired identity.
+      for (const otherPerson of db.persons) {
+        if (otherPerson.identityId === retiredIdentity.id) {
+          otherPerson.identityId = identity.id;
+          otherPerson.updatedAt = nowIso();
+        }
+      }
+      // Drop the retired record from the live collection.
+      const retiredIdx = identities.findIndex(
+        (entry) => entry.id === retiredIdentity.id,
+      );
+      if (retiredIdx >= 0) {
+        identities.splice(retiredIdx, 1);
+      }
+    }
+
+    // Attach both — _attachPersonToIdentity also re-runs the
+    // PersonIdentity reconciliation pass so personIds stays
+    // consistent.
+    this._attachPersonToIdentity(db, sourcePerson, identity, sourcePerson.userId);
+    this._attachPersonToIdentity(db, targetPerson, identity, targetPerson.userId);
+
+    // Audit trail on both trees so each tree's history shows the
+    // explicit linking.
+    const linkDetails = {
+      identityId: identity.id,
+      linkedToPersonId: targetPersonId,
+      linkedToTreeId: targetTreeId,
+    };
+    this._appendTreeChangeRecord(db, {
+      treeId: sourceTreeId,
+      actorId,
+      type: "person.identity-linked",
+      personId: sourcePersonId,
+      details: linkDetails,
+    });
+    this._appendTreeChangeRecord(db, {
+      treeId: targetTreeId,
+      actorId,
+      type: "person.identity-linked",
+      personId: targetPersonId,
+      details: {
+        identityId: identity.id,
+        linkedToPersonId: sourcePersonId,
+        linkedToTreeId: sourceTreeId,
+      },
+    });
+
+    await this._write(db);
+    return {
+      sourcePerson: structuredClone(sourcePerson),
+      targetPerson: structuredClone(targetPerson),
+      identityId: identity.id,
+    };
   }
 
   _mergeProposalStillActionable(db, proposal) {

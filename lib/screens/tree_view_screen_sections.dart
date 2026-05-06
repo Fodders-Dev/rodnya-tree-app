@@ -1352,6 +1352,12 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
                 // we stamp the new person id here, the tree picks
                 // it up via didUpdateWidget and snaps to center.
                 recenterOnPersonId: _recenterOnPersonIdAfterReload,
+                // Phase 1.2 voltage indicator: counts come from the
+                // background fetch in _loadData; tap callback opens
+                // the suggestions sheet.
+                identitySuggestionCounts: _identitySuggestionCounts,
+                onShowIdentitySuggestions:
+                    _handleShowIdentitySuggestionsForPerson,
                 // Reserve vertical space for the floating chrome stacked
                 // above the canvas — toolbar (~60) + context column
                 // (up to ~210) on mobile compact, much less on desktop

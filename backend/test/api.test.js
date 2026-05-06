@@ -3795,6 +3795,257 @@ test("password reset request issues a single-use token, emails it, and confirm r
   }
 });
 
+// Phase 1.2 of unified-graph migration: voltage-indicator matcher.
+// For one specific person, surface medium+high confidence cross-
+// tree matches the user hasn't linked or dismissed. The Flutter
+// client uses this to render a 💡 dot on each card with at least
+// one suggestion; tap → confirm-link or dismiss.
+test("voltage-indicator matcher: surfaces unlinked dupes, link merges identityId, dismiss persists", async () => {
+  const ctx = await startTestServer();
+
+  try {
+    const owner = await registerTestUser(ctx, "owner@rodnya.app", "Артём");
+    const ownerHeaders = {
+      authorization: `Bearer ${owner.accessToken}`,
+      "content-type": "application/json",
+    };
+    const stranger = await registerTestUser(
+      ctx,
+      "stranger@rodnya.app",
+      "Незнакомец",
+    );
+    const strangerHeaders = {
+      authorization: `Bearer ${stranger.accessToken}`,
+      "content-type": "application/json",
+    };
+
+    async function createTree(headers, name) {
+      const response = await fetch(`${ctx.baseUrl}/v1/trees`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({name, isPrivate: true}),
+      });
+      assert.equal(response.status, 201);
+      return (await response.json()).tree.id;
+    }
+    async function addPerson(headers, treeId, body) {
+      const response = await fetch(
+        `${ctx.baseUrl}/v1/trees/${treeId}/persons`,
+        {
+          method: "POST",
+          headers,
+          body: JSON.stringify(body),
+        },
+      );
+      assert.equal(response.status, 201);
+      return (await response.json()).person;
+    }
+
+    // Owner has TWO trees with the SAME human entered separately
+    // (no picker → no shared identityId). Matcher should surface
+    // the pair as a medium+high confidence suggestion.
+    const treeOneId = await createTree(ownerHeaders, "Семья (моя)");
+    const treeTwoId = await createTree(ownerHeaders, "Родня (мамина)");
+    const motherOnTreeOne = await addPerson(ownerHeaders, treeOneId, {
+      firstName: "Анна",
+      lastName: "Кузнецова",
+      gender: "female",
+      birthDate: "1965-03-12",
+      birthPlace: "Тула",
+    });
+    const motherOnTreeTwoStandalone = await addPerson(
+      ownerHeaders,
+      treeTwoId,
+      {
+        firstName: "Анна",
+        lastName: "Кузнецова",
+        gender: "female",
+        birthDate: "1965-03-12",
+        birthPlace: "Тула",
+      },
+    );
+    // Distractor on tree #2 — same gender, completely different
+    // name/dates — must NOT surface.
+    await addPerson(ownerHeaders, treeTwoId, {
+      firstName: "Светлана",
+      lastName: "Иванова",
+      gender: "female",
+      birthDate: "1980-09-01",
+    });
+
+    // Stranger's tree contains an "Анна Кузнецова" too — must NOT
+    // surface in owner's suggestions (privacy).
+    const strangerTreeId = await createTree(
+      strangerHeaders,
+      "Чужое дерево",
+    );
+    await addPerson(strangerHeaders, strangerTreeId, {
+      firstName: "Анна",
+      lastName: "Кузнецова",
+      gender: "female",
+      birthDate: "1965-03-12",
+    });
+
+    // ── 1. GET suggestions for tree-1 mother ──
+    const suggestionsResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeOneId}/persons/${motherOnTreeOne.id}/identity-suggestions`,
+      {headers: {authorization: `Bearer ${owner.accessToken}`}},
+    );
+    assert.equal(suggestionsResponse.status, 200);
+    const suggestionsPayload = await suggestionsResponse.json();
+    // Exactly one suggestion: tree-2 standalone mother. Distractor
+    // and stranger filtered out.
+    assert.equal(suggestionsPayload.suggestions.length, 1);
+    const suggestion = suggestionsPayload.suggestions[0];
+    assert.equal(suggestion.targetPersonId, motherOnTreeTwoStandalone.id);
+    assert.equal(suggestion.targetTreeId, treeTwoId);
+    assert.equal(suggestion.targetTreeName, "Родня (мамина)");
+    assert.ok(suggestion.score >= 0.78);
+    assert.ok(["medium", "high"].includes(suggestion.confidence));
+    assert.ok(Array.isArray(suggestion.reasons));
+
+    // ── 2. Link them — both records now share identityId ──
+    const linkResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeOneId}/persons/${motherOnTreeOne.id}/link-identity`,
+      {
+        method: "POST",
+        headers: ownerHeaders,
+        body: JSON.stringify({
+          targetTreeId: treeTwoId,
+          targetPersonId: motherOnTreeTwoStandalone.id,
+        }),
+      },
+    );
+    assert.equal(linkResponse.status, 200);
+    const linkPayload = await linkResponse.json();
+    assert.ok(linkPayload.identityId);
+    assert.equal(linkPayload.source.identityId, linkPayload.identityId);
+    assert.equal(linkPayload.target.identityId, linkPayload.identityId);
+
+    // After linking, the suggestion should NO LONGER appear (the
+    // matcher skips already-linked pairs).
+    const afterLinkSuggestions = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeOneId}/persons/${motherOnTreeOne.id}/identity-suggestions`,
+      {headers: {authorization: `Bearer ${owner.accessToken}`}},
+    );
+    const afterLinkPayload = await afterLinkSuggestions.json();
+    assert.equal(afterLinkPayload.suggestions.length, 0);
+
+    // ── 3. From now on Phase 1.1 propagation works between them.
+    //      Update name on tree-1 → tree-2 inherits.
+    const updateResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeOneId}/persons/${motherOnTreeOne.id}`,
+      {
+        method: "PATCH",
+        headers: ownerHeaders,
+        body: JSON.stringify({
+          firstName: "Анна",
+          lastName: "Кузнецова",
+          middleName: "Петровна",
+          birthDate: "1965-03-12",
+          birthPlace: "Тула",
+        }),
+      },
+    );
+    const updatePayload = await updateResponse.json();
+    assert.equal(updatePayload.identityPropagation.affected.length, 1);
+    assert.equal(
+      updatePayload.identityPropagation.affected[0].personId,
+      motherOnTreeTwoStandalone.id,
+    );
+
+    // ── 4. Dismissal flow: add a NEW unlinked dupe and dismiss it.
+    //      Subsequent GET should not return it.
+    const treeThreeId = await createTree(ownerHeaders, "Третье");
+    const motherOnTreeThree = await addPerson(ownerHeaders, treeThreeId, {
+      firstName: "Анна",
+      lastName: "Кузнецова",
+      // Same middleName as the propagated tree-1+tree-2 record so
+      // the name-similarity score crosses the matcher's 0.78
+      // threshold. (Real-life users sometimes forget the middle
+      // name; the matcher's lower bound + biographical signals
+      // pick those up too, but for a deterministic regression
+      // test we want a score guaranteed above the threshold.)
+      middleName: "Петровна",
+      gender: "female",
+      birthDate: "1965-03-12",
+      birthPlace: "Тула",
+    });
+    const beforeDismissResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeOneId}/persons/${motherOnTreeOne.id}/identity-suggestions`,
+      {headers: {authorization: `Bearer ${owner.accessToken}`}},
+    );
+    const beforeDismiss = await beforeDismissResponse.json();
+    assert.equal(beforeDismiss.suggestions.length, 1);
+    assert.equal(
+      beforeDismiss.suggestions[0].targetPersonId,
+      motherOnTreeThree.id,
+    );
+
+    const dismissResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeOneId}/persons/${motherOnTreeOne.id}/dismiss-suggestion`,
+      {
+        method: "POST",
+        headers: ownerHeaders,
+        body: JSON.stringify({targetPersonId: motherOnTreeThree.id}),
+      },
+    );
+    assert.equal(dismissResponse.status, 204);
+
+    const afterDismissResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeOneId}/persons/${motherOnTreeOne.id}/identity-suggestions`,
+      {headers: {authorization: `Bearer ${owner.accessToken}`}},
+    );
+    const afterDismiss = await afterDismissResponse.json();
+    assert.equal(
+      afterDismiss.suggestions.length,
+      0,
+      "dismissed suggestion must NOT keep surfacing",
+    );
+
+    // Idempotent dismiss — calling again is a 204, not an error.
+    const repeatDismissResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeOneId}/persons/${motherOnTreeOne.id}/dismiss-suggestion`,
+      {
+        method: "POST",
+        headers: ownerHeaders,
+        body: JSON.stringify({targetPersonId: motherOnTreeThree.id}),
+      },
+    );
+    assert.equal(repeatDismissResponse.status, 204);
+
+    // ── 5. Cross-user privacy: stranger's "Анна Кузнецова" never
+    //      appears in owner's suggestions, and vice-versa.
+    const strangerSuggestionsResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${strangerTreeId}/persons/${motherOnTreeOne.id}/identity-suggestions`,
+      {headers: {authorization: `Bearer ${stranger.accessToken}`}},
+    );
+    // Stranger doesn't have access to owner's mother record at all,
+    // so the route returns 404 (route's tree-scope guard) or 200 +
+    // empty suggestions. Either way, NO leak of owner's mother.
+    if (strangerSuggestionsResponse.status === 200) {
+      const strangerPayload = await strangerSuggestionsResponse.json();
+      assert.equal(strangerPayload.suggestions.length, 0);
+    }
+
+    // ── 6. Link to non-accessible tree → 403 (auth wall).
+    const crossUserLinkResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${strangerTreeId}/persons/some-stranger-id/link-identity`,
+      {
+        method: "POST",
+        headers: ownerHeaders,
+        body: JSON.stringify({
+          targetTreeId: strangerTreeId,
+          targetPersonId: "some-stranger-id",
+        }),
+      },
+    );
+    assert.ok([403, 404].includes(crossUserLinkResponse.status));
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
 // Phase 1.1 of unified-graph migration: identity propagation.
 // When a person updates on tree A, fan canonical-fields-only
 // changes out to every other person record sharing the same

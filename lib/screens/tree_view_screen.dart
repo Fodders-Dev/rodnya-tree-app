@@ -7,6 +7,8 @@ import 'package:provider/provider.dart'; // Импортируем Provider
 import 'package:get_it/get_it.dart';
 
 import '../backend/backend_runtime_config.dart';
+import '../backend/interfaces/identity_suggestions_capable_family_tree_service.dart';
+import '../backend/models/identity_suggestion.dart';
 import '../models/family_person.dart';
 import '../models/family_relation.dart';
 import '../models/family_tree.dart';
@@ -104,6 +106,11 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
   // newly-dropped card. Without this the user can lose the card
   // when zoomed into another branch.
   String? _recenterOnPersonIdAfterReload;
+  // Phase 1.2 voltage-indicator matcher: per-person count of
+  // medium+high confidence cross-tree suggestions. Drives the 💡
+  // dot on the canvas. Lazily populated after the tree loads —
+  // we don't gate the initial render on this.
+  Map<String, int> _identitySuggestionCounts = const <String, int>{};
   // Reference design pattern: bottom sheet starts collapsed (peek bar with
   // avatar + name + meta + chevron) and expands on tap to reveal action row
   // and full info. Reset to collapsed whenever selection changes.
@@ -470,6 +477,11 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
             _selectedPersonSheetId = null;
           }
         });
+        // Phase 1.2 voltage-indicator: kick off cross-tree
+        // suggestion fetches in the background. Doesn't block
+        // first paint — when responses come in we update the
+        // counts state and the canvas re-renders the 💡 dots.
+        unawaited(_refreshIdentitySuggestionCounts(treeId, relatives));
       }
     } catch (e, s) {
       debugPrint('Ошибка загрузки данных дерева $treeId: $e\\n$s');
@@ -822,6 +834,163 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
   }
 
   // <<< НОВЫЙ МЕТОД-КОЛЛБЭК: Обработка добавления себя из дерева >>>
+  // ── Phase 1.2 voltage-indicator matcher handlers ────────────────
+  // The canvas reads `_identitySuggestionCounts` to decide where
+  // to show the 💡 dot; tap on the dot calls `_handleShowIdentity
+  // SuggestionsForPerson` which fetches details, opens a sheet
+  // with the suggestion list, dispatches link/dismiss on the
+  // service, and refreshes the counts.
+
+  Future<void> _refreshIdentitySuggestionCounts(
+    String treeId,
+    List<FamilyPerson> relatives,
+  ) async {
+    final service = _familyService;
+    if (service is! IdentitySuggestionsCapableFamilyTreeService) return;
+    final capable =
+        service as IdentitySuggestionsCapableFamilyTreeService;
+    final newCounts = <String, int>{};
+    // Sequential fetch is acceptable here — only a handful of
+    // persons typically and the response is tiny. Parallelizing
+    // could trigger rate-limits on the auth route.
+    for (final person in relatives) {
+      try {
+        final suggestions = await capable.getIdentitySuggestionsForPerson(
+          treeId: treeId,
+          personId: person.id,
+        );
+        if (suggestions.isNotEmpty) {
+          newCounts[person.id] = suggestions.length;
+        }
+      } catch (_) {
+        // Suggestion fetch is best-effort — failure on one
+        // person shouldn't kill the whole batch.
+      }
+      if (!mounted || _currentTreeId != treeId) return;
+    }
+    if (mounted && _currentTreeId == treeId) {
+      setState(() {
+        _identitySuggestionCounts = newCounts;
+      });
+    }
+  }
+
+  Future<void> _handleShowIdentitySuggestionsForPerson(String personId) async {
+    final treeId = _currentTreeId;
+    if (treeId == null) return;
+    final service = _familyService;
+    if (service is! IdentitySuggestionsCapableFamilyTreeService) return;
+    final capable =
+        service as IdentitySuggestionsCapableFamilyTreeService;
+    List<IdentitySuggestion> suggestions;
+    try {
+      suggestions = await capable.getIdentitySuggestionsForPerson(
+        treeId: treeId,
+        personId: personId,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Не удалось загрузить подсказки: $error')),
+      );
+      return;
+    }
+    if (!mounted || suggestions.isEmpty) return;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) => _IdentitySuggestionsSheet(
+        suggestions: suggestions,
+        onConfirm: (suggestion) async {
+          Navigator.of(sheetContext).pop();
+          await _confirmIdentitySuggestion(suggestion);
+        },
+        onDismiss: (suggestion) async {
+          await _dismissIdentitySuggestion(suggestion);
+          // Re-render the sheet without that suggestion. Easiest
+          // way: pop and reopen; or hand the sheet a stateful
+          // wrapper. For simplicity, just pop — the dot count
+          // refresh below will re-show one if others remain.
+          if (sheetContext.mounted) {
+            Navigator.of(sheetContext).pop();
+          }
+          // Reload list with remaining suggestions.
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+          await _handleShowIdentitySuggestionsForPerson(personId);
+        },
+      ),
+    );
+  }
+
+  Future<void> _confirmIdentitySuggestion(IdentitySuggestion suggestion) async {
+    final service = _familyService;
+    if (service is! IdentitySuggestionsCapableFamilyTreeService) return;
+    final capable =
+        service as IdentitySuggestionsCapableFamilyTreeService;
+    try {
+      await capable.linkIdentity(
+        sourceTreeId: suggestion.sourceTreeId,
+        sourcePersonId: suggestion.sourcePersonId,
+        targetTreeId: suggestion.targetTreeId,
+        targetPersonId: suggestion.targetPersonId,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Карточки связаны. Теперь правки в одной автоматически отразятся в другой.',
+          ),
+          duration: Duration(seconds: 4),
+        ),
+      );
+      // Refresh tree (propagation may have already touched fields)
+      // and recompute the 💡 counts (this pair drops out).
+      final treeId = _currentTreeId;
+      if (treeId != null) {
+        await _loadData(treeId);
+      }
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Не удалось связать карточки: $error')),
+      );
+    }
+  }
+
+  Future<void> _dismissIdentitySuggestion(IdentitySuggestion suggestion) async {
+    final service = _familyService;
+    if (service is! IdentitySuggestionsCapableFamilyTreeService) return;
+    final capable =
+        service as IdentitySuggestionsCapableFamilyTreeService;
+    try {
+      await capable.dismissIdentitySuggestion(
+        sourceTreeId: suggestion.sourceTreeId,
+        sourcePersonId: suggestion.sourcePersonId,
+        targetPersonId: suggestion.targetPersonId,
+      );
+      // Optimistically drop the count by one — a fresh fetch
+      // confirms after.
+      if (mounted) {
+        setState(() {
+          final next = Map<String, int>.from(_identitySuggestionCounts);
+          final current = next[suggestion.sourcePersonId] ?? 0;
+          if (current <= 1) {
+            next.remove(suggestion.sourcePersonId);
+          } else {
+            next[suggestion.sourcePersonId] = current - 1;
+          }
+          _identitySuggestionCounts = next;
+        });
+      }
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Не удалось скрыть подсказку: $error')),
+      );
+    }
+  }
+
   // Blank-card creator handler. Called when the user tapped the
   // canvas-level "+ Карточка" FAB, filled name + gender in the
   // compact dialog, and pressed Save. We create the person without
@@ -1285,6 +1454,208 @@ class _TreeTopbarPill extends StatelessWidget {
             child: Center(child: child),
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Bottom sheet shown when the user taps the 💡 voltage-indicator
+/// dot on a card. Lists each suggestion with target person + tree
+/// origin + match reasons + confirm/dismiss buttons.
+class _IdentitySuggestionsSheet extends StatelessWidget {
+  const _IdentitySuggestionsSheet({
+    required this.suggestions,
+    required this.onConfirm,
+    required this.onDismiss,
+  });
+
+  final List<IdentitySuggestion> suggestions;
+  final Future<void> Function(IdentitySuggestion suggestion) onConfirm;
+  final Future<void> Function(IdentitySuggestion suggestion) onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 18, 20, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: scheme.tertiaryContainer.withValues(alpha: 0.6),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(
+                    Icons.lightbulb_outline_rounded,
+                    color: scheme.tertiary,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Возможные дубликаты',
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      Text(
+                        suggestions.length == 1
+                            ? 'Кажется, этот человек уже есть в одном из ваших деревьев. Связать карточки?'
+                            : 'Кажется, этот человек уже есть в ${suggestions.length} ваших деревьях. Связать?',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            for (final suggestion in suggestions) ...[
+              _SuggestionRow(
+                suggestion: suggestion,
+                onConfirm: () => onConfirm(suggestion),
+                onDismiss: () => onDismiss(suggestion),
+              ),
+              const SizedBox(height: 10),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SuggestionRow extends StatelessWidget {
+  const _SuggestionRow({
+    required this.suggestion,
+    required this.onConfirm,
+    required this.onDismiss,
+  });
+
+  final IdentitySuggestion suggestion;
+  final Future<void> Function() onConfirm;
+  final Future<void> Function() onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final reasons = suggestion.reasons.join(' · ');
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest.withValues(alpha: 0.6),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: scheme.outlineVariant),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              CircleAvatar(
+                radius: 20,
+                backgroundImage: suggestion.targetPhotoUrl != null &&
+                        suggestion.targetPhotoUrl!.isNotEmpty
+                    ? NetworkImage(suggestion.targetPhotoUrl!)
+                    : null,
+                backgroundColor: scheme.surfaceContainer,
+                child: suggestion.targetPhotoUrl == null
+                    ? Text(
+                        suggestion.targetDisplayName.isNotEmpty
+                            ? suggestion.targetDisplayName[0]
+                            : '?',
+                      )
+                    : null,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      suggestion.targetDisplayName,
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    if (suggestion.targetTreeName.isNotEmpty)
+                      Text(
+                        'Из «${suggestion.targetTreeName}»',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                  ],
+                ),
+              ),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: suggestion.confidence == 'high'
+                      ? scheme.primaryContainer
+                      : scheme.surfaceContainerHigh,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  '${(suggestion.score * 100).round()}%',
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    fontWeight: FontWeight.w800,
+                    color: suggestion.confidence == 'high'
+                        ? scheme.onPrimaryContainer
+                        : scheme.onSurface,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (reasons.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              reasons,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: onDismiss,
+                  icon: const Icon(Icons.close_rounded, size: 18),
+                  label: const Text('Не он'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: onConfirm,
+                  icon: const Icon(Icons.link_rounded, size: 18),
+                  label: const Text('Связать'),
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }

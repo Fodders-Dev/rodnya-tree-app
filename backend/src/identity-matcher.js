@@ -197,8 +197,92 @@ function findWithinTreeDuplicateCandidates({
     .slice(0, Math.max(0, Math.min(Number(limit) || 20, 100)));
 }
 
+// Phase 1.2 of unified-graph migration: cross-tree identity
+// suggestions. For a single source person, score them against
+// every person in the user's OTHER accessible trees and return
+// medium+high confidence matches that aren't already linked or
+// dismissed. Surfaces the user's natural duplicates without
+// dragging them through 200 modal popups.
+//
+// Threshold tuning:
+//   * 0.78+ score = surface (mid+high)
+//   * < 0.78     = silent, never shown
+//   * confidence = "high" when score >= 0.9, "medium" otherwise
+// Mirrors within-tree scoring so the user sees consistent
+// confidence levels across both surfaces.
+function findCrossTreeIdentitySuggestions({
+  sourcePerson,
+  accessibleTrees,
+  persons,
+  dismissedTargetPersonIds = new Set(),
+  limit = 10,
+} = {}) {
+  if (!sourcePerson || typeof sourcePerson !== "object") return [];
+  if (!Array.isArray(persons) || !Array.isArray(accessibleTrees)) return [];
+  const accessibleTreeIds = new Set(
+    accessibleTrees.map((tree) => normalizeNullableString(tree?.id)).filter(Boolean),
+  );
+  const sourceTreeId = normalizeNullableString(sourcePerson.treeId);
+  const sourcePersonId = normalizeNullableString(sourcePerson.id);
+  if (!sourceTreeId || !sourcePersonId) return [];
+  const sourceIdentityId = normalizeNullableString(sourcePerson.identityId);
+
+  const treeNameById = new Map();
+  for (const tree of accessibleTrees) {
+    if (tree?.id) treeNameById.set(tree.id, tree.name || "");
+  }
+
+  const suggestions = [];
+  for (const candidate of persons) {
+    if (!candidate || typeof candidate !== "object") continue;
+    const candidateTreeId = normalizeNullableString(candidate.treeId);
+    if (!candidateTreeId || !accessibleTreeIds.has(candidateTreeId)) continue;
+    // Skip persons in the source's own tree — within-tree
+    // duplicates have their own surface (`/duplicates`).
+    if (candidateTreeId === sourceTreeId) continue;
+    const candidatePersonId = normalizeNullableString(candidate.id);
+    if (!candidatePersonId) continue;
+    // Skip if user already dismissed this exact pair.
+    if (dismissedTargetPersonIds.has(candidatePersonId)) continue;
+    // Skip if already linked via identityId — they're already
+    // the "same human" in our model. (Phase 1.1 handles edit
+    // propagation; the matcher only surfaces UNlinked candidates.)
+    const candidateIdentityId = normalizeNullableString(candidate.identityId);
+    if (
+      sourceIdentityId &&
+      candidateIdentityId &&
+      sourceIdentityId === candidateIdentityId
+    ) {
+      continue;
+    }
+
+    const match = scorePersonPair(sourcePerson, candidate);
+    if (!match) continue;
+
+    suggestions.push({
+      sourcePersonId,
+      sourceTreeId,
+      targetPersonId: candidatePersonId,
+      targetTreeId: candidateTreeId,
+      targetTreeName: treeNameById.get(candidateTreeId) || "",
+      targetPerson: candidate,
+      score: match.score,
+      confidence: match.score >= 0.9 ? "high" : "medium",
+      reasons: match.reasons,
+    });
+  }
+
+  return suggestions
+    .sort((left, right) => {
+      if (right.score !== left.score) return right.score - left.score;
+      return left.targetPersonId.localeCompare(right.targetPersonId);
+    })
+    .slice(0, Math.max(0, Math.min(Number(limit) || 10, 50)));
+}
+
 module.exports = {
   findWithinTreeDuplicateCandidates,
+  findCrossTreeIdentitySuggestions,
   normalizedBirthYear,
   scorePersonPair,
 };

@@ -7,8 +7,10 @@ import '../backend/backend_runtime_config.dart';
 import '../backend/interfaces/cross_tree_person_search_capable_family_tree_service.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
 import '../backend/interfaces/identity_duplicate_capable_family_tree_service.dart';
+import '../backend/interfaces/identity_suggestions_capable_family_tree_service.dart';
 import '../backend/interfaces/profile_service_interface.dart';
 import '../backend/interfaces/tree_graph_capable_family_tree_service.dart';
+import '../backend/models/identity_suggestion.dart';
 import '../backend/models/cross_tree_person_suggestion.dart';
 import '../backend/models/selectable_tree.dart';
 import '../backend/models/tree_invitation.dart';
@@ -30,7 +32,8 @@ class CustomApiFamilyTreeService
         FamilyTreeServiceInterface,
         TreeGraphCapableFamilyTreeService,
         IdentityDuplicateCapableFamilyTreeService,
-        CrossTreePersonSearchCapableFamilyTreeService {
+        CrossTreePersonSearchCapableFamilyTreeService,
+        IdentitySuggestionsCapableFamilyTreeService {
   CustomApiFamilyTreeService({
     required CustomApiAuthService authService,
     required BackendRuntimeConfig runtimeConfig,
@@ -161,6 +164,72 @@ class CustomApiFamilyTreeService
         .map((entry) => Map<String, dynamic>.from(entry))
         .map(CrossTreePersonSuggestion.fromJson)
         .toList(growable: false);
+  }
+
+  // ── Phase 1.2 voltage-indicator matcher ─────────────────────────────
+  // Cross-tree suggestion fetch / link / dismiss. Service-level
+  // implementation; UI surfaces are wired via the canvas's
+  // IdentitySuggestionsCapableFamilyTreeService capability gate.
+
+  @override
+  Future<List<IdentitySuggestion>> getIdentitySuggestionsForPerson({
+    required String treeId,
+    required String personId,
+    int limit = 10,
+  }) async {
+    final params = <String, String>{};
+    if (limit > 0) params['limit'] = limit.toString();
+    final path = params.isEmpty
+        ? '/v1/trees/$treeId/persons/$personId/identity-suggestions'
+        : _buildPathWithQuery(
+            '/v1/trees/$treeId/persons/$personId/identity-suggestions',
+            params,
+          );
+    final response = await _requestJson(method: 'GET', path: path);
+    final raw = response['suggestions'];
+    if (raw is! List) return const <IdentitySuggestion>[];
+    return raw
+        .whereType<Map>()
+        .map((entry) => Map<String, dynamic>.from(entry))
+        .map(IdentitySuggestion.fromJson)
+        .toList(growable: false);
+  }
+
+  @override
+  Future<void> linkIdentity({
+    required String sourceTreeId,
+    required String sourcePersonId,
+    required String targetTreeId,
+    required String targetPersonId,
+  }) async {
+    await _requestJson(
+      method: 'POST',
+      path: '/v1/trees/$sourceTreeId/persons/$sourcePersonId/link-identity',
+      body: <String, dynamic>{
+        'targetTreeId': targetTreeId,
+        'targetPersonId': targetPersonId,
+      },
+    );
+    // Both trees may have just had Phase 1.1 propagation effects
+    // applied at the backend (the link itself doesn't propagate,
+    // but the next edit on either side now will). Invalidate
+    // graph snapshots for both so the consumer refetches.
+    _graphSnapshotCache.remove(sourceTreeId);
+    _graphSnapshotCache.remove(targetTreeId);
+  }
+
+  @override
+  Future<void> dismissIdentitySuggestion({
+    required String sourceTreeId,
+    required String sourcePersonId,
+    required String targetPersonId,
+  }) async {
+    await _requestJson(
+      method: 'POST',
+      path:
+          '/v1/trees/$sourceTreeId/persons/$sourcePersonId/dismiss-suggestion',
+      body: <String, dynamic>{'targetPersonId': targetPersonId},
+    );
   }
 
   @override
