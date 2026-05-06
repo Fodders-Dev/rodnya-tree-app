@@ -31,6 +31,12 @@ class RealtimeHub {
     this.wss = new WebSocketServer({
       server,
       path: "/v1/realtime",
+      // ws library default `maxPayload` is 100 MB. Our realtime
+      // protocol is just typing-indicator JSON (`chat.typing.set`)
+      // — anything over a few hundred bytes is malformed or hostile.
+      // 8 KB is roomy enough for any future small status payload
+      // without giving an attacker a free DoS surface.
+      maxPayload: 8 * 1024,
     });
 
     this.wss.on("connection", async (socket, request) => {
@@ -87,7 +93,7 @@ class RealtimeHub {
         });
 
         socket.on("message", (rawMessage) => {
-          void this._handleSocketMessage(userId, rawMessage);
+          void this._handleSocketMessage(userId, rawMessage, socket);
         });
       } catch (error) {
         this.logger.warn?.("[rodnya-backend] realtime connection failed", error);
@@ -322,11 +328,47 @@ class RealtimeHub {
     }
   }
 
-  async _handleSocketMessage(userId, rawMessage) {
+  // Per-socket message-rate accounting. Keyed by the WebSocket
+  // instance via WeakMap so we don't keep references after the
+  // socket closes. The realtime protocol has exactly one action
+  // (`chat.typing.set`); anything beyond a few events per second is
+  // either a buggy client looping or an attacker. 60 events / 10 s
+  // = 6/s is way over normal typing cadence (~3/s peak).
+  _shouldThrottleIncoming(socket) {
+    if (!this._socketRateState) {
+      this._socketRateState = new WeakMap();
+    }
+    const now = Date.now();
+    const windowMs = 10_000;
+    const maxEventsPerWindow = 60;
+    const existing = this._socketRateState.get(socket);
+    const bucket = existing && existing.resetAt > now
+      ? existing
+      : {count: 0, resetAt: now + windowMs};
+    bucket.count += 1;
+    this._socketRateState.set(socket, bucket);
+    return bucket.count > maxEventsPerWindow;
+  }
+
+  async _handleSocketMessage(userId, rawMessage, socket = null) {
+    if (socket && this._shouldThrottleIncoming(socket)) {
+      // Silently drop; logging every dropped event would be noisy
+      // and gives the attacker timing feedback.
+      return;
+    }
+
     const serializedMessage = Buffer.isBuffer(rawMessage)
       ? rawMessage.toString("utf8")
       : String(rawMessage || "").trim();
     if (!serializedMessage) {
+      return;
+    }
+
+    // Defense-in-depth size cap on the parsed-string side — the
+    // ws-level maxPayload already enforces 8 KB at the byte level,
+    // but if a future protocol bump raises that we still want a
+    // sanity bound on the parsed JSON before parsing it.
+    if (serializedMessage.length > 8 * 1024) {
       return;
     }
 

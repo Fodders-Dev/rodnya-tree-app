@@ -6519,7 +6519,11 @@ test("chat preview list safely truncates oversized message previews", async () =
       peers.push(await registerPeerResponse.json());
     }
 
-    const oversizedMessageText = "Ж".repeat(200_000);
+    // Was 200_000 chars before the input-guard cap landed. Server now
+    // rejects single messages over 16 KB; the preview-truncation
+    // logic kicks in well below that anyway (preview cap is 280),
+    // so 16 KB exactly is the largest we can validate against.
+    const oversizedMessageText = "Ж".repeat(16_384);
 
     for (const [index, peer] of peers.entries()) {
       const createChatResponse = await fetch(`${ctx.baseUrl}/v1/chats/direct`, {
@@ -11213,6 +11217,101 @@ test("login locks account after repeated failures and unlocks on success", async
       401,
       "correct password during lockout window must still 401",
     );
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("chat send rejects oversized text and oversized attachment array", async () => {
+  const ctx = await startConfiguredTestServer();
+  try {
+    const aliceResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "alice-guard@rodnya.app",
+        password: "secret-pass-123",
+        displayName: "Алиса",
+      }),
+    });
+    assert.equal(aliceResponse.status, 201);
+    const alice = await aliceResponse.json();
+
+    const bobResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "bob-guard@rodnya.app",
+        password: "secret-pass-123",
+        displayName: "Боб",
+      }),
+    });
+    assert.equal(bobResponse.status, 201);
+    const bob = await bobResponse.json();
+
+    const directChatResponse = await fetch(
+      `${ctx.baseUrl}/v1/chats/direct`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${alice.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({otherUserId: bob.user.id}),
+      },
+    );
+    assert.equal(directChatResponse.status, 200);
+    const chat = await directChatResponse.json();
+
+    // 17 KB is over the 16 KB text cap.
+    const tooLongText = "Ж".repeat(17_000);
+    const oversizedTextResponse = await fetch(
+      `${ctx.baseUrl}/v1/chats/${chat.chatId}/messages`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${alice.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({text: tooLongText}),
+      },
+    );
+    assert.equal(oversizedTextResponse.status, 400);
+
+    // 25 attachments > the 20 cap.
+    const tooManyAttachments = Array.from({length: 25}, (_, i) => ({
+      id: `att-${i}`,
+      url: `https://example.com/${i}.jpg`,
+    }));
+    const oversizedAttachmentsResponse = await fetch(
+      `${ctx.baseUrl}/v1/chats/${chat.chatId}/messages`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${alice.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          text: "with attachments",
+          attachments: tooManyAttachments,
+        }),
+      },
+    );
+    assert.equal(oversizedAttachmentsResponse.status, 400);
+
+    // Sane payload still works.
+    const okResponse = await fetch(
+      `${ctx.baseUrl}/v1/chats/${chat.chatId}/messages`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${alice.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({text: "hello"}),
+      },
+    );
+    assert.equal(okResponse.status, 201);
   } finally {
     await stopTestServer(ctx);
   }

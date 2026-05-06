@@ -1,3 +1,9 @@
+const {
+  enforceTextLimit,
+  enforceNonNegativeInt,
+  enforceArrayCap,
+} = require("../input-guards");
+
 function registerChatRoutes(
   app,
   {
@@ -225,9 +231,39 @@ function registerChatRoutes(
   });
 
   app.post("/v1/chats/groups", requireAuth, async (req, res) => {
-    const participantIds = Array.isArray(req.body?.participantIds)
-      ? req.body.participantIds
-      : [];
+    // Cap the participants list — without this an attacker could
+    // create a 100 k-member group, force the realtime hub to publish
+    // chat.created to every one of them, and DoS the broadcast layer.
+    const participantsGuard = enforceArrayCap(req.body?.participantIds, {
+      max: 256, // matches Telegram's old "supergroup" boundary
+      itemValidator: (raw) =>
+          enforceTextLimit(raw, {
+            max: 64,
+            allowMultiline: false,
+            fieldName: "participantId",
+          }),
+      fieldName: "participantIds",
+    });
+    if (!participantsGuard.ok) {
+      res
+          .status(participantsGuard.status)
+          .json({message: participantsGuard.message});
+      return;
+    }
+    const participantIds = participantsGuard.value;
+
+    if (req.body?.title != null) {
+      const titleGuard = enforceTextLimit(req.body?.title, {
+        max: 120,
+        allowEmpty: true,
+        allowMultiline: false,
+        fieldName: "title",
+      });
+      if (!titleGuard.ok) {
+        res.status(titleGuard.status).json({message: titleGuard.message});
+        return;
+      }
+    }
     const title = req.body?.title;
     const treeId = req.body?.treeId;
 
@@ -653,17 +689,94 @@ function registerChatRoutes(
       }
     }
 
-    const text = String(req.body?.text || "").trim();
-    const attachments = Array.isArray(req.body?.attachments)
-      ? req.body.attachments
-      : [];
-    const mediaUrls = Array.isArray(req.body?.mediaUrls) ? req.body.mediaUrls : [];
+    // ── Hard caps on every user-input field ────────────────────────
+    // The 50 MB express.json body cap is a defense-in-depth ceiling,
+    // not a validation policy. Each field below has its own bound so
+    // a single message can't bloat the DB, break realtime broadcast,
+    // or crash clients trying to render it.
+    const textGuard = enforceTextLimit(req.body?.text, {
+      max: 16_384, // 16 KB — fits a long-form note, way under any UI breakage threshold
+      allowEmpty: true,
+      fieldName: "text",
+    });
+    if (!textGuard.ok) {
+      res.status(textGuard.status).json({message: textGuard.message});
+      return;
+    }
+    const text = textGuard.value;
+
+    const attachmentsGuard = enforceArrayCap(req.body?.attachments, {
+      max: 20, // matches client-side picker cap
+      itemValidator: (item) => {
+        if (item == null || typeof item !== "object") {
+          return {ok: false, message: "должно быть объектом"};
+        }
+        return {ok: true, value: item};
+      },
+      fieldName: "attachments",
+    });
+    if (!attachmentsGuard.ok) {
+      res.status(attachmentsGuard.status).json({message: attachmentsGuard.message});
+      return;
+    }
+    const attachments = attachmentsGuard.value;
+
+    const mediaUrlsGuard = enforceArrayCap(req.body?.mediaUrls, {
+      max: 20,
+      itemValidator: (raw) =>
+          enforceTextLimit(raw, {
+            max: 2048,
+            fieldName: "mediaUrl",
+          }),
+      fieldName: "mediaUrls",
+    });
+    if (!mediaUrlsGuard.ok) {
+      res.status(mediaUrlsGuard.status).json({message: mediaUrlsGuard.message});
+      return;
+    }
+    const mediaUrls = mediaUrlsGuard.value;
+
     const imageUrl = req.body?.imageUrl;
-    const clientMessageId = String(req.body?.clientMessageId || "").trim() || null;
-    const expiresInSeconds = Number(req.body?.expiresInSeconds || 0);
+    if (imageUrl != null && imageUrl !== "") {
+      const imageGuard = enforceTextLimit(imageUrl, {
+        max: 2048,
+        fieldName: "imageUrl",
+      });
+      if (!imageGuard.ok) {
+        res.status(imageGuard.status).json({message: imageGuard.message});
+        return;
+      }
+    }
+
+    const clientIdGuard = enforceTextLimit(req.body?.clientMessageId, {
+      max: 128,
+      allowEmpty: true,
+      allowMultiline: false,
+      fieldName: "clientMessageId",
+    });
+    if (!clientIdGuard.ok) {
+      res.status(clientIdGuard.status).json({message: clientIdGuard.message});
+      return;
+    }
+    const clientMessageId = clientIdGuard.value || null;
+
+    // expiresInSeconds: cap at 90 days. Anything longer is either
+    // attacker noise (Number.MAX_SAFE_INTEGER → year 285 000 stamp)
+    // or a product mistake — disappearing-message UX shouldn't go
+    // beyond a quarter.
+    const expiresGuard = enforceNonNegativeInt(req.body?.expiresInSeconds || 0, {
+      max: 90 * 24 * 60 * 60, // 90 days in seconds
+      fieldName: "expiresInSeconds",
+    });
+    if (!expiresGuard.ok) {
+      res.status(expiresGuard.status).json({message: expiresGuard.message});
+      return;
+    }
+    const expiresInSeconds = expiresGuard.value;
     const expiresAt = expiresInSeconds > 0
       ? new Date(Date.now() + expiresInSeconds * 1000).toISOString()
       : req.body?.expiresAt;
+
     if (
       !text &&
       attachments.length === 0 &&

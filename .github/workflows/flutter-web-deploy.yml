@@ -55,26 +55,43 @@ jobs:
         run: tar -czf rodnya-site.tgz -C build/web .
 
       - name: Setup SSH key
+        # Pass the secret via `env:` and reference it from the shell
+        # via $VAR — keeps the key out of the rendered shell command
+        # (GitHub masks `${{ secrets.* }}` in logs, but masking can
+        # be bypassed by partial-line echoes; passing via env never
+        # interpolates the value into the rendered script source at
+        # all).
+        env:
+          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
         run: |
+          set +x
           mkdir -p ~/.ssh
-          echo "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/id_ed25519
+          printenv SERVER_SSH_KEY > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -H "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts
+          ssh-keyscan -H "$SERVER_HOST" >> ~/.ssh/known_hosts
 
       - name: Upload release archive
         env:
           REMOTE_ARCHIVE: /tmp/rodnya-site-${{ github.sha }}.tgz
+          SERVER_USERNAME: ${{ secrets.SERVER_USERNAME }}
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
         run: |
+          set +x
           scp -i ~/.ssh/id_ed25519 rodnya-site.tgz \
-            "${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_HOST }}:${REMOTE_ARCHIVE}"
+            "$SERVER_USERNAME@$SERVER_HOST:${REMOTE_ARCHIVE}"
 
       - name: Activate release on server
         env:
           REMOTE_ARCHIVE: /tmp/rodnya-site-${{ github.sha }}.tgz
+          SERVER_USERNAME: ${{ secrets.SERVER_USERNAME }}
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
         run: |
+          set +x
           DEPLOY_LABEL="deploy ${GITHUB_SHA::7} / github-actions / $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-          ssh -i ~/.ssh/id_ed25519 "${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_HOST }}" \
-            bash -s -- "${REMOTE_ARCHIVE}" "${{ secrets.DEPLOY_PATH }}" "${DEPLOY_LABEL}" <<'EOF'
+          ssh -i ~/.ssh/id_ed25519 "$SERVER_USERNAME@$SERVER_HOST" \
+            bash -s -- "${REMOTE_ARCHIVE}" "$DEPLOY_PATH" "${DEPLOY_LABEL}" <<'EOF'
           set -euo pipefail
           archive="$1"
           target="$2"

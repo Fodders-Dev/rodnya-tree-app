@@ -6557,6 +6557,87 @@ class FileStore {
         (!entry.notificationId || activeNotificationIds.has(entry.notificationId))
       );
     });
+
+    // ── GDPR completeness sweep ──────────────────────────────────────
+    // Every record that ties the deleted user's id to user-visible
+    // surface must be either removed or anonymized. The original
+    // deleteUser missed reactions on OTHER users' content
+    // ("Иван reacted ❤️" stayed visible after Иван's account was
+    // deleted) and a few audit-side records that name the user.
+    if (Array.isArray(db.postReactions)) {
+      db.postReactions = db.postReactions.filter((entry) => {
+        return entry.userId !== userId && !removedPostIds.has(entry.postId);
+      });
+    }
+    if (Array.isArray(db.postCommentReactions)) {
+      db.postCommentReactions = db.postCommentReactions.filter((entry) => {
+        return (
+          entry.userId !== userId &&
+          !removedCommentIds.has(entry.commentId)
+        );
+      });
+    }
+    if (Array.isArray(db.storyReactions)) {
+      db.storyReactions = db.storyReactions.filter(
+        (entry) => entry.userId !== userId,
+      );
+    }
+    if (Array.isArray(db.messageReactions)) {
+      db.messageReactions = db.messageReactions.filter((entry) => {
+        return (
+          entry.userId !== userId &&
+          (!entry.messageId || activeMessageIds.has(String(entry.messageId).trim()))
+        );
+      });
+    }
+    if (Array.isArray(db.profileContributions)) {
+      db.profileContributions = db.profileContributions.filter((entry) => {
+        return entry.contributorId !== userId && entry.targetUserId !== userId;
+      });
+    }
+    if (Array.isArray(db.mergeProposals)) {
+      db.mergeProposals = db.mergeProposals.filter((entry) => {
+        return (
+          entry.proposerId !== userId &&
+          !removedTreeIds.has(entry.treeId)
+        );
+      });
+    }
+    if (Array.isArray(db.identityClaims)) {
+      db.identityClaims = db.identityClaims.filter(
+        (entry) => entry.claimerId !== userId,
+      );
+    }
+    if (Array.isArray(db.calls)) {
+      // Drop calls where the deleted user was the only initiator,
+      // and scrub the user from participant lists of group calls.
+      const filteredCalls = [];
+      for (const call of db.calls) {
+        if (call.initiatorId === userId) continue;
+        if (Array.isArray(call.participantIds)) {
+          call.participantIds = call.participantIds.filter(
+            (id) => id !== userId,
+          );
+          if (call.participantIds.length === 0) continue;
+        }
+        filteredCalls.push(call);
+      }
+      db.calls = filteredCalls;
+    }
+    if (Array.isArray(db.treeChangeRecords)) {
+      // Anonymize rather than delete — change records are an audit
+      // log; preserving them as "deleted user changed X" keeps the
+      // tree's history intact while removing the personal identifier.
+      // Right-to-erasure under GDPR allows pseudonymization for
+      // legitimate-interest audit logs (recital 26).
+      for (const record of db.treeChangeRecords) {
+        if (record.actorId === userId) {
+          record.actorId = "deleted-user";
+          record.actorName = null;
+        }
+      }
+    }
+
     this._reconcilePersonIdentities(db);
     await this._write(db);
     this._forgetUser(userId);

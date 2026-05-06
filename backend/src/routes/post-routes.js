@@ -1,3 +1,8 @@
+const {
+  enforceTextLimit,
+  enforceArrayCap,
+} = require("../input-guards");
+
 function registerPostRoutes(
   app,
   {
@@ -74,14 +79,58 @@ function registerPostRoutes(
 
   app.post("/v1/posts", requireAuth, async (req, res) => {
     const treeId = String(req.body?.treeId || "").trim();
-    const content = String(req.body?.content || "");
-    const imageUrls = Array.isArray(req.body?.imageUrls) ? req.body.imageUrls : [];
+
+    // Post body — bigger cap than chat (long-form), still bounded.
+    // 32 KB is roomy enough for a journal-length entry but keeps the
+    // home feed query payloads predictable.
+    const contentGuard = enforceTextLimit(req.body?.content, {
+      max: 32_768,
+      allowEmpty: true,
+      fieldName: "content",
+    });
+    if (!contentGuard.ok) {
+      res.status(contentGuard.status).json({message: contentGuard.message});
+      return;
+    }
+    const content = contentGuard.value;
+
+    // Cap photo carousel — 30 photos covers any realistic post and
+    // 30 × 100 KB thumbnail-cache budget on clients stays under 3 MB.
+    const imageUrlsGuard = enforceArrayCap(req.body?.imageUrls, {
+      max: 30,
+      itemValidator: (raw) =>
+          enforceTextLimit(raw, {
+            max: 2048,
+            fieldName: "imageUrl",
+          }),
+      fieldName: "imageUrls",
+    });
+    if (!imageUrlsGuard.ok) {
+      res.status(imageUrlsGuard.status).json({message: imageUrlsGuard.message});
+      return;
+    }
+    const imageUrls = imageUrlsGuard.value;
+
     const isPublic = req.body?.isPublic === true;
     const scopeType = String(req.body?.scopeType || "wholeTree").trim();
     const circleId = String(req.body?.circleId || "").trim() || null;
-    const anchorPersonIds = Array.isArray(req.body?.anchorPersonIds)
-      ? req.body.anchorPersonIds
-      : [];
+
+    // Anchor persons cap — same logic as message attachments.
+    const anchorsGuard = enforceArrayCap(req.body?.anchorPersonIds, {
+      max: 100,
+      itemValidator: (raw) =>
+          enforceTextLimit(raw, {
+            max: 64,
+            allowMultiline: false,
+            fieldName: "anchorPersonId",
+          }),
+      fieldName: "anchorPersonIds",
+    });
+    if (!anchorsGuard.ok) {
+      res.status(anchorsGuard.status).json({message: anchorsGuard.message});
+      return;
+    }
+    const anchorPersonIds = anchorsGuard.value;
 
     if (!treeId) {
       res.status(400).json({message: "Нужен treeId"});
@@ -349,6 +398,18 @@ function registerPostRoutes(
         ? rawParentCommentId
         : null;
 
+    // Cap comment body. 4 KB matches what most social apps enforce
+    // for inline comments (TG / IG cap around 2-4 KB) — anything
+    // longer almost certainly belongs in a top-level post.
+    const commentGuard = enforceTextLimit(req.body?.content, {
+      max: 4096,
+      fieldName: "content",
+    });
+    if (!commentGuard.ok) {
+      res.status(commentGuard.status).json({message: commentGuard.message});
+      return;
+    }
+
     const actorName =
       req.auth.user.profile?.displayName ||
       composeDisplayName(req.auth.user.profile) ||
@@ -360,7 +421,7 @@ function registerPostRoutes(
       authorId: req.auth.user.id,
       authorName: actorName,
       authorPhotoUrl: req.auth.user.profile?.photoUrl || null,
-      content: req.body?.content,
+      content: commentGuard.value,
       parentCommentId,
     });
 
