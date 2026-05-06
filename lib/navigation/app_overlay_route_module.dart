@@ -13,6 +13,7 @@ import '../screens/identity_review_screen.dart';
 import '../screens/notifications_screen.dart';
 import '../screens/onboarding_screen.dart';
 import '../screens/password_reset_screen.dart';
+import '../screens/reset_password_confirm_screen.dart';
 import '../screens/privacy_policy_screen.dart';
 import '../screens/public_tree_entry_screen.dart';
 import '../screens/qr_login_display_screen.dart';
@@ -155,6 +156,23 @@ class AppOverlayRouteModule {
           child: const PasswordResetScreen(),
           transitionsBuilder: AppRouteTransitions.fade,
         ),
+      ),
+      // Deep-link target from password-reset emails. The link in the
+      // message is `https://rodnya-tree.ru/reset-password?token=...`
+      // — the host serves the Flutter web app at that path, GoRouter
+      // pulls `?token=` out of `state.uri.queryParameters`, and the
+      // confirm screen wires it into `confirmPasswordReset(...)`.
+      GoRoute(
+        path: '/reset-password',
+        parentNavigatorKey: rootNavigatorKey,
+        pageBuilder: (context, state) {
+          final token = state.uri.queryParameters['token']?.trim() ?? '';
+          return RodnyaCustomTransitionPage(
+            key: state.pageKey,
+            child: ResetPasswordConfirmScreen(token: token),
+            transitionsBuilder: AppRouteTransitions.fade,
+          );
+        },
       ),
       GoRoute(
         path: '/onboarding',

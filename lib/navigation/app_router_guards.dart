@@ -19,6 +19,12 @@ class AppRouterGuards {
   static const Set<String> authEntryPages = <String>{
     '/login',
     '/password_reset',
+    // Deep-link landing page from password-reset emails. The user
+    // is by definition not authenticated when they tap the link
+    // — we MUST let them through without redirecting to /login,
+    // otherwise the token in the query string would get dropped
+    // on the redirect.
+    '/reset-password',
   };
 
   static const Set<String> publicInfoPages = <String>{
