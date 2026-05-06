@@ -238,11 +238,13 @@ class RustoreService {
     Function(update.RequestResponse state) onStateChanged,
   ) {
     if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
-      debugPrint('Starting RuStore update listener (v8 API)...');
+      debugPrint('Starting RuStore update listener (v10 API)...');
       try {
-        // Используем RustoreUpdateClient.listener
-        // listener принимает колбэк напрямую
-        RustoreUpdateClient.listener((state) {
+        // 10.x deprecated `RustoreUpdateClient.listener(callback)` in
+        // favour of a stream-based subscription. Same payload shape;
+        // the stream just ergonomically fits the rest of our
+        // realtime plumbing too.
+        RustoreUpdateClient.stateStream.listen((state) {
           debugPrint('Update listener state received: ${state.toString()}');
           onStateChanged(state);
 
@@ -489,10 +491,12 @@ class RustoreService {
     try {
       debugPrint(
           '[RustoreService] Attempting purchase for product ID: $productId');
-      // Используем RustoreBillingClient.purchase()
+      // 10.x kept the static `purchase` method but converted the
+      // second arg to a named `developerPayload`. Pass null
+      // explicitly for clarity.
       final billing.PaymentResult result = await RustoreBillingClient.purchase(
         productId,
-        null,
+        developerPayload: null,
       );
       // Временно убираем детальную проверку полей result, т.к. они вызывают ошибки
       debugPrint('Purchase flow finished. Result: ${result.toString()}');

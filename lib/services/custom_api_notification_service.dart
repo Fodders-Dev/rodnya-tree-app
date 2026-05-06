@@ -192,8 +192,11 @@ class CustomApiNotificationService implements NotificationServiceInterface {
       iOS: initializationSettingsIOS,
     );
 
+    // flutter_local_notifications 21.x switched the first arg to a
+    // named `settings:` parameter. Same payload shape, just the
+    // call site changed.
     await _plugin.initialize(
-      initializationSettings,
+      settings: initializationSettings,
       onDidReceiveNotificationResponse: _onDidReceiveNotificationResponse,
       onDidReceiveBackgroundNotificationResponse:
           onDidReceiveBackgroundCustomApiNotificationResponse,
@@ -579,10 +582,10 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     await initialize();
 
     await _plugin.show(
-      person.id.hashCode,
-      'День рождения',
-      'Сегодня день рождения у ${person.name}',
-      const NotificationDetails(
+      id: person.id.hashCode,
+      title: 'День рождения',
+      body: 'Сегодня день рождения у ${person.name}',
+      notificationDetails: const NotificationDetails(
         android: AndroidNotificationDetails(
           _channelIdEvents,
           _channelNameEvents,
@@ -652,10 +655,10 @@ class CustomApiNotificationService implements NotificationServiceInterface {
         : messageText;
 
     await _plugin.show(
-      notificationId,
-      senderName,
-      shortText,
-      NotificationDetails(
+      id: notificationId,
+      title: senderName,
+      body: shortText,
+      notificationDetails: NotificationDetails(
         android: AndroidNotificationDetails(
           _channelIdGeneral,
           _channelNameGeneral,
@@ -717,10 +720,10 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     }
 
     await _plugin.show(
-      callId.hashCode,
-      resolvedCallerName,
-      body,
-      const NotificationDetails(
+      id: callId.hashCode,
+      title: resolvedCallerName,
+      body: body,
+      notificationDetails: const NotificationDetails(
         android: AndroidNotificationDetails(
           _channelIdEvents,
           _channelNameEvents,
@@ -747,7 +750,8 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     }
     await initialize();
     await _androidIncomingCallService?.dismissCall(callId);
-    await _plugin.cancel(callId.hashCode);
+    // 21.x switched cancel to a named-arg form too.
+    await _plugin.cancel(id: callId.hashCode);
   }
 
   Future<void> _handleRealtimeNotification(
@@ -1152,10 +1156,10 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     }
 
     await _plugin.show(
-      notificationId,
-      title,
-      body,
-      const NotificationDetails(
+      id: notificationId,
+      title: title,
+      body: body,
+      notificationDetails: const NotificationDetails(
         android: AndroidNotificationDetails(
           _channelIdGeneral,
           _channelNameGeneral,

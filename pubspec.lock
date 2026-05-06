@@ -562,34 +562,34 @@ packages:
     dependency: "direct main"
     description:
       name: flutter_local_notifications
-      sha256: "19ffb0a8bb7407875555e5e98d7343a633bb73707bae6c6a5f37c90014077875"
+      sha256: "0d9035862236fe38250fe1644d7ed3b8254e34a21b2c837c9f539fbb3bba5ef1"
       url: "https://pub.dev"
     source: hosted
-    version: "19.5.0"
+    version: "21.0.0"
   flutter_local_notifications_linux:
     dependency: transitive
     description:
       name: flutter_local_notifications_linux
-      sha256: e3c277b2daab8e36ac5a6820536668d07e83851aeeb79c446e525a70710770a5
+      sha256: e0f25e243c6c44c825bbbc6b2b2e76f7d9222362adcfe9fd780bf01923c840bd
       url: "https://pub.dev"
     source: hosted
-    version: "6.0.0"
+    version: "8.0.0"
   flutter_local_notifications_platform_interface:
     dependency: "direct dev"
     description:
       name: flutter_local_notifications_platform_interface
-      sha256: "277d25d960c15674ce78ca97f57d0bae2ee401c844b6ac80fcd972a9c99d09fe"
+      sha256: e7db3d5b49c2b7ecc68deba4aaaa67a348f92ee0fef34c8e4b4459dbef0d7307
       url: "https://pub.dev"
     source: hosted
-    version: "9.1.0"
+    version: "11.0.0"
   flutter_local_notifications_windows:
     dependency: transitive
     description:
       name: flutter_local_notifications_windows
-      sha256: "8d658f0d367c48bd420e7cf2d26655e2d1130147bca1eea917e576ca76668aaf"
+      sha256: "3a2654ba104fbb52c618ebed9def24ef270228470718c43b3a6afcd5c81bef0c"
       url: "https://pub.dev"
     source: hosted
-    version: "1.0.3"
+    version: "3.0.0"
   flutter_localizations:
     dependency: "direct main"
     description: flutter
@@ -607,34 +607,34 @@ packages:
     dependency: "direct main"
     description:
       name: flutter_rustore_billing
-      sha256: "6e653d40c203d016b33cd08f7bf9b6cdc62bcb5e15ab5abdd253b680f06a8c13"
+      sha256: "615734afb9825ef4aa23bf90e114f433c0038f1c4f0e91bfb2125fca50dae5d1"
       url: "https://pub.dev"
     source: hosted
-    version: "8.0.0"
+    version: "10.0.0"
   flutter_rustore_push:
     dependency: "direct main"
     description:
       name: flutter_rustore_push
-      sha256: defdc52c8559799ccec8cc8dcc025cfe4f90e151865544dd665b044a3a326a64
+      sha256: f8d6dd0b8a8f8be76c82f26d870fb513a7f4df3959ce4b7dfdebf96d3c3ca29e
       url: "https://pub.dev"
     source: hosted
-    version: "6.10.0"
+    version: "7.2.0"
   flutter_rustore_review:
     dependency: "direct main"
     description:
       name: flutter_rustore_review
-      sha256: e4ce8da1160689ed72c4926c32e663c194b0e82a32ae297f105f60bc96052ba0
+      sha256: ee8b5a97454ac275df6e4245007ad88d0bd86dcf9a21e46798ccc7985d36955a
       url: "https://pub.dev"
     source: hosted
-    version: "8.0.0"
+    version: "10.0.0"
   flutter_rustore_update:
     dependency: "direct main"
     description:
       name: flutter_rustore_update
-      sha256: f6b7d81e919c19b1cf8a0840c05fa13dd4df8e74330fe6ab98637374d4845fa3
+      sha256: bee347e501d30baf583db0013b02bf706424184c1f8a3d1051a9395e06c6f0bd
       url: "https://pub.dev"
     source: hosted
-    version: "8.0.0"
+    version: "10.3.0"
   flutter_secure_storage:
     dependency: "direct main"
     description:
@@ -1113,10 +1113,10 @@ packages:
     dependency: "direct main"
     description:
       name: mobile_scanner
-      sha256: d234581c090526676fd8fab4ada92f35c6746e3fb4f05a399665d75a399fb760
+      sha256: c92c26bf2231695b6d3477c8dcf435f51e28f87b1745966b1fe4c47a286171ce
       url: "https://pub.dev"
     source: hosted
-    version: "5.2.3"
+    version: "7.2.0"
   native_toolchain_c:
     dependency: transitive
     description:
@@ -1734,10 +1734,10 @@ packages:
     dependency: transitive
     description:
       name: timezone
-      sha256: dd14a3b83cfd7cb19e7888f1cbc20f258b8d71b54c06f79ac585f14093a287d1
+      sha256: "784a5e34d2eb62e1326f24d6f600aaaee452eb8ca8ef2f384a59244e292d158b"
       url: "https://pub.dev"
     source: hosted
-    version: "0.10.1"
+    version: "0.11.0"
   timing:
     dependency: transitive
     description:

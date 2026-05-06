@@ -856,8 +856,8 @@ class _FakeFlutterLocalNotificationsPlatform
     return const NotificationAppLaunchDetails(false);
   }
 
-  Future<bool?> initialize(
-    InitializationSettings initializationSettings, {
+  Future<bool?> initialize({
+    required InitializationSettings settings,
     DidReceiveNotificationResponseCallback? onDidReceiveNotificationResponse,
     DidReceiveBackgroundNotificationResponseCallback?
         onDidReceiveBackgroundNotificationResponse,
@@ -866,11 +866,10 @@ class _FakeFlutterLocalNotificationsPlatform
   }
 
   @override
-  Future<void> show(
-    int id,
+  Future<void> show({
+    required int id,
     String? title,
-    String? body, {
-    AndroidNotificationDetails? notificationDetails,
+    String? body,
     String? payload,
   }) async {
     shownNotifications.add({
@@ -882,7 +881,7 @@ class _FakeFlutterLocalNotificationsPlatform
   }
 
   @override
-  Future<void> cancel(int id, {String? tag}) async {}
+  Future<void> cancel({required int id}) async {}
 }
 
 class _FakeNotificationCallCoordinator extends CallCoordinatorService {
