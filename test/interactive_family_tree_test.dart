@@ -2353,6 +2353,7 @@ void main() {
       WidgetTester tester, {
       required void Function(String, String, RelationType)?
           onConnectExistingPersons,
+      Future<void> Function(Map<String, dynamic>)? onAddBlankPerson,
     }) async {
       tester.view.physicalSize = const Size(1400, 1000);
       tester.view.devicePixelRatio = 1.0;
@@ -2392,12 +2393,28 @@ void main() {
               currentUserIsInTree: false,
               onAddSelfTapWithType: (_, __) async {},
               onConnectExistingPersons: onConnectExistingPersons,
+              onAddBlankPerson: onAddBlankPerson,
               currentUserId: 'user-1',
             ),
           ),
         ),
       );
       await tester.pumpAndSettle();
+    }
+
+    // Convenience: shape that turns on the blank-card FAB but
+    // leaves the connector callback null so unrelated assertions
+    // don't fight LongPressDraggable.
+    Future<void> pumpTwoPersonTreeWithBlankPerson(
+      WidgetTester tester, {
+      required Future<void> Function(Map<String, dynamic>)
+          onAddBlankPerson,
+    }) async {
+      await pumpTwoPersonTree(
+        tester,
+        onConnectExistingPersons: (_, __, ___) {},
+        onAddBlankPerson: onAddBlankPerson,
+      );
     }
 
     testWidgets(
@@ -2508,6 +2525,87 @@ void main() {
 
         // Pill is gone after the picker resolves.
         expect(find.textContaining('Перетащите'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'blank-card FAB is hidden when host did not wire onAddBlankPerson',
+      (tester) async {
+        await pumpTwoPersonTree(tester, onConnectExistingPersons: null);
+        expect(find.byTooltip('Добавить карточку'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'blank-card FAB opens dialog → save fires onAddBlankPerson with name + gender',
+      (tester) async {
+        Map<String, dynamic>? captured;
+        await pumpTwoPersonTreeWithBlankPerson(
+          tester,
+          onAddBlankPerson: (data) async {
+            captured = data;
+          },
+        );
+
+        // FAB visible with the right tooltip.
+        expect(find.byTooltip('Добавить карточку'), findsOneWidget);
+
+        await tester.tap(find.byTooltip('Добавить карточку'));
+        await tester.pumpAndSettle();
+
+        // Dialog renders with both name fields and the 3 gender chips.
+        expect(find.text('Новый человек'), findsOneWidget);
+        expect(find.widgetWithText(TextFormField, 'Имя'), findsOneWidget);
+        expect(find.text('Мужской'), findsOneWidget);
+        expect(find.text('Женский'), findsOneWidget);
+        expect(find.text('Не указан'), findsOneWidget);
+
+        // Empty save → validation message; callback NOT fired.
+        await tester.tap(find.text('Добавить'));
+        await tester.pumpAndSettle();
+        expect(find.text('Введите имя'), findsOneWidget);
+        expect(captured, isNull);
+
+        // Type a name + flip to female → save fires the callback.
+        await tester.enterText(
+          find.widgetWithText(TextFormField, 'Имя'),
+          'Анна',
+        );
+        await tester.tap(find.text('Женский'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Добавить'));
+        await tester.pumpAndSettle();
+
+        expect(captured, isNotNull);
+        expect(captured!['firstName'], 'Анна');
+        expect(captured!['gender'], 'female');
+        // Empty lastName → omitted from payload (don't send blanks).
+        expect(captured!.containsKey('lastName'), isFalse);
+      },
+    );
+
+    testWidgets(
+      'blank-card dialog cancel → callback NOT called, dialog closes',
+      (tester) async {
+        bool wasCalled = false;
+        await pumpTwoPersonTreeWithBlankPerson(
+          tester,
+          onAddBlankPerson: (_) async {
+            wasCalled = true;
+          },
+        );
+
+        await tester.tap(find.byTooltip('Добавить карточку'));
+        await tester.pumpAndSettle();
+        await tester.enterText(
+          find.widgetWithText(TextFormField, 'Имя'),
+          'Кто-то',
+        );
+        await tester.tap(find.text('Отмена'));
+        await tester.pumpAndSettle();
+
+        expect(find.text('Новый человек'), findsNothing);
+        expect(wasCalled, isFalse);
       },
     );
 

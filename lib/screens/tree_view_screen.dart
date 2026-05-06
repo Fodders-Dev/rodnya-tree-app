@@ -816,6 +816,35 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
   }
 
   // <<< НОВЫЙ МЕТОД-КОЛЛБЭК: Обработка добавления себя из дерева >>>
+  // Blank-card creator handler. Called when the user tapped the
+  // canvas-level "+ Карточка" FAB, filled name + gender in the
+  // compact dialog, and pressed Save. We create the person without
+  // any relation; the user connects them to the rest of the tree
+  // via the edge-first connector. Pairs with the connector to
+  // fully replace the form-based add-relative flow.
+  Future<void> _handleAddBlankPersonFromTree(
+    Map<String, dynamic> personData,
+  ) async {
+    final treeId = _currentTreeId;
+    if (treeId == null) return;
+    try {
+      await _familyService.addRelative(treeId, personData);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Карточка добавлена. Соедините её длинным нажатием.'),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+      await _loadData(treeId);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Не удалось добавить карточку: $error')),
+      );
+    }
+  }
+
   // Edge-first connector handler. Called when the user has dragged
   // one card onto another and picked a relation type from the inline
   // 4-icon picker. Skips the AddRelativeScreen form entirely and

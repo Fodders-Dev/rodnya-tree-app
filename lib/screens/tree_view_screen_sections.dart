@@ -1343,6 +1343,11 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
                 // 4-icon picker. The handler talks to family service
                 // directly and reloads on success; no form involved.
                 onConnectExistingPersons: _handleConnectExistingFromTree,
+                // Blank-card creator — drop a person on the canvas
+                // with no relation. The user fills name + gender in
+                // a small dialog, we create them via the service,
+                // and they then connect via the connector above.
+                onAddBlankPerson: _handleAddBlankPersonFromTree,
                 // Reserve vertical space for the floating chrome stacked
                 // above the canvas — toolbar (~60) + context column
                 // (up to ~210) on mobile compact, much less on desktop

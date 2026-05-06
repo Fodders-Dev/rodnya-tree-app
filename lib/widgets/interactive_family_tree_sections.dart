@@ -37,6 +37,18 @@ extension _InteractiveFamilyTreeSections on _InteractiveFamilyTreeState {
                     : 92,
                 child: _buildViewportControlDock(),
               ),
+              // Blank-card creator FAB on the LEFT (mirrors the
+              // viewport control dock on the right). Visible only
+              // when the host wired `onAddBlankPerson` — the public
+              // viewer doesn't, so the canvas there stays read-only.
+              if (widget.onAddBlankPerson != null && !widget.isEditMode)
+                Positioned(
+                  left: 12,
+                  top: widget.viewportReservedTop > 96
+                      ? widget.viewportReservedTop + 8
+                      : 92,
+                  child: _buildBlankCardCreatorFab(),
+                ),
               // Small unobtrusive zoom indicator at the BOTTOM of the
               // canvas — replaces the previous "Семья / 250%" pill at
               // the top-left which the user said was overpowering.
@@ -467,4 +479,63 @@ extension _InteractiveFamilyTreeSections on _InteractiveFamilyTreeState {
     );
   }
 
+  // Floating blank-card creator. Tap → small dialog with name +
+  // gender + optional photo. Save → callback fires with a map the
+  // host pipes to family_tree_service.addRelative(...). The new
+  // person lands on the canvas with no relations; the user then
+  // uses the edge-first connector (long-press → drag → drop) to
+  // attach it to the rest of the tree.
+  //
+  // Distinct from the per-card "+" badge that appears on hover/
+  // select: that one opens the legacy form-based quick-add sheet
+  // and creates BOTH person + relation in one shot. This FAB
+  // creates JUST the person — relations are added later via the
+  // graphical connector.
+  Widget _buildBlankCardCreatorFab() {
+    final theme = Theme.of(context);
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+    return Tooltip(
+      message: 'Добавить карточку',
+      child: Material(
+        color: tokens.accent,
+        borderRadius: BorderRadius.circular(999),
+        elevation: 3,
+        shadowColor: Colors.black.withValues(alpha: 0.25),
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: _openBlankCardDialog,
+          child: SizedBox(
+            width: 48,
+            height: 48,
+            child: Icon(
+              Icons.person_add_alt_1_rounded,
+              size: 22,
+              color: tokens.accentInk,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openBlankCardDialog() async {
+    final handler = widget.onAddBlankPerson;
+    if (handler == null) return;
+
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      barrierColor: Colors.black.withValues(alpha: 0.32),
+      builder: (dialogContext) => const _BlankCardDialog(),
+    );
+    if (result == null || !mounted) return;
+    try {
+      await handler(result);
+    } catch (_) {
+      // Host shows its own snackbar on failure; we don't need to
+      // do anything here. Surfacing a second toast would compete.
+    }
+  }
 }
