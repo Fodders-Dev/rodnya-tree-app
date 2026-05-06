@@ -51,6 +51,50 @@ jobs:
       - name: Sync web shell assets
         run: node tool/sync_web_shell_assets.js
 
+      - name: Pre-compress static assets (gzip + brotli)
+        # main.dart.js is ~7 MB uncompressed and the user's VPS
+        # got CPU-throttled by HOSTKEY when nginx had to gzip it
+        # on the fly for every fresh page load. Pre-compressing
+        # at build time means nginx serves the .gz / .br files
+        # directly via `gzip_static on` / `brotli_static on` →
+        # zero CPU cost per request and roughly 5x smaller wire
+        # payload. Skip tiny files where the compression overhead
+        # exceeds the savings.
+        #
+        # NB: requires `gzip_static on;` (and ideally
+        # `brotli_static on;` if ngx_brotli is built) in the
+        # nginx server block on the host. Without those, the
+        # pre-compressed files just sit alongside the originals
+        # and nginx keeps gzipping at runtime — no harm done.
+        run: |
+          set -euo pipefail
+          # Files worth compressing — text-like binaries and
+          # assets that the browser will fetch on initial load.
+          # Skip already-compressed media (png/jpg/woff2/etc.)
+          # and trivially-small files (compression cost > savings).
+          find build/web -type f \( \
+              -name '*.js'    -o \
+              -name '*.json'  -o \
+              -name '*.css'   -o \
+              -name '*.wasm'  -o \
+              -name '*.html'  -o \
+              -name '*.svg'   -o \
+              -name '*.map'   -o \
+              -name '*.ttf'   \
+            \) -size +1k -print0 \
+            | while IFS= read -r -d '' file; do
+                gzip -k -9 -- "$file"
+                if command -v brotli >/dev/null 2>&1; then
+                  brotli -q 11 -k -- "$file"
+                fi
+              done
+          echo "Compressed assets summary:"
+          # Count and sample the largest pairs so the workflow
+          # log shows the wire-size win at a glance.
+          find build/web -type f -name '*.js.gz' \
+            -exec ls -lah {} \; \
+            | sort -k 5 -hr | head -5
+
       - name: Create release archive
         run: tar -czf rodnya-site.tgz -C build/web .
 
