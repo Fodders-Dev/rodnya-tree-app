@@ -2672,6 +2672,307 @@ void main() {
         );
       },
     );
+
+    // Regression for the live-prod bug: when uncle-by-marriage is
+    // structurally connected to the viewer's MAIN component (e.g.,
+    // because his daughter is also linked as the viewer's blood
+    // aunt's daughter, OR because his daughter has a sibling-of-
+    // viewer edge somewhere), the cross-component shift doesn't
+    // touch him — the within-component anchor pass must.
+    testWidgets(
+      'in-law inside the viewer main component lands on partner row, his daughter on viewer row',
+      (tester) async {
+        tester.view.physicalSize = const Size(1600, 1100);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(() => tester.view.reset());
+
+        // Cast — same as the previous test BUT with one extra
+        // parent edge from grandma → cousin. That edge bridges
+        // uncle's branch into the viewer's main component, which
+        // is what triggered the production bug.
+        final grandpa = FamilyPerson(
+          id: 'grandpa',
+          treeId: 'tree-1',
+          name: 'Анатолий Степанович',
+          gender: Gender.male,
+          isAlive: true,
+          createdAt: DateTime(2024, 1, 1),
+          updatedAt: DateTime(2024, 1, 1),
+        );
+        final grandma = FamilyPerson(
+          id: 'grandma',
+          treeId: 'tree-1',
+          name: 'Валентина',
+          gender: Gender.female,
+          isAlive: true,
+          createdAt: DateTime(2024, 1, 1),
+          updatedAt: DateTime(2024, 1, 1),
+        );
+        final father = FamilyPerson(
+          id: 'father',
+          treeId: 'tree-1',
+          name: 'Андрей Анатольевич',
+          gender: Gender.male,
+          isAlive: true,
+          createdAt: DateTime(2024, 1, 1),
+          updatedAt: DateTime(2024, 1, 1),
+        );
+        final viewer = FamilyPerson(
+          id: 'viewer',
+          treeId: 'tree-1',
+          userId: 'user-viewer',
+          name: 'Артём Андреевич',
+          gender: Gender.male,
+          isAlive: true,
+          createdAt: DateTime(2024, 1, 1),
+          updatedAt: DateTime(2024, 1, 1),
+        );
+        final aunt = FamilyPerson(
+          id: 'aunt',
+          treeId: 'tree-1',
+          name: 'Лена Анатольевна',
+          gender: Gender.female,
+          isAlive: true,
+          createdAt: DateTime(2024, 1, 1),
+          updatedAt: DateTime(2024, 1, 1),
+        );
+        final uncle = FamilyPerson(
+          id: 'uncle',
+          treeId: 'tree-1',
+          name: 'Виктор',
+          gender: Gender.male,
+          isAlive: true,
+          createdAt: DateTime(2024, 1, 1),
+          updatedAt: DateTime(2024, 1, 1),
+        );
+        final cousin = FamilyPerson(
+          id: 'cousin',
+          treeId: 'tree-1',
+          name: 'Анастасия Викторовна',
+          gender: Gender.female,
+          isAlive: true,
+          createdAt: DateTime(2024, 1, 1),
+          updatedAt: DateTime(2024, 1, 1),
+        );
+
+        // Cousin has BOTH the aunt AND the uncle as parents in
+        // this case → uncle joins the viewer's main component
+        // through cousin's parent edges. No spouse-of-aunt edge
+        // for the uncle. Same data shape as production.
+        final relations = <FamilyRelation>[
+          FamilyRelation(
+            id: 'r1',
+            treeId: 'tree-1',
+            person1Id: 'grandpa',
+            person2Id: 'grandma',
+            relation1to2: RelationType.spouse,
+            relation2to1: RelationType.spouse,
+            isConfirmed: true,
+            createdAt: DateTime(2024, 1, 1),
+          ),
+          FamilyRelation(
+            id: 'r2',
+            treeId: 'tree-1',
+            person1Id: 'grandpa',
+            person2Id: 'father',
+            relation1to2: RelationType.parent,
+            relation2to1: RelationType.child,
+            isConfirmed: true,
+            createdAt: DateTime(2024, 1, 1),
+          ),
+          FamilyRelation(
+            id: 'r3',
+            treeId: 'tree-1',
+            person1Id: 'grandma',
+            person2Id: 'father',
+            relation1to2: RelationType.parent,
+            relation2to1: RelationType.child,
+            isConfirmed: true,
+            createdAt: DateTime(2024, 1, 1),
+          ),
+          FamilyRelation(
+            id: 'r4',
+            treeId: 'tree-1',
+            person1Id: 'father',
+            person2Id: 'viewer',
+            relation1to2: RelationType.parent,
+            relation2to1: RelationType.child,
+            isConfirmed: true,
+            createdAt: DateTime(2024, 1, 1),
+          ),
+          FamilyRelation(
+            id: 'r5',
+            treeId: 'tree-1',
+            person1Id: 'grandpa',
+            person2Id: 'aunt',
+            relation1to2: RelationType.parent,
+            relation2to1: RelationType.child,
+            isConfirmed: true,
+            createdAt: DateTime(2024, 1, 1),
+          ),
+          FamilyRelation(
+            id: 'r6',
+            treeId: 'tree-1',
+            person1Id: 'grandma',
+            person2Id: 'aunt',
+            relation1to2: RelationType.parent,
+            relation2to1: RelationType.child,
+            isConfirmed: true,
+            createdAt: DateTime(2024, 1, 1),
+          ),
+          // Uncle parent of cousin.
+          FamilyRelation(
+            id: 'r7',
+            treeId: 'tree-1',
+            person1Id: 'uncle',
+            person2Id: 'cousin',
+            relation1to2: RelationType.parent,
+            relation2to1: RelationType.child,
+            isConfirmed: true,
+            createdAt: DateTime(2024, 1, 1),
+          ),
+          // *** Bridge to viewer's main component ***: aunt is
+          // ALSO a parent of cousin. This is what makes uncle
+          // and cousin show up in the viewer's main component
+          // (not their own isolated component).
+          FamilyRelation(
+            id: 'r8',
+            treeId: 'tree-1',
+            person1Id: 'aunt',
+            person2Id: 'cousin',
+            relation1to2: RelationType.parent,
+            relation2to1: RelationType.child,
+            isConfirmed: true,
+            createdAt: DateTime(2024, 1, 1),
+          ),
+        ];
+
+        final descriptors = [
+          TreeGraphViewerDescriptor(
+            personId: 'father',
+            primaryRelationLabel: 'Отец',
+            isBlood: true,
+            alternatePathCount: 0,
+            pathSummary: null,
+            primaryPathPersonIds: const ['father'],
+          ),
+          TreeGraphViewerDescriptor(
+            personId: 'aunt',
+            primaryRelationLabel: 'Тётя',
+            isBlood: true,
+            alternatePathCount: 0,
+            pathSummary: null,
+            primaryPathPersonIds: const ['aunt'],
+          ),
+          TreeGraphViewerDescriptor(
+            personId: 'uncle',
+            primaryRelationLabel: 'Дядя',
+            isBlood: false,
+            alternatePathCount: 0,
+            pathSummary: null,
+            primaryPathPersonIds: const ['uncle'],
+          ),
+          TreeGraphViewerDescriptor(
+            personId: 'cousin',
+            primaryRelationLabel: 'Двоюродная сестра',
+            isBlood: false,
+            alternatePathCount: 0,
+            pathSummary: null,
+            primaryPathPersonIds: const ['cousin'],
+          ),
+          TreeGraphViewerDescriptor(
+            personId: 'grandpa',
+            primaryRelationLabel: 'Дедушка',
+            isBlood: true,
+            alternatePathCount: 0,
+            pathSummary: null,
+            primaryPathPersonIds: const ['grandpa'],
+          ),
+          TreeGraphViewerDescriptor(
+            personId: 'grandma',
+            primaryRelationLabel: 'Бабушка',
+            isBlood: true,
+            alternatePathCount: 0,
+            pathSummary: null,
+            primaryPathPersonIds: const ['grandma'],
+          ),
+        ];
+        final snapshot = TreeGraphSnapshot(
+          treeId: 'tree-1',
+          viewerPersonId: 'viewer',
+          people: const [],
+          relations: const [],
+          generationRows: const [],
+          familyUnits: const [],
+          branchBlocks: const [],
+          warnings: const [],
+          viewerDescriptors: descriptors,
+        );
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: InteractiveFamilyTree(
+                peopleData: [
+                  for (final p in [
+                    grandpa,
+                    grandma,
+                    father,
+                    viewer,
+                    aunt,
+                    uncle,
+                    cousin,
+                  ])
+                    {'person': p, 'userProfile': null},
+                ],
+                relations: relations,
+                graphSnapshot: snapshot,
+                onPersonTap: (_) {},
+                isEditMode: false,
+                onAddRelativeTapWithType: (_, __) {},
+                currentUserIsInTree: true,
+                onAddSelfTapWithType: (_, __) async {},
+                currentUserId: 'user-viewer',
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        double topYFor(String personId) {
+          final finder = find.byKey(ValueKey<String>('tree-node-position-$personId'));
+          expect(finder, findsOneWidget);
+          final renderBox = tester.renderObject<RenderBox>(finder);
+          return renderBox.localToGlobal(Offset.zero).dy;
+        }
+
+        final viewerY = topYFor('viewer');
+        final fatherY = topYFor('father');
+        final auntY = topYFor('aunt');
+        final uncleY = topYFor('uncle');
+        final cousinY = topYFor('cousin');
+
+        expect(
+          (uncleY - fatherY).abs() < 5,
+          isTrue,
+          reason:
+              'in-law uncle in main component should land on parents row, '
+              'NOT on grandparents row',
+        );
+        expect(
+          (auntY - fatherY).abs() < 5,
+          isTrue,
+          reason: 'aunt should be on parents row',
+        );
+        expect(
+          (cousinY - viewerY).abs() < 5,
+          isTrue,
+          reason:
+              'cousin in main component should land on viewer row, '
+              'NOT on parents row',
+        );
+      },
+    );
   });
 
   group('Edge-first connector', () {

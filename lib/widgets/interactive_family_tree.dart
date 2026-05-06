@@ -2699,6 +2699,106 @@ class _TreeLayoutEngine {
           levels[entry.key] = entry.value + medianShift;
         }
       }
+
+      // Within-component anchor pass — for the viewer's OWN
+      // component. Same idea as the cross-component median shift
+      // above, but applied per-person: when an in-law (e.g.
+      // "Дядя" by marriage) is connected to the viewer's main
+      // family graph via a child edge but has no explicit spouse
+      // edge to anchor him to his wife's row, his BFS-derived
+      // level is wrong by exactly one. The descriptor knows
+      // better, so we override.
+      //
+      // Critical safety: only override when the move respects
+      // parent>child constraints in BOTH directions:
+      //   * Person's level must end up > each in-component parent.
+      //   * Person's level must end up < each in-component child.
+      // If the move would violate either, the structural data is
+      // tighter than the descriptor and we leave it alone.
+      //
+      // We loop until stable so that overriding a parent (e.g.
+      // Vitya) ALSO pulls his children (e.g. Nastya) along —
+      // the spouse-parity loop in _assignLevels will handle the
+      // re-balance after each override.
+      if (viewerPerson != null) {
+        final viewerOwnComponent = components.firstWhere(
+          (component) => component.contains(viewerPerson!.id),
+          orElse: () => <String>{},
+        );
+        final levels = componentLevels[viewerOwnComponent];
+        if (levels != null && viewerOwnComponent.isNotEmpty) {
+          final maxIterations = viewerOwnComponent.length * 2 + 4;
+          var changed = true;
+          var iteration = 0;
+          while (changed && iteration < maxIterations) {
+            changed = false;
+            iteration += 1;
+            for (final personId in viewerOwnComponent) {
+              if (personId == viewerPerson.id) continue;
+              final descriptor = descriptors[personId];
+              if (descriptor == null) continue;
+              final offset = _generationOffsetFromRelationLabel(
+                descriptor.primaryRelationLabel,
+              );
+              if (offset == null) continue;
+              final desiredLevel = viewerGlobalLevel + offset;
+              final currentLevel = levels[personId];
+              if (currentLevel == null) continue;
+              if (currentLevel == desiredLevel) continue;
+              // Parent-child safety: don't pull a person below
+              // their own children, don't push them above their
+              // own parents, EVEN if the descriptor disagrees
+              // with the BFS. Structural data wins on direction.
+              final parents = childToParents[personId] ?? const <String>{};
+              final children = parentToChildren[personId] ?? const <String>{};
+              var safe = true;
+              for (final parentId in parents) {
+                if (!viewerOwnComponent.contains(parentId)) continue;
+                final parentLevel = levels[parentId];
+                if (parentLevel == null) continue;
+                if (desiredLevel <= parentLevel) {
+                  safe = false;
+                  break;
+                }
+              }
+              if (!safe) continue;
+              for (final childId in children) {
+                if (!viewerOwnComponent.contains(childId)) continue;
+                final childLevel = levels[childId];
+                if (childLevel == null) continue;
+                if (desiredLevel >= childLevel) {
+                  safe = false;
+                  break;
+                }
+              }
+              if (!safe) continue;
+              // Spouse parity: if person has spouse(s) at OTHER
+              // levels, snap them along.
+              levels[personId] = desiredLevel;
+              for (final spouseId
+                  in spousesByPerson[personId] ?? const <String>{}) {
+                if (viewerOwnComponent.contains(spouseId) &&
+                    levels[spouseId] != desiredLevel) {
+                  levels[spouseId] = desiredLevel;
+                }
+              }
+              // Children of the moved person should be ONE row
+              // below — set them now so the next iteration sees
+              // the correct constraint when checking their own
+              // descriptors.
+              for (final childId in children) {
+                if (viewerOwnComponent.contains(childId)) {
+                  final newChildLevel = desiredLevel + 1;
+                  if ((levels[childId] ?? 0) < newChildLevel) {
+                    levels[childId] = newChildLevel;
+                  }
+                }
+              }
+              changed = true;
+            }
+          }
+        }
+      }
     }
 
     final nodePositions = <String, Offset>{};
