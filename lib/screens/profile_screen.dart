@@ -591,6 +591,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             ),
                           ),
                           IconButton(
+                            tooltip: 'Закрыть галерею',
                             onPressed: () => Navigator.of(dialogContext).pop(),
                             icon: const Icon(Icons.close, color: Colors.white),
                           ),

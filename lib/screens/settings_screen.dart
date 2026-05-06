@@ -833,6 +833,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           vertical: 16,
                         ),
                         suffixIcon: IconButton(
+                          tooltip: isPasswordVisible
+                              ? 'Скрыть пароль'
+                              : 'Показать пароль',
                           icon: Icon(
                             isPasswordVisible
                                 ? Icons.visibility_off

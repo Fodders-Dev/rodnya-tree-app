@@ -93,8 +93,9 @@ class _OfflineProfilesScreenState extends State<OfflineProfilesScreen> {
       appBar: AppBar(
         title: Text('Созданные профили (${_selectedTreeName ?? "..."})'),
         leading: IconButton(
-          icon: Icon(Icons.arrow_back),
-          onPressed: () => context.pop(), // Возврат на предыдущий экран
+          tooltip: 'Назад',
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => context.pop(),
         ),
       ),
       body: _buildBody(),

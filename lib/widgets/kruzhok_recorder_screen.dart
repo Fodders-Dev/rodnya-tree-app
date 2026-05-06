@@ -400,6 +400,7 @@ class _KruzhokRecorderScreenState extends State<KruzhokRecorderScreen> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               IconButton(
+                tooltip: 'Отменить запись',
                 icon: const Icon(Icons.close, color: Colors.white),
                 onPressed: _cancel,
               ),

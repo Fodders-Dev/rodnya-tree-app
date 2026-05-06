@@ -379,6 +379,7 @@ class _CreateChatSheetState extends State<_CreateChatSheet> {
                         ),
                         const Spacer(),
                         IconButton(
+                          tooltip: 'Закрыть',
                           onPressed: () => Navigator.of(context).pop(),
                           icon: const Icon(Icons.close),
                           style: IconButton.styleFrom(

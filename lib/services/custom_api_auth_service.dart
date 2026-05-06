@@ -553,15 +553,26 @@ class CustomApiAuthService implements AuthServiceInterface {
       );
       _lastGoogleAccount = account;
       return account;
-    } on GoogleSignInException catch (error) {
-      // Map the canceled / interrupted exception codes to the same
-      // "interactiveCancelledMessage" string the old null-return path
-      // surfaced upstream, so calling code's UX text doesn't change.
+    } on GoogleSignInException catch (error, stackTrace) {
+      // Verbose diagnostics for on-device verification — once we ship
+      // 7.x to real users we want logs that pinpoint why a sign-in
+      // failed without dumping a full stack into the UI. The `code`
+      // tells us which path: canceled = user dismissed; interrupted =
+      // OS killed it; uiUnavailable = platform isn't ready (web FedCM
+      // not loaded yet, Android Play services missing); everything
+      // else is a config/server problem we want to know about.
+      debugPrint(
+        '[GoogleSignIn 7.x] authenticate() failed — code=${error.code}, '
+        'description=${error.description}',
+      );
       if (error.code == GoogleSignInExceptionCode.canceled ||
           error.code == GoogleSignInExceptionCode.interrupted ||
           error.code == GoogleSignInExceptionCode.uiUnavailable) {
         throw CustomApiException(interactiveCancelledMessage);
       }
+      // Fall-through → rethrow with stack so the upstream
+      // `_appStatusService.reportError` path captures it.
+      debugPrintStack(stackTrace: stackTrace);
       rethrow;
     }
   }
@@ -572,6 +583,21 @@ class CustomApiAuthService implements AuthServiceInterface {
     final authentication = account.authentication;
     final idToken = authentication.idToken?.trim() ?? '';
     if (idToken.isEmpty) {
+      // Distinct cases for on-device diagnostics:
+      //  * web: usually means GIS hasn't been initialized with a
+      //    matching client_id, OR the user is signed into Google
+      //    in a way that doesn't yield an id_token (e.g. "use
+      //    Continue As" without granting email scope).
+      //  * mobile: serverClientId mismatch with backend audience
+      //    is the #1 cause. Backend-side
+      //    `verifyIdToken({audience: serverClientId})` will reject
+      //    a token issued to the WEB client.
+      debugPrint(
+        '[GoogleSignIn 7.x] account.authentication returned an empty '
+        'idToken — kIsWeb=$kIsWeb, '
+        'configuredWebClientId=${_runtimeConfig.googleWebClientId.isNotEmpty}, '
+        'accountId=${account.id}, accountEmail=${account.email}',
+      );
       throw const CustomApiException(
         'Google не вернул idToken. Проверьте Web client ID и OAuth clients.',
       );

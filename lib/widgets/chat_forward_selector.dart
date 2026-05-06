@@ -69,6 +69,7 @@ class _ChatForwardSelectorState extends State<ChatForwardSelector> {
                 ),
                 const Spacer(),
                 IconButton(
+                  tooltip: 'Закрыть',
                   icon: const Icon(Icons.close),
                   onPressed: () => Navigator.pop(context),
                 ),

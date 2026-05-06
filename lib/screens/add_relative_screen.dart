@@ -887,7 +887,8 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
             ),
           if (widget.isEditing)
             IconButton(
-              icon: Icon(Icons.delete),
+              tooltip: 'Удалить родственника',
+              icon: const Icon(Icons.delete),
               onPressed: () {
                 showDialog(
                   context: context,

@@ -167,6 +167,9 @@ class _VoicePlayerWidgetState extends State<_VoicePlayerWidget> {
           mainAxisSize: MainAxisSize.min,
           children: [
             IconButton(
+              tooltip: isPlaying
+                  ? 'Пауза голосового сообщения'
+                  : 'Воспроизвести голосовое сообщение',
               onPressed: isPlaying ? _pause : _play,
               icon: Icon(isPlaying
                   ? Icons.pause_circle_filled

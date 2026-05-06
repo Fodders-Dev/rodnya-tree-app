@@ -338,6 +338,7 @@ extension _ChatsListScreenSections on _ChatsListScreenState {
             prefixIcon: const Icon(Icons.search, size: 20),
             suffixIcon: _searchQuery.isNotEmpty
                 ? IconButton(
+                    tooltip: 'Очистить поиск',
                     icon: const Icon(Icons.close, size: 18),
                     onPressed: () {
                       _clearSearchQuery();

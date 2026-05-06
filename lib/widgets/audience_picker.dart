@@ -427,6 +427,7 @@ class _SearchField extends StatelessWidget {
         suffixIcon: controller.text.isEmpty
             ? null
             : IconButton(
+                tooltip: 'Очистить поиск',
                 icon: Icon(Icons.close, color: tokens.inkSecondary),
                 onPressed: () {
                   controller.clear();

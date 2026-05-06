@@ -142,7 +142,8 @@ class _SendRelationRequestScreenState extends State<SendRelationRequestScreen> {
                       labelText: 'Имя, email или телефон',
                       border: OutlineInputBorder(),
                       suffixIcon: IconButton(
-                        icon: Icon(Icons.search),
+                        tooltip: 'Найти',
+                        icon: const Icon(Icons.search),
                         onPressed: () => _searchUsers(_searchController.text),
                       ),
                     ),
@@ -217,7 +218,8 @@ class _SendRelationRequestScreenState extends State<SendRelationRequestScreen> {
                       title: Text(_selectedUser!.displayName),
                       subtitle: Text(_selectedUser!.email ?? 'Email не указан'),
                       trailing: IconButton(
-                        icon: Icon(Icons.close),
+                        tooltip: 'Снять выбор',
+                        icon: const Icon(Icons.close),
                         onPressed: () {
                           setState(() {
                             _selectedUser = null;

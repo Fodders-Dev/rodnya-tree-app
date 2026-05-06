@@ -1740,6 +1740,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
               ),
             ),
             IconButton(
+              tooltip: 'Удалить вложение',
               icon: const Icon(Icons.cancel, color: Colors.black54),
               iconSize: 20,
               padding: EdgeInsets.zero,

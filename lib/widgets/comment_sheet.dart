@@ -275,6 +275,7 @@ class _CommentSheetState extends State<CommentSheet> {
             ],
           ),
           IconButton(
+            tooltip: 'Закрыть комментарии',
             icon: const Icon(Icons.close),
             onPressed: () => Navigator.pop(context, _comments?.length),
           ),
@@ -770,6 +771,7 @@ class _CommentSheetState extends State<CommentSheet> {
                       ),
                     )
                   : IconButton(
+                      tooltip: 'Отправить комментарий',
                       onPressed: _addComment,
                       icon: Icon(
                         Icons.send,

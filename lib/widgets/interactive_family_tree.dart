@@ -891,6 +891,7 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
                             ),
                           ),
                           IconButton(
+                            tooltip: 'Закрыть галерею',
                             onPressed: () => Navigator.of(context).pop(),
                             icon: const Icon(Icons.close, color: Colors.white),
                           ),

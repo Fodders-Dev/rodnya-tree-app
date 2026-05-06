@@ -144,6 +144,7 @@ class _PersonMultiPickerSheetState extends State<PersonMultiPickerSheet> {
                 suffixIcon: _query.isEmpty
                     ? null
                     : IconButton(
+                        tooltip: 'Очистить поиск',
                         icon: const Icon(Icons.close),
                         onPressed: () {
                           _searchController.clear();

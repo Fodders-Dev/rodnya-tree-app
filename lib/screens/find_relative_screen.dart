@@ -437,6 +437,7 @@ class _FindRelativeScreenState extends State<FindRelativeScreen>
               prefixIcon: Icon(icon),
               border: const OutlineInputBorder(),
               suffixIcon: IconButton(
+                tooltip: 'Найти',
                 icon: const Icon(Icons.search),
                 onPressed: onSearch,
               ),
@@ -785,6 +786,7 @@ class _FindRelativeScreenState extends State<FindRelativeScreen>
           ],
         ),
         trailing: IconButton(
+          tooltip: 'Добавить как родственника',
           icon: const Icon(Icons.add_circle_outline, color: Colors.green),
           onPressed: () => _showRelationSelectDialog(user),
         ),

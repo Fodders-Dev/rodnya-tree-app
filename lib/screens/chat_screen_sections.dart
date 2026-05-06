@@ -4,6 +4,9 @@ extension _ChatScreenScaffoldSections on _ChatScreenState {
   PreferredSizeWidget _buildChatAppBar(BuildContext context) {
     return AppBar(
       leading: IconButton(
+        tooltip: _isSelectionMode
+            ? 'Снять выделение'
+            : (_isSearchMode ? 'Закрыть поиск' : 'Назад'),
         icon: Icon(
           _isSelectionMode
               ? Icons.close

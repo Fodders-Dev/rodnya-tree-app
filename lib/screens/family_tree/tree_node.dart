@@ -187,9 +187,10 @@ class TreeNode extends StatelessWidget {
   Widget _buildAddButton({
     required IconData icon,
     required VoidCallback onPressed,
+    String? tooltip,
   }) {
     return Container(
-      decoration: BoxDecoration(
+      decoration: const BoxDecoration(
         color: Colors.white,
         shape: BoxShape.circle,
         boxShadow: [
@@ -197,10 +198,11 @@ class TreeNode extends StatelessWidget {
         ],
       ),
       child: IconButton(
+        tooltip: tooltip ?? 'Действие',
         icon: Icon(icon, size: 16),
         onPressed: onPressed,
-        padding: EdgeInsets.all(4),
-        constraints: BoxConstraints(minWidth: 24, minHeight: 24),
+        padding: const EdgeInsets.all(4),
+        constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
         color: Colors.blue,
       ),
     );
