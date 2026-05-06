@@ -637,6 +637,290 @@ extension _AddRelativeScreenSections on _AddRelativeScreenState {
     );
   }
 
+  // ── Phase 0 cross-tree person picker ───────────────────────────────
+  // Surfaces relatives the user already entered on any of their other
+  // trees so they don't have to re-key the same human. Pick → form
+  // pre-fills + we stash the source person id for the create POST.
+
+  bool get _isOtherTreesPickerAvailable {
+    if (widget.isEditing) return false;
+    return _familyService is CrossTreePersonSearchCapableFamilyTreeService;
+  }
+
+  void _onOtherTreesSearchChanged(String value) {
+    _otherTreesSearchDebounce?.cancel();
+    final trimmed = value.trim();
+    if (trimmed == _otherTreesSearchQuery) {
+      // No semantic change (e.g. trailing-space tweak) — skip.
+      return;
+    }
+    _otherTreesSearchDebounce = Timer(
+      const Duration(milliseconds: 250),
+      () => _runOtherTreesSearch(trimmed),
+    );
+  }
+
+  Future<void> _runOtherTreesSearch(String query) async {
+    if (!mounted) return;
+    final service = _familyService;
+    if (service is! CrossTreePersonSearchCapableFamilyTreeService) return;
+    // Explicit cast — Dart's flow analyzer doesn't promote field
+    // accesses across `await`, and this is an extension method so
+    // the local `is`-narrowing isn't preserved either.
+    final searchService =
+        service as CrossTreePersonSearchCapableFamilyTreeService;
+
+    _updateSectionState(() {
+      _otherTreesSearchQuery = query;
+      _isSearchingOtherTrees = true;
+    });
+
+    try {
+      final results = await searchService.searchPersonsAcrossOwnTrees(
+        query: query,
+        excludeTreeId: widget.treeId,
+      );
+      if (!mounted) return;
+      // Drop late results if the user has typed past this query — we
+      // only care about the latest. Cheap optimistic check.
+      if (query != _otherTreesSearchQuery) return;
+      _updateSectionState(() {
+        _otherTreesSearchResults = results;
+        _isSearchingOtherTrees = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      _updateSectionState(() {
+        _isSearchingOtherTrees = false;
+        _otherTreesSearchResults = const <CrossTreePersonSuggestion>[];
+      });
+      // Soft-fail: the picker is an aid, not a critical path. Show
+      // a toast so the user knows search didn't land, but don't
+      // block them from filling the form by hand.
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Не удалось загрузить родственников: $error'),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
+  }
+
+  void _onPickOtherTreePerson(CrossTreePersonSuggestion picked) {
+    // Source persons store a composed display name "Фамилия Имя
+    // Отчество" — split into form fields the same way the editing
+    // path does (initState block in the main class).
+    final parts = picked.displayName.trim().split(RegExp(r'\s+'));
+    final lastName = parts.isNotEmpty ? parts[0] : '';
+    final firstName = parts.length >= 2 ? parts[1] : '';
+    final middleName =
+        parts.length >= 3 ? parts.sublist(2).join(' ') : '';
+
+    _updateSectionState(() {
+      _sourcePersonId = picked.id;
+      _sourcePersonTreeName = picked.treeName;
+      _lastNameController.text = lastName;
+      _firstNameController.text = firstName;
+      _middleNameController.text = middleName;
+      if (picked.gender == 'female') {
+        _selectedGender = Gender.female;
+      } else if (picked.gender == 'male') {
+        _selectedGender = Gender.male;
+      }
+      if (picked.birthDate != null && picked.birthDate!.isNotEmpty) {
+        _birthDate = DateTime.tryParse(picked.birthDate!);
+      }
+      // Collapse the picker so the user can focus on the form
+      // fields. The "linked" chip stays visible above to remind
+      // them what they did and let them undo.
+      _otherTreesSearchResults = const <CrossTreePersonSuggestion>[];
+      _otherTreesSearchController.clear();
+      _otherTreesSearchQuery = '';
+      _otherTreesPickerExpanded = false;
+    });
+  }
+
+  void _clearOtherTreesPick() {
+    _updateSectionState(() {
+      _sourcePersonId = null;
+      _sourcePersonTreeName = null;
+      // We DON'T clear the form fields — the user might still want
+      // the pre-filled values, just without the cross-tree link.
+    });
+  }
+
+  Widget _buildOtherTreesPickerCard() {
+    if (!_isOtherTreesPickerAvailable) return const SizedBox.shrink();
+
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    // When a source is already linked, the card collapses into a
+    // single-row "linked from {treeName}" chip with an X. Reduces
+    // visual weight after the user has made their choice.
+    if (_sourcePersonId != null) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: scheme.primaryContainer.withValues(alpha: 0.35),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: scheme.outlineVariant),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.link, size: 18, color: scheme.primary),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                _sourcePersonTreeName == null ||
+                        _sourcePersonTreeName!.isEmpty
+                    ? 'Связан с человеком из вашего другого дерева'
+                    : 'Связан с человеком из «$_sourcePersonTreeName»',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: scheme.onSurface,
+                ),
+              ),
+            ),
+            IconButton(
+              tooltip: 'Отвязать',
+              onPressed: _clearOtherTreesPick,
+              icon: const Icon(Icons.close_rounded, size: 18),
+              visualDensity: VisualDensity.compact,
+            ),
+          ],
+        ),
+      );
+    }
+
+    // No source picked yet — collapsible search section. Default
+    // collapsed because the form below is still the primary path
+    // for users with a single tree.
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest.withValues(alpha: 0.4),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: scheme.outlineVariant),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          InkWell(
+            borderRadius: BorderRadius.circular(16),
+            onTap: () {
+              _updateSectionState(() {
+                _otherTreesPickerExpanded = !_otherTreesPickerExpanded;
+              });
+              if (_otherTreesPickerExpanded &&
+                  _otherTreesSearchResults.isEmpty &&
+                  !_isSearchingOtherTrees) {
+                // Lazy initial fetch on first expand — shows the
+                // picker as already-populated for users with other
+                // trees, while users with no other trees see the
+                // "ничего не найдено" empty state on first try.
+                _runOtherTreesSearch('');
+              }
+            },
+            child: Padding(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.account_tree_outlined,
+                    color: scheme.primary,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Из моих других деревьев',
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'Найти человека, которого вы уже добавили в другое дерево',
+                          style: TextStyle(
+                            color: scheme.onSurfaceVariant,
+                            fontSize: 12.5,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Icon(
+                    _otherTreesPickerExpanded
+                        ? Icons.expand_less
+                        : Icons.expand_more,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (_otherTreesPickerExpanded)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  TextField(
+                    controller: _otherTreesSearchController,
+                    onChanged: _onOtherTreesSearchChanged,
+                    decoration: InputDecoration(
+                      hintText: 'Имя или фамилия',
+                      prefixIcon: const Icon(Icons.search),
+                      isDense: true,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  if (_isSearchingOtherTrees)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 12),
+                      child: Center(
+                        child: SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      ),
+                    )
+                  else if (_otherTreesSearchResults.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      child: Text(
+                        _otherTreesSearchQuery.isEmpty
+                            ? 'У вас пока нет родственников в других деревьях. Добавьте их из формы ниже.'
+                            : 'Никого не нашлось. Добавьте новую карточку из формы ниже.',
+                        style: TextStyle(color: scheme.onSurfaceVariant),
+                      ),
+                    )
+                  else
+                    Column(
+                      children: [
+                        for (final suggestion in _otherTreesSearchResults)
+                          _OtherTreesPickerRow(
+                            suggestion: suggestion,
+                            onTap: () => _onPickOtherTreePerson(suggestion),
+                          ),
+                      ],
+                    ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   void _disposeExtractedControllers() {
     _lastNameController.removeListener(_updateRelationshipWidget);
     _firstNameController.removeListener(_updateRelationshipWidget);
@@ -648,6 +932,8 @@ extension _AddRelativeScreenSections on _AddRelativeScreenState {
     _educationController.dispose();
     _bioController.dispose();
     _notesController.dispose();
+    _otherTreesSearchController.dispose();
+    _otherTreesSearchDebounce?.cancel();
     for (final draft in _importantEventDrafts) {
       draft.dispose();
     }

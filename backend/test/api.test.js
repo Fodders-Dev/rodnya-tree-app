@@ -3550,6 +3550,282 @@ test("tree duplicate endpoint returns read-only within-tree suggestions", async 
   }
 });
 
+// Phase 0 of unified-graph migration: cross-tree person picker.
+// The Flutter add-relative screen calls GET /v1/persons/search to
+// surface relatives the user already entered on any of their other
+// trees, then calls POST /v1/trees/:treeId/persons with
+// `sourcePersonId` to create the new card while linking the two
+// records under one PersonIdentity. This test pins the contract
+// that flow depends on.
+test("cross-tree person picker scopes to caller, excludes target tree, and shares identityId on link", async () => {
+  const ctx = await startTestServer();
+
+  try {
+    const owner = await registerTestUser(ctx, "owner@rodnya.app", "Артём");
+    const ownerHeaders = {
+      authorization: `Bearer ${owner.accessToken}`,
+      "content-type": "application/json",
+    };
+
+    // Create two trees owned by the same user to simulate the
+    // real pain: "I built tree #1 with mom, now I'm starting tree
+    // #2 and have to re-enter mom".
+    async function createTreeForOwner(name) {
+      const response = await fetch(`${ctx.baseUrl}/v1/trees`, {
+        method: "POST",
+        headers: ownerHeaders,
+        body: JSON.stringify({name, isPrivate: true}),
+      });
+      assert.equal(response.status, 201);
+      return (await response.json()).tree.id;
+    }
+    const treeOneId = await createTreeForOwner("Семья (моя)");
+    const treeTwoId = await createTreeForOwner("Родня (мамина)");
+
+    // Add a non-owner relative to tree #1 — this is the relative
+    // the picker should surface when we open tree #2's add-screen.
+    async function addPerson(treeId, body) {
+      const response = await fetch(
+        `${ctx.baseUrl}/v1/trees/${treeId}/persons`,
+        {
+          method: "POST",
+          headers: ownerHeaders,
+          body: JSON.stringify(body),
+        },
+      );
+      assert.equal(response.status, 201);
+      return (await response.json()).person;
+    }
+    const motherOnTreeOne = await addPerson(treeOneId, {
+      firstName: "Анна",
+      lastName: "Кузнецова",
+      gender: "female",
+      birthDate: "1965-03-12",
+      birthPlace: "Тула",
+    });
+
+    // Add a second card on tree #1 to make sure the substring
+    // filter actually filters — searching for "Анна" should NOT
+    // return "Иван".
+    await addPerson(treeOneId, {
+      firstName: "Иван",
+      lastName: "Кузнецов",
+      gender: "male",
+    });
+
+    // Another user with their own tree + relative — must NOT leak
+    // through cross-tree search to our owner. Single most important
+    // privacy invariant.
+    const stranger = await registerTestUser(
+      ctx,
+      "stranger@rodnya.app",
+      "Незнакомец",
+    );
+    const strangerHeaders = {
+      authorization: `Bearer ${stranger.accessToken}`,
+      "content-type": "application/json",
+    };
+    const strangerTreeResponse = await fetch(`${ctx.baseUrl}/v1/trees`, {
+      method: "POST",
+      headers: strangerHeaders,
+      body: JSON.stringify({name: "Чужое дерево", isPrivate: true}),
+    });
+    assert.equal(strangerTreeResponse.status, 201);
+    const strangerTreeId = (await strangerTreeResponse.json()).tree.id;
+    const strangerRelativeResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${strangerTreeId}/persons`,
+      {
+        method: "POST",
+        headers: strangerHeaders,
+        body: JSON.stringify({
+          firstName: "Анна",
+          lastName: "Постороння",
+          gender: "female",
+        }),
+      },
+    );
+    assert.equal(strangerRelativeResponse.status, 201);
+    const strangerRelative = (await strangerRelativeResponse.json()).person;
+
+    // 1. Picker without query returns all of owner's persons across
+    //    accessible trees, MINUS the excluded tree.
+    const allResultsResponse = await fetch(
+      `${ctx.baseUrl}/v1/persons/search?excludeTreeId=${treeTwoId}`,
+      {headers: {authorization: `Bearer ${owner.accessToken}`}},
+    );
+    assert.equal(allResultsResponse.status, 200);
+    const allResultsPayload = await allResultsResponse.json();
+    const allResultIds = allResultsPayload.persons.map((person) => person.id);
+    assert.ok(
+      allResultIds.includes(motherOnTreeOne.id),
+      "owner's tree-1 mother must surface in picker",
+    );
+    assert.ok(
+      !allResultIds.includes(strangerRelative.id),
+      "stranger's relative must never leak across user boundary",
+    );
+
+    // 2. Query "Анна" filters to mother only — even though
+    //    stranger has an "Анна" too. Belt-and-braces against
+    //    cross-user leakage.
+    const filteredResponse = await fetch(
+      `${ctx.baseUrl}/v1/persons/search?q=${encodeURIComponent("Анна")}&excludeTreeId=${treeTwoId}`,
+      {headers: {authorization: `Bearer ${owner.accessToken}`}},
+    );
+    assert.equal(filteredResponse.status, 200);
+    const filteredPayload = await filteredResponse.json();
+    assert.equal(filteredPayload.persons.length, 1);
+    assert.equal(filteredPayload.persons[0].id, motherOnTreeOne.id);
+    assert.equal(filteredPayload.persons[0].treeId, treeOneId);
+    assert.equal(filteredPayload.persons[0].treeName, "Семья (моя)");
+    assert.equal(filteredPayload.persons[0].displayName, "Кузнецова Анна");
+    assert.ok(
+      String(filteredPayload.persons[0].birthDate || "").startsWith(
+        "1965-03-12",
+      ),
+    );
+
+    // 3. excludeTreeId must drop persons from that exact tree —
+    //    we don't want to suggest someone the user is currently
+    //    building a tree FROM.
+    const excludeOwnTreeResponse = await fetch(
+      `${ctx.baseUrl}/v1/persons/search?excludeTreeId=${treeOneId}`,
+      {headers: {authorization: `Bearer ${owner.accessToken}`}},
+    );
+    assert.equal(excludeOwnTreeResponse.status, 200);
+    const excludeOwnTreePayload = await excludeOwnTreeResponse.json();
+    const excludeIds = excludeOwnTreePayload.persons.map((person) => person.id);
+    assert.ok(
+      !excludeIds.includes(motherOnTreeOne.id),
+      "tree-1 person must be excluded when excludeTreeId=tree-1",
+    );
+
+    // 4. Auth required.
+    const unauthResponse = await fetch(`${ctx.baseUrl}/v1/persons/search`);
+    assert.equal(unauthResponse.status, 401);
+
+    // 5. Now use the picker pick flow: create a person on tree #2
+    //    with sourcePersonId pointing at mother on tree #1. Caller
+    //    leaves all data fields blank — server should pre-fill
+    //    from source AND share an identityId.
+    const linkedPersonResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeTwoId}/persons`,
+      {
+        method: "POST",
+        headers: ownerHeaders,
+        body: JSON.stringify({
+          sourcePersonId: motherOnTreeOne.id,
+        }),
+      },
+    );
+    assert.equal(linkedPersonResponse.status, 201);
+    const linkedPerson = (await linkedPersonResponse.json()).person;
+    assert.equal(
+      linkedPerson.name,
+      "Кузнецова Анна",
+      "name must be inherited from source when caller supplied none",
+    );
+    assert.ok(
+      String(linkedPerson.birthDate || "").startsWith("1965-03-12"),
+    );
+    assert.equal(linkedPerson.birthPlace, "Тула");
+    assert.equal(linkedPerson.gender, "female");
+    assert.ok(linkedPerson.identityId);
+
+    // Both persons share an identityId — that's the canonical-
+    // graph link. Phase 1 turns this into edit propagation.
+    const snapshot = await ctx.store._read();
+    const motherAfterLink = snapshot.persons.find(
+      (entry) => entry.id === motherOnTreeOne.id,
+    );
+    assert.equal(
+      motherAfterLink.identityId,
+      linkedPerson.identityId,
+      "source and target persons must share identityId after picker link",
+    );
+    const sharedIdentity = snapshot.personIdentities.find(
+      (identity) => identity.id === linkedPerson.identityId,
+    );
+    assert.ok(sharedIdentity);
+
+    // 6. Caller-supplied fields override source — user can edit
+    //    the picker pre-fill before saving.
+    const overriddenPersonResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeTwoId}/persons`,
+      {
+        method: "POST",
+        headers: ownerHeaders,
+        body: JSON.stringify({
+          sourcePersonId: motherOnTreeOne.id,
+          firstName: "Анна",
+          lastName: "Кузнецова",
+          // Nickname / maiden override — mother's record had none,
+          // user adds it on the new tree.
+          maidenName: "Петрова",
+        }),
+      },
+    );
+    assert.equal(overriddenPersonResponse.status, 201);
+    const overriddenPerson = (await overriddenPersonResponse.json()).person;
+    assert.equal(overriddenPerson.maidenName, "Петрова");
+    assert.equal(overriddenPerson.identityId, linkedPerson.identityId);
+
+    // 7. Bogus sourcePersonId silently drops the link — never
+    //    blocks the create. We don't want to reveal the existence
+    //    of inaccessible records via 404, and we don't want to
+    //    fail the create just because the client cached a stale
+    //    person id.
+    const bogusLinkResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeTwoId}/persons`,
+      {
+        method: "POST",
+        headers: ownerHeaders,
+        body: JSON.stringify({
+          firstName: "Никита",
+          sourcePersonId: "person-that-does-not-exist",
+        }),
+      },
+    );
+    assert.equal(bogusLinkResponse.status, 201);
+    const bogusLinkPerson = (await bogusLinkResponse.json()).person;
+    assert.equal(bogusLinkPerson.name, "Никита");
+    // No identity link — record stands on its own.
+    assert.notEqual(bogusLinkPerson.identityId, linkedPerson.identityId);
+
+    // 8. Cannot link to a person on a tree the caller can't see —
+    //    same silent-drop behavior. Privacy: don't surface that
+    //    such a person exists.
+    const crossUserLinkResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeTwoId}/persons`,
+      {
+        method: "POST",
+        headers: ownerHeaders,
+        body: JSON.stringify({
+          firstName: "Серж",
+          sourcePersonId: strangerRelative.id,
+        }),
+      },
+    );
+    assert.equal(crossUserLinkResponse.status, 201);
+    const crossUserLinkPerson = (await crossUserLinkResponse.json()).person;
+    assert.equal(crossUserLinkPerson.name, "Серж");
+    // Identity should NOT be the stranger's identity.
+    const strangerSnapshot = await ctx.store._read();
+    const strangerRelativeAfter = strangerSnapshot.persons.find(
+      (entry) => entry.id === strangerRelative.id,
+    );
+    if (strangerRelativeAfter.identityId) {
+      assert.notEqual(
+        crossUserLinkPerson.identityId,
+        strangerRelativeAfter.identityId,
+        "cross-user identity link must be silently rejected",
+      );
+    }
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
 test("cross-tree merge proposals expose only safe previews and require reviewer consensus", async () => {
   const ctx = await startTestServer();
 

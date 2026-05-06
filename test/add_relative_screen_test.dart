@@ -3,9 +3,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
 import 'package:rodnya/backend/interfaces/auth_service_interface.dart';
+import 'package:rodnya/backend/interfaces/cross_tree_person_search_capable_family_tree_service.dart';
 import 'package:rodnya/backend/interfaces/family_tree_service_interface.dart';
 import 'package:rodnya/backend/interfaces/profile_service_interface.dart';
 import 'package:rodnya/backend/interfaces/storage_service_interface.dart';
+import 'package:rodnya/backend/models/cross_tree_person_suggestion.dart';
 import 'package:rodnya/models/family_person.dart';
 import 'package:rodnya/models/family_relation.dart';
 import 'package:rodnya/models/tree_change_record.dart';
@@ -567,4 +569,215 @@ void main() {
     expect(find.text('Бабушка'), findsWidgets);
     expect(find.text('Внучка'), findsNothing);
   });
+
+  // Phase 0 cross-tree picker tests. The picker section appears
+  // ONLY when the registered FamilyTreeServiceInterface also
+  // implements CrossTreePersonSearchCapableFamilyTreeService — so a
+  // service that doesn't can opt out of the feature entirely.
+  group('Cross-tree person picker (Phase 0)', () {
+    testWidgets(
+      'is hidden when the service does not implement the search capability',
+      (tester) async {
+        // Default _FakeFamilyTreeService DOES NOT implement the
+        // search capability; the picker should not surface.
+        final router = GoRouter(
+          routes: [
+            GoRoute(
+              path: '/add',
+              builder: (context, state) =>
+                  const AddRelativeScreen(treeId: 'tree-1'),
+            ),
+          ],
+          initialLocation: '/add',
+        );
+
+        await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+        await tester.pumpAndSettle();
+
+        expect(find.text('Из моих других деревьев'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'expands on tap, runs a search, lists results and pre-fills form on pick',
+      (tester) async {
+        final searchableService = _SearchCapableFakeFamilyTreeService(
+          results: [
+            const CrossTreePersonSuggestion(
+              id: 'mama-on-tree-1',
+              treeId: 'tree-99',
+              treeName: 'Семья',
+              displayName: 'Кузнецова Анна Петровна',
+              gender: 'female',
+              birthDate: '1965-03-12T00:00:00.000Z',
+            ),
+          ],
+        );
+        await getIt.unregister<FamilyTreeServiceInterface>();
+        getIt.registerSingleton<FamilyTreeServiceInterface>(searchableService);
+
+        final router = GoRouter(
+          routes: [
+            GoRoute(
+              path: '/add',
+              builder: (context, state) =>
+                  const AddRelativeScreen(treeId: 'tree-2'),
+            ),
+          ],
+          initialLocation: '/add',
+        );
+
+        await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+        await tester.pumpAndSettle();
+
+        // Picker header is visible but collapsed by default — the
+        // form below stays the primary path for users with one tree.
+        expect(find.text('Из моих других деревьев'), findsOneWidget);
+        expect(find.byIcon(Icons.expand_more), findsOneWidget);
+
+        await tester.tap(find.text('Из моих других деревьев'));
+        await tester.pump(); // expansion animation tick
+        await tester.pump(const Duration(milliseconds: 260)); // debounce
+        await tester.pumpAndSettle();
+
+        // Empty-query auto-fetch fires once on first expand → result
+        // row renders with name + tree origin.
+        expect(searchableService.searchCallCount, greaterThan(0));
+        expect(find.text('Кузнецова Анна Петровна'), findsOneWidget);
+        expect(find.textContaining('Из «Семья»'), findsOneWidget);
+
+        // Tap the row → form pre-fills + picker collapses + linked
+        // chip appears with tree name.
+        await tester.tap(find.text('Кузнецова Анна Петровна'));
+        await tester.pumpAndSettle();
+
+        expect(
+          find.textContaining('Связан с человеком из «Семья»'),
+          findsOneWidget,
+        );
+        // Form-field controllers were populated. We don't have a
+        // direct getter, but the surname text-field hint disappears
+        // because Flutter renders the actual text on top — find the
+        // "Кузнецова" inside the form by looking past the chip.
+        final allKuznetsova = find.text('Кузнецова');
+        expect(allKuznetsova, findsWidgets);
+      },
+    );
+
+    testWidgets(
+      'X on the linked chip clears the source link without wiping the form',
+      (tester) async {
+        final searchableService = _SearchCapableFakeFamilyTreeService(
+          results: [
+            const CrossTreePersonSuggestion(
+              id: 'p1',
+              treeId: 't1',
+              treeName: 'Дерево',
+              displayName: 'Иванов Иван',
+              gender: 'male',
+            ),
+          ],
+        );
+        await getIt.unregister<FamilyTreeServiceInterface>();
+        getIt.registerSingleton<FamilyTreeServiceInterface>(searchableService);
+
+        final router = GoRouter(
+          routes: [
+            GoRoute(
+              path: '/add',
+              builder: (context, state) =>
+                  const AddRelativeScreen(treeId: 'tree-2'),
+            ),
+          ],
+          initialLocation: '/add',
+        );
+
+        await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.text('Из моих других деревьев'));
+        await tester.pump(const Duration(milliseconds: 260));
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.text('Иванов Иван'));
+        await tester.pumpAndSettle();
+
+        expect(
+          find.textContaining('Связан с человеком'),
+          findsOneWidget,
+        );
+
+        // Click "Отвязать" — the IconButton with tooltip.
+        await tester.tap(find.byTooltip('Отвязать'));
+        await tester.pumpAndSettle();
+
+        expect(
+          find.textContaining('Связан с человеком'),
+          findsNothing,
+        );
+        // Picker is back, form fields are NOT cleared (we only
+        // strip the link, not the data — user might still want it).
+        expect(find.text('Из моих других деревьев'), findsOneWidget);
+      },
+    );
+  });
+}
+
+/// Fake that implements both the standard tree service and the
+/// Phase 0 cross-tree search capability — used to verify that the
+/// picker section appears + functions when the capability is
+/// available.
+class _SearchCapableFakeFamilyTreeService implements
+    FamilyTreeServiceInterface,
+    CrossTreePersonSearchCapableFamilyTreeService {
+  _SearchCapableFakeFamilyTreeService({required this.results});
+
+  final List<CrossTreePersonSuggestion> results;
+
+  int searchCallCount = 0;
+  String? lastQuery;
+  String? lastExcludeTreeId;
+
+  /// Records the last call so we can assert behavior on it.
+  Map<String, dynamic>? lastAddRelativeData;
+
+  @override
+  Future<List<FamilyPerson>> getRelatives(String treeId) async => const [];
+
+  @override
+  Future<String> addRelative(String treeId, Map<String, dynamic> personData) {
+    lastAddRelativeData = personData;
+    return Future.value('person-1');
+  }
+
+  @override
+  Future<List<TreeChangeRecord>> getTreeHistory({
+    required String treeId,
+    String? personId,
+    String? type,
+    String? actorId,
+  }) async {
+    return const [];
+  }
+
+  @override
+  Future<List<CrossTreePersonSuggestion>> searchPersonsAcrossOwnTrees({
+    required String query,
+    String? excludeTreeId,
+    int limit = 20,
+  }) async {
+    searchCallCount += 1;
+    lastQuery = query;
+    lastExcludeTreeId = excludeTreeId;
+    if (query.isEmpty) return results;
+    final lowered = query.toLowerCase();
+    return results
+        .where(
+          (entry) => entry.displayName.toLowerCase().contains(lowered),
+        )
+        .toList();
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:image_picker/image_picker.dart';
@@ -6,9 +8,11 @@ import '../models/family_relation.dart';
 import 'package:go_router/go_router.dart';
 import 'package:get_it/get_it.dart';
 import '../backend/interfaces/auth_service_interface.dart';
+import '../backend/interfaces/cross_tree_person_search_capable_family_tree_service.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
 import '../backend/interfaces/profile_service_interface.dart';
 import '../backend/interfaces/storage_service_interface.dart';
+import '../backend/models/cross_tree_person_suggestion.dart';
 import '../utils/user_facing_error.dart';
 import '../widgets/custom_relation_label_dialog.dart';
 import '../widgets/tree_history_sheet.dart';
@@ -134,6 +138,26 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
   RelationType? _contextRelationType;
   bool _isLoadingContext = false;
   bool _isQuickAddMode = false;
+
+  // Phase 0 cross-tree picker state. When the user picks an existing
+  // relative from another of their trees, [_sourcePersonId] holds
+  // that person's id. We forward it on save → the backend pre-fills
+  // any blank fields from the source AND shares an `identityId`
+  // between the two records, so the unified-graph migration in
+  // Phase 1 can later turn this hint into edit propagation.
+  //
+  // Search state is debounced 250 ms — typing "Анна" doesn't fire
+  // four round trips, only the final one.
+  final TextEditingController _otherTreesSearchController =
+      TextEditingController();
+  String? _sourcePersonId;
+  String? _sourcePersonTreeName;
+  Timer? _otherTreesSearchDebounce;
+  String _otherTreesSearchQuery = '';
+  List<CrossTreePersonSuggestion> _otherTreesSearchResults =
+      const <CrossTreePersonSuggestion>[];
+  bool _isSearchingOtherTrees = false;
+  bool _otherTreesPickerExpanded = false;
 
   void _updateSectionState(VoidCallback update) {
     setState(update);
@@ -513,6 +537,14 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
           'birthPlace': _birthPlaceController.text.trim(),
           'familySummary': _bioController.text.trim(),
           if (details.isNotEmpty) 'details': details,
+          // Phase 0 unified-graph hint: when the user picked an
+          // existing relative from one of their other trees via
+          // the cross-tree picker, we forward that id so the
+          // backend shares an `identityId` between the two records
+          // → "same human across trees" without dedup popups.
+          // Only attach on create — editing keeps existing identity.
+          if (!widget.isEditing && _sourcePersonId != null)
+            'sourcePersonId': _sourcePersonId,
         };
 
         // Добавляем даты, если они указаны
@@ -939,6 +971,16 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
                     if (!widget.isEditing && _canUseQuickAddLoop) ...[
                       _buildQuickAddToolbar(),
                       SizedBox(height: 24),
+                    ],
+
+                    // Phase 0: cross-tree picker — surfaces relatives
+                    // the user already entered on any of their other
+                    // trees. Hidden in edit mode (handled inside the
+                    // builder) so the section doesn't crowd the
+                    // editing UI.
+                    if (!widget.isEditing) ...[
+                      _buildOtherTreesPickerCard(),
+                      SizedBox(height: 16),
                     ],
 
                     _buildEditorModeCard(),
@@ -1483,5 +1525,91 @@ class _QuickInfoChip extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+/// One row in the Phase 0 cross-tree person picker — name + tree
+/// origin + small avatar. Tap pre-fills the form fields and stamps
+/// `sourcePersonId` so the create POST shares an `identityId` with
+/// the source. See `_buildOtherTreesPickerCard` for the host.
+class _OtherTreesPickerRow extends StatelessWidget {
+  const _OtherTreesPickerRow({
+    required this.suggestion,
+    required this.onTap,
+  });
+
+  final CrossTreePersonSuggestion suggestion;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    final initials = _buildInitials(suggestion.displayName);
+
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 6),
+        child: Row(
+          children: [
+            CircleAvatar(
+              radius: 20,
+              backgroundImage: suggestion.photoUrl != null
+                  ? NetworkImage(suggestion.photoUrl!)
+                  : null,
+              backgroundColor: scheme.surfaceContainerHighest,
+              child: suggestion.photoUrl == null
+                  ? Text(
+                      initials,
+                      style: TextStyle(
+                        color: scheme.onSurfaceVariant,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    )
+                  : null,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    suggestion.displayName,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    suggestion.treeName.isNotEmpty
+                        ? 'Из «${suggestion.treeName}»'
+                        : 'Из другого дерева',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+            Icon(Icons.add_link, color: scheme.primary, size: 20),
+          ],
+        ),
+      ),
+    );
+  }
+
+  static String _buildInitials(String fullName) {
+    final parts =
+        fullName.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty);
+    if (parts.isEmpty) return '?';
+    final letters = parts.take(2).map((part) => part[0].toUpperCase());
+    return letters.join();
   }
 }

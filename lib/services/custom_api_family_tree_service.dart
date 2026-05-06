@@ -4,10 +4,12 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../backend/backend_runtime_config.dart';
+import '../backend/interfaces/cross_tree_person_search_capable_family_tree_service.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
 import '../backend/interfaces/identity_duplicate_capable_family_tree_service.dart';
 import '../backend/interfaces/profile_service_interface.dart';
 import '../backend/interfaces/tree_graph_capable_family_tree_service.dart';
+import '../backend/models/cross_tree_person_suggestion.dart';
 import '../backend/models/selectable_tree.dart';
 import '../backend/models/tree_invitation.dart';
 import '../models/family_person.dart';
@@ -27,7 +29,8 @@ class CustomApiFamilyTreeService
     implements
         FamilyTreeServiceInterface,
         TreeGraphCapableFamilyTreeService,
-        IdentityDuplicateCapableFamilyTreeService {
+        IdentityDuplicateCapableFamilyTreeService,
+        CrossTreePersonSearchCapableFamilyTreeService {
   CustomApiFamilyTreeService({
     required CustomApiAuthService authService,
     required BackendRuntimeConfig runtimeConfig,
@@ -109,6 +112,55 @@ class CustomApiFamilyTreeService
     }
     await _cachePersons(relatives);
     return relatives;
+  }
+
+  /// Phase 0 cross-tree picker: surface relatives the user already
+  /// entered on any of their other trees so they don't have to
+  /// re-key the same human when starting a new tree. The Flutter
+  /// add-relative screen calls this from a debounced text-field as
+  /// the user types — pass [excludeTreeId] to keep the suggestions
+  /// from including persons already on the tree being edited.
+  ///
+  /// On the picker, a tapped suggestion's [CrossTreePersonSuggestion.id]
+  /// becomes the `sourcePersonId` on the create-person POST — the
+  /// backend then shares an identityId between source and target so
+  /// future Phase 1 work can propagate edits across trees.
+  @override
+  Future<List<CrossTreePersonSuggestion>> searchPersonsAcrossOwnTrees({
+    required String query,
+    String? excludeTreeId,
+    int limit = 20,
+  }) async {
+    final params = <String, String>{};
+    final trimmedQuery = query.trim();
+    if (trimmedQuery.isNotEmpty) {
+      params['q'] = trimmedQuery;
+    }
+    if (excludeTreeId != null && excludeTreeId.isNotEmpty) {
+      params['excludeTreeId'] = excludeTreeId;
+    }
+    if (limit > 0) {
+      params['limit'] = limit.toString();
+    }
+
+    final path = params.isEmpty
+        ? '/v1/persons/search'
+        : _buildPathWithQuery('/v1/persons/search', params);
+
+    final response = await _requestJson(
+      method: 'GET',
+      path: path,
+    );
+
+    final raw = response['persons'];
+    if (raw is! List) {
+      return const <CrossTreePersonSuggestion>[];
+    }
+    return raw
+        .whereType<Map>()
+        .map((entry) => Map<String, dynamic>.from(entry))
+        .map(CrossTreePersonSuggestion.fromJson)
+        .toList(growable: false);
   }
 
   @override

@@ -137,6 +137,63 @@ function registerTreeRoutes(
     });
   });
 
+  // Phase 0 of unified-graph migration: cross-tree person search.
+  // The Flutter add-relative screen calls this from a debounced
+  // textfield as the user types — surfaces relatives they ALREADY
+  // entered on any of their other trees so they don't have to
+  // re-key the same human. Picking a result on the client side
+  // pre-fills the form, stamps `sourcePersonId` into the create
+  // payload, and the server then shares an identityId between the
+  // two records (Phase 1 turns this into full edit propagation).
+  //
+  // Strict per-user scope: only walks the caller's accessible
+  // trees (creator + member), never anyone else's. Future Phase 4
+  // adds a separate opt-in social-discovery endpoint with explicit
+  // consent — that's a different problem and a different route.
+  app.get("/v1/persons/search", requireAuth, async (req, res) => {
+    const rawQuery = req.query?.q;
+    const query = typeof rawQuery === "string" ? rawQuery : "";
+    if (query.length > 200) {
+      // Defense in depth — `searchPersonsForUser` already does a
+      // bounded substring scan, but pathological queries deserve
+      // an early reject so we don't tie up the libuv thread on a
+      // 1MB needle. Real names don't get this long.
+      res.status(400).json({message: "Слишком длинный запрос"});
+      return;
+    }
+
+    const excludeTreeId = req.query?.excludeTreeId;
+    const limitRaw = Number(req.query?.limit);
+    const limit = Number.isFinite(limitRaw) && limitRaw > 0
+      ? Math.min(limitRaw, 50)
+      : 20;
+
+    const persons = await store.searchPersonsForUser({
+      userId: req.auth.user.id,
+      query,
+      excludeTreeId:
+        typeof excludeTreeId === "string" ? excludeTreeId : null,
+      limit,
+    });
+
+    res.json({
+      // Trim to the lightweight summary shape — the picker only
+      // needs name + photo + tree name to render. Full Person
+      // payload is fetched on demand via /v1/trees/:id/persons/:id
+      // when the user actually picks. Keeps this hot path tiny
+      // even for users with many trees / hundreds of persons.
+      persons: persons.map((person) => ({
+        id: person.id,
+        treeId: person.treeId,
+        treeName: person.treeName || "",
+        displayName: person.name || "",
+        photoUrl: person.primaryPhotoUrl || person.photoUrl || null,
+        birthDate: person.birthDate || null,
+        gender: person.gender || "unknown",
+      })),
+    });
+  });
+
   app.get("/v1/trees/:treeId/persons", requireAuth, async (req, res) => {
     const tree = await requireTreeAccess(req, res, req.params.treeId);
     if (!tree) {
@@ -190,11 +247,24 @@ function registerTreeRoutes(
       return;
     }
 
+    // Phase 0 cross-tree picker: optional `sourcePersonId` on the
+    // body lets the client say "this is the same human as person
+    // X on one of my other trees". The store enforces access (the
+    // source must live in a tree the caller can reach), so a
+    // forged ID can't leak data — it's just dropped. We pass the
+    // raw value through; the store does the access check.
+    const sourcePersonIdRaw = req.body?.sourcePersonId;
+    const sourcePersonId =
+      typeof sourcePersonIdRaw === "string" && sourcePersonIdRaw.trim()
+        ? sourcePersonIdRaw.trim()
+        : null;
+
     const person = await store.createPerson({
       treeId: tree.id,
       creatorId: req.auth.user.id,
       userId: requestedUserId || null,
       personData: req.body || {},
+      sourcePersonId,
     });
 
     if (!person) {

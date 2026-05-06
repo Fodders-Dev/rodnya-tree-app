@@ -4448,6 +4448,62 @@ function buildPersonRecord({
   };
 }
 
+// Phase 0 cross-tree picker: when a user picks an existing relative
+// from one of their other trees, the new person record on the
+// target tree pre-fills any fields the caller didn't supply with
+// values from the source. Caller-supplied fields always win — we
+// only fill blanks. This is a CONSERVATIVE merge: we only forward
+// fields that describe the human (name, birth, photos, gender),
+// never tree-local stuff (visibility, notes), since those are a
+// per-tree editorial decision.
+function mergePersonDataFromSource(personData, sourcePerson) {
+  if (!sourcePerson) {
+    return personData;
+  }
+  const merged = {...personData};
+
+  function fillIfBlank(field) {
+    const supplied = merged[field];
+    const isBlank =
+      supplied === undefined ||
+      supplied === null ||
+      (typeof supplied === "string" && supplied.trim() === "");
+    if (isBlank && sourcePerson[field] != null && sourcePerson[field] !== "") {
+      merged[field] = sourcePerson[field];
+    }
+  }
+
+  // Source persons store a composed `name` (no separate firstName /
+  // lastName / middleName), so forwarding the composed name is the
+  // correct fallback — fullNameFromPersonInput consumes either form.
+  const callerProvidedAnyNamePart =
+    Boolean(merged.firstName) ||
+    Boolean(merged.lastName) ||
+    Boolean(merged.middleName) ||
+    Boolean(merged.name);
+  if (!callerProvidedAnyNamePart && sourcePerson.name) {
+    merged.name = sourcePerson.name;
+  }
+
+  fillIfBlank("maidenName");
+  fillIfBlank("gender");
+  fillIfBlank("birthDate");
+  fillIfBlank("birthPlace");
+  fillIfBlank("deathDate");
+  fillIfBlank("deathPlace");
+  fillIfBlank("photoUrl");
+  fillIfBlank("primaryPhotoUrl");
+  if (
+    !merged.photoGallery &&
+    Array.isArray(sourcePerson.photoGallery) &&
+    sourcePerson.photoGallery.length > 0
+  ) {
+    merged.photoGallery = sourcePerson.photoGallery;
+  }
+
+  return merged;
+}
+
 function createPersonIdentityRecord({
   id = crypto.randomUUID(),
   userId = null,
@@ -7317,6 +7373,96 @@ class FileStore {
     return person ? buildCanonicalPersonView(db, person) : null;
   }
 
+  // Phase 0 of the unified-graph migration: when the user adds a
+  // relative on tree T2, surface relatives they ALREADY entered on
+  // any of their other trees so they don't have to re-type the same
+  // person. The picker calls this with a name fragment; we walk the
+  // user's accessible trees and rank persons by:
+  //   1. Whether the person's tree is the currently-open one
+  //      (excluded entirely — caller passes excludeTreeId so the
+  //      picker doesn't suggest someone already on this tree).
+  //   2. Substring match against displayName (case-insensitive).
+  // Limit defaults to 20 — UI only shows ~6 at a time, but we
+  // overfetch so the user can keep typing without round-tripping.
+  //
+  // Privacy: scoped to the caller's accessible trees only. We never
+  // leak other users' graphs through this endpoint — that's a
+  // future Phase 4 feature with explicit consent.
+  async searchPersonsForUser({
+    userId,
+    query = "",
+    excludeTreeId = null,
+    limit = 20,
+  } = {}) {
+    const db = await this._read();
+    const normalizedUserId = normalizeNullableString(userId);
+    if (!normalizedUserId) {
+      return [];
+    }
+
+    const accessibleTrees = db.trees.filter((tree) =>
+      this._userCanAccessTreeRecord(tree, normalizedUserId),
+    );
+    if (accessibleTrees.length === 0) {
+      return [];
+    }
+
+    const treeById = new Map(accessibleTrees.map((tree) => [tree.id, tree]));
+    const normalizedExcludeTreeId = normalizeNullableString(excludeTreeId);
+    const trimmedQuery = String(query || "").trim().toLowerCase();
+    const safeLimit = Math.min(
+      Math.max(Number(limit) || 20, 1),
+      50,
+    );
+
+    const matches = [];
+    for (const person of db.persons) {
+      if (!treeById.has(person.treeId)) {
+        continue;
+      }
+      if (
+        normalizedExcludeTreeId &&
+        person.treeId === normalizedExcludeTreeId
+      ) {
+        continue;
+      }
+
+      const haystack = String(person.name || "").toLowerCase();
+      if (trimmedQuery && !haystack.includes(trimmedQuery)) {
+        continue;
+      }
+
+      matches.push({
+        person,
+        tree: treeById.get(person.treeId),
+        // Names that START with the query rank before mid-string
+        // matches — closer to how iOS/Android contacts pickers feel.
+        rank: trimmedQuery && haystack.startsWith(trimmedQuery) ? 0 : 1,
+      });
+
+      if (matches.length >= safeLimit * 4) {
+        // Cap the inner walk so pathological queries (huge graph,
+        // empty query) don't hold the event loop. We still pick the
+        // best `safeLimit` after sort; the rest get dropped.
+        break;
+      }
+    }
+
+    matches.sort((left, right) => {
+      if (left.rank !== right.rank) {
+        return left.rank - right.rank;
+      }
+      return String(left.person.name || "").localeCompare(
+        String(right.person.name || ""),
+      );
+    });
+
+    return matches.slice(0, safeLimit).map(({person, tree}) => ({
+      ...buildCanonicalPersonView(db, person),
+      treeName: tree.name || "",
+    }));
+  }
+
   async getPersonDossier(treeId, personId) {
     const db = await this._read();
     const person = db.persons.find(
@@ -8052,6 +8198,7 @@ class FileStore {
     creatorId,
     personData,
     userId = null,
+    sourcePersonId = null,
   }) {
     const db = await this._read();
     const tree = db.trees.find((entry) => entry.id === treeId);
@@ -8080,11 +8227,72 @@ class FileStore {
       }
     }
 
-    const canonicalIdentity = userId ? this._ensureUserIdentity(db, userId) : null;
+    // Phase 0 cross-tree picker: if the caller picked an existing
+    // relative from one of their other trees, we (a) ensure the
+    // source has a PersonIdentity (creating one if it didn't),
+    // and (b) inherit that identityId onto the new person so they
+    // are correlated as "the same human" across trees. Phase 1
+    // turns this hint into full edit-propagation; for now it just
+    // tags the relationship.
+    //
+    // sourcePersonId is RESOLVED here, not at the route layer, so
+    // a malicious client can't forge an identityId — the source
+    // must live in a tree the caller has access to. The route
+    // layer is responsible for that access check before calling.
+    let sourcePerson = null;
+    if (sourcePersonId) {
+      sourcePerson = db.persons.find(
+        (entry) => entry.id === sourcePersonId,
+      ) || null;
+      if (sourcePerson) {
+        const sourceTree = db.trees.find(
+          (entry) => entry.id === sourcePerson.treeId,
+        );
+        if (
+          !sourceTree ||
+          !this._userCanAccessTreeRecord(sourceTree, creatorId)
+        ) {
+          // Don't surface the existence of inaccessible persons —
+          // treat as "source unknown" and proceed without the link.
+          sourcePerson = null;
+        }
+      }
+    }
+
+    let canonicalIdentity = userId ? this._ensureUserIdentity(db, userId) : null;
+    if (!canonicalIdentity && sourcePerson) {
+      // Source has an identity already → reuse it. Otherwise
+      // create a fresh PersonIdentity record and attach BOTH the
+      // source and the new person to it, so they share a canonical
+      // node in the unified graph.
+      const identities = this._ensurePersonIdentityCollection(db);
+      const existingIdentity = sourcePerson.identityId
+        ? identities.find((entry) => entry.id === sourcePerson.identityId)
+        : null;
+      if (existingIdentity) {
+        canonicalIdentity = existingIdentity;
+      } else {
+        canonicalIdentity = createPersonIdentityRecord({
+          personIds: [sourcePerson.id],
+        });
+        identities.push(canonicalIdentity);
+        sourcePerson.identityId = canonicalIdentity.id;
+        sourcePerson.updatedAt = nowIso();
+      }
+    }
+
+    // Pre-fill any fields the caller didn't supply from the source
+    // record, so the picker can drop a partial `personData` and
+    // still get a fully-populated relative. Caller-supplied fields
+    // always win — no overwrites of user intent.
+    const mergedPersonData = sourcePerson
+      ? mergePersonDataFromSource(personData, sourcePerson)
+      : personData;
+
     const person = buildPersonRecord({
       treeId,
       creatorId,
-      personData,
+      personData: mergedPersonData,
       userId,
       identityId: canonicalIdentity?.id || null,
     });
