@@ -98,6 +98,12 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
   String? _branchRootPersonId;
   String? _selectedPersonSheetId;
   String? _selectedEditPersonId;
+  // After a successful blank-card creation we set this to the new
+  // person's id; the InteractiveFamilyTree picks it up via
+  // `recenterOnPersonId` and snaps the viewport to center on the
+  // newly-dropped card. Without this the user can lose the card
+  // when zoomed into another branch.
+  String? _recenterOnPersonIdAfterReload;
   // Reference design pattern: bottom sheet starts collapsed (peek bar with
   // avatar + name + meta + chevron) and expands on tap to reveal action row
   // and full info. Reset to collapsed whenever selection changes.
@@ -828,7 +834,14 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
     final treeId = _currentTreeId;
     if (treeId == null) return;
     try {
-      await _familyService.addRelative(treeId, personData);
+      // addRelative returns the new person id — we capture it so
+      // the tree can auto-center on the new card after the
+      // reload (nice UX detail: without this, a freshly-created
+      // orphan ends up wherever the layout engine puts it,
+      // possibly off-screen if the user is zoomed into another
+      // branch).
+      final newPersonId =
+          await _familyService.addRelative(treeId, personData);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -836,6 +849,13 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
           duration: const Duration(seconds: 3),
         ),
       );
+      // Stamp the recenter id BEFORE the reload — when _loadData
+      // sets peopleData the InteractiveFamilyTree's didUpdateWidget
+      // sees both the new data + the new recenter target in one
+      // pass and schedules the focus once layout is recomputed.
+      setState(() {
+        _recenterOnPersonIdAfterReload = newPersonId;
+      });
       await _loadData(treeId);
     } catch (error) {
       if (!mounted) return;

@@ -2585,6 +2585,110 @@ void main() {
     );
 
     testWidgets(
+      'recenterOnPersonId triggers _focusOnPerson via TransformationController',
+      (tester) async {
+        tester.view.physicalSize = const Size(1400, 1000);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(() => tester.view.reset());
+
+        final personA = FamilyPerson(
+          id: 'person-a',
+          treeId: 'tree-1',
+          name: 'Анна',
+          gender: Gender.female,
+          isAlive: true,
+          createdAt: DateTime(2024, 1, 1),
+          updatedAt: DateTime(2024, 1, 1),
+        );
+        final personB = FamilyPerson(
+          id: 'person-b',
+          treeId: 'tree-1',
+          name: 'Борис',
+          gender: Gender.male,
+          isAlive: true,
+          createdAt: DateTime(2024, 1, 1),
+          updatedAt: DateTime(2024, 1, 1),
+        );
+
+        // Stabilize peopleData / relations across rebuilds so the
+        // tree's didUpdateWidget doesn't see them as "changed" and
+        // recompute layout (which would reset the transform we're
+        // trying to assert on).
+        final stablePeopleData = [
+          {'person': personA, 'userProfile': null},
+          {'person': personB, 'userProfile': null},
+        ];
+        const stableRelations = <FamilyRelation>[];
+
+        Widget buildTree(String? recenterId) => MaterialApp(
+              home: Scaffold(
+                body: InteractiveFamilyTree(
+                  peopleData: stablePeopleData,
+                  relations: stableRelations,
+                  onPersonTap: (_) {},
+                  isEditMode: false,
+                  onAddRelativeTapWithType: (_, __) {},
+                  currentUserIsInTree: false,
+                  onAddSelfTapWithType: (_, __) async {},
+                  recenterOnPersonId: recenterId,
+                  currentUserId: 'user-1',
+                ),
+              ),
+            );
+
+        // Initial mount with no recenter — viewport sits in
+        // whatever default state the layout engine produces.
+        await tester.pumpWidget(buildTree(null));
+        await tester.pumpAndSettle();
+
+        // Capture the initial transformation matrix so we can
+        // detect a change. We don't pin its exact value — the
+        // layout engine's output depends on the viewport size and
+        // could change with future polish — we just verify that
+        // setting recenterOnPersonId DOES move the viewport.
+        final viewerWidgetBefore =
+            tester.widget<InteractiveViewer>(find.byType(InteractiveViewer));
+        final controllerBefore =
+            viewerWidgetBefore.transformationController!.value.clone();
+
+        // Now rebuild with recenterOnPersonId set to person-b.
+        // The tree's didUpdateWidget should schedule a post-frame
+        // _focusOnPerson which mutates the TransformationController.
+        await tester.pumpWidget(buildTree('person-b'));
+        await tester.pumpAndSettle();
+
+        final viewerWidgetAfter =
+            tester.widget<InteractiveViewer>(find.byType(InteractiveViewer));
+        final controllerAfter =
+            viewerWidgetAfter.transformationController!.value;
+
+        expect(
+          controllerAfter == controllerBefore,
+          isFalse,
+          reason:
+              'Setting recenterOnPersonId should move the viewport via _focusOnPerson',
+        );
+
+        // Setting the SAME id again is a no-op (only fires on
+        // change). We use that to make sure rebuilds with the
+        // same prop value don't keep re-centering — important
+        // because tree_view_screen leaves the prop in place
+        // after the initial set.
+        final controllerStable = controllerAfter.clone();
+        await tester.pumpWidget(buildTree('person-b'));
+        await tester.pumpAndSettle();
+        final viewerWidgetAgain =
+            tester.widget<InteractiveViewer>(find.byType(InteractiveViewer));
+        expect(
+          viewerWidgetAgain.transformationController!.value ==
+              controllerStable,
+          isTrue,
+          reason: 'Same recenterOnPersonId should not re-trigger focus',
+        );
+      },
+    );
+
+    testWidgets(
       'blank-card dialog cancel → callback NOT called, dialog closes',
       (tester) async {
         bool wasCalled = false;

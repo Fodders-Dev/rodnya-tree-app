@@ -53,6 +53,19 @@ class InteractiveFamilyTree extends StatefulWidget {
     RelationType relation1to2,
   )? onConnectExistingPersons;
 
+  /// Auto-recenter trigger. When this prop's value CHANGES to a
+  /// non-null person id, the tree animates / snaps the viewport to
+  /// center that person on the next frame. Used after creating a
+  /// new card via [onAddBlankPerson] so the user always sees where
+  /// it landed (otherwise a freshly-created orphan can appear off-
+  /// viewport when the user is zoomed into another branch).
+  ///
+  /// Only triggers on change — passing the same id twice does
+  /// nothing. The host sets it once after a successful create,
+  /// the tree consumes it via didUpdateWidget, and the host can
+  /// leave it in place; it won't keep firing.
+  final String? recenterOnPersonId;
+
   /// Blank-card creator: lets the user drop a person on the canvas
   /// without specifying any relation up front. The user fills name
   /// + gender in a small dialog (NOT the legacy form), the host
@@ -126,6 +139,7 @@ class InteractiveFamilyTree extends StatefulWidget {
     required this.onAddSelfTapWithType, // Делаем обязательным
     this.onConnectExistingPersons,
     this.onAddBlankPerson,
+    this.recenterOnPersonId,
     this.currentUserId,
     this.branchRootPersonId,
     this.selectedPersonId,
@@ -351,6 +365,30 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
     if (oldWidget.selectedPersonId != widget.selectedPersonId ||
         oldWidget.relations != widget.relations) {
       _activePathPersonIds = _computeActivePath(widget.selectedPersonId);
+    }
+
+    // Auto-recenter trigger from the host. Used after the user
+    // creates a fresh blank card via the "+" FAB so they always
+    // see where it landed — without this, a freshly-created
+    // orphan can end up off-viewport when the user is zoomed
+    // into another branch.
+    //
+    // Only fires on CHANGE: passing the same id twice in a row is
+    // a no-op, so the host can leave the prop in place after the
+    // first set without causing repeated re-centers on every
+    // unrelated rebuild.
+    final pendingRecenterId = widget.recenterOnPersonId;
+    if (pendingRecenterId != null &&
+        pendingRecenterId.isNotEmpty &&
+        pendingRecenterId != oldWidget.recenterOnPersonId) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        // _calculateLayout has already run synchronously by the
+        // time this post-frame callback fires (didUpdateWidget
+        // recomputes layout above when peopleData changes), so
+        // nodePositions is populated for the new card.
+        _focusOnPerson(pendingRecenterId);
+      });
     }
   }
 
