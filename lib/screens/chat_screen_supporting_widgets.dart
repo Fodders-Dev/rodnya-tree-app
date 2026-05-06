@@ -1002,11 +1002,21 @@ class _AttachmentImage extends StatelessWidget {
       return fallback;
     }
 
-    return CachedNetworkImage(
-      imageUrl: normalizedUrl!,
-      fit: fit,
-      placeholder: placeholder == null ? null : (_, __) => placeholder!,
-      errorWidget: (_, __, ___) => fallback,
+    return Semantics(
+      // a11y: TalkBack/VoiceOver previously announced just "Image"
+      // which is useless. "Изображение в сообщении" tells the user
+      // what kind of media they're focused on. Future improvement:
+      // surface alt-text from the attachment metadata when the
+      // backend supports it.
+      label: 'Изображение в сообщении',
+      image: true,
+      excludeSemantics: true,
+      child: CachedNetworkImage(
+        imageUrl: normalizedUrl!,
+        fit: fit,
+        placeholder: placeholder == null ? null : (_, __) => placeholder!,
+        errorWidget: (_, __, ___) => fallback,
+      ),
     );
   }
 }

@@ -531,15 +531,26 @@ class _LightboxPhotoPage extends StatelessWidget {
       );
     }
 
-    final image = CachedNetworkImage(
-      imageUrl: url,
-      fit: BoxFit.contain,
-      placeholder: (_, __) => const Center(
-        child: CircularProgressIndicator(color: Colors.white70),
-      ),
-      errorWidget: (_, __, ___) => const Center(
-        child: Icon(Icons.broken_image_outlined,
-            color: Colors.white54, size: 48),
+    // a11y: announce caption (sender / date / "1 / 5") rather than
+    // the bare "Image" TalkBack default. Falls back to "Изображение"
+    // when the lightbox item carries no caption.
+    final caption = item.caption?.trim();
+    final image = Semantics(
+      label: caption != null && caption.isNotEmpty
+          ? caption
+          : 'Изображение',
+      image: true,
+      excludeSemantics: true,
+      child: CachedNetworkImage(
+        imageUrl: url,
+        fit: BoxFit.contain,
+        placeholder: (_, __) => const Center(
+          child: CircularProgressIndicator(color: Colors.white70),
+        ),
+        errorWidget: (_, __, ___) => const Center(
+          child: Icon(Icons.broken_image_outlined,
+              color: Colors.white54, size: 48),
+        ),
       ),
     );
 

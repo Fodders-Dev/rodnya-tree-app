@@ -870,12 +870,19 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
           imageUrl: mediaUrl,
           dimmed: true,
         ),
-        CachedNetworkImage(
-          imageUrl: mediaUrl,
-          fit: BoxFit.cover,
-          placeholder: (context, url) =>
-              const Center(child: CircularProgressIndicator()),
-          errorWidget: (_, __, ___) => _buildUnavailableStory(),
+        Semantics(
+          label: story.text?.trim().isNotEmpty == true
+              ? 'История: ${story.text!.trim()}'
+              : 'История от ${story.authorName}',
+          image: true,
+          excludeSemantics: true,
+          child: CachedNetworkImage(
+            imageUrl: mediaUrl,
+            fit: BoxFit.cover,
+            placeholder: (context, url) =>
+                const Center(child: CircularProgressIndicator()),
+            errorWidget: (_, __, ___) => _buildUnavailableStory(),
+          ),
         ),
       ],
     );
