@@ -1338,6 +1338,11 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
                 onAddRelativeTapWithType: _handleAddRelativeFromTree,
                 currentUserIsInTree: _currentUserIsInTree,
                 onAddSelfTapWithType: _handleAddSelfFromTree,
+                // Edge-first connector — long-press a card, drag to
+                // another, pick a relation type from the inline
+                // 4-icon picker. The handler talks to family service
+                // directly and reloads on success; no form involved.
+                onConnectExistingPersons: _handleConnectExistingFromTree,
                 // Reserve vertical space for the floating chrome stacked
                 // above the canvas — toolbar (~60) + context column
                 // (up to ~210) on mobile compact, much less on desktop

@@ -48,6 +48,19 @@ extension _InteractiveFamilyTreeSections on _InteractiveFamilyTreeState {
                   child: Center(child: _buildBottomZoomIndicator()),
                 ),
               ),
+              // Edge-first connector status pill — appears at the top
+              // center when the user has long-pressed a card and is
+              // mid-drag. Stays visible until they drop on a target
+              // (picker fires) or cancel via the X / ESC / tap-empty.
+              if (_isConnecting || _showingRelationPicker)
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  top: widget.viewportReservedTop > 8
+                      ? widget.viewportReservedTop - 4
+                      : 16,
+                  child: Center(child: _buildConnectingPill()),
+                ),
             ],
           );
         },
@@ -78,11 +91,20 @@ extension _InteractiveFamilyTreeSections on _InteractiveFamilyTreeState {
             _zoomBy(1 / 1.2),
         const SingleActivator(LogicalKeyboardKey.digit0): () =>
             _fitTreeToViewport(),
+        // ESC cancels an in-progress connect drag on desktop. The
+        // binding is always installed but is a no-op when not in
+        // connect mode — _cancelConnecting short-circuits.
+        const SingleActivator(LogicalKeyboardKey.escape):
+            _cancelConnecting,
       },
       child: Focus(
         autofocus: true,
         child: GestureDetector(
           behavior: HitTestBehavior.translucent,
+          // Tap on empty canvas cancels an in-progress connect.
+          // Cards have their own onTap that runs first, so tapping
+          // a card during connect doesn't reach this handler.
+          onTap: _isConnecting ? _cancelConnecting : null,
           onDoubleTap: _fitTreeToViewport,
           child: InteractiveViewer(
             transformationController: _transformationController,
@@ -90,7 +112,9 @@ extension _InteractiveFamilyTreeSections on _InteractiveFamilyTreeState {
             clipBehavior: Clip.none,
             boundaryMargin: EdgeInsets.all(interactionBoundary),
             panAxis: PanAxis.free,
-            panEnabled: _draggingPersonId == null,
+            // Disable pan during connect-drag so panning the canvas
+            // doesn't fight the LongPressDraggable feedback.
+            panEnabled: _draggingPersonId == null && !_isConnecting,
             scaleEnabled: true,
             trackpadScrollCausesScale: true,
             minScale: 0.08,
@@ -113,47 +137,150 @@ extension _InteractiveFamilyTreeSections on _InteractiveFamilyTreeState {
         (Theme.of(context).brightness == Brightness.dark
             ? RodnyaDesignTokens.dark
             : RodnyaDesignTokens.light);
+    final stackContent = Stack(
+      clipBehavior: Clip.none,
+      children: [
+        if (widget.showGenerationGuides)
+          ..._buildGenerationGuideWidgets(stackWidth: stackWidth),
+        CustomPaint(
+          size: Size(stackWidth, stackHeight),
+          painter: FamilyTreePainter(
+            nodePositions,
+            connections,
+            graphSnapshot: widget.graphSnapshot,
+            relations: widget.relations,
+            lineColor: tokens.inkSecondary,
+            mutedLineColor: tokens.inkMuted,
+            spouseColor: tokens.warm,
+            junctionColor: tokens.inkSecondary,
+          ),
+        ),
+        if ((widget.selectedPersonId ?? '').isNotEmpty)
+          CustomPaint(
+            size: Size(stackWidth, stackHeight),
+            painter: _SelectedTreePathPainter(
+              nodePositions: nodePositions,
+              relations: widget.relations,
+              selectedPersonId: widget.selectedPersonId!,
+              // Reference uses accent (deep teal/green) for active path
+              // highlights — switch from warm so it reads as "selected"
+              // rather than "warning".
+              accent: tokens.accent,
+            ),
+          ),
+        // Edge-first connector: live preview line from the long-pressed
+        // source card to the current pointer position. Painted ABOVE
+        // the existing relation lines so it's visible even when the
+        // pointer crosses an established edge.
+        if (_isConnecting &&
+            _connectingFromPersonId != null &&
+            _connectingPointerCanvasPosition != null &&
+            nodePositions[_connectingFromPersonId!] != null)
+          IgnorePointer(
+            child: CustomPaint(
+              size: Size(stackWidth, stackHeight),
+              painter: _ConnectorPreviewPainter(
+                source: nodePositions[_connectingFromPersonId!]!,
+                target: _connectingPointerCanvasPosition!,
+                color: tokens.accent,
+              ),
+            ),
+          ),
+        ..._buildPersonWidgets(),
+        if (widget.isEditMode && widget.showInlineEditPanel)
+          _buildInlineEditPanel(
+            stackWidth: stackWidth,
+            stackHeight: stackHeight,
+          ),
+      ],
+    );
+
+    // Listener tracks pointer-move events in the canvas's local
+    // coordinate system (the same space `nodePositions` lives in,
+    // because the Listener sits as a direct child of the
+    // SizedBox the layout engine fills). When NOT connecting we
+    // cheaply ignore the events; only the active drag updates
+    // state, which keeps idle-canvas frame rates clean.
     return SizedBox(
       width: stackWidth,
       height: stackHeight,
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          if (widget.showGenerationGuides)
-            ..._buildGenerationGuideWidgets(stackWidth: stackWidth),
-          CustomPaint(
-            size: Size(stackWidth, stackHeight),
-            painter: FamilyTreePainter(
-              nodePositions,
-              connections,
-              graphSnapshot: widget.graphSnapshot,
-              relations: widget.relations,
-              lineColor: tokens.inkSecondary,
-              mutedLineColor: tokens.inkMuted,
-              spouseColor: tokens.warm,
-              junctionColor: tokens.inkSecondary,
+      child: Listener(
+        behavior: HitTestBehavior.translucent,
+        onPointerMove: (event) {
+          if (!_isConnecting) return;
+          // event.localPosition is in this Listener's local coords,
+          // which IS the canvas-local coordinate space for our
+          // overlay painter — no further transform needed.
+          if (_connectingPointerCanvasPosition != event.localPosition) {
+            _updateTreeState(() {
+              _connectingPointerCanvasPosition = event.localPosition;
+            });
+          }
+        },
+        child: stackContent,
+      ),
+    );
+  }
+
+  // Top-of-canvas pill shown while a connect drag is in flight or
+  // the relation-type picker is open. Tap the X to abort.
+  Widget _buildConnectingPill() {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final sourcePerson = _connectingFromPersonId == null
+        ? null
+        : _findPersonInData(_connectingFromPersonId!);
+    final sourceName = sourcePerson?.displayName ?? 'этого человека';
+    return Material(
+      color: Colors.transparent,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 160),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: scheme.primary.withValues(alpha: 0.94),
+          borderRadius: BorderRadius.circular(999),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.16),
+              blurRadius: 14,
+              offset: const Offset(0, 4),
             ),
-          ),
-          if ((widget.selectedPersonId ?? '').isNotEmpty)
-            CustomPaint(
-              size: Size(stackWidth, stackHeight),
-              painter: _SelectedTreePathPainter(
-                nodePositions: nodePositions,
-                relations: widget.relations,
-                selectedPersonId: widget.selectedPersonId!,
-                // Reference uses accent (deep teal/green) for active path
-                // highlights — switch from warm so it reads as "selected"
-                // rather than "warning".
-                accent: tokens.accent,
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.cable_rounded, color: scheme.onPrimary, size: 18),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                'Перетащите «$sourceName» на другую карточку',
+                style: theme.textTheme.labelLarge?.copyWith(
+                  color: scheme.onPrimary,
+                  fontWeight: FontWeight.w700,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
             ),
-          ..._buildPersonWidgets(),
-          if (widget.isEditMode && widget.showInlineEditPanel)
-            _buildInlineEditPanel(
-              stackWidth: stackWidth,
-              stackHeight: stackHeight,
+            const SizedBox(width: 10),
+            Tooltip(
+              message: 'Отменить (Esc)',
+              child: InkWell(
+                customBorder: const CircleBorder(),
+                onTap: _cancelConnecting,
+                child: Padding(
+                  padding: const EdgeInsets.all(4),
+                  child: Icon(
+                    Icons.close_rounded,
+                    color: scheme.onPrimary,
+                    size: 18,
+                  ),
+                ),
+              ),
             ),
-        ],
+          ],
+        ),
       ),
     );
   }

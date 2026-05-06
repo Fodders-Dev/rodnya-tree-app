@@ -816,6 +816,75 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
   }
 
   // <<< НОВЫЙ МЕТОД-КОЛЛБЭК: Обработка добавления себя из дерева >>>
+  // Edge-first connector handler. Called when the user has dragged
+  // one card onto another and picked a relation type from the inline
+  // 4-icon picker. Skips the AddRelativeScreen form entirely and
+  // creates the relation directly via the family-tree service, then
+  // reloads the tree so the new edge appears.
+  //
+  // The picker only offers four relation types (parent, spouse,
+  // sibling, other). For "other" we open a small sheet to ask which
+  // long-tail relation (cousin / nephew / step-* / etc.) — better
+  // than guessing wrong and silently writing a bad edge.
+  Future<void> _handleConnectExistingFromTree(
+    String sourcePersonId,
+    String targetPersonId,
+    RelationType relation1to2,
+  ) async {
+    final treeId = _currentTreeId;
+    if (treeId == null) return;
+    if (sourcePersonId.isEmpty || targetPersonId.isEmpty) return;
+    if (sourcePersonId == targetPersonId) return;
+
+    // For "other" we DON'T have enough info to create a relation —
+    // pop the legacy quick-add sheet pre-anchored on the target so
+    // the user can pick the specific long-tail type. This is the
+    // only branch where the form is still needed.
+    if (relation1to2 == RelationType.other) {
+      final sourcePerson = _relativesData
+          .map((entry) => entry['person'])
+          .whereType<FamilyPerson>()
+          .firstWhere(
+            (person) => person.id == sourcePersonId,
+            orElse: () => FamilyPerson(
+              id: sourcePersonId,
+              treeId: treeId,
+              name: '',
+              gender: Gender.unknown,
+              isAlive: true,
+              createdAt: DateTime.now(),
+              updatedAt: DateTime.now(),
+            ),
+          );
+      _handleAddRelativeFromTree(sourcePerson, relation1to2);
+      return;
+    }
+
+    try {
+      await _familyService.createRelation(
+        treeId: treeId,
+        person1Id: sourcePersonId,
+        person2Id: targetPersonId,
+        relation1to2: relation1to2,
+        isConfirmed: true,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Связь создана'),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+      // Reload so the new edge renders + layout engine can rebalance.
+      await _loadData(treeId);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Не удалось создать связь: $error')),
+      );
+    }
+  }
+
   Future<void> _handleAddSelfFromTree(
     FamilyPerson targetPerson,
     RelationType relationType,

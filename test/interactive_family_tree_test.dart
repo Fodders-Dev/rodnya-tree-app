@@ -2341,4 +2341,208 @@ void main() {
           reason: 'cousin should have a visible parent line to the aunt');
     },
   );
+
+  // ── Edge-first connector tests ──────────────────────────────────────
+  // Long-press one card → drag to another → 4-icon picker → relation
+  // type chosen → onConnectExistingPersons fires with the right
+  // (source, target, type) tuple. These tests don't go through the
+  // service layer — they pin the WIDGET's contract.
+
+  group('Edge-first connector', () {
+    Future<void> pumpTwoPersonTree(
+      WidgetTester tester, {
+      required void Function(String, String, RelationType)?
+          onConnectExistingPersons,
+    }) async {
+      tester.view.physicalSize = const Size(1400, 1000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() => tester.view.reset());
+
+      final personA = FamilyPerson(
+        id: 'person-a',
+        treeId: 'tree-1',
+        name: 'Анна Кузнецова',
+        gender: Gender.female,
+        isAlive: true,
+        createdAt: DateTime(2024, 1, 1),
+        updatedAt: DateTime(2024, 1, 1),
+      );
+      final personB = FamilyPerson(
+        id: 'person-b',
+        treeId: 'tree-1',
+        name: 'Борис Кузнецов',
+        gender: Gender.male,
+        isAlive: true,
+        createdAt: DateTime(2024, 1, 1),
+        updatedAt: DateTime(2024, 1, 1),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: InteractiveFamilyTree(
+              peopleData: [
+                {'person': personA, 'userProfile': null},
+                {'person': personB, 'userProfile': null},
+              ],
+              relations: const <FamilyRelation>[],
+              onPersonTap: (_) {},
+              isEditMode: false,
+              onAddRelativeTapWithType: (_, __) {},
+              currentUserIsInTree: false,
+              onAddSelfTapWithType: (_, __) async {},
+              onConnectExistingPersons: onConnectExistingPersons,
+              currentUserId: 'user-1',
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets(
+      'is fully disabled when host did not wire onConnectExistingPersons',
+      (tester) async {
+        await pumpTwoPersonTree(tester, onConnectExistingPersons: null);
+
+        // No DragTarget / LongPressDraggable should be present —
+        // when the callback is null the widget falls back to the
+        // legacy GestureDetector tree without drag wiring.
+        expect(find.byType(LongPressDraggable<String>), findsNothing);
+        expect(find.byType(DragTarget<String>), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'long-press starts connecting → pill shows source name → ESC cancels',
+      (tester) async {
+        bool wasCalled = false;
+        await pumpTwoPersonTree(
+          tester,
+          onConnectExistingPersons: (_, __, ___) {
+            wasCalled = true;
+          },
+        );
+
+        // Card "Анна" rendered → long-press starts the connect drag.
+        // The connector wiring requires LongPressDraggable to fire
+        // onDragStarted, which sets _connectingFromPersonId. We
+        // verify the pill appears with the source name.
+        expect(find.byType(LongPressDraggable<String>), findsAtLeastNWidgets(1));
+        expect(find.byType(DragTarget<String>), findsAtLeastNWidgets(1));
+
+        // Trigger the long-press on the source card.
+        final cardFinder = find.text('Анна').first;
+        final cardCenter = tester.getCenter(cardFinder);
+        final gesture = await tester.startGesture(cardCenter);
+        // Wait past the LongPressDraggable delay (we tightened to
+        // 320 ms in the connector wrapper).
+        await tester.pump(const Duration(milliseconds: 380));
+        // Move slightly to nudge into "drag" state (some platforms
+        // require movement after the long-press to start the drag).
+        await gesture.moveBy(const Offset(40, 40));
+        await tester.pump();
+
+        // Pill is rendered with the source name in it.
+        expect(
+          find.textContaining('Перетащите «Анна'),
+          findsOneWidget,
+          reason: 'Connecting pill should show with the source person name',
+        );
+
+        // Drop in empty space → cancel via the onDragEnd handler;
+        // pill disappears.
+        await gesture.up();
+        await tester.pumpAndSettle();
+        expect(find.textContaining('Перетащите'), findsNothing);
+        expect(wasCalled, isFalse);
+      },
+    );
+
+    testWidgets(
+      'picker fires onConnectExistingPersons with chosen relation type',
+      (tester) async {
+        String? capturedSource;
+        String? capturedTarget;
+        RelationType? capturedType;
+        await pumpTwoPersonTree(
+          tester,
+          onConnectExistingPersons: (sourceId, targetId, type) {
+            capturedSource = sourceId;
+            capturedTarget = targetId;
+            capturedType = type;
+          },
+        );
+
+        // Drag from card A onto card B.
+        final sourceCenter = tester.getCenter(find.text('Анна').first);
+        final targetCenter = tester.getCenter(find.text('Борис').first);
+
+        final gesture = await tester.startGesture(sourceCenter);
+        await tester.pump(const Duration(milliseconds: 380));
+        // Move in two hops so the LongPressDraggable feedback
+        // tracks correctly across the canvas.
+        await gesture.moveTo(
+          Offset((sourceCenter.dx + targetCenter.dx) / 2,
+              (sourceCenter.dy + targetCenter.dy) / 2),
+        );
+        await tester.pump();
+        await gesture.moveTo(targetCenter);
+        await tester.pump();
+        await gesture.up();
+        await tester.pumpAndSettle();
+
+        // Picker dialog should be visible with all 4 options.
+        expect(find.text('Кто такие друг другу?'), findsOneWidget);
+        expect(find.text('Супруги'), findsOneWidget);
+        expect(find.text('Брат/сестра'), findsOneWidget);
+        expect(find.text('Другая связь'), findsOneWidget);
+
+        // Tap "Супруги" — should fire the callback with spouse type.
+        await tester.tap(find.text('Супруги'));
+        await tester.pumpAndSettle();
+
+        expect(capturedSource, 'person-a');
+        expect(capturedTarget, 'person-b');
+        expect(capturedType, RelationType.spouse);
+
+        // Pill is gone after the picker resolves.
+        expect(find.textContaining('Перетащите'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'picker dismissed without choosing → callback NOT called, state cleared',
+      (tester) async {
+        bool wasCalled = false;
+        await pumpTwoPersonTree(
+          tester,
+          onConnectExistingPersons: (_, __, ___) {
+            wasCalled = true;
+          },
+        );
+
+        final sourceCenter = tester.getCenter(find.text('Анна').first);
+        final targetCenter = tester.getCenter(find.text('Борис').first);
+
+        final gesture = await tester.startGesture(sourceCenter);
+        await tester.pump(const Duration(milliseconds: 380));
+        await gesture.moveTo(targetCenter);
+        await tester.pump();
+        await gesture.up();
+        await tester.pumpAndSettle();
+
+        expect(find.text('Кто такие друг другу?'), findsOneWidget);
+
+        // Hit "Отмена" — picker resolves with null, no relation
+        // is created, pill goes away.
+        await tester.tap(find.text('Отмена'));
+        await tester.pumpAndSettle();
+
+        expect(wasCalled, isFalse);
+        expect(find.text('Кто такие друг другу?'), findsNothing);
+        expect(find.textContaining('Перетащите'), findsNothing);
+      },
+    );
+  });
 }

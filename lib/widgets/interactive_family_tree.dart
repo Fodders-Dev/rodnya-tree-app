@@ -32,6 +32,26 @@ class InteractiveFamilyTree extends StatefulWidget {
       currentUserIsInTree; // <<< НОВЫЙ ПАРАМЕТР: Флаг, добавлен ли текущий пользователь
   final void Function(FamilyPerson targetPerson, RelationType relationType)
       onAddSelfTapWithType; // <<< НОВЫЙ ПАРАМЕТР: Коллбэк для добавления себя
+
+  /// Edge-first connector: long-press a card → drag to another card →
+  /// pick a relation type from the inline 4-icon picker → relation
+  /// is created. Replaces the old "open form, choose relation in
+  /// dropdown, save" flow with direct graphical manipulation.
+  ///
+  /// When omitted (e.g. on the public read-only viewer), the
+  /// connector is fully disabled — long-press falls back to the
+  /// legacy quick-add bottom-sheet.
+  ///
+  /// The callback receives the source and target person ids in the
+  /// order the user dragged them (source = where the gesture
+  /// started, target = where it was released) plus the chosen
+  /// `relation1to2`. The consumer is responsible for invoking
+  /// `family_tree_service.createRelation(...)` and reloading.
+  final void Function(
+    String sourcePersonId,
+    String targetPersonId,
+    RelationType relation1to2,
+  )? onConnectExistingPersons;
   final String? currentUserId;
   final String? branchRootPersonId;
   final String? selectedPersonId;
@@ -87,6 +107,7 @@ class InteractiveFamilyTree extends StatefulWidget {
     required this.onAddRelativeTapWithType,
     required this.currentUserIsInTree, // Делаем обязательным
     required this.onAddSelfTapWithType, // Делаем обязательным
+    this.onConnectExistingPersons,
     this.currentUserId,
     this.branchRootPersonId,
     this.selectedPersonId,
@@ -151,6 +172,126 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
   /// Person ids on the active path (selected + parents + children + spouse +
   /// siblings) — used to dim everyone else when something is selected.
   Set<String>? _activePathPersonIds;
+
+  // ── Edge-first connector state ─────────────────────────────────────
+  // Active when the user has long-pressed a card and is dragging a
+  // connection towards another card. The whole flow:
+  //
+  //  1. onLongPressStart → _connectingFromPersonId = source.id
+  //     (and we hide the existing legacy quick-add sheet path)
+  //  2. Pointer move tracked via Listener at canvas root → updates
+  //     _connectingPointerCanvasPosition (in canvas-local coords,
+  //     i.e. AFTER the InteractiveViewer transform)
+  //  3. DragTarget.onMove on a destination card → sets
+  //     _connectingHoverTargetId so the card glows
+  //  4. DragTarget.onAcceptWithDetails → opens the relation-type
+  //     picker; on selection we fire onConnectExistingPersons
+  //  5. Drag released over empty canvas / picker dismissed / ESC
+  //     pressed → _cancelConnecting() clears all four fields
+  //
+  // We never store relation creation locally — that's the consumer's
+  // job (tree_view_screen wires it to family_tree_service).
+  String? _connectingFromPersonId;
+  Offset? _connectingPointerCanvasPosition;
+  String? _connectingHoverTargetId;
+  bool _showingRelationPicker = false;
+  // Used for ESC-to-cancel on desktop. We attach a Focus only while
+  // a connect is in progress so we don't fight other shortcuts.
+  final FocusNode _connectModeFocusNode = FocusNode(debugLabel: 'tree-connect-mode');
+
+  bool get _isConnecting => _connectingFromPersonId != null;
+
+  void _startConnecting(String sourcePersonId) {
+    if (widget.onConnectExistingPersons == null) return;
+    if (widget.isEditMode) return;
+    if (_connectingFromPersonId == sourcePersonId) return;
+    HapticFeedback.selectionClick();
+    setState(() {
+      _connectingFromPersonId = sourcePersonId;
+      _connectingPointerCanvasPosition =
+          nodePositions[sourcePersonId];
+      _connectingHoverTargetId = null;
+      _showingRelationPicker = false;
+    });
+    // Grab focus so ESC works on desktop. Do it after the frame so
+    // the FocusNode is mounted into the tree.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _isConnecting) {
+        _connectModeFocusNode.requestFocus();
+      }
+    });
+  }
+
+  void _cancelConnecting() {
+    if (!_isConnecting && !_showingRelationPicker) return;
+    setState(() {
+      _connectingFromPersonId = null;
+      _connectingPointerCanvasPosition = null;
+      _connectingHoverTargetId = null;
+      _showingRelationPicker = false;
+    });
+  }
+
+  void _setHoverTargetForConnect(String targetPersonId) {
+    if (!_isConnecting) return;
+    if (targetPersonId == _connectingFromPersonId) return;
+    if (_connectingHoverTargetId == targetPersonId) return;
+    setState(() {
+      _connectingHoverTargetId = targetPersonId;
+    });
+  }
+
+  void _clearHoverTargetIfMatches(String targetPersonId) {
+    if (_connectingHoverTargetId != targetPersonId) return;
+    setState(() {
+      _connectingHoverTargetId = null;
+    });
+  }
+
+  Future<void> _completeConnection(String sourceId, String targetId) async {
+    if (!_isConnecting) return;
+    if (sourceId == targetId) {
+      _cancelConnecting();
+      return;
+    }
+    HapticFeedback.mediumImpact();
+    // Resolve persons for nicer copy in the picker.
+    final sourcePerson = _findPersonInData(sourceId);
+    final targetPerson = _findPersonInData(targetId);
+    setState(() {
+      _showingRelationPicker = true;
+      _connectingHoverTargetId = targetId;
+    });
+    final picked = await showDialog<RelationType>(
+      context: context,
+      barrierColor: Colors.black.withValues(alpha: 0.32),
+      builder: (dialogContext) => _ConnectorRelationTypePicker(
+        sourceName: sourcePerson?.displayName ?? 'этот человек',
+        targetName: targetPerson?.displayName ?? 'этому человеку',
+      ),
+    );
+    if (!mounted) return;
+    if (picked == null) {
+      // User dismissed the picker (tapped outside / pressed back).
+      _cancelConnecting();
+      return;
+    }
+    // Fire-and-forget: the consumer reloads the tree, didUpdateWidget
+    // will pick up the new relation and re-render. We clear our local
+    // state immediately so the preview line/pill go away.
+    widget.onConnectExistingPersons?.call(sourceId, targetId, picked);
+    _cancelConnecting();
+  }
+
+  FamilyPerson? _findPersonInData(String personId) {
+    for (final entry in widget.peopleData) {
+      final person = entry['person'];
+      if (person is FamilyPerson && person.id == personId) {
+        return person;
+      }
+    }
+    return null;
+  }
 
   @override
   void initState() {
@@ -267,6 +408,7 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
   void dispose() {
     _transformationController.removeListener(_handleTransformChanged);
     _transformationController.dispose();
+    _connectModeFocusNode.dispose();
     super.dispose();
   }
 
@@ -1421,6 +1563,144 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
       isDimmed: isDimmed,
     );
 
+    // Edge-first connector is enabled when (a) the host wired the
+    // onConnectExistingPersons callback (the public read-only viewer
+    // does NOT) AND (b) we're not in edit mode (where long-press is
+    // already used to drag cards into manual positions).
+    final connectorEnabled =
+        widget.onConnectExistingPersons != null && !widget.isEditMode;
+    final isConnectHoverTarget =
+        connectorEnabled && _connectingHoverTargetId == person.id &&
+            _connectingFromPersonId != person.id;
+    final isConnectSource =
+        connectorEnabled && _connectingFromPersonId == person.id;
+
+    // Card with optional "drop-target glow" for connector hover state.
+    final cardWithConnectAffordance = Stack(
+      clipBehavior: Clip.none,
+      children: [
+        cardContent,
+        // Glow ring shown when another card is being dragged onto
+        // this one during edge-first connection.
+        if (isConnectHoverTarget)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: Theme.of(context).colorScheme.primary,
+                    width: 3,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Theme.of(context)
+                          .colorScheme
+                          .primary
+                          .withValues(alpha: 0.35),
+                      blurRadius: 18,
+                      spreadRadius: 1,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+
+    final tapAndDoubleTapDetector = GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onLongPressStart: widget.isEditMode
+          ? (_) {
+              HapticFeedback.mediumImpact();
+              _handleNodeDragStart(person);
+            }
+          : null,
+      onLongPressMoveUpdate: widget.isEditMode
+          ? (details) => _handleNodeDragUpdate(
+                person,
+                details.offsetFromOrigin,
+              )
+          : null,
+      onLongPressEnd:
+          widget.isEditMode ? (_) => _handleNodeDragEnd() : null,
+      onTap: () {
+        if (widget.isEditMode) {
+          _selectEditPerson(person);
+          return;
+        }
+        widget.onPersonTap(person);
+      },
+      onDoubleTap: widget.isEditMode || widget.onPersonDoubleTap == null
+          ? null
+          : () => widget.onPersonDoubleTap!(person),
+      // Legacy long-press → quick-add bottom sheet. Suppressed when
+      // the connector is enabled (the LongPressDraggable below
+      // takes that gesture for drag-to-connect instead).
+      onLongPress: widget.isEditMode ||
+              !canUseLongPressQuickAdd ||
+              connectorEnabled
+          ? null
+          : () => _showQuickAddRelativeSheet(context, person),
+      child: cardWithConnectAffordance,
+    );
+
+    final cardInteractionLayer = connectorEnabled
+        ? DragTarget<String>(
+            onWillAcceptWithDetails: (details) =>
+                // Don't accept self-drops — would create A↔A relations.
+                details.data != person.id,
+            onMove: (_) => _setHoverTargetForConnect(person.id),
+            onLeave: (_) => _clearHoverTargetIfMatches(person.id),
+            onAcceptWithDetails: (details) =>
+                _completeConnection(details.data, person.id),
+            builder: (context, candidates, rejected) {
+              return LongPressDraggable<String>(
+                data: person.id,
+                // Slightly tighter than Flutter's 500 ms default — feels
+                // immediate to the user without firing on accidental
+                // taps. Matches the Material LongPress recognizer's
+                // recommended haptic-confirmation window.
+                delay: const Duration(milliseconds: 320),
+                onDragStarted: () => _startConnecting(person.id),
+                onDragEnd: (details) {
+                  // The DragTarget.onAccept path drives _completeConnection
+                  // which eventually clears state via _cancelConnecting.
+                  // If we reach DragEnd without a drop having been
+                  // accepted (released over empty canvas), tear down
+                  // here so the preview line doesn't get stuck.
+                  if (_isConnecting && !_showingRelationPicker) {
+                    _cancelConnecting();
+                  }
+                },
+                feedback: Material(
+                  color: Colors.transparent,
+                  // We deliberately DO NOT use the full
+                  // FamilyTreeNodeCard as feedback — the card has a
+                  // flexible internal Column that doesn't survive
+                  // the Overlay's unbounded constraints (overflows
+                  // vertically). A small named pill is plenty —
+                  // the actual source card pulses at its origin
+                  // and the dashed preview line connects them.
+                  child: _ConnectorDragFeedbackChip(
+                    label: displayName,
+                    color:
+                        Theme.of(context).colorScheme.primary,
+                    foreground:
+                        Theme.of(context).colorScheme.onPrimary,
+                  ),
+                ),
+                childWhenDragging: Opacity(
+                  opacity: 0.35,
+                  child: tapAndDoubleTapDetector,
+                ),
+                child: tapAndDoubleTapDetector,
+              );
+            },
+          )
+        : tapAndDoubleTapDetector;
+
     return MouseRegion(
       onEnter: widget.isEditMode
           ? null
@@ -1436,37 +1716,24 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
         clipBehavior: Clip.none,
         alignment: Alignment.center,
         children: [
-          GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onLongPressStart: widget.isEditMode
-                ? (_) {
-                    HapticFeedback.mediumImpact();
-                    _handleNodeDragStart(person);
-                  }
-                : null,
-            onLongPressMoveUpdate: widget.isEditMode
-                ? (details) => _handleNodeDragUpdate(
-                      person,
-                      details.offsetFromOrigin,
-                    )
-                : null,
-            onLongPressEnd:
-                widget.isEditMode ? (_) => _handleNodeDragEnd() : null,
-            onTap: () {
-              if (widget.isEditMode) {
-                _selectEditPerson(person);
-                return;
-              }
-              widget.onPersonTap(person);
-            },
-            onDoubleTap: widget.isEditMode || widget.onPersonDoubleTap == null
-                ? null
-                : () => widget.onPersonDoubleTap!(person),
-            onLongPress: widget.isEditMode || !canUseLongPressQuickAdd
-                ? null
-                : () => _showQuickAddRelativeSheet(context, person),
-            child: cardContent,
-          ),
+          // Subtle source-card pulse so the user remembers WHERE the
+          // drag started while their finger is mid-flight elsewhere.
+          if (isConnectSource)
+            Positioned.fill(
+              child: IgnorePointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: Theme.of(context).colorScheme.primary,
+                      width: 2,
+                      style: BorderStyle.solid,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          cardInteractionLayer,
           // Show the "+" quick-add badge on hover (desktop) AND on the
           // currently-selected node (so mobile users with no hover can
           // still trigger the add-relative sheet without going through
@@ -4003,5 +4270,272 @@ class _SelectedTreePathPainter extends CustomPainter {
         oldDelegate.relations != relations ||
         oldDelegate.selectedPersonId != selectedPersonId ||
         oldDelegate.accent != accent;
+  }
+}
+
+/// 4-icon picker for the edge-first connector. The user has just
+/// dropped a card onto another and now picks the relation type.
+/// Returns the chosen [RelationType] via Navigator.pop, or null
+/// when the user dismisses (taps outside or hits back).
+///
+/// We deliberately keep the choices to FOUR — covers >95% of real
+/// family-tree edits and matches the existing quick-add bottom-
+/// sheet's vocabulary. "Другая связь" pops the legacy quick-add
+/// sheet so power users can still reach the long tail
+/// (cousin / nephew / step-* / in-laws / friend / colleague).
+class _ConnectorRelationTypePicker extends StatelessWidget {
+  const _ConnectorRelationTypePicker({
+    required this.sourceName,
+    required this.targetName,
+  });
+
+  final String sourceName;
+  final String targetName;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Dialog(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(24),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 22, 20, 18),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'Кто такие друг другу?',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Выберите связь между «$sourceName» и «$targetName»',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 18),
+            Row(
+              children: [
+                _ConnectorRelationButton(
+                  icon: Icons.escalator_warning_outlined,
+                  label: 'Родитель → ребёнок',
+                  // Source is the PARENT of the target — that's the
+                  // direction the user dragged. If they meant
+                  // "child of" they should drag the other way.
+                  relationType: RelationType.parent,
+                ),
+                const SizedBox(width: 10),
+                _ConnectorRelationButton(
+                  icon: Icons.favorite_outline,
+                  label: 'Супруги',
+                  relationType: RelationType.spouse,
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                _ConnectorRelationButton(
+                  icon: Icons.family_restroom_outlined,
+                  label: 'Брат/сестра',
+                  relationType: RelationType.sibling,
+                ),
+                const SizedBox(width: 10),
+                _ConnectorRelationButton(
+                  icon: Icons.more_horiz_rounded,
+                  label: 'Другая связь',
+                  relationType: RelationType.other,
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Отмена'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Compact chip used as the LongPressDraggable.feedback during an
+/// edge-first connect drag. Shows the source person's name on a
+/// small accent pill so the user always sees what they're carrying.
+/// We avoid using the full card as feedback because the card's
+/// internal Column overflows when wrapped in the Overlay's
+/// unbounded constraints.
+class _ConnectorDragFeedbackChip extends StatelessWidget {
+  const _ConnectorDragFeedbackChip({
+    required this.label,
+    required this.color,
+    required this.foreground,
+  });
+
+  final String label;
+  final Color color;
+  final Color foreground;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.94),
+        borderRadius: BorderRadius.circular(999),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.18),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.cable_rounded, size: 16, color: foreground),
+          const SizedBox(width: 6),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 160),
+            child: Text(
+              label.isEmpty ? '...' : label,
+              style: TextStyle(
+                color: foreground,
+                fontWeight: FontWeight.w700,
+                fontSize: 13,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Live preview line drawn from the long-pressed source card to
+/// wherever the user's pointer currently is. Dashed + accent color
+/// so the user reads it as "in progress, not yet a real edge".
+/// Repainted only while the user is actively dragging — when the
+/// drag ends (accepted or canceled) the parent removes this from
+/// the tree entirely.
+class _ConnectorPreviewPainter extends CustomPainter {
+  _ConnectorPreviewPainter({
+    required this.source,
+    required this.target,
+    required this.color,
+  });
+
+  final Offset source;
+  final Offset target;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color.withValues(alpha: 0.78)
+      ..strokeWidth = 2.4
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
+
+    // Dashed line: 8 px on, 6 px off. Path-based so the cap-rounded
+    // segments look continuous at the tip.
+    const dashOn = 8.0;
+    const dashOff = 6.0;
+    final dx = target.dx - source.dx;
+    final dy = target.dy - source.dy;
+    final totalLength = sqrt(dx * dx + dy * dy);
+    if (totalLength <= 0) return;
+    final stepX = dx / totalLength;
+    final stepY = dy / totalLength;
+    var traveled = 0.0;
+    while (traveled < totalLength) {
+      final segmentEnd = min(traveled + dashOn, totalLength);
+      canvas.drawLine(
+        Offset(source.dx + stepX * traveled, source.dy + stepY * traveled),
+        Offset(source.dx + stepX * segmentEnd, source.dy + stepY * segmentEnd),
+        paint,
+      );
+      traveled = segmentEnd + dashOff;
+    }
+
+    // Filled circle on the target end so the line "reads" as
+    // attaching to the cursor rather than fading off.
+    final dotPaint = Paint()
+      ..color = color.withValues(alpha: 0.92)
+      ..style = PaintingStyle.fill;
+    canvas.drawCircle(target, 5.5, dotPaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _ConnectorPreviewPainter oldDelegate) {
+    return oldDelegate.source != source ||
+        oldDelegate.target != target ||
+        oldDelegate.color != color;
+  }
+}
+
+class _ConnectorRelationButton extends StatelessWidget {
+  const _ConnectorRelationButton({
+    required this.icon,
+    required this.label,
+    required this.relationType,
+  });
+
+  final IconData icon;
+  final String label;
+  final RelationType relationType;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Expanded(
+      child: Semantics(
+        button: true,
+        label: label,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: () => Navigator.of(context).pop(relationType),
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.primaryContainer
+                  .withValues(alpha: 0.45),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: theme.colorScheme.outlineVariant.withValues(
+                  alpha: 0.6,
+                ),
+              ),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, color: theme.colorScheme.primary, size: 28),
+                const SizedBox(height: 6),
+                Text(
+                  label,
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.labelMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
