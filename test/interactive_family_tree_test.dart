@@ -2348,6 +2348,332 @@ void main() {
   // (source, target, type) tuple. These tests don't go through the
   // service layer — they pin the WIDGET's contract.
 
+  // Regression test for the user-reported "Витя branch shifts up
+  // one generation" bug. When an uncle-by-marriage is in the
+  // graph WITHOUT an explicit spouse relation to the blood-aunt,
+  // and his only structural anchor is "parent of cousin", the
+  // BFS used to place him at grandparents' row and his cousin
+  // child at parents' row — both one generation too high. The
+  // viewer-relation anchor pass now uses the backend-supplied
+  // primaryRelationLabel ("Дядя", "Двоюродная сестра", etc.) to
+  // pull these weakly-anchored nodes back to the correct rows.
+  group('Layout: viewer-relation generation anchor', () {
+    testWidgets(
+      'uncle-by-marriage with no spouse edge lands on parents row, his daughter on viewer row',
+      (tester) async {
+        tester.view.physicalSize = const Size(1600, 1100);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(() => tester.view.reset());
+
+        // Cast: 4 generations.
+        //   Grandfather + Grandmother (gen 1)
+        //   ├─ Father (gen 2, viewer's parent)
+        //   │  ├─ Viewer (gen 3) — currentUserId is wired here
+        //   ├─ Aunt — Lena (gen 2, sister of father)
+        //   ?  Uncle — Vitya (no explicit spouse-of-Lena edge,
+        //              no explicit parent-of-cousin relation here
+        //              either; the BACKEND graph supplies the
+        //              "Дядя" descriptor that should anchor him).
+        //   ?  Cousin — Nastya (Vitya's daughter, no explicit
+        //              parent edge; descriptor says "Двоюродная
+        //              сестра" → same gen as viewer).
+        final grandpa = FamilyPerson(
+          id: 'grandpa',
+          treeId: 'tree-1',
+          name: 'Анатолий Степанович',
+          gender: Gender.male,
+          isAlive: true,
+          createdAt: DateTime(2024, 1, 1),
+          updatedAt: DateTime(2024, 1, 1),
+        );
+        final grandma = FamilyPerson(
+          id: 'grandma',
+          treeId: 'tree-1',
+          name: 'Валентина',
+          gender: Gender.female,
+          isAlive: true,
+          createdAt: DateTime(2024, 1, 1),
+          updatedAt: DateTime(2024, 1, 1),
+        );
+        final father = FamilyPerson(
+          id: 'father',
+          treeId: 'tree-1',
+          name: 'Андрей Анатольевич',
+          gender: Gender.male,
+          isAlive: true,
+          createdAt: DateTime(2024, 1, 1),
+          updatedAt: DateTime(2024, 1, 1),
+        );
+        final viewer = FamilyPerson(
+          id: 'viewer',
+          treeId: 'tree-1',
+          userId: 'user-viewer',
+          name: 'Артём Андреевич',
+          gender: Gender.male,
+          isAlive: true,
+          createdAt: DateTime(2024, 1, 1),
+          updatedAt: DateTime(2024, 1, 1),
+        );
+        final aunt = FamilyPerson(
+          id: 'aunt',
+          treeId: 'tree-1',
+          name: 'Лена Анатольевна',
+          gender: Gender.female,
+          isAlive: true,
+          createdAt: DateTime(2024, 1, 1),
+          updatedAt: DateTime(2024, 1, 1),
+        );
+        final uncle = FamilyPerson(
+          id: 'uncle',
+          treeId: 'tree-1',
+          name: 'Виктор',
+          gender: Gender.male,
+          isAlive: true,
+          createdAt: DateTime(2024, 1, 1),
+          updatedAt: DateTime(2024, 1, 1),
+        );
+        final cousin = FamilyPerson(
+          id: 'cousin',
+          treeId: 'tree-1',
+          name: 'Анастасия Викторовна',
+          gender: Gender.female,
+          isAlive: true,
+          createdAt: DateTime(2024, 1, 1),
+          updatedAt: DateTime(2024, 1, 1),
+        );
+
+        // Explicit relations — note the GAPS:
+        //   * No spouse edge between aunt + uncle (the bug case).
+        //   * No parent edge from aunt to cousin (data is incomplete).
+        //   * The ONLY edge that anchors uncle is "parent of cousin".
+        // This recreates the exact data shape that triggered the bug.
+        final relations = <FamilyRelation>[
+          FamilyRelation(
+            id: 'r1',
+            treeId: 'tree-1',
+            person1Id: 'grandpa',
+            person2Id: 'grandma',
+            relation1to2: RelationType.spouse,
+            relation2to1: RelationType.spouse,
+            isConfirmed: true,
+            createdAt: DateTime(2024, 1, 1),
+          ),
+          FamilyRelation(
+            id: 'r2',
+            treeId: 'tree-1',
+            person1Id: 'grandpa',
+            person2Id: 'father',
+            relation1to2: RelationType.parent,
+            relation2to1: RelationType.child,
+            isConfirmed: true,
+            createdAt: DateTime(2024, 1, 1),
+          ),
+          FamilyRelation(
+            id: 'r3',
+            treeId: 'tree-1',
+            person1Id: 'grandma',
+            person2Id: 'father',
+            relation1to2: RelationType.parent,
+            relation2to1: RelationType.child,
+            isConfirmed: true,
+            createdAt: DateTime(2024, 1, 1),
+          ),
+          FamilyRelation(
+            id: 'r4',
+            treeId: 'tree-1',
+            person1Id: 'father',
+            person2Id: 'viewer',
+            relation1to2: RelationType.parent,
+            relation2to1: RelationType.child,
+            isConfirmed: true,
+            createdAt: DateTime(2024, 1, 1),
+          ),
+          FamilyRelation(
+            id: 'r5',
+            treeId: 'tree-1',
+            person1Id: 'grandpa',
+            person2Id: 'aunt',
+            relation1to2: RelationType.parent,
+            relation2to1: RelationType.child,
+            isConfirmed: true,
+            createdAt: DateTime(2024, 1, 1),
+          ),
+          FamilyRelation(
+            id: 'r6',
+            treeId: 'tree-1',
+            person1Id: 'grandma',
+            person2Id: 'aunt',
+            relation1to2: RelationType.parent,
+            relation2to1: RelationType.child,
+            isConfirmed: true,
+            createdAt: DateTime(2024, 1, 1),
+          ),
+          // Uncle's only structural anchor — parent of cousin.
+          // Without the viewer-relation anchor pass, this drops
+          // him to gen 1 (with cousin at gen 2) instead of gen 2
+          // (with cousin at gen 3 alongside viewer).
+          FamilyRelation(
+            id: 'r7',
+            treeId: 'tree-1',
+            person1Id: 'uncle',
+            person2Id: 'cousin',
+            relation1to2: RelationType.parent,
+            relation2to1: RelationType.child,
+            isConfirmed: true,
+            createdAt: DateTime(2024, 1, 1),
+          ),
+        ];
+
+        // Backend-supplied descriptors. The viewer-relation anchor
+        // pass uses these to derive "uncle should be at viewer-1,
+        // cousin at viewer-0" and overrides the BFS.
+        final descriptors = [
+          TreeGraphViewerDescriptor(
+            personId: 'father',
+            primaryRelationLabel: 'Отец',
+            isBlood: true,
+            alternatePathCount: 0,
+            pathSummary: null,
+            primaryPathPersonIds: const ['father'],
+          ),
+          TreeGraphViewerDescriptor(
+            personId: 'aunt',
+            primaryRelationLabel: 'Тётя',
+            isBlood: true,
+            alternatePathCount: 0,
+            pathSummary: null,
+            primaryPathPersonIds: const ['aunt'],
+          ),
+          TreeGraphViewerDescriptor(
+            personId: 'uncle',
+            primaryRelationLabel: 'Дядя',
+            isBlood: false,
+            alternatePathCount: 0,
+            pathSummary: null,
+            primaryPathPersonIds: const ['uncle'],
+          ),
+          TreeGraphViewerDescriptor(
+            personId: 'cousin',
+            primaryRelationLabel: 'Двоюродная сестра',
+            isBlood: false,
+            alternatePathCount: 0,
+            pathSummary: null,
+            primaryPathPersonIds: const ['cousin'],
+          ),
+          TreeGraphViewerDescriptor(
+            personId: 'grandpa',
+            primaryRelationLabel: 'Дедушка',
+            isBlood: true,
+            alternatePathCount: 0,
+            pathSummary: null,
+            primaryPathPersonIds: const ['grandpa'],
+          ),
+          TreeGraphViewerDescriptor(
+            personId: 'grandma',
+            primaryRelationLabel: 'Бабушка',
+            isBlood: true,
+            alternatePathCount: 0,
+            pathSummary: null,
+            primaryPathPersonIds: const ['grandma'],
+          ),
+        ];
+        final snapshot = TreeGraphSnapshot(
+          treeId: 'tree-1',
+          viewerPersonId: 'viewer',
+          people: const [],
+          relations: const [],
+          generationRows: const [],
+          familyUnits: const [],
+          branchBlocks: const [],
+          warnings: const [],
+          viewerDescriptors: descriptors,
+        );
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: InteractiveFamilyTree(
+                peopleData: [
+                  for (final p in [
+                    grandpa,
+                    grandma,
+                    father,
+                    viewer,
+                    aunt,
+                    uncle,
+                    cousin,
+                  ])
+                    {'person': p, 'userProfile': null},
+                ],
+                relations: relations,
+                graphSnapshot: snapshot,
+                onPersonTap: (_) {},
+                isEditMode: false,
+                onAddRelativeTapWithType: (_, __) {},
+                currentUserIsInTree: true,
+                onAddSelfTapWithType: (_, __) async {},
+                currentUserId: 'user-viewer',
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        // Read the layout result from the rendered Positioned cards.
+        // Each card has a key 'tree-node-position-<id>'; we read its
+        // resolved top-Y to compare rows.
+        double topYFor(String personId) {
+          final finder = find.byKey(ValueKey<String>('tree-node-position-$personId'));
+          expect(finder, findsOneWidget,
+              reason: 'card for $personId should be on the canvas');
+          final renderBox = tester.renderObject<RenderBox>(finder);
+          final origin = renderBox.localToGlobal(Offset.zero);
+          return origin.dy;
+        }
+
+        final viewerY = topYFor('viewer');
+        final fatherY = topYFor('father');
+        final grandpaY = topYFor('grandpa');
+        final auntY = topYFor('aunt');
+        final uncleY = topYFor('uncle');
+        final cousinY = topYFor('cousin');
+
+        // Sanity check: father is one row above viewer; grandpa
+        // one above father.
+        expect(fatherY < viewerY, isTrue,
+            reason: 'father must be above viewer in the layout');
+        expect(grandpaY < fatherY, isTrue,
+            reason: 'grandpa must be above father');
+
+        // The bug: uncle-by-marriage lands on grandparents' row.
+        // The fix: the viewer-relation anchor pulls him to
+        // father's row (parents' generation = -1 from viewer).
+        // We compare against the *father*'s Y (his blood-relative
+        // anchor) so the test is robust to layout-engine row-
+        // height tweaks.
+        expect(
+          (uncleY - fatherY).abs() < 5,
+          isTrue,
+          reason:
+              'uncle (Дядя by descriptor) should sit on the same row as father / aunt',
+        );
+        expect(
+          (auntY - fatherY).abs() < 5,
+          isTrue,
+          reason: 'aunt should also be on parents\' row',
+        );
+
+        // Cousin (Двоюродная сестра by descriptor) should land on
+        // viewer's row, not on father's row.
+        expect(
+          (cousinY - viewerY).abs() < 5,
+          isTrue,
+          reason: 'cousin should be on the same row as viewer',
+        );
+      },
+    );
+  });
+
   group('Edge-first connector', () {
     Future<void> pumpTwoPersonTree(
       WidgetTester tester, {

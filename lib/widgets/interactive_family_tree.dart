@@ -527,6 +527,7 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
       peopleData: visiblePeopleData,
       relations: visibleRelations,
       graphSnapshot: widget.graphSnapshot,
+      currentUserId: widget.currentUserId,
     ).compute();
   }
 
@@ -2398,16 +2399,102 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
   }
 } // <- Закрывающая скобка для класса _InteractiveFamilyTreeState
 
+// Maps the viewer-relative relation label the backend computes
+// (e.g., "Дядя", "Двоюродная сестра", "Бабушка") to a generation
+// offset in the layout's row index space:
+//   negative → older generation (above the viewer row)
+//   zero     → same generation as the viewer
+//   positive → younger generation (below the viewer row)
+//
+// Returns null when the label doesn't map cleanly to a single
+// offset (e.g., "В законе" / "Друг" / unknown). The caller should
+// then fall back to whatever the structural BFS came up with.
+//
+// The matcher is intentionally lowercase substring — backend
+// labels can carry suffixes ("+2", "по жене", colloquial forms)
+// which we strip before testing.
+int? _generationOffsetFromRelationLabel(String? rawLabel) {
+  if (rawLabel == null) return null;
+  final label = rawLabel.toLowerCase().trim();
+  if (label.isEmpty) return null;
+
+  // Order matters: more specific patterns first so "прабабушка"
+  // doesn't accidentally match the "бабушка" rule.
+  if (label.contains('прапрадед') ||
+      label.contains('прапрабабушк') ||
+      label.contains('прапрадеду')) {
+    return -4;
+  }
+  if (label.contains('прадед') ||
+      label.contains('прабаб') ||
+      label.contains('прадеду')) {
+    return -3;
+  }
+  if (label.contains('двоюродн')) {
+    // Двоюродный/-ая брат/сестра/племянник/дядя/тётя — the
+    // generation offset depends on the second half.
+    if (label.contains('брат') || label.contains('сестр')) return 0;
+    if (label.contains('племянн')) return 1;
+    if (label.contains('дядя') ||
+        label.contains('тёт') ||
+        label.contains('тет')) {
+      return -1;
+    }
+    if (label.contains('бабуш') || label.contains('дед')) return -2;
+    if (label.contains('внук') || label.contains('внучк')) return 2;
+    return null;
+  }
+  if (label.contains('дед') ||
+      label.contains('бабуш') ||
+      label.contains('бабк')) {
+    return -2;
+  }
+  if (label.contains('внук') || label.contains('внучк')) return 2;
+  if (label.contains('племянн') || label.contains('племяшк')) return 1;
+  if (label.contains('дядя') ||
+      label.contains('тёт') ||
+      label.contains('тет')) {
+    return -1;
+  }
+  if (label.contains('мать') ||
+      label.contains('мам') ||
+      label.contains('отец') ||
+      label.contains('папа') ||
+      label.contains('родитель') ||
+      label.contains('мачех') ||
+      label.contains('отчим')) {
+    return -1;
+  }
+  if (label.contains('сын') ||
+      label.contains('дочь') ||
+      label.contains('дочк') ||
+      label.contains('пасынк') ||
+      label.contains('падчериц')) {
+    return 1;
+  }
+  if (label.contains('брат') || label.contains('сестр')) return 0;
+  if (label.contains('супруг') ||
+      label.contains('партнёр') ||
+      label.contains('партнер') ||
+      label.contains('жен') ||
+      label.contains('муж')) {
+    return 0;
+  }
+  return null;
+}
+
 class _TreeLayoutEngine {
   _TreeLayoutEngine({
     required this.peopleData,
     required this.relations,
     this.graphSnapshot,
+    this.currentUserId,
   });
 
   final List<Map<String, dynamic>> peopleData;
   final List<FamilyRelation> relations;
   final TreeGraphSnapshot? graphSnapshot;
+  final String? currentUserId;
 
   _TreeLayoutComputation compute() {
     final peopleById = <String, FamilyPerson>{
@@ -2525,12 +2612,31 @@ class _TreeLayoutEngine {
     }
 
     final components = _buildComponents(adjacency, peopleById);
-    final nodePositions = <String, Offset>{};
-    var offsetX = InteractiveFamilyTree.contentInsetHorizontal +
-        InteractiveFamilyTree.nodeWidth / 2 +
-        InteractiveFamilyTree.siblingSeparation;
-    var maxBottomY = 0.0;
 
+    // ── Find viewer + their global level BEFORE the components loop.
+    // We process the viewer's component first, capture its levels,
+    // and use the viewer's level as the global anchor for any
+    // OTHER component that has a viewer-relative descriptor (e.g.,
+    // an uncle-by-marriage who has no structural connection to the
+    // viewer's blood ancestors). Without this, separate components
+    // each min-shift to row 0 and float independently — placing an
+    // uncle's branch at the canvas top instead of the parents' row.
+    FamilyPerson? viewerPerson;
+    if (currentUserId != null && currentUserId!.isNotEmpty) {
+      for (final person in peopleById.values) {
+        if (person.userId == currentUserId) {
+          viewerPerson = person;
+          break;
+        }
+      }
+    }
+    int? viewerGlobalLevel;
+    final componentLevels = <Set<String>, Map<String, int>>{};
+
+    // Pre-pass: assign levels for every component AND find the
+    // viewer's level. We can't do this lazily inside the position
+    // loop because uncle's component might be processed before
+    // viewer's component, and uncle needs viewer's level to anchor.
     for (final component in components) {
       final levels = _assignLevels(
         component: component,
@@ -2540,6 +2646,69 @@ class _TreeLayoutEngine {
         spousesByPerson: spousesByPerson,
         siblingsByPerson: siblingsByPerson,
       );
+      componentLevels[component] = levels;
+      if (viewerPerson != null && component.contains(viewerPerson.id)) {
+        viewerGlobalLevel = levels[viewerPerson.id];
+      }
+    }
+
+    // Viewer-relation anchor pass: for each NON-viewer component,
+    // override its levels using descriptors so people land on the
+    // right global row even when they're structurally disconnected
+    // from the viewer. Specifically for the uncle-by-marriage case,
+    // his "Дядя" descriptor → -1 from viewer → moved to viewer-1.
+    final descriptors = graphSnapshot?.viewerDescriptorByPersonId;
+    if (viewerGlobalLevel != null &&
+        descriptors != null &&
+        descriptors.isNotEmpty) {
+      for (final component in components) {
+        if (viewerPerson != null && component.contains(viewerPerson.id)) {
+          // The viewer's own component already has the right
+          // structural levels — don't second-guess them.
+          continue;
+        }
+        final levels = componentLevels[component];
+        if (levels == null) continue;
+
+        // Find anchor candidates in this component. Each anchor's
+        // desired global level (viewerGlobalLevel + offset) maps
+        // to a current level in the component; the difference is
+        // the shift to apply to ALL members of this component to
+        // align them to the viewer's coordinate space.
+        final shifts = <int>[];
+        for (final personId in component) {
+          final descriptor = descriptors[personId];
+          if (descriptor == null) continue;
+          final offset = _generationOffsetFromRelationLabel(
+            descriptor.primaryRelationLabel,
+          );
+          if (offset == null) continue;
+          final currentLevel = levels[personId];
+          if (currentLevel == null) continue;
+          shifts.add((viewerGlobalLevel + offset) - currentLevel);
+        }
+        if (shifts.isEmpty) continue;
+
+        // Use the median shift — robust against one weird
+        // descriptor pulling everyone the wrong way.
+        shifts.sort();
+        final medianShift = shifts[shifts.length ~/ 2];
+        if (medianShift == 0) continue;
+
+        for (final entry in levels.entries.toList()) {
+          levels[entry.key] = entry.value + medianShift;
+        }
+      }
+    }
+
+    final nodePositions = <String, Offset>{};
+    var offsetX = InteractiveFamilyTree.contentInsetHorizontal +
+        InteractiveFamilyTree.nodeWidth / 2 +
+        InteractiveFamilyTree.siblingSeparation;
+    var maxBottomY = 0.0;
+
+    for (final component in components) {
+      final levels = componentLevels[component]!;
       final groupsByLevel = _buildGroupsByLevel(
         component: component,
         levels: levels,
@@ -3071,6 +3240,27 @@ class _TreeLayoutEngine {
       }
     }
 
+    // ── Viewer-relation anchor pass ───────────────────────────────────
+    // The structural BFS gets confused when one half of a couple has
+    // strong anchors in-tree (e.g., wife is daughter of grandparents,
+    // child of viewer's grandparent → anchored at parents' row) and
+    // the other half has only a weak anchor (e.g., husband-by-marriage
+    // with only one parent-of-cousin edge — gets dropped a generation
+    // because his only kid floats up). In that case the BFS puts the
+    // weakly-anchored spouse one row higher than they should be, and
+    // their kid follows.
+    //
+    // The backend already computes a label for everyone relative to
+    // the viewer (Дядя / Тётя / Двоюродная сестра / etc), and that
+    // label encodes a clear generation offset. When the structural
+    // level disagrees by exactly 1 row with what the relation label
+    // demands, the label wins — same with the spouse-pairing rules,
+    // we treat it as the "ground truth" the BFS should match.
+    //
+    // We're conservative: only override by ±1 (not ±2+), so a
+    // genuinely-broken graph doesn't get yanked across the canvas
+    // by a stale label. And the override re-runs the spouse-/kid-
+    // anchor passes implicitly via _propagateLevelChange below.
     final minLevel = levels.values.reduce(min);
     if (minLevel != 0) {
       for (final entry in levels.entries.toList()) {
