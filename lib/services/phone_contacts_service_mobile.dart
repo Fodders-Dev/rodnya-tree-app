@@ -14,7 +14,13 @@ class PhoneContactsService {
     if (!await isSupported()) {
       return false;
     }
-    return FlutterContacts.requestPermission(readonly: true);
+    // flutter_contacts 2.x replaced the boolean
+    // `requestPermission(readonly: true)` with a `PermissionStatus`
+    // returning request via the new permissions namespace.
+    final status =
+        await FlutterContacts.permissions.request(PermissionType.read);
+    return status == PermissionStatus.granted ||
+        status == PermissionStatus.limited;
   }
 
   Future<List<PhoneContactEntry>> getPhoneContacts() async {
@@ -22,16 +28,21 @@ class PhoneContactsService {
       return const [];
     }
 
-    final contacts = await FlutterContacts.getContacts(
-      withProperties: true,
-      withPhoto: false,
+    // 2.x renamed `getContacts(withProperties: true)` to `getAll` with
+    // an explicit ContactProperty set. We only need names + phone
+    // numbers — skip photos / addresses / other properties to keep
+    // the read fast on devices with thousands of contacts. The enum
+    // member is `phone` (singular) in 2.x.
+    final contacts = await FlutterContacts.getAll(
+      properties: const {ContactProperty.phone},
     );
     final normalizedEntries = <String, PhoneContactEntry>{};
 
     for (final contact in contacts) {
-      final displayName = contact.displayName.trim().isNotEmpty
-          ? contact.displayName.trim()
-          : 'Контакт';
+      // displayName is nullable in 2.x — fall back to "Контакт" so
+      // we always render something readable in the picker list.
+      final rawName = contact.displayName?.trim() ?? '';
+      final displayName = rawName.isNotEmpty ? rawName : 'Контакт';
       for (final phone in contact.phones) {
         final rawPhoneNumber = phone.number.trim();
         final normalizedPhoneNumber = PhoneUtils.normalize(rawPhoneNumber);

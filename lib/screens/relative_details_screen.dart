@@ -1479,12 +1479,17 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
 
       if (mounted) {
         final box = context.findRenderObject() as RenderBox?;
-        // Используем share_plus для отправки ссылки
-        await Share.share(
-          'Присоединяйтесь к нашему семейному древу в Родне! ${inviteUrl.toString()}',
-          subject: 'Приглашение в Родню',
-          sharePositionOrigin:
-              box!.localToGlobal(Offset.zero) & box.size, // Позиция для iPad
+        // share_plus 11.x replaced the static Share.share with a singleton
+        // SharePlus.instance.share(ShareParams(...)).
+        await SharePlus.instance.share(
+          ShareParams(
+            text:
+                'Присоединяйтесь к нашему семейному древу в Родне! ${inviteUrl.toString()}',
+            subject: 'Приглашение в Родню',
+            sharePositionOrigin: box != null
+                ? box.localToGlobal(Offset.zero) & box.size
+                : null,
+          ),
         );
       }
     } catch (e) {

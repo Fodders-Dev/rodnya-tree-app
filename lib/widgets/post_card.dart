@@ -221,7 +221,9 @@ class _PostCardState extends State<PostCard>
         ..writeln('Фото: ${imageUrls.join('\n')}');
     }
 
-    await Share.share(buffer.toString().trim());
+    await SharePlus.instance.share(
+      ShareParams(text: buffer.toString().trim()),
+    );
   }
 
   String get _audienceLabel {

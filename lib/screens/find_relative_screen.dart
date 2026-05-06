@@ -211,11 +211,13 @@ class _FindRelativeScreenState extends State<FindRelativeScreen>
   Future<void> _shareAppLink() async {
     final publicAppUrl = BackendRuntimeConfig.current.publicAppUrl;
     final profileCode = _searchProfileCodeController.text.trim();
-    await Share.share(
-      'Присоединяйтесь к Родне по ссылке: $publicAppUrl\n\n'
-      'Если у вас уже есть аккаунт, меня можно найти по email, username или профильному коду'
-      '${profileCode.isEmpty ? '' : ' $profileCode'}. '
-      'Если аккаунта ещё нет, откройте invite/claim ссылку или QR.',
+    await SharePlus.instance.share(
+      ShareParams(
+        text: 'Присоединяйтесь к Родне по ссылке: $publicAppUrl\n\n'
+            'Если у вас уже есть аккаунт, меня можно найти по email, username или профильному коду'
+            '${profileCode.isEmpty ? '' : ' $profileCode'}. '
+            'Если аккаунта ещё нет, откройте invite/claim ссылку или QR.',
+      ),
     );
   }
 

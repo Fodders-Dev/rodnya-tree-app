@@ -1532,13 +1532,15 @@ class _RelativesScreenState extends State<RelativesScreen> {
         treeId: _currentTreeId!,
         personId: relative.id,
       );
-      await Share.share(
-        (_treeProviderInstance?.selectedTreeKind == TreeKind.friends)
-            ? 'Присоединяйтесь к нашему кругу друзей в Родне: ${inviteUrl.toString()}'
-            : 'Присоединяйтесь к нашему семейному древу в Родне: ${inviteUrl.toString()}',
-        subject: _treeProviderInstance?.selectedTreeKind == TreeKind.friends
-            ? 'Приглашение в круг друзей'
-            : 'Приглашение в Родню',
+      await SharePlus.instance.share(
+        ShareParams(
+          text: (_treeProviderInstance?.selectedTreeKind == TreeKind.friends)
+              ? 'Присоединяйтесь к нашему кругу друзей в Родне: ${inviteUrl.toString()}'
+              : 'Присоединяйтесь к нашему семейному древу в Родне: ${inviteUrl.toString()}',
+          subject: _treeProviderInstance?.selectedTreeKind == TreeKind.friends
+              ? 'Приглашение в круг друзей'
+              : 'Приглашение в Родню',
+        ),
       );
     } catch (error) {
       if (!mounted) {

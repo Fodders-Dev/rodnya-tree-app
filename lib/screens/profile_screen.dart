@@ -417,9 +417,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Future<void> _shareProfileConnectionLink(Uri link) async {
     final displayName =
         _userProfile == null ? 'Я' : _getSafeDisplayName(_userProfile!).trim();
-    await Share.share(
-      '$displayName в Родне\n$link\n\n'
-      'Откройте ссылку, чтобы перейти к поиску по профильному коду, invite или claim flow.',
+    await SharePlus.instance.share(
+      ShareParams(
+        text: '$displayName в Родне\n$link\n\n'
+            'Откройте ссылку, чтобы перейти к поиску по профильному коду, invite или claim flow.',
+      ),
     );
   }
 

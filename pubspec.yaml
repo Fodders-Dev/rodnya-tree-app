@@ -43,7 +43,7 @@ dependencies:
   uuid: ^4.5.1  # Более стабильная версия
   path: ^1.8.3
   url_launcher: ^6.1.11
-  package_info_plus: ^8.3.0
+  package_info_plus: ^9.0.0
   flutter_localizations:
     sdk: flutter
   
@@ -57,20 +57,20 @@ dependencies:
 
   # Добавляем зависимости для локального хранилища и синхронизации
   idb_shim: ^2.6.0  # Возвращаем версию, где должны быть нужные функции
-  connectivity_plus: ^6.1.3  # Для отслеживания состояния подключения
+  connectivity_plus: ^7.0.0  # Для отслеживания состояния подключения
   shared_preferences: ^2.5.3  # Добавляем обратно для ThemeProvider
   # Android Keystore-backed storage for auth tokens. SharedPreferences
   # plaintext-stores everything; secure_storage wraps EncryptedSharedPreferences
   # on Android 23+ and KeyChain on iOS so a rooted/USB-debugger can't
   # extract session tokens by `cat`-ing the prefs file.
   flutter_secure_storage: ^9.2.2
-  get_it: ^8.0.3  # Добавляем для внедрения зависимостей
+  get_it: ^9.0.0  # Добавляем для внедрения зависимостей
 
   # Локальные уведомления (для foreground и каналов)
   flutter_local_notifications: ^19.0.0
 
   # Добавляем flutter_dotenv
-  flutter_dotenv: ^5.1.0
+  flutter_dotenv: ^6.0.0
 
   # Зависимости для idb_shim на мобильных
   sembast: ^3.8.4+1
@@ -85,7 +85,7 @@ dependencies:
   hive: ^2.2.3
   hive_flutter: ^1.1.0
   permission_handler: ^12.0.0+1
-  flutter_contacts: ^1.1.9+2
+  flutter_contacts: ^2.0.0
 
   # Зависимости для RuStore (обновляем на стандартные версии)
   flutter_rustore_update: ^8.0.0
@@ -94,7 +94,9 @@ dependencies:
   flutter_rustore_billing: ^8.0.0
   # Добавляем зависимость для Push Notifications (версия 6.5.0)
   flutter_rustore_push: ^6.5.0
-  share_plus: ^10.1.4
+  # 13.x pulls win32 ^6.0 which clashes with flutter_secure_storage 9.x.
+  # 11.x is the highest version that still resolves cleanly.
+  share_plus: ^11.0.0
   http: ^1.5.0
   google_sign_in: 6.3.0
   google_sign_in_web: 0.12.4+4
@@ -103,7 +105,7 @@ dependencies:
   # the system browser. On web we still parse Uri.base query
   # parameters; on mobile this listener forwards the URI to the
   # auth-screen handlers.
-  app_links: ^6.4.1
+  app_links: ^7.0.0
   web_socket_channel: ^3.0.3
   # Старые git зависимости удалены
 
@@ -119,11 +121,13 @@ dependencies:
   # "файл отдельный". We only use it on mobile; web stays on the
   # gallery picker because <input type=file> can't drive a live
   # preview round capture loop.
-  camera: ^0.11.0+2
+  camera: ^0.12.0
   file_picker: ^8.0.0+1
   open_filex: ^4.5.0
   qr_flutter: ^4.1.0
-  device_info_plus: ^11.3.0
+  # 13.x requires win32 6; flutter_secure_storage 9.x still pins win32 5,
+  # so 12.x is the highest we can go without dropping secure_storage.
+  device_info_plus: ^12.0.0
   mobile_scanner: ^5.2.3
 
 # The following adds the Cupertino Icons font to your application.
