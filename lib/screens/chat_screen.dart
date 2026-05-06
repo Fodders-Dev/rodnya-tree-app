@@ -3641,6 +3641,15 @@ class _ChatScreenState extends State<ChatScreen> {
                 0,
                 8,
               ),
+              // Pre-render ~1.4 screens of bubbles in each scroll
+              // direction (default is 250 px, which on a 1.5-meter
+              // chat with photo carousels looked like a fresh build
+              // every flick — the user reported jank when scrolling
+              // through long histories). 1500 dp is roughly 3 phone
+              // viewports of buffer; the trade-off is RAM, but
+              // bubbles already cap their text + share an image
+              // cache so the cost stays bounded.
+              cacheExtent: 1500,
               itemCount: filteredRemoteMessages.length +
                   filteredOptimisticMessages.length +
                   serverOnlySearchResults.length +

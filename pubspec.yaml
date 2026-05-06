@@ -43,6 +43,7 @@ dependencies:
   uuid: ^4.5.1  # Более стабильная версия
   path: ^1.8.3
   url_launcher: ^6.1.11
+  # 10.x wants win32 ^6 — same conflict as device_info_plus 13.
   package_info_plus: ^9.0.0
   flutter_localizations:
     sdk: flutter
@@ -94,8 +95,7 @@ dependencies:
   flutter_rustore_billing: ^10.0.0
   # Добавляем зависимость для Push Notifications
   flutter_rustore_push: ^7.2.0
-  # 13.x pulls win32 ^6.0 which clashes with flutter_secure_storage 9.x.
-  # 11.x is the highest version that still resolves cleanly.
+  # 13.x wants win32 ^6 — same conflict as device_info_plus 13.
   share_plus: ^11.0.0
   http: ^1.5.0
   # 7.x is a near-total rewrite (initialize/authenticate/
@@ -130,8 +130,17 @@ dependencies:
   file_picker: ^11.0.0
   open_filex: ^4.5.0
   qr_flutter: ^4.1.0
-  # 13.x requires win32 6; flutter_secure_storage 9.x still pins win32 5,
-  # so 12.x is the highest we can go without dropping secure_storage.
+  # 13.x + share_plus 13 + package_info_plus 10 all want win32 ^6.0;
+  # flutter_secure_storage 9.x's transitive
+  # flutter_secure_storage_windows still pins win32 ^5.5, AND
+  # file_picker 11.x's Windows backend was compiled against the
+  # win32-5 HRESULT typedef. A `dependency_overrides: { win32: ^6.0 }`
+  # resolves at pub level but breaks Windows-target compilation
+  # (file_picker_windows.dart uses HRESULT extension type semantics
+  # introduced in win32 6 — old 5-style int args don't fit). Stay on
+  # 12.x until either flutter_secure_storage drops the
+  # flutter_secure_storage_windows 4.x line OR file_picker ships a
+  # win32-6-compatible Windows backend.
   device_info_plus: ^12.0.0
   mobile_scanner: ^7.0.0
 
@@ -139,7 +148,8 @@ dependencies:
 # Use with the CupertinoIcons class for iOS style icons.
 
   collection: any
-  livekit_client: ^2.5.4
+  livekit_client: ^2.7.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
