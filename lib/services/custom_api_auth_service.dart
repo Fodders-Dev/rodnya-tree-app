@@ -605,34 +605,31 @@ class CustomApiAuthService implements AuthServiceInterface {
   /// app needs the backend to redirect to a URL that the app's
   /// app_links listener picks up.
   ///
-  /// Currently we still use the custom `rodnya://oauth/callback`
-  /// scheme. The app ALSO accepts the verified-https path
-  /// (`https://rodnya-tree.ru/oauth/callback`) via the autoVerify
-  /// intent filter we registered in the manifest, but flipping
-  /// `finalRedirect` over to the https form requires THREE
-  /// preconditions that need a separate operations PR:
+  /// We use the verified-https path
+  /// (`https://rodnya-tree.ru/oauth/callback`) rather than the
+  /// custom `rodnya://` scheme:
   ///
-  ///   1. `https://rodnya-tree.ru/.well-known/assetlinks.json` must
-  ///      be served with the release SHA-256 fingerprint listed
-  ///      so Android's autoVerify pass succeeds. Otherwise the OS
-  ///      falls through to the browser and the user sees a 404.
-  ///   2. `https://rodnya-tree.ru/oauth/callback` must serve a
-  ///      bridge page that detects the URI scheme on devices
-  ///      without verified link support and falls back to
-  ///      `rodnya://oauth/callback?...same params...`. Otherwise
-  ///      pre-Android-12 / unverified installs land on a blank
-  ///      page.
-  ///   3. The marketing site needs a route entry for `/oauth/`.
-  ///
-  /// Until those land, we keep the custom-scheme finalRedirect so
-  /// flow remains intact. The verified-https intent filter still
-  /// gives us spoofing protection for any inbound link from
-  /// email/SMS that happens to match our domain — that's the
-  /// other half of the OAuth deep-link spoofing fix.
+  ///   * On installs that have completed Verified App Links
+  ///     handshake — i.e. Android pulled
+  ///     `https://rodnya-tree.ru/.well-known/assetlinks.json` post-
+  ///     install and matched our SHA-256 fingerprint — the OS
+  ///     intercepts BEFORE the browser ever loads the URL. No
+  ///     chooser dialog appears, no other app can register a
+  ///     competing filter for the same `https://rodnya-tree.ru/oauth/*`
+  ///     prefix. That's the OAuth deep-link spoofing fix.
+  ///   * On installs that haven't picked up the verification (older
+  ///     Android, fresh-install before the post-install handshake,
+  ///     or a corrupted assetlinks fetch), the browser loads our
+  ///     bridge page at `web/oauth/callback/index.html`. That page
+  ///     auto-attempts a hop to the legacy `rodnya://oauth/callback?...`
+  ///     custom scheme and renders an explicit "Open in Родня" /
+  ///     "Install from RuStore" UI. The custom scheme intent filter
+  ///     stays registered in the manifest as a safety net.
   ///
   /// On web we leave it null so the backend keeps using the public
   /// web URL.
-  static const String _mobileOauthCallback = 'rodnya://oauth/callback';
+  static const String _mobileOauthCallback =
+      'https://rodnya-tree.ru/oauth/callback';
   String? _resolveOauthFinalRedirect() => kIsWeb ? null : _mobileOauthCallback;
 
   Future<String> resolveTelegramLoginStartUrl({bool linkMode = false}) async {

@@ -46,6 +46,37 @@ rodnya-tree.ru, www.rodnya-tree.ru {
   }
   header @pushWorker Cache-Control "no-cache, must-revalidate"
 
+  # Android Verified App Links manifest. Caddy hides dotfiles by
+  # default, so we explicitly serve `.well-known/*` with the right
+  # content-type. Without this Android can't auto-verify the
+  # `https://rodnya-tree.ru/oauth/*` intent filter and the OAuth
+  # spoofing protection never kicks in.
+  @assetLinks {
+    path /.well-known/assetlinks.json
+  }
+  handle @assetLinks {
+    header Content-Type "application/json"
+    header Cache-Control "public, max-age=300"
+    file_server {
+      hide
+    }
+  }
+
+  # OAuth callback bridge page. Verified App Links: if the user has
+  # the app installed AND assetlinks.json is verified, the OS
+  # intercepts before the browser ever loads this URL. If NOT,
+  # we render a meta-refresh that hops to the legacy custom scheme
+  # and an "Open in Родня" button as a last-resort fallback.
+  @oauthBridge {
+    path /oauth/callback
+    path /oauth/callback/
+  }
+  handle @oauthBridge {
+    header Cache-Control "no-store, no-cache, must-revalidate"
+    rewrite * /oauth/callback/index.html
+    file_server
+  }
+
   @staticAssets {
     path /assets/* /icons/* /canvaskit/* /splash/* /favicon.png /apple-touch-icon.png
     not path /assets/AssetManifest.bin.json /assets/AssetManifest.json /assets/FontManifest.json
