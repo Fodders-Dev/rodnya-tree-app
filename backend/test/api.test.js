@@ -11140,17 +11140,150 @@ test("login is timing-equalized for unknown vs invalid-password emails", async (
     const realMissed = await timeLogin("real@rodnya.app");
     const unknownMissed = await timeLogin("nope-not-real@rodnya.app");
 
-    // scrypt with the parameters we use takes ≥30 ms on any modern
-    // hardware. If we ever regress and skip the dummy hash, the
-    // unknown-email path drops to single-digit ms and this fails.
+    // scrypt at our parameters takes 20–150 ms depending on hardware.
+    // The threshold is loose (10 ms) because what we actually want
+    // to prove is that the unknown-email path doesn't SKIP the hash
+    // — a no-op would return in sub-millisecond. If we ever regress
+    // to short-circuit-on-no-user, this drops to <1 ms and the test
+    // fails loud.
     assert.ok(
-      realMissed > 30,
-      `expected real-user wrong-password to take >30 ms, got ${realMissed}`,
+      realMissed > 10,
+      `expected real-user wrong-password to take >10 ms (real verify), ` +
+          `got ${realMissed}`,
     );
     assert.ok(
-      unknownMissed > 30,
-      `expected unknown-email path to take >30 ms (dummy verify), ` +
+      unknownMissed > 10,
+      `expected unknown-email path to take >10 ms (dummy verify), ` +
           `got ${unknownMissed}`,
+    );
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("login locks account after repeated failures and unlocks on success", async () => {
+  const ctx = await startConfiguredTestServer();
+  try {
+    const registerResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "lockout-test@rodnya.app",
+        password: "real-secret-1234",
+        displayName: "Тест",
+      }),
+    });
+    assert.equal(registerResponse.status, 201);
+
+    // 7 failures = lockout threshold (matches FileStore constant).
+    // We send 7 wrong-password attempts; the 8th must be 401 even
+    // with the CORRECT password because the account is now locked.
+    // Important: the test uses a unique email so the per-IP rate
+    // limiter (30/min for /login) doesn't kick in first — we only
+    // hit it 8 times here.
+    for (let i = 0; i < 7; i += 1) {
+      const r = await fetch(`${ctx.baseUrl}/v1/auth/login`, {
+        method: "POST",
+        headers: {"content-type": "application/json"},
+        body: JSON.stringify({
+          email: "lockout-test@rodnya.app",
+          password: `wrong-${i}`,
+        }),
+      });
+      assert.equal(
+        r.status,
+        401,
+        `attempt ${i + 1} should be 401 (wrong password)`,
+      );
+    }
+
+    // 8th attempt with the CORRECT password — must still 401 because
+    // the account is locked. Without the lockout, this would succeed
+    // and emit a fresh session, defeating brute-force protection.
+    const lockedResponse = await fetch(`${ctx.baseUrl}/v1/auth/login`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "lockout-test@rodnya.app",
+        password: "real-secret-1234",
+      }),
+    });
+    assert.equal(
+      lockedResponse.status,
+      401,
+      "correct password during lockout window must still 401",
+    );
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("successful login resets the lockout failure counter", async () => {
+  const ctx = await startConfiguredTestServer();
+  try {
+    const registerResponse = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "reset-test@rodnya.app",
+        password: "real-secret-1234",
+        displayName: "Тест",
+      }),
+    });
+    assert.equal(registerResponse.status, 201);
+
+    // Burn 6 failures (one shy of the 7-attempt threshold).
+    for (let i = 0; i < 6; i += 1) {
+      const r = await fetch(`${ctx.baseUrl}/v1/auth/login`, {
+        method: "POST",
+        headers: {"content-type": "application/json"},
+        body: JSON.stringify({
+          email: "reset-test@rodnya.app",
+          password: `wrong-${i}`,
+        }),
+      });
+      assert.equal(r.status, 401);
+    }
+
+    // Successful login at attempt 7.
+    const okResponse = await fetch(`${ctx.baseUrl}/v1/auth/login`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "reset-test@rodnya.app",
+        password: "real-secret-1234",
+      }),
+    });
+    assert.equal(okResponse.status, 200);
+
+    // Now do another 6 failures — if the success above didn't reset
+    // the counter we'd be at 12 (over the 7 threshold) and locked
+    // out. This 7th-from-the-success-mark wrong attempt must NOT
+    // lock the account; the 8th success attempt must succeed.
+    for (let i = 0; i < 6; i += 1) {
+      const r = await fetch(`${ctx.baseUrl}/v1/auth/login`, {
+        method: "POST",
+        headers: {"content-type": "application/json"},
+        body: JSON.stringify({
+          email: "reset-test@rodnya.app",
+          password: `wrong-second-pass-${i}`,
+        }),
+      });
+      assert.equal(r.status, 401);
+    }
+
+    const stillOk = await fetch(`${ctx.baseUrl}/v1/auth/login`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "reset-test@rodnya.app",
+        password: "real-secret-1234",
+      }),
+    });
+    assert.equal(
+      stillOk.status,
+      200,
+      "successful login must reset the counter so we don't lock too eagerly",
     );
   } finally {
     await stopTestServer(ctx);

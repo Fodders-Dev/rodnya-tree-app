@@ -32,17 +32,56 @@ function registerAdminRoutes(
     });
   });
 
+  // Whitelist of statuses an admin can write into a report. Anything
+  // outside this set is rejected so the field can't be used as a free-
+  // form text payload — moderators sometimes copy-paste 64KB triage
+  // notes into the wrong field, and downstream UI keys hard off the
+  // status string.
+  const allowedReportStatuses = new Set([
+    "resolved",
+    "dismissed",
+    "investigating",
+  ]);
+
   app.post("/v1/admin/reports/:reportId/resolve", requireAuth, async (req, res) => {
     if (!requireAdmin(req, res)) {
       return;
     }
 
-    const status = String(req.body?.status || "resolved").trim() || "resolved";
+    const rawStatus = String(req.body?.status || "resolved").trim();
+    const status = rawStatus.length === 0 ? "resolved" : rawStatus;
+    if (!allowedReportStatuses.has(status)) {
+      res.status(400).json({
+        message:
+            `Недопустимый status. Разрешены: ${[...allowedReportStatuses].join(", ")}`,
+      });
+      return;
+    }
+
+    // Cap resolution note to keep DB row size bounded. 4 KB is plenty
+    // for any human-written triage paragraph; anything beyond is
+    // either accidental paste of a chat history or deliberate abuse.
+    const rawNote = req.body?.resolutionNote;
+    let resolutionNote = null;
+    if (rawNote != null) {
+      const noteString = String(rawNote);
+      if (noteString.length > 4096) {
+        res.status(400).json({
+          message: "resolutionNote слишком длинный (максимум 4096 символов).",
+        });
+        return;
+      }
+      // Strip ASCII control chars (CR/LF/NUL/...) so the note can't
+      // break log lines or downstream tooling that splits on \n.
+      // eslint-disable-next-line no-control-regex
+      resolutionNote = noteString.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
+    }
+
     const report = await store.resolveReport({
       reportId: req.params.reportId,
       resolvedBy: req.auth.user.id,
       status,
-      resolutionNote: req.body?.resolutionNote,
+      resolutionNote,
     });
     if (!report) {
       res.status(404).json({message: "Жалоба не найдена"});

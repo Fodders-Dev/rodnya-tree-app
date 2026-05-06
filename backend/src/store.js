@@ -5618,6 +5618,34 @@ class FileStore {
     return cloneUserWithAuthState(user);
   }
 
+  // Per-account brute-force lockout policy. The IP-based rate
+  // limiter in app.js caps an attacker who hits us from a single
+  // address, but anyone with a proxy pool can rotate IPs and burn
+  // through 30 attempts/min PER IP. Locking the ACCOUNT after a
+  // small streak of failures denies the easy attack regardless of
+  // how many IPs the attacker controls.
+  //
+  // Tuning:
+  //   * 7 failures before lockout — generous enough that a user
+  //     fat-fingering their password doesn't get locked out
+  //     mid-typing, but tight enough that an attacker only gets a
+  //     handful of guesses before the account becomes unreachable.
+  //   * 15-minute lockout window — long enough that a brute-force
+  //     attacker would need >67 hours to make the same number of
+  //     guesses they could without lockout, short enough that a
+  //     legitimate user doesn't get permanently locked out from
+  //     a forgotten-password situation.
+  //   * Successful login resets both fields. So a user who
+  //     remembers their password on attempt 3 doesn't carry the
+  //     two failures into the next session.
+  static get _maxLoginFailuresBeforeLockout() {
+    return 7;
+  }
+
+  static get _loginLockoutDurationMs() {
+    return 15 * 60 * 1000; // 15 minutes
+  }
+
   async authenticate(email, password) {
     const db = await this._read();
     const normalizedEmail = String(email || "").trim().toLowerCase();
@@ -5635,13 +5663,81 @@ class FileStore {
       return null;
     }
 
+    // ── Per-account lockout check ────────────────────────────────
+    // Rejected before we even compute the hash, so a locked account
+    // can't be used as a CPU sink either. We still run the dummy
+    // verify so the wall-clock matches the unknown-email branch
+    // and an attacker can't tell "locked" from "not registered" by
+    // timing.
+    const lockedUntil = user.lockedUntil
+        ? Date.parse(user.lockedUntil)
+        : null;
+    if (lockedUntil && Number.isFinite(lockedUntil) && lockedUntil > Date.now()) {
+      await dummyVerifyForTimingParity(String(password || ""));
+      return null;
+    }
+
     const isValid = await verifyPasswordAsync(password, user);
     if (!isValid) {
+      // Bump failure counter and persist. If we've crossed the
+      // threshold, set lockedUntil so the next attempt short-circuits.
+      const nextCount = (Number(user.failedLoginCount) || 0) + 1;
+      const updates = {failedLoginCount: nextCount};
+      if (nextCount >= FileStore._maxLoginFailuresBeforeLockout) {
+        const unlockAt = Date.now() + FileStore._loginLockoutDurationMs;
+        updates.lockedUntil = new Date(unlockAt).toISOString();
+      }
+      try {
+        await this._persistAuthFailureState(user.id, updates);
+      } catch (error) {
+        // Persistence is best-effort — never fail the auth response
+        // because the failure counter couldn't be written. The
+        // attacker still doesn't get in; we just lose one increment.
+        console.error(
+          "[backend] failed to persist login-failure state",
+          JSON.stringify({userId: user.id, message: error?.message}),
+        );
+      }
       return null;
+    }
+
+    // Successful sign-in resets the failure state.
+    if (user.failedLoginCount || user.lockedUntil) {
+      try {
+        await this._persistAuthFailureState(user.id, {
+          failedLoginCount: 0,
+          lockedUntil: null,
+        });
+      } catch (error) {
+        // Reset is best-effort. Leaving a stale `lockedUntil` in the
+        // past does no harm because the date check ignores expired
+        // entries.
+        console.error(
+          "[backend] failed to clear login-failure state",
+          JSON.stringify({userId: user.id, message: error?.message}),
+        );
+      }
     }
 
     this._rememberUser(user);
     return cloneUserWithAuthState(user);
+  }
+
+  // Targeted persister for the lockout fields. Lives separately from
+  // the bulk user-update path so a failure here doesn't poison the
+  // larger `_write` queue. Subclasses (PostgresStore) override to
+  // skip the full state read and write only the touched columns.
+  async _persistAuthFailureState(userId, updates) {
+    const db = await this._read();
+    const user = db.users.find((entry) => entry.id === userId);
+    if (!user) return;
+    if ("failedLoginCount" in updates) {
+      user.failedLoginCount = updates.failedLoginCount;
+    }
+    if ("lockedUntil" in updates) {
+      user.lockedUntil = updates.lockedUntil;
+    }
+    await this._write(db);
   }
 
   /// Mark the user's last-seen timestamp. Called by the realtime hub when

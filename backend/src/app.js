@@ -25,6 +25,7 @@ const {
   normalizeParticipantIds,
 } = require("./store");
 const {createOperationalStatus} = require("./operational-status");
+const {InMemoryRateLimitBackend} = require("./rate-limit-backends");
 const {registerAdminRoutes} = require("./routes/admin-routes");
 const {registerAuthSessionRoutes} = require("./routes/auth-session-routes");
 const {
@@ -74,6 +75,23 @@ function createApp({
   maxAuthClient = null,
   liveKitService = null,
   runtimeInfo = null,
+  // Pluggable rate-limit backend. The default is an in-memory Map
+  // which is correct for a single-process deploy (current production
+  // shape). When the backend is scaled out to multiple processes /
+  // replicas, every process gets its own Map and the per-IP / per-
+  // bucket caps multiply by the replica count — an attacker can
+  // burn (replicas × limit) attempts per window. To fix that
+  // horizontally, callers can pass a Redis-backed (or any other
+  // shared-state) implementation here. The contract is just two
+  // methods:
+  //   incr(key, windowMs): returns {count, resetAt} after bumping
+  //                         the bucket. Window resets when resetAt
+  //                         has passed.
+  //   evict(key): drop a bucket explicitly (used by the periodic
+  //               cleanup tick).
+  // Both must be synchronous-ish (a Promise is fine — see
+  // rate-limit-backends.js for a reference Redis adapter sketch).
+  rateLimitBackend = null,
 }) {
   const app = express();
   const resolvedPushGateway =
@@ -84,7 +102,13 @@ function createApp({
   const resolvedVkAuthClient = vkAuthClient ?? createVkAuthClient(config);
   const resolvedMaxAuthClient = maxAuthClient ?? createMaxAuthClient(config);
   const resolvedLiveKitService = liveKitService ?? createLiveKitService(config);
-  const rateLimitState = new Map();
+  // Used by the rate-limit middleware below. Backwards-compat name
+  // for what used to be a bare `Map<string, {count, resetAt}>`; the
+  // middleware now routes through the pluggable backend's `incr`
+  // method so a future scale-out PR can swap in a Redis-backed
+  // implementation without touching the middleware logic.
+  const resolvedRateLimitBackend =
+    rateLimitBackend ?? new InMemoryRateLimitBackend();
   const operationalStatus = createOperationalStatus({
     store,
     config,
@@ -580,7 +604,13 @@ function createApp({
   // such as like/view/read actions. Accept it and let handlers validate fields.
   app.use(express.json({limit: "50mb", strict: false}));
   registerPublicMediaRoutes(app, {mediaStorage: resolvedMediaStorage});
-  app.use((req, res, next) => {
+  // async because the rate-limit backend's `incr` returns a Promise
+  // (mandatory for the Redis-backed implementation; the in-memory
+  // default still resolves synchronously). Express forwards thrown
+  // errors when the middleware function is `async`, so any rejection
+  // is converted into a 500 by the global error handler — except we
+  // catch internally and fail-open above.
+  app.use(async (req, res, next) => {
     const policy = (() => {
       const pathName = req.path || "/";
       if (pathName === "/health" || pathName === "/ready") {
@@ -636,19 +666,32 @@ function createApp({
       : 60_000;
     const actorId = String(req.ip || "unknown").trim() || "unknown";
     const key = `${policy.bucket}:${actorId}`;
-    const current = rateLimitState.get(key);
-    const activeBucket = current && current.resetAt > now
-      ? current
-      : {count: 0, resetAt: now + windowMs};
-    activeBucket.count += 1;
-    rateLimitState.set(key, activeBucket);
 
-    if (Math.random() < 0.01 && rateLimitState.size > 2000) {
-      for (const [bucketKey, bucket] of rateLimitState.entries()) {
-        if (!bucket || bucket.resetAt <= now) {
-          rateLimitState.delete(bucketKey);
-        }
-      }
+    let activeBucket;
+    try {
+      activeBucket = await resolvedRateLimitBackend.incr(key, windowMs);
+    } catch (error) {
+      // Backend hiccup (e.g. Redis blip in a future scaled-out
+      // deploy) — fail OPEN so we don't 503 every request when the
+      // limiter is unavailable. The trade-off is documented:
+      // attacker can briefly burst during the outage, which is a
+      // better failure mode than denying every legitimate request.
+      console.error(
+        "[backend] rate-limit backend failure — failing open",
+        JSON.stringify({requestId: req.requestId, message: error?.message}),
+      );
+      next();
+      return;
+    }
+
+    // Periodic GC sweep — only the in-memory backend exposes the
+    // sweepExpired hook. Redis-backed buckets self-expire via TTL.
+    if (
+      typeof resolvedRateLimitBackend.sweepExpired === "function" &&
+      Math.random() < 0.01 &&
+      resolvedRateLimitBackend.size > 2000
+    ) {
+      resolvedRateLimitBackend.sweepExpired(now);
     }
 
     res.setHeader("x-ratelimit-limit", String(policy.limit));
