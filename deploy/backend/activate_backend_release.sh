@@ -74,7 +74,7 @@ rollback_release() {
     mv "$TARGET_DIR" "$failed_dir"
   fi
   mv "$previous_dir" "$TARGET_DIR"
-  systemctl restart "$SERVICE_NAME"
+  systemctl restart "$SERVICE_NAME" </dev/null >/dev/null 2>&1
   check_ready 15 2 || fail "rollback failed: ${SERVICE_NAME} did not become ready"
   fail "backend release failed readiness check and was rolled back"
 }
@@ -138,7 +138,7 @@ log "activating new backend release at $TARGET_DIR"
 mv "$next_dir" "$TARGET_DIR"
 
 log "restarting ${SERVICE_NAME}"
-systemctl restart "$SERVICE_NAME"
+systemctl restart "$SERVICE_NAME" </dev/null >/dev/null 2>&1
 
 if ! check_ready 15 2; then
   rollback_release

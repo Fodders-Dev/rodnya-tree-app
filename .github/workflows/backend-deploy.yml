@@ -11,6 +11,13 @@ on:
       - "tool/backend_ready_alert.mjs"
       - "tool/backend_runtime_watch.mjs"
 
+# Cancel in-flight deploys when a newer push lands. Prevents a slow
+# / hung run from blocking the next attempt — the most recent push
+# is always what we want in production, older ones are noise.
+concurrency:
+  group: backend-deploy-main
+  cancel-in-progress: true
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -69,6 +76,17 @@ jobs:
             "${BACKEND_SERVER_USERNAME}@$SERVER_HOST:${REMOTE_ARCHIVE}"
 
       - name: Activate backend release on server
+        # The activation script does its real work in <30 s
+        # (extract → npm ci --omit=dev → systemctl restart →
+        # readiness check). When the SSH session occasionally
+        # hangs on cleanup post-`systemctl restart` (the new
+        # backend process inherits the SSH stdin/stdout fds and
+        # SSH waits forever), this step would idle for hours
+        # holding GitHub minutes. Cap it at 5 min — enough for
+        # any legitimate deploy, short enough that a hang
+        # surfaces as a clear failure instead of pretending to
+        # still be running.
+        timeout-minutes: 5
         env:
           REMOTE_ARCHIVE: /tmp/rodnya-backend-${{ github.sha }}.tgz
           BACKEND_TARGET_DIR: /opt/rodnya/backend

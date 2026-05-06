@@ -19,6 +19,11 @@ on:
       - "tool/prod_route_smoke.mjs"
       - "tool/sync_web_shell_assets.js"
 
+# Cancel in-flight deploys when a newer push lands.
+concurrency:
+  group: flutter-web-deploy-main
+  cancel-in-progress: true
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
