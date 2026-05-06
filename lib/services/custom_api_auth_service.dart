@@ -11,6 +11,7 @@ import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/models/custom_api_session.dart';
 import 'app_status_service.dart';
 import 'invitation_service.dart';
+import 'secure_session_storage.dart';
 import '../utils/client_instance_id.dart';
 import '../utils/device_descriptor.dart';
 import '../utils/url_utils.dart';
@@ -211,19 +212,19 @@ class CustomApiAuthService implements AuthServiceInterface {
     required BackendRuntimeConfig runtimeConfig,
     required InvitationService invitationService,
     AppStatusService? appStatusService,
+    SecureSessionStorage? sessionStorage,
   })  : _httpClient = httpClient,
-        _preferences = preferences,
         _runtimeConfig = runtimeConfig,
         _invitationService = invitationService,
-        _appStatusService = appStatusService;
-
-  static const _sessionStorageKey = 'custom_api_session_v1';
+        _appStatusService = appStatusService,
+        _sessionStorage = sessionStorage ??
+            SecureSessionStorage(fallbackPreferences: preferences);
 
   final http.Client _httpClient;
-  final SharedPreferences _preferences;
   final BackendRuntimeConfig _runtimeConfig;
   final InvitationService _invitationService;
   final AppStatusService? _appStatusService;
+  final SecureSessionStorage _sessionStorage;
   final StreamController<String?> _authStateController =
       StreamController<String?>.broadcast();
 
@@ -318,7 +319,7 @@ class CustomApiAuthService implements AuthServiceInterface {
 
   Future<void> restoreSession() async {
     try {
-      final rawValue = _preferences.getString(_sessionStorageKey);
+      final rawValue = await _sessionStorage.read();
       if (rawValue == null || rawValue.isEmpty) {
         _session = null;
         return;
@@ -334,7 +335,7 @@ class CustomApiAuthService implements AuthServiceInterface {
       }
     } catch (_) {
       _session = null;
-      await _preferences.remove(_sessionStorageKey);
+      await _sessionStorage.delete();
     }
   }
 
@@ -601,9 +602,36 @@ class CustomApiAuthService implements AuthServiceInterface {
   /// device metadata and would land in /v1/auth/sessions as "Безымянное
   /// устройство".
   /// On Android the OAuth handshake opens the system browser, so the
-  /// app needs the backend to redirect to a custom URI scheme that the
-  /// app's app_links listener picks up. On web we leave it null so the
-  /// backend keeps using the public web URL.
+  /// app needs the backend to redirect to a URL that the app's
+  /// app_links listener picks up.
+  ///
+  /// Currently we still use the custom `rodnya://oauth/callback`
+  /// scheme. The app ALSO accepts the verified-https path
+  /// (`https://rodnya-tree.ru/oauth/callback`) via the autoVerify
+  /// intent filter we registered in the manifest, but flipping
+  /// `finalRedirect` over to the https form requires THREE
+  /// preconditions that need a separate operations PR:
+  ///
+  ///   1. `https://rodnya-tree.ru/.well-known/assetlinks.json` must
+  ///      be served with the release SHA-256 fingerprint listed
+  ///      so Android's autoVerify pass succeeds. Otherwise the OS
+  ///      falls through to the browser and the user sees a 404.
+  ///   2. `https://rodnya-tree.ru/oauth/callback` must serve a
+  ///      bridge page that detects the URI scheme on devices
+  ///      without verified link support and falls back to
+  ///      `rodnya://oauth/callback?...same params...`. Otherwise
+  ///      pre-Android-12 / unverified installs land on a blank
+  ///      page.
+  ///   3. The marketing site needs a route entry for `/oauth/`.
+  ///
+  /// Until those land, we keep the custom-scheme finalRedirect so
+  /// flow remains intact. The verified-https intent filter still
+  /// gives us spoofing protection for any inbound link from
+  /// email/SMS that happens to match our domain — that's the
+  /// other half of the OAuth deep-link spoofing fix.
+  ///
+  /// On web we leave it null so the backend keeps using the public
+  /// web URL.
   static const String _mobileOauthCallback = 'rodnya://oauth/callback';
   String? _resolveOauthFinalRedirect() => kIsWeb ? null : _mobileOauthCallback;
 
@@ -1172,16 +1200,13 @@ class CustomApiAuthService implements AuthServiceInterface {
 
   Future<void> _saveSession(CustomApiSession session) async {
     _session = session;
-    await _preferences.setString(
-      _sessionStorageKey,
-      jsonEncode(session.toJson()),
-    );
+    await _sessionStorage.write(jsonEncode(session.toJson()));
     _appStatusService?.clearSessionIssue();
   }
 
   Future<void> _clearSession({bool sessionExpired = false}) async {
     _session = null;
-    await _preferences.remove(_sessionStorageKey);
+    await _sessionStorage.delete();
     _authStateController.add(null);
     if (sessionExpired) {
       _appStatusService?.reportSessionExpired();

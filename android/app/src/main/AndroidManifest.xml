@@ -101,9 +101,11 @@
             </intent-filter>
 
             <!-- OAuth callback deep link (Telegram / VK ID / MAX).
-                 Backend redirects to rodnya://oauth/callback?provider=...
-                 with the auth code, AppLinks listener inside Flutter
-                 forwards it into the auth-screen handlers. -->
+                 Custom-scheme fallback for older builds and devices
+                 that haven't picked up the verified App Links yet.
+                 Any other app can technically register the same
+                 `rodnya://` scheme, so the verified-https filter
+                 below is preferred when both are available. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW"/>
                 <category android:name="android.intent.category.DEFAULT"/>
@@ -111,6 +113,29 @@
                 <data
                     android:scheme="rodnya"
                     android:host="oauth"/>
+            </intent-filter>
+
+            <!-- Verified App Links — closes the OAuth deep-link
+                 spoofing hole. android:autoVerify="true" tells the
+                 OS to fetch
+                 https://rodnya-tree.ru/.well-known/assetlinks.json
+                 on install and grant us EXCLUSIVE ownership of
+                 https://rodnya-tree.ru/oauth/callback paths if our
+                 SHA-256 cert fingerprint matches the entry there.
+                 No other app can intercept these intents (and the
+                 chooser dialog never appears). For this to take
+                 effect on a real install, assetlinks.json MUST be
+                 served from
+                 https://rodnya-tree.ru/.well-known/assetlinks.json
+                 with `Content-Type: application/json` and the
+                 release keystore's SHA-256 fingerprint listed. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="https"/>
+                <data android:host="rodnya-tree.ru"/>
+                <data android:pathPrefix="/oauth/"/>
             </intent-filter>
 
         </activity>

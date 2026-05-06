@@ -59,6 +59,11 @@ dependencies:
   idb_shim: ^2.6.0  # Возвращаем версию, где должны быть нужные функции
   connectivity_plus: ^6.1.3  # Для отслеживания состояния подключения
   shared_preferences: ^2.5.3  # Добавляем обратно для ThemeProvider
+  # Android Keystore-backed storage for auth tokens. SharedPreferences
+  # plaintext-stores everything; secure_storage wraps EncryptedSharedPreferences
+  # on Android 23+ and KeyChain on iOS so a rooted/USB-debugger can't
+  # extract session tokens by `cat`-ing the prefs file.
+  flutter_secure_storage: ^9.2.2
   get_it: ^8.0.3  # Добавляем для внедрения зависимостей
 
   # Локальные уведомления (для foreground и каналов)

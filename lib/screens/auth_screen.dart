@@ -132,7 +132,18 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 
   Future<void> _dispatchOauthDeepLink(Uri uri) async {
-    if (uri.scheme != 'rodnya' || uri.host != 'oauth') return;
+    // Accept BOTH the legacy custom-scheme callback and the
+    // verified https App Link path. The custom scheme stays for
+    // backward compat with older installs / devices that haven't
+    // picked up the verified intent filter; the https path is the
+    // only one another app can't intercept (Digital Asset Links
+    // gives us exclusive ownership of /oauth/* on rodnya-tree.ru).
+    final isCustomScheme =
+        uri.scheme == 'rodnya' && uri.host == 'oauth';
+    final isVerifiedHttps = uri.scheme == 'https' &&
+        uri.host == 'rodnya-tree.ru' &&
+        uri.path.startsWith('/oauth/');
+    if (!isCustomScheme && !isVerifiedHttps) return;
     if (!mounted) return;
     setState(() => _pendingDeepLinkUri = uri);
     try {
