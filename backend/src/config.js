@@ -157,6 +157,16 @@ function createConfig() {
     .toLowerCase();
   const mailFrom = readEnvAlias("RODNYA_MAIL_FROM") || "no-reply@rodnya-tree.ru";
   const mailFromName = readEnvAlias("RODNYA_MAIL_FROM_NAME") || "Родня";
+  // UniSender Go HTTPS API. Preferred over SMTP in production —
+  // works through outbound 443 which is universally open, even
+  // when 587/465/25 are blocked by the VPS provider's anti-spam
+  // policy. The API key is the same as RODNYA_SMTP_PASSWORD if you
+  // already had SMTP wired up; just rename the env var.
+  const unisenderApiKey =
+    process.env.RODNYA_UNISENDER_API_KEY || "";
+  const unisenderApiBaseUrl =
+    readEnvAlias("RODNYA_UNISENDER_API_BASE_URL") ||
+    "https://go2.unisender.ru/ru/transactional/api/v1";
 
   return {
     port: Number(process.env.PORT || 8080),
@@ -230,6 +240,15 @@ function createConfig() {
     mailFrom,
     mailFromName,
     smtpEnabled: Boolean(smtpHost && smtpUser && smtpPassword),
+    unisenderApiKey,
+    unisenderApiBaseUrl,
+    unisenderHttpsEnabled: Boolean(unisenderApiKey),
+    // True when ANY transport is configured — the email-sender
+    // factory falls back to a console logger otherwise. Useful for
+    // boot-time logs ("email sending: enabled via https-api").
+    emailDeliveryEnabled: Boolean(
+      unisenderApiKey || (smtpHost && smtpUser && smtpPassword),
+    ),
     webPushPublicKey,
     webPushPrivateKey,
     webPushSubject,

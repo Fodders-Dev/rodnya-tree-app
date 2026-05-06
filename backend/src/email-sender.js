@@ -122,6 +122,115 @@ function buildSmtpTransport({host, port, user, password, secure}) {
   });
 }
 
+// Parse RFC 5322 "Display Name <email@addr>" into name + email
+// pair, or fall back to the bare email when no display name is
+// present. The HTTPS API needs them as separate JSON fields, while
+// nodemailer takes the combined string.
+function parseFromAddress(combined) {
+  const value = String(combined || "").trim();
+  // Match `"Name" <email>` or `Name <email>` or just `email`.
+  const angled = value.match(/^"?([^"<]+?)"?\s*<\s*([^>]+)\s*>\s*$/);
+  if (angled) {
+    return {name: angled[1].trim(), email: angled[2].trim()};
+  }
+  return {name: "", email: value};
+}
+
+// HTTPS-API transport. Used when the host is on a VPS that blocks
+// outbound SMTP (common — many providers block 25/465/587 by
+// default). UniSender Go exposes the same send capability over
+// HTTPS so we get reliable delivery via port 443 which is always
+// open. Same API key as SMTP (re-used as-is).
+function buildHttpsApiTransport({apiKey, baseUrl, logger}) {
+  const sink = logger || console;
+  const trimmedBase = String(baseUrl || "")
+    .trim()
+    .replace(/\/+$/u, "");
+  if (!trimmedBase) {
+    throw new Error("UniSender HTTPS API: base URL is required");
+  }
+  if (!apiKey) {
+    throw new Error("UniSender HTTPS API: api key is required");
+  }
+  const sendUrl = `${trimmedBase}/email/send.json`;
+  return {
+    isHttpsApi: true,
+    async sendMail(payload) {
+      const fromParsed = parseFromAddress(payload.from);
+      const body = {
+        message: {
+          recipients: [{email: payload.to}],
+          subject: payload.subject,
+          from_email: fromParsed.email,
+          from_name: fromParsed.name || undefined,
+          body: {
+            ...(payload.text ? {plaintext: payload.text} : {}),
+            ...(payload.html ? {html: payload.html} : {}),
+          },
+        },
+      };
+      // 10-second wall clock — UniSender Go normally answers in <500 ms
+      // when the path is healthy. Anything past that we'd rather fail
+      // the request than hold a libuv slot.
+      let response;
+      try {
+        response = await fetch(sendUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-API-KEY": apiKey,
+          },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(10_000),
+        });
+      } catch (error) {
+        // Network-level failure — DNS, refused, timeout, TLS. Same
+        // shape as nodemailer would give us back so the calling
+        // route's error log stays consistent.
+        const wrapped = new Error(
+          `UniSender API network error: ${error?.message || String(error)}`,
+        );
+        wrapped.cause = error;
+        throw wrapped;
+      }
+      const responseText = await response.text();
+      let parsed = null;
+      try {
+        parsed = responseText ? JSON.parse(responseText) : null;
+      } catch (_) {
+        parsed = null;
+      }
+      if (!response.ok || parsed?.status !== "success") {
+        // Don't shovel the entire response body into the error
+        // message — could contain html error pages. Pull just the
+        // structured `message` if present, else status code.
+        const detail =
+          parsed?.message ||
+          `HTTP ${response.status} ${response.statusText || ""}`.trim();
+        const code = parsed?.code != null ? ` (code ${parsed.code})` : "";
+        sink.error(
+          "[email-sender] UniSender HTTPS API non-success",
+          JSON.stringify({
+            status: response.status,
+            apiStatus: parsed?.status || null,
+            apiCode: parsed?.code || null,
+            apiMessage: parsed?.message || null,
+            // First 200 chars of the response in case JSON parse failed.
+            rawHead: responseText.slice(0, 200),
+          }),
+        );
+        const error = new Error(`UniSender API: ${detail}${code}`);
+        error.statusCode = response.status;
+        throw error;
+      }
+      return {
+        messageId: parsed.job_id || null,
+        accepted: Array.isArray(parsed.emails) ? parsed.emails : [payload.to],
+      };
+    },
+  };
+}
+
 function buildLoggerTransport(logger) {
   // Dev / test fallback. We DON'T want a real transport here — when
   // SMTP isn't configured the right behavior is to make the password
@@ -165,10 +274,35 @@ function createEmailSender({config = {}, logger = console} = {}) {
     .toString()
     .toLowerCase() === "true";
 
-  const transportConfigured = Boolean(host && port && user && password);
-  const transport = transportConfigured
-    ? buildSmtpTransport({host, port, user, password, secure})
-    : buildLoggerTransport(logger);
+  // Transport selection (in priority order):
+  //   1. UniSender HTTPS API — when the API key is set. Preferred
+  //      in production because (a) port 443 is universally open
+  //      where outbound SMTP often isn't, and (b) structured JSON
+  //      errors beat opaque SMTP 5xx codes for debugging.
+  //   2. Plain SMTP (nodemailer) — when SMTP_* are set. Kept as
+  //      a fallback for hosts where the HTTPS API is unavailable
+  //      or for self-hosted SMTP relays.
+  //   3. Console logger — when neither is configured. Dev / CI
+  //      paths print what they would have sent; password reset
+  //      links land in stdout for the developer to copy.
+  const unisenderApiKey = String(config.unisenderApiKey || "").trim();
+  const unisenderBaseUrl = String(
+    config.unisenderApiBaseUrl ||
+      "https://go2.unisender.ru/ru/transactional/api/v1",
+  ).trim();
+
+  let transport;
+  if (unisenderApiKey) {
+    transport = buildHttpsApiTransport({
+      apiKey: unisenderApiKey,
+      baseUrl: unisenderBaseUrl,
+      logger,
+    });
+  } else if (host && port && user && password) {
+    transport = buildSmtpTransport({host, port, user, password, secure});
+  } else {
+    transport = buildLoggerTransport(logger);
+  }
 
   function formatFrom() {
     return fromName ? `"${fromName}" <${fromAddress}>` : fromAddress;
@@ -224,6 +358,14 @@ function createEmailSender({config = {}, logger = console} = {}) {
   return {
     sendPasswordResetEmail,
     isUsingLogger: () => Boolean(transport.isLogger),
+    /// Diagnostic — which delivery path is in use. Useful in
+    /// boot-time logs to make sure ops actually wired what they
+    /// thought they did. Values: "https-api" | "smtp" | "logger".
+    activeTransport: () => {
+      if (transport.isHttpsApi) return "https-api";
+      if (transport.isLogger) return "logger";
+      return "smtp";
+    },
   };
 }
 
@@ -233,6 +375,8 @@ module.exports = {
   // and assert on the rendered text without spinning up a transport.
   __test_buildPasswordResetBody: buildPasswordResetBody,
   __test_stripHeaderUnsafeChars: stripHeaderUnsafeChars,
+  __test_parseFromAddress: parseFromAddress,
+  __test_buildHttpsApiTransport: buildHttpsApiTransport,
   PASSWORD_RESET_TTL_HOURS,
   PASSWORD_RESET_SUBJECT,
 };
