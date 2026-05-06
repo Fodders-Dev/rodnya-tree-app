@@ -1,19 +1,66 @@
 # Deploy
 
-Rodnya web production is served by Caddy from `/var/www/rodnya-site`, while the API runs as `rodnya-backend.service` from `/opt/rodnya/backend` behind `api.rodnya-tree.ru`.
+> **Production front-end is nginx**, not Caddy.
+> `caddy.service` crashed on 2026-04-22 and never came back; nginx
+> now binds `0.0.0.0:80/443` directly. The active config lives at
+> [`deploy/nginx/rodnya.conf`](nginx/rodnya.conf) and is installed
+> via [`deploy/nginx/install_nginx_config.sh`](nginx/install_nginx_config.sh).
+> The Caddyfile in `deploy/caddy/` is kept for reference but is **not**
+> applied on the host — changes there have no production effect until
+> someone stops nginx on 80/443 and brings caddy.service back.
 
-LiveKit pilot production is intended to run on the same VM from `/opt/rodnya/livekit` as a Docker stack managed by `rodnya-livekit.service`, with:
+Rodnya web production is served by nginx from `/var/www/rodnya-site`,
+while the API runs as `rodnya-backend.service` from `/opt/rodnya/backend`
+behind `api.rodnya-tree.ru`.
 
-- `livekit.rodnya-tree.ru` proxied by Caddy to `127.0.0.1:7880`
+LiveKit pilot production runs on the same VM from `/opt/rodnya/livekit`
+as a Docker stack managed by `rodnya-livekit.service`, with:
+
+- `livekit.rodnya-tree.ru` proxied by nginx to `127.0.0.1:7880`
+  (WebSocket-aware location block in `rodnya.conf`)
 - `turn.rodnya-tree.ru` used by LiveKit TURN/TLS
 
-Current production nuance: on the shared VM, `Caddy` already binds `443/udp` for HTTP/3, and embedded TURN/UDP also proved unstable on this host. Until LiveKit moves to a dedicated IP/VM or an L4 proxy, the same-VM pilot should stay on:
+Current production nuance: on the shared VM, embedded TURN/UDP proved
+unstable on this host. Until LiveKit moves to a dedicated IP/VM or an
+L4 proxy, the same-VM pilot should stay on:
 
 - `TURN/TLS` via `5349/tcp`
 - `ICE/TCP` via `7881/tcp`
 - direct media over `50000-60000/udp`
 
 The current working VM config also pins LiveKit to the public `ens1` interface and a static node IP instead of STUN-based external-IP discovery.
+
+## Web / nginx front-end
+
+`deploy/nginx/rodnya.conf` is the canonical configuration for the
+`rodnya-tree.ru`, `www.rodnya-tree.ru`, `api.rodnya-tree.ru`,
+`livekit.rodnya-tree.ru`, and `turn.rodnya-tree.ru` server blocks. It
+captures the current production behaviour, including:
+
+- `/.well-known/assetlinks.json` served as `application/json` for
+  Android Verified App Links (see
+  [`docs/verified_app_links_deployment.md`](../docs/verified_app_links_deployment.md)).
+- `/oauth/callback` routed to the static bridge HTML at
+  `web/oauth/callback/index.html` so unverified-link installs still
+  fall back to the legacy `rodnya://oauth/callback` custom scheme.
+- `/doc-coauthoring` falling through to the Flutter SPA.
+- Cache-Control bands for SPA entry / runtime / long-cached assets
+  matching the Caddy chain we used to run.
+
+After updating `rodnya.conf` (or `connection-upgrade.conf`) in this
+repo, push to the host and run as root:
+
+```
+sudo deploy/nginx/install_nginx_config.sh
+```
+
+The installer is idempotent: it copies the conf to
+`/etc/nginx/sites-available/rodnya`, removes any stale
+`rodnya.conf.bak*` / `rodnya.conf.codex*` siblings that nginx has
+been warning about, symlinks into `sites-enabled/`, then runs
+`nginx -t` and `systemctl reload nginx` only after validation
+succeeds. If validation fails, it leaves the previous live config in
+place.
 
 ## Backend production flow
 

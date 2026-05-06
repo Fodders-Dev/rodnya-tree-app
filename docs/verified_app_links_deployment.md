@@ -1,21 +1,41 @@
 # Verified App Links — deployment guide
 
 The Android app already declares an `<intent-filter android:autoVerify="true">`
-for `https://rodnya-tree.ru/oauth/*`. The only missing piece for the OS to grant
-us exclusive ownership of those paths (so no other app can intercept the OAuth
-callback) is publishing the matching `assetlinks.json` on the marketing site.
+for `https://rodnya-tree.ru/oauth/*`, AND `_mobileOauthCallback` is now
+the https URL. The only missing piece for the OS to grant us exclusive
+ownership of those paths (so no other app can intercept the OAuth
+callback) is publishing the matching `assetlinks.json` on the marketing
+site so Android's autoVerify pass succeeds.
 
-This is a **two-step** deployment:
+> **Front-end note**: production currently uses nginx, not Caddy.
+> The active site config is in
+> [`deploy/nginx/rodnya.conf`](../deploy/nginx/rodnya.conf) and is
+> installed via [`deploy/nginx/install_nginx_config.sh`](../deploy/nginx/install_nginx_config.sh).
+> Both the `assetlinks.json` content-type override and the
+> `/oauth/callback` bridge route are already in that conf.
 
-1. Publish `assetlinks.json` at the canonical well-known location.
-2. (Optional follow-up) Switch `_mobileOauthCallback` in `custom_api_auth_service.dart`
-   from `rodnya://oauth/callback` to `https://rodnya-tree.ru/oauth/callback`,
-   AND host a bridge page at that URL that falls back to `rodnya://` for
-   pre-Android-12 / unverified installs.
+The deployment is a single push of the latest commit to prod:
 
-Until step 2, the verified-https filter still protects against inbound
-spoofed links from email/SMS that happen to match `rodnya-tree.ru/oauth/...`
-— the OS will route those to the app instead of the browser.
+1. Publish the latest web build so `web/.well-known/assetlinks.json`
+   and `web/oauth/callback/index.html` land in `/var/www/rodnya-site`.
+2. Re-run `deploy/nginx/install_nginx_config.sh` on the host so the
+   server blocks pick up any updates to `rodnya.conf` (cache headers,
+   SPA fallback, etc.). Idempotent — safe to run on every release.
+3. Confirm via:
+
+   ```
+   curl -fsS https://rodnya-tree.ru/.well-known/assetlinks.json | head
+   curl -fsSI https://rodnya-tree.ru/.well-known/assetlinks.json \
+     | grep -i content-type
+   ```
+
+   Headers must show `application/json` (no charset suffix).
+
+The verified-https filter ALREADY protects against spoofed inbound
+links from email/SMS that happen to match `rodnya-tree.ru/oauth/...`
+— the OS routes those to the app instead of the browser regardless of
+verification status — but full autoVerify is what closes the OAuth
+deep-link spoofing hole during the auth handshake itself.
 
 ---
 

@@ -1,3 +1,14 @@
+# NOTE: Caddy is NOT the production front-end as of 2026-04-22.
+# caddy.service crashed and was killed by systemd; nginx took over
+# (binds 80/443 directly). The active config lives at
+# `deploy/nginx/rodnya.conf` and is installed via
+# `deploy/nginx/install_nginx_config.sh`.
+#
+# This Caddyfile is kept for reference / future migration. Do NOT
+# expect changes here to land in production until/unless Caddy is
+# brought back, nginx is stopped on 80/443, and the prod README is
+# updated to point back at this file.
+
 {
   servers {
     protocols h1 h2
