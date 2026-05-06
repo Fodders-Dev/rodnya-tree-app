@@ -133,6 +133,31 @@ function createConfig() {
   const liveKitApiSecret = readEnvAlias("RODNYA_LIVEKIT_API_SECRET");
   const liveKitWebhookKey = readEnvAlias("RODNYA_LIVEKIT_WEBHOOK_KEY");
 
+  // SMTP for transactional email (password reset etc.). Provider is
+  // pluggable — UniSender Go in production today (РФ-friendly free
+  // tier), but `email-sender.js` only sees these env-derived knobs
+  // so swapping providers is a env edit, not a code change.
+  //
+  // When SMTP_HOST / USER / PASSWORD are not set, `email-sender.js`
+  // falls back to a console-logger that prints what it would have
+  // sent → keeps dev/CI green and gives developers a copyable reset
+  // link in stdout.
+  const smtpHost = readEnvAlias("RODNYA_SMTP_HOST");
+  const smtpPort = readEnvNumber(
+    587,
+    "RODNYA_SMTP_PORT",
+    legacyEnvKey("RODNYA_SMTP_PORT"),
+  );
+  const smtpUser = readEnvAlias("RODNYA_SMTP_USER");
+  const smtpPassword = process.env.RODNYA_SMTP_PASSWORD || "";
+  const smtpSecure = String(
+    readEnvAlias("RODNYA_SMTP_SECURE") || "false",
+  )
+    .trim()
+    .toLowerCase();
+  const mailFrom = readEnvAlias("RODNYA_MAIL_FROM") || "no-reply@rodnya-tree.ru";
+  const mailFromName = readEnvAlias("RODNYA_MAIL_FROM_NAME") || "Родня";
+
   return {
     port: Number(process.env.PORT || 8080),
     corsOrigin: readEnvAlias("RODNYA_BACKEND_CORS_ORIGIN") || "*",
@@ -197,6 +222,14 @@ function createConfig() {
     liveKitApiSecret,
     liveKitWebhookKey,
     liveKitEnabled: Boolean(liveKitUrl && liveKitApiKey && liveKitApiSecret),
+    smtpHost,
+    smtpPort,
+    smtpUser,
+    smtpPassword,
+    smtpSecure,
+    mailFrom,
+    mailFromName,
+    smtpEnabled: Boolean(smtpHost && smtpUser && smtpPassword),
     webPushPublicKey,
     webPushPrivateKey,
     webPushSubject,

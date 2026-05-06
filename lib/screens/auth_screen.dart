@@ -1538,6 +1538,18 @@ class _AuthScreenState extends State<AuthScreen> {
                       )
                     : Text(_isLogin ? 'Войти' : 'Создать аккаунт'),
               ),
+              if (_isLogin) ...[
+                const SizedBox(height: 6),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton(
+                    onPressed: _isLoading
+                        ? null
+                        : () => context.push('/password_reset'),
+                    child: const Text('Забыли пароль?'),
+                  ),
+                ),
+              ],
               const SizedBox(height: 16),
               Row(
                 children: [

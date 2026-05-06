@@ -44,6 +44,7 @@ const EMPTY_DB = {
   users: [],
   sessions: [],
   authHandoffs: [],
+  passwordResetTokens: [],
   trees: [],
   persons: [],
   personIdentities: [],
@@ -81,6 +82,9 @@ function normalizeDbState(parsed) {
     users: Array.isArray(parsed?.users) ? parsed.users : [],
     sessions: Array.isArray(parsed?.sessions) ? parsed.sessions : [],
     authHandoffs: Array.isArray(parsed?.authHandoffs) ? parsed.authHandoffs : [],
+    passwordResetTokens: Array.isArray(parsed?.passwordResetTokens)
+      ? parsed.passwordResetTokens
+      : [],
     trees: Array.isArray(parsed?.trees) ? parsed.trees : [],
     persons: Array.isArray(parsed?.persons) ? parsed.persons : [],
     personIdentities: Array.isArray(parsed?.personIdentities)
@@ -6002,6 +6006,220 @@ class FileStore {
     return session ? structuredClone(session) : null;
   }
 
+  // Password reset token storage. Plaintext token NEVER hits the
+  // DB — we store `crypto.randomBytes(32).toString('base64url')` in
+  // the email URL and a `sha256(token)` hex digest in the row.
+  // Standard Rails/Django pattern: a DB read leak doesn't reveal
+  // active reset tokens, but lookup is still O(1) per identity
+  // because we only key by hash equality.
+  //
+  // Rate-limit at the issue side: max 1 unconsumed token per user
+  // per hour. Without this, a malicious actor can spam reset
+  // emails to a victim's inbox indefinitely (annoying, but ALSO
+  // helps phishing — flood, then spoof a fake reset email mid-
+  // flood). The rate window is short enough that a real user who
+  // mistyped won't be blocked for long.
+  static get _passwordResetTokenTtlMs() {
+    return 24 * 60 * 60 * 1000; // 24 hours
+  }
+
+  static get _passwordResetMinIssueIntervalMs() {
+    return 60 * 60 * 1000; // 1 hour
+  }
+
+  _hashResetToken(plaintext) {
+    return crypto
+      .createHash("sha256")
+      .update(String(plaintext || ""))
+      .digest("hex");
+  }
+
+  _cleanupExpiredPasswordResetTokens(db) {
+    if (!Array.isArray(db.passwordResetTokens)) {
+      db.passwordResetTokens = [];
+      return false;
+    }
+    const beforeLength = db.passwordResetTokens.length;
+    const nowMs = Date.now();
+    db.passwordResetTokens = db.passwordResetTokens.filter((entry) => {
+      const expiresMs = Date.parse(entry?.expiresAt || "");
+      if (Number.isFinite(expiresMs) && expiresMs <= nowMs) {
+        return false;
+      }
+      // Drop already-consumed tokens older than 1 hour — keep them
+      // briefly for audit, then GC. We don't want a "consumed" row
+      // pinning memory forever.
+      if (entry?.consumedAt) {
+        const consumedMs = Date.parse(entry.consumedAt);
+        if (
+          Number.isFinite(consumedMs) &&
+          consumedMs + 60 * 60 * 1000 <= nowMs
+        ) {
+          return false;
+        }
+      }
+      return true;
+    });
+    return db.passwordResetTokens.length !== beforeLength;
+  }
+
+  // Returns the plaintext token to embed in the reset URL. The
+  // CALLER is responsible for getting it into the email and never
+  // storing it elsewhere — once we return, the plaintext is gone
+  // from the server.
+  //
+  // Returns null if the user is rate-limited (too many resets in
+  // the last hour). Caller should still treat it as success to the
+  // outside world — anti-enumeration.
+  async issuePasswordResetToken(userId) {
+    const db = await this._read();
+    this._cleanupExpiredPasswordResetTokens(db);
+
+    const normalizedUserId = normalizeNullableString(userId);
+    if (!normalizedUserId) {
+      return null;
+    }
+    const user = db.users.find((entry) => entry.id === normalizedUserId);
+    if (!user) {
+      return null;
+    }
+
+    const nowMs = Date.now();
+    const recentForUser = db.passwordResetTokens.find((entry) => {
+      if (entry.userId !== normalizedUserId) return false;
+      if (entry.consumedAt) return false;
+      const createdMs = Date.parse(entry.createdAt || "");
+      if (!Number.isFinite(createdMs)) return false;
+      return (
+        nowMs - createdMs <
+        FileStore._passwordResetMinIssueIntervalMs
+      );
+    });
+    if (recentForUser) {
+      // Don't issue a new token — the one we already sent within
+      // the last hour is still valid. Returning null here lets the
+      // route choose its anti-enumeration response (it returns
+      // 202 anyway).
+      return null;
+    }
+
+    const plaintext = crypto.randomBytes(32).toString("base64url");
+    const tokenHash = this._hashResetToken(plaintext);
+    const createdAt = nowIso();
+    const expiresAt = new Date(
+      nowMs + FileStore._passwordResetTokenTtlMs,
+    ).toISOString();
+
+    db.passwordResetTokens.push({
+      id: crypto.randomUUID(),
+      userId: normalizedUserId,
+      tokenHash,
+      createdAt,
+      expiresAt,
+      consumedAt: null,
+    });
+    await this._write(db);
+
+    return {
+      plaintext,
+      expiresAt,
+      ttlSeconds: Math.floor(FileStore._passwordResetTokenTtlMs / 1000),
+    };
+  }
+
+  // Look up a reset token by its plaintext (re-hashed here), and
+  // mark it consumed atomically. Returns the user id if the token
+  // was valid and not previously used, null otherwise.
+  //
+  // We DO NOT update the password here — the caller does that
+  // explicitly via `updateUserPassword` so the route can validate
+  // the new password's shape (length etc.) BEFORE consuming the
+  // token. Otherwise a malformed-password attempt would burn a
+  // valid token and force the user to re-request.
+  async consumePasswordResetToken(plaintextToken) {
+    const db = await this._read();
+    this._cleanupExpiredPasswordResetTokens(db);
+
+    const trimmed = String(plaintextToken || "").trim();
+    if (!trimmed) return null;
+
+    const tokenHash = this._hashResetToken(trimmed);
+    const index = db.passwordResetTokens.findIndex(
+      (entry) =>
+        entry.tokenHash === tokenHash &&
+        !entry.consumedAt &&
+        !isExpiredAt(entry?.expiresAt),
+    );
+    if (index < 0) {
+      // Cleanup may have changed the array — flush even on miss.
+      await this._write(db);
+      return null;
+    }
+    const record = db.passwordResetTokens[index];
+    record.consumedAt = nowIso();
+    await this._write(db);
+    return record.userId;
+  }
+
+  async findUserByEmail(emailRaw) {
+    const db = await this._read();
+    const normalized = String(emailRaw || "").trim().toLowerCase();
+    if (!normalized) return null;
+    const user = db.users.find((entry) => entry.email === normalized);
+    return user ? structuredClone(user) : null;
+  }
+
+  // Used by the password-reset confirm route. Async-hashes via
+  // libuv thread pool — same scrypt cost as login verify, so the
+  // event loop stays responsive under concurrent resets.
+  async updateUserPassword(userId, newPlaintextPassword) {
+    const db = await this._read();
+    const user = db.users.find((entry) => entry.id === userId);
+    if (!user) return false;
+
+    const credentials = await hashPasswordAsync(
+      String(newPlaintextPassword || ""),
+    );
+    user.passwordHash = credentials.passwordHash;
+    user.passwordSalt = credentials.salt;
+    // Reset failed-login state so the user isn't still locked
+    // out with their fresh password. Common UX: "I locked myself
+    // out → reset my password → still locked".
+    user.failedLoginCount = 0;
+    user.lockedUntil = null;
+    user.updatedAt = nowIso();
+
+    // Security hygiene: invalidate all existing sessions on
+    // password reset. If the user reset because they suspected
+    // compromise, leaving open sessions defeats the point. They'll
+    // re-login on each device. We MUST also evict the in-memory
+    // session cache (`_sessionCache`) — `db.sessions` is the
+    // persistent store, but requireAuth hits the cache first.
+    const userSessionTokens = (Array.isArray(db.sessions) ? db.sessions : [])
+      .filter((session) => session.userId === userId)
+      .map((session) => session.token);
+    db.sessions = (Array.isArray(db.sessions) ? db.sessions : []).filter(
+      (session) => session.userId !== userId,
+    );
+    for (const token of userSessionTokens) {
+      this._forgetSession(token);
+    }
+
+    // Drop any other unconsumed reset tokens for this user — once
+    // they've used one, the rest are stale and shouldn't sit
+    // around as latent attack surface.
+    if (Array.isArray(db.passwordResetTokens)) {
+      db.passwordResetTokens = db.passwordResetTokens.filter((entry) => {
+        if (entry.userId !== userId) return true;
+        if (entry.consumedAt) return true; // keep the one we just consumed for audit
+        return false;
+      });
+    }
+
+    await this._write(db);
+    return true;
+  }
+
   _cleanupExpiredAuthHandoffs(db) {
     const beforeLength = Array.isArray(db.authHandoffs) ? db.authHandoffs.length : 0;
     db.authHandoffs = (Array.isArray(db.authHandoffs) ? db.authHandoffs : []).filter(
@@ -6419,6 +6637,12 @@ class FileStore {
     db.users = db.users.filter((entry) => entry.id !== userId);
     db.sessions = db.sessions.filter((entry) => entry.userId !== userId);
     db.authHandoffs = (db.authHandoffs || []).filter((entry) => entry.userId !== userId);
+    // GDPR cleanup: drop any pending or consumed password-reset
+    // tokens for this user. We keep no audit trail across the
+    // delete since the user record itself is gone.
+    db.passwordResetTokens = (db.passwordResetTokens || []).filter(
+      (entry) => entry.userId !== userId,
+    );
     db.persons = db.persons.filter((entry) => !removedPersonIds.has(entry.id));
     db.relations = db.relations.filter((entry) => {
       return (

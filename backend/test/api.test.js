@@ -3557,6 +3557,244 @@ test("tree duplicate endpoint returns read-only within-tree suggestions", async 
 // `sourcePersonId` to create the new card while linking the two
 // records under one PersonIdentity. This test pins the contract
 // that flow depends on.
+// Password-reset flow: request → email send → confirm. Uses a
+// recording email-sender fake so we can assert on the outgoing
+// payload without touching nodemailer / SMTP. The flow is
+// security-critical (anti-enumeration, single-use, expiry,
+// session invalidation), so the test pins all those invariants.
+test("password reset request issues a single-use token, emails it, and confirm rotates the password + invalidates sessions", async () => {
+  const sentEmails = [];
+  const recordingEmailSender = {
+    isUsingLogger: () => false,
+    async sendPasswordResetEmail({to, resetUrl, displayName}) {
+      sentEmails.push({to, resetUrl, displayName});
+      return {ok: true, messageId: `test-${sentEmails.length}`};
+    },
+  };
+
+  const ctx = await startConfiguredTestServer({
+    configOverrides: {
+      publicAppUrl: "https://rodnya-tree.ru",
+    },
+  });
+  // The default startConfiguredTestServer doesn't accept an
+  // emailSender override, so monkey-patch the app's resolver via
+  // direct route registration is not clean. Instead we register
+  // the user, start a SECOND ctx with the recording sender wired
+  // in. The simpler path: re-use the same startConfiguredTestServer
+  // and post against the running app — but we lose the recording
+  // sender. So replace ctx with a custom app build.
+  await stopTestServer(ctx);
+
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "rodnya-backend-"));
+  const dataPath = path.join(tempDir, "dev-db.json");
+  const store = new FileStore(dataPath);
+  await store.initialize();
+  const realtimeHub = new RealtimeHub({store});
+  const app = createApp({
+    store,
+    config: {
+      corsOrigin: "*",
+      dataPath,
+      mediaRootPath: path.join(tempDir, "uploads"),
+      publicAppUrl: "https://rodnya-tree.ru",
+    },
+    realtimeHub,
+    pushGateway: new PushGateway({store}),
+    emailSender: recordingEmailSender,
+  });
+  const server = await new Promise((resolve) => {
+    const instance = app.listen(0, "127.0.0.1", () => resolve(instance));
+  });
+  realtimeHub.attach(server);
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const customCtx = {baseUrl, server, store, tempDir};
+
+  try {
+    // Register a user to reset.
+    const owner = await registerTestUser(customCtx, "owner@rodnya.app", "Артём");
+
+    // 1. Request endpoint always returns 202 quickly, regardless
+    //    of whether the email is registered.
+    const knownEmailRequest = await fetch(
+      `${baseUrl}/v1/auth/password-reset/request`,
+      {
+        method: "POST",
+        headers: {"content-type": "application/json"},
+        body: JSON.stringify({email: "owner@rodnya.app"}),
+      },
+    );
+    assert.equal(knownEmailRequest.status, 202);
+    const knownEmailPayload = await knownEmailRequest.json();
+    assert.deepEqual(knownEmailPayload, {ok: true});
+
+    // 2. Unknown email returns the SAME 202 → anti-enumeration.
+    const unknownEmailRequest = await fetch(
+      `${baseUrl}/v1/auth/password-reset/request`,
+      {
+        method: "POST",
+        headers: {"content-type": "application/json"},
+        body: JSON.stringify({email: "nobody@rodnya.app"}),
+      },
+    );
+    assert.equal(unknownEmailRequest.status, 202);
+    assert.deepEqual(await unknownEmailRequest.json(), {ok: true});
+
+    // 3. Wait for the async email send to complete. The route
+    //    returns 202 BEFORE awaiting the send, so we need a tiny
+    //    pause here for the recording fake to capture.
+    for (let attempt = 0; attempt < 20 && sentEmails.length === 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    assert.equal(sentEmails.length, 1, "exactly one email should have gone out");
+    const sent = sentEmails[0];
+    assert.equal(sent.to, "owner@rodnya.app");
+    assert.match(
+      sent.resetUrl,
+      /^https:\/\/rodnya-tree\.ru\/reset-password\?token=[A-Za-z0-9_\-]{30,}/,
+    );
+
+    // Pluck the plaintext token out of the URL — same as the
+    // Flutter app would parse from the universal link.
+    const tokenFromUrl = new URL(sent.resetUrl).searchParams.get("token");
+    assert.ok(tokenFromUrl);
+
+    // 4. Per-user rate limit: a second request inside the hour
+    //    is silently dropped (no second email sent), but the
+    //    response is still 202.
+    const secondRequest = await fetch(
+      `${baseUrl}/v1/auth/password-reset/request`,
+      {
+        method: "POST",
+        headers: {"content-type": "application/json"},
+        body: JSON.stringify({email: "owner@rodnya.app"}),
+      },
+    );
+    assert.equal(secondRequest.status, 202);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(
+      sentEmails.length,
+      1,
+      "rate limit should suppress a second email within the hour",
+    );
+
+    // 5. Confirm with a too-short password is rejected and does
+    //    NOT consume the token (caller can retry with a valid
+    //    password).
+    const shortPwResponse = await fetch(
+      `${baseUrl}/v1/auth/password-reset/confirm`,
+      {
+        method: "POST",
+        headers: {"content-type": "application/json"},
+        body: JSON.stringify({token: tokenFromUrl, password: "abc"}),
+      },
+    );
+    assert.equal(shortPwResponse.status, 400);
+
+    // 6. Confirm with a bogus token returns the SAME generic
+    //    error as expired/used.
+    const bogusTokenResponse = await fetch(
+      `${baseUrl}/v1/auth/password-reset/confirm`,
+      {
+        method: "POST",
+        headers: {"content-type": "application/json"},
+        body: JSON.stringify({token: "not-a-real-token", password: "newpass1234"}),
+      },
+    );
+    assert.equal(bogusTokenResponse.status, 400);
+
+    // Login with old password should still work — the token has
+    // not been consumed yet.
+    const oldPasswordLogin = await fetch(`${baseUrl}/v1/auth/login`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "owner@rodnya.app",
+        password: "secret123",
+      }),
+    });
+    assert.equal(oldPasswordLogin.status, 200);
+    const oldSession = await oldPasswordLogin.json();
+    assert.ok(oldSession.accessToken);
+
+    // 7. Confirm with valid token + valid new password rotates
+    //    the password and invalidates ALL existing sessions.
+    const confirmResponse = await fetch(
+      `${baseUrl}/v1/auth/password-reset/confirm`,
+      {
+        method: "POST",
+        headers: {"content-type": "application/json"},
+        body: JSON.stringify({
+          token: tokenFromUrl,
+          password: "brand-new-secret-456",
+        }),
+      },
+    );
+    assert.equal(confirmResponse.status, 200);
+    assert.deepEqual(await confirmResponse.json(), {ok: true});
+
+    // 8. Old password no longer works.
+    const oldLoginAfterReset = await fetch(`${baseUrl}/v1/auth/login`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "owner@rodnya.app",
+        password: "secret123",
+      }),
+    });
+    assert.equal(oldLoginAfterReset.status, 401);
+
+    // 9. New password DOES work.
+    const newLoginResponse = await fetch(`${baseUrl}/v1/auth/login`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "owner@rodnya.app",
+        password: "brand-new-secret-456",
+      }),
+    });
+    assert.equal(newLoginResponse.status, 200);
+
+    // 10. Pre-existing session token (issued before the reset)
+    //     is invalidated — the user has to re-login on every
+    //     device. Hits a sensitive endpoint to check.
+    const sessionsAfterReset = await fetch(
+      `${baseUrl}/v1/auth/sessions`,
+      {
+        headers: {authorization: `Bearer ${owner.accessToken}`},
+      },
+    );
+    assert.equal(
+      sessionsAfterReset.status,
+      401,
+      "old session must be invalidated by password reset",
+    );
+
+    // 11. Token is single-use — confirming again with the same
+    //     token returns the generic invalid-or-expired error.
+    const replayResponse = await fetch(
+      `${baseUrl}/v1/auth/password-reset/confirm`,
+      {
+        method: "POST",
+        headers: {"content-type": "application/json"},
+        body: JSON.stringify({
+          token: tokenFromUrl,
+          password: "another-new-pass-789",
+        }),
+      },
+    );
+    assert.equal(replayResponse.status, 400);
+  } finally {
+    await new Promise((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+    if (typeof store.close === "function") {
+      await store.close();
+    }
+    await fs.rm(tempDir, {recursive: true, force: true});
+  }
+});
+
 test("cross-tree person picker scopes to caller, excludes target tree, and shares identityId on link", async () => {
   const ctx = await startTestServer();
 

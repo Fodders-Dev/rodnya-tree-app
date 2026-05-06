@@ -16,6 +16,10 @@ abstract class AuthServiceInterface {
   Future<Object?> signInWithGoogle();
   Future<void> signOut();
   Future<void> resetPassword(String email);
+  Future<void> confirmPasswordReset({
+    required String token,
+    required String newPassword,
+  });
   Future<void> deleteAccount([String? password]);
   Future<Map<String, dynamic>> checkProfileCompleteness();
   Future<void> processPendingInvitation();

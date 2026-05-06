@@ -113,6 +113,14 @@ class PendingBackendAuthService implements AuthServiceInterface {
   }
 
   @override
+  Future<void> confirmPasswordReset({
+    required String token,
+    required String newPassword,
+  }) {
+    throw UnsupportedError(_pendingProviderMessage('auth'));
+  }
+
+  @override
   Future<void> signOut() async {}
 
   @override

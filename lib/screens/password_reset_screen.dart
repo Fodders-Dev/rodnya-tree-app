@@ -41,14 +41,18 @@ class _PasswordResetScreenState extends State<PasswordResetScreen> {
     try {
       await _authService.resetPassword(_emailController.text.trim());
 
+      // Anti-enumeration: backend returns 202 regardless of whether
+      // the email is registered. We mirror that here — saying
+      // "Письмо отправлено" would leak that the email exists.
       setState(() {
         _isSuccess = true;
-        _message = 'Ссылка отправлена.';
+        _message =
+            'Если такой email зарегистрирован, мы отправили инструкцию по сбросу пароля. Проверьте почту.';
       });
     } catch (e) {
       setState(() {
         _isSuccess = false;
-        _message = 'Не удалось отправить письмо.';
+        _message = 'Не удалось отправить запрос. Проверьте интернет и попробуйте ещё раз.';
       });
     } finally {
       setState(() {
@@ -110,7 +114,7 @@ class _PasswordResetScreenState extends State<PasswordResetScreen> {
                       ),
                       const SizedBox(height: 6),
                       Text(
-                        'Письмо придёт на ваш email.',
+                        'Введите email, на который вы регистрировались. Если такой адрес есть в системе, мы пришлём ссылку на сброс пароля. Ссылка действительна 24 часа.',
                         style: theme.textTheme.bodyMedium?.copyWith(
                           color: theme.colorScheme.onSurfaceVariant,
                         ),

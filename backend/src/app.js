@@ -24,6 +24,7 @@ const {
   deriveSessionPublicId,
   normalizeParticipantIds,
 } = require("./store");
+const {createEmailSender} = require("./email-sender");
 const {createOperationalStatus} = require("./operational-status");
 const {InMemoryRateLimitBackend} = require("./rate-limit-backends");
 const {registerAdminRoutes} = require("./routes/admin-routes");
@@ -75,6 +76,12 @@ function createApp({
   maxAuthClient = null,
   liveKitService = null,
   runtimeInfo = null,
+  // Transactional email sender for password-reset / verification.
+  // When omitted we build one from `config.smtp*` (or fall back to
+  // the dev console-logger when SMTP isn't configured). Tests pass
+  // a recording fake so they can assert on outgoing payloads
+  // without touching nodemailer.
+  emailSender = null,
   // Pluggable rate-limit backend. The default is an in-memory Map
   // which is correct for a single-process deploy (current production
   // shape). When the backend is scaled out to multiple processes /
@@ -102,6 +109,8 @@ function createApp({
   const resolvedVkAuthClient = vkAuthClient ?? createVkAuthClient(config);
   const resolvedMaxAuthClient = maxAuthClient ?? createMaxAuthClient(config);
   const resolvedLiveKitService = liveKitService ?? createLiveKitService(config);
+  const resolvedEmailSender =
+    emailSender ?? createEmailSender({config, logger: console});
   // Used by the rate-limit middleware below. Backwards-compat name
   // for what used to be a bare `Map<string, {count, resetAt}>`; the
   // middleware now routes through the pluggable backend's `incr`
@@ -2221,6 +2230,8 @@ function createApp({
   registerAuthSessionRoutes(app, {
     store,
     mediaStorage: resolvedMediaStorage,
+    config,
+    emailSender: resolvedEmailSender,
     requireAuth,
     authResponse,
     sanitizeProfile,

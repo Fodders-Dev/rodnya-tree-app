@@ -3,6 +3,8 @@ function registerAuthSessionRoutes(
   {
     store,
     mediaStorage,
+    config = {},
+    emailSender = null,
     requireAuth,
     authResponse,
     sanitizeProfile,
@@ -422,13 +424,160 @@ function registerAuthSessionRoutes(
     });
   });
 
-  app.post("/v1/auth/password-reset", async (req, res) => {
-    const {email} = req.body || {};
-    res.status(202).json({
-      ok: true,
-      email: email ? String(email).trim().toLowerCase() : null,
-      message: "Password reset flow is stubbed in minimal backend",
-    });
+  // ── Password reset request ──────────────────────────────────────
+  // Anti-enumeration contract: this endpoint returns the SAME 202
+  // shape and roughly the same wall-clock latency regardless of
+  // whether the email is registered. Without that, an attacker
+  // hitting POST /password-reset/request can map "registered →
+  // 202 quickly + email sent" vs "not registered → 202 quickly
+  // but no email" via timing or downstream observation. So we
+  // do the work silently behind the response.
+  //
+  // Rate limiting:
+  //   * The auth rate limiter (30/IP/min) caps blast radius at
+  //     the IP layer.
+  //   * `store.issuePasswordResetToken` enforces a 1-token-per-user-
+  //     per-hour cap, which prevents an attacker who knows a user
+  //     exists from flooding their inbox.
+  app.post("/v1/auth/password-reset/request", async (req, res) => {
+    const rawEmail = req.body?.email;
+    const email = String(rawEmail || "").trim().toLowerCase();
+
+    // Always 202. We do NOT reveal whether the email is registered.
+    // Return BEFORE the async work completes — token issue + email
+    // send happen in the background. The client's perceived latency
+    // is identical for known + unknown emails.
+    res.status(202).json({ok: true});
+
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return;
+    }
+    if (email.length > 254) {
+      return;
+    }
+
+    try {
+      const user = await store.findUserByEmail(email);
+      if (!user) {
+        return;
+      }
+
+      const issued = await store.issuePasswordResetToken(user.id);
+      if (!issued) {
+        // Either rate-limited or user vanished mid-call. Anti-
+        // enumeration: stay silent.
+        return;
+      }
+
+      // Build the reset URL. `publicAppUrl` is the user-facing
+      // domain (rodnya-tree.ru in production); the path matches
+      // whatever the Flutter `/reset-password` route expects.
+      const baseUrl = String(
+        config?.publicAppUrl || "https://rodnya-tree.ru",
+      ).replace(/\/+$/u, "");
+      const resetUrl = `${baseUrl}/reset-password?token=${encodeURIComponent(issued.plaintext)}`;
+
+      if (emailSender) {
+        const result = await emailSender.sendPasswordResetEmail({
+          to: email,
+          resetUrl,
+          displayName: user.profile?.displayName || "",
+        });
+        if (!result?.ok) {
+          console.error(
+            "[backend] password reset email send failed",
+            JSON.stringify({
+              requestId: req.requestId,
+              userId: user.id,
+              email,
+            }),
+          );
+        }
+      } else {
+        // Should never happen in production wiring, but guard
+        // against a misconfigured app.js setup.
+        console.warn(
+          "[backend] password reset issued but no emailSender configured",
+        );
+      }
+    } catch (error) {
+      // Never bubble — the response was already sent. Log with
+      // request id for observability.
+      console.error(
+        "[backend] password reset request failure",
+        JSON.stringify({
+          requestId: req.requestId,
+          message: error?.message || String(error),
+        }),
+      );
+    }
+  });
+
+  // ── Password reset confirm ──────────────────────────────────────
+  // Caller posts the token (from the email URL) + new password.
+  // We validate the new password's shape BEFORE consuming the
+  // token — otherwise a malformed-password attempt would burn a
+  // valid token and force the user to re-request from scratch.
+  app.post("/v1/auth/password-reset/confirm", async (req, res) => {
+    const tokenRaw = req.body?.token;
+    const passwordRaw = req.body?.password;
+    const token = typeof tokenRaw === "string" ? tokenRaw.trim() : "";
+    const password = typeof passwordRaw === "string" ? passwordRaw : "";
+
+    if (!token || !password) {
+      res.status(400).json({message: "Нужны token и password"});
+      return;
+    }
+    if (token.length > 256) {
+      // Real tokens are ~43 chars (32 bytes base64url). Anything
+      // bigger is almost certainly an attack probe.
+      res.status(400).json({message: "Некорректный токен"});
+      return;
+    }
+    // Same password-shape rules as /v1/auth/register.
+    if (password.length < 8) {
+      res
+        .status(400)
+        .json({message: "Пароль должен быть минимум 8 символов."});
+      return;
+    }
+    if (password.length > 1024) {
+      res.status(400).json({message: "Пароль слишком длинный."});
+      return;
+    }
+
+    try {
+      const userId = await store.consumePasswordResetToken(token);
+      if (!userId) {
+        // Same generic error for invalid/expired/already-used —
+        // gives the attacker no signal.
+        res.status(400).json({
+          message: "Ссылка для сброса пароля недействительна или истекла",
+        });
+        return;
+      }
+
+      const updated = await store.updateUserPassword(userId, password);
+      if (!updated) {
+        // User was deleted between consume and update. Generic
+        // error again.
+        res.status(400).json({
+          message: "Не удалось обновить пароль",
+        });
+        return;
+      }
+
+      res.json({ok: true});
+    } catch (error) {
+      console.error(
+        "[backend] password reset confirm failure",
+        JSON.stringify({
+          requestId: req.requestId,
+          message: error?.message || String(error),
+        }),
+      );
+      res.status(500).json({message: "Не удалось сбросить пароль"});
+    }
   });
 
   app.delete("/v1/auth/account", requireAuth, async (req, res) => {

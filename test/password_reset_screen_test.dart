@@ -39,7 +39,10 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Сброс пароля'), findsWidgets);
-    expect(find.text('Письмо придёт на ваш email.'), findsOneWidget);
+    expect(
+      find.textContaining('Если такой адрес есть в системе'),
+      findsOneWidget,
+    );
     expect(find.text('Отправить'), findsOneWidget);
 
     await tester.enterText(
@@ -50,7 +53,12 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(authService.lastResetEmail, 'user@test.dev');
-    expect(find.text('Ссылка отправлена.'), findsOneWidget);
+    // Anti-enumeration message — never reveals whether the email
+    // is registered. Backend returns 202 either way.
+    expect(
+      find.textContaining('Если такой email зарегистрирован'),
+      findsOneWidget,
+    );
     expect(find.text('К входу'), findsOneWidget);
   });
 }

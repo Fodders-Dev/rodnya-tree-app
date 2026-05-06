@@ -1040,8 +1040,23 @@ class CustomApiAuthService implements AuthServiceInterface {
   Future<void> resetPassword(String email) async {
     await _requestJson(
       method: 'POST',
-      path: '/v1/auth/password-reset',
+      path: '/v1/auth/password-reset/request',
       body: {'email': email},
+    );
+  }
+
+  @override
+  Future<void> confirmPasswordReset({
+    required String token,
+    required String newPassword,
+  }) async {
+    await _requestJson(
+      method: 'POST',
+      path: '/v1/auth/password-reset/confirm',
+      body: {
+        'token': token,
+        'password': newPassword,
+      },
     );
   }
 

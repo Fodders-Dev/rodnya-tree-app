@@ -82,6 +82,14 @@ class _FakeAuthService implements AuthServiceInterface {
   }
 
   @override
+  Future<void> confirmPasswordReset({
+    required String token,
+    required String newPassword,
+  }) {
+    throw UnimplementedError();
+  }
+
+  @override
   Future<Object?> signInWithGoogle() {
     throw UnimplementedError();
   }
