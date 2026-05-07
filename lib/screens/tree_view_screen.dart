@@ -593,14 +593,19 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
             bottom: false,
             child: Row(
               children: [
-                if (context.canPop())
-                  IconButton(
-                    icon: Icon(Icons.arrow_back_rounded, color: tokens.ink),
-                    tooltip: 'Назад',
-                    onPressed: () => context.pop(),
-                  )
-                else
-                  const SizedBox(width: 14),
+                IconButton(
+                  icon: Icon(Icons.arrow_back_rounded, color: tokens.ink),
+                  tooltip: 'К списку деревьев',
+                  // Plain `context.pop()` was popping back to the
+                  // shell's `/tree` route, which has a redirect
+                  // that says "if selectedTreeId exists, send the
+                  // user to /tree/view/$id" — so the user briefly
+                  // saw the tree list, then got auto-kicked back
+                  // to the view they were trying to leave. Going
+                  // to `/trees` explicitly bypasses that redirect
+                  // (different path) and lands on the real list.
+                  onPressed: () => context.go('/trees'),
+                ),
                 // "Дерево" / "Круг" gets natural width (short word
                 // — never wraps). The tree-name pill takes the rest
                 // of the row via Expanded so long names like "Семья
