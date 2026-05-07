@@ -640,8 +640,10 @@ function formatBytes(sizeBytes) {
 }
 
 module.exports = {
+  GRAPH_PERSON_CANONICAL_FIELDS,
   SNAPSHOT_COLLECTION_KEYS,
   backfillPersonIdentities,
+  buildGraphRelationDedupKey,
   collectLocalMediaObjects,
   formatBytes,
   formatSnapshotSummary,

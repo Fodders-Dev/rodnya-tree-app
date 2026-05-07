@@ -12,7 +12,9 @@ const {
   findCrossTreeIdentitySuggestions,
 } = require("./identity-matcher");
 const {
+  GRAPH_PERSON_CANONICAL_FIELDS,
   backfillPersonIdentities,
+  buildGraphRelationDedupKey,
   migrateTreesToGraphAndBranches,
 } = require("./migration-utils");
 
@@ -5250,10 +5252,22 @@ class FileStore {
     await this._writeQueue;
     const raw = await fs.readFile(this.dataPath, "utf8");
     const parsed = JSON.parse(raw);
-    return normalizeDbState(parsed);
+    const normalized = normalizeDbState(parsed);
+    // Phase 3.1c: keep the graph mirror eventually consistent
+    // with the legacy collections without wiring sync into every
+    // write path. Idempotent — no-op once the graph already
+    // matches the legacy side.
+    this._syncGraphFromLegacy(normalized);
+    return normalized;
   }
 
   async _write(data) {
+    // Same sync pass as _read, but on the OUT-bound side: ensures
+    // the data we're about to persist already has graph rows that
+    // mirror the legacy mutation the caller just made. Without
+    // this, the next process boot would read a snapshot whose
+    // graph is one step behind the legacy state.
+    this._syncGraphFromLegacy(data);
     this._writeQueue = this._writeQueue.then(async () => {
       const directoryPath = path.dirname(this.dataPath);
       const tempPath = path.join(
@@ -9347,8 +9361,514 @@ class FileStore {
         treeId: linkedPerson.treeId,
         personId: linkedPerson.id,
       });
+      // graphPerson sync is handled centrally by _write →
+      // _syncGraphFromLegacy; no need to mirror here.
     }
     return propagated;
+  }
+
+  // ── Phase 3.1c: incremental graph-sync helpers ──────────────────────
+  // After each legacy-side write the relevant helper mirrors the
+  // change into graphPersons / graphRelations / branches /
+  // branchPersonViews. Idempotent — calling them with no change is
+  // a no-op. Ids are stable: graphPerson.id keys on identityId,
+  // branch.id on legacyTreeId, graphRelation.id reuses the first
+  // legacy relation id in the dedup group. Stable ids matter because
+  // future collections (posts.branchIds, conflict-log graphPersonId)
+  // hold references that must survive incremental rewrites.
+  //
+  // Why not full re-migration on every write? It's fine for the 19-
+  // person prod state today but rebuilds non-identity graph rows
+  // with fresh uuids each pass — any reference held by another
+  // collection would break. The helpers preserve identity.
+
+  _syncPersonToGraph(db, legacyPerson) {
+    if (!legacyPerson) return;
+    if (!Array.isArray(db.graphPersons)) db.graphPersons = [];
+    if (!Array.isArray(db.branchPersonViews)) db.branchPersonViews = [];
+    if (!Array.isArray(db.branches)) db.branches = [];
+
+    const identityId = normalizeNullableString(legacyPerson.identityId);
+    if (!identityId) {
+      // After Phase 0 backfill every legacy person has an identityId.
+      // Hitting this branch means we're mid-creation BEFORE
+      // _reconcilePersonIdentities ran; the caller will re-sync after
+      // that step.
+      return;
+    }
+
+    let graphPerson = db.graphPersons.find((g) => g.id === identityId);
+    if (!graphPerson) {
+      graphPerson = {
+        id: identityId,
+        createdBy: legacyPerson.creatorId || null,
+        createdAt: legacyPerson.createdAt,
+        updatedAt: legacyPerson.updatedAt,
+        version: 0,
+        deletedAt: null,
+        mergedInto: null,
+        userId: legacyPerson.userId || null,
+        legacyPersonIds: [legacyPerson.id],
+        contactPrivacy: "owner-only",
+        isPublic: false,
+        source: "manual",
+      };
+      for (const field of GRAPH_PERSON_CANONICAL_FIELDS) {
+        graphPerson[field] = legacyPerson[field] ?? null;
+      }
+      db.graphPersons.push(graphPerson);
+    } else {
+      let canonicalChanged = false;
+      for (const field of GRAPH_PERSON_CANONICAL_FIELDS) {
+        const next = legacyPerson[field] ?? null;
+        const cur = graphPerson[field] ?? null;
+        // JSON-equality covers both scalar fields and the array-
+        // shaped photoGallery — we don't need a deep-equal helper.
+        if (JSON.stringify(next) !== JSON.stringify(cur)) {
+          graphPerson[field] =
+            next === null || next === undefined ? null : structuredClone(next);
+          canonicalChanged = true;
+        }
+      }
+      if (canonicalChanged) {
+        graphPerson.version = (graphPerson.version || 0) + 1;
+        graphPerson.updatedAt = legacyPerson.updatedAt;
+      }
+      if (!Array.isArray(graphPerson.legacyPersonIds)) {
+        graphPerson.legacyPersonIds = [];
+      }
+      if (!graphPerson.legacyPersonIds.includes(legacyPerson.id)) {
+        graphPerson.legacyPersonIds.push(legacyPerson.id);
+      }
+      if (!graphPerson.userId && legacyPerson.userId) {
+        graphPerson.userId = legacyPerson.userId;
+      }
+      if (graphPerson.deletedAt) {
+        // Resurrect — the legacy person came back, so does its
+        // canonical node. Most likely path: a soft-delete the user
+        // reverted, or a sibling person re-created on another branch.
+        graphPerson.deletedAt = null;
+      }
+    }
+
+    // Per-(branch, person) editorial slot.
+    let view = db.branchPersonViews.find(
+      (v) =>
+        v.branchId === legacyPerson.treeId && v.personId === graphPerson.id,
+    );
+    if (!view) {
+      view = {
+        id: crypto.randomUUID(),
+        branchId: legacyPerson.treeId,
+        personId: graphPerson.id,
+        label: null,
+        photoOverride: null,
+        notes: legacyPerson.notes ?? null,
+        familySummary: legacyPerson.familySummary ?? null,
+        bio: legacyPerson.bio ?? null,
+        visibility: legacyPerson.visibility ?? null,
+        legacyPersonId: legacyPerson.id,
+        createdAt: legacyPerson.createdAt,
+        updatedAt: legacyPerson.updatedAt,
+      };
+      db.branchPersonViews.push(view);
+    } else {
+      view.notes = legacyPerson.notes ?? null;
+      view.familySummary = legacyPerson.familySummary ?? null;
+      view.bio = legacyPerson.bio ?? null;
+      view.visibility = legacyPerson.visibility ?? null;
+      view.updatedAt = legacyPerson.updatedAt;
+      if (!view.legacyPersonId) view.legacyPersonId = legacyPerson.id;
+    }
+
+    // Auto-extend the branch's manual-include rule. Phase 3.2's
+    // wizard will let the user pick richer rule types per branch
+    // (blood-from-me, ancestors-of, etc.); for now every legacy
+    // tree just becomes a manual-list branch and the rule grows
+    // as people get added to the tree.
+    const branch = db.branches.find((b) => b.id === legacyPerson.treeId);
+    if (branch) {
+      if (
+        !branch.includeRules ||
+        typeof branch.includeRules !== "object"
+      ) {
+        branch.includeRules = {type: "manual", manualPersonIds: []};
+      }
+      if (!Array.isArray(branch.includeRules.manualPersonIds)) {
+        branch.includeRules.manualPersonIds = [];
+      }
+      if (!branch.includeRules.manualPersonIds.includes(graphPerson.id)) {
+        branch.includeRules.manualPersonIds.push(graphPerson.id);
+        branch.updatedAt = legacyPerson.updatedAt;
+      }
+    }
+  }
+
+  _syncTreeToBranch(db, tree) {
+    if (!tree) return;
+    if (!Array.isArray(db.branches)) db.branches = [];
+    const memberIds = Array.isArray(tree.memberIds)
+      ? [...tree.memberIds]
+      : Array.isArray(tree.members)
+          ? [...tree.members]
+          : [];
+    let branch = db.branches.find((b) => b.id === tree.id);
+    if (!branch) {
+      branch = {
+        id: tree.id,
+        legacyTreeId: tree.id,
+        ownerId: tree.creatorId,
+        name: tree.name,
+        description: tree.description || "",
+        isPrivate: tree.isPrivate !== false,
+        kind: tree.kind || "family",
+        includeRules: {type: "manual", manualPersonIds: []},
+        memberIds,
+        publicSlug: tree.publicSlug || null,
+        isCertified: tree.isCertified === true,
+        certificationNote: tree.certificationNote || null,
+        createdAt: tree.createdAt,
+        updatedAt: tree.updatedAt,
+        deletedAt: null,
+      };
+      db.branches.push(branch);
+      return;
+    }
+    branch.name = tree.name;
+    branch.description = tree.description || "";
+    branch.isPrivate = tree.isPrivate !== false;
+    branch.kind = tree.kind || "family";
+    branch.memberIds = memberIds;
+    branch.publicSlug = tree.publicSlug || null;
+    branch.isCertified = tree.isCertified === true;
+    branch.certificationNote = tree.certificationNote || null;
+    branch.updatedAt = tree.updatedAt;
+    branch.deletedAt = null;
+  }
+
+  _markPersonDeletedInGraph(db, legacyPerson) {
+    if (!legacyPerson) return;
+    if (!Array.isArray(db.graphPersons)) db.graphPersons = [];
+    if (!Array.isArray(db.branchPersonViews)) db.branchPersonViews = [];
+    if (!Array.isArray(db.branches)) db.branches = [];
+
+    db.branchPersonViews = db.branchPersonViews.filter(
+      (v) => v.legacyPersonId !== legacyPerson.id,
+    );
+
+    const identityId = normalizeNullableString(legacyPerson.identityId);
+    if (!identityId) return;
+
+    // Drop from branch.includeRules ONLY if no other legacy person
+    // on the same branch is still tied to the same identity. Several
+    // legacy persons sharing an identity on one branch is unusual but
+    // possible (e.g. a botched import); we hold the inclusion until
+    // the LAST such legacy row is gone.
+    const stillOnBranch = (db.persons || []).some(
+      (p) =>
+        p.id !== legacyPerson.id &&
+        p.treeId === legacyPerson.treeId &&
+        normalizeNullableString(p.identityId) === identityId,
+    );
+    if (!stillOnBranch) {
+      const branch = db.branches.find((b) => b.id === legacyPerson.treeId);
+      if (branch?.includeRules?.manualPersonIds) {
+        branch.includeRules.manualPersonIds =
+          branch.includeRules.manualPersonIds.filter(
+            (gid) => gid !== identityId,
+          );
+        branch.updatedAt = nowIso();
+      }
+    }
+
+    // Soft-delete the graphPerson when no legacy row anywhere ties
+    // to its identity. Final hard-delete is deferred to the 30-day
+    // undo window referenced in the RFC; for now `deletedAt` lets
+    // read paths filter the row out and lets an undo flip it back.
+    const stillReferenced = (db.persons || []).some(
+      (p) =>
+        p.id !== legacyPerson.id &&
+        normalizeNullableString(p.identityId) === identityId,
+    );
+    if (!stillReferenced) {
+      const graphPerson = db.graphPersons.find((g) => g.id === identityId);
+      if (graphPerson && !graphPerson.deletedAt) {
+        graphPerson.deletedAt = nowIso();
+      }
+    }
+  }
+
+  _resolveGraphPersonIdForLegacy(db, legacyPersonId) {
+    if (!legacyPersonId) return null;
+    const legacyPerson = (db.persons || []).find(
+      (p) => p.id === legacyPersonId,
+    );
+    if (legacyPerson) {
+      const identityId = normalizeNullableString(legacyPerson.identityId);
+      if (identityId) return identityId;
+    }
+    // Person already deleted — fall back to a stale lookup through
+    // existing graph rows so callers still operating on a relation
+    // mid-cleanup don't get null.
+    const fromGraph = (db.graphPersons || []).find((g) =>
+      Array.isArray(g.legacyPersonIds) &&
+      g.legacyPersonIds.includes(legacyPersonId),
+    );
+    return fromGraph ? fromGraph.id : null;
+  }
+
+  _syncRelationToGraph(db, legacyRelation) {
+    if (!legacyRelation) return;
+    if (!Array.isArray(db.graphRelations)) db.graphRelations = [];
+    const p1g = this._resolveGraphPersonIdForLegacy(
+      db,
+      legacyRelation.person1Id,
+    );
+    const p2g = this._resolveGraphPersonIdForLegacy(
+      db,
+      legacyRelation.person2Id,
+    );
+    if (!p1g || !p2g) return;
+
+    const dedupKey = buildGraphRelationDedupKey(p1g, p2g, legacyRelation);
+    let graphRelation = db.graphRelations.find((entry) => {
+      if (
+        Array.isArray(entry.legacyRelationIds) &&
+        entry.legacyRelationIds.includes(legacyRelation.id)
+      ) {
+        return true;
+      }
+      return (
+        buildGraphRelationDedupKey(entry.person1Id, entry.person2Id, entry) ===
+        dedupKey
+      );
+    });
+
+    const nowTs = nowIso();
+    if (!graphRelation) {
+      graphRelation = {
+        id: legacyRelation.id,
+        person1Id: p1g,
+        person2Id: p2g,
+        relation1to2: legacyRelation.relation1to2,
+        relation2to1: legacyRelation.relation2to1,
+        isConfirmed: legacyRelation.isConfirmed === true,
+        createdBy: legacyRelation.createdBy || null,
+        createdAt: legacyRelation.createdAt || nowTs,
+        updatedAt: legacyRelation.updatedAt || nowTs,
+        version: 0,
+        deletedAt: null,
+        marriageDate: legacyRelation.marriageDate || null,
+        divorceDate: legacyRelation.divorceDate || null,
+        customRelationLabel1to2:
+          legacyRelation.customRelationLabel1to2 || null,
+        customRelationLabel2to1:
+          legacyRelation.customRelationLabel2to1 || null,
+        parentSetId: legacyRelation.parentSetId || null,
+        parentSetType: legacyRelation.parentSetType || null,
+        isPrimaryParentSet:
+          typeof legacyRelation.isPrimaryParentSet === "boolean"
+            ? legacyRelation.isPrimaryParentSet
+            : null,
+        unionId: legacyRelation.unionId || null,
+        unionType: legacyRelation.unionType || null,
+        unionStatus: legacyRelation.unionStatus || null,
+        legacyRelationIds: [legacyRelation.id],
+        legacyTreeIds: legacyRelation.treeId ? [legacyRelation.treeId] : [],
+      };
+      db.graphRelations.push(graphRelation);
+      return;
+    }
+
+    graphRelation.relation1to2 = legacyRelation.relation1to2;
+    graphRelation.relation2to1 = legacyRelation.relation2to1;
+    graphRelation.isConfirmed = legacyRelation.isConfirmed === true;
+    graphRelation.updatedAt = legacyRelation.updatedAt || nowTs;
+    graphRelation.marriageDate = legacyRelation.marriageDate || null;
+    graphRelation.divorceDate = legacyRelation.divorceDate || null;
+    graphRelation.customRelationLabel1to2 =
+      legacyRelation.customRelationLabel1to2 || null;
+    graphRelation.customRelationLabel2to1 =
+      legacyRelation.customRelationLabel2to1 || null;
+    graphRelation.parentSetId = legacyRelation.parentSetId || null;
+    graphRelation.parentSetType = legacyRelation.parentSetType || null;
+    graphRelation.isPrimaryParentSet =
+      typeof legacyRelation.isPrimaryParentSet === "boolean"
+        ? legacyRelation.isPrimaryParentSet
+        : null;
+    graphRelation.unionId = legacyRelation.unionId || null;
+    graphRelation.unionType = legacyRelation.unionType || null;
+    graphRelation.unionStatus = legacyRelation.unionStatus || null;
+    if (graphRelation.deletedAt) graphRelation.deletedAt = null;
+    if (!Array.isArray(graphRelation.legacyRelationIds)) {
+      graphRelation.legacyRelationIds = [];
+    }
+    if (!graphRelation.legacyRelationIds.includes(legacyRelation.id)) {
+      graphRelation.legacyRelationIds.push(legacyRelation.id);
+    }
+    if (!Array.isArray(graphRelation.legacyTreeIds)) {
+      graphRelation.legacyTreeIds = [];
+    }
+    if (
+      legacyRelation.treeId &&
+      !graphRelation.legacyTreeIds.includes(legacyRelation.treeId)
+    ) {
+      graphRelation.legacyTreeIds.push(legacyRelation.treeId);
+    }
+    graphRelation.version = (graphRelation.version || 0) + 1;
+  }
+
+  _markRelationDeletedInGraph(db, legacyRelation) {
+    if (!legacyRelation) return;
+    if (!Array.isArray(db.graphRelations)) db.graphRelations = [];
+    const target = db.graphRelations.find(
+      (entry) =>
+        Array.isArray(entry.legacyRelationIds) &&
+        entry.legacyRelationIds.includes(legacyRelation.id),
+    );
+    if (!target) return;
+    target.legacyRelationIds = target.legacyRelationIds.filter(
+      (rid) => rid !== legacyRelation.id,
+    );
+    if (legacyRelation.treeId) {
+      const stillUsed = (db.relations || []).some(
+        (r) =>
+          target.legacyRelationIds.includes(r.id) &&
+          r.treeId === legacyRelation.treeId,
+      );
+      if (!stillUsed) {
+        target.legacyTreeIds = target.legacyTreeIds.filter(
+          (tid) => tid !== legacyRelation.treeId,
+        );
+      }
+    }
+    if (target.legacyRelationIds.length === 0 && !target.deletedAt) {
+      target.deletedAt = nowIso();
+    }
+  }
+
+  // Aggregate full-scan helper. Walks the legacy collections and
+  // brings the graph side into sync with whatever's currently
+  // there. Idempotent — every step is a no-op when its row is
+  // already up-to-date — so calling it on every _read and every
+  // _write keeps the graph eventually consistent without wiring
+  // a sync into each of the 30+ write paths individually.
+  //
+  // The cost is O(persons + relations + trees) per call, which on
+  // today's scale (≤100 persons per user) is sub-millisecond. The
+  // helper goes away in Phase 3.4 once we drop the legacy mirror.
+  _syncGraphFromLegacy(db) {
+    if (!db || typeof db !== "object") return;
+    if (!Array.isArray(db.graphPersons)) db.graphPersons = [];
+    if (!Array.isArray(db.branchPersonViews)) db.branchPersonViews = [];
+    if (!Array.isArray(db.branches)) db.branches = [];
+    if (!Array.isArray(db.graphRelations)) db.graphRelations = [];
+
+    const trees = Array.isArray(db.trees) ? db.trees : [];
+    const persons = Array.isArray(db.persons) ? db.persons : [];
+    const relations = Array.isArray(db.relations) ? db.relations : [];
+
+    for (const tree of trees) {
+      this._syncTreeToBranch(db, tree);
+    }
+
+    const liveLegacyPersonIds = new Set();
+    const liveIdentityIds = new Set();
+    for (const person of persons) {
+      liveLegacyPersonIds.add(person.id);
+      const identityId = normalizeNullableString(person.identityId);
+      if (identityId) liveIdentityIds.add(identityId);
+      this._syncPersonToGraph(db, person);
+    }
+
+    const liveRelationIds = new Set();
+    for (const relation of relations) {
+      liveRelationIds.add(relation.id);
+      this._syncRelationToGraph(db, relation);
+    }
+
+    // Drop branchPersonViews whose legacyPersonId is gone — the
+    // person was hard-deleted before the graph caught up, so the
+    // view is meaningless. (Soft-deletes leave the legacy person
+    // in place; we don't reach this branch in that path.)
+    db.branchPersonViews = db.branchPersonViews.filter(
+      (view) =>
+        !view.legacyPersonId || liveLegacyPersonIds.has(view.legacyPersonId),
+    );
+
+    // Soft-delete graphPersons whose identityId is no longer
+    // referenced by any legacy person. (And clear deletedAt for
+    // ones that came back — handled in _syncPersonToGraph already,
+    // but a fresh data file might land in a state where the legacy
+    // row exists but the graphPerson is stamped deleted.)
+    for (const graphPerson of db.graphPersons) {
+      if (liveIdentityIds.has(graphPerson.id)) {
+        if (graphPerson.deletedAt) graphPerson.deletedAt = null;
+        continue;
+      }
+      if (!graphPerson.deletedAt) {
+        graphPerson.deletedAt = nowIso();
+      }
+    }
+
+    // Trim branch.includeRules.manualPersonIds: if a legacy person
+    // got deleted, its identity is no longer on this branch and the
+    // inclusion list shouldn't claim it. Mirrors the per-branch
+    // membership rebuild in _markPersonDeletedInGraph but for the
+    // full-scan path.
+    const identitiesByBranch = new Map();
+    for (const person of persons) {
+      const identityId = normalizeNullableString(person.identityId);
+      if (!identityId) continue;
+      if (!identitiesByBranch.has(person.treeId)) {
+        identitiesByBranch.set(person.treeId, new Set());
+      }
+      identitiesByBranch.get(person.treeId).add(identityId);
+    }
+    for (const branch of db.branches) {
+      const ids = branch.includeRules?.manualPersonIds;
+      if (!Array.isArray(ids)) continue;
+      const allowed = identitiesByBranch.get(branch.id);
+      if (!allowed) {
+        // Branch with no live persons — drop all manual entries.
+        if (ids.length > 0) {
+          branch.includeRules.manualPersonIds = [];
+        }
+        continue;
+      }
+      branch.includeRules.manualPersonIds = ids.filter((gid) =>
+        allowed.has(gid),
+      );
+    }
+
+    // Trim graphRelation.legacyRelationIds: drop ones that no
+    // longer exist in db.relations. If the list goes empty, mark
+    // the canonical edge deleted.
+    for (const graphRelation of db.graphRelations) {
+      if (!Array.isArray(graphRelation.legacyRelationIds)) {
+        graphRelation.legacyRelationIds = [];
+      }
+      const filtered = graphRelation.legacyRelationIds.filter((rid) =>
+        liveRelationIds.has(rid),
+      );
+      if (filtered.length !== graphRelation.legacyRelationIds.length) {
+        graphRelation.legacyRelationIds = filtered;
+      }
+      if (filtered.length === 0 && !graphRelation.deletedAt) {
+        graphRelation.deletedAt = nowIso();
+      } else if (filtered.length > 0 && graphRelation.deletedAt) {
+        // Re-attached after delete — clear the tombstone.
+        graphRelation.deletedAt = null;
+      }
+    }
+
+    // Drop branches whose legacy tree was deleted entirely.
+    const liveTreeIds = new Set(trees.map((t) => t.id));
+    for (const branch of db.branches) {
+      if (!liveTreeIds.has(branch.id) && !branch.deletedAt) {
+        branch.deletedAt = nowIso();
+      }
+    }
   }
 
   async deletePerson(treeId, personId, actorId = null) {
