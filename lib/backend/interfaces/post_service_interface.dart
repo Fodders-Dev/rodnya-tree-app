@@ -11,6 +11,11 @@ abstract class PostServiceInterface {
 
   /// Create a new family post.
   /// [images] optional attachments for the post.
+  /// [branchIds] (Phase 3.4) — optional list of branch ids the
+  /// post should appear in. The primary [treeId] is implicit; the
+  /// server validates every entry against the trees the author
+  /// can access and silently drops the rest. When omitted/null,
+  /// backend defaults to a single-branch publish (`[treeId]`).
   Future<Post> createPost({
     required String treeId,
     required String content,
@@ -19,6 +24,7 @@ abstract class PostServiceInterface {
     TreeContentScopeType scopeType = TreeContentScopeType.wholeTree,
     List<String> anchorPersonIds = const [],
     String? circleId,
+    List<String>? branchIds,
   });
 
   /// Delete a post by ID.

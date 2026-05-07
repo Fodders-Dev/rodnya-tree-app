@@ -109,6 +109,7 @@ class _FakePostService implements PostServiceInterface {
     TreeContentScopeType scopeType = TreeContentScopeType.wholeTree,
     List<String> anchorPersonIds = const [],
     String? circleId,
+    List<String>? branchIds,
   }) async =>
       Post(
         id: 'post-1',

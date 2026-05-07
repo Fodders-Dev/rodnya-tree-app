@@ -61,12 +61,22 @@ class CustomApiPostService implements PostServiceInterface {
     TreeContentScopeType scopeType = TreeContentScopeType.wholeTree,
     List<String> anchorPersonIds = const [],
     String? circleId,
+    List<String>? branchIds,
   }) async {
     final imageUrls = <String>[];
     for (final image in images) {
       final url = await _storageService.uploadImage(image, 'posts');
       if (url != null) imageUrls.add(url);
     }
+
+    // Phase 3.4: only send branchIds if the caller passed a non-
+    // empty list. The backend default ([treeId]) keeps the legacy
+    // "single-branch publish" behavior when this is omitted.
+    final cleanBranchIds = branchIds
+        ?.map((b) => b.trim())
+        .where((b) => b.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
 
     final response = await _requestJson(
       method: 'POST',
@@ -82,6 +92,8 @@ class CustomApiPostService implements PostServiceInterface {
         'anchorPersonIds': anchorPersonIds,
         if (circleId != null && circleId.trim().isNotEmpty)
           'circleId': circleId.trim(),
+        if (cleanBranchIds != null && cleanBranchIds.isNotEmpty)
+          'branchIds': cleanBranchIds,
       },
     );
 

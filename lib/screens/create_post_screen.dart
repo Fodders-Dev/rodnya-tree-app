@@ -63,6 +63,13 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
   bool _isLoadingPeople = false;
   bool _circlesUnavailable = false;
   bool _branchCandidatesUnavailable = false;
+  // Phase 3.4 multi-branch posts: list of the user's OTHER trees
+  // (excluding the primary one driving this composer) that the
+  // post can be cross-posted to. The primary tree is always
+  // implicit — `_additionalBranchIds` only tracks the extras.
+  // When empty, the post is single-branch (legacy behavior).
+  List<FamilyTree> _otherUserTrees = <FamilyTree>[];
+  final Set<String> _additionalBranchIds = <String>{};
   // Mixed photos + videos. The Post model still stores everything as
   // imageUrls (server-side blob, no schema change needed), but locally
   // we track the kind so the preview tile can render a video poster
@@ -205,6 +212,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     _loadCurrentTreeMeta();
     _loadAudienceCircles();
     _loadBranchCandidates();
+    _loadOtherUserTrees();
     // Honor the action hint coming from the home teaser icons. The
     // post-frame callback gives the navigator a chance to settle so
     // the picker sheet appears on top of the actually-mounted
@@ -234,6 +242,28 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     setState(() {
       _currentTreeMeta = treeMeta;
     });
+  }
+
+  // Phase 3.4: load the user's OTHER branches (legacy: trees) so
+  // the composer can offer "Опубликовать также в:" toggles for
+  // multi-branch posts. Best-effort — when the call fails the
+  // section just stays hidden and the user posts to the primary
+  // branch only (legacy behavior).
+  Future<void> _loadOtherUserTrees() async {
+    final treeId = _currentTreeId;
+    if (treeId == null) return;
+    try {
+      final trees = await _familyTreeService.getUserTrees();
+      if (!mounted) return;
+      setState(() {
+        _otherUserTrees = trees
+            .where((tree) => tree.id != treeId)
+            .toList(growable: false);
+      });
+    } catch (_) {
+      // Silent: multi-branch is opt-in. If we can't load the list,
+      // hide the section rather than blocking the composer.
+    }
   }
 
   Future<void> _loadBranchCandidates() async {
@@ -546,6 +576,14 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     setState(() => _isLoading = true);
 
     try {
+      // Phase 3.4: when the user picked one or more "Опубликовать
+      // также в" chips, the post fans out to the primary tree
+      // PLUS those branches. When nothing's picked, send `null`
+      // so the backend keeps the legacy single-branch default.
+      final List<String>? branchIdsForRequest =
+          _additionalBranchIds.isEmpty
+              ? null
+              : <String>{_currentTreeId!, ..._additionalBranchIds}.toList();
       await _postService.createPost(
         treeId: _currentTreeId!,
         content: content,
@@ -558,6 +596,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
         scopeType: _scopeType,
         anchorPersonIds: _selectedBranchPersonIds.toList(),
         circleId: _selectedCircleId,
+        branchIds: branchIdsForRequest,
       );
 
       if (mounted) {
@@ -982,6 +1021,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
         const SizedBox(height: 16),
         _buildBranchAudienceSection(sheetSetState: sheetSetState),
         const SizedBox(height: 16),
+        _buildCrossBranchSection(theme, tokens, sheetSetState),
         SwitchListTile.adaptive(
           contentPadding: EdgeInsets.zero,
           title: const Text('По публичной ссылке'),
@@ -1008,6 +1048,64 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
           ),
         ],
       ],
+    );
+  }
+
+  // Phase 3.4 cross-branch composer section. Renders an empty
+  // SizedBox when the user has 0 other trees; otherwise shows a
+  // "Опубликовать также в:" row with one FilterChip per other
+  // branch. Toggles add/remove the branch id from the set the
+  // post will fan out to. The primary branch is always included
+  // server-side, so the chips here are pure additions.
+  Widget _buildCrossBranchSection(
+    ThemeData theme,
+    RodnyaDesignTokens tokens,
+    StateSetter? sheetSetState,
+  ) {
+    if (_otherUserTrees.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Опубликовать также в:',
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w800,
+              color: tokens.ink,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Один пост увидят сразу несколько ваших веток. Реакции и комментарии останутся общими.',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: tokens.inkSecondary,
+              height: 1.35,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: _otherUserTrees.map((tree) {
+              final selected = _additionalBranchIds.contains(tree.id);
+              return FilterChip(
+                label: Text(tree.name),
+                selected: selected,
+                onSelected: (next) {
+                  _updateAudienceState(() {
+                    if (next) {
+                      _additionalBranchIds.add(tree.id);
+                    } else {
+                      _additionalBranchIds.remove(tree.id);
+                    }
+                  }, sheetSetState);
+                },
+              );
+            }).toList(),
+          ),
+        ],
+      ),
     );
   }
 
