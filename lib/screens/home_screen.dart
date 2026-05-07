@@ -27,6 +27,7 @@ import '../models/story.dart';
 import '../services/app_status_service.dart';
 import '../services/posts_cache.dart';
 import '../theme/app_theme.dart';
+import '../widgets/branch_switcher_chip.dart';
 import '../widgets/post_card.dart';
 import '../widgets/post_card_shimmer.dart';
 import '../widgets/glass_panel.dart';
@@ -581,6 +582,12 @@ class _HomeScreenState extends State<HomeScreen> {
                     letterSpacing: -0.22,
                   ),
                 ),
+                const SizedBox(width: 12),
+                // Phase 6.1: branch switcher chip — tap opens a
+                // bottom sheet with all of the user's branches.
+                // Hidden when there's nothing to switch to (fresh
+                // account, no trees yet).
+                const Flexible(child: BranchSwitcherChip()),
                 const Spacer(),
                 _buildTopbarIconButton(
                   tokens: tokens,

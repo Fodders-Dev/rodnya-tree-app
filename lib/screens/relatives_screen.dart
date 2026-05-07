@@ -22,6 +22,7 @@ import '../services/app_status_service.dart';
 import '../utils/photo_url.dart';
 import '../utils/snackbar.dart';
 import '../utils/user_facing_error.dart';
+import '../widgets/branch_switcher_chip.dart';
 
 part 'relatives_screen_sections.dart';
 
@@ -1651,6 +1652,11 @@ class _RelativesScreenState extends State<RelativesScreen> {
                     letterSpacing: -0.22,
                   ),
                 ),
+                const SizedBox(width: 12),
+                // Phase 6.1: branch switcher chip in the relatives
+                // top bar so the user can flip "родители папа /
+                // папина / семья жены" without leaving the screen.
+                const Flexible(child: BranchSwitcherChip()),
                 const Spacer(),
                 ..._buildRelativesAppBarActions(
                   treeProvider: treeProvider,

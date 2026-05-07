@@ -23,6 +23,13 @@ class TreeProvider with ChangeNotifier {
   String? get selectedTreeId => _selectedTreeId;
   String? get selectedTreeName => _selectedTreeName;
   TreeKind? get selectedTreeKind => _selectedTreeKind;
+  /// Phase 6.1: read-only view of the user's available branches
+  /// (legacy: trees) so the BranchSwitcher widget can render the
+  /// dropdown without re-fetching from the service. Always reflects
+  /// the last successful load — empty when load hasn't finished or
+  /// the user has no branches yet.
+  List<FamilyTree> get availableTrees => _availableTrees;
+  bool get hasLoadedAvailableTrees => _hasLoadedAvailableTrees;
 
   FamilyTreeServiceInterface? get _familyTreeService =>
       GetIt.I.isRegistered<FamilyTreeServiceInterface>()
