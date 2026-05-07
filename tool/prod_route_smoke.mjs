@@ -811,6 +811,29 @@ function isIgnorablePageError(routeName, errorInfo) {
   );
 }
 
+// Allow-list of console.error messages that are noise from third-
+// party SDKs we can't silence at the source. Each pattern is the
+// exact text the browser emits; keep them tight (anchored regexes)
+// so we don't accidentally swallow a real Flutter error that
+// happens to share a substring.
+const IGNORABLE_CONSOLE_MESSAGE_PATTERNS = [
+  // FedCM / Google Identity Services / Credential Management API
+  // emits this when the browser session has no cached account for
+  // the configured provider. Anonymous smoke runs use a fresh
+  // browser context → no cached accounts → the error always fires.
+  // The real "no provider available" UX path lands the user on
+  // the manual-credentials form, which IS what the smoke verifies
+  // by `final=#/login`. Authenticated runs don't hit this because
+  // the provider has the user's session already.
+  /^Provider's accounts list is empty\.?$/,
+];
+
+function isIgnorableConsoleError(message) {
+  return IGNORABLE_CONSOLE_MESSAGE_PATTERNS.some((pattern) =>
+    pattern.test(message),
+  );
+}
+
 async function withRouteMetrics(page, config, routeName, targetUrl, task) {
   const baseOrigin = new URL(config.baseUrl).origin;
   const routeMetrics = {
@@ -820,6 +843,7 @@ async function withRouteMetrics(page, config, routeName, targetUrl, task) {
     requestCount: 0,
     sameOriginRequestCount: 0,
     consoleErrors: [],
+    ignoredConsoleErrors: [],
     pageErrors: [],
     ignoredPageErrors: [],
     failedRequests: [],
@@ -849,7 +873,12 @@ async function withRouteMetrics(page, config, routeName, targetUrl, task) {
   };
   const onConsole = (message) => {
     if (message.type() === "error") {
-      routeMetrics.consoleErrors.push(message.text());
+      const text = message.text();
+      if (isIgnorableConsoleError(text)) {
+        routeMetrics.ignoredConsoleErrors.push(text);
+        return;
+      }
+      routeMetrics.consoleErrors.push(text);
     }
   };
   const onPageError = (error) => {
