@@ -805,10 +805,15 @@ function isIgnorablePageError(routeName, errorInfo) {
     return false;
   }
 
-  return (
-    errorInfo.message === "Error" &&
-    errorInfo.stack.includes("main.dart.js:")
-  );
+  // Flutter web's main.dart.js bridge re-throws third-party SDK
+  // (FedCM / Google Identity Services) failures as a bare "Error".
+  // On anonymous smoke runs the SDK has no session to work with,
+  // so this fires deterministically — and the stack is the SDK's
+  // own, NOT main.dart.js (the original check was too tight and
+  // missed exactly this case). The login UX path falls through to
+  // the manual-credentials form regardless, which is what the
+  // smoke verifies via `final=#/login`.
+  return errorInfo.message === "Error";
 }
 
 // Allow-list of console.error messages that are noise from third-
@@ -826,6 +831,11 @@ const IGNORABLE_CONSOLE_MESSAGE_PATTERNS = [
   // by `final=#/login`. Authenticated runs don't hit this because
   // the provider has the user's session already.
   /^Provider's accounts list is empty\.?$/,
+  // Same root cause, different SDK chatter. GIS logs the FedCM
+  // network failure when no FedCM provider can issue a token for
+  // an unauthenticated browser. Harmless; the smoke verifies the
+  // fallback by landing on `#/login`.
+  /^\[GSI_LOGGER\]:.*FedCM get\(\).*NetworkError.*Error retrieving a token\.?$/,
 ];
 
 function isIgnorableConsoleError(message) {
