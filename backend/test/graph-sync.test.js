@@ -406,3 +406,180 @@ test(
     assert.equal(db.branchPersonViews.length, 0);
   },
 );
+
+// ── Phase 3.1d: graph-first read helper ────────────────────────────
+
+test(
+  "_buildPersonViewFromGraph returns a legacy-shape record sourced from graphPerson + branchPersonView",
+  () => {
+    const store = makeStoreStub();
+    const db = freshDb();
+    db.trees = [{id: "t1", creatorId: "u1", name: "T1"}];
+    db.persons = [
+      {
+        id: "p1",
+        treeId: "t1",
+        identityId: "i1",
+        firstName: "Иван",
+        middleName: "Иванович",
+        lastName: "Иванов",
+        name: "Иванов Иван Иванович",
+        birthDate: "1990-01-01",
+        notes: "Старая заметка",
+        creatorId: "u1",
+      },
+    ];
+    db.personIdentities = [{id: "i1", personIds: ["p1"]}];
+    store._syncGraphFromLegacy(db);
+
+    const view = store._buildPersonViewFromGraph(db, "t1", "p1");
+    assert.equal(view.id, "p1");
+    assert.equal(view.treeId, "t1");
+    assert.equal(view.identityId, "i1");
+    assert.equal(view.name, "Иванов Иван Иванович");
+    assert.equal(view.birthDate, "1990-01-01");
+    // Legacy-only fields stay accessible — needed by writes that
+    // recompose `name` from firstName/lastName/middleName.
+    assert.equal(view.firstName, "Иван");
+    assert.equal(view.lastName, "Иванов");
+    // Editorial fields come from branchPersonView.
+    assert.equal(view.notes, "Старая заметка");
+  },
+);
+
+test(
+  "_buildPersonViewFromGraph prefers graphPerson canonical fields over the legacy record (graph is source of truth)",
+  () => {
+    const store = makeStoreStub();
+    const db = freshDb();
+    db.trees = [{id: "t1", creatorId: "u1", name: "T1"}];
+    db.persons = [
+      {
+        id: "p1",
+        treeId: "t1",
+        identityId: "i1",
+        name: "Старое имя",
+        birthDate: "1990-01-01",
+        creatorId: "u1",
+      },
+    ];
+    db.personIdentities = [{id: "i1", personIds: ["p1"]}];
+    store._syncGraphFromLegacy(db);
+
+    // Simulate graph drift — graphPerson holds a newer canonical
+    // value than the legacy record. The helper should return the
+    // graph value (the unified-graph migration gives the graph
+    // side authority over canonical fields).
+    db.graphPersons[0].name = "Новое имя";
+    db.graphPersons[0].birthDate = "1995-06-15";
+
+    const view = store._buildPersonViewFromGraph(db, "t1", "p1");
+    assert.equal(view.name, "Новое имя");
+    assert.equal(view.birthDate, "1995-06-15");
+  },
+);
+
+test(
+  "_buildPersonViewFromGraph prefers branchPersonView editorial fields over the legacy record",
+  () => {
+    const store = makeStoreStub();
+    const db = freshDb();
+    db.trees = [{id: "t1", creatorId: "u1", name: "T1"}];
+    db.persons = [
+      {
+        id: "p1",
+        treeId: "t1",
+        identityId: "i1",
+        name: "X",
+        notes: "Старая заметка",
+        familySummary: "Старое описание",
+        creatorId: "u1",
+      },
+    ];
+    db.personIdentities = [{id: "i1", personIds: ["p1"]}];
+    store._syncGraphFromLegacy(db);
+
+    // Simulate per-branch editorial drift.
+    const view = db.branchPersonViews[0];
+    view.notes = "Новая заметка";
+    view.familySummary = "Новое описание";
+
+    const result = store._buildPersonViewFromGraph(db, "t1", "p1");
+    assert.equal(result.notes, "Новая заметка");
+    assert.equal(result.familySummary, "Новое описание");
+  },
+);
+
+test(
+  "_buildPersonViewFromGraph falls back to the legacy record when graph data is missing",
+  () => {
+    const store = makeStoreStub();
+    const db = freshDb();
+    db.trees = [{id: "t1", creatorId: "u1", name: "T1"}];
+    db.persons = [
+      {
+        id: "p1",
+        treeId: "t1",
+        identityId: "i1",
+        name: "Иван",
+        birthDate: "1990-01-01",
+        notes: "Заметка",
+        creatorId: "u1",
+      },
+    ];
+    db.personIdentities = [{id: "i1", personIds: ["p1"]}];
+    // Deliberately skip the sync — graphPersons / branchPersonViews
+    // stay empty. Helper must fall through to the legacy record so
+    // existing API behavior survives until the migration ran on a
+    // production snapshot.
+
+    const result = store._buildPersonViewFromGraph(db, "t1", "p1");
+    assert.equal(result.name, "Иван");
+    assert.equal(result.birthDate, "1990-01-01");
+    assert.equal(result.notes, "Заметка");
+  },
+);
+
+test(
+  "_buildPersonViewFromGraph returns null when the legacy person isn't on this branch",
+  () => {
+    const store = makeStoreStub();
+    const db = freshDb();
+    db.trees = [{id: "t1", creatorId: "u1", name: "T1"}];
+    db.persons = [];
+    store._syncGraphFromLegacy(db);
+
+    assert.equal(
+      store._buildPersonViewFromGraph(db, "t1", "p-missing"),
+      null,
+    );
+  },
+);
+
+test(
+  "_buildPersonViewFromGraph filters out a soft-deleted graphPerson and falls back to legacy",
+  () => {
+    const store = makeStoreStub();
+    const db = freshDb();
+    db.trees = [{id: "t1", creatorId: "u1", name: "T1"}];
+    db.persons = [
+      {
+        id: "p1",
+        treeId: "t1",
+        identityId: "i1",
+        name: "Иван",
+        creatorId: "u1",
+      },
+    ];
+    db.personIdentities = [{id: "i1", personIds: ["p1"]}];
+    store._syncGraphFromLegacy(db);
+
+    // Soft-delete the graph row. Legacy record is still alive
+    // (real deletion would have removed it from db.persons too) —
+    // helper must ignore the tombstoned graph row and use legacy.
+    db.graphPersons[0].deletedAt = new Date().toISOString();
+
+    const result = store._buildPersonViewFromGraph(db, "t1", "p1");
+    assert.equal(result.name, "Иван");
+  },
+);

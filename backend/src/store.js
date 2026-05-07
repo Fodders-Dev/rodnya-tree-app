@@ -7713,10 +7713,7 @@ class FileStore {
 
   async findPerson(treeId, personId) {
     const db = await this._read();
-    const person = db.persons.find(
-      (entry) => entry.id === personId && entry.treeId === treeId,
-    );
-    return person ? buildCanonicalPersonView(db, person) : null;
+    return this._buildPersonViewFromGraph(db, treeId, personId);
   }
 
   async findPersonByUserId(treeId, userId) {
@@ -7724,7 +7721,8 @@ class FileStore {
     const person = db.persons.find(
       (entry) => entry.treeId === treeId && entry.userId === userId,
     );
-    return person ? buildCanonicalPersonView(db, person) : null;
+    if (!person) return null;
+    return this._buildPersonViewFromGraph(db, treeId, person.id);
   }
 
   // Phase 0 of the unified-graph migration: when the user adds a
@@ -7819,19 +7817,17 @@ class FileStore {
 
   async getPersonDossier(treeId, personId) {
     const db = await this._read();
-    const person = db.persons.find(
-      (entry) => entry.id === personId && entry.treeId === treeId,
-    );
-    if (!person) {
+    const personView = this._buildPersonViewFromGraph(db, treeId, personId);
+    if (!personView) {
       return null;
     }
 
-    const linkedUser = person.userId
-      ? db.users.find((entry) => entry.id === person.userId) || null
+    const linkedUser = personView.userId
+      ? db.users.find((entry) => entry.id === personView.userId) || null
       : null;
 
     return {
-      person: buildCanonicalPersonView(db, person),
+      person: personView,
       linkedProfile: linkedUser?.profile ? structuredClone(linkedUser.profile) : null,
     };
   }
@@ -9747,6 +9743,74 @@ class FileStore {
     }
   }
 
+  // ── Phase 3.1d: graph-first read helper ─────────────────────────────
+  // Resolves a legacy-shape person record by reading from
+  // graphPersons + branchPersonViews + tree first, falling back
+  // to the legacy persons collection when graph data is missing
+  // (e.g. row hasn't been synced yet, or migration hasn't run).
+  // Returns null if no data exists for this (branch, personId).
+  //
+  // The shape returned is the same as the legacy `db.persons[i]`
+  // record so callers and downstream `mapPerson` see no change in
+  // payload structure. The values, however, come from the graph
+  // side — once we drop the legacy collection in 3.4 this helper
+  // simply stops touching `db.persons`.
+  _buildPersonViewFromGraph(db, branchId, legacyPersonId) {
+    const legacyPerson = (db.persons || []).find(
+      (p) => p.id === legacyPersonId && p.treeId === branchId,
+    );
+    if (!legacyPerson) return null;
+
+    const identityId = normalizeNullableString(legacyPerson.identityId);
+    const graphPerson = identityId
+      ? (db.graphPersons || []).find(
+          (g) => g.id === identityId && !g.deletedAt,
+        )
+      : null;
+
+    if (!graphPerson) {
+      // No graph row yet — happens during the boot window before
+      // _syncGraphFromLegacy fires, or for a person whose
+      // identityId backfill hasn't completed. Falling back to the
+      // legacy record keeps the API working in those edge cases.
+      return buildCanonicalPersonView(db, legacyPerson);
+    }
+
+    const view = (db.branchPersonViews || []).find(
+      (v) => v.branchId === branchId && v.personId === graphPerson.id,
+    );
+
+    // Compose: legacy record as the base (carries firstName /
+    // lastName / middleName / details / lastPropagatedFields and
+    // any other field the graph layer doesn't own yet), then
+    // override the canonical fields from graphPerson and the
+    // editorial fields from branchPersonView. Output is shape-
+    // compatible with the legacy `mapPerson` consumer.
+    const personView = structuredClone(legacyPerson);
+    for (const field of GRAPH_PERSON_CANONICAL_FIELDS) {
+      if (graphPerson[field] !== undefined) {
+        personView[field] =
+          graphPerson[field] === null
+            ? null
+            : structuredClone(graphPerson[field]);
+      }
+    }
+    if (view) {
+      personView.notes = view.notes ?? personView.notes ?? null;
+      personView.familySummary =
+        view.familySummary ?? personView.familySummary ?? null;
+      personView.bio = view.bio ?? personView.bio ?? null;
+      if (view.visibility !== undefined && view.visibility !== null) {
+        personView.visibility = view.visibility;
+      }
+    }
+
+    if (!personView.userId) return personView;
+    const user = db.users.find((entry) => entry.id === personView.userId);
+    if (!user?.profile) return personView;
+    return applyCanonicalProfileToPerson(personView, user.profile);
+  }
+
   // Aggregate full-scan helper. Walks the legacy collections and
   // brings the graph side into sync with whatever's currently
   // there. Idempotent — every step is a no-op when its row is
@@ -10190,9 +10254,14 @@ class FileStore {
 
   async getTreeGraphSnapshot(treeId, {viewerUserId = null} = {}) {
     const db = await this._read();
+    // Phase 3.1d: every person in the snapshot now flows through
+    // the graph-first helper. Helper falls back to the legacy
+    // record if graph data is absent, so nothing breaks during
+    // the boot window or on a snapshot that hasn't been migrated.
     const treePersons = db.persons
       .filter((person) => person.treeId === treeId)
-      .map((person) => buildCanonicalPersonView(db, person));
+      .map((person) => this._buildPersonViewFromGraph(db, treeId, person.id))
+      .filter(Boolean);
     if (treePersons.length === 0 && !db.trees.some((tree) => tree.id === treeId)) {
       return null;
     }
