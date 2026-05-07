@@ -6,6 +6,12 @@ enum TreeContentScopeType { wholeTree, branches }
 class Post {
   final String id;
   final String treeId;
+  /// Phase 3.4: list of branch ids the post is published into.
+  /// One post can land in several branches at once (e.g. one
+  /// family photo posted to "Моя кровь" AND "Семья жены"). The
+  /// primary [treeId] is always implicit in this list — older
+  /// payloads that lack the field deserialise as `[treeId]`.
+  final List<String> branchIds;
   final String authorId;
   final String authorName;
   final String? _authorPhotoUrl;
@@ -52,6 +58,7 @@ class Post {
     List<String>? anchorPersonIds,
     this.circleId,
     List<ReactionSummary>? reactions,
+    List<String>? branchIds,
   })  : _authorPhotoUrl = UrlUtils.normalizeImageUrl(authorPhotoUrl),
         _imageUrls = imageUrls
             ?.map((url) => UrlUtils.normalizeImageUrl(url))
@@ -59,16 +66,27 @@ class Post {
             .toList(),
         likedBy = likedBy ?? [],
         anchorPersonIds = anchorPersonIds ?? [],
-        reactions = reactions ?? const <ReactionSummary>[];
+        reactions = reactions ?? const <ReactionSummary>[],
+        // Default the audience to the primary tree when the
+        // server response (or local construction) didn't include
+        // branchIds. Keeps every post with a non-empty audience.
+        branchIds = (branchIds == null || branchIds.isEmpty)
+            ? [treeId]
+            : branchIds;
 
   factory Post.fromJson(Map<String, dynamic> json) {
     final rawImageUrls = (json['imageUrls'] as List<dynamic>? ?? [])
         .map((e) => e.toString())
         .toList();
 
+    final rawBranchIds = (json['branchIds'] as List<dynamic>? ?? const [])
+        .map((e) => e.toString())
+        .where((s) => s.isNotEmpty)
+        .toList();
     return Post(
       id: json['id']?.toString() ?? '',
       treeId: json['treeId']?.toString() ?? '',
+      branchIds: rawBranchIds,
       authorId: json['authorId']?.toString() ?? '',
       authorName: json['authorName']?.toString() ?? 'Аноним',
       authorPhotoUrl: json['authorPhotoUrl'] as String?,
@@ -95,6 +113,7 @@ class Post {
     return {
       'id': id,
       'treeId': treeId,
+      'branchIds': branchIds,
       'authorId': authorId,
       'authorName': authorName,
       'authorPhotoUrl': authorPhotoUrl,
