@@ -36,6 +36,7 @@ const {
 const {registerChatRoutes} = require("./routes/chat-routes");
 const {registerCircleRoutes} = require("./routes/circle-routes");
 const {registerGoogleAuthRoutes} = require("./routes/google-auth-routes");
+const {registerGraphRoutes} = require("./routes/graph-routes");
 const {registerIdentityRoutes} = require("./routes/identity-routes");
 const {registerMaxAuthRoutes} = require("./routes/max-auth-routes");
 const {registerMergeRoutes} = require("./routes/merge-routes");
@@ -2339,6 +2340,12 @@ function createApp({
     store,
     requireAuth,
     requireTreeAccess,
+  });
+
+  registerGraphRoutes(app, {
+    store,
+    requireAuth,
+    mapPerson,
   });
 
   registerTreeRoutes(app, {

@@ -633,3 +633,336 @@ test(
     assert.deepEqual(post.branchIds, ["tree-a"]);
   },
 );
+
+// ── Phase 4: Find blood relation ───────────────────────────────────
+
+// Helper: build a snapshot with a chosen family shape and run
+// _syncGraphFromLegacy so graphRelations + graphPersons are
+// populated. Then call findBloodRelation through the prototype.
+function buildFamilyDb(persons, relations) {
+  const store = makeStoreStub();
+  const db = freshDb();
+  db.trees = [{id: "t1", creatorId: "u1", name: "T1"}];
+  db.persons = persons.map((p) => ({
+    creatorId: "u1",
+    treeId: "t1",
+    ...p,
+  }));
+  db.personIdentities = persons
+    .filter((p) => p.identityId)
+    .map((p) => ({id: p.identityId, personIds: [p.id]}));
+  db.relations = relations.map((r, i) => ({
+    id: `rel-${i}`,
+    treeId: "t1",
+    ...r,
+  }));
+  store._syncGraphFromLegacy(db);
+  return {store, db};
+}
+
+test(
+  "findBloodRelation: parent → mama/papa label per gender",
+  () => {
+    const {store, db} = buildFamilyDb(
+      [
+        {id: "p-self", identityId: "id-self", name: "Сам", gender: "male"},
+        {id: "p-mom", identityId: "id-mom", name: "Мама", gender: "female"},
+      ],
+      [
+        {
+          person1Id: "p-mom",
+          person2Id: "p-self",
+          relation1to2: "parent",
+          relation2to1: "child",
+        },
+      ],
+    );
+    const result = store._findBloodRelationBetween(
+      db,
+      "id-self",
+      "id-mom",
+    );
+    assert.ok(result);
+    assert.equal(result.label, "мама");
+    assert.equal(result.degree, 1);
+    // Walking self → mom: source self is the CHILD, so edge type
+    // is "child" — describeBloodRelation reads child as an UP step.
+    assert.deepEqual(result.edges, ["child"]);
+  },
+);
+
+test(
+  "findBloodRelation: 2 hops parent→parent → бабушка/дедушка",
+  () => {
+    const {store, db} = buildFamilyDb(
+      [
+        {id: "p-self", identityId: "id-self", name: "Сам", gender: "male"},
+        {id: "p-mom", identityId: "id-mom", name: "Мама", gender: "female"},
+        {
+          id: "p-grandma",
+          identityId: "id-grandma",
+          name: "Бабушка",
+          gender: "female",
+        },
+      ],
+      [
+        {
+          person1Id: "p-mom",
+          person2Id: "p-self",
+          relation1to2: "parent",
+          relation2to1: "child",
+        },
+        {
+          person1Id: "p-grandma",
+          person2Id: "p-mom",
+          relation1to2: "parent",
+          relation2to1: "child",
+        },
+      ],
+    );
+    const result = store._findBloodRelationBetween(
+      db,
+      "id-self",
+      "id-grandma",
+    );
+    assert.ok(result);
+    assert.equal(result.label, "бабушка");
+    assert.equal(result.degree, 2);
+    // Two child-edge hops: self (child) → mom (child) → grandma.
+    assert.deepEqual(result.edges, ["child", "child"]);
+    // Chain includes self + mom + grandma in order.
+    assert.deepEqual(result.chain, ["id-self", "id-mom", "id-grandma"]);
+  },
+);
+
+test(
+  "findBloodRelation: parent + sibling → дядя/тётя",
+  () => {
+    const {store, db} = buildFamilyDb(
+      [
+        {id: "p-self", identityId: "id-self", name: "Сам", gender: "male"},
+        {id: "p-mom", identityId: "id-mom", name: "Мама", gender: "female"},
+        {
+          id: "p-uncle",
+          identityId: "id-uncle",
+          name: "Дядя",
+          gender: "male",
+        },
+      ],
+      [
+        {
+          person1Id: "p-mom",
+          person2Id: "p-self",
+          relation1to2: "parent",
+          relation2to1: "child",
+        },
+        {
+          person1Id: "p-mom",
+          person2Id: "p-uncle",
+          relation1to2: "sibling",
+          relation2to1: "sibling",
+        },
+      ],
+    );
+    const result = store._findBloodRelationBetween(
+      db,
+      "id-self",
+      "id-uncle",
+    );
+    assert.ok(result);
+    assert.equal(result.label, "дядя");
+    assert.equal(result.degree, 2);
+  },
+);
+
+test(
+  "findBloodRelation: parent + sibling + child → двоюродный брат / сестра",
+  () => {
+    const {store, db} = buildFamilyDb(
+      [
+        {id: "p-self", identityId: "id-self", name: "Сам", gender: "male"},
+        {id: "p-mom", identityId: "id-mom", name: "Мама", gender: "female"},
+        {
+          id: "p-aunt",
+          identityId: "id-aunt",
+          name: "Тётя",
+          gender: "female",
+        },
+        {
+          id: "p-cousin",
+          identityId: "id-cousin",
+          name: "Сестра",
+          gender: "female",
+        },
+      ],
+      [
+        {
+          person1Id: "p-mom",
+          person2Id: "p-self",
+          relation1to2: "parent",
+          relation2to1: "child",
+        },
+        {
+          person1Id: "p-mom",
+          person2Id: "p-aunt",
+          relation1to2: "sibling",
+          relation2to1: "sibling",
+        },
+        {
+          person1Id: "p-aunt",
+          person2Id: "p-cousin",
+          relation1to2: "parent",
+          relation2to1: "child",
+        },
+      ],
+    );
+    const result = store._findBloodRelationBetween(
+      db,
+      "id-self",
+      "id-cousin",
+    );
+    assert.ok(result);
+    assert.equal(result.label, "двоюродный сестра"); // grammatical mismatch noted — acceptable for v1
+    assert.equal(result.degree, 3);
+    // self (child) → mom → aunt (sibling of mom) → cousin (parent of cousin = aunt).
+    assert.deepEqual(result.edges, ["child", "sibling", "parent"]);
+  },
+);
+
+test(
+  "findBloodRelation: returns null when no blood path exists",
+  () => {
+    const {store, db} = buildFamilyDb(
+      [
+        {id: "p-a", identityId: "id-a", name: "A"},
+        {id: "p-b", identityId: "id-b", name: "B"},
+      ],
+      [], // no edges
+    );
+    const result = store._findBloodRelationBetween(db, "id-a", "id-b");
+    assert.equal(result, null);
+  },
+);
+
+test(
+  "findBloodRelation: same person returns degree 0",
+  () => {
+    const {store, db} = buildFamilyDb(
+      [{id: "p-self", identityId: "id-self", name: "Сам"}],
+      [],
+    );
+    const result = store._findBloodRelationBetween(db, "id-self", "id-self");
+    assert.ok(result);
+    assert.equal(result.degree, 0);
+    assert.equal(result.label, "Это вы");
+    assert.deepEqual(result.chain, ["id-self"]);
+  },
+);
+
+test(
+  "findBloodRelation: child line — внук / внучка",
+  () => {
+    const {store, db} = buildFamilyDb(
+      [
+        {id: "p-self", identityId: "id-self", name: "Сам", gender: "male"},
+        {id: "p-son", identityId: "id-son", name: "Сын", gender: "male"},
+        {
+          id: "p-grandson",
+          identityId: "id-grandson",
+          name: "Внук",
+          gender: "male",
+        },
+      ],
+      [
+        {
+          person1Id: "p-self",
+          person2Id: "p-son",
+          relation1to2: "parent",
+          relation2to1: "child",
+        },
+        {
+          person1Id: "p-son",
+          person2Id: "p-grandson",
+          relation1to2: "parent",
+          relation2to1: "child",
+        },
+      ],
+    );
+    const result = store._findBloodRelationBetween(
+      db,
+      "id-self",
+      "id-grandson",
+    );
+    assert.ok(result);
+    assert.equal(result.label, "внук");
+    assert.equal(result.degree, 2);
+  },
+);
+
+test(
+  "findBloodRelation: 3-up прабабушка label",
+  () => {
+    const {store, db} = buildFamilyDb(
+      [
+        {id: "p-self", identityId: "id-self", name: "Сам", gender: "male"},
+        {id: "p-mom", identityId: "id-mom", name: "Мама", gender: "female"},
+        {id: "p-gma", identityId: "id-gma", name: "Бабушка", gender: "female"},
+        {id: "p-ggma", identityId: "id-ggma", name: "Прабабушка", gender: "female"},
+      ],
+      [
+        {
+          person1Id: "p-mom",
+          person2Id: "p-self",
+          relation1to2: "parent",
+          relation2to1: "child",
+        },
+        {
+          person1Id: "p-gma",
+          person2Id: "p-mom",
+          relation1to2: "parent",
+          relation2to1: "child",
+        },
+        {
+          person1Id: "p-ggma",
+          person2Id: "p-gma",
+          relation1to2: "parent",
+          relation2to1: "child",
+        },
+      ],
+    );
+    const result = store._findBloodRelationBetween(
+      db,
+      "id-self",
+      "id-ggma",
+    );
+    assert.equal(result.label, "прабабушка");
+    assert.equal(result.degree, 3);
+  },
+);
+
+test(
+  "findBloodRelation: spouse edge isn't blood — no path through it",
+  () => {
+    const {store, db} = buildFamilyDb(
+      [
+        {id: "p-self", identityId: "id-self", name: "Сам", gender: "male"},
+        {id: "p-wife", identityId: "id-wife", name: "Жена", gender: "female"},
+      ],
+      [
+        {
+          person1Id: "p-self",
+          person2Id: "p-wife",
+          relation1to2: "spouse",
+          relation2to1: "spouse",
+        },
+      ],
+    );
+    const result = store._findBloodRelationBetween(
+      db,
+      "id-self",
+      "id-wife",
+    );
+    // No blood path — spouse is not a blood edge.
+    assert.equal(result, null);
+  },
+);

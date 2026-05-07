@@ -236,6 +236,163 @@ function valuesEqualForPropagation(field, a, b) {
   return a === b;
 }
 
+// ── Phase 4: blood-relation classification ────────────────────────────
+// `parent` / `child` / `sibling` are the three edges the BFS engine
+// walks to find consanguinity paths. step-/adopted-/in-law variants
+// are NOT blood — they connect family but not DNA — and are
+// deliberately excluded so "найти родство" stays meaningful.
+function canonicalBloodType(rawType) {
+  switch (String(rawType || "").toLowerCase()) {
+    case "parent":
+      return "parent";
+    case "child":
+      return "child";
+    case "sibling":
+      return "sibling";
+    default:
+      return null;
+  }
+}
+
+// Russian relationship label generator. Takes the edge sequence
+// produced by the BFS (e.g. ["parent","sibling","child"]) and the
+// target person's gender, returns a human label + degree. Handles
+// the common direct-line / sibling / cousin patterns; falls back
+// to a neutral "родственник" for shapes we don't classify yet
+// (zigzag paths through marriage etc., though the engine doesn't
+// produce those today since spouse edges aren't in the graph).
+function describeBloodRelation(edges, gender) {
+  // Edge semantics: each edge label is the SOURCE side's role.
+  // - "child" edge means walker is the child going to a parent
+  //   (going UP — towards ancestor).
+  // - "parent" edge means walker is the parent going to a child
+  //   (going DOWN — towards descendant).
+  // - "sibling" edge stays sibling (lateral).
+  let up = 0;
+  let hasSibling = false;
+  let down = 0;
+  let i = 0;
+  while (i < edges.length && edges[i] === "child") {
+    up++;
+    i++;
+  }
+  if (i < edges.length && edges[i] === "sibling") {
+    hasSibling = true;
+    i++;
+  }
+  while (i < edges.length && edges[i] === "parent") {
+    down++;
+    i++;
+  }
+  if (i !== edges.length) {
+    // Unusual shape — e.g. child-parent-child traversal that
+    // would imply spouse edges. We don't traverse those, but
+    // be defensive in case future code surfaces such paths.
+    return {label: "Родственник", degree: edges.length};
+  }
+
+  const isFemale = String(gender || "").toLowerCase() === "female";
+
+  // Direct ancestor line.
+  if (!hasSibling && down === 0 && up > 0) {
+    if (up === 1) return {label: isFemale ? "мама" : "папа", degree: 1};
+    if (up === 2) return {label: isFemale ? "бабушка" : "дедушка", degree: 2};
+    if (up === 3)
+      return {label: isFemale ? "прабабушка" : "прадедушка", degree: 3};
+    const prefix = "пра".repeat(up - 2);
+    return {
+      label: `${prefix}${isFemale ? "бабушка" : "дедушка"}`,
+      degree: up,
+    };
+  }
+
+  // Direct descendant line.
+  if (!hasSibling && up === 0 && down > 0) {
+    if (down === 1) return {label: isFemale ? "дочь" : "сын", degree: 1};
+    if (down === 2)
+      return {label: isFemale ? "внучка" : "внук", degree: 2};
+    if (down === 3)
+      return {label: isFemale ? "правнучка" : "правнук", degree: 3};
+    const prefix = "пра".repeat(down - 2);
+    return {
+      label: `${prefix}${isFemale ? "внучка" : "внук"}`,
+      degree: down,
+    };
+  }
+
+  // Pure sibling.
+  if (hasSibling && up === 0 && down === 0) {
+    return {label: isFemale ? "сестра" : "брат", degree: 1};
+  }
+
+  // Sibling-of-ancestor: uncle / aunt and their elders.
+  if (hasSibling && up >= 1 && down === 0) {
+    if (up === 1) return {label: isFemale ? "тётя" : "дядя", degree: 2};
+    if (up === 2) {
+      return {
+        label: isFemale ? "двоюродная бабушка" : "двоюродный дедушка",
+        degree: 3,
+      };
+    }
+    const prefix = "пра".repeat(up - 1);
+    return {
+      label: `${prefix}${isFemale ? "тётя" : "дядя"}`,
+      degree: up + 1,
+    };
+  }
+
+  // Descendant-of-sibling: nephew / niece and their juniors.
+  if (hasSibling && up === 0 && down >= 1) {
+    if (down === 1) {
+      return {label: isFemale ? "племянница" : "племянник", degree: 2};
+    }
+    if (down === 2) {
+      return {
+        label: isFemale ? "внучатая племянница" : "внучатый племянник",
+        degree: 3,
+      };
+    }
+    const prefix = "пра".repeat(down - 1);
+    return {
+      label: `${prefix}${isFemale ? "племянница" : "племянник"}`,
+      degree: down + 1,
+    };
+  }
+
+  // Cousin family: ancestor → sibling → descendant.
+  if (hasSibling && up >= 1 && down >= 1) {
+    const cousinDegree = Math.min(up, down);
+    const removed = Math.abs(up - down);
+    const cousinPrefixOptions = [
+      "двоюродный",
+      "троюродный",
+      "четвероюродный",
+      "пятиюродный",
+      "шестиюродный",
+    ];
+    const cousinPrefix =
+      cousinPrefixOptions[cousinDegree - 1] || `${cousinDegree + 1}-юродный`;
+    if (removed === 0) {
+      return {
+        label: `${cousinPrefix} ${isFemale ? "сестра" : "брат"}`,
+        degree: up + down + 1,
+      };
+    }
+    if (up > down) {
+      return {
+        label: `${cousinPrefix} ${isFemale ? "тётя" : "дядя"}`,
+        degree: up + down + 1,
+      };
+    }
+    return {
+      label: `${cousinPrefix} ${isFemale ? "племянница" : "племянник"}`,
+      degree: up + down + 1,
+    };
+  }
+
+  return {label: "Родственник", degree: edges.length};
+}
+
 const SESSION_TOUCH_MIN_INTERVAL_MS = 60_000;
 
 function normalizeOptionalIsoTimestamp(value) {
@@ -9732,6 +9889,156 @@ class FileStore {
       graphRelation.legacyTreeIds.push(legacyRelation.treeId);
     }
     graphRelation.version = (graphRelation.version || 0) + 1;
+  }
+
+  // ── Phase 4: Find Blood Relation (BFS over the unified graph) ──────
+  // Walks `graphRelations` looking only at blood-relation edges
+  // (parent/child/sibling). Returns the shortest chain of graph
+  // persons from `fromId` to `toId`, the edge sequence describing
+  // the path, the consanguinity degree, and a Russian label
+  // ("троюродная сестра", "прадедушка"). Returns null when no
+  // blood path exists within `maxDepth` hops.
+  //
+  // Why blood-only: spouse/partner/step/adopted edges connect
+  // people who share the household but not necessarily DNA. The
+  // RFC restricts the "найти родство" feature to the consanguinity
+  // graph by design — adding non-blood edges turns the engine
+  // into "social distance" rather than "родство".
+  _findBloodRelationBetween(
+    db,
+    fromGraphPersonId,
+    toGraphPersonId,
+    {maxDepth = 10} = {},
+  ) {
+    if (!fromGraphPersonId || !toGraphPersonId) return null;
+    if (fromGraphPersonId === toGraphPersonId) {
+      return {
+        chain: [fromGraphPersonId],
+        edges: [],
+        label: "Это вы",
+        degree: 0,
+      };
+    }
+    const adjacency = this._buildBloodAdjacency(db);
+    const fromList = adjacency.get(fromGraphPersonId);
+    if (!fromList) return null;
+
+    // BFS gives shortest path in an unweighted graph — exactly
+    // what we want for "ближайшая степень родства".
+    const visited = new Map([[fromGraphPersonId, null]]);
+    const queue = [{node: fromGraphPersonId, depth: 0, edges: []}];
+    while (queue.length) {
+      const current = queue.shift();
+      if (current.depth >= maxDepth) continue;
+      const neighbors = adjacency.get(current.node) || [];
+      for (const {neighbor, edgeType} of neighbors) {
+        if (visited.has(neighbor)) continue;
+        visited.set(neighbor, {parent: current.node, edgeType});
+        if (neighbor === toGraphPersonId) {
+          const path = [neighbor];
+          const edges = [edgeType];
+          let cursor = current.node;
+          while (cursor !== fromGraphPersonId) {
+            path.push(cursor);
+            const back = visited.get(cursor);
+            edges.push(back.edgeType);
+            cursor = back.parent;
+          }
+          path.push(fromGraphPersonId);
+          path.reverse();
+          edges.reverse();
+          const targetPerson = (db.graphPersons || []).find(
+            (g) => g.id === toGraphPersonId,
+          );
+          const description = describeBloodRelation(
+            edges,
+            targetPerson?.gender,
+          );
+          return {
+            chain: path,
+            edges,
+            label: description.label,
+            degree: description.degree,
+          };
+        }
+        queue.push({
+          node: neighbor,
+          depth: current.depth + 1,
+          edges: [...current.edges, edgeType],
+        });
+      }
+    }
+    return null;
+  }
+
+  _buildBloodAdjacency(db) {
+    const adjacency = new Map();
+    const relations = Array.isArray(db.graphRelations)
+      ? db.graphRelations
+      : [];
+    const ensure = (id) => {
+      if (!adjacency.has(id)) adjacency.set(id, []);
+      return adjacency.get(id);
+    };
+    for (const relation of relations) {
+      if (relation.deletedAt) continue;
+      const r1 = canonicalBloodType(relation.relation1to2);
+      const r2 = canonicalBloodType(relation.relation2to1);
+      // Both directions must agree on being blood — a one-sided
+      // (e.g. "parent" / "step-child") edge is treated as non-
+      // blood for this engine.
+      if (!r1 || !r2) continue;
+      ensure(relation.person1Id).push({
+        neighbor: relation.person2Id,
+        edgeType: r1,
+      });
+      ensure(relation.person2Id).push({
+        neighbor: relation.person1Id,
+        edgeType: r2,
+      });
+    }
+    return adjacency;
+  }
+
+  async findBloodRelation({fromGraphPersonId, toGraphPersonId, maxDepth = 10}) {
+    const db = await this._read();
+    return this._findBloodRelationBetween(
+      db,
+      fromGraphPersonId,
+      toGraphPersonId,
+      {maxDepth},
+    );
+  }
+
+  // Preview shape for the chain returned by `/v1/graph/relation`.
+  // Only the bare minimum — name + photo + dates — so the client
+  // can render a relationship-path strip without leaking editorial
+  // fields from non-accessible branches.
+  async previewGraphPersonsByIds(graphPersonIds) {
+    const db = await this._read();
+    const ids = Array.isArray(graphPersonIds) ? graphPersonIds : [];
+    return ids.map((id) => {
+      const graphPerson = (db.graphPersons || []).find((g) => g.id === id);
+      if (!graphPerson || graphPerson.deletedAt) {
+        return {
+          id,
+          name: null,
+          gender: null,
+          birthDate: null,
+          deathDate: null,
+          photoUrl: null,
+        };
+      }
+      return {
+        id: graphPerson.id,
+        name: graphPerson.name,
+        gender: graphPerson.gender,
+        birthDate: graphPerson.birthDate,
+        deathDate: graphPerson.deathDate,
+        photoUrl:
+          graphPerson.primaryPhotoUrl || graphPerson.photoUrl || null,
+      };
+    });
   }
 
   _markRelationDeletedInGraph(db, legacyRelation) {
