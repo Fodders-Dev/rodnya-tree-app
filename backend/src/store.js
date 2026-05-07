@@ -11,7 +11,10 @@ const {
   scorePersonPair,
   findCrossTreeIdentitySuggestions,
 } = require("./identity-matcher");
-const {backfillPersonIdentities} = require("./migration-utils");
+const {
+  backfillPersonIdentities,
+  migrateTreesToGraphAndBranches,
+} = require("./migration-utils");
 
 const PROFILE_CONTRIBUTION_POLICIES = new Set([
   "disabled",
@@ -59,6 +62,37 @@ const EMPTY_DB = {
   // `keep` (target wins, source change ignored on this side)
   // or `overwrite` (source wins, target overwritten).
   identityFieldConflicts: [],
+  // Phase 3.1 unified-graph collections. The legacy trees /
+  // persons / relations are kept as the read source until the
+  // back-compat layer is wired in 3.1c — these new collections
+  // are populated by the one-shot migration in
+  // migration-utils.migrateTreesToGraphAndBranches and serve as
+  // the source of truth from then on.
+  // graphPersons: one node per real human, identity-merged from
+  //   the legacy persons + personIdentities pair. Carries the
+  //   canonical identity-propagation fields (name, dates, photo).
+  // graphRelations: deduplicated parent/child/spouse edges
+  //   between graphPersons (legacy per-tree duplicates collapsed
+  //   to one row per canonical pair+type).
+  // branches: per-user filter slice over the graph + automatic
+  //   social circle for the per-branch feed. Replaces the legacy
+  //   `trees` notion of "container of people" with "named view
+  //   over the global graph". `legacyTreeId` keeps the back-
+  //   reference so existing /v1/trees/:treeId routes can resolve
+  //   the matching branch.
+  // branchPersonViews: per-(branch, person) editorial annotation
+  //   — notes / familySummary / bio / visibility / per-branch
+  //   label override. Splits "what is this human" (graphPerson)
+  //   from "how does this branch present them" (this row).
+  graphPersons: [],
+  graphRelations: [],
+  branches: [],
+  branchPersonViews: [],
+  // One-shot migration ledger: tracks which schema migrations have
+  // already run so re-reads on startup don't redo idempotent work.
+  // Phase 3.1 sets `treesToGraph: "complete"` once the migration
+  // has built the new collections from the legacy ones.
+  migrationStatus: {},
   trees: [],
   persons: [],
   personIdentities: [],
@@ -107,6 +141,18 @@ function normalizeDbState(parsed) {
     identityFieldConflicts: Array.isArray(parsed?.identityFieldConflicts)
       ? parsed.identityFieldConflicts
       : [],
+    graphPersons: Array.isArray(parsed?.graphPersons) ? parsed.graphPersons : [],
+    graphRelations: Array.isArray(parsed?.graphRelations)
+      ? parsed.graphRelations
+      : [],
+    branches: Array.isArray(parsed?.branches) ? parsed.branches : [],
+    branchPersonViews: Array.isArray(parsed?.branchPersonViews)
+      ? parsed.branchPersonViews
+      : [],
+    migrationStatus:
+      parsed?.migrationStatus && typeof parsed.migrationStatus === "object"
+        ? parsed.migrationStatus
+        : {},
     trees: Array.isArray(parsed?.trees) ? parsed.trees : [],
     persons: Array.isArray(parsed?.persons) ? parsed.persons : [],
     personIdentities: Array.isArray(parsed?.personIdentities)
@@ -5164,8 +5210,22 @@ class FileStore {
     const normalized = normalizeDbState(parsed);
     const migration = backfillPersonIdentities(normalized);
     const migratedSnapshot = migration.snapshot;
+    // Phase 3.1: one-shot trees → graph + branches migration.
+    // Idempotent (skips on `migrationStatus.treesToGraph ===
+    // "complete"`), so re-runs after the initial fill are free.
+    // Fires AFTER backfillPersonIdentities so every person has an
+    // identityId and the graph rows can dedupe by it. The legacy
+    // collections stay in place — Phase 3.1c will wire reads/
+    // writes to the graph behind the existing /v1/trees/:treeId
+    // routes; until then this just stages the data side ready
+    // for the next layer.
+    const graphMigration = migrateTreesToGraphAndBranches(migratedSnapshot);
     const defaultCirclesChanged = ensureCirclesForAllTrees(migratedSnapshot);
-    if (migration.changed || defaultCirclesChanged) {
+    if (
+      migration.changed ||
+      defaultCirclesChanged ||
+      graphMigration.changed
+    ) {
       const directoryPath = path.dirname(this.dataPath);
       const tempPath = path.join(
         directoryPath,
