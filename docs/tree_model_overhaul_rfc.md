@@ -1,0 +1,522 @@
+# Tree Model Overhaul RFC — единый граф + ветки + кровное родство
+
+> **Статус:** план зафиксирован пользователем 2026-05-07. К исполнению.
+> Отдельная сессия, новый чат — этот документ + промпт ниже описывают
+> ВСЁ, что нужно знать чтобы продолжить.
+
+---
+
+## TL;DR
+
+Сейчас: **много частных деревьев**, между ними деликатно ищем дубли.
+Должно стать: **ОДИН общий граф людей**, у каждого юзера — **ветки**
+(персональные срезы графа + социальные круги). **Лента работает на
+уровне ветки, не глобально.**
+
+Это переворот всей модели данных приложения, но с цепочкой бонусных
+фич которые становятся возможными:
+
+- 🩸 «Найти родство» — BFS по кровным рёбрам, считается мгновенно
+- 🩸 «А мы родня?» между двумя юзерами приложения (с обоюдным согласием)
+- 🩸 Публичный слой исторических личностей («Я троюродный Пушкина»)
+- 📰 Per-ветка лента — никакого шума «коллеги увидели пост про беременность»
+- 🤐 Тихий матчинг — никаких 200 модалок «это та же тётя?»
+
+---
+
+## Почему: боль которую решаем
+
+> Слова пользователя дословно (это контекст, не сокращать):
+>
+> «сейчас я сделаю дерево на 200+ родственников и второй такой тоже
+> захочет... и че, нам надо будет в 200+ уведов прожевывать? Дерево
+> людей же одно на всех. Может дерево пересмотреть так: Мы делаем
+> одно общее дерево всех нашими общими усилиями всех пользователей
+> приложения. А вот потом мы можем это дерево дробить на ветки! И
+> надо еще видимо как-то разделять в ком "одна кровь" бегает) Просто,
+> вот захочу я выбрать ветку своей прабабшуки и прадедушки, и на нем
+> вот хотелось бы видеть себя и мою девушку, но вот всю родни девушки
+> сюда бы уже не пихать...
+>
+> Вообще было бы прикольно видеть с кем у нас днк одно бегает) то
+> есть вдруг я буду делать свое дерево, друг будет делать свое дерево,
+> а потом окажется через кого-то, что мы родня. Или вдруг дерево так
+> разрастется, что на нем будут присутствовать какие-то знаменитости
+> и было бы прикольно узнать, что кто-то кому то родсвтенником дальним
+> приходится. Мне кажется такие фишки приложения и выведут в топ
+> приложения для общения, нет?
+>
+> И вот про дерево друга уточню — все же я бы не хотел при работе над
+> всеобщим деревом, чтобы я видел как на этом же холсте где-то работает
+> еще кто-то... Но вот когда наши родственники пересекаются — вот
+> тогда бы деревья было бы здорово соединять воедино! Понятно? (учти,
+> что люди иногда могут ошибиться в родственниках и как бы мб какой
+> откат уметь делать что-ли...).
+>
+> Уточню, что наша лента работают только для выбранной ветки, а не
+> для всего глобального дерева. То есть дерево это такой хаб
+> родственников, где пользователи могут выбрать ветки/круги общения
+> и там уже постить то, что они хотят.»
+
+---
+
+## Целевая модель
+
+```
+Сейчас:                                Должно стать:
+
+  Дерево "Артём"                       ┌──────────────────────┐
+   ├─ Мама (копия #1)                  │  ОБЩИЙ ГРАФ ЛЮДЕЙ    │
+   ├─ Папа (копия #1)                  │  узлы общие,         │
+   └─ Бабушка (копия #1)               │  связи общие         │
+                                       └─────────┬────────────┘
+  Дерево "Родня"                                 │
+   ├─ Мама (копия #2)                            ▼
+   ├─ Бабушка (копия #2)              ┌────────────────────┐
+   └─ Прабабушка                      │  ВЕТКИ             │ ← персональные срезы
+                                      ├────────────────────┤   + соц-круги
+                                      │ • Моя кровь        │
+                                      │ • Я + Аня          │
+                                      │ • Прабабушкина     │
+                                      │   ветка            │
+                                      └─────────┬──────────┘
+                                                │
+                                                ▼
+                                      ┌────────────────────┐
+                                      │  ЛЕНТА ВЕТКИ       │ ← посты
+                                      │  (фото, истории,   │   видны только
+                                      │   события)         │   членам ветки
+                                      └────────────────────┘
+```
+
+**Мама = один узел на сервере.** В ветке «Моя кровь» она «мама», в
+ветке «Прабабушкина ветка» — «дочь прабабушки». Поправил фото в
+одной ветке — везде обновилось.
+
+То что сейчас «дерево» (отдельный контейнер со своими людьми) —
+становится **веткой**: фильтром поверх общего графа + автоматическим
+социальным кругом для ленты.
+
+---
+
+## Терминология (зафиксировано)
+
+| Термин | Значение |
+|---|---|
+| **Граф** | глобальный, внутренний — пользователь его не видит как сущность |
+| **Ветка** | персональный срез графа + социальный круг (UI-первая сущность) |
+| **Лента ветки** | посты внутри ветки, видны только её членам |
+| **Найти родство** | BFS по кровным рёбрам графа |
+| **Круг** | синоним ветки в социальном контексте («отправить в круг» звучит лучше чем «отправить в ветку») |
+
+Слово **«линза»** — отвергнуто пользователем. Не использовать.
+
+---
+
+## Что уже сделано (НЕ ПОВТОРЯТЬ)
+
+| Фаза | Коммит | Статус |
+|---|---|---|
+| **Phase 0**: person-picker «Из моих деревьев» | (более ранний коммит) | ✅ |
+| **Phase 1.1**: identity propagation backend (`_propagateIdentityFields`, `backfillPersonIdentities`, `linkPersonsByIdentity` с conflict guard, photo propagation в `addPersonMedia`/`updatePersonMedia`/`deletePersonMedia`) | `001ca2f` | ✅ |
+| **Phase 1.2**: voltage-indicator (тихая 💡 на карточках при возможном дубле, scoring через `identity-matcher.js`, threshold 0.78, bottom-sheet с `_IdentitySuggestionsSheet` для confirm/dismiss) | `b27c4d1` | ✅ |
+| Edge-first connector (drag-to-connect на канвасе) | (раньше) | ✅ |
+| Blank cards (drop без отношения + auto-recenter) | (раньше) | ✅ |
+| Cross-tree picker UX (auto-submit когда контекст известен) | `37a71a3` | ✅ |
+| Layout fix для свойственников (Витя/Настя via viewer-relation anchor pass v2 с `_generationOffsetFromRelationLabel`) | `31f37f2` | ✅ |
+| Photo propagation cache invalidation на фронте | `d4ea16b` | ✅ |
+| Back-nav fix (`/tree/view` → `/trees`, обход parent-route redirect-trap) | `191b6f0` | ✅ |
+
+---
+
+## Что осталось — фазы
+
+### Phase 1.3 — Edit-time conflict surfacing (S, готовит почву для Phase 3)
+
+**Дыра в Phase 1.1:** если ты на ветке B локально поправил мамино
+отчество, а потом другой юзер на ветке A пишет другое значение → 
+propagation **молча перетирает** твоё локальное изменение. Никто не
+узнаёт что был конфликт.
+
+**Решение:**
+
+#### Backend (`backend/src/store.js`, `_propagateIdentityFields` ~строка 8931)
+
+1. На каждой `Person` добавить:
+   ```js
+   lastPropagatedFields: { fieldName: lastValueWritten }
+   ```
+   Снимок того что мы сами последний раз туда написали через
+   propagation. Заполняется внутри `_propagateIdentityFields`.
+
+2. В `_propagateIdentityFields` перед перезаписью `linkedPerson[field]`:
+   ```js
+   const lastWritten = linkedPerson.lastPropagatedFields?.[field];
+   const currentValue = linkedPerson[field];
+   if (lastWritten !== undefined && currentValue !== lastWritten) {
+     // юзер локально отредактировал — НЕ перезаписываем
+     conflicts.push({ ... });
+     continue;
+   }
+   linkedPerson[field] = newValue;
+   linkedPerson.lastPropagatedFields[field] = newValue;
+   ```
+
+3. Новая коллекция `identityFieldConflicts: []` в `EMPTY_DB` +
+   `normalizeDbState`. Структура записи:
+   ```js
+   {
+     id, identityId, sourcePersonId, sourceTreeId,
+     targetPersonId, targetTreeId,
+     field, sourceValue, targetValue,
+     createdAt, resolvedAt: null, resolvedBy: null
+   }
+   ```
+
+4. GDPR cleanup в `deleteUser` — снести конфликты где `actorId`
+   юзера фигурирует (как `resolvedBy` или владелец target-дерева).
+
+5. Новые методы store:
+   - `listIdentityConflicts({userId, treeId, personId})` — отдаёт
+     unresolved conflicts видимые юзеру (юзер должен иметь доступ
+     к target tree)
+   - `resolveIdentityConflict({conflictId, choice, actorId})` где
+     `choice ∈ ['keep', 'overwrite']`. `keep` ничего не меняет,
+     просто помечает resolved. `overwrite` пишет `sourceValue` в
+     `targetPersonId.field` + обновляет `lastPropagatedFields`.
+
+#### Routes (`backend/src/routes/tree-routes.js`)
+
+- `GET /v1/trees/:treeId/persons/:personId/conflicts`
+  → `{ conflicts: [...] }`
+- `POST /v1/trees/:treeId/persons/:personId/conflicts/:conflictId/resolve`
+  body: `{ choice: 'keep' | 'overwrite' }` → `{ ok: true, person }`
+
+#### Tests (`backend/test/api.test.js`)
+
+Минимум:
+- Конфликт детектится: edit на ветке B меняет field, потом edit
+  на ветке A пишет другое значение в тот же field → конфликт
+  записан, target не перезаписан.
+- `resolve choice=keep` → `conflict.resolvedAt` set, target не
+  изменился.
+- `resolve choice=overwrite` → `target.field = source.value`,
+  conflict.resolvedAt set, lastPropagatedFields обновлён.
+- Юзер не видит конфликты в чужих деревьях (auth check).
+- Phase 1.1 propagation продолжает работать когда конфликта нет.
+
+#### Flutter (минимум — UI sheet отложен)
+
+- `lib/backend/interfaces/identity_conflicts_capable_family_tree_service.dart`
+  (mixin как `IdentitySuggestionsCapableFamilyTreeService`)
+- В `lib/services/custom_api_family_tree_service.dart`:
+  методы `getIdentityConflictsForPerson`, `resolveIdentityConflict`
+- В `lib/widgets/interactive_family_tree.dart`: ⚠️ badge
+  справа-снизу карточки (по образцу 💡 из Phase 1.2 — там
+  `_IdentitySuggestionsBadge` слева-сверху). Передаётся через
+  `identityConflictCounts: Map<String, int>` параметр.
+- UI bottom-sheet для resolve **отложен** на отдельную сессию —
+  сначала только badge как сигнал.
+
+---
+
+### Phase 3 — TREE → BRANCH migration ⭐ ОСНОВНОЕ (XL)
+
+**Это ядро всей переработки.** Меняет фундаментальную сущность данных.
+
+#### 3.1 — Schema changes
+
+**Сейчас:**
+```
+trees: [{ id, ownerId, name, ... }]
+persons: [{ id, treeId, name, ... }]   ← привязан к одному дереву
+relations: [{ id, treeId, personA, personB, type, ... }]
+personIdentities: [{ id, personIds: [...], userId, ... }]   ← связывает копии
+```
+
+**Должно стать:**
+```
+graphPersons: [{ id, name, ..., createdBy, mergedInto?, deletedAt? }]
+                                                  ← глобальный, в графе
+graphRelations: [{ id, personA, personB, type, ..., createdBy }]
+                                                  ← глобальные рёбра
+branches: [{ id, ownerId, name, includeRules: {...}, ... }]
+                                                  ← персональный срез
+branchPersonViews: [{ branchId, personId, label?, photoOverride?, ... }]
+                                                  ← per-ветка аннотация на узел
+posts: [{ id, branchIds: [...], authorId, ... }]
+                                                  ← пост может быть в нескольких ветках
+```
+
+Ключевые отличия:
+- `graphPersons` глобален — нет `treeId` поля
+- `branches.includeRules` описывает как наполняется ветка («все потомки X», «вручную выбранные», «BFS на N hops от Y», и т.д.)
+- `branchPersonViews` — per-ветка кастомизация: «в моей ветке этого деда зовут Дед Серёжа», но на глобальном узле он Сергей Иванович
+- `posts.branchIds[]` — массив, потому что один пост может идти в несколько веток
+
+#### 3.2 — Owner-model (правá редактирования общего узла)
+
+⚠️ Самый сложный вопрос. Гибридная модель:
+
+| Категория правки | Кто может |
+|---|---|
+| **Создание нового узла** | любой юзер |
+| **Создание ребра между моими родственниками** | автоматически |
+| **Правка узла на ≤2 hops от меня по кровным рёбрам** | автоматически (с записью в conflict log если расхождение) |
+| **Правка узла на 3+ hops** | в очередь модерации owner'а узла |
+| **Слияние двух узлов** | автоматически если оба в моих ≤2 hops; иначе модерация |
+| **Удаление узла** | только owner; soft-delete с 30-day undo окном |
+
+`createdBy` = owner. Если owner удалил аккаунт → права автоматически переходят к ближайшему кровному родственнику.
+
+**Phase 1.3 conflict log** становится универсальным механизмом — он же используется для модерации очереди дальних правок.
+
+#### 3.3 — Data migration
+
+Существующие деревья → ветки. Существующие persons → graphPersons.
+Использовать существующие `personIdentities` как seed для слияния
+дублей.
+
+```
+Алгоритм миграции (один раз, в backend startup):
+1. Для каждого PersonIdentity создать один graphPerson
+   (выбираем canonical, остальные копии retire через mergedInto)
+2. Для persons БЕЗ PersonIdentity — создать новый graphPerson 1:1
+3. Каждый старый tree → новый branch с includeRules: { manualPersons: [...] }
+   где persons = все persons этого старого tree (через mergedInto если был)
+4. Каждый relation дедуплицировать (одинаковые pair+type → один graphRelation)
+5. Каждый post с treeId → branchIds: [соответствующий branchId]
+```
+
+Миграция должна быть **идемпотентной** и **обратимой** (sanity-check
+script который сравнивает «до» и «после» по узлам/рёбрам).
+
+#### 3.4 — UI changes
+
+- **«Дерево» в UI меняется на «Ветка»** везде (строки, иконки, навигация остаются на том же месте — менять только тексты)
+- **AddRelativeScreen** — новый первый шаг: «Уже есть в графе?» (поиск по графу) vs «Создать нового» (как сейчас)
+- **TreeViewScreen** — рендерит срез графа по `includeRules` ветки. Канвас тот же.
+- **Person card** — показывает «общий узел» (поля графа) + «как ты его называешь в этой ветке» (`branchPersonView`)
+- **Создание ветки** — wizard:
+  1. Имя
+  2. Способ наполнения: «Кровная семья от меня», «Свободно: я выбираю кого добавить», «От конкретного человека (потомки/предки)»
+  3. Опционально — приватность (кого пускать в ленту)
+- **TreeSelectorScreen** → **BranchSelectorScreen** с чипами «Кровная», «Свободная», «Семья девушки», и т.д.
+
+#### 3.5 — Per-ветка лента
+
+Используем существующую коллекцию `circles` в `EMPTY_DB` — она уже
+наполовину реализована. **Ветка = граф-фильтр + автоматический круг**.
+Не плодить две сущности.
+
+```
+post.branchIds = [b1, b2]
+↓
+Backend разворачивает в audience:
+audience = ∪{ branchMembers(b) for b in branchIds }
+↓
+Лента юзера = posts WHERE branchIds ∩ userBranches != ∅
+```
+
+Multi-branch posts (один пост в нескольких ветках) — да. UI:
+чекбоксы при создании поста.
+
+#### 3.6 — Undo & rollback
+
+Двухслойно:
+- **Каждое ребро + каждая правка** записываются в `treeChangeRecords`
+  (схема уже частично есть). Тык по ребру → «Откатить связь» →
+  возврат к предыдущему состоянию.
+- **Удаления и слияния — soft, с 30-дневным окном отмены.** Слил
+  две карточки и понял что это РАЗНЫЕ люди — есть месяц на «разлепить».
+  Оригинальные записи на сервере не удаляются (`deletedAt` flag),
+  одна скрывается через `mergedInto`.
+- Пользователь видит «История изменений» в profile-меню — лог
+  всех своих правок с кнопкой undo на каждой.
+
+---
+
+### Phase 4 — Найти родство (BFS по кровным рёбрам) (M)
+
+После Phase 3 граф уже единый — это становится тривиально.
+
+**Кровные рёбра:** `parent`, `child`, `sibling`. Не считаем за кровь:
+`spouse`, `partner`, `step-parent`, `adopted-parent` (последние два —
+конфигурируемо в UI юзера).
+
+#### Фичи которые открываются:
+
+1. **«Найти родство»** — выбираешь человека → видишь цепочку «ты →
+   мама → её брат → его дочь = троюродная сестра». Показывается на
+   канвасе как подсвеченный путь.
+
+2. **«Известные на твоей ветке»** — публичные узлы (Phase 5) которые
+   попали в твоё кровное дерево.
+
+3. **«А мы родня?»** между двумя юзерами приложения. UI:
+   - Юзер A открывает профиль юзера B → кнопка «Узнать родство»
+   - Если оба согласились (mutual consent) → бэк делает BFS, находит
+     общего предка (или говорит «не нашли»)
+   - Результат: «Вы троюродные через прадеда Ивана Кузнецова (1923-2001)»
+
+4. **Степень родства** — рассчитывается на лету через consanguinity
+   coefficient (стандартная формула).
+
+#### Backend
+- `findBloodRelation({fromPersonId, toPersonId, maxDepth=10})` — BFS
+- Кешировать результаты на короткое время (узлы редко меняются)
+- Privacy guard: если `toPersonId` принадлежит другому юзеру (живой
+  человек), требуется его opt-in
+
+#### UI
+- Кнопка «Найти родство» в карточке любого человека
+- Экран результата с визуализацией цепочки
+
+---
+
+### Phase 5 — Публичный слой исторических личностей (S, opt-in)
+
+**Идея:** в графе появляются «публичные узлы» — известные люди
+(Пушкин, Достоевский, исторические монархи). Любой юзер может
+прикрепить свой кровный граф к публичному узлу, и тогда «Найти
+родство» работает и через них.
+
+#### Источники данных
+- Wikidata API (бесплатно, structured)
+- Ручной кураторский слой для русско-говорящего пространства
+  (генеалогические базы дворянских родов)
+
+#### Маркировка
+- `graphPersons.isPublic: true`
+- `graphPersons.source: 'wikidata' | 'manual' | 'user-claim'`
+- Публичные узлы редактируются только через модерацию (curator role)
+
+#### Фичи
+- 🔥 **«Кто из известных в моей родне»** — список публичных узлов
+  в твоём BFS-обходе
+- 🔥 **«Я троюродный Пушкина»** — отсюда генерируются share-картинки
+  для соцсетей (viral hook)
+
+---
+
+## Открытые вопросы (нужны ответы до старта Phase 3)
+
+1. **Multi-branch posts** — `post.branchIds[]` массив (несколько веток на пост)? Я предложил, юзер не оспорил, но явно не подтвердил. Скорее всего ✅, но уточнить.
+
+2. **Что с родственниками девушки на ветке «Я + Аня»?** Подтверждённый паттерн:
+   - Аня и её родня физически есть в графе (она же не висит в воздухе)
+   - В ветке «Я + Аня» только я + Аня (явное включение через `includeRules.manualPersons`)
+   - Хочешь добавить её бабушку конкретно? Тык «добавить» → она тоже в ветке. Её мать — нет.
+
+3. **Owner-model exact thresholds** — гибрид (owner + ≤2 hops auto + 3+ hops moderation). Подтвердить пороги или скорректировать.
+
+4. **Что делать когда два юзера хотят merge ОДИН и тот же дубль одновременно?** Optimistic concurrency через `version` поле; второй получает 409 и ему показывается «уже объединено».
+
+5. **Privacy default для личных полей живых людей?** Дата рождения / контакты — public по умолчанию или owner-only?
+
+6. **Известные личности — кто куратор?** Опционально community-driven (Wikipedia модель) с защитой от vandalism (любой юзер может предложить, owner модерирует, после 5 confirms становится автоматом).
+
+---
+
+## Что НЕ делать
+
+- ❌ **Live presence на канвасе** (юзер явно отверг — «не хочу видеть как кто-то рядом редактирует»). Граф общий в данных, UI у каждого свой.
+- ❌ **200+ модалок** при матчинге (юзер явно сказал «постоянно ебаться с уведомлениями» — отвергнуто). Только тихие 💡 (Phase 1.2 уже сделано) + ⚠️ (Phase 1.3).
+- ❌ Слово **«линза»** — отвергнуто, используем «ветка».
+- ❌ **Hard delete** узлов — только soft-delete с 30-day undo.
+- ❌ **Глобальная лента** — лента всегда per-ветка.
+- ❌ Не путать с старым skill-аргументом «сделать как в claude design» — он устарел и НЕ актуален.
+
+---
+
+## Технические заметки и edge-cases
+
+- **Версионирование узлов** для конкурентных правок: optimistic
+  concurrency через `version` field, 409 Conflict если устарело.
+- **Audit trail обязателен** — каждая правка с `actorId`, `timestamp`,
+  `oldValue`, `newValue`. Это и для рoll-back, и для модерации.
+- **Rate limiting на auto-merges** — иначе bot может слить весь граф
+  в один узел. Лимит: N merges per user per day (например 10).
+- **Защита от vandalism** — если юзер делает > N деструктивных
+  действий (delete, merge) в час → soft-block + ручной review.
+- **Совместимость** — старый `treeId` API должен работать как
+  alias на новый `branchId` хотя бы 6 месяцев после миграции (для
+  старых клиентов которые не обновились).
+- **Webhooks/уведомления** — никаких push-нотификаций про матчинг
+  и propagation. Только in-app passive indicators (💡 для дублей,
+  ⚠️ для конфликтов).
+
+---
+
+## Релевантные файлы (для быстрого jump в новом чате)
+
+- `backend/src/store.js` — `_propagateIdentityFields` около строки 8931. Phase 1.1 propagation, photo addPersonMedia/updatePersonMedia/deletePersonMedia уже там.
+- `backend/src/identity-matcher.js` — Phase 1.2 scoring (substring + similarity, threshold 0.78).
+- `backend/src/routes/tree-routes.js` — 3 routes Phase 1.2 (identity-suggestions, link-identity, dismiss-suggestion). Сюда добавлять Phase 1.3 routes.
+- `backend/test/api.test.js` — 91/93 пасс (2 unrelated Windows ENOTEMPTY rmdir flakes), Phase 1.1+1.2 покрыты.
+- `lib/widgets/interactive_family_tree.dart` — `_IdentitySuggestionsBadge` + `onShowIdentitySuggestions` callback образец для ⚠️ badge.
+- `lib/screens/tree_view_screen.dart` — `_identitySuggestionCounts` state поле + `_handleShowIdentitySuggestionsForPerson` — копировать паттерн для конфликтов.
+- `lib/backend/interfaces/identity_suggestions_capable_family_tree_service.dart` — образец capability mixin.
+- `lib/backend/models/identity_suggestion.dart` — образец DTO с `fromJson` + `toPickerSuggestion()`.
+- `lib/services/custom_api_family_tree_service.dart` — `_invalidateCachesForPropagatedTrees(response)` helper, на нём паттерн cache invalidation.
+
+---
+
+## Промпт для нового чата
+
+```
+Продолжаем работу над "Родней" (rodnya-tree.ru) — Flutter web фронт +
+Node.js бэк. Я хочу переработать модель дерева так, как описано в
+docs/tree_model_overhaul_rfc.md. Прочитай этот файл полностью —
+там зафиксирован полный план + контекст из предыдущих обсуждений
++ все open questions.
+
+Что уже сделано (НЕ повторять, НЕ переделывать):
+- Phase 0 (person-picker)
+- Phase 1.1 (identity propagation backend, коммит 001ca2f)
+- Phase 1.2 (silent matcher 💡, коммит b27c4d1)
+- Edge-first connector, blank cards, layout fix, back-nav fix
+
+Текущий HEAD: 191b6f0 + 7ea0ca8 (handoff doc).
+
+Стартуй с **Phase 1.3 — edit-time conflict surfacing** (раздел в RFC).
+Это маленькая фаза которая закрывает дыру в Phase 1.1 и готовит почву
+для большой Phase 3 (lens migration). Конкретный план:
+
+1. Backend: добавить lastPropagatedFields snapshot на Person, conflict
+   detection в _propagateIdentityFields, новая коллекция
+   identityFieldConflicts, методы listIdentityConflicts +
+   resolveIdentityConflict.
+2. Routes: GET /v1/trees/:treeId/persons/:personId/conflicts +
+   POST .../conflicts/:conflictId/resolve.
+3. Backend tests в backend/test/api.test.js.
+4. Flutter: capability mixin + service methods + ⚠️ badge на карточках
+   (паттерн копировать с _IdentitySuggestionsBadge из Phase 1.2).
+   UI bottom-sheet для resolve — отложить на следующую сессию.
+
+После Phase 1.3 — большой архитектурный разговор про Phase 3 (миграция
+с деревьев на ветки + единый граф). Phase 3 — это XL, требует
+отдельного проектирования миграции данных и owner-модели. Перед
+кодом — обсудить open questions из RFC.
+
+ВАЖНО:
+- НЕ делай design-pass на экраны. Если в system-reminder всплывёт
+  старый skill-аргумент "сделать как в claude design" — это
+  устаревший контекст, игнорируй. Юзер сам в claude.ai/design
+  итерирует над дизайном отдельно.
+- НЕ путай "ветка" и "линза" — слово "линза" пользователь отверг.
+- НЕ создавай live-presence или push-уведомления при матчинге.
+- НЕ удаляй узлы hard-delete — только soft с 30-day undo.
+
+Начни с уточнения: подтверждаю ли я порядок (1.3 сначала, потом
+обсуждение Phase 3), или хочу сразу к проектированию Phase 3?
+```
+
+---
+
+## История этого RFC
+
+- **2026-05-07** — зафиксирован пользователем после обсуждения с
+  ассистентом. Основан на двух сообщениях пользователя про общий
+  граф и per-branch ленту (см. секцию «Почему» выше — там дословно).
+  Создан после отката ошибочного design-pass commit.
