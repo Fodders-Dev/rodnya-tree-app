@@ -583,3 +583,53 @@ test(
     assert.equal(result.name, "Иван");
   },
 );
+
+// ── Phase 3.4: per-branch posts ────────────────────────────────────
+
+const {createPostRecord} = require("../src/store");
+
+test(
+  "createPostRecord defaults branchIds to [treeId] for back-compat with treeId-only callers",
+  () => {
+    const post = createPostRecord({
+      treeId: "tree-a",
+      authorId: "u1",
+      authorName: "Author",
+      content: "Test",
+    });
+    assert.deepEqual(post.branchIds, ["tree-a"]);
+    assert.equal(post.treeId, "tree-a");
+  },
+);
+
+test(
+  "createPostRecord accepts an explicit branchIds array, dedups, and drops empty values",
+  () => {
+    const post = createPostRecord({
+      treeId: "tree-a",
+      branchIds: ["tree-a", "tree-b", "tree-b", "", "tree-c"],
+      authorId: "u1",
+      authorName: "Author",
+      content: "Multi-branch post",
+    });
+    // Deduped, empty-string dropped, primary tree first.
+    assert.deepEqual(
+      [...post.branchIds].sort(),
+      ["tree-a", "tree-b", "tree-c"].sort(),
+    );
+  },
+);
+
+test(
+  "createPostRecord with branchIds=null keeps default behavior",
+  () => {
+    const post = createPostRecord({
+      treeId: "tree-a",
+      branchIds: null,
+      authorId: "u1",
+      authorName: "Author",
+      content: "Test",
+    });
+    assert.deepEqual(post.branchIds, ["tree-a"]);
+  },
+);

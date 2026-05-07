@@ -115,6 +115,35 @@ function registerPostRoutes(
     const scopeType = String(req.body?.scopeType || "wholeTree").trim();
     const circleId = String(req.body?.circleId || "").trim() || null;
 
+    // Phase 3.4 multi-branch posts. Optional `branchIds: [string]`
+    // on the body lets the author publish a post into several
+    // branches at once (e.g. one family photo into "Моя кровь"
+    // AND "Семья жены"). The store enforces that every branchId
+    // is in a tree the author can access — anything else is
+    // dropped silently. The primary `treeId` from the URL is
+    // always implicit in the audience.
+    let branchIds = null;
+    if (Array.isArray(req.body?.branchIds)) {
+      const branchIdsGuard = enforceArrayCap(req.body.branchIds, {
+        // Tight cap — multi-branch is a deliberate fan-out, not a
+        // billing-channel-style broadcast. 16 covers any realistic
+        // family/circle combo without becoming a spam vector.
+        max: 16,
+        itemValidator: (raw) =>
+            enforceTextLimit(raw, {
+              max: 64,
+              allowMultiline: false,
+              fieldName: "branchId",
+            }),
+        fieldName: "branchIds",
+      });
+      if (!branchIdsGuard.ok) {
+        res.status(branchIdsGuard.status).json({message: branchIdsGuard.message});
+        return;
+      }
+      branchIds = branchIdsGuard.value;
+    }
+
     // Anchor persons cap — same logic as message attachments.
     const anchorsGuard = enforceArrayCap(req.body?.anchorPersonIds, {
       max: 100,
@@ -158,6 +187,7 @@ function registerPostRoutes(
 
     const post = await store.createPost({
       treeId: tree.id,
+      branchIds,
       authorId: req.auth.user.id,
       authorName:
         req.auth.user.profile?.displayName ||

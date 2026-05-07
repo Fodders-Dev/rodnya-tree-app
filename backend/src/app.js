@@ -1298,9 +1298,18 @@ function createApp({
   }
 
   function mapPost(post, commentCount = 0) {
+    // Phase 3.4: surface branchIds so the Flutter feed can render
+    // the "this post was published to N branches" affordance and
+    // group/dedup posts visible to the user via more than one
+    // branch. Always derive a non-empty list — fall back to
+    // [treeId] for posts created before the field existed.
+    const branchIds = Array.isArray(post.branchIds) && post.branchIds.length > 0
+      ? post.branchIds
+      : (post.treeId ? [post.treeId] : []);
     return {
       id: post.id,
       treeId: post.treeId,
+      branchIds,
       authorId: post.authorId,
       authorName: post.authorName || "Аноним",
       authorPhotoUrl: normalizePublicUrl(post.authorPhotoUrl || null),

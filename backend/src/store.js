@@ -287,6 +287,7 @@ function createNotificationRecord({userId, type, title, body, data = {}}) {
 
 function createPostRecord({
   treeId,
+  branchIds = null,
   authorId,
   authorName,
   authorPhotoUrl = null,
@@ -298,9 +299,28 @@ function createPostRecord({
   circleId = null,
 }) {
   const timestamp = nowIso();
+  // Phase 3.4: a post lives in one or more branches. Default is
+  // the single legacy tree id (back-compat with old clients that
+  // only know treeId), but callers can pass an explicit branchIds
+  // array to publish a post into multiple branches at once
+  // (e.g. one family photo published to "Моя кровь" AND
+  // "Семья жены" so both feeds show it without copies).
+  const normalizedBranchIds = Array.isArray(branchIds)
+    ? Array.from(
+        new Set(
+          branchIds
+            .map((value) => normalizeNullableString(value))
+            .filter(Boolean),
+        ),
+      )
+    : [];
+  if (normalizedBranchIds.length === 0 && treeId) {
+    normalizedBranchIds.push(treeId);
+  }
   return {
     id: crypto.randomUUID(),
     treeId,
+    branchIds: normalizedBranchIds,
     authorId,
     authorName: String(authorName || "Аноним").trim() || "Аноним",
     authorPhotoUrl: normalizeNullableString(authorPhotoUrl),
@@ -11553,8 +11573,22 @@ class FileStore {
     }
     return db.posts
       .filter((entry) => {
-        if (treeId && entry.treeId !== treeId) {
-          return false;
+        // Phase 3.4 multi-branch visibility. If `treeId` filter is
+        // set, the post matches when the requested tree is in
+        // post.branchIds (preferred) OR matches post.treeId (back-
+        // compat for posts created before 3.4). Without a treeId
+        // filter the tree gate is skipped entirely (cross-branch
+        // feed query) and visibility falls to the circle/scope
+        // checks below.
+        if (treeId) {
+          const branchIds = Array.isArray(entry.branchIds)
+            ? entry.branchIds
+            : [];
+          const inBranches = branchIds.includes(treeId);
+          const matchesLegacyTreeId = entry.treeId === treeId;
+          if (!inBranches && !matchesLegacyTreeId) {
+            return false;
+          }
         }
         if (authorId && entry.authorId !== authorId) {
           return false;
@@ -11868,8 +11902,21 @@ class FileStore {
 
     const candidates = (Array.isArray(db.posts) ? db.posts : [])
       .filter((post) => {
-        if (!accessibleTreeIds.has(post.treeId)) return false;
-        if (normalizedTreeId && post.treeId !== normalizedTreeId) return false;
+        // Phase 3.4: a post is visible if ANY of its branchIds is
+        // accessible to the viewer (multi-branch publishing), or
+        // its legacy treeId is — back-compat for posts created
+        // before the branchIds field existed.
+        const branchIds = Array.isArray(post.branchIds) ? post.branchIds : [];
+        const hasAccessibleBranch = branchIds.some((bid) =>
+          accessibleTreeIds.has(bid),
+        );
+        const hasAccessibleLegacyTree = accessibleTreeIds.has(post.treeId);
+        if (!hasAccessibleBranch && !hasAccessibleLegacyTree) return false;
+        if (normalizedTreeId) {
+          const matchesBranch = branchIds.includes(normalizedTreeId);
+          const matchesLegacyTreeId = post.treeId === normalizedTreeId;
+          if (!matchesBranch && !matchesLegacyTreeId) return false;
+        }
         return this._canUserViewCirclePost(db, post, normalizedUserId);
       })
       .sort((left, right) =>
@@ -11899,6 +11946,7 @@ class FileStore {
 
   async createPost({
     treeId,
+    branchIds = null,
     authorId,
     authorName,
     authorPhotoUrl = null,
@@ -11924,8 +11972,37 @@ class FileStore {
       return null;
     }
 
+    // Phase 3.4 multi-branch: validate every requested branchId
+    // resolves to a tree the author can access. Without this, an
+    // author could publish into someone else's branch by passing
+    // a branchId they don't own. The treeId in the URL stays the
+    // primary tree (visibility / circle membership inherits from
+    // it); branchIds extend the audience to additional branches
+    // the author also belongs to.
+    let resolvedBranchIds = null;
+    if (Array.isArray(branchIds) && branchIds.length > 0) {
+      const accessibleTreeIds = new Set(
+        db.trees
+          .filter((entry) => this._userCanAccessTreeRecord(entry, authorId))
+          .map((entry) => entry.id),
+      );
+      resolvedBranchIds = Array.from(
+        new Set(
+          branchIds
+            .map((value) => normalizeNullableString(value))
+            .filter((value) => value && accessibleTreeIds.has(value)),
+        ),
+      );
+      // Always include the primary treeId; the route already
+      // verified caller has access to it.
+      if (!resolvedBranchIds.includes(treeId)) {
+        resolvedBranchIds.unshift(treeId);
+      }
+    }
+
     const post = createPostRecord({
       treeId,
+      branchIds: resolvedBranchIds,
       authorId,
       authorName,
       authorPhotoUrl,
@@ -14472,6 +14549,7 @@ module.exports = {
   buildCallParticipantIdentity,
   cloneUserWithAuthState,
   createPersonIdentityRecord,
+  createPostRecord,
   createTreeChangeRecord,
   deriveSessionPublicId,
   describeMessagePreview,

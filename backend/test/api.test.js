@@ -6873,6 +6873,184 @@ test("post and comment emoji reactions toggle and surface in feed", async () => 
   }
 });
 
+// Phase 3.4 multi-branch posts: a single post can be published into
+// several branches the author belongs to. Both feeds show the same
+// post (one row, no copies), and the response surfaces branchIds[]
+// so the UI can render a "this post is in N branches" affordance.
+test(
+  "multi-branch post: one post visible in every branch listed in branchIds[], strangers blocked",
+  async () => {
+    const ctx = await startTestServer();
+
+    try {
+      const owner = await registerTestUser(
+        ctx,
+        "multi-branch-owner@rodnya.app",
+        "Артём",
+      );
+      const stranger = await registerTestUser(
+        ctx,
+        "multi-branch-stranger@rodnya.app",
+        "Гость",
+      );
+      const ownerHeaders = {
+        authorization: `Bearer ${owner.accessToken}`,
+        "content-type": "application/json",
+      };
+
+      async function createTreeForOwner(name) {
+        const response = await fetch(`${ctx.baseUrl}/v1/trees`, {
+          method: "POST",
+          headers: ownerHeaders,
+          body: JSON.stringify({name, isPrivate: true}),
+        });
+        assert.equal(response.status, 201);
+        return (await response.json()).tree.id;
+      }
+      const treeAId = await createTreeForOwner("Семья");
+      const treeBId = await createTreeForOwner("Семья жены");
+      const strangerTreeId = await (async () => {
+        const response = await fetch(`${ctx.baseUrl}/v1/trees`, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${stranger.accessToken}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({name: "Чужое дерево"}),
+        });
+        assert.equal(response.status, 201);
+        return (await response.json()).tree.id;
+      })();
+
+      // Multi-branch publish: pass both tree A and tree B in branchIds.
+      // The primary `treeId` from the URL is the chat circle/visibility
+      // anchor; branchIds extends the audience.
+      const createResponse = await fetch(`${ctx.baseUrl}/v1/posts`, {
+        method: "POST",
+        headers: ownerHeaders,
+        body: JSON.stringify({
+          treeId: treeAId,
+          branchIds: [treeAId, treeBId],
+          content: "Семейное фото — и в свою родню, и в семью жены",
+        }),
+      });
+      assert.equal(createResponse.status, 201);
+      const createPayload = await createResponse.json();
+      assert.deepEqual(
+        [...createPayload.branchIds].sort(),
+        [treeAId, treeBId].sort(),
+      );
+      const postId = createPayload.id;
+
+      // Both feeds — A and B — show the same post.
+      // Route returns the array directly (not wrapped in {posts: [...]}).
+      const feedFor = async (treeId) => {
+        const response = await fetch(
+          `${ctx.baseUrl}/v1/posts?treeId=${treeId}`,
+          {headers: {authorization: `Bearer ${owner.accessToken}`}},
+        );
+        assert.equal(response.status, 200);
+        return await response.json();
+      };
+      const feedA = await feedFor(treeAId);
+      const feedB = await feedFor(treeBId);
+      assert.ok(feedA.some((p) => p.id === postId), "A feed must show post");
+      assert.ok(feedB.some((p) => p.id === postId), "B feed must show post");
+
+      // Stranger CANNOT publish into the owner's tree by spoofing
+      // branchIds — author-side validation drops every branchId
+      // they don't own; only the primary tree from their own URL
+      // remains. Here the stranger publishes into their OWN tree
+      // but tries to add owner's tree A to branchIds — the cross-
+      // user branch must be silently dropped, leaving just the
+      // stranger's tree.
+      const sneakResponse = await fetch(`${ctx.baseUrl}/v1/posts`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${stranger.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          treeId: strangerTreeId,
+          branchIds: [strangerTreeId, treeAId],
+          content: "Спам",
+        }),
+      });
+      assert.equal(sneakResponse.status, 201);
+      const sneakPayload = await sneakResponse.json();
+      assert.deepEqual(sneakPayload.branchIds, [strangerTreeId]);
+
+      // Owner's feed for tree A must NOT include the stranger's spam.
+      const feedAAfter = await feedFor(treeAId);
+      assert.ok(
+        !feedAAfter.some((p) => p.id === sneakPayload.id),
+        "stranger's branchIds spoof must not leak into owner's tree feed",
+      );
+    } finally {
+      await stopTestServer(ctx);
+    }
+  },
+);
+
+// Posts created BEFORE Phase 3.4 had only `treeId` and no
+// `branchIds[]`. The migration in 3.1 stamps the back-compat
+// branchIds: [treeId], but the read filter must also tolerate
+// posts that somehow lack the field — falling back to treeId.
+test(
+  "multi-branch posts: legacy posts (no branchIds field) still resolve via treeId fallback",
+  async () => {
+    const ctx = await startTestServer();
+
+    try {
+      const owner = await registerTestUser(
+        ctx,
+        "legacy-post-owner@rodnya.app",
+        "Артём",
+      );
+      const ownerHeaders = {
+        authorization: `Bearer ${owner.accessToken}`,
+        "content-type": "application/json",
+      };
+      const treeResponse = await fetch(`${ctx.baseUrl}/v1/trees`, {
+        method: "POST",
+        headers: ownerHeaders,
+        body: JSON.stringify({name: "Дерево", isPrivate: true}),
+      });
+      const treeId = (await treeResponse.json()).tree.id;
+
+      // Create normally, then strip branchIds from the raw store
+      // to simulate the pre-3.4 shape.
+      const createResponse = await fetch(`${ctx.baseUrl}/v1/posts`, {
+        method: "POST",
+        headers: ownerHeaders,
+        body: JSON.stringify({treeId, content: "Старый пост"}),
+      });
+      assert.equal(createResponse.status, 201);
+      const postId = (await createResponse.json()).id;
+
+      const raw = await ctx.store._read();
+      const targetPost = raw.posts.find((p) => p.id === postId);
+      delete targetPost.branchIds;
+      await ctx.store._write(raw);
+
+      // Feed query must still surface this post via the treeId
+      // fallback in listPosts.
+      const feedResponse = await fetch(
+        `${ctx.baseUrl}/v1/posts?treeId=${treeId}`,
+        {headers: {authorization: `Bearer ${owner.accessToken}`}},
+      );
+      const feed = await feedResponse.json();
+      const found = feed.find((p) => p.id === postId);
+      assert.ok(found, "legacy post must remain visible via treeId fallback");
+      // mapPost rehydrated branchIds from treeId so the response
+      // stays uniform from the client's perspective.
+      assert.deepEqual(found.branchIds, [treeId]);
+    } finally {
+      await stopTestServer(ctx);
+    }
+  },
+);
+
 test("post search filters by content + author + tree access", async () => {
   const ctx = await startTestServer();
 
