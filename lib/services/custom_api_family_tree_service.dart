@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../backend/backend_runtime_config.dart';
+import '../backend/interfaces/blood_relation_capable_family_tree_service.dart';
 import '../backend/interfaces/cross_tree_person_search_capable_family_tree_service.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
 import '../backend/interfaces/identity_conflicts_capable_family_tree_service.dart';
@@ -11,6 +12,7 @@ import '../backend/interfaces/identity_duplicate_capable_family_tree_service.dar
 import '../backend/interfaces/identity_suggestions_capable_family_tree_service.dart';
 import '../backend/interfaces/profile_service_interface.dart';
 import '../backend/interfaces/tree_graph_capable_family_tree_service.dart';
+import '../backend/models/blood_relation.dart';
 import '../backend/models/identity_field_conflict.dart';
 import '../backend/models/identity_suggestion.dart';
 import '../backend/models/cross_tree_person_suggestion.dart';
@@ -36,7 +38,8 @@ class CustomApiFamilyTreeService
         IdentityDuplicateCapableFamilyTreeService,
         CrossTreePersonSearchCapableFamilyTreeService,
         IdentitySuggestionsCapableFamilyTreeService,
-        IdentityConflictsCapableFamilyTreeService {
+        IdentityConflictsCapableFamilyTreeService,
+        BloodRelationCapableFamilyTreeService {
   CustomApiFamilyTreeService({
     required CustomApiAuthService authService,
     required BackendRuntimeConfig runtimeConfig,
@@ -274,6 +277,30 @@ class CustomApiFamilyTreeService
     // keep is technically a no-op for graph data, but the badge
     // count still changes; cheap to invalidate either way.
     _graphSnapshotCache.remove(treeId);
+  }
+
+  // ── Phase 4: Find Blood Relation ───────────────────────────────────
+  // Calls GET /v1/graph/relation?from=<gid>&to=<gid>&maxDepth=<n>
+  // and parses the response into a BloodRelation. Returns
+  // BloodRelation.empty when the server reports no path.
+
+  @override
+  Future<BloodRelation> findBloodRelation({
+    required String fromGraphPersonId,
+    required String toGraphPersonId,
+    int maxDepth = 10,
+  }) async {
+    final params = <String, String>{
+      'from': fromGraphPersonId,
+      'to': toGraphPersonId,
+      if (maxDepth > 0 && maxDepth != 10) 'maxDepth': maxDepth.toString(),
+    };
+    final response = await _requestJson(
+      method: 'GET',
+      path: _buildPathWithQuery('/v1/graph/relation', params),
+    );
+    if (response['found'] != true) return BloodRelation.empty;
+    return BloodRelation.fromJson(response);
   }
 
   @override

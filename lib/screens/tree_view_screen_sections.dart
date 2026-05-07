@@ -1683,6 +1683,19 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
                             onPressed: () =>
                                 _showTreePersonRelationSheet(person),
                           ),
+                          const SizedBox(width: 8),
+                          // Phase 4: «Кем мы приходимся?» — BFS over the
+                          // unified-graph blood-relation edges. Hidden
+                          // when the viewer is selected (it's "you") or
+                          // the viewer card isn't in the tree.
+                          if (person.id != _graphSnapshot?.viewerPersonId &&
+                              _graphSnapshot?.viewerPersonId != null)
+                            _buildTreeSheetAction(
+                              icon: Icons.account_tree_rounded,
+                              label: 'Родство',
+                              onPressed: () =>
+                                  _showTreePersonBloodRelation(person),
+                            ),
                           if (hasWarnings) ...[
                             const SizedBox(width: 8),
                             _buildTreeSheetAction(
