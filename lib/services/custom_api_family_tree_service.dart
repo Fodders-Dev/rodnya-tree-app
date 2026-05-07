@@ -1050,6 +1050,8 @@ class CustomApiFamilyTreeService
 
     final updatedPerson = _personFromResponse(response, fallbackTreeId: treeId);
     _personTreeIds[updatedPerson.id] = treeId;
+    _graphSnapshotCache.remove(treeId);
+    _invalidateCachesForPropagatedTrees(response);
     await _cachePerson(updatedPerson);
     return updatedPerson;
   }
@@ -1076,6 +1078,8 @@ class CustomApiFamilyTreeService
 
     final updatedPerson = _personFromResponse(response, fallbackTreeId: treeId);
     _personTreeIds[updatedPerson.id] = treeId;
+    _graphSnapshotCache.remove(treeId);
+    _invalidateCachesForPropagatedTrees(response);
     await _cachePerson(updatedPerson);
     return updatedPerson;
   }
@@ -1107,8 +1111,47 @@ class CustomApiFamilyTreeService
 
     final updatedPerson = _personFromResponse(response, fallbackTreeId: treeId);
     _personTreeIds[updatedPerson.id] = treeId;
+    _graphSnapshotCache.remove(treeId);
+    _invalidateCachesForPropagatedTrees(response);
     await _cachePerson(updatedPerson);
     return updatedPerson;
+  }
+
+  // Phase 1.1 helper: when the backend reports `propagatedTo` /
+  // `identityPropagation.affected` on a write response, drop the
+  // graph-snapshot cache for each touched tree so the next read
+  // fetches fresh data. Backwards-compatible: silently no-ops on
+  // older response shapes that don't carry the field.
+  void _invalidateCachesForPropagatedTrees(Map<String, dynamic> response) {
+    // New shape (media routes): top-level `propagatedTo: [...]`.
+    final propagated = response['propagatedTo'];
+    if (propagated is List) {
+      for (final entry in propagated) {
+        if (entry is Map) {
+          final treeId = entry['treeId']?.toString();
+          if (treeId != null && treeId.isNotEmpty) {
+            _graphSnapshotCache.remove(treeId);
+          }
+        }
+      }
+    }
+    // Pre-existing shape (PATCH /persons/:id): nested under
+    // `identityPropagation.affected`. Same semantics, same
+    // invalidation; we accept both for forward/back-compat.
+    final propagation = response['identityPropagation'];
+    if (propagation is Map<String, dynamic>) {
+      final affected = propagation['affected'];
+      if (affected is List) {
+        for (final entry in affected) {
+          if (entry is Map) {
+            final treeId = entry['treeId']?.toString();
+            if (treeId != null && treeId.isNotEmpty) {
+              _graphSnapshotCache.remove(treeId);
+            }
+          }
+        }
+      }
+    }
   }
 
   @override
