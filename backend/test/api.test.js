@@ -4442,6 +4442,512 @@ test("identity propagation: name/photo/birthDate fan out across trees, but notes
   }
 });
 
+// ── Phase 1.3 of unified-graph migration: edit-time conflict surfacing ──
+// Closes the silent-overwrite hole in Phase 1.1: if user edits the
+// same field on tree B locally and then a propagation arrives from
+// tree A with a different value, the propagator no longer clobbers
+// the local edit — it records a conflict row that the user resolves
+// via /v1/trees/:treeId/conflicts/:conflictId/resolve.
+test(
+  "identity propagation: detects conflict when target edited locally between propagations, exposes via /conflicts",
+  async () => {
+    const ctx = await startTestServer();
+
+    try {
+      const owner = await registerTestUser(ctx, "owner@rodnya.app", "Артём");
+      const ownerHeaders = {
+        authorization: `Bearer ${owner.accessToken}`,
+        "content-type": "application/json",
+      };
+
+      async function createTreeForOwner(name) {
+        const response = await fetch(`${ctx.baseUrl}/v1/trees`, {
+          method: "POST",
+          headers: ownerHeaders,
+          body: JSON.stringify({name, isPrivate: true}),
+        });
+        assert.equal(response.status, 201);
+        return (await response.json()).tree.id;
+      }
+      async function addPerson(treeId, body) {
+        const response = await fetch(
+          `${ctx.baseUrl}/v1/trees/${treeId}/persons`,
+          {
+            method: "POST",
+            headers: ownerHeaders,
+            body: JSON.stringify(body),
+          },
+        );
+        assert.equal(response.status, 201);
+        return (await response.json()).person;
+      }
+      async function patchPerson(treeId, personId, body) {
+        const response = await fetch(
+          `${ctx.baseUrl}/v1/trees/${treeId}/persons/${personId}`,
+          {
+            method: "PATCH",
+            headers: ownerHeaders,
+            body: JSON.stringify(body),
+          },
+        );
+        assert.equal(response.status, 200);
+        return (await response.json()).person;
+      }
+      async function fetchPerson(treeId, personId) {
+        const response = await fetch(
+          `${ctx.baseUrl}/v1/trees/${treeId}/persons/${personId}`,
+          {headers: {authorization: `Bearer ${owner.accessToken}`}},
+        );
+        assert.equal(response.status, 200);
+        return (await response.json()).person;
+      }
+
+      const treeAId = await createTreeForOwner("Семья (моя)");
+      const treeBId = await createTreeForOwner("Родня (мамина)");
+
+      const momOnA = await addPerson(treeAId, {
+        firstName: "Анна",
+        lastName: "Кузнецова",
+        gender: "female",
+        birthDate: "1965-03-12",
+      });
+      const momOnB = await addPerson(treeBId, {sourcePersonId: momOnA.id});
+      assert.equal(momOnA.identityId, momOnB.identityId);
+
+      // ── 1. First propagation populates lastPropagatedFields and
+      //      does NOT fire a conflict (no local edit yet on B).
+      await patchPerson(treeAId, momOnA.id, {
+        firstName: "Анна",
+        middleName: "Петровна",
+        lastName: "Кузнецова",
+        birthPlace: "Тула",
+      });
+      const conflictsAfterFirst = await fetch(
+        `${ctx.baseUrl}/v1/trees/${treeBId}/conflicts`,
+        {headers: {authorization: `Bearer ${owner.accessToken}`}},
+      );
+      assert.equal(conflictsAfterFirst.status, 200);
+      assert.equal(
+        (await conflictsAfterFirst.json()).conflicts.length,
+        0,
+        "first propagation must not generate a conflict — no local edit yet",
+      );
+      // Sanity: B's name updated normally.
+      const momOnBAfterFirst = await fetchPerson(treeBId, momOnB.id);
+      assert.equal(momOnBAfterFirst.name, "Кузнецова Анна Петровна");
+      assert.equal(momOnBAfterFirst.birthPlace, "Тула");
+
+      // ── 2. User locally edits B's birthPlace to a different value.
+      //      No propagation fires (it's a tree-B-only edit on a
+      //      record whose identityId fan-out goes B→A; we don't
+      //      care about that side here, we care about A→B fan-out
+      //      seeing the local edit).
+      await patchPerson(treeBId, momOnB.id, {
+        firstName: "Анна",
+        middleName: "Петровна",
+        lastName: "Кузнецова",
+        birthPlace: "Калуга", // <-- divergence from A's "Тула"
+      });
+
+      // ── 3. Now A pushes ANOTHER value for birthPlace. Propagator
+      //      sees `lastWritten === "Тула"` but `current === "Калуга"`
+      //      on B → conflict, do NOT overwrite.
+      await patchPerson(treeAId, momOnA.id, {
+        firstName: "Анна",
+        middleName: "Петровна",
+        lastName: "Кузнецова",
+        birthPlace: "Орёл",
+      });
+      const momOnBAfterConflict = await fetchPerson(treeBId, momOnB.id);
+      assert.equal(
+        momOnBAfterConflict.birthPlace,
+        "Калуга",
+        "propagator must NOT overwrite a locally-edited field",
+      );
+
+      const conflictsListResponse = await fetch(
+        `${ctx.baseUrl}/v1/trees/${treeBId}/conflicts`,
+        {headers: {authorization: `Bearer ${owner.accessToken}`}},
+      );
+      assert.equal(conflictsListResponse.status, 200);
+      const conflictsList = (await conflictsListResponse.json()).conflicts;
+      assert.equal(conflictsList.length, 1);
+      const [conflict] = conflictsList;
+      assert.equal(conflict.field, "birthPlace");
+      assert.equal(conflict.sourceValue, "Орёл");
+      assert.equal(conflict.targetValue, "Калуга");
+      assert.equal(conflict.targetTreeId, treeBId);
+      assert.equal(conflict.sourceTreeId, treeAId);
+      assert.equal(conflict.targetPersonId, momOnB.id);
+      assert.equal(conflict.sourcePersonId, momOnA.id);
+      assert.equal(conflict.resolvedAt, null);
+
+      // ── 4. Repeated propagation refreshes the existing row, doesn't
+      //      append duplicates.
+      await patchPerson(treeAId, momOnA.id, {
+        firstName: "Анна",
+        middleName: "Петровна",
+        lastName: "Кузнецова",
+        birthPlace: "Орёл",
+        // Touch a non-conflicting field so propagation runs.
+        birthDate: "1965-03-13",
+      });
+      const conflictsAfterRefresh = await fetch(
+        `${ctx.baseUrl}/v1/trees/${treeBId}/conflicts`,
+        {headers: {authorization: `Bearer ${owner.accessToken}`}},
+      );
+      const refreshedList =
+        (await conflictsAfterRefresh.json()).conflicts;
+      assert.equal(
+        refreshedList.length,
+        1,
+        "repeated propagation must update the existing conflict row, not append",
+      );
+      // birthDate is non-conflicting — propagated normally.
+      const momOnBAfterRefresh = await fetchPerson(treeBId, momOnB.id);
+      assert.ok(
+        String(momOnBAfterRefresh.birthDate || "").startsWith("1965-03-13"),
+      );
+      assert.equal(
+        momOnBAfterRefresh.birthPlace,
+        "Калуга",
+        "birthPlace stays Калуга — still the user's local value",
+      );
+
+      // ── 5. resolve choice=keep — target unchanged, conflict marked
+      //      resolved, future propagation with same pair stays muted.
+      const keepResolveResponse = await fetch(
+        `${ctx.baseUrl}/v1/trees/${treeBId}/conflicts/${conflict.id}/resolve`,
+        {
+          method: "POST",
+          headers: ownerHeaders,
+          body: JSON.stringify({choice: "keep"}),
+        },
+      );
+      assert.equal(keepResolveResponse.status, 200);
+      const keepPayload = await keepResolveResponse.json();
+      assert.ok(keepPayload.conflict.resolvedAt);
+      assert.equal(keepPayload.conflict.resolvedBy, owner.user.id);
+      const momOnBAfterKeep = await fetchPerson(treeBId, momOnB.id);
+      assert.equal(
+        momOnBAfterKeep.birthPlace,
+        "Калуга",
+        "keep must leave the target value untouched",
+      );
+
+      // No unresolved conflicts after keep.
+      const afterKeepList = await fetch(
+        `${ctx.baseUrl}/v1/trees/${treeBId}/conflicts`,
+        {headers: {authorization: `Bearer ${owner.accessToken}`}},
+      );
+      assert.equal((await afterKeepList.json()).conflicts.length, 0);
+
+      // Same propagation again — muted, no new conflict.
+      await patchPerson(treeAId, momOnA.id, {
+        firstName: "Анна",
+        middleName: "Петровна",
+        lastName: "Кузнецова",
+        birthPlace: "Орёл",
+        birthDate: "1965-03-14",
+      });
+      const mutedList = await fetch(
+        `${ctx.baseUrl}/v1/trees/${treeBId}/conflicts`,
+        {headers: {authorization: `Bearer ${owner.accessToken}`}},
+      );
+      assert.equal(
+        (await mutedList.json()).conflicts.length,
+        0,
+        "muted conflict (same source/target pair) must NOT resurface after keep",
+      );
+
+      // ── 6. resolve choice=overwrite — source wins, target updated,
+      //      lastPropagatedFields refreshed so a follow-up propagation
+      //      with the now-matching source value is a no-op (not a
+      //      new conflict).
+      // Set up a fresh conflict on a different field by editing
+      // locally on B then propagating A.
+      await patchPerson(treeBId, momOnB.id, {
+        firstName: "Анна",
+        middleName: "Петровна",
+        lastName: "Иванова", // <-- divergence
+      });
+      await patchPerson(treeAId, momOnA.id, {
+        firstName: "Анна",
+        middleName: "Петровна",
+        lastName: "Кузнецова-Маркова",
+      });
+      const secondConflictsResponse = await fetch(
+        `${ctx.baseUrl}/v1/trees/${treeBId}/conflicts`,
+        {headers: {authorization: `Bearer ${owner.accessToken}`}},
+      );
+      const [nameConflict] =
+        (await secondConflictsResponse.json()).conflicts;
+      assert.equal(nameConflict.field, "name");
+
+      const overwriteResolveResponse = await fetch(
+        `${ctx.baseUrl}/v1/trees/${treeBId}/conflicts/${nameConflict.id}/resolve`,
+        {
+          method: "POST",
+          headers: ownerHeaders,
+          body: JSON.stringify({choice: "overwrite"}),
+        },
+      );
+      assert.equal(overwriteResolveResponse.status, 200);
+      const overwritePayload = await overwriteResolveResponse.json();
+      assert.ok(overwritePayload.person);
+      assert.equal(
+        overwritePayload.person.name,
+        nameConflict.sourceValue,
+        "overwrite must write sourceValue onto the target person",
+      );
+
+      const momOnBAfterOverwrite = await fetchPerson(treeBId, momOnB.id);
+      assert.equal(
+        momOnBAfterOverwrite.name,
+        nameConflict.sourceValue,
+      );
+
+      // ── 7. After overwrite, push the SAME source value again →
+      //      propagation must be a clean no-op (lastPropagatedFields
+      //      now matches), no new conflict.
+      await patchPerson(treeAId, momOnA.id, {
+        firstName: "Анна",
+        middleName: "Петровна",
+        lastName: "Кузнецова-Маркова",
+        // Touch something to force a propagation pass.
+        birthDate: "1965-03-15",
+      });
+      const finalConflicts = await fetch(
+        `${ctx.baseUrl}/v1/trees/${treeBId}/conflicts`,
+        {headers: {authorization: `Bearer ${owner.accessToken}`}},
+      );
+      assert.equal(
+        (await finalConflicts.json()).conflicts.length,
+        0,
+        "after overwrite + matching source: no new conflict for the same field",
+      );
+    } finally {
+      await stopTestServer(ctx);
+    }
+  },
+);
+
+test(
+  "identity-field conflicts: deleted user's conflicts are dropped (GDPR sweep)",
+  async () => {
+    const ctx = await startTestServer();
+
+    try {
+      const owner = await registerTestUser(
+        ctx,
+        "owner-conflict-delete@rodnya.app",
+        "Артём",
+      );
+      const ownerHeaders = {
+        authorization: `Bearer ${owner.accessToken}`,
+        "content-type": "application/json",
+      };
+
+      async function createTreeForOwner(name) {
+        const response = await fetch(`${ctx.baseUrl}/v1/trees`, {
+          method: "POST",
+          headers: ownerHeaders,
+          body: JSON.stringify({name, isPrivate: true}),
+        });
+        assert.equal(response.status, 201);
+        return (await response.json()).tree.id;
+      }
+      async function addPerson(treeId, body) {
+        const response = await fetch(
+          `${ctx.baseUrl}/v1/trees/${treeId}/persons`,
+          {
+            method: "POST",
+            headers: ownerHeaders,
+            body: JSON.stringify(body),
+          },
+        );
+        assert.equal(response.status, 201);
+        return (await response.json()).person;
+      }
+      async function patchPerson(treeId, personId, body) {
+        const response = await fetch(
+          `${ctx.baseUrl}/v1/trees/${treeId}/persons/${personId}`,
+          {
+            method: "PATCH",
+            headers: ownerHeaders,
+            body: JSON.stringify(body),
+          },
+        );
+        assert.equal(response.status, 200);
+      }
+
+      const treeAId = await createTreeForOwner("A");
+      const treeBId = await createTreeForOwner("B");
+      const momA = await addPerson(treeAId, {
+        firstName: "Анна",
+        lastName: "Кузнецова",
+        gender: "female",
+      });
+      const momB = await addPerson(treeBId, {sourcePersonId: momA.id});
+
+      // Create a conflict (same recipe as the main test).
+      await patchPerson(treeAId, momA.id, {birthPlace: "Тула"});
+      await patchPerson(treeBId, momB.id, {birthPlace: "Калуга"});
+      await patchPerson(treeAId, momA.id, {birthPlace: "Орёл"});
+
+      // Pre-condition: conflict exists.
+      const beforeDelete = (
+        await (
+          await fetch(`${ctx.baseUrl}/v1/trees/${treeBId}/conflicts`, {
+            headers: {authorization: `Bearer ${owner.accessToken}`},
+          })
+        ).json()
+      ).conflicts;
+      assert.equal(beforeDelete.length, 1);
+
+      // Delete the owner. With both trees gone, the conflict row's
+      // target/source treeIds are in `removedTreeIds` → cleanup
+      // sweeps it. Verify by reading the raw store.
+      const deleteResponse = await fetch(`${ctx.baseUrl}/v1/auth/account`, {
+        method: "DELETE",
+        headers: {authorization: `Bearer ${owner.accessToken}`},
+      });
+      assert.equal(deleteResponse.status, 204);
+
+      const rawAfter = await ctx.store._read();
+      const remainingForOwner = (rawAfter.identityFieldConflicts || []).filter(
+        (entry) =>
+          entry.targetTreeId === treeAId ||
+          entry.targetTreeId === treeBId ||
+          entry.sourceTreeId === treeAId ||
+          entry.sourceTreeId === treeBId,
+      );
+      assert.equal(
+        remainingForOwner.length,
+        0,
+        "deleteUser must sweep conflicts that reference removed trees",
+      );
+    } finally {
+      await stopTestServer(ctx);
+    }
+  },
+);
+
+test(
+  "identity-field conflicts: stranger cannot see or resolve another user's conflicts",
+  async () => {
+    const ctx = await startTestServer();
+
+    try {
+      const owner = await registerTestUser(ctx, "owner@rodnya.app", "Артём");
+      const stranger = await registerTestUser(
+        ctx,
+        "stranger@rodnya.app",
+        "Гость",
+      );
+      const ownerHeaders = {
+        authorization: `Bearer ${owner.accessToken}`,
+        "content-type": "application/json",
+      };
+
+      async function createTreeForOwner(name) {
+        const response = await fetch(`${ctx.baseUrl}/v1/trees`, {
+          method: "POST",
+          headers: ownerHeaders,
+          body: JSON.stringify({name, isPrivate: true}),
+        });
+        assert.equal(response.status, 201);
+        return (await response.json()).tree.id;
+      }
+      async function addPerson(treeId, body) {
+        const response = await fetch(
+          `${ctx.baseUrl}/v1/trees/${treeId}/persons`,
+          {
+            method: "POST",
+            headers: ownerHeaders,
+            body: JSON.stringify(body),
+          },
+        );
+        assert.equal(response.status, 201);
+        return (await response.json()).person;
+      }
+      async function patchOwnerPerson(treeId, personId, body) {
+        const response = await fetch(
+          `${ctx.baseUrl}/v1/trees/${treeId}/persons/${personId}`,
+          {
+            method: "PATCH",
+            headers: ownerHeaders,
+            body: JSON.stringify(body),
+          },
+        );
+        assert.equal(response.status, 200);
+      }
+
+      const treeAId = await createTreeForOwner("A");
+      const treeBId = await createTreeForOwner("B");
+      const momA = await addPerson(treeAId, {
+        firstName: "Анна",
+        lastName: "Кузнецова",
+        gender: "female",
+      });
+      const momB = await addPerson(treeBId, {sourcePersonId: momA.id});
+
+      // Build a conflict.
+      await patchOwnerPerson(treeAId, momA.id, {birthPlace: "Тула"});
+      await patchOwnerPerson(treeBId, momB.id, {birthPlace: "Калуга"});
+      await patchOwnerPerson(treeAId, momA.id, {birthPlace: "Орёл"});
+
+      const ownerConflictsResponse = await fetch(
+        `${ctx.baseUrl}/v1/trees/${treeBId}/conflicts`,
+        {headers: {authorization: `Bearer ${owner.accessToken}`}},
+      );
+      const ownerConflicts =
+        (await ownerConflictsResponse.json()).conflicts;
+      assert.equal(ownerConflicts.length, 1);
+      const [conflict] = ownerConflicts;
+
+      // Stranger cannot list conflicts on owner's private tree.
+      const strangerListResponse = await fetch(
+        `${ctx.baseUrl}/v1/trees/${treeBId}/conflicts`,
+        {headers: {authorization: `Bearer ${stranger.accessToken}`}},
+      );
+      assert.ok(
+        [403, 404].includes(strangerListResponse.status),
+        "stranger must be blocked at the route's tree-access guard",
+      );
+
+      // Stranger cannot resolve owner's conflict either.
+      const strangerResolveResponse = await fetch(
+        `${ctx.baseUrl}/v1/trees/${treeBId}/conflicts/${conflict.id}/resolve`,
+        {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${stranger.accessToken}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({choice: "overwrite"}),
+        },
+      );
+      assert.ok(
+        [403, 404].includes(strangerResolveResponse.status),
+        "stranger resolve must fail at the auth guard",
+      );
+
+      // Owner's conflict still unresolved.
+      const ownerStillThereResponse = await fetch(
+        `${ctx.baseUrl}/v1/trees/${treeBId}/conflicts`,
+        {headers: {authorization: `Bearer ${owner.accessToken}`}},
+      );
+      const ownerStillThere =
+        (await ownerStillThereResponse.json()).conflicts;
+      assert.equal(ownerStillThere.length, 1);
+      assert.equal(ownerStillThere[0].resolvedAt, null);
+    } finally {
+      await stopTestServer(ctx);
+    }
+  },
+);
+
 test("cross-tree person picker scopes to caller, excludes target tree, and shares identityId on link", async () => {
   const ctx = await startTestServer();
 

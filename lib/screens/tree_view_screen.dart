@@ -7,7 +7,9 @@ import 'package:provider/provider.dart'; // Импортируем Provider
 import 'package:get_it/get_it.dart';
 
 import '../backend/backend_runtime_config.dart';
+import '../backend/interfaces/identity_conflicts_capable_family_tree_service.dart';
 import '../backend/interfaces/identity_suggestions_capable_family_tree_service.dart';
+import '../backend/models/identity_field_conflict.dart';
 import '../backend/models/identity_suggestion.dart';
 import '../models/family_person.dart';
 import '../models/family_relation.dart';
@@ -111,6 +113,15 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
   // dot on the canvas. Lazily populated after the tree loads —
   // we don't gate the initial render on this.
   Map<String, int> _identitySuggestionCounts = const <String, int>{};
+  // Phase 1.3 edit-time conflict surfacing: per-person count of
+  // unresolved identity-field conflicts on this tree. Drives the
+  // ⚠️ dot. Same loading model as suggestions — fetch in the
+  // background, render when ready, no gate on first paint.
+  // Cached full conflict list so the tap handler doesn't refetch
+  // (one HTTP roundtrip per tree-load instead of per-tap).
+  Map<String, int> _identityConflictCounts = const <String, int>{};
+  List<IdentityFieldConflict> _identityConflictsCache =
+      const <IdentityFieldConflict>[];
   // Reference design pattern: bottom sheet starts collapsed (peek bar with
   // avatar + name + meta + chevron) and expands on tap to reveal action row
   // and full info. Reset to collapsed whenever selection changes.
@@ -482,6 +493,11 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
         // first paint — when responses come in we update the
         // counts state and the canvas re-renders the 💡 dots.
         unawaited(_refreshIdentitySuggestionCounts(treeId, relatives));
+        // Phase 1.3 edit-time conflicts: same fire-and-forget
+        // pattern. One HTTP call covers every visible card —
+        // /v1/trees/:treeId/conflicts is tree-scoped (vs.
+        // suggestions, which is per-person — historical).
+        unawaited(_refreshIdentityConflictCounts(treeId));
       }
     } catch (e, s) {
       debugPrint('Ошибка загрузки данных дерева $treeId: $e\\n$s');
@@ -975,6 +991,90 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
         SnackBar(content: Text('Не удалось связать карточки: $error')),
       );
     }
+  }
+
+  // ── Phase 1.3 edit-time conflict surfacing handlers ─────────────
+  // Tree-level fetch, group-by personId, render ⚠️ badge on each
+  // affected card. Tap → resolve sheet, applies user choice,
+  // refreshes counts.
+
+  Future<void> _refreshIdentityConflictCounts(String treeId) async {
+    final service = _familyService;
+    if (service is! IdentityConflictsCapableFamilyTreeService) return;
+    final capable = service as IdentityConflictsCapableFamilyTreeService;
+    List<IdentityFieldConflict> conflicts;
+    try {
+      conflicts = await capable.getIdentityConflictsForTree(treeId: treeId);
+    } catch (_) {
+      // Best-effort — a failed fetch shouldn't kill the tree
+      // render. The badge just stays absent until next refresh.
+      return;
+    }
+    if (!mounted || _currentTreeId != treeId) return;
+    final counts = <String, int>{};
+    for (final conflict in conflicts) {
+      counts[conflict.targetPersonId] =
+          (counts[conflict.targetPersonId] ?? 0) + 1;
+    }
+    setState(() {
+      _identityConflictCounts = counts;
+      _identityConflictsCache = conflicts;
+    });
+  }
+
+  Future<void> _handleShowIdentityConflictsForPerson(String personId) async {
+    final treeId = _currentTreeId;
+    if (treeId == null) return;
+    final service = _familyService;
+    if (service is! IdentityConflictsCapableFamilyTreeService) return;
+    final personConflicts = _identityConflictsCache
+        .where((c) => c.targetPersonId == personId && !c.isResolved)
+        .toList(growable: false);
+    if (personConflicts.isEmpty) {
+      // Cache stale (already resolved on another device, deleted,
+      // etc.) — refresh and bail. The badge will disappear once
+      // counts state catches up.
+      await _refreshIdentityConflictCounts(treeId);
+      return;
+    }
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) => _IdentityConflictsSheet(
+        conflicts: personConflicts,
+        onChoice: (conflict, choice) async {
+          final capable =
+              service as IdentityConflictsCapableFamilyTreeService;
+          try {
+            await capable.resolveIdentityConflict(
+              treeId: treeId,
+              conflictId: conflict.id,
+              choice: choice,
+            );
+          } catch (error) {
+            if (sheetContext.mounted) {
+              ScaffoldMessenger.of(sheetContext).showSnackBar(
+                SnackBar(content: Text('Не удалось применить выбор: $error')),
+              );
+            }
+            return;
+          }
+          if (sheetContext.mounted) {
+            Navigator.of(sheetContext).pop();
+          }
+          // overwrite changes the underlying person — pull a
+          // fresh tree snapshot so the canvas shows the new
+          // canonical value. keep is data-neutral but the
+          // refresh below clears the badge either way.
+          if (choice == 'overwrite') {
+            await _loadData(treeId);
+          } else {
+            await _refreshIdentityConflictCounts(treeId);
+          }
+        },
+      ),
+    );
   }
 
   Future<void> _dismissIdentitySuggestion(IdentitySuggestion suggestion) async {
@@ -1682,6 +1782,236 @@ class _SuggestionRow extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+// ── Phase 1.3 conflict resolution sheet ────────────────────────────
+// One row per diverging field with side-by-side "keep mine" /
+// "accept other branch's value". Plain text rendering of values —
+// good enough for a v1; richer formatting (date, photo preview)
+// comes with the Phase 3 lens migration when the conflict surface
+// becomes more central.
+
+const Map<String, String> _kIdentityConflictFieldLabels = <String, String>{
+  'name': 'ФИО',
+  'maidenName': 'Девичья фамилия',
+  'gender': 'Пол',
+  'birthDate': 'Дата рождения',
+  'deathDate': 'Дата смерти',
+  'isAlive': 'Признак "жив"',
+  'birthPlace': 'Место рождения',
+  'deathPlace': 'Место смерти',
+  'photoUrl': 'Фото',
+  'primaryPhotoUrl': 'Основное фото',
+  'photoGallery': 'Галерея фото',
+};
+
+String _identityConflictFieldLabel(String field) =>
+    _kIdentityConflictFieldLabels[field] ?? field;
+
+String _formatIdentityConflictValue(String field, dynamic value) {
+  if (value == null) return '— пусто —';
+  if (field == 'photoGallery') {
+    if (value is List) {
+      return value.isEmpty ? '— пусто —' : '${value.length} фото';
+    }
+    return value.toString();
+  }
+  if (value is bool) return value ? 'да' : 'нет';
+  final stringValue = value.toString().trim();
+  return stringValue.isEmpty ? '— пусто —' : stringValue;
+}
+
+class _IdentityConflictsSheet extends StatelessWidget {
+  const _IdentityConflictsSheet({
+    required this.conflicts,
+    required this.onChoice,
+  });
+
+  final List<IdentityFieldConflict> conflicts;
+
+  /// Called when the user picks a side. `choice` is `'keep'` or
+  /// `'overwrite'`. Sheet dismisses on success — owner closes it.
+  final Future<void> Function(IdentityFieldConflict conflict, String choice)
+      onChoice;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 18, 20, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: scheme.errorContainer.withValues(alpha: 0.6),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(
+                    Icons.error_outline_rounded,
+                    color: scheme.error,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        conflicts.length == 1
+                            ? 'Расхождение в одной ветке'
+                            : 'Расхождения в ${conflicts.length} полях',
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      Text(
+                        'Этот человек по-разному заполнен на разных ветках. '
+                        'Выберите, какое значение оставить.',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            for (final conflict in conflicts) ...[
+              _ConflictRow(
+                conflict: conflict,
+                onChoice: (choice) => onChoice(conflict, choice),
+              ),
+              const SizedBox(height: 10),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ConflictRow extends StatelessWidget {
+  const _ConflictRow({
+    required this.conflict,
+    required this.onChoice,
+  });
+
+  final IdentityFieldConflict conflict;
+  final Future<void> Function(String choice) onChoice;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final fieldLabel = _identityConflictFieldLabel(conflict.field);
+    final ourValue =
+        _formatIdentityConflictValue(conflict.field, conflict.targetValue);
+    final theirValue =
+        _formatIdentityConflictValue(conflict.field, conflict.sourceValue);
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest.withValues(alpha: 0.6),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: scheme.outlineVariant),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            fieldLabel,
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 10),
+          _ConflictSide(
+            label: 'Здесь',
+            value: ourValue,
+            actionLabel: 'Оставить',
+            onTap: () => onChoice('keep'),
+            isPrimary: false,
+          ),
+          const SizedBox(height: 8),
+          _ConflictSide(
+            label: 'На другой ветке',
+            value: theirValue,
+            actionLabel: 'Принять',
+            onTap: () => onChoice('overwrite'),
+            isPrimary: true,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ConflictSide extends StatelessWidget {
+  const _ConflictSide({
+    required this.label,
+    required this.value,
+    required this.actionLabel,
+    required this.onTap,
+    required this.isPrimary,
+  });
+
+  final String label;
+  final String value;
+  final String actionLabel;
+  final Future<void> Function() onTap;
+  final bool isPrimary;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Row(
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                value,
+                style: theme.textTheme.bodyMedium,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 12),
+        SizedBox(
+          width: 120,
+          child: isPrimary
+              ? FilledButton(
+                  onPressed: () => onTap(),
+                  child: Text(actionLabel),
+                )
+              : OutlinedButton(
+                  onPressed: () => onTap(),
+                  child: Text(actionLabel),
+                ),
+        ),
+      ],
     );
   }
 }

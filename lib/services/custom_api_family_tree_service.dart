@@ -6,10 +6,12 @@ import 'package:http/http.dart' as http;
 import '../backend/backend_runtime_config.dart';
 import '../backend/interfaces/cross_tree_person_search_capable_family_tree_service.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
+import '../backend/interfaces/identity_conflicts_capable_family_tree_service.dart';
 import '../backend/interfaces/identity_duplicate_capable_family_tree_service.dart';
 import '../backend/interfaces/identity_suggestions_capable_family_tree_service.dart';
 import '../backend/interfaces/profile_service_interface.dart';
 import '../backend/interfaces/tree_graph_capable_family_tree_service.dart';
+import '../backend/models/identity_field_conflict.dart';
 import '../backend/models/identity_suggestion.dart';
 import '../backend/models/cross_tree_person_suggestion.dart';
 import '../backend/models/selectable_tree.dart';
@@ -33,7 +35,8 @@ class CustomApiFamilyTreeService
         TreeGraphCapableFamilyTreeService,
         IdentityDuplicateCapableFamilyTreeService,
         CrossTreePersonSearchCapableFamilyTreeService,
-        IdentitySuggestionsCapableFamilyTreeService {
+        IdentitySuggestionsCapableFamilyTreeService,
+        IdentityConflictsCapableFamilyTreeService {
   CustomApiFamilyTreeService({
     required CustomApiAuthService authService,
     required BackendRuntimeConfig runtimeConfig,
@@ -230,6 +233,47 @@ class CustomApiFamilyTreeService
           '/v1/trees/$sourceTreeId/persons/$sourcePersonId/dismiss-suggestion',
       body: <String, dynamic>{'targetPersonId': targetPersonId},
     );
+  }
+
+  // ── Phase 1.3: identity-field conflicts ─────────────────────────────
+  // Tree-level fetch (one HTTP call covers every visible card on
+  // the canvas) and per-conflict resolve. Resolve invalidates the
+  // tree's graph snapshot cache because `overwrite` changes the
+  // target person's canonical fields.
+
+  @override
+  Future<List<IdentityFieldConflict>> getIdentityConflictsForTree({
+    required String treeId,
+  }) async {
+    final response = await _requestJson(
+      method: 'GET',
+      path: '/v1/trees/$treeId/conflicts',
+    );
+    final raw = response['conflicts'];
+    if (raw is! List) return const <IdentityFieldConflict>[];
+    return raw
+        .whereType<Map>()
+        .map((entry) => Map<String, dynamic>.from(entry))
+        .map(IdentityFieldConflict.fromJson)
+        .toList(growable: false);
+  }
+
+  @override
+  Future<void> resolveIdentityConflict({
+    required String treeId,
+    required String conflictId,
+    required String choice,
+  }) async {
+    await _requestJson(
+      method: 'POST',
+      path: '/v1/trees/$treeId/conflicts/$conflictId/resolve',
+      body: <String, dynamic>{'choice': choice},
+    );
+    // overwrite mutates the target person — drop the cached graph
+    // snapshot so the next read shows the new canonical value.
+    // keep is technically a no-op for graph data, but the badge
+    // count still changes; cheap to invalidate either way.
+    _graphSnapshotCache.remove(treeId);
   }
 
   @override

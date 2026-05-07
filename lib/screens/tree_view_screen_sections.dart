@@ -1358,6 +1358,12 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
                 identitySuggestionCounts: _identitySuggestionCounts,
                 onShowIdentitySuggestions:
                     _handleShowIdentitySuggestionsForPerson,
+                // Phase 1.3 conflict surfacing: same model as 💡 —
+                // counts populated in the background, tap opens
+                // the resolve sheet keyed off this person.
+                identityConflictCounts: _identityConflictCounts,
+                onShowIdentityConflicts:
+                    _handleShowIdentityConflictsForPerson,
                 // Reserve vertical space for the floating chrome stacked
                 // above the canvas — toolbar (~60) + context column
                 // (up to ~210) on mobile compact, much less on desktop

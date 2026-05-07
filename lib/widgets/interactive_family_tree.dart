@@ -69,6 +69,24 @@ class InteractiveFamilyTree extends StatefulWidget {
   /// shows a sheet, dispatches link/dismiss on the service.
   final void Function(String personId)? onShowIdentitySuggestions;
 
+  /// Phase 1.3 edit-time conflict surfacing: per-person counts of
+  /// unresolved identity-field conflicts (propagation declined to
+  /// overwrite a locally-edited field). When count > 0, the
+  /// canvas renders a ⚠️ dot on the card; tapping fires
+  /// [onShowIdentityConflicts] so the host can pop a sheet listing
+  /// the diverging fields with `keep` / `overwrite` controls.
+  ///
+  /// Distinct from [identitySuggestionCounts] because the meaning
+  /// is different: 💡 means "maybe these are the same human",
+  /// ⚠️ means "this human's data is out of sync between branches
+  /// and needs your attention".
+  final Map<String, int>? identityConflictCounts;
+
+  /// Tap callback for the ⚠️ dot. Host fetches the conflict list
+  /// for the tree (already cached from the canvas refresh) and
+  /// shows the resolve sheet for the selected card.
+  final void Function(String personId)? onShowIdentityConflicts;
+
   /// Auto-recenter trigger. When this prop's value CHANGES to a
   /// non-null person id, the tree animates / snaps the viewport to
   /// center that person on the next frame. Used after creating a
@@ -158,6 +176,8 @@ class InteractiveFamilyTree extends StatefulWidget {
     this.recenterOnPersonId,
     this.identitySuggestionCounts,
     this.onShowIdentitySuggestions,
+    this.identityConflictCounts,
+    this.onShowIdentityConflicts,
     this.currentUserId,
     this.branchRootPersonId,
     this.selectedPersonId,
@@ -1824,6 +1844,23 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
                 count: widget.identitySuggestionCounts![person.id]!,
                 onTap: () =>
                     widget.onShowIdentitySuggestions?.call(person.id),
+              ),
+            ),
+          // Phase 1.3 edit-time conflict surfacing: ⚠️ dot on the
+          // bottom-RIGHT (deliberately opposite the 💡 badge so
+          // both can coexist on a card without overlapping).
+          // Always visible — unlike 💡 this is "your data is
+          // diverging, please review" rather than a passive hint,
+          // and hiding it would defeat the point.
+          if (!widget.isEditMode &&
+              (widget.identityConflictCounts?[person.id] ?? 0) > 0)
+            Positioned(
+              bottom: 8,
+              right: 8,
+              child: _IdentityConflictsBadge(
+                count: widget.identityConflictCounts![person.id]!,
+                onTap: () =>
+                    widget.onShowIdentityConflicts?.call(person.id),
               ),
             ),
           // Show the "+" quick-add badge on hover (desktop) AND on the
@@ -5233,6 +5270,73 @@ class _IdentitySuggestionsBadge extends StatelessWidget {
                 Icons.lightbulb_outline_rounded,
                 size: 15,
                 color: scheme.tertiary,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Phase 1.3 ⚠️ badge — appears on the bottom-right of a card
+/// when at least one identity-field conflict is unresolved on
+/// the linked person on this tree. Visual is more assertive
+/// than the 💡 badge (error-tinted vs. tertiary, always visible
+/// regardless of hover) because the meaning is also more
+/// urgent: data diverged, the user needs to pick a side.
+///
+/// Tap → host opens the resolve sheet. The sheet is owned by
+/// tree_view_screen so it can wire to the service and refresh
+/// counts after resolution.
+class _IdentityConflictsBadge extends StatelessWidget {
+  const _IdentityConflictsBadge({
+    required this.count,
+    required this.onTap,
+  });
+
+  final int count;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Semantics(
+      button: true,
+      label: count == 1
+          ? 'Конфликт правок: одна карточка'
+          : 'Конфликты правок: $count полей',
+      child: Tooltip(
+        message: count == 1
+            ? 'Поле этой карточки расходится с другой веткой — нажмите, чтобы выбрать значение'
+            : '$count полей расходятся с другой веткой — нажмите, чтобы разобраться',
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            customBorder: const CircleBorder(),
+            onTap: onTap,
+            child: Container(
+              width: 26,
+              height: 26,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: scheme.errorContainer.withValues(alpha: 0.95),
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: scheme.error.withValues(alpha: 0.6),
+                  width: 1.2,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: scheme.error.withValues(alpha: 0.18),
+                    blurRadius: 6,
+                  ),
+                ],
+              ),
+              child: Icon(
+                Icons.error_outline_rounded,
+                size: 15,
+                color: scheme.error,
               ),
             ),
           ),

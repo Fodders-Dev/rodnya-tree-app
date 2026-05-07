@@ -51,6 +51,14 @@ const EMPTY_DB = {
   // re-suggesting pairs the user already said "no, these are
   // different people" about.
   dismissedIdentitySuggestions: [],
+  // Phase 1.3 edit-time conflict surfacing: rows recorded by
+  // `_propagateIdentityFields` when it would have overwritten a
+  // value the user had locally edited on the target tree
+  // between propagations. The user resolves each row via
+  // /v1/trees/:treeId/conflicts/:conflictId/resolve as either
+  // `keep` (target wins, source change ignored on this side)
+  // or `overwrite` (source wins, target overwritten).
+  identityFieldConflicts: [],
   trees: [],
   persons: [],
   personIdentities: [],
@@ -95,6 +103,9 @@ function normalizeDbState(parsed) {
       parsed?.dismissedIdentitySuggestions,
     )
       ? parsed.dismissedIdentitySuggestions
+      : [],
+    identityFieldConflicts: Array.isArray(parsed?.identityFieldConflicts)
+      ? parsed.identityFieldConflicts
       : [],
     trees: Array.isArray(parsed?.trees) ? parsed.trees : [],
     persons: Array.isArray(parsed?.persons) ? parsed.persons : [],
@@ -163,6 +174,18 @@ function normalizeDbState(parsed) {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+// Compare two values for one of the identity-propagation fields.
+// `photoGallery` is an array — JSON-snapshot equality matches the
+// existing propagation skip-rule (see `_propagateIdentityFields`)
+// so reordering with the same content doesn't count as a change.
+// Other fields are scalars; reference/value equality is enough.
+function valuesEqualForPropagation(field, a, b) {
+  if (field === "photoGallery") {
+    return JSON.stringify(a || []) === JSON.stringify(b || []);
+  }
+  return a === b;
 }
 
 const SESSION_TOUCH_MIN_INTERVAL_MS = 60_000;
@@ -6932,6 +6955,24 @@ class FileStore {
         }
       }
     }
+    if (Array.isArray(db.identityFieldConflicts)) {
+      // Phase 1.3: drop conflict rows that touch trees or persons
+      // we just removed (the surface they referred to is gone),
+      // and pseudonymize `resolvedBy` on the rest — same GDPR
+      // tradeoff as treeChangeRecords above.
+      db.identityFieldConflicts = db.identityFieldConflicts.filter(
+        (entry) =>
+          !removedTreeIds.has(entry.targetTreeId) &&
+          !removedTreeIds.has(entry.sourceTreeId) &&
+          !removedPersonIds.has(entry.targetPersonId) &&
+          !removedPersonIds.has(entry.sourcePersonId),
+      );
+      for (const entry of db.identityFieldConflicts) {
+        if (entry.resolvedBy === userId) {
+          entry.resolvedBy = "deleted-user";
+        }
+      }
+    }
 
     this._reconcilePersonIdentities(db);
     await this._write(db);
@@ -7967,6 +8008,143 @@ class FileStore {
     };
   }
 
+  // ── Phase 1.3: edit-time conflict surfacing ─────────────────────────
+  // List unresolved identity-field conflicts visible to the user.
+  // Auth model: target-side. The user sees a row when it lives on a
+  // tree they can access — i.e. "someone's edit on another tree
+  // wants to overwrite YOUR copy of mom's name". Source-side
+  // visibility isn't useful (the user knows what they wrote) and
+  // would also leak conflict existence into trees the user
+  // doesn't necessarily have access to.
+  async listIdentityConflicts({userId, treeId = null, personId = null}) {
+    const db = await this._read();
+    const normalizedUserId = normalizeNullableString(userId);
+    if (!normalizedUserId) return [];
+
+    const accessibleTreeIds = new Set(
+      db.trees
+        .filter((tree) =>
+          this._userCanAccessTreeRecord(tree, normalizedUserId),
+        )
+        .map((tree) => tree.id),
+    );
+
+    return (db.identityFieldConflicts || [])
+      .filter((entry) => !entry.resolvedAt)
+      .filter((entry) => accessibleTreeIds.has(entry.targetTreeId))
+      .filter((entry) => !treeId || entry.targetTreeId === treeId)
+      .filter((entry) => !personId || entry.targetPersonId === personId)
+      .map((entry) => structuredClone(entry));
+  }
+
+  // Apply the user's resolution. `keep` leaves the target value
+  // alone and just marks the row resolved (subsequent propagation
+  // sees the resolved row, treats it as muted, and stops nagging
+  // about this exact pair). `overwrite` writes sourceValue onto
+  // the target person AND refreshes lastPropagatedFields[field]
+  // — without that refresh the very next propagation would re-
+  // diff `current vs lastWritten` and fire a fresh conflict.
+  async resolveIdentityConflict({conflictId, choice, actorId}) {
+    if (choice !== "keep" && choice !== "overwrite") {
+      throw new Error("INVALID_CHOICE");
+    }
+    const normalizedActorId = normalizeNullableString(actorId);
+    if (!normalizedActorId) {
+      throw new Error("FORBIDDEN");
+    }
+    const db = await this._read();
+    if (!Array.isArray(db.identityFieldConflicts)) {
+      db.identityFieldConflicts = [];
+    }
+    const conflict = db.identityFieldConflicts.find(
+      (entry) => entry.id === conflictId,
+    );
+    if (!conflict) return null;
+    if (conflict.resolvedAt) {
+      // Already resolved — return current state. Idempotent so
+      // double-clicks on the resolve button don't 500.
+      const targetPerson = db.persons.find(
+        (entry) =>
+          entry.id === conflict.targetPersonId &&
+          entry.treeId === conflict.targetTreeId,
+      );
+      return {
+        conflict: structuredClone(conflict),
+        person: targetPerson ? structuredClone(targetPerson) : null,
+      };
+    }
+
+    const targetTree = db.trees.find(
+      (entry) => entry.id === conflict.targetTreeId,
+    );
+    if (
+      !targetTree ||
+      !this._userCanAccessTreeRecord(targetTree, normalizedActorId)
+    ) {
+      throw new Error("FORBIDDEN");
+    }
+    const targetPerson = db.persons.find(
+      (entry) =>
+        entry.id === conflict.targetPersonId &&
+        entry.treeId === conflict.targetTreeId,
+    );
+    if (!targetPerson) {
+      // Target gone (deleted between conflict creation and now).
+      // Drop the row; UI will refetch and stop showing the badge.
+      db.identityFieldConflicts = db.identityFieldConflicts.filter(
+        (entry) => entry.id !== conflictId,
+      );
+      await this._write(db);
+      return null;
+    }
+
+    const nowTs = nowIso();
+    if (choice === "overwrite") {
+      const previousPersonSnapshot = structuredClone(targetPerson);
+      targetPerson[conflict.field] = structuredClone(conflict.sourceValue);
+      if (
+        !targetPerson.lastPropagatedFields ||
+        typeof targetPerson.lastPropagatedFields !== "object"
+      ) {
+        targetPerson.lastPropagatedFields = {};
+      }
+      targetPerson.lastPropagatedFields[conflict.field] = structuredClone(
+        conflict.sourceValue,
+      );
+      targetPerson.updatedAt = nowTs;
+      targetTree.updatedAt = nowTs;
+
+      this._appendTreeChangeRecord(db, {
+        treeId: conflict.targetTreeId,
+        actorId: normalizedActorId,
+        type: "person.updated",
+        personId: conflict.targetPersonId,
+        details: {
+          before: previousPersonSnapshot,
+          after: structuredClone(targetPerson),
+          identityConflictResolution: {
+            conflictId,
+            field: conflict.field,
+            choice: "overwrite",
+            sourceTreeId: conflict.sourceTreeId,
+            sourcePersonId: conflict.sourcePersonId,
+          },
+        },
+      });
+      upsertPersonAttributesForPerson(db, targetPerson, normalizedActorId);
+    }
+
+    conflict.resolvedAt = nowTs;
+    conflict.resolvedBy = normalizedActorId;
+    conflict.resolution = choice;
+
+    await this._write(db);
+    return {
+      conflict: structuredClone(conflict),
+      person: structuredClone(targetPerson),
+    };
+  }
+
   _mergeProposalStillActionable(db, proposal) {
     if (!proposal || proposal.status !== "pending") {
       return false;
@@ -8944,6 +9122,10 @@ class FileStore {
     );
     if (linked.length === 0) return [];
 
+    if (!Array.isArray(db.identityFieldConflicts)) {
+      db.identityFieldConflicts = [];
+    }
+
     const propagated = [];
     const fields = FileStore._identityPropagationFields;
     const nowTs = nowIso();
@@ -8951,23 +9133,124 @@ class FileStore {
     for (const linkedPerson of linked) {
       const previousLinked = structuredClone(linkedPerson);
       let anyChange = false;
+
+      // Per-target snapshot of "what this propagator last wrote
+      // here". First propagation populates it; subsequent passes
+      // diff `current vs lastWritten` to tell apart "still our
+      // value, just out-of-date" (overwrite freely) from "user
+      // locally edited this between propagations" (conflict, do
+      // NOT clobber). See Phase 1.3 RFC §1.3.
+      if (
+        !linkedPerson.lastPropagatedFields ||
+        typeof linkedPerson.lastPropagatedFields !== "object"
+      ) {
+        linkedPerson.lastPropagatedFields = {};
+      }
+
       for (const field of fields) {
         const sourceValue = sourcePerson[field];
-        if (linkedPerson[field] !== sourceValue) {
-          // Special-case photoGallery — array equality. We only
-          // skip propagation when JSON-serialized snapshots
-          // match; cheap enough and avoids spurious updates
-          // when the order rotated but content is the same.
+        const linkedValue = linkedPerson[field];
+        if (valuesEqualForPropagation(field, linkedValue, sourceValue)) {
+          // Values already match — no overwrite needed. But we
+          // still stamp the snapshot if absent, so a future
+          // local edit on the target followed by a divergent
+          // source update lands in the conflict path instead of
+          // a silent overwrite (snapshotPresent would otherwise
+          // stay false on this field forever).
           if (
-            field === "photoGallery" &&
-            JSON.stringify(linkedPerson[field] || []) ===
-              JSON.stringify(sourceValue || [])
+            !Object.prototype.hasOwnProperty.call(
+              linkedPerson.lastPropagatedFields,
+              field,
+            )
           ) {
+            linkedPerson.lastPropagatedFields[field] = structuredClone(
+              sourceValue,
+            );
+          }
+          continue;
+        }
+
+        // Conflict detection only kicks in AFTER the snapshot is
+        // present — before that we can't distinguish "different
+        // initial values" from "local edit". `hasOwnProperty`
+        // keeps a deliberately-stamped null/undefined from being
+        // treated as unset.
+        const snapshotPresent = Object.prototype.hasOwnProperty.call(
+          linkedPerson.lastPropagatedFields,
+          field,
+        );
+        const lastWritten = linkedPerson.lastPropagatedFields[field];
+        const localEdit =
+          snapshotPresent &&
+          !valuesEqualForPropagation(field, linkedValue, lastWritten);
+        if (localEdit) {
+          // The user already resolved this exact (sourceValue,
+          // targetValue) pair earlier with `keep` — honor it and
+          // leave the divergence in place silently. Without this
+          // mute-check, every later propagation pass would
+          // resurface the same conflict the user dismissed.
+          const muted = db.identityFieldConflicts.find(
+            (entry) =>
+              entry.resolvedAt &&
+              entry.targetPersonId === linkedPerson.id &&
+              entry.targetTreeId === linkedPerson.treeId &&
+              entry.field === field &&
+              valuesEqualForPropagation(
+                field,
+                entry.sourceValue,
+                sourceValue,
+              ) &&
+              valuesEqualForPropagation(
+                field,
+                entry.targetValue,
+                linkedValue,
+              ),
+          );
+          if (muted) {
             continue;
           }
-          linkedPerson[field] = structuredClone(sourceValue);
-          anyChange = true;
+
+          // Refresh an existing open row for the same
+          // (target, field) rather than appending a duplicate —
+          // /conflicts stays clean if propagation runs many
+          // times before the user resolves.
+          const existing = db.identityFieldConflicts.find(
+            (entry) =>
+              !entry.resolvedAt &&
+              entry.targetPersonId === linkedPerson.id &&
+              entry.targetTreeId === linkedPerson.treeId &&
+              entry.field === field,
+          );
+          if (existing) {
+            existing.identityId = identityId;
+            existing.sourcePersonId = sourcePerson.id;
+            existing.sourceTreeId = sourcePerson.treeId;
+            existing.sourceValue = structuredClone(sourceValue);
+            existing.targetValue = structuredClone(linkedValue);
+            existing.updatedAt = nowTs;
+          } else {
+            db.identityFieldConflicts.push({
+              id: crypto.randomUUID(),
+              identityId,
+              sourcePersonId: sourcePerson.id,
+              sourceTreeId: sourcePerson.treeId,
+              targetPersonId: linkedPerson.id,
+              targetTreeId: linkedPerson.treeId,
+              field,
+              sourceValue: structuredClone(sourceValue),
+              targetValue: structuredClone(linkedValue),
+              createdAt: nowTs,
+              updatedAt: nowTs,
+              resolvedAt: null,
+              resolvedBy: null,
+            });
+          }
+          continue;
         }
+
+        linkedPerson[field] = structuredClone(sourceValue);
+        linkedPerson.lastPropagatedFields[field] = structuredClone(sourceValue);
+        anyChange = true;
       }
       if (!anyChange) continue;
       linkedPerson.updatedAt = nowTs;

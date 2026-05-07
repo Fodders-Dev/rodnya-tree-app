@@ -353,6 +353,86 @@ function registerTreeRoutes(
     },
   );
 
+  // ── Phase 1.3: identity-field conflicts ─────────────────────────────
+  // List unresolved conflicts where the linked person on THIS
+  // tree was about to be overwritten by propagation but had a
+  // local edit. Drives the ⚠️ badge on the canvas. Tree-scoped
+  // (one HTTP call covers every visible card) — the per-person
+  // shape is achievable client-side via group-by.
+  app.get(
+    "/v1/trees/:treeId/conflicts",
+    requireAuth,
+    async (req, res) => {
+      const tree = await requireTreeAccess(req, res, req.params.treeId);
+      if (!tree) return;
+      const conflicts = await store.listIdentityConflicts({
+        userId: req.auth.user.id,
+        treeId: tree.id,
+      });
+      res.json({conflicts});
+    },
+  );
+
+  // Resolve one conflict. `choice: "keep"` — target value wins,
+  // mark row resolved and let the propagator mute future passes
+  // for this exact (sourceValue, targetValue) pair.
+  // `choice: "overwrite"` — source value wins, write it onto the
+  // target person and refresh lastPropagatedFields so the next
+  // pass sees a clean snapshot.
+  app.post(
+    "/v1/trees/:treeId/conflicts/:conflictId/resolve",
+    requireAuth,
+    async (req, res) => {
+      const tree = await requireTreeAccess(req, res, req.params.treeId);
+      if (!tree) return;
+      const choiceRaw = req.body?.choice;
+      const choice = typeof choiceRaw === "string" ? choiceRaw.trim() : "";
+      if (choice !== "keep" && choice !== "overwrite") {
+        res.status(400).json({
+          message: "choice должен быть 'keep' или 'overwrite'",
+        });
+        return;
+      }
+      try {
+        const result = await store.resolveIdentityConflict({
+          conflictId: req.params.conflictId,
+          choice,
+          actorId: req.auth.user.id,
+        });
+        if (!result) {
+          res.status(404).json({message: "Конфликт не найден"});
+          return;
+        }
+        // The conflict could live on a tree the user CAN access
+        // but isn't the one in :treeId — verify they match so a
+        // copy-pasted route doesn't accidentally resolve a row
+        // on a different tree (the underlying store call already
+        // checked access; this is a stricter guard for the
+        // route's contract — :treeId names the affected tree).
+        if (result.conflict.targetTreeId !== tree.id) {
+          res.status(404).json({message: "Конфликт не найден"});
+          return;
+        }
+        res.json({
+          conflict: result.conflict,
+          person: result.person ? mapPerson(result.person) : null,
+        });
+      } catch (error) {
+        if (error?.message === "FORBIDDEN") {
+          res.status(403).json({message: "Нет доступа к целевому дереву"});
+          return;
+        }
+        if (error?.message === "INVALID_CHOICE") {
+          res.status(400).json({
+            message: "choice должен быть 'keep' или 'overwrite'",
+          });
+          return;
+        }
+        throw error;
+      }
+    },
+  );
+
   app.post("/v1/trees/:treeId/persons", requireAuth, async (req, res) => {
     const tree = await requireTreeAccess(req, res, req.params.treeId);
     if (!tree) {
