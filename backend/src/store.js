@@ -9093,6 +9093,11 @@ class FileStore {
       return null;
     }
 
+    // Snapshot for Phase 1.1 photo propagation — captured BEFORE
+    // we mutate person.* below. The propagator diffs against this
+    // to detect what fields changed and replicates them onto any
+    // linked records sharing identityId.
+    const previousPersonSnapshot = structuredClone(person);
     const timestamp = nowIso();
     const requestedUrl = media.url || media.mediaUrl || media.photoUrl;
     const photoState = normalizePersonPhotoGallery([
@@ -9138,10 +9143,22 @@ class FileStore {
         after: storedMedia ? structuredClone(storedMedia) : null,
       },
     });
+    // Phase 1.1 propagation: photo fields fan out to linked
+    // records on other trees so the user's "I added a photo on
+    // mom in tree A" actually shows up on mom in tree B too.
+    // Without this, only the explicit `updatePerson` path
+    // propagates — uploads silently stay tree-local.
+    const propagatedTo = this._propagateIdentityFields(
+      db,
+      person,
+      previousPersonSnapshot,
+      actorId,
+    );
     await this._write(db);
     return {
       person: structuredClone(person),
       media: storedMedia ? structuredClone(storedMedia) : null,
+      propagatedTo,
     };
   }
 
@@ -9160,6 +9177,7 @@ class FileStore {
       return null;
     }
 
+    const previousPersonSnapshot = structuredClone(person);
     const currentGallery = Array.isArray(person.photoGallery)
       ? person.photoGallery.map((entry) => structuredClone(entry))
       : [];
@@ -9212,10 +9230,17 @@ class FileStore {
         after: updatedMedia ? structuredClone(updatedMedia) : null,
       },
     });
+    const propagatedTo = this._propagateIdentityFields(
+      db,
+      person,
+      previousPersonSnapshot,
+      actorId,
+    );
     await this._write(db);
     return {
       person: structuredClone(person),
       media: updatedMedia ? structuredClone(updatedMedia) : null,
+      propagatedTo,
     };
   }
 
@@ -9234,6 +9259,7 @@ class FileStore {
       return null;
     }
 
+    const previousPersonSnapshot = structuredClone(person);
     const currentGallery = Array.isArray(person.photoGallery)
       ? person.photoGallery.map((entry) => structuredClone(entry))
       : [];
@@ -9279,10 +9305,17 @@ class FileStore {
         before: removedMedia,
       },
     });
+    const propagatedTo = this._propagateIdentityFields(
+      db,
+      person,
+      previousPersonSnapshot,
+      actorId,
+    );
     await this._write(db);
     return {
       person: structuredClone(person),
       deletedMedia: structuredClone(removedMedia),
+      propagatedTo,
     };
   }
 

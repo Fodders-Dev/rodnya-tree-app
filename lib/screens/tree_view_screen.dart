@@ -740,14 +740,28 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
     }
   }
 
-  void _openPersonDetails(FamilyPerson person, {String? action}) {
+  Future<void> _openPersonDetails(
+    FamilyPerson person, {
+    String? action,
+  }) async {
     final normalizedAction = action?.trim();
-    if (normalizedAction == null || normalizedAction.isEmpty) {
-      context.push('/relative/details/${person.id}');
-      return;
-    }
-    final encodedAction = Uri.encodeQueryComponent(normalizedAction);
-    context.push('/relative/details/${person.id}?action=$encodedAction');
+    final route = (normalizedAction == null || normalizedAction.isEmpty)
+        ? '/relative/details/${person.id}'
+        : '/relative/details/${person.id}'
+            '?action=${Uri.encodeQueryComponent(normalizedAction)}';
+    // Awaiting the push lets us refresh the tree once the user
+    // navigates back. The detail screen edits person fields /
+    // photos in place — without this refresh the tree keeps
+    // showing the stale avatar / labels until the user hits
+    // hard-reload. With this, swipe-back / tap-back transparently
+    // pulls the updated state and Phase 1.1 propagation effects
+    // (e.g., photos that fanned out to linked records on other
+    // trees) come along for the ride.
+    await context.push<dynamic>(route);
+    if (!mounted) return;
+    final treeId = _currentTreeId;
+    if (treeId == null) return;
+    await _loadData(treeId);
   }
 
   // === НОВЫЙ МЕТОД-КОЛЛБЭК для InteractiveFamilyTree ===
@@ -1235,12 +1249,18 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
             error,
             fallbackMessage: 'Не удалось загрузить историю.',
           ),
-          onOpenPerson: (personId) {
+          onOpenPerson: (personId) async {
             Navigator.of(sheetContext).pop();
-            if (!mounted) {
-              return;
+            if (!mounted) return;
+            await context.push<dynamic>('/relative/details/$personId');
+            if (!mounted) return;
+            // Refresh tree on return so edits made on the detail
+            // screen (photo, name parts, dates) show up immediately
+            // instead of requiring a hard-reload.
+            final treeId = _currentTreeId;
+            if (treeId != null) {
+              await _loadData(treeId);
             }
-            context.push('/relative/details/$personId');
           },
         );
       },

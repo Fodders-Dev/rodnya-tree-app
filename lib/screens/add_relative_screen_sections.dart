@@ -738,6 +738,20 @@ extension _AddRelativeScreenSections on _AddRelativeScreenState {
       _otherTreesSearchQuery = '';
       _otherTreesPickerExpanded = false;
     });
+
+    // UX shortcut: when the user is adding a relative WITH a known
+    // relation context (came in via "+ Add as parent / spouse /
+    // child / sibling" on a tree node), pick = ONE TAP commit. No
+    // need to make them tap save again — they've already told us
+    // who this is AND the relation. Schedule the save on the next
+    // microtask so the setState above has flushed and the form
+    // controllers see the new values when validate() runs.
+    if (_isContextualAdd && _resolvedRelationType != null) {
+      Future<void>.microtask(() {
+        if (!mounted) return;
+        _savePerson();
+      });
+    }
   }
 
   void _clearOtherTreesPick() {

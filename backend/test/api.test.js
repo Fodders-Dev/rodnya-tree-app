@@ -3795,6 +3795,142 @@ test("password reset request issues a single-use token, emails it, and confirm r
   }
 });
 
+// Photo media propagation regression — user reported that adding a
+// photo on a card linked across two trees showed up only on one
+// side. The media-route fast paths (addPersonMedia /
+// updatePersonMedia / deletePersonMedia) directly mutate
+// person.photoUrl/photoGallery; before this fix they didn't fire
+// the Phase 1.1 identity propagator and the linked record on the
+// other tree stayed un-photographed.
+test("photo media propagates across linked records on different trees", async () => {
+  const ctx = await startTestServer();
+
+  try {
+    const owner = await registerTestUser(ctx, "owner@rodnya.app", "Артём");
+    const ownerHeaders = {
+      authorization: `Bearer ${owner.accessToken}`,
+      "content-type": "application/json",
+    };
+
+    async function createTree(name) {
+      const response = await fetch(`${ctx.baseUrl}/v1/trees`, {
+        method: "POST",
+        headers: ownerHeaders,
+        body: JSON.stringify({name, isPrivate: true}),
+      });
+      assert.equal(response.status, 201);
+      return (await response.json()).tree.id;
+    }
+
+    const treeAId = await createTree("Семья");
+    const treeBId = await createTree("Родня");
+
+    // Mom on tree A, then Mom on tree B linked via cross-tree
+    // picker (sourcePersonId) → both share an identityId.
+    const momAResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeAId}/persons`,
+      {
+        method: "POST",
+        headers: ownerHeaders,
+        body: JSON.stringify({
+          firstName: "Анна",
+          lastName: "Кузнецова",
+          gender: "female",
+        }),
+      },
+    );
+    const momA = (await momAResponse.json()).person;
+
+    const momBResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeBId}/persons`,
+      {
+        method: "POST",
+        headers: ownerHeaders,
+        body: JSON.stringify({sourcePersonId: momA.id}),
+      },
+    );
+    const momB = (await momBResponse.json()).person;
+    assert.equal(momA.identityId, momB.identityId,
+        "sourcePersonId must share identityId");
+
+    // ── 1. addPersonMedia on tree A propagates to tree B
+    const photoUrl = "https://media.rodnya-tree.ru/example/mom.jpg";
+    const addResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeAId}/persons/${momA.id}/media`,
+      {
+        method: "POST",
+        headers: ownerHeaders,
+        body: JSON.stringify({
+          url: photoUrl,
+          type: "photo",
+          isPrimary: true,
+        }),
+      },
+    );
+    assert.equal(addResponse.status, 201);
+    const addPayload = await addResponse.json();
+    assert.equal(addPayload.person.primaryPhotoUrl, photoUrl);
+    // Propagation result is exposed for the client to optimistically
+    // refetch / invalidate caches on the affected trees.
+    assert.ok(Array.isArray(addPayload.propagatedTo));
+    assert.equal(addPayload.propagatedTo.length, 1);
+    assert.equal(addPayload.propagatedTo[0].treeId, treeBId);
+
+    // Tree B's mom now carries the same photo without us touching her.
+    const momBAfterResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeBId}/persons/${momB.id}`,
+      {headers: {authorization: `Bearer ${owner.accessToken}`}},
+    );
+    const momBAfter = (await momBAfterResponse.json()).person;
+    assert.equal(momBAfter.primaryPhotoUrl, photoUrl);
+    assert.ok(
+      Array.isArray(momBAfter.photoGallery) &&
+        momBAfter.photoGallery.some((entry) => entry.url === photoUrl),
+      "tree-B mom photoGallery must mirror tree-A mom photoGallery",
+    );
+
+    // ── 2. updatePersonMedia (mark as non-primary) propagates too
+    const mediaId = addPayload.media.id;
+    const updateResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeAId}/persons/${momA.id}/media/${mediaId}`,
+      {
+        method: "PATCH",
+        headers: ownerHeaders,
+        body: JSON.stringify({caption: "На пикнике"}),
+      },
+    );
+    assert.equal(updateResponse.status, 200);
+    const updatePayload = await updateResponse.json();
+    assert.equal(updatePayload.propagatedTo.length, 1);
+
+    // ── 3. deletePersonMedia propagates the empty gallery too
+    const deleteResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeAId}/persons/${momA.id}/media/${mediaId}`,
+      {
+        method: "DELETE",
+        headers: ownerHeaders,
+      },
+    );
+    assert.equal(deleteResponse.status, 200);
+    const deletePayload = await deleteResponse.json();
+    assert.equal(deletePayload.propagatedTo.length, 1);
+
+    const momBFinalResponse = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeBId}/persons/${momB.id}`,
+      {headers: {authorization: `Bearer ${owner.accessToken}`}},
+    );
+    const momBFinal = (await momBFinalResponse.json()).person;
+    assert.equal(momBFinal.primaryPhotoUrl, null);
+    assert.equal(
+      Array.isArray(momBFinal.photoGallery) ? momBFinal.photoGallery.length : 0,
+      0,
+      "tree-B gallery must mirror the now-empty tree-A gallery",
+    );
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
 // Phase 1.2 of unified-graph migration: voltage-indicator matcher.
 // For one specific person, surface medium+high confidence cross-
 // tree matches the user hasn't linked or dismissed. The Flutter

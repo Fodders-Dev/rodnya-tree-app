@@ -575,6 +575,11 @@ function registerTreeRoutes(
       res.status(201).json({
         person: mapPerson(result.person),
         media: result.media,
+        // Phase 1.1 photo propagation: list of {treeId, personId}
+        // pairs the change fanned out to. Flutter client uses
+        // this to invalidate graph snapshots on the affected
+        // trees so the UI doesn't stay stale.
+        propagatedTo: result.propagatedTo || [],
       });
     },
   );
@@ -607,6 +612,7 @@ function registerTreeRoutes(
       res.json({
         person: mapPerson(result.person),
         media: result.media,
+        propagatedTo: result.propagatedTo || [],
       });
     },
   );
@@ -642,6 +648,7 @@ function registerTreeRoutes(
       res.json({
         person: mapPerson(result.person),
         deletedMediaId: result.deletedMedia?.id || req.params.mediaId,
+        propagatedTo: result.propagatedTo || [],
       });
     },
   );
