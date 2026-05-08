@@ -895,9 +895,12 @@ void main() {
       expect(find.text('Кровная связь'), findsOneWidget);
       expect(find.text('Шагов: 1'), findsOneWidget);
       expect(find.text('Еще путей: 1'), findsOneWidget);
+      // Path summary now appears both inline (in the «Связь» section
+      // under the hero card) AND inside the path-relations bottom
+      // sheet — so we expect one-or-more, not exactly-one.
       expect(
         find.text('Кузнецов Артем -> Кузнецов Андрей Анатольевич'),
-        findsOneWidget,
+        findsWidgets,
       );
       expect(find.text('Это вы'), findsOneWidget);
       expect(find.text('Выбранный человек'), findsOneWidget);
@@ -930,9 +933,12 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Кровная связь'), findsOneWidget);
+      // Path summary now appears both inline (in the «Связь» section
+      // under the hero card) AND inside the path-relations bottom
+      // sheet — so we expect one-or-more, not exactly-one.
       expect(
         find.text('Кузнецов Артем -> Кузнецов Андрей Анатольевич'),
-        findsOneWidget,
+        findsWidgets,
       );
     },
   );

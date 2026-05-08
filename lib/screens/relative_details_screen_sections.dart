@@ -286,6 +286,8 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
                       const EdgeInsets.fromLTRB(12, 18, 12, 0),
                   child: _buildDuplicateSuggestionBanner(),
                 ),
+              if (_kinshipSectionHasContent())
+                _buildKinshipSection(),
               if (_relativeFactsHaveContent(dossier, person))
                 _buildRelativeFactsSection(dossier, person),
               if (dossier.familySummary.trim().isNotEmpty ||
@@ -359,6 +361,61 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
     if (birth != null && death != null) return '$birth — $death';
     if (birth != null) return '$birth г.';
     return '— $death';
+  }
+
+  bool _kinshipSectionHasContent() {
+    final descriptor = _viewerDescriptor;
+    if (descriptor == null) return false;
+    if (_person?.id == _currentUserPersonId) return false;
+    final label = (descriptor.primaryRelationLabel ?? '').trim();
+    final summary = (descriptor.pathSummary ?? '').trim();
+    return label.isNotEmpty || summary.isNotEmpty;
+  }
+
+  Widget _buildKinshipSection() {
+    final descriptor = _viewerDescriptor!;
+    final label = (descriptor.primaryRelationLabel ?? '').trim();
+    final summary = (descriptor.pathSummary ?? '').trim();
+    final modifier = descriptor.isBlood
+        ? 'кровное родство'
+        : 'родственная связь';
+    final altCount = descriptor.alternatePathCount;
+    final altSuffix = altCount > 0
+        ? altCount == 1
+            ? ' · ещё 1 путь'
+            : ' · ещё $altCount пути'
+        : '';
+
+    final rows = <Widget>[];
+    if (label.isNotEmpty) {
+      rows.add(InfoRow(
+        icon: Icons.diversity_3_outlined,
+        label: 'Родство',
+        value: '$label · $modifier$altSuffix',
+        isFirst: rows.isEmpty,
+      ));
+    }
+    if (summary.isNotEmpty) {
+      rows.add(InfoRow(
+        icon: Icons.route_outlined,
+        label: 'Путь',
+        value: summary,
+        isFirst: rows.isEmpty,
+        onTap: _showRelationPathSheet,
+      ));
+    }
+    if (rows.isNotEmpty) {
+      final last = rows.removeLast() as InfoRow;
+      rows.add(InfoRow(
+        icon: last.icon,
+        label: last.label,
+        value: last.value,
+        isFirst: last.isFirst,
+        isLast: true,
+        onTap: last.onTap,
+      ));
+    }
+    return ProfileSection(title: 'Связь', children: rows);
   }
 
   bool _relativeFactsHaveContent(PersonDossier d, FamilyPerson p) {
