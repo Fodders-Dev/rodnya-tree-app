@@ -25,7 +25,8 @@ import 'package:rodnya/providers/theme_provider.dart';
 import 'package:rodnya/providers/tree_provider.dart';
 import 'package:rodnya/screens/create_post_screen.dart';
 import 'package:rodnya/screens/create_story_screen.dart';
-import 'package:rodnya/screens/profile_edit_screen.dart';
+import 'package:rodnya/widgets/profile_edit_sheet.dart';
+import 'package:rodnya/widgets/profile_redesign.dart';
 import 'package:rodnya/screens/settings_screen.dart';
 import 'package:rodnya/services/app_status_service.dart';
 import 'package:rodnya/services/local_storage_service.dart';
@@ -381,42 +382,73 @@ void main() {
     expect(find.text('Поделитесь моментом'), findsOneWidget);
   });
 
-  testWidgets('ProfileEditScreen shows sectioned profile form', (tester) async {
-    await tester.pumpWidget(_withTheme(const ProfileEditScreen()));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
+  testWidgets('Profile Redesign edit sheet renders 4 named steps',
+      (tester) async {
+    // The legacy ProfileEditScreen has been retired in favour of
+    // showProfileEditSheet — a 4-step bottom sheet («Кто я», «Жизнь»,
+    // «Медиа», «Приватность») that ProfileScreen pops on edit. The
+    // /profile/edit deep link now redirects to /profile?edit=1 which
+    // triggers the same sheet. We assert the sheet's structure here so
+    // any regression to the redesigned editing surface fails the build.
+    await tester.pumpWidget(_withTheme(
+      Builder(builder: (ctx) {
+        return TextButton(
+          onPressed: () => showProfileEditSheet(
+            ctx,
+            initial: const ProfileEditDraft(
+              firstName: 'Анна',
+              lastName: 'Кузнецова',
+              patronymic: 'Сергеевна',
+              bio: 'Хранитель семейного архива',
+            ),
+            isSelf: true,
+          ),
+          child: const Text('open-sheet'),
+        );
+      }),
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('open-sheet'));
+    await tester.pumpAndSettle();
 
-    expect(find.text('Профиль'), findsOneWidget);
-    expect(find.text('Фото профиля'), findsOneWidget);
-    expect(find.text('Основное'), findsWidgets);
-    expect(find.text('О человеке'), findsOneWidget);
-    expect(find.text('Учёба и дело'), findsOneWidget);
-    expect(find.text('Ценности и взгляды'), findsOneWidget);
-    expect(find.text('Что хотите рассказать семье'), findsOneWidget);
-    expect(find.text('Родной город'), findsOneWidget);
-    expect(find.text('Языки'), findsOneWidget);
-    expect(find.text('Интересы и увлечения'), findsOneWidget);
-    expect(find.text('Подтверждённые каналы'), findsOneWidget);
-    expect(find.text('Контакты и приватность'), findsOneWidget);
-    expect(find.text('Все в Родне'), findsWidgets);
-    expect(find.text('Мои деревья'), findsWidgets);
-    expect(find.text('Выбранные деревья'), findsWidgets);
-    expect(find.text('Выбранные ветки'), findsWidgets);
-    expect(find.text('Конкретные люди'), findsWidgets);
-    expect(find.text('Сохранить'), findsOneWidget);
+    // Sheet opens on step 0 («Кто я») — title shown in the header,
+    // step indicator is `1 / 4`, and the step renders the redesign
+    // input fields. _FieldGroup labels are uppercased per design.
+    expect(find.text('Кто я'), findsWidgets);
+    expect(find.text('1 / 4'), findsOneWidget);
+    expect(find.text('ИМЯ'), findsWidgets);
+    expect(find.text('ФАМИЛИЯ'), findsWidgets);
+    expect(find.text('ОТЧЕСТВО'), findsWidgets);
   });
 
-  testWidgets('ProfileEditScreen explains that phone is only a contact',
+  testWidgets('Profile Redesign edit sheet exposes privacy scope buttons',
       (tester) async {
-    await tester.pumpWidget(_withTheme(const ProfileEditScreen()));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pumpWidget(_withTheme(
+      Builder(builder: (ctx) {
+        return TextButton(
+          onPressed: () => showProfileEditSheet(
+            ctx,
+            initial: const ProfileEditDraft(
+              firstName: 'Анна',
+              lastName: 'Кузнецова',
+            ),
+            isSelf: true,
+            initialStep: 3,
+          ),
+          child: const Text('open-privacy'),
+        );
+      }),
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('open-privacy'));
+    await tester.pumpAndSettle();
 
-    expect(find.text('Подтверждённые каналы'), findsOneWidget);
-    expect(
-      find.textContaining('Телефон больше не считается подтверждённым каналом'),
-      findsOneWidget,
-    );
+    // Step 3 («Приватность») uses PrivacyScopeRow buttons with the
+    // canonical «Только я / Семья / Все» trio per content block.
+    expect(find.byType(PrivacyScopeRow), findsWidgets);
+    expect(find.text('Только я'), findsWidgets);
+    expect(find.text('Семья'), findsWidgets);
+    expect(find.text('Все'), findsWidgets);
   });
 
   testWidgets('SettingsScreen shows compact settings sections', (tester) async {

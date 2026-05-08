@@ -23,7 +23,6 @@ import '../screens/find_relative_screen.dart';
 import '../screens/home_screen.dart';
 import '../screens/offline_profiles_screen.dart';
 import '../screens/post_search_screen.dart';
-import '../screens/profile_edit_screen.dart';
 import '../screens/profile_screen.dart';
 import '../screens/story_archive_screen.dart';
 import '../screens/relatives_screen.dart';
@@ -424,15 +423,17 @@ class AppShellRouteModule {
               child: ProfileScreen(),
             ),
             routes: [
+              // Profile Redesign: legacy ProfileEditScreen has been retired
+              // in favour of the 4-step bottom sheet (showProfileEditSheet)
+              // launched from ProfileScreen. We keep `/profile/edit` as a
+              // working URL so existing deep-links (auth flow, onboarding
+              // flow, snackbar shortcuts) keep redirecting to «edit my
+              // profile» — the redirect just lands on /profile with an
+              // ?edit=1 query param that ProfileScreen reacts to by
+              // auto-opening the sheet on the next frame.
               GoRoute(
                 path: 'edit',
-                parentNavigatorKey: rootNavigatorKey,
-                pageBuilder: (context, state) => RodnyaCustomTransitionPage(
-                  key: state.pageKey,
-                  constrainWidth: true,
-                  child: const ProfileEditScreen(),
-                  transitionsBuilder: AppRouteTransitions.slide,
-                ),
+                redirect: (context, state) => '/profile?edit=1',
               ),
               GoRoute(
                 // Archive of the user's expired stories — IG / TG model.

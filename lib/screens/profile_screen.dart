@@ -175,6 +175,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ? 'Сначала выберите активный круг друзей на вкладке "Дерево" или "Родные"'
       : 'Сначала выберите активное дерево на вкладке "Дерево" или "Родные"';
 
+  /// Tracks whether we've already auto-opened the edit sheet for the
+  /// current `?edit=...` query param so the deep-link only fires once
+  /// per visit. Cleared via `_clearEditQueryParam` after the sheet
+  /// dismisses.
+  bool _autoEditConsumed = false;
+
   @override
   void initState() {
     super.initState();
@@ -203,6 +209,46 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ),
       );
     }
+    _maybeHandleEditQueryParam();
+  }
+
+  /// Reads `?edit=1` (or `?edit=<step>` 0..3) from the route URI and
+  /// pops the redesign edit sheet on the next frame. Used as the
+  /// canonical entry point for the legacy `/profile/edit` deep link
+  /// — the route now redirects to `/profile?edit=1` so external
+  /// callers (auth flow, onboarding flow, push notifications) keep
+  /// working without knowing about the new modal sheet.
+  void _maybeHandleEditQueryParam() {
+    if (_autoEditConsumed) return;
+    if (_userProfile == null) return;
+    // GoRouter may not be installed (e.g. in widget tests that mount
+    // ProfileScreen under a bare MaterialApp). Treat absence as «no
+    // edit query param» — the screen still works, the deep-link just
+    // doesn't auto-open the sheet.
+    String? raw;
+    try {
+      raw = GoRouterState.of(context).uri.queryParameters['edit'];
+    } catch (_) {
+      return;
+    }
+    if (raw == null || raw.isEmpty) return;
+    _autoEditConsumed = true;
+    final step = int.tryParse(raw)?.clamp(0, 3) ?? 0;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      await _openProfileEditSheet(initialStep: step);
+      if (!mounted) return;
+      // Clear the query param so back-navigation / deep-link
+      // refreshes don't reopen the sheet.
+      try {
+        final routerState = GoRouterState.of(context);
+        if (routerState.uri.queryParameters.containsKey('edit')) {
+          context.go('/profile');
+        }
+      } catch (_) {
+        // No GoRouter — nothing to clear.
+      }
+    });
   }
 
   Future<void> _signOut() async {
@@ -373,6 +419,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
           currentUserId: userId,
         ),
       );
+      // Profile is now hydrated — if we arrived via /profile?edit=1
+      // (the redirect target for legacy /profile/edit deep links),
+      // pop the redesign edit sheet on the next frame.
+      _maybeHandleEditQueryParam();
     } catch (e) {
       // Cache-first soft failure: if we already painted something
       // from disk, downgrade the error to a quiet log so the screen
