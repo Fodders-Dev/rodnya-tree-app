@@ -2,6 +2,8 @@
 import 'dart:async';
 import 'dart:ui';
 
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
@@ -729,62 +731,70 @@ class _ChatsListScreenState extends State<ChatsListScreen>
     required ThemeData theme,
     required RodnyaDesignTokens tokens,
   }) {
+    // Skip BackdropFilter on Android — see profile_screen for the
+    // perf reasoning. The list scrolls a lot, so avoiding the blur
+    // every frame matters.
+    final useBlur = defaultTargetPlatform != TargetPlatform.android;
+    final body = Container(
+      height: 76,
+      decoration: BoxDecoration(
+        color: tokens.surface.withValues(
+          alpha: theme.brightness == Brightness.dark
+              ? (useBlur ? 0.74 : 0.96)
+              : (useBlur ? 0.78 : 0.97),
+        ),
+        border: Border(
+          bottom: BorderSide(
+            color: tokens.surfaceLine.withValues(alpha: 0.5),
+            width: 0.6,
+          ),
+        ),
+      ),
+      padding: const EdgeInsets.fromLTRB(18, 12, 12, 14),
+      child: SafeArea(
+        bottom: false,
+        child: Row(
+          children: [
+            Text(
+              'Чаты',
+              style: AppTheme.serif(
+                color: tokens.ink,
+                fontSize: 22,
+                fontWeight: FontWeight.w600,
+                letterSpacing: -0.22,
+              ),
+            ),
+            const Spacer(),
+            _buildTopbarPillButton(
+              tokens: tokens,
+              tooltip: 'Поиск',
+              onTap: _focusSearch,
+              child: Icon(
+                Icons.search_rounded,
+                size: 19,
+                color: tokens.ink,
+              ),
+            ),
+            const SizedBox(width: 8),
+            _buildTopbarPillButton(
+              tokens: tokens,
+              tooltip: 'Новый чат',
+              onTap: _openChatComposer,
+              child: Icon(
+                Icons.edit_outlined,
+                size: 18,
+                color: tokens.accent,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!useBlur) return body;
     return ClipRect(
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-        child: Container(
-          height: 76,
-          decoration: BoxDecoration(
-            color: tokens.surface.withValues(
-              alpha: theme.brightness == Brightness.dark ? 0.74 : 0.78,
-            ),
-            border: Border(
-              bottom: BorderSide(
-                color: tokens.surfaceLine.withValues(alpha: 0.5),
-                width: 0.6,
-              ),
-            ),
-          ),
-          padding: const EdgeInsets.fromLTRB(18, 12, 12, 14),
-          child: SafeArea(
-            bottom: false,
-            child: Row(
-              children: [
-                Text(
-                  'Чаты',
-                  style: AppTheme.serif(
-                    color: tokens.ink,
-                    fontSize: 22,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: -0.22,
-                  ),
-                ),
-                const Spacer(),
-                _buildTopbarPillButton(
-                  tokens: tokens,
-                  tooltip: 'Поиск',
-                  onTap: _focusSearch,
-                  child: Icon(
-                    Icons.search_rounded,
-                    size: 19,
-                    color: tokens.ink,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                _buildTopbarPillButton(
-                  tokens: tokens,
-                  tooltip: 'Новый чат',
-                  onTap: _openChatComposer,
-                  child: Icon(
-                    Icons.edit_outlined,
-                    size: 18,
-                    color: tokens.accent,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
+        child: body,
       ),
     );
   }

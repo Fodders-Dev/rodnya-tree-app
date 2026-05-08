@@ -29,7 +29,7 @@ void main() {
     binding.platformDispatcher.views.first.resetDevicePixelRatio();
   });
 
-  Widget _wrap(Widget child) {
+  Widget wrap(Widget child) {
     return MaterialApp(
       theme: ThemeData(
         extensions: const <ThemeExtension<dynamic>>[RodnyaDesignTokens.light],
@@ -44,7 +44,7 @@ void main() {
 
   testWidgets('ProfileHeroCard fits a 360 dp viewport without overflow',
       (tester) async {
-    await tester.pumpWidget(_wrap(
+    await tester.pumpWidget(wrap(
       ProfileHeroCard(
         fullName: 'Кузнецов Андрей Анатольевич',
         firstName: 'Андрей',
@@ -79,7 +79,7 @@ void main() {
 
   testWidgets('ProfileHeroCard memorial variant fits 360 dp without overflow',
       (tester) async {
-    await tester.pumpWidget(_wrap(
+    await tester.pumpWidget(wrap(
       ProfileHeroCard(
         fullName: 'Кузнецов Иван Степанович',
         firstName: 'Иван',
@@ -107,7 +107,7 @@ void main() {
 
   testWidgets('ProfileSection + InfoRow renders cleanly at 360 dp',
       (tester) async {
-    await tester.pumpWidget(_wrap(
+    await tester.pumpWidget(wrap(
       const ProfileSection(
         title: 'Образование и работа',
         children: [
@@ -133,7 +133,7 @@ void main() {
 
   testWidgets('ProfileCompletionMeterCard with chips fits 360 dp',
       (tester) async {
-    await tester.pumpWidget(_wrap(
+    await tester.pumpWidget(wrap(
       ProfileCompletionMeterCard(
         percent: 62,
         suggestions: [
@@ -151,7 +151,7 @@ void main() {
   });
 
   testWidgets('PrivacyScopeRow fits 360 dp', (tester) async {
-    await tester.pumpWidget(_wrap(
+    await tester.pumpWidget(wrap(
       Padding(
         padding: const EdgeInsets.all(12),
         child: PrivacyScopeRow(
@@ -170,7 +170,7 @@ void main() {
     // Пригласить в Родню / Предложить правку / Это моя карточка /
     // Приватность). ProfileHeroCard wraps `actions` with Wrap so all
     // five fit even at 360 dp.
-    await tester.pumpWidget(_wrap(
+    await tester.pumpWidget(wrap(
       ProfileHeroCard(
         fullName: 'Кузнецов Андрей',
         firstName: 'Андрей',
@@ -216,7 +216,7 @@ void main() {
   });
 
   testWidgets('Section with very long InfoRow value wraps', (tester) async {
-    await tester.pumpWidget(_wrap(
+    await tester.pumpWidget(wrap(
       const ProfileSection(
         title: 'Семья',
         children: [

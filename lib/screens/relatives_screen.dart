@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
@@ -1625,51 +1627,58 @@ class _RelativesScreenState extends State<RelativesScreen> {
     required String? selectedTreeId,
     required bool isFriendsTree,
   }) {
+    // Skip BackdropFilter on Android (perf) — same pattern as
+    // home/profile/chats topbars.
+    final useBlur = defaultTargetPlatform != TargetPlatform.android;
+    final body = Container(
+      height: 76,
+      decoration: BoxDecoration(
+        color: tokens.surface.withValues(
+          alpha: theme.brightness == Brightness.dark
+              ? (useBlur ? 0.74 : 0.96)
+              : (useBlur ? 0.78 : 0.97),
+        ),
+        border: Border(
+          bottom: BorderSide(
+            color: tokens.surfaceLine.withValues(alpha: 0.5),
+            width: 0.6,
+          ),
+        ),
+      ),
+      padding: const EdgeInsets.fromLTRB(18, 12, 12, 14),
+      child: SafeArea(
+        bottom: false,
+        child: Row(
+          children: [
+            Text(
+              isFriendsTree ? 'Круг' : 'Родные',
+              style: AppTheme.serif(
+                color: tokens.ink,
+                fontSize: 22,
+                fontWeight: FontWeight.w600,
+                letterSpacing: -0.22,
+              ),
+            ),
+            const SizedBox(width: 12),
+            // Phase 6.1: branch switcher chip in the relatives
+            // top bar so the user can flip "родители папа /
+            // папина / семья жены" without leaving the screen.
+            const Flexible(child: BranchSwitcherChip()),
+            const Spacer(),
+            ..._buildRelativesAppBarActions(
+              treeProvider: treeProvider,
+              selectedTreeId: selectedTreeId,
+              isFriendsTree: isFriendsTree,
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!useBlur) return body;
     return ClipRect(
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-        child: Container(
-          height: 76,
-          decoration: BoxDecoration(
-            color: tokens.surface.withValues(
-              alpha: theme.brightness == Brightness.dark ? 0.74 : 0.78,
-            ),
-            border: Border(
-              bottom: BorderSide(
-                color: tokens.surfaceLine.withValues(alpha: 0.5),
-                width: 0.6,
-              ),
-            ),
-          ),
-          padding: const EdgeInsets.fromLTRB(18, 12, 12, 14),
-          child: SafeArea(
-            bottom: false,
-            child: Row(
-              children: [
-                Text(
-                  isFriendsTree ? 'Круг' : 'Родные',
-                  style: AppTheme.serif(
-                    color: tokens.ink,
-                    fontSize: 22,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: -0.22,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                // Phase 6.1: branch switcher chip in the relatives
-                // top bar so the user can flip "родители папа /
-                // папина / семья жены" without leaving the screen.
-                const Flexible(child: BranchSwitcherChip()),
-                const Spacer(),
-                ..._buildRelativesAppBarActions(
-                  treeProvider: treeProvider,
-                  selectedTreeId: selectedTreeId,
-                  isFriendsTree: isFriendsTree,
-                ),
-              ],
-            ),
-          ),
-        ),
+        child: body,
       ),
     );
   }

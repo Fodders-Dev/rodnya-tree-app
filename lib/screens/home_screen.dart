@@ -4,7 +4,8 @@ import 'dart:ui';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, kIsWeb, TargetPlatform;
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
@@ -596,75 +597,84 @@ class _HomeScreenState extends State<HomeScreen> {
     required ThemeData theme,
     required RodnyaDesignTokens tokens,
   }) {
+    // See profile_screen._buildProfileTopbar — same perf reasoning.
+    // BackdropFilter is the heaviest per-frame cost on Samsung S20
+    // FE class hardware; skip on Android and bump the surface alpha
+    // to ~96% so the look is essentially preserved.
+    final useBlur = defaultTargetPlatform != TargetPlatform.android;
+    final body = Container(
+      height: 76,
+      decoration: BoxDecoration(
+        color: tokens.surface.withValues(
+          alpha: theme.brightness == Brightness.dark
+              ? (useBlur ? 0.74 : 0.96)
+              : (useBlur ? 0.78 : 0.97),
+        ),
+        border: Border(
+          bottom: BorderSide(
+            color: tokens.surfaceLine.withValues(alpha: 0.5),
+            width: 0.6,
+          ),
+        ),
+      ),
+      padding: const EdgeInsets.fromLTRB(18, 12, 12, 14),
+      child: SafeArea(
+        bottom: false,
+        child: Row(
+          children: [
+            Text(
+              'Родня',
+              style: AppTheme.serif(
+                color: tokens.ink,
+                fontSize: 22,
+                fontWeight: FontWeight.w600,
+                letterSpacing: -0.22,
+              ),
+            ),
+            const SizedBox(width: 12),
+            // Phase 6.1: branch switcher chip — tap opens a bottom
+            // sheet with all of the user's branches. Hidden when
+            // there's nothing to switch to (fresh account, no trees
+            // yet).
+            const Flexible(child: BranchSwitcherChip()),
+            const Spacer(),
+            _buildTopbarIconButton(
+              tokens: tokens,
+              tooltip: 'Поиск по постам',
+              onTap: () => context.push('/post/search'),
+              child: Icon(
+                Icons.search_rounded,
+                size: 20,
+                color: tokens.accent,
+              ),
+            ),
+            const SizedBox(width: 8),
+            _buildTopbarIconButton(
+              tokens: tokens,
+              child: _buildNotificationsAction(tokens: tokens),
+              tooltip: 'Активность',
+              onTap: () => context.push('/notifications'),
+            ),
+            const SizedBox(width: 8),
+            _buildTopbarIconButton(
+              tokens: tokens,
+              tooltip: 'Выбрать дерево',
+              onTap: () => context.go('/tree?selector=1'),
+              child: Icon(
+                Icons.account_tree_outlined,
+                size: 19,
+                color: tokens.accent,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!useBlur) return body;
     return ClipRect(
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-        child: Container(
-          height: 76,
-          decoration: BoxDecoration(
-            color: tokens.surface.withValues(
-              alpha: theme.brightness == Brightness.dark ? 0.74 : 0.78,
-            ),
-            border: Border(
-              bottom: BorderSide(
-                color: tokens.surfaceLine.withValues(alpha: 0.5),
-                width: 0.6,
-              ),
-            ),
-          ),
-          padding: const EdgeInsets.fromLTRB(18, 12, 12, 14),
-          child: SafeArea(
-            bottom: false,
-            child: Row(
-              children: [
-                Text(
-                  'Родня',
-                  style: AppTheme.serif(
-                    color: tokens.ink,
-                    fontSize: 22,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: -0.22,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                // Phase 6.1: branch switcher chip — tap opens a
-                // bottom sheet with all of the user's branches.
-                // Hidden when there's nothing to switch to (fresh
-                // account, no trees yet).
-                const Flexible(child: BranchSwitcherChip()),
-                const Spacer(),
-                _buildTopbarIconButton(
-                  tokens: tokens,
-                  tooltip: 'Поиск по постам',
-                  onTap: () => context.push('/post/search'),
-                  child: Icon(
-                    Icons.search_rounded,
-                    size: 20,
-                    color: tokens.accent,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                _buildTopbarIconButton(
-                  tokens: tokens,
-                  child: _buildNotificationsAction(tokens: tokens),
-                  tooltip: 'Активность',
-                  onTap: () => context.push('/notifications'),
-                ),
-                const SizedBox(width: 8),
-                _buildTopbarIconButton(
-                  tokens: tokens,
-                  tooltip: 'Выбрать дерево',
-                  onTap: () => context.go('/tree?selector=1'),
-                  child: Icon(
-                    Icons.account_tree_outlined,
-                    size: 19,
-                    color: tokens.accent,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
+        child: body,
       ),
     );
   }
