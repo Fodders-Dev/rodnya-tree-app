@@ -685,9 +685,10 @@ test(
     assert.ok(result);
     assert.equal(result.label, "мама");
     assert.equal(result.degree, 1);
-    // Walking self → mom: source self is the CHILD, so edge type
-    // is "child" — describeBloodRelation reads child as an UP step.
-    assert.deepEqual(result.edges, ["child"]);
+    // Edge label = role of TARGET. Walking self → mom: target IS
+    // the parent → edge type "parent". describeBloodRelation reads
+    // "parent" as an UP step (towards ancestor).
+    assert.deepEqual(result.edges, ["parent"]);
   },
 );
 
@@ -728,8 +729,8 @@ test(
     assert.ok(result);
     assert.equal(result.label, "бабушка");
     assert.equal(result.degree, 2);
-    // Two child-edge hops: self (child) → mom (child) → grandma.
-    assert.deepEqual(result.edges, ["child", "child"]);
+    // Two parent-target hops: self → mom (parent) → grandma (parent).
+    assert.deepEqual(result.edges, ["parent", "parent"]);
     // Chain includes self + mom + grandma in order.
     assert.deepEqual(result.chain, ["id-self", "id-mom", "id-grandma"]);
   },
@@ -824,8 +825,8 @@ test(
     assert.ok(result);
     assert.equal(result.label, "двоюродный сестра"); // grammatical mismatch noted — acceptable for v1
     assert.equal(result.degree, 3);
-    // self (child) → mom → aunt (sibling of mom) → cousin (parent of cousin = aunt).
-    assert.deepEqual(result.edges, ["child", "sibling", "parent"]);
+    // self → mom (parent) → aunt (sibling) → cousin (child).
+    assert.deepEqual(result.edges, ["parent", "sibling", "child"]);
   },
 );
 
@@ -937,6 +938,36 @@ test(
     );
     assert.equal(result.label, "прабабушка");
     assert.equal(result.degree, 3);
+  },
+);
+
+test(
+  "findBloodRelation: derives missing relation2to1 via mirror so one-sided legacy rows still walk",
+  () => {
+    const {store, db} = buildFamilyDb(
+      [
+        {id: "p-self", identityId: "id-self", name: "Сам", gender: "male"},
+        {id: "p-mom", identityId: "id-mom", name: "Мама", gender: "female"},
+      ],
+      [
+        // Legacy import where only relation1to2 was set — the
+        // mirror needs to come from canonicalBloodType('parent') →
+        // 'child' for the reverse adjacency edge to exist.
+        {
+          person1Id: "p-mom",
+          person2Id: "p-self",
+          relation1to2: "parent",
+          relation2to1: null,
+        },
+      ],
+    );
+    const result = store._findBloodRelationBetween(
+      db,
+      "id-self",
+      "id-mom",
+    );
+    assert.ok(result, "BFS must reach mom even with relation2to1 missing");
+    assert.equal(result.label, "мама");
   },
 );
 

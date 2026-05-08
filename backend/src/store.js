@@ -242,7 +242,7 @@ function valuesEqualForPropagation(field, a, b) {
 // are NOT blood — they connect family but not DNA — and are
 // deliberately excluded so "найти родство" stays meaningful.
 function canonicalBloodType(rawType) {
-  switch (String(rawType || "").toLowerCase()) {
+  switch (String(rawType || "").toLowerCase().trim()) {
     case "parent":
       return "parent";
     case "child":
@@ -254,6 +254,20 @@ function canonicalBloodType(rawType) {
   }
 }
 
+// Mirror of a blood type — used when one side of a legacy relation
+// row was stored without a relation2to1 value. The existing tree
+// code in `_buildBranchVisiblePersonIds` (line ~12420) does the
+// same fallback via `relationMirror`; doing it here keeps the
+// blood-graph in sync with what the rest of the backend already
+// considers "family" for that record.
+function mirrorBloodType(rawType) {
+  const canonical = canonicalBloodType(rawType);
+  if (canonical === "parent") return "child";
+  if (canonical === "child") return "parent";
+  if (canonical === "sibling") return "sibling";
+  return null;
+}
+
 // Russian relationship label generator. Takes the edge sequence
 // produced by the BFS (e.g. ["parent","sibling","child"]) and the
 // target person's gender, returns a human label + degree. Handles
@@ -262,17 +276,19 @@ function canonicalBloodType(rawType) {
 // (zigzag paths through marriage etc., though the engine doesn't
 // produce those today since spouse edges aren't in the graph).
 function describeBloodRelation(edges, gender) {
-  // Edge semantics: each edge label is the SOURCE side's role.
-  // - "child" edge means walker is the child going to a parent
-  //   (going UP — towards ancestor).
-  // - "parent" edge means walker is the parent going to a child
-  //   (going DOWN — towards descendant).
-  // - "sibling" edge stays sibling (lateral).
+  // Edge semantics: each edge label is the role of the TARGET side
+  // (the person we're walking TO).
+  // - "parent" edge means I went TO a parent (going UP — towards
+  //   ancestor).
+  // - "child" edge means I went TO a child (going DOWN — towards
+  //   descendant).
+  // - "sibling" edge stays lateral.
+  // Matches the convention in _buildBranchVisiblePersonIds.
   let up = 0;
   let hasSibling = false;
   let down = 0;
   let i = 0;
-  while (i < edges.length && edges[i] === "child") {
+  while (i < edges.length && edges[i] === "parent") {
     up++;
     i++;
   }
@@ -280,7 +296,7 @@ function describeBloodRelation(edges, gender) {
     hasSibling = true;
     i++;
   }
-  while (i < edges.length && edges[i] === "parent") {
+  while (i < edges.length && edges[i] === "child") {
     down++;
     i++;
   }
@@ -9980,20 +9996,36 @@ class FileStore {
       if (!adjacency.has(id)) adjacency.set(id, []);
       return adjacency.get(id);
     };
+    // Adjacency uses the role-of-TARGET convention. For a relation
+    // (p1, p2, relation1to2='parent') — p1 is parent of p2 — we
+    // record:
+    //   adjacency[p2] += {neighbor: p1, edgeType: 'parent'}
+    //   adjacency[p1] += {neighbor: p2, edgeType: 'child'}
+    // Walking p2 → p1 means I traversed an edge whose target is a
+    // 'parent' (going UP / towards ancestor). Walking p1 → p2 means
+    // I traversed an edge whose target is a 'child' (going DOWN /
+    // towards descendant). This matches the convention in
+    // _buildBranchVisiblePersonIds (line ~12420) so two engines
+    // describe the same family the same way.
+    //
+    // If `relation2to1` is missing we derive it via `mirrorBloodType`
+    // — the existing branch-visibility code does the same fallback
+    // through `relationMirror`. Without this, half of legacy rows
+    // (one-sided imports) silently drop out of the blood graph and
+    // BFS returns "no path" for relatives that obviously share DNA.
     for (const relation of relations) {
       if (relation.deletedAt) continue;
       const r1 = canonicalBloodType(relation.relation1to2);
-      const r2 = canonicalBloodType(relation.relation2to1);
-      // Both directions must agree on being blood — a one-sided
-      // (e.g. "parent" / "step-child") edge is treated as non-
-      // blood for this engine.
+      const r2 =
+        canonicalBloodType(relation.relation2to1) ||
+        mirrorBloodType(relation.relation1to2);
       if (!r1 || !r2) continue;
-      ensure(relation.person1Id).push({
-        neighbor: relation.person2Id,
-        edgeType: r1,
-      });
       ensure(relation.person2Id).push({
         neighbor: relation.person1Id,
+        edgeType: r1,
+      });
+      ensure(relation.person1Id).push({
+        neighbor: relation.person2Id,
         edgeType: r2,
       });
     }
