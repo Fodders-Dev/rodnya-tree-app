@@ -349,6 +349,41 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
             tooltip: _isFriendsTree ? 'Найти связь' : 'Найти родственника',
             onPressed: () => context.go('/relatives'),
           ),
+          // Selection mode toggle — top-level visible icon instead
+          // of buried in the «...» overflow. This is the user's
+          // primary tool for slicing the tree («выделить мамину
+          // линию и одной кнопкой собрать ветку»), so hiding it
+          // behind a popup made it functionally invisible. When
+          // active the button shows the close glyph + accent fill
+          // so the user has a clear "exit selection" affordance
+          // without hunting through the menu.
+          //
+          // On compact viewports we drop the visible button (the
+          // toolbar Row would overflow) and rely on the overflow
+          // popup-menu entry — same selection flow, one extra tap.
+          if (!compact)
+            _buildTreeToolbarIconButton(
+              icon: _isSelectionMode
+                  ? Icons.close_rounded
+                  : Icons.check_box_outlined,
+              tooltip: _isSelectionMode
+                  ? 'Выйти из режима выбора'
+                  : 'Выбрать несколько человек',
+              emphasized: _isSelectionMode,
+              onPressed: () {
+                _updateSectionState(() {
+                  _isSelectionMode = !_isSelectionMode;
+                  if (!_isSelectionMode) {
+                    _selectedPersonIds.clear();
+                  } else if (_isEditMode) {
+                    // Selection and edit fight over the same gesture
+                    // (long-press / drag); switch atomically.
+                    _isEditMode = false;
+                    _selectedEditPersonId = null;
+                  }
+                });
+              },
+            ),
           _buildTreeToolbarIconButton(
             icon: _isEditMode ? Icons.visibility_outlined : Icons.open_with,
             tooltip:
@@ -358,6 +393,9 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
                 _isEditMode = !_isEditMode;
                 if (!_isEditMode) {
                   _selectedEditPersonId = null;
+                } else if (_isSelectionMode) {
+                  _isSelectionMode = false;
+                  _selectedPersonIds.clear();
                 }
               });
             },
@@ -2492,7 +2530,7 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
                   Text(
                     hasSelection
                         ? 'Тап — добавить/убрать. Палочка — расширить по линии.'
-                        : 'Тапайте по карточкам, чтобы выбрать несколько человек.',
+                        : 'Тап — выбрать одну карточку. Drag по пустому холсту — выделить лассо.',
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: tokens.inkSecondary,
                       height: 1.3,
