@@ -14,6 +14,7 @@ class ProfileFormData {
     this.countryName,
     this.city = '',
     this.photoUrl,
+    this.coverPhotoUrl,
     this.gender = Gender.unknown,
     this.maidenName = '',
     this.birthDate,
@@ -48,6 +49,7 @@ class ProfileFormData {
   final String? countryName;
   final String city;
   final String? photoUrl;
+  final String? coverPhotoUrl;
   final Gender gender;
   final String maidenName;
   final DateTime? birthDate;
@@ -82,6 +84,7 @@ class ProfileFormData {
     String? countryName,
     String? city,
     String? photoUrl,
+    String? coverPhotoUrl,
     Gender? gender,
     String? maidenName,
     DateTime? birthDate,
@@ -116,6 +119,7 @@ class ProfileFormData {
       countryName: countryName ?? this.countryName,
       city: city ?? this.city,
       photoUrl: photoUrl ?? this.photoUrl,
+      coverPhotoUrl: coverPhotoUrl ?? this.coverPhotoUrl,
       gender: gender ?? this.gender,
       maidenName: maidenName ?? this.maidenName,
       birthDate: birthDate ?? this.birthDate,

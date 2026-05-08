@@ -287,9 +287,13 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    expect(find.text('Родственники'), findsOneWidget);
+    // Profile Redesign: ProfileHeroCard now uses lowercase stat
+    // labels («родственники», «деревья», «постов») to match the
+    // design tokens (Lora serif numbers + sans-serif lowercase
+    // labels). The actual numbers remain stats counts.
+    expect(find.text('родственники'), findsOneWidget);
     expect(find.text('3'), findsOneWidget);
-    expect(find.text('Деревья'), findsOneWidget);
+    expect(find.text('деревья'), findsOneWidget);
     expect(find.text('2'), findsOneWidget);
   });
 
@@ -308,11 +312,28 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    expect(find.text('Карточка в дереве'), findsOneWidget);
-    expect(find.text('Алексей Петров'), findsWidgets);
-    expect(find.byTooltip('Фото пока нет'), findsOneWidget);
-    expect(find.byTooltip('Открыть карточку'), findsOneWidget);
-    expect(find.byTooltip('История'), findsOneWidget);
+    // Profile Redesign: the new ProfileHeroCard is taller than the
+    // legacy PersonDossierView, so the inline tree-card sits below
+    // the 600 px test viewport. We assert presence regardless of
+    // viewport position via skipOffstage: false — the user reaches it
+    // by scrolling.
+    expect(
+      find.text('Карточка в дереве', skipOffstage: false),
+      findsOneWidget,
+    );
+    expect(
+      find.text('Алексей Петров', skipOffstage: false),
+      findsWidgets,
+    );
+    expect(
+      find.byTooltip('Фото пока нет', skipOffstage: false),
+      findsOneWidget,
+    );
+    expect(
+      find.byTooltip('Открыть карточку', skipOffstage: false),
+      findsOneWidget,
+    );
+    expect(find.byTooltip('История', skipOffstage: false), findsOneWidget);
   });
 
   testWidgets('ProfileScreen показывает доверенные каналы и профильный код',
@@ -361,6 +382,15 @@ void main() {
 
     await tester.pumpAndSettle();
 
+    // Tree-card is now below the redesign hero, so scroll it into the
+    // viewport before the tap — `find.byTooltip` defaults to skipping
+    // offstage widgets, and `tester.tap` requires hit-testable hits.
+    await tester.scrollUntilVisible(
+      find.byTooltip('История'),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('История'));
     await tester.pump();
     await tester.pumpAndSettle();

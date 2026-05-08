@@ -18,6 +18,7 @@ abstract class StorageServiceInterface {
   Future<String?> uploadImage(XFile imageFile, String folder);
   Future<bool> deleteImage(String imageUrl);
   Future<String?> uploadProfileImage(XFile imageFile);
+  Future<String?> uploadCoverImage(XFile imageFile);
   Future<String?> uploadBytes({
     required String bucket,
     required String path,

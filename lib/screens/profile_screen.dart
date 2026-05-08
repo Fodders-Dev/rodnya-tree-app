@@ -7,7 +7,6 @@ import 'package:share_plus/share_plus.dart';
 import '../theme/app_theme.dart';
 import '../models/family_person.dart';
 import '../models/family_tree.dart';
-import '../models/person_dossier.dart';
 import '../models/profile_contribution.dart';
 import '../models/account_linking_status.dart';
 import '../models/user_profile.dart';
@@ -24,12 +23,13 @@ import '../models/post.dart';
 import '../models/story.dart';
 import '../widgets/post_card.dart';
 import '../widgets/post_card_shimmer.dart';
-import '../widgets/person_dossier_view.dart';
 import '../widgets/empty_state_widget.dart';
-import '../widgets/profile_completion_meter.dart';
+import '../widgets/profile_redesign.dart';
+import '../widgets/profile_edit_sheet.dart';
 import '../widgets/story_rail.dart';
 import '../widgets/tree_history_sheet.dart';
 import '../widgets/glass_panel.dart';
+import 'package:image_picker/image_picker.dart';
 import '../backend/backend_runtime_config.dart';
 import '../services/app_status_service.dart';
 import '../services/custom_api_post_service.dart';
@@ -872,77 +872,183 @@ class _ProfileScreenState extends State<ProfileScreen> {
     required bool isFriendsTree,
   }) {
     return [
+                          // Redesign hero card — cover gradient + avatar
+                          // overlap + name split + stats + pill actions.
+                          // Replaces the legacy PersonDossierView block;
+                          // matches docs/design_handoff/Profile Redesign.html.
                           SliverToBoxAdapter(
                             child: Padding(
-                              padding: const EdgeInsets.all(16),
+                              padding: const EdgeInsets.fromLTRB(0, 12, 0, 0),
+                              child: Center(
+                                child: ConstrainedBox(
+                                  constraints:
+                                      const BoxConstraints(maxWidth: 680),
+                                  child: ProfileHeroCard(
+                                    fullName:
+                                        _getSafeDisplayName(_userProfile!),
+                                    firstName: _userProfile!.firstName.trim(),
+                                    patronymic:
+                                        _userProfile!.middleName.trim(),
+                                    lastName: _userProfile!.lastName.trim(),
+                                    photoUrl: _userProfile!.photoURL,
+                                    coverPhotoUrl:
+                                        _userProfile!.coverPhotoURL,
+                                    location:
+                                        _composeProfileLocation(_userProfile!),
+                                    bio: _userProfile!.bio,
+                                    stats: [
+                                      ProfileHeroStat(
+                                        value: '$_postCount',
+                                        label: 'постов',
+                                      ),
+                                      ProfileHeroStat(
+                                        value: '$_relativeCount',
+                                        label: _graphStatLabel(context)
+                                            .toLowerCase(),
+                                      ),
+                                      ProfileHeroStat(
+                                        value: '$_treeCount',
+                                        label: 'деревья',
+                                      ),
+                                    ],
+                                    actions: [
+                                      PillButton(
+                                        label: 'В дерево',
+                                        icon: Icons.account_tree_outlined,
+                                        onPressed: () {
+                                          if (selectedTreeId == null) {
+                                            ScaffoldMessenger.of(context)
+                                                .showSnackBar(
+                                              SnackBar(
+                                                content: Text(
+                                                  _graphSelectionHint(context),
+                                                ),
+                                                action: SnackBarAction(
+                                                  label: 'Выбрать',
+                                                  onPressed: () =>
+                                                      context.go('/tree'),
+                                                ),
+                                              ),
+                                            );
+                                          } else {
+                                            context.go('/tree');
+                                          }
+                                        },
+                                      ),
+                                      PillButton(
+                                        label: 'Поделиться',
+                                        icon: Icons.share_outlined,
+                                        variant: PillButtonVariant.outlined,
+                                        onPressed: _shareProfileLink,
+                                      ),
+                                    ],
+                                    onTapAvatar: _pickProfilePhoto,
+                                    onTapCover: _pickCoverPhoto,
+                                    onEditPressed: () =>
+                                        _openProfileEditSheet(),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                          // Completion meter — replaces sidebar widget on
+                          // narrow + adds suggestion chips that jump into
+                          // the right step of the edit sheet.
+                          if (!isWide && _userProfile != null)
+                            SliverToBoxAdapter(
+                              child: Center(
+                                child: ConstrainedBox(
+                                  constraints:
+                                      const BoxConstraints(maxWidth: 680),
+                                  child: ProfileCompletionMeterCard(
+                                    percent: _profileCompletionPercent(
+                                        _userProfile!),
+                                    suggestions: _profileCompletionChips(
+                                      _userProfile!,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          // ── Redesign info-card sections ─────────────────
+                          if (_basicsSectionHasContent(_userProfile!))
+                            SliverToBoxAdapter(
+                              child: Center(
+                                child: ConstrainedBox(
+                                  constraints:
+                                      const BoxConstraints(maxWidth: 680),
+                                  child: _buildBasicsSection(_userProfile!),
+                                ),
+                              ),
+                            ),
+                          if (_eduSectionHasContent(_userProfile!))
+                            SliverToBoxAdapter(
+                              child: Center(
+                                child: ConstrainedBox(
+                                  constraints:
+                                      const BoxConstraints(maxWidth: 680),
+                                  child: _buildEduSection(_userProfile!),
+                                ),
+                              ),
+                            ),
+                          if (_aboutSectionHasContent(_userProfile!))
+                            SliverToBoxAdapter(
+                              child: Center(
+                                child: ConstrainedBox(
+                                  constraints:
+                                      const BoxConstraints(maxWidth: 680),
+                                  child: _buildAboutSection(_userProfile!),
+                                ),
+                              ),
+                            ),
+                          if (_worldviewSectionHasContent(_userProfile!))
+                            SliverToBoxAdapter(
+                              child: Center(
+                                child: ConstrainedBox(
+                                  constraints:
+                                      const BoxConstraints(maxWidth: 680),
+                                  child: _buildWorldviewSection(_userProfile!),
+                                ),
+                              ),
+                            ),
+                          // Quick «Карточки в дереве» entry — keeps the
+                          // legacy /profile/offline_profiles button
+                          // discoverable now that the dossier action row
+                          // has been replaced by hero pills.
+                          SliverToBoxAdapter(
+                            child: Center(
                               child: ConstrainedBox(
                                 constraints:
                                     const BoxConstraints(maxWidth: 680),
-                                child: PersonDossierView(
-                                  dossier: PersonDossier.fromProfile(
-                                    _userProfile!,
-                                    treePerson: _selectedTreePerson,
-                                    isSelf: true,
-                                  ),
-                                  statsRow: _buildStatsRow(context),
-                                  headerChips: [
-                                    if (selectedTreeName != null)
-                                      _buildTreeChip(
-                                        context,
-                                        label: selectedTreeName,
-                                        isFriends: isFriendsTree,
-                                        onTap: () => context.go('/tree'),
-                                      ),
-                                  ],
-                                  actionButtons: [
-                                    IconButton.filled(
-                                      onPressed: () async {
-                                        await context.push('/profile/edit');
-                                        if (mounted) {
-                                          unawaited(_loadUserData());
-                                        }
-                                      },
-                                      tooltip: 'Редактировать профиль',
-                                      icon: const Icon(
-                                        Icons.edit_outlined,
-                                        size: 18,
-                                      ),
-                                    ),
-                                    IconButton.outlined(
-                                      style: IconButton.styleFrom(
-                                        visualDensity: VisualDensity.compact,
-                                        tapTargetSize:
-                                            MaterialTapTargetSize.shrinkWrap,
-                                      ),
-                                      onPressed: () {
-                                        if (selectedTreeId == null) {
-                                          ScaffoldMessenger.of(
-                                            context,
-                                          ).showSnackBar(
-                                            SnackBar(
-                                              content: Text(
-                                                _graphSelectionHint(context),
-                                              ),
-                                              action: SnackBarAction(
-                                                label: 'Выбрать',
-                                                onPressed: () =>
-                                                    context.go('/tree'),
-                                              ),
+                                child: Padding(
+                                  padding:
+                                      const EdgeInsets.fromLTRB(12, 12, 12, 0),
+                                  child: PillButton(
+                                    label: _graphProfilesLabel(context),
+                                    icon: Icons.people_outline,
+                                    variant: PillButtonVariant.outlined,
+                                    onPressed: () {
+                                      if (selectedTreeId == null) {
+                                        ScaffoldMessenger.of(context)
+                                            .showSnackBar(
+                                          SnackBar(
+                                            content: Text(
+                                              _graphSelectionHint(context),
                                             ),
-                                          );
-                                        } else {
-                                          context.push(
-                                            '/profile/offline_profiles',
-                                          );
-                                        }
-                                      },
-                                      tooltip: _graphProfilesLabel(context),
-                                      icon: const Icon(
-                                        Icons.people_outline,
-                                        size: 18,
-                                      ),
-                                    ),
-                                  ],
+                                            action: SnackBarAction(
+                                              label: 'Выбрать',
+                                              onPressed: () =>
+                                                  context.go('/tree'),
+                                            ),
+                                          ),
+                                        );
+                                      } else {
+                                        context.push(
+                                          '/profile/offline_profiles',
+                                        );
+                                      }
+                                    },
+                                  ),
                                 ),
                               ),
                             ),
@@ -982,26 +1088,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 child: _buildAccountSettingsLink(scheme, theme),
                               ),
                             ),
-                          if (!isWide && _userProfile != null)
-                            SliverToBoxAdapter(
-                              child: Padding(
-                                padding: const EdgeInsets.fromLTRB(
-                                  16,
-                                  12,
-                                  16,
-                                  0,
-                                ),
-                                child: ProfileCompletionMeter(
-                                  profile: _userProfile!,
-                                  onTap: () async {
-                                    await context.push('/profile/edit');
-                                    if (mounted) {
-                                      unawaited(_loadUserData());
-                                    }
-                                  },
-                                ),
-                              ),
-                            ),
+                          // The ProfileCompletionMeterCard already lives
+                          // inline with the hero (above), so nothing else
+                          // needs the legacy meter widget here.
                           if (!isWide)
                             SliverToBoxAdapter(
                               child: Padding(
@@ -1206,14 +1295,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
             const SizedBox(height: 16),
           ],
           if (_userProfile != null) ...[
-            ProfileCompletionMeter(
-              profile: _userProfile!,
-              onTap: () async {
-                await context.push('/profile/edit');
-                if (mounted) {
-                  unawaited(_loadUserData());
-                }
-              },
+            ProfileCompletionMeterCard(
+              percent: _profileCompletionPercent(_userProfile!),
+              suggestions: _profileCompletionChips(_userProfile!),
             ),
             const SizedBox(height: 16),
           ],
@@ -1282,10 +1366,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 _ProfileTopbarPill(
                   tokens: tokens,
                   tooltip: 'Редактировать',
-                  onTap: () async {
-                    await context.push('/profile/edit');
-                    if (mounted) unawaited(_loadUserData());
-                  },
+                  onTap: () => _openProfileEditSheet(),
                   child: Icon(
                     Icons.edit_outlined,
                     size: 18,
@@ -1342,6 +1423,529 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ),
       ),
     );
+  }
+
+  // ── Profile Redesign helpers ──────────────────────────────────────────────
+  // The new hero card + sections + edit sheet all read from the same
+  // UserProfile we already hold in `_userProfile`. These helpers package
+  // up the small bits that the design needs but `UserProfile` doesn't
+  // expose directly: a single-line city/country string, a completion
+  // percent + suggestion chips, the section visibility helpers, and the
+  // photo-pick / edit-sheet plumbing.
+
+  String? _composeProfileLocation(UserProfile profile) {
+    final city = profile.city?.trim() ?? '';
+    final country = profile.country?.trim() ?? '';
+    if (city.isEmpty && country.isEmpty) return null;
+    if (city.isEmpty) return country;
+    if (country.isEmpty) return city;
+    return '$city · $country';
+  }
+
+  /// Roughly mirrors the legacy ProfileCompletionMeter scoring: each
+  /// non-empty meaningful field counts towards the percentage. The
+  /// design's progress bar isn't a precision instrument — close-enough
+  /// is exactly the point.
+  double _profileCompletionPercent(UserProfile profile) {
+    int total = 0;
+    int filled = 0;
+    void check(bool ok) {
+      total += 1;
+      if (ok) filled += 1;
+    }
+
+    check(profile.firstName.trim().isNotEmpty);
+    check(profile.lastName.trim().isNotEmpty);
+    check(profile.photoURL != null && profile.photoURL!.trim().isNotEmpty);
+    check(profile.bio.trim().isNotEmpty);
+    check(profile.birthDate != null);
+    check((profile.city ?? '').trim().isNotEmpty ||
+        (profile.country ?? '').trim().isNotEmpty);
+    check(profile.hometown.trim().isNotEmpty);
+    check(profile.education.trim().isNotEmpty);
+    check(profile.work.trim().isNotEmpty);
+    check(profile.languages.trim().isNotEmpty);
+    check(profile.interests.trim().isNotEmpty);
+    check(profile.aboutFamily.trim().isNotEmpty);
+    if (total == 0) return 0;
+    return (filled / total) * 100.0;
+  }
+
+  /// Build `+ {field}` suggestion chips for any sufficiently-rare empty
+  /// field. Tapping a chip jumps directly to the matching step in the
+  /// edit sheet so the user doesn't hunt.
+  List<ProfileCompletionChipData> _profileCompletionChips(
+    UserProfile profile,
+  ) {
+    final chips = <ProfileCompletionChipData>[];
+    if (profile.bio.trim().isEmpty) {
+      chips.add(ProfileCompletionChipData(
+        label: 'обо мне',
+        onTap: () => _openProfileEditSheet(initialStep: 0),
+      ));
+    }
+    if ((profile.city ?? '').trim().isEmpty &&
+        (profile.country ?? '').trim().isEmpty) {
+      chips.add(ProfileCompletionChipData(
+        label: 'город',
+        onTap: () => _openProfileEditSheet(initialStep: 1),
+      ));
+    }
+    if (profile.work.trim().isEmpty) {
+      chips.add(ProfileCompletionChipData(
+        label: 'работа',
+        onTap: () => _openProfileEditSheet(initialStep: 1),
+      ));
+    }
+    if (profile.education.trim().isEmpty) {
+      chips.add(ProfileCompletionChipData(
+        label: 'учёба',
+        onTap: () => _openProfileEditSheet(initialStep: 1),
+      ));
+    }
+    if (profile.languages.trim().isEmpty) {
+      chips.add(ProfileCompletionChipData(
+        label: 'языки',
+        onTap: () => _openProfileEditSheet(initialStep: 1),
+      ));
+    }
+    if (profile.coverPhotoURL == null ||
+        profile.coverPhotoURL!.trim().isEmpty) {
+      chips.add(ProfileCompletionChipData(
+        label: 'обложка',
+        onTap: _pickCoverPhoto,
+      ));
+    }
+    return chips;
+  }
+
+  // ── Section helpers ───────────────────────────────────────────────────────
+
+  bool _basicsSectionHasContent(UserProfile p) {
+    return p.birthDate != null ||
+        (p.city ?? '').trim().isNotEmpty ||
+        (p.country ?? '').trim().isNotEmpty ||
+        p.hometown.trim().isNotEmpty ||
+        p.languages.trim().isNotEmpty;
+  }
+
+  Widget _buildBasicsSection(UserProfile p) {
+    final rows = <Widget>[];
+    if (p.birthDate != null) {
+      rows.add(InfoRow(
+        icon: Icons.cake_outlined,
+        label: 'Дата рождения',
+        value: _formatBirthDate(p.birthDate!),
+        isFirst: rows.isEmpty,
+      ));
+    }
+    final loc = _composeProfileLocation(p);
+    if (loc != null) {
+      rows.add(InfoRow(
+        icon: Icons.place_outlined,
+        label: 'Город',
+        value: loc,
+        isFirst: rows.isEmpty,
+      ));
+    }
+    if (p.hometown.trim().isNotEmpty) {
+      rows.add(InfoRow(
+        icon: Icons.account_tree_outlined,
+        label: 'Родом из',
+        value: p.hometown.trim(),
+        isFirst: rows.isEmpty,
+      ));
+    }
+    if (p.languages.trim().isNotEmpty) {
+      rows.add(InfoRow(
+        icon: Icons.language_outlined,
+        label: 'Языки',
+        value: p.languages.trim(),
+        isFirst: rows.isEmpty,
+      ));
+    }
+    if (rows.isNotEmpty) {
+      // Mark the last row so it doesn't draw the bottom divider.
+      final last = rows.removeLast() as InfoRow;
+      rows.add(InfoRow(
+        icon: last.icon,
+        label: last.label,
+        value: last.value,
+        isFirst: last.isFirst,
+        isLast: true,
+      ));
+    }
+    return ProfileSection(title: 'Основное', children: rows);
+  }
+
+  bool _eduSectionHasContent(UserProfile p) {
+    return p.education.trim().isNotEmpty || p.work.trim().isNotEmpty;
+  }
+
+  Widget _buildEduSection(UserProfile p) {
+    final rows = <Widget>[];
+    if (p.education.trim().isNotEmpty) {
+      rows.add(InfoRow(
+        icon: Icons.school_outlined,
+        label: 'Образование',
+        value: p.education.trim(),
+        isFirst: rows.isEmpty,
+      ));
+    }
+    if (p.work.trim().isNotEmpty) {
+      rows.add(InfoRow(
+        icon: Icons.work_outline_rounded,
+        label: 'Работа',
+        value: p.work.trim(),
+        isFirst: rows.isEmpty,
+      ));
+    }
+    if (rows.isNotEmpty) {
+      final last = rows.removeLast() as InfoRow;
+      rows.add(InfoRow(
+        icon: last.icon,
+        label: last.label,
+        value: last.value,
+        isFirst: last.isFirst,
+        isLast: true,
+      ));
+    }
+    return ProfileSection(title: 'Образование и работа', children: rows);
+  }
+
+  bool _aboutSectionHasContent(UserProfile p) {
+    return p.familyStatus.trim().isNotEmpty ||
+        p.aboutFamily.trim().isNotEmpty ||
+        p.maidenName.trim().isNotEmpty;
+  }
+
+  Widget _buildAboutSection(UserProfile p) {
+    final rows = <Widget>[];
+    if (p.maidenName.trim().isNotEmpty) {
+      rows.add(InfoRow(
+        icon: Icons.label_outline,
+        label: 'Девичья фамилия',
+        value: p.maidenName.trim(),
+        warm: true,
+        isFirst: rows.isEmpty,
+      ));
+    }
+    if (p.familyStatus.trim().isNotEmpty) {
+      rows.add(InfoRow(
+        icon: Icons.favorite_border_rounded,
+        label: 'Семейное положение',
+        value: p.familyStatus.trim(),
+        warm: true,
+        isFirst: rows.isEmpty,
+      ));
+    }
+    if (p.aboutFamily.trim().isNotEmpty) {
+      rows.add(InfoRow(
+        icon: Icons.family_restroom_outlined,
+        label: 'Заметка для семьи',
+        value: p.aboutFamily.trim(),
+        warm: true,
+        isFirst: rows.isEmpty,
+      ));
+    }
+    if (rows.isNotEmpty) {
+      final last = rows.removeLast() as InfoRow;
+      rows.add(InfoRow(
+        icon: last.icon,
+        label: last.label,
+        value: last.value,
+        warm: last.warm,
+        isFirst: last.isFirst,
+        isLast: true,
+      ));
+    }
+    return ProfileSection(title: 'Семья', children: rows);
+  }
+
+  bool _worldviewSectionHasContent(UserProfile p) {
+    return p.religion.trim().isNotEmpty || p.interests.trim().isNotEmpty;
+  }
+
+  Widget _buildWorldviewSection(UserProfile p) {
+    final rows = <Widget>[];
+    if (p.interests.trim().isNotEmpty) {
+      rows.add(InfoRow(
+        icon: Icons.auto_awesome_outlined,
+        label: 'Интересы',
+        value: p.interests.trim(),
+        isFirst: rows.isEmpty,
+      ));
+    }
+    if (p.religion.trim().isNotEmpty) {
+      rows.add(InfoRow(
+        icon: Icons.book_outlined,
+        label: 'Мировоззрение',
+        value: p.religion.trim(),
+        isFirst: rows.isEmpty,
+      ));
+    }
+    if (rows.isNotEmpty) {
+      final last = rows.removeLast() as InfoRow;
+      rows.add(InfoRow(
+        icon: last.icon,
+        label: last.label,
+        value: last.value,
+        isFirst: last.isFirst,
+        isLast: true,
+      ));
+    }
+    return ProfileSection(title: 'Кругозор', children: rows);
+  }
+
+  String _formatBirthDate(DateTime d) {
+    const months = [
+      'января',
+      'февраля',
+      'марта',
+      'апреля',
+      'мая',
+      'июня',
+      'июля',
+      'августа',
+      'сентября',
+      'октября',
+      'ноября',
+      'декабря',
+    ];
+    return '${d.day} ${months[d.month - 1]} ${d.year}';
+  }
+
+  // ── Edit sheet plumbing ──────────────────────────────────────────────────
+
+  ProfileEditDraft _buildDraftFromProfile(UserProfile p) {
+    String mapStoredScopeToDesignScope(String? stored) {
+      // Backend canonical values differ from the design's vocabulary. The
+      // edit sheet uses «private/family/public» labels but the backend
+      // stores «private/shared_trees/public». Map both ways.
+      switch ((stored ?? '').trim()) {
+        case 'private':
+          return 'private';
+        case 'public':
+          return 'public';
+        case 'shared_trees':
+        case 'specific_trees':
+        case 'specific_branches':
+        case 'specific_users':
+        default:
+          return 'family';
+      }
+    }
+
+    final scopes = p.profileVisibilityScopes ?? const <String, String>{};
+    return ProfileEditDraft(
+      firstName: p.firstName,
+      lastName: p.lastName,
+      patronymic: p.middleName,
+      gender: p.gender ?? Gender.unknown,
+      maidenName: p.maidenName,
+      bio: p.bio,
+      birthDate: p.birthDate,
+      city: p.city ?? '',
+      country: p.country ?? '',
+      hometown: p.hometown,
+      education: p.education,
+      work: p.work,
+      languages: p.languages,
+      religion: p.religion,
+      interests: p.interests,
+      familyNote: p.aboutFamily,
+      bioVisibility: mapStoredScopeToDesignScope(scopes['about']),
+      contactsVisibility: mapStoredScopeToDesignScope(scopes['contacts']),
+      backgroundVisibility: mapStoredScopeToDesignScope(scopes['background']),
+      allowsContributions: p.profileContributionPolicy == 'suggestions',
+      photoUrl: p.photoURL,
+      coverPhotoUrl: p.coverPhotoURL,
+    );
+  }
+
+  Future<void> _openProfileEditSheet({int initialStep = 0}) async {
+    final profile = _userProfile;
+    if (profile == null) return;
+    final draft = _buildDraftFromProfile(profile);
+    final next = await showProfileEditSheet(
+      context,
+      initial: draft,
+      isSelf: true,
+      initialStep: initialStep,
+      onPickPhoto: () async {
+        final url = await _pickProfilePhoto();
+        return url;
+      },
+      onPickCoverPhoto: () async {
+        final url = await _pickCoverPhoto();
+        return url;
+      },
+    );
+    if (next == null || !mounted) return;
+    await _persistProfileDraft(profile, next);
+    if (mounted) {
+      unawaited(_loadUserData());
+    }
+  }
+
+  Future<void> _persistProfileDraft(
+    UserProfile previous,
+    ProfileEditDraft draft,
+  ) async {
+    String mapDesignScopeToStored(String design) {
+      switch (design) {
+        case 'private':
+          return 'private';
+        case 'public':
+          return 'public';
+        case 'family':
+        default:
+          return 'shared_trees';
+      }
+    }
+
+    final scopes = Map<String, String>.from(
+      previous.profileVisibilityScopes ?? const <String, String>{},
+    );
+    scopes['about'] = mapDesignScopeToStored(draft.bioVisibility);
+    scopes['contacts'] = mapDesignScopeToStored(draft.contactsVisibility);
+    scopes['background'] = mapDesignScopeToStored(draft.backgroundVisibility);
+    if (!scopes.containsKey('worldview')) {
+      scopes['worldview'] = mapDesignScopeToStored(draft.bioVisibility);
+    }
+
+    final updated = previous.copyWith(
+      firstName: draft.firstName.trim(),
+      lastName: draft.lastName.trim(),
+      middleName: draft.patronymic.trim(),
+      gender: draft.gender,
+      maidenName: draft.maidenName.trim(),
+      bio: draft.bio.trim(),
+      birthDate: draft.birthDate,
+      city: draft.city.trim(),
+      country: draft.country.trim(),
+      hometown: draft.hometown.trim(),
+      education: draft.education.trim(),
+      work: draft.work.trim(),
+      languages: draft.languages.trim(),
+      religion: draft.religion.trim(),
+      interests: draft.interests.trim(),
+      aboutFamily: draft.familyNote.trim(),
+      profileContributionPolicy:
+          draft.allowsContributions ? 'suggestions' : 'disabled',
+      profileVisibilityScopes: scopes,
+      photoURL: draft.photoUrl ?? previous.photoURL,
+      coverPhotoURL: draft.coverPhotoUrl ?? previous.coverPhotoURL,
+    );
+
+    try {
+      await _profileService.updateUserProfile(previous.id, updated);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Профиль обновлён')),
+        );
+      }
+    } catch (error) {
+      debugPrint('Не удалось сохранить профиль: $error');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              describeUserFacingError(
+                authService: _authService,
+                error: error,
+                fallbackMessage: 'Не удалось сохранить профиль.',
+              ),
+            ),
+          ),
+        );
+      }
+    }
+  }
+
+  /// Pick + upload a new avatar. Returns the new URL on success so the
+  /// edit sheet can preview it without waiting for the next refresh.
+  Future<String?> _pickProfilePhoto() async {
+    try {
+      final picker = ImagePicker();
+      final picked = await picker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 88,
+        maxWidth: 2400,
+      );
+      if (picked == null) return null;
+      final url = await _profileService.uploadProfilePhoto(picked);
+      if (mounted) {
+        unawaited(_loadUserData());
+      }
+      return url;
+    } catch (error) {
+      debugPrint('Не удалось загрузить фото: $error');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              describeUserFacingError(
+                authService: _authService,
+                error: error,
+                fallbackMessage: 'Не удалось загрузить фото.',
+              ),
+            ),
+          ),
+        );
+      }
+      return null;
+    }
+  }
+
+  Future<String?> _pickCoverPhoto() async {
+    try {
+      final picker = ImagePicker();
+      final picked = await picker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 86,
+        maxWidth: 2800,
+      );
+      if (picked == null) return null;
+      final url = await _profileService.uploadCoverPhoto(picked);
+      if (mounted) {
+        unawaited(_loadUserData());
+      }
+      return url;
+    } catch (error) {
+      debugPrint('Не удалось загрузить обложку: $error');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              describeUserFacingError(
+                authService: _authService,
+                error: error,
+                fallbackMessage: 'Не удалось загрузить обложку.',
+              ),
+            ),
+          ),
+        );
+      }
+      return null;
+    }
+  }
+
+  void _shareProfileLink() {
+    final profile = _userProfile;
+    if (profile == null) return;
+    final username = profile.username.trim();
+    final fullName = _getSafeDisplayName(profile);
+    final link = username.isNotEmpty
+        ? 'https://rodnya-tree.ru/u/$username'
+        : 'https://rodnya-tree.ru/u/${profile.id}';
+    final body = 'Профиль $fullName в Родне\n$link';
+    SharePlus.instance
+        .share(ShareParams(text: body))
+        .catchError((Object error) {
+      debugPrint('Не удалось поделиться профилем: $error');
+      return ShareResult('', ShareResultStatus.unavailable);
+    });
   }
 }
 

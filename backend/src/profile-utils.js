@@ -259,6 +259,7 @@ function sanitizeProfile(profile = {}, viewerContext = null) {
         : String(profile.countryName),
     city: normalizeString(profile.city),
     photoUrl: normalizePublicUrl(profile.photoUrl),
+    coverPhotoUrl: normalizePublicUrl(profile.coverPhotoUrl),
     gender: normalizeString(profile.gender || "unknown"),
     maidenName: normalizeString(profile.maidenName),
     birthDate:
@@ -334,6 +335,7 @@ function sanitizeUserProfilePreview(user) {
     displayName: composeDisplayName(profile),
     username: normalizeString(profile.username),
     photoUrl: normalizePublicUrl(profile.photoUrl),
+    coverPhotoUrl: normalizePublicUrl(profile.coverPhotoUrl),
   };
 }
 

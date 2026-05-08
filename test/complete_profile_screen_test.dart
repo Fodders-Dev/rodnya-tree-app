@@ -121,20 +121,26 @@ void main() {
       await tester.pumpWidget(MaterialApp.router(routerConfig: router));
       await tester.pumpAndSettle();
 
-      expect(find.text('Почти готово'), findsOneWidget);
-      expect(find.text('Основное'), findsOneWidget);
-      expect(find.text('Как с вами связаться'), findsOneWidget);
+      // Profile Redesign: registration card now uses the «Кто я» /
+      // «Как с вами связаться» / «Личное» sections matching the
+      // edit-sheet step 0 vocabulary (was «Почти готово» + «Основное»).
+      expect(find.text('Расскажите о себе'), findsOneWidget);
+      // ProfileSection renders titles uppercased.
+      expect(find.text('КТО Я'), findsOneWidget);
+      expect(find.text('КАК С ВАМИ СВЯЗАТЬСЯ'), findsOneWidget);
 
+      // Username input is identified by its `username` placeholder hint.
       await tester.enterText(
-        find.bySemanticsLabel('Username'),
+        find.widgetWithText(TextFormField, 'username'),
         'shuflyak.nastya',
       );
       tester.testTextInput.hide();
       await tester.pumpAndSettle();
 
-      await tester.ensureVisible(find.text('Сохранить'));
+      final saveLabel = find.text('Сохранить и продолжить');
+      await tester.ensureVisible(saveLabel);
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Сохранить'));
+      await tester.tap(saveLabel);
       await tester.pumpAndSettle();
 
       expect(find.text('trees invitations'), findsOneWidget);

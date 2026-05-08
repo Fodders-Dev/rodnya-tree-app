@@ -634,6 +634,9 @@ class _FakeStorageService implements StorageServiceInterface {
   Future<String?> uploadProfileImage(XFile imageFile) async => uploadedUrl;
 
   @override
+  Future<String?> uploadCoverImage(XFile imageFile) async => uploadedUrl;
+
+  @override
   Future<String?> uploadBytes({
     required String bucket,
     required String path,

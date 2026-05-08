@@ -422,93 +422,11 @@ extension _ProfileScreenSections on _ProfileScreenState {
   }
 
   // ── New helper widgets called from the redesigned build() ─────────────────
-
-  /// Stats row widget passed to PersonDossierView (posts / relatives / trees).
-  Widget _buildStatsRow(BuildContext context) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Flexible(
-          child: _StatBadge(
-            value: _postCount.toString(),
-            label: 'Постов',
-            onTap: null,
-          ),
-        ),
-        _StatDivider(),
-        Flexible(
-          child: _StatBadge(
-            value: _relativeCount.toString(),
-            label: _graphStatLabel(context),
-            onTap: () => context.go('/relatives'),
-          ),
-        ),
-        _StatDivider(),
-        Flexible(
-          child: _StatBadge(
-            value: _treeCount.toString(),
-            label: 'Деревья',
-            onTap: () => context.go('/tree?selector=1'),
-          ),
-        ),
-      ],
-    );
-  }
-
-  /// Compact tree context chip for the PersonDossierView headerChips list.
-  Widget _buildTreeChip(
-    BuildContext context, {
-    required String label,
-    required bool isFriends,
-    required VoidCallback onTap,
-  }) {
-    final scheme = Theme.of(context).colorScheme;
-    // InkWell instead of bare GestureDetector — gets us hover splash +
-    // click cursor on web / desktop for free, and the ripple is shaped
-    // to the chip's pill border via the matching borderRadius.
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(999),
-        child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: scheme.primaryContainer.withValues(alpha: 0.55),
-          borderRadius: BorderRadius.circular(999),
-          border: Border.all(
-            color: scheme.primary.withValues(alpha: 0.22),
-            width: 0.8,
-          ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              isFriends
-                  ? Icons.diversity_3_outlined
-                  : Icons.account_tree_outlined,
-              size: 14,
-              color: scheme.primary,
-            ),
-            const SizedBox(width: 6),
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 150),
-              child: Text(
-                label,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                      color: scheme.primary,
-                      fontWeight: FontWeight.w700,
-                    ),
-              ),
-            ),
-          ],
-        ),
-        ),
-      ),
-    );
-  }
+  //
+  // _buildStatsRow / _buildTreeChip used to feed the legacy
+  // PersonDossierView slot — the Profile Redesign hero card now packs
+  // the same stats + chips inline (see ProfileHeroCard / PillButton in
+  // profile_screen.dart) so those helpers are gone.
 
   /// Compact "tree card" row — replaces the old big GraphContextBanner.
   Widget _buildTreeCardCompact(
@@ -643,65 +561,6 @@ extension _ProfileScreenSections on _ProfileScreenState {
   }
 }
 
-// ── Stat badge widget ─────────────────────────────────────────────────────────
-
-class _StatBadge extends StatelessWidget {
-  const _StatBadge({
-    required this.value,
-    required this.label,
-    required this.onTap,
-  });
-
-  final String value;
-  final String label;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return InkWell(
-      borderRadius: BorderRadius.circular(12),
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              value,
-              style: theme.textTheme.labelLarge?.copyWith(
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-            const SizedBox(width: 4),
-            Flexible(
-              child: Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.labelSmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _StatDivider extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      height: 18,
-      child: VerticalDivider(
-        color:
-            Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.6),
-        width: 1,
-      ),
-    );
-  }
-}
+// _StatBadge / _StatDivider used to live here for the legacy stats row;
+// they were only referenced from _buildStatsRow which has been removed
+// in the Profile Redesign pass (ProfileHeroStat handles stats now).

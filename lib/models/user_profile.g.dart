@@ -25,6 +25,7 @@ class UserProfileAdapter extends TypeAdapter<UserProfile> {
       middleName: fields[5] as String,
       username: fields[6] as String,
       photoURL: fields[7] as String?,
+      coverPhotoURL: fields[39] as String?,
       phoneNumber: fields[8] as String,
       gender: fields[10] as Gender?,
       birthDate: fields[11] as DateTime?,
@@ -76,7 +77,7 @@ class UserProfileAdapter extends TypeAdapter<UserProfile> {
   @override
   void write(BinaryWriter writer, UserProfile obj) {
     writer
-      ..writeByte(38)
+      ..writeByte(39)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -152,7 +153,9 @@ class UserProfileAdapter extends TypeAdapter<UserProfile> {
       ..writeByte(37)
       ..write(obj.profileContributionPolicy)
       ..writeByte(38)
-      ..write(obj.maidenName);
+      ..write(obj.maidenName)
+      ..writeByte(39)
+      ..write(obj.coverPhotoURL);
   }
 
   @override

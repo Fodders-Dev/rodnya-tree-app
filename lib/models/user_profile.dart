@@ -83,8 +83,11 @@ class UserProfile extends HiveObject {
   final String profileContributionPolicy;
   @HiveField(38)
   final String maidenName;
+  @HiveField(39)
+  final String? _coverPhotoURL;
 
   String? get photoURL => _photoURL;
+  String? get coverPhotoURL => _coverPhotoURL;
 
   UserProfile({
     required this.id,
@@ -95,6 +98,7 @@ class UserProfile extends HiveObject {
     this.middleName = '',
     required this.username,
     String? photoURL,
+    String? coverPhotoURL,
     required this.phoneNumber,
     this.gender,
     this.birthDate,
@@ -125,7 +129,8 @@ class UserProfile extends HiveObject {
     this.birthPlace,
     this.profileContributionPolicy = 'suggestions',
     this.maidenName = '',
-  }) : _photoURL = UrlUtils.normalizeImageUrl(photoURL);
+  })  : _photoURL = UrlUtils.normalizeImageUrl(photoURL),
+        _coverPhotoURL = UrlUtils.normalizeImageUrl(coverPhotoURL);
 
   factory UserProfile.fromFirestore(dynamic doc) {
     final data =
@@ -158,6 +163,7 @@ class UserProfile extends HiveObject {
       middleName: data['middleName'] ?? '',
       username: data['username'] ?? '',
       photoURL: data['photoURL'],
+      coverPhotoURL: data['coverPhotoURL'] ?? data['coverPhotoUrl'],
       phoneNumber: data['phoneNumber'] ?? '',
       gender: userGender,
       birthDate: data['birthDate'] != null
@@ -240,6 +246,8 @@ class UserProfile extends HiveObject {
       'middleName': middleName,
       'username': username,
       'photoURL': photoURL,
+      if (coverPhotoURL != null && coverPhotoURL!.isNotEmpty)
+        'coverPhotoURL': coverPhotoURL,
       'phoneNumber': phoneNumber,
       'gender': gender?.toString().split('.').last,
       'birthDate': birthDate?.toIso8601String(),
@@ -298,6 +306,7 @@ class UserProfile extends HiveObject {
     String? middleName,
     String? username,
     String? photoURL,
+    String? coverPhotoURL,
     String? phoneNumber,
     Gender? gender,
     DateTime? birthDate,
@@ -338,6 +347,7 @@ class UserProfile extends HiveObject {
       middleName: middleName ?? this.middleName,
       username: username ?? this.username,
       photoURL: photoURL ?? this.photoURL,
+      coverPhotoURL: coverPhotoURL ?? this.coverPhotoURL,
       phoneNumber: phoneNumber ?? this.phoneNumber,
       gender: gender ?? this.gender,
       birthDate: birthDate ?? this.birthDate,
@@ -386,6 +396,7 @@ class UserProfile extends HiveObject {
     String middleName = '',
     required String username,
     String? photoURL,
+    String? coverPhotoURL,
     required String phoneNumber,
     Gender? gender,
     DateTime? birthDate,
@@ -425,6 +436,7 @@ class UserProfile extends HiveObject {
       middleName: middleName,
       username: username,
       photoURL: photoURL,
+      coverPhotoURL: coverPhotoURL,
       phoneNumber: phoneNumber,
       gender: gender,
       birthDate: birthDate,
@@ -482,6 +494,7 @@ class UserProfile extends HiveObject {
       displayName: map['displayName'] ?? '',
       email: map['email'] ?? '',
       photoURL: map['photoURL'],
+      coverPhotoURL: map['coverPhotoURL'] ?? map['coverPhotoUrl'],
       firstName: map['firstName'] ?? '',
       lastName: map['lastName'] ?? '',
       middleName: map['middleName'],

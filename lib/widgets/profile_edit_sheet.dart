@@ -16,7 +16,6 @@
 // host owns persistence (UserProfile vs FamilyPerson) and validation.
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../models/family_person.dart';
 import '../theme/app_theme.dart';
@@ -999,15 +998,11 @@ class _RodnyaInput extends StatelessWidget {
     required this.controller,
     this.hint,
     this.multi = false,
-    this.keyboardType,
-    this.inputFormatters,
   });
 
   final TextEditingController controller;
   final String? hint;
   final bool multi;
-  final TextInputType? keyboardType;
-  final List<TextInputFormatter>? inputFormatters;
 
   @override
   Widget build(BuildContext context) {
@@ -1020,8 +1015,7 @@ class _RodnyaInput extends StatelessWidget {
       controller: controller,
       maxLines: multi ? null : 1,
       minLines: multi ? 3 : 1,
-      keyboardType: keyboardType ?? (multi ? TextInputType.multiline : null),
-      inputFormatters: inputFormatters,
+      keyboardType: multi ? TextInputType.multiline : null,
       style: AppTheme.sans(
         color: tokens.ink,
         fontSize: 14.5,

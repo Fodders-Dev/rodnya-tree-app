@@ -198,6 +198,11 @@ class PendingBackendProfileService implements ProfileServiceInterface {
   }
 
   @override
+  Future<String?> uploadCoverPhoto(XFile photo) {
+    throw UnsupportedError(_pendingProviderMessage('profile'));
+  }
+
+  @override
   Future<void> updateProfileNote(String userId, ProfileNote note) {
     throw UnsupportedError(_pendingProviderMessage('profile'));
   }
@@ -931,6 +936,8 @@ class NoopStorageService implements StorageServiceInterface {
   Future<bool> deleteImage(String imageUrl) async => true;
   @override
   Future<String?> uploadProfileImage(XFile imageFile) async => null;
+  @override
+  Future<String?> uploadCoverImage(XFile imageFile) async => null;
   @override
   Future<String?> uploadBytes({
     required String bucket,

@@ -13,6 +13,7 @@ abstract class ProfileServiceInterface {
   Future<AccountLinkingStatus> getCurrentAccountLinkingStatus();
   Future<void> saveCurrentUserProfileFormData(ProfileFormData data);
   Future<String?> uploadProfilePhoto(XFile photo);
+  Future<String?> uploadCoverPhoto(XFile photo);
   Future<void> updateUserProfile(String userId, UserProfile profile);
   Future<List<ProfileContribution>> getPendingProfileContributions();
   Future<void> acceptProfileContribution(String contributionId);

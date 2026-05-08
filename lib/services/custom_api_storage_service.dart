@@ -82,6 +82,31 @@ class CustomApiStorageService implements StorageServiceInterface {
   }
 
   @override
+  Future<String?> uploadCoverImage(XFile imageFile) async {
+    final userId = _authService.currentUserId;
+    if (userId == null || userId.isEmpty) {
+      throw const CustomApiStorageException('Пользователь не авторизован');
+    }
+
+    final extension = _detectExtension(
+      imageFile.name,
+      fallback: '.jpg',
+      mimeType: imageFile.mimeType,
+    );
+    final fileBytes = await imageFile.readAsBytes();
+
+    return uploadBytes(
+      bucket: 'covers',
+      path: '$userId/cover_${DateTime.now().millisecondsSinceEpoch}$extension',
+      fileBytes: fileBytes,
+      fileOptions: FileOptions(
+        upsert: true,
+        contentType: _contentTypeForExtension(extension),
+      ),
+    );
+  }
+
+  @override
   Future<String?> uploadBytes({
     required String bucket,
     required String path,

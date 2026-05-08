@@ -26,8 +26,9 @@ import '../models/tree_change_record.dart';
 import '../models/tree_graph_snapshot.dart';
 import '../widgets/custom_relation_label_dialog.dart';
 import '../widgets/glass_panel.dart';
-import '../widgets/person_dossier_view.dart';
+import '../widgets/profile_redesign.dart';
 import '../widgets/tree_history_sheet.dart';
+import '../theme/app_theme.dart';
 import '../utils/photo_url.dart';
 import '../utils/user_facing_error.dart';
 

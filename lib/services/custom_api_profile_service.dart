@@ -215,6 +215,48 @@ class CustomApiProfileService implements ProfileServiceInterface {
   }
 
   @override
+  Future<String?> uploadCoverPhoto(XFile photo) async {
+    final storageService = _storageService;
+    if (storageService == null) {
+      throw UnsupportedError(
+        'Для customApi profile adapter нужен storage provider customApi.',
+      );
+    }
+
+    final extension = _detectExtension(photo.name, mimeType: photo.mimeType);
+    if (!_allowedExtensions.contains(extension)) {
+      throw Exception(
+        'Недопустимый формат файла. Разрешены только ${_allowedExtensions.join(', ')}',
+      );
+    }
+
+    final fileBytes = await photo.readAsBytes();
+    if (fileBytes.length > _maxPhotoSizeBytes) {
+      throw Exception('Размер файла превышает 5MB');
+    }
+
+    final coverPhotoUrl = await storageService.uploadCoverImage(photo);
+    if (coverPhotoUrl == null || coverPhotoUrl.isEmpty) {
+      throw Exception('Не удалось загрузить обложку профиля');
+    }
+
+    await _requestJson(
+      method: 'PATCH',
+      path: '/v1/profile/me',
+      body: {
+        'coverPhotoUrl': coverPhotoUrl,
+      },
+    );
+
+    final cached = _getCachedProfileForm();
+    if (cached != null) {
+      await _cacheProfileForm(cached.copyWith(coverPhotoUrl: coverPhotoUrl));
+    }
+
+    return coverPhotoUrl;
+  }
+
+  @override
   Future<void> updateUserProfile(String userId, UserProfile profile) async {
     await _requestJson(
       method: 'PATCH',
@@ -233,6 +275,7 @@ class CustomApiProfileService implements ProfileServiceInterface {
           countryName: profile.country,
           city: profile.city ?? '',
           photoUrl: profile.photoURL,
+          coverPhotoUrl: profile.coverPhotoURL,
           gender: profile.gender ?? Gender.unknown,
           birthDate: profile.birthDate,
           birthPlace: profile.birthPlace ?? '',
@@ -629,6 +672,8 @@ class CustomApiProfileService implements ProfileServiceInterface {
           json['countryName']?.toString() ?? json['country']?.toString(),
       city: json['city']?.toString() ?? '',
       photoUrl: json['photoUrl']?.toString() ?? json['photoURL']?.toString(),
+      coverPhotoUrl: json['coverPhotoUrl']?.toString() ??
+          json['coverPhotoURL']?.toString(),
       gender: gender,
       maidenName: json['maidenName']?.toString() ?? '',
       birthDate: birthDateValue != null && birthDateValue.isNotEmpty
@@ -696,6 +741,7 @@ class CustomApiProfileService implements ProfileServiceInterface {
       'countryName': data.countryName,
       'city': data.city.trim(),
       'photoUrl': data.photoUrl,
+      if (data.coverPhotoUrl != null) 'coverPhotoUrl': data.coverPhotoUrl,
       'gender': data.gender.name,
       'maidenName': data.maidenName.trim(),
       'birthDate': data.birthDate?.toIso8601String(),
@@ -741,6 +787,7 @@ class CustomApiProfileService implements ProfileServiceInterface {
       middleName: data.middleName,
       username: data.username,
       photoURL: data.photoUrl,
+      coverPhotoURL: data.coverPhotoUrl,
       phoneNumber: data.phoneNumber,
       gender: data.gender,
       birthDate: data.birthDate,

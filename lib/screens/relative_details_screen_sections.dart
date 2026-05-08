@@ -141,119 +141,414 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
     final directRelationLabel = _getDirectRelationLabel();
     final galleryEntries = _person!.photoGallery;
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          PersonDossierView(
-            dossier: dossier,
-            headerChips: [
-              _buildStatusChip(contactStatus),
-              if (directRelationLabel != null)
-                Chip(
-                  avatar: const Icon(
-                    Icons.family_restroom_outlined,
-                    size: 18,
-                  ),
-                  label: Text('Для вас: $directRelationLabel'),
-                  visualDensity: VisualDensity.compact,
-                ),
-            ],
-            actionButtons: [
-              if (canStartChat)
-                FilledButton.icon(
-                  onPressed: _openChatWithPerson,
-                  icon: const Icon(Icons.message_outlined, size: 18),
-                  label: const Text('Написать'),
-                ),
-              if (canInvite)
-                OutlinedButton.icon(
-                  onPressed:
-                      _isGeneratingLink ? null : _generateAndShareInviteLink,
-                  icon: _isGeneratingLink
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.person_add_alt_1_outlined),
-                  label: const Text('Пригласить в Родню'),
-                ),
-              if (_canSuggestProfileEdits())
-                OutlinedButton.icon(
-                  onPressed: _suggestProfileChanges,
-                  icon: const Icon(Icons.edit_note_outlined),
-                  label: const Text('Предложить правку'),
-                ),
-              if (_identityService != null &&
-                  _currentTreeId != null &&
-                  _person?.userId != _authService.currentUserId)
-                OutlinedButton.icon(
-                  onPressed: _isUpdatingIdentity
-                      ? null
-                      : () => _requestIdentityClaim(),
-                  icon: _isUpdatingIdentity
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.verified_user_outlined),
-                  label: const Text('Это моя карточка'),
-                ),
-              if (_identityService != null && _canEditOrDelete())
-                OutlinedButton.icon(
-                  onPressed:
-                      _isUpdatingPrivacy ? null : () => _showPrivacySettings(),
-                  icon: _isUpdatingPrivacy
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.lock_outline),
-                  label: const Text('Приватность'),
-                ),
-              if (_canDirectEditProfile())
-                OutlinedButton.icon(
-                  onPressed: _editRelative,
-                  icon: const Icon(Icons.edit_outlined),
-                  label: const Text('Редактировать'),
-                ),
-            ],
-            banner: Text(
-              contactStatus.description,
-              style: TextStyle(color: Colors.grey[800], height: 1.35),
+    final person = _person!;
+    final isDeceased = !person.isAlive || person.deathDate != null;
+    final fullName = dossier.displayName.isNotEmpty
+        ? dossier.displayName
+        : person.name;
+    final nameParts = _splitNameParts(person, dossier);
+    final firstNameTrimmed = nameParts.firstName;
+    final lastNameTrimmed = nameParts.lastName;
+    final patronymicTrimmed = nameParts.patronymic;
+
+    final loc = _composeRelativeLocation(dossier);
+    final years = _composeYears(person);
+
+    final actions = <Widget>[
+      if (canStartChat)
+        PillButton(
+          label: 'Написать',
+          icon: Icons.message_outlined,
+          onPressed: _openChatWithPerson,
+        ),
+      if (canInvite)
+        PillButton(
+          label: _isGeneratingLink ? 'Готовим…' : 'Пригласить в Родню',
+          icon: Icons.person_add_alt_1_outlined,
+          variant: PillButtonVariant.outlined,
+          onPressed: _isGeneratingLink ? null : _generateAndShareInviteLink,
+        ),
+      if (_canSuggestProfileEdits())
+        PillButton(
+          label: 'Предложить правку',
+          icon: Icons.edit_note_outlined,
+          variant: PillButtonVariant.outlined,
+          onPressed: _suggestProfileChanges,
+        ),
+      if (_identityService != null &&
+          _currentTreeId != null &&
+          person.userId != _authService.currentUserId)
+        PillButton(
+          label:
+              _isUpdatingIdentity ? 'Подтверждение…' : 'Это моя карточка',
+          icon: Icons.verified_user_outlined,
+          variant: PillButtonVariant.outlined,
+          onPressed: _isUpdatingIdentity ? null : _requestIdentityClaim,
+        ),
+      if (_identityService != null && _canEditOrDelete())
+        PillButton(
+          label: _isUpdatingPrivacy ? 'Сохраняем…' : 'Приватность',
+          icon: Icons.lock_outline_rounded,
+          variant: PillButtonVariant.outlined,
+          onPressed: _isUpdatingPrivacy ? null : _showPrivacySettings,
+        ),
+    ];
+
+    final headerStatus = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          decoration: BoxDecoration(
+            color: contactStatus.color.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(
+              color: contactStatus.color.withValues(alpha: 0.22),
+              width: 1,
             ),
           ),
-          if (_duplicateSuggestions.isNotEmpty) ...[
-            const SizedBox(height: 20),
-            _buildDuplicateSuggestionBanner(),
-          ],
-          if (galleryEntries.isNotEmpty || _canEditOrDelete()) ...[
-            const SizedBox(height: 20),
-            _buildGallerySection(galleryEntries),
-          ],
-          if (_person != null) ...[
-            const SizedBox(height: 20),
-            _buildHistorySection(),
-          ],
-          if (_person!.userId != null && _person!.userId!.isNotEmpty) ...[
-            const SizedBox(height: 20),
-            _buildLinkedProfileSection(),
-          ],
-          if (_graphTreeService != null &&
-              (_person!.id != _currentUserPersonId || _canEditOrDelete())) ...[
-            const SizedBox(height: 20),
-            _buildRelationToolsSection(),
-          ],
-          if (_buildDirectFamilyRows().isNotEmpty)
-            _buildInfoSection('Семья', _buildDirectFamilyRows()),
-          const SizedBox(height: 20), // Отступ снизу
-        ],
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(contactStatus.icon, size: 13, color: contactStatus.color),
+              const SizedBox(width: 5),
+              Text(
+                contactStatus.label,
+                style: AppTheme.sans(
+                  color: contactStatus.color,
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          contactStatus.description,
+          style: AppTheme.sans(
+            color: Theme.of(context)
+                .colorScheme
+                .onSurfaceVariant
+                .withValues(alpha: 0.85),
+            fontSize: 12.5,
+            fontWeight: FontWeight.w500,
+            letterSpacing: 0,
+            height: 1.35,
+          ),
+        ),
+      ],
+    );
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(0, 12, 0, 32),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 680),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ProfileHeroCard(
+                fullName: fullName,
+                firstName:
+                    firstNameTrimmed.isEmpty ? null : firstNameTrimmed,
+                lastName:
+                    lastNameTrimmed.isEmpty ? null : lastNameTrimmed,
+                patronymic:
+                    patronymicTrimmed.isEmpty ? null : patronymicTrimmed,
+                photoUrl: dossier.photoUrl,
+                location: loc,
+                bio: dossier.bio.trim().isNotEmpty
+                    ? dossier.bio.trim()
+                    : (person.bio?.trim().isNotEmpty == true
+                        ? person.bio!.trim()
+                        : null),
+                relBadge: directRelationLabel == null
+                    ? null
+                    : 'Для вас: $directRelationLabel',
+                useWarmAvatar: true,
+                deceased: isDeceased,
+                deceasedYears: years,
+                actions: actions,
+                onEditPressed:
+                    _canDirectEditProfile() ? _editRelative : null,
+                editLabel: 'Редактировать',
+              ),
+              Padding(
+                padding:
+                    const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                child: headerStatus,
+              ),
+              if (_duplicateSuggestions.isNotEmpty)
+                Padding(
+                  padding:
+                      const EdgeInsets.fromLTRB(12, 18, 12, 0),
+                  child: _buildDuplicateSuggestionBanner(),
+                ),
+              if (_relativeFactsHaveContent(dossier, person))
+                _buildRelativeFactsSection(dossier, person),
+              if (dossier.familySummary.trim().isNotEmpty ||
+                  dossier.aboutFamily.trim().isNotEmpty)
+                _buildRelativeFamilyNoteSection(dossier),
+              if (galleryEntries.isNotEmpty || _canEditOrDelete())
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 18, 16, 0),
+                  child: _buildGallerySection(galleryEntries),
+                ),
+              if (_person != null)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 18, 16, 0),
+                  child: _buildHistorySection(),
+                ),
+              if (person.userId != null && person.userId!.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 18, 16, 0),
+                  child: _buildLinkedProfileSection(),
+                ),
+              if (_graphTreeService != null &&
+                  (person.id != _currentUserPersonId ||
+                      _canEditOrDelete()))
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 18, 16, 0),
+                  child: _buildRelationToolsSection(),
+                ),
+              if (_buildDirectFamilyRows().isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 18, 16, 0),
+                  child: _buildInfoSection(
+                    'Семья',
+                    _buildDirectFamilyRows(),
+                  ),
+                ),
+            ],
+          ),
+        ),
       ),
     );
+  }
+
+  // ── Profile Redesign helpers (relative card flavour) ───────────────────────
+
+  String? _composeRelativeLocation(PersonDossier d) {
+    final city = d.city?.trim() ?? '';
+    final country = d.country?.trim() ?? '';
+    final birthPlace = d.birthPlace?.trim() ?? '';
+    if (city.isNotEmpty && country.isNotEmpty) return '$city · $country';
+    if (city.isNotEmpty) return city;
+    if (country.isNotEmpty) return country;
+    if (birthPlace.isNotEmpty) return birthPlace;
+    return null;
+  }
+
+  String? _composeYears(FamilyPerson person) {
+    final birth = person.birthDate?.year;
+    final death = person.deathDate?.year;
+    if (birth == null && death == null) return null;
+    if (birth != null && death != null) return '$birth — $death';
+    if (birth != null) return '$birth г.';
+    return '— $death';
+  }
+
+  bool _relativeFactsHaveContent(PersonDossier d, FamilyPerson p) {
+    return p.birthDate != null ||
+        (d.birthPlace ?? '').trim().isNotEmpty ||
+        d.hometown.trim().isNotEmpty ||
+        d.education.trim().isNotEmpty ||
+        d.work.trim().isNotEmpty ||
+        d.languages.trim().isNotEmpty ||
+        d.interests.trim().isNotEmpty ||
+        d.maidenName.trim().isNotEmpty;
+  }
+
+  Widget _buildRelativeFactsSection(PersonDossier d, FamilyPerson p) {
+    final rows = <Widget>[];
+    if (p.birthDate != null) {
+      rows.add(InfoRow(
+        icon: Icons.cake_outlined,
+        label: 'Дата рождения',
+        value: _formatRussianDate(p.birthDate!),
+        warm: true,
+        isFirst: rows.isEmpty,
+      ));
+    }
+    if ((d.birthPlace ?? '').trim().isNotEmpty) {
+      rows.add(InfoRow(
+        icon: Icons.place_outlined,
+        label: 'Место рождения',
+        value: d.birthPlace!.trim(),
+        warm: true,
+        isFirst: rows.isEmpty,
+      ));
+    }
+    if (d.hometown.trim().isNotEmpty) {
+      rows.add(InfoRow(
+        icon: Icons.account_tree_outlined,
+        label: 'Родом из',
+        value: d.hometown.trim(),
+        warm: true,
+        isFirst: rows.isEmpty,
+      ));
+    }
+    if (d.education.trim().isNotEmpty) {
+      rows.add(InfoRow(
+        icon: Icons.school_outlined,
+        label: 'Образование',
+        value: d.education.trim(),
+        warm: true,
+        isFirst: rows.isEmpty,
+      ));
+    }
+    if (d.work.trim().isNotEmpty) {
+      rows.add(InfoRow(
+        icon: Icons.work_outline_rounded,
+        label: 'Работа',
+        value: d.work.trim(),
+        warm: true,
+        isFirst: rows.isEmpty,
+      ));
+    }
+    if (d.languages.trim().isNotEmpty) {
+      rows.add(InfoRow(
+        icon: Icons.language_outlined,
+        label: 'Языки',
+        value: d.languages.trim(),
+        warm: true,
+        isFirst: rows.isEmpty,
+      ));
+    }
+    if (d.interests.trim().isNotEmpty) {
+      rows.add(InfoRow(
+        icon: Icons.auto_awesome_outlined,
+        label: 'Интересы',
+        value: d.interests.trim(),
+        warm: true,
+        isFirst: rows.isEmpty,
+      ));
+    }
+    if (d.maidenName.trim().isNotEmpty) {
+      rows.add(InfoRow(
+        icon: Icons.label_outline,
+        label: 'Девичья фамилия',
+        value: d.maidenName.trim(),
+        warm: true,
+        isFirst: rows.isEmpty,
+      ));
+    }
+    if (rows.isNotEmpty) {
+      final last = rows.removeLast() as InfoRow;
+      rows.add(InfoRow(
+        icon: last.icon,
+        label: last.label,
+        value: last.value,
+        warm: last.warm,
+        isFirst: last.isFirst,
+        isLast: true,
+      ));
+    }
+    return ProfileSection(title: 'О человеке', children: rows);
+  }
+
+  Widget _buildRelativeFamilyNoteSection(PersonDossier d) {
+    final summary = d.familySummary.trim();
+    final about = d.aboutFamily.trim();
+    final rows = <Widget>[];
+    if (summary.isNotEmpty) {
+      rows.add(InfoRow(
+        icon: Icons.notes_outlined,
+        label: 'Для семьи',
+        value: summary,
+        warm: true,
+        isFirst: rows.isEmpty,
+      ));
+    }
+    if (about.isNotEmpty) {
+      rows.add(InfoRow(
+        icon: Icons.family_restroom_outlined,
+        label: 'О семье',
+        value: about,
+        warm: true,
+        isFirst: rows.isEmpty,
+      ));
+    }
+    if (rows.isNotEmpty) {
+      final last = rows.removeLast() as InfoRow;
+      rows.add(InfoRow(
+        icon: last.icon,
+        label: last.label,
+        value: last.value,
+        warm: last.warm,
+        isFirst: last.isFirst,
+        isLast: true,
+      ));
+    }
+    return ProfileSection(title: 'Заметка для семьи', children: rows);
+  }
+
+  _RelativeNameParts _splitNameParts(
+    FamilyPerson person,
+    PersonDossier dossier,
+  ) {
+    final linked = dossier.linkedProfile;
+    if (linked != null) {
+      return _RelativeNameParts(
+        firstName: linked.firstName.trim(),
+        lastName: linked.lastName.trim(),
+        patronymic: linked.middleName.trim(),
+      );
+    }
+    final raw = person.name.trim();
+    if (raw.isEmpty) {
+      return const _RelativeNameParts(
+        firstName: '',
+        lastName: '',
+        patronymic: '',
+      );
+    }
+    // FamilyPerson stores name as «Фамилия Имя Отчество». Splitting
+    // by whitespace gives us back those three parts (or fewer when the
+    // record is partial). The hero-card composes them again as
+    // «Имя Отчество\nФамилия» so both halves get the redesign's split
+    // typography.
+    final parts =
+        raw.split(RegExp(r'\s+')).where((part) => part.isNotEmpty).toList();
+    if (parts.length == 1) {
+      return _RelativeNameParts(
+        firstName: parts.first,
+        lastName: '',
+        patronymic: '',
+      );
+    }
+    if (parts.length == 2) {
+      return _RelativeNameParts(
+        firstName: parts[1],
+        lastName: parts.first,
+        patronymic: '',
+      );
+    }
+    return _RelativeNameParts(
+      firstName: parts[1],
+      lastName: parts.first,
+      patronymic: parts.sublist(2).join(' '),
+    );
+  }
+
+  String _formatRussianDate(DateTime d) {
+    const months = [
+      'января',
+      'февраля',
+      'марта',
+      'апреля',
+      'мая',
+      'июня',
+      'июля',
+      'августа',
+      'сентября',
+      'октября',
+      'ноября',
+      'декабря',
+    ];
+    return '${d.day} ${months[d.month - 1]} ${d.year}';
   }
 
   Widget _buildDuplicateSuggestionBanner() {
@@ -1320,19 +1615,10 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
     );
   }
 
-  Widget _buildStatusChip(_RelativeContactStatus status) {
-    return Chip(
-      avatar: Icon(status.icon, size: 18, color: status.color),
-      label: Text(status.label),
-      labelStyle: TextStyle(
-        color: status.color,
-        fontWeight: FontWeight.w600,
-      ),
-      backgroundColor: status.color.withValues(alpha: 0.1),
-      side: BorderSide(color: status.color.withValues(alpha: 0.18)),
-      visualDensity: VisualDensity.compact,
-    );
-  }
+  // _buildStatusChip used to render a contact-status chip in the
+  // PersonDossierView header area. The new redesign hero card surfaces
+  // the same information through `relBadge` + the status text rendered
+  // directly under the hero — the chip helper is no longer needed.
 
   List<Widget> _buildDirectFamilyRows() {
     if (_person == null) {
@@ -1396,4 +1682,16 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
 
     return rows;
   }
+}
+
+class _RelativeNameParts {
+  const _RelativeNameParts({
+    required this.firstName,
+    required this.lastName,
+    required this.patronymic,
+  });
+
+  final String firstName;
+  final String lastName;
+  final String patronymic;
 }
