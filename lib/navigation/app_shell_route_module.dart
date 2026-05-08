@@ -433,7 +433,15 @@ class AppShellRouteModule {
               // auto-opening the sheet on the next frame.
               GoRoute(
                 path: 'edit',
-                redirect: (context, state) => '/profile?edit=1',
+                redirect: (context, state) {
+                  // Forward `?step=<0..3>` if present so deep links
+                  // can land directly on a specific step (e.g. push
+                  // notifications that say «дополни данные о работе»
+                  // can route to step 1).
+                  final step = state.uri.queryParameters['step'];
+                  final value = (step != null && step.isNotEmpty) ? step : '1';
+                  return '/profile?edit=$value';
+                },
               ),
               GoRoute(
                 // Archive of the user's expired stories — IG / TG model.
