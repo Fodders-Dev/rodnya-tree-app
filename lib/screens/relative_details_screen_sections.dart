@@ -321,6 +321,17 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
                     _buildDirectFamilyRows(),
                   ),
                 ),
+              // Profile Redesign: prominent «Удалить из дерева»
+              // button at the tail of the card. Only shown when the
+              // viewer can edit (mirrors the appbar trash icon's
+              // existing gate). The bottom button matches the design
+              // spec better than a tiny icon — destructive actions
+              // shouldn't hide.
+              if (_canDirectEditProfile())
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 22, 24, 0),
+                  child: _DeleteRelativeButton(onTap: _deleteRelative),
+                ),
             ],
           ),
         ),
@@ -1695,3 +1706,55 @@ class _RelativeNameParts {
   final String lastName;
   final String patronymic;
 }
+
+/// Bottom-of-card destructive button for «Удалить из дерева». Matches
+/// the design's red-tinted ghost treatment (Bordered, transparent
+/// fill, soft red ink) — destructive intent without screaming red.
+class _DeleteRelativeButton extends StatelessWidget {
+  const _DeleteRelativeButton({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    const dangerInk = Color(0xFFC0392B);
+    final dangerLine = dangerInk.withValues(alpha: 0.32);
+    final dangerSoft = dangerInk.withValues(alpha: 0.06);
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 18),
+          decoration: BoxDecoration(
+            color: Theme.of(context).brightness == Brightness.dark
+                ? dangerSoft
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: dangerLine, width: 1),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.delete_outline_rounded, size: 18, color: dangerInk),
+              const SizedBox(width: 8),
+              Text(
+                'Удалить из дерева',
+                style: AppTheme.sans(
+                  color: dangerInk,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+

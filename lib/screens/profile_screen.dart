@@ -1310,6 +1310,37 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 childCount: _userPosts.length,
                               ),
                             ),
+      // Profile Redesign: prominent «Выйти из аккаунта» button at the
+      // tail of the profile, matching the design's warm-tinted ghost
+      // button. The popup menu keeps a duplicate entry so power users
+      // can sign out from the topbar without scrolling.
+      SliverToBoxAdapter(
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 680),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(24, 24, 24, 8),
+              child: _SignOutButton(onTap: _signOut),
+            ),
+          ),
+        ),
+      ),
+      SliverToBoxAdapter(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(0, 14, 0, 4),
+            child: Text(
+              'Родня',
+              style: AppTheme.serif(
+                color: tokens.inkMuted,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0,
+              ),
+            ),
+          ),
+        ),
+      ),
       const SliverToBoxAdapter(child: SizedBox(height: 40)),
     ];
   }
@@ -2029,6 +2060,52 @@ class _ProfileTopbarPill extends StatelessWidget {
             width: 38,
             height: 38,
             child: Center(child: child),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Bottom-of-profile sign-out button matching the design's warm
+/// muted ghost treatment: full-width, surface-line border, warm-
+/// coloured label, no fill until press. The popup-menu entry is the
+/// secondary path (kept for power users), this is the primary one
+/// the user expects to find on the profile screen.
+class _SignOutButton extends StatelessWidget {
+  const _SignOutButton({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = Theme.of(context).extension<RodnyaDesignTokens>() ??
+        (Theme.of(context).brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 18),
+          decoration: BoxDecoration(
+            color: Colors.transparent,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: tokens.surfaceLine),
+          ),
+          child: Center(
+            child: Text(
+              'Выйти из аккаунта',
+              style: AppTheme.sans(
+                color: tokens.warm,
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0,
+              ),
+            ),
           ),
         ),
       ),
