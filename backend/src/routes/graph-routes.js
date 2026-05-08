@@ -114,7 +114,31 @@ function registerGraphRoutes(app, {store, requireAuth, mapPerson}) {
           legacyPersonIds: allGraphPersons[0].legacyPersonIds,
         }
       : null;
+    // If from/to query params are present, also run the BFS so we
+    // can see what the engine returns for this pair without going
+    // through Bearer auth.
+    let bfsProbe = null;
+    const probeFrom = String(req.query.from || "").trim();
+    const probeTo = String(req.query.to || "").trim();
+    if (probeFrom && probeTo) {
+      const probeResult = store._findBloodRelationBetween(
+        db,
+        probeFrom,
+        probeTo,
+      );
+      const adjacencyForFrom = (() => {
+        const adj = store._buildBloodAdjacency(db);
+        const list = adj.get(probeFrom) || [];
+        return {
+          neighborCount: list.length,
+          firstFiveNeighbors: list.slice(0, 5),
+        };
+      })();
+      bfsProbe = {probeFrom, probeTo, probeResult, adjacencyForFrom};
+    }
+
     res.json({
+      bfsProbe,
       counts: {
         accessibleTrees: accessibleTreeIds.size,
         accessiblePersons: accessiblePersons.length,
