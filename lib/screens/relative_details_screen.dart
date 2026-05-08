@@ -26,6 +26,7 @@ import '../models/tree_change_record.dart';
 import '../models/tree_graph_snapshot.dart';
 import '../widgets/custom_relation_label_dialog.dart';
 import '../widgets/glass_panel.dart';
+import '../widgets/media_lightbox.dart';
 import '../widgets/profile_redesign.dart';
 import '../widgets/tree_history_sheet.dart';
 import '../theme/app_theme.dart';
@@ -1825,195 +1826,37 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
     List<Map<String, dynamic>> galleryEntries, {
     required int initialIndex,
   }) {
-    if (galleryEntries.isEmpty) {
-      return;
+    // Profile Redesign: route through the shared MediaLightbox so the
+    // relative gallery, the post feed, and chat attachments all use
+    // the same fullscreen viewer (pinch-to-zoom, swipe-to-dismiss,
+    // dark scrim, caption rail). Removes ~150 LOC of bespoke
+    // PageView + Dialog plumbing that lived here.
+    if (galleryEntries.isEmpty) return;
+
+    final items = <MediaLightboxItem>[];
+    for (var i = 0; i < galleryEntries.length; i++) {
+      final entry = galleryEntries[i];
+      final url = entry['url']?.toString() ?? '';
+      if (url.isEmpty) continue;
+      final captionRaw = entry['caption']?.toString().trim() ?? '';
+      final isPrimary = entry['isPrimary'] == true;
+      final positionLabel = '${i + 1} / ${galleryEntries.length}';
+      final caption = [
+        if (isPrimary) 'Основное фото',
+        if (captionRaw.isNotEmpty) captionRaw,
+        positionLabel,
+      ].join(' · ');
+      items.add(MediaLightboxItem(
+        imageUrl: normalizePhotoUrl(url) ?? url,
+        caption: caption.isEmpty ? null : caption,
+      ));
     }
-
-    final pageController = PageController(initialPage: initialIndex);
-    var currentIndex = initialIndex;
-
-    showDialog<void>(
-      context: context,
-      barrierColor: Colors.black87,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            final media = galleryEntries[currentIndex];
-            final caption = media['caption']?.toString();
-
-            return Dialog(
-              insetPadding: const EdgeInsets.all(16),
-              backgroundColor: Colors.black,
-              child: SizedBox(
-                width: 520,
-                height: 520,
-                child: Column(
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              media['isPrimary'] == true
-                                  ? 'Основное фото'
-                                  : 'Фото',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                          IconButton(
-                            tooltip: 'Закрыть галерею',
-                            onPressed: () => Navigator.of(context).pop(),
-                            icon: const Icon(Icons.close, color: Colors.white),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Expanded(
-                      child: PageView.builder(
-                        controller: pageController,
-                        itemCount: galleryEntries.length,
-                        onPageChanged: (index) {
-                          setDialogState(() {
-                            currentIndex = index;
-                          });
-                        },
-                        itemBuilder: (context, index) {
-                          final itemUrl =
-                              galleryEntries[index]['url']?.toString() ?? '';
-                          final normalizedItemUrl = normalizePhotoUrl(itemUrl);
-                          return InteractiveViewer(
-                            child: normalizedItemUrl == null
-                                ? const Center(
-                                    child: Icon(
-                                      Icons.broken_image_outlined,
-                                      color: Colors.white,
-                                      size: 40,
-                                    ),
-                                  )
-                                : CachedNetworkImage(
-                                    imageUrl: normalizedItemUrl,
-                                    fit: BoxFit.contain,
-                                    placeholder: (context, url) => const Center(
-                                      child: CircularProgressIndicator(
-                                        color: Colors.white,
-                                      ),
-                                    ),
-                                    errorWidget: (context, url, error) =>
-                                        const Center(
-                                      child: Icon(
-                                        Icons.broken_image_outlined,
-                                        color: Colors.white,
-                                        size: 40,
-                                      ),
-                                    ),
-                                  ),
-                          );
-                        },
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-                      child: Column(
-                        children: [
-                          Text(
-                            '${currentIndex + 1} из ${galleryEntries.length}',
-                            style: const TextStyle(
-                              color: Colors.white70,
-                              fontSize: 12,
-                            ),
-                          ),
-                          if (caption != null && caption.isNotEmpty) ...[
-                            const SizedBox(height: 8),
-                            Text(
-                              caption,
-                              textAlign: TextAlign.center,
-                              style: const TextStyle(color: Colors.white),
-                            ),
-                          ],
-                          if (galleryEntries.length > 1) ...[
-                            const SizedBox(height: 12),
-                            SizedBox(
-                              height: 52,
-                              child: ListView.separated(
-                                scrollDirection: Axis.horizontal,
-                                itemCount: galleryEntries.length,
-                                separatorBuilder: (_, __) =>
-                                    const SizedBox(width: 8),
-                                itemBuilder: (context, index) {
-                                  final itemUrl = galleryEntries[index]['url']
-                                          ?.toString() ??
-                                      '';
-                                  final normalizedItemUrl =
-                                      normalizePhotoUrl(itemUrl);
-                                  final isSelected = index == currentIndex;
-
-                                  return Semantics(
-                                    button: true,
-                                    label: 'Перейти к фото ${index + 1} из ${galleryEntries.length}',
-                                    selected: isSelected,
-                                    child: InkWell(
-                                    onTap: () {
-                                      pageController.jumpToPage(index);
-                                      setDialogState(() {
-                                        currentIndex = index;
-                                      });
-                                    },
-                                    borderRadius: BorderRadius.circular(10),
-                                    child: Container(
-                                      width: 52,
-                                      decoration: BoxDecoration(
-                                        borderRadius: BorderRadius.circular(10),
-                                        border: Border.all(
-                                          color: isSelected
-                                              ? Colors.white
-                                              : Colors.white24,
-                                          width: isSelected ? 2 : 1,
-                                        ),
-                                      ),
-                                      clipBehavior: Clip.antiAlias,
-                                      child: normalizedItemUrl == null
-                                          ? const ColoredBox(
-                                              color: Colors.black54,
-                                              child: Icon(
-                                                Icons.image_not_supported,
-                                                color: Colors.white54,
-                                              ),
-                                            )
-                                          : CachedNetworkImage(
-                                              imageUrl: normalizedItemUrl,
-                                              fit: BoxFit.cover,
-                                              errorWidget:
-                                                  (context, url, error) =>
-                                                      const ColoredBox(
-                                                color: Colors.black54,
-                                                child: Icon(
-                                                  Icons.image_not_supported,
-                                                  color: Colors.white54,
-                                                ),
-                                              ),
-                                            ),
-                                    ),
-                                  ),
-                                  );
-                                },
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      },
+    if (items.isEmpty) return;
+    final clampedIndex = initialIndex.clamp(0, items.length - 1);
+    MediaLightbox.show(
+      context,
+      items: items,
+      initialIndex: clampedIndex,
     );
   }
 

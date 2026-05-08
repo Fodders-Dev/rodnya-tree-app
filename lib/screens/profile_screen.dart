@@ -1,4 +1,3 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -24,6 +23,7 @@ import '../models/story.dart';
 import '../widgets/post_card.dart';
 import '../widgets/post_card_shimmer.dart';
 import '../widgets/empty_state_widget.dart';
+import '../widgets/media_lightbox.dart';
 import '../widgets/profile_redesign.dart';
 import '../widgets/profile_edit_sheet.dart';
 import '../widgets/story_rail.dart';
@@ -599,128 +599,34 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   void _showSelectedTreePersonGallery(FamilyPerson person) {
+    // Profile Redesign: rebuild the inline gallery viewer on top of the
+    // shared MediaLightbox (same one used by post feed + chat
+    // attachments). Hands the user pinch-to-zoom, swipe-to-dismiss,
+    // and the dark-scrim treatment the design calls for, instead of
+    // the bespoke Dialog + PageView we used to roll here.
     final gallery = person.photoGallery;
-    if (gallery.isEmpty) {
-      return;
+    if (gallery.isEmpty) return;
+
+    final items = <MediaLightboxItem>[];
+    for (var i = 0; i < gallery.length; i++) {
+      final entry = gallery[i];
+      final url = entry['url']?.toString() ?? '';
+      if (url.isEmpty) continue;
+      final captionRaw = entry['caption']?.toString().trim() ?? '';
+      final isPrimary = entry['isPrimary'] == true;
+      final positionLabel = '${i + 1} / ${gallery.length}';
+      final caption = [
+        if (isPrimary) 'Основное фото',
+        if (captionRaw.isNotEmpty) captionRaw,
+        positionLabel,
+      ].join(' · ');
+      items.add(MediaLightboxItem(
+        imageUrl: normalizePhotoUrl(url) ?? url,
+        caption: caption.isEmpty ? null : caption,
+      ));
     }
-
-    final pageController = PageController();
-    var currentIndex = 0;
-
-    showDialog<void>(
-      context: context,
-      barrierColor: Colors.black87,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (dialogContext, setDialogState) {
-            final media = gallery[currentIndex];
-            final caption = media['caption']?.toString();
-
-            return Dialog(
-              insetPadding: const EdgeInsets.all(16),
-              backgroundColor: Colors.black,
-              child: SizedBox(
-                width: 520,
-                height: 520,
-                child: Column(
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              media['isPrimary'] == true
-                                  ? 'Основное фото'
-                                  : 'Фото из карточки',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                          IconButton(
-                            tooltip: 'Закрыть галерею',
-                            onPressed: () => Navigator.of(dialogContext).pop(),
-                            icon: const Icon(Icons.close, color: Colors.white),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Expanded(
-                      child: PageView.builder(
-                        controller: pageController,
-                        itemCount: gallery.length,
-                        onPageChanged: (index) {
-                          setDialogState(() {
-                            currentIndex = index;
-                          });
-                        },
-                        itemBuilder: (context, index) {
-                          final itemUrl =
-                              gallery[index]['url']?.toString() ?? '';
-                          final normalizedItemUrl = normalizePhotoUrl(itemUrl);
-                          return InteractiveViewer(
-                            child: normalizedItemUrl == null
-                                ? const Center(
-                                    child: Icon(
-                                      Icons.broken_image_outlined,
-                                      color: Colors.white,
-                                      size: 40,
-                                    ),
-                                  )
-                                : CachedNetworkImage(
-                                    imageUrl: normalizedItemUrl,
-                                    fit: BoxFit.contain,
-                                    placeholder: (context, url) => const Center(
-                                      child: CircularProgressIndicator(
-                                        color: Colors.white,
-                                      ),
-                                    ),
-                                    errorWidget: (context, url, error) =>
-                                        const Center(
-                                      child: Icon(
-                                        Icons.broken_image_outlined,
-                                        color: Colors.white,
-                                        size: 40,
-                                      ),
-                                    ),
-                                  ),
-                          );
-                        },
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-                      child: Column(
-                        children: [
-                          Text(
-                            '${currentIndex + 1} из ${gallery.length}',
-                            style: const TextStyle(
-                              color: Colors.white70,
-                              fontSize: 12,
-                            ),
-                          ),
-                          if (caption != null && caption.isNotEmpty) ...[
-                            const SizedBox(height: 8),
-                            Text(
-                              caption,
-                              textAlign: TextAlign.center,
-                              style: const TextStyle(color: Colors.white),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      },
-    );
+    if (items.isEmpty) return;
+    MediaLightbox.show(context, items: items);
   }
 
   Future<void> _showSelectedTreePersonHistory(FamilyPerson person) async {
