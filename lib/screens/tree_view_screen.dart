@@ -44,6 +44,7 @@ enum _TreeToolbarAction {
   openChats,
   createPost,
   toggleEditMode,
+  toggleSelectionMode,
   openBranchChat,
   openBranchDetails,
   copyPublicLink,
@@ -99,6 +100,13 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
   bool _isLoading = true;
   String _errorMessage = '';
   bool _isEditMode = false; // <<< Добавляем состояние режима редактирования
+  // Multi-select mode for bulk operations on the canvas — entered
+  // via the toolbar action, exited explicitly by the user (or auto-
+  // exits when the user opens edit mode, which owns long-press).
+  // The set is the source of truth; it survives until the user
+  // closes selection mode or completes a bulk action.
+  bool _isSelectionMode = false;
+  final Set<String> _selectedPersonIds = <String>{};
   TreeProvider? _treeProviderInstance; // Храним экземпляр
   String? _currentTreeId;
   String? _branchRootPersonId;
@@ -739,6 +747,28 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
         setState(() {
           _isEditMode = !_isEditMode;
           if (!_isEditMode) {
+            _selectedEditPersonId = null;
+          }
+          // Edit and selection are mutually exclusive — both want
+          // long-press / tap. Entering one closes the other.
+          if (_isEditMode && _isSelectionMode) {
+            _isSelectionMode = false;
+            _selectedPersonIds.clear();
+          }
+        });
+        return;
+      case _TreeToolbarAction.toggleSelectionMode:
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          _isSelectionMode = !_isSelectionMode;
+          if (!_isSelectionMode) {
+            _selectedPersonIds.clear();
+          }
+          // Symmetric guard — entering selection closes edit mode.
+          if (_isSelectionMode && _isEditMode) {
+            _isEditMode = false;
             _selectedEditPersonId = null;
           }
         });

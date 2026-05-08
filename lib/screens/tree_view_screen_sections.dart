@@ -1375,6 +1375,23 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
                 // the floating inline panel so we don't have two action
                 // surfaces over the same node.
                 showInlineEditPanel: false,
+                // Multi-select for bulk actions (Step 2). When the
+                // host opens selection mode through the toolbar, the
+                // canvas owns tap-to-toggle and shows accent rings;
+                // a separate bottom toolbar (below) drives the
+                // bulk-action choice.
+                selectionMode: _isSelectionMode,
+                selectedPersonIds: _selectedPersonIds,
+                onPersonSelectionToggle: (person) {
+                  if (!_isSelectionMode) return;
+                  _updateSectionState(() {
+                    if (_selectedPersonIds.contains(person.id)) {
+                      _selectedPersonIds.remove(person.id);
+                    } else {
+                      _selectedPersonIds.add(person.id);
+                    }
+                  });
+                },
               ),
               Positioned(
                 left: 12,
@@ -1384,15 +1401,20 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
                   duration: const Duration(milliseconds: 180),
                   switchInCurve: Curves.easeOut,
                   switchOutCurve: Curves.easeIn,
-                  child: selectedPerson == null
-                      ? const SizedBox.shrink()
-                      : _buildTreePersonBottomSheet(
-                          key: ValueKey<String>(
-                            'tree-person-sheet-${selectedPerson.id}',
-                          ),
-                          person: selectedPerson,
+                  child: _isSelectionMode
+                      ? _buildSelectionToolbar(
+                          key: const ValueKey<String>('selection-toolbar'),
                           accent: canvasAccent,
-                        ),
+                        )
+                      : selectedPerson == null
+                          ? const SizedBox.shrink()
+                          : _buildTreePersonBottomSheet(
+                              key: ValueKey<String>(
+                                'tree-person-sheet-${selectedPerson.id}',
+                              ),
+                              person: selectedPerson,
+                              accent: canvasAccent,
+                            ),
                 ),
               ),
               IgnorePointer(
@@ -2141,6 +2163,15 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
             ? 'Выключить перемещение карточек'
             : 'Включить перемещение карточек',
       ),
+      _buildTreeToolbarMenuItem(
+        value: _TreeToolbarAction.toggleSelectionMode,
+        icon: _isSelectionMode
+            ? Icons.check_box_outlined
+            : Icons.check_box_outline_blank,
+        label: _isSelectionMode
+            ? 'Выйти из режима выбора'
+            : 'Выбрать несколько человек',
+      ),
     ];
 
     if (branchRootPerson != null) {
@@ -2208,6 +2239,256 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
           const SizedBox(width: 10),
           Expanded(child: Text(label)),
         ],
+      ),
+    );
+  }
+
+  /// Bulk «Add to branch» action: opens a bottom sheet listing every
+  /// other branch the user belongs to, lets them pick one, and then
+  /// copies each selected person into that branch via the existing
+  /// cross-tree create-person flow (one POST per person, each with
+  /// `sourcePersonId` so the new card shares an `identityId` with
+  /// the original — we get identity propagation across trees as a
+  /// side-effect of copying).
+  ///
+  /// Failures fall through to a snackbar with a count of successes
+  /// so the user knows what landed and what didn't. Selection is
+  /// cleared on success only — partial failures keep the unfinished
+  /// people selected so the user can retry.
+  Future<void> _openBulkAddToBranchSheet() async {
+    if (!_isSelectionMode) return;
+    if (_selectedPersonIds.isEmpty) return;
+    final sourceTreeId = _currentTreeId;
+    if (sourceTreeId == null) return;
+
+    final treeProvider = Provider.of<TreeProvider>(context, listen: false);
+    final candidates = treeProvider.availableTrees
+        .where((tree) => tree.id != sourceTreeId)
+        .toList(growable: false);
+    if (candidates.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Нужна вторая ветка — создайте её сначала.'),
+        ),
+      );
+      return;
+    }
+
+    final FamilyTree? target = await showModalBottomSheet<FamilyTree>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Theme.of(sheetContext).colorScheme.outlineVariant,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  'Добавить ${_selectedPersonIds.length} в ветку',
+                  style: Theme.of(sheetContext).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Эти люди появятся в выбранной ветке как карточки. '
+                  'Связи между ними нужно будет соединить вручную.',
+                  style: Theme.of(sheetContext).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(sheetContext)
+                            .colorScheme
+                            .onSurfaceVariant,
+                      ),
+                ),
+                const SizedBox(height: 14),
+                for (final tree in candidates)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: CircleAvatar(
+                      backgroundColor:
+                          Theme.of(sheetContext).colorScheme.primary,
+                      child: Icon(
+                        tree.isFriendsTree
+                            ? Icons.diversity_3_outlined
+                            : Icons.account_tree,
+                        color: Colors.white,
+                      ),
+                    ),
+                    title: Text(
+                      tree.name,
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    subtitle: Text(
+                      tree.isPrivate ? 'Приватная' : 'Публичная',
+                      style: Theme.of(sheetContext).textTheme.bodySmall,
+                    ),
+                    trailing: const Icon(Icons.chevron_right_rounded),
+                    onTap: () => Navigator.of(sheetContext).pop(tree),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    if (target == null || !mounted) return;
+    await _runBulkAddToBranch(targetTree: target);
+  }
+
+  Future<void> _runBulkAddToBranch({required FamilyTree targetTree}) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final selectedIds = List<String>.from(_selectedPersonIds);
+    final peopleById = {
+      for (final entry in _relativesData)
+        if (entry['person'] is FamilyPerson)
+          (entry['person'] as FamilyPerson).id: entry['person'] as FamilyPerson,
+    };
+
+    final failures = <String>[];
+    var successCount = 0;
+    for (final personId in selectedIds) {
+      final source = peopleById[personId];
+      if (source == null) {
+        failures.add(personId);
+        continue;
+      }
+      try {
+        // Pass sourcePersonId so the backend's mergePersonDataFromSource
+        // path inherits name / dates / photo from the source — we do
+        // NOT need to forward those fields explicitly. identityId is
+        // wired up on the same code path so the new card auto-merges
+        // identity-wise with the original.
+        await _familyService.addRelative(targetTree.id, <String, dynamic>{
+          'sourcePersonId': source.id,
+          'name': source.name,
+          'gender': source.gender.name,
+        });
+        successCount += 1;
+      } catch (error) {
+        debugPrint(
+          'Bulk add-to-branch failed for $personId in ${targetTree.id}: $error',
+        );
+        failures.add(personId);
+      }
+    }
+
+    if (!mounted) return;
+    _updateSectionState(() {
+      if (failures.isEmpty) {
+        _selectedPersonIds.clear();
+        _isSelectionMode = false;
+      } else {
+        // Keep failed ones selected so the user can retry without
+        // re-tapping each card. Drop the successes.
+        _selectedPersonIds.removeAll(
+          selectedIds.where((id) => !failures.contains(id)),
+        );
+      }
+    });
+
+    final message = failures.isEmpty
+        ? 'Добавлено в «${targetTree.name}»: $successCount'
+        : 'Добавлено: $successCount, не удалось: ${failures.length}.';
+    messenger.showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  /// Bottom toolbar shown over the canvas while the user is in
+  /// multi-select mode. Surfaces the selection count and the bulk
+  /// action ("Add to branch…") + a "Done" exit button. Replaces the
+  /// regular per-person bottom sheet so the user always sees a
+  /// single coherent action surface — never both at once.
+  Widget _buildSelectionToolbar({
+    required Key key,
+    required Color accent,
+  }) {
+    final theme = Theme.of(context);
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+    final count = _selectedPersonIds.length;
+    final hasSelection = count > 0;
+    return Material(
+      key: key,
+      elevation: 6,
+      borderRadius: BorderRadius.circular(20),
+      color: tokens.surface.withValues(alpha: 0.96),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+        child: Row(
+          children: [
+            Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                color: accent.withValues(alpha: 0.18),
+                shape: BoxShape.circle,
+              ),
+              alignment: Alignment.center,
+              child: Icon(Icons.check_box_outlined, size: 20, color: accent),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    hasSelection
+                        ? 'Выбрано: $count'
+                        : 'Режим выбора',
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                      color: tokens.ink,
+                    ),
+                  ),
+                  Text(
+                    hasSelection
+                        ? 'Тапните по другим карточкам, чтобы добавить или убрать.'
+                        : 'Тапайте по карточкам, чтобы выбрать несколько человек.',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: tokens.inkSecondary,
+                      height: 1.3,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            FilledButton.icon(
+              onPressed:
+                  hasSelection ? _openBulkAddToBranchSheet : null,
+              icon: const Icon(Icons.account_tree_outlined, size: 18),
+              label: const Text('В ветку…'),
+            ),
+            const SizedBox(width: 6),
+            IconButton(
+              tooltip: 'Закрыть режим выбора',
+              onPressed: () {
+                _updateSectionState(() {
+                  _isSelectionMode = false;
+                  _selectedPersonIds.clear();
+                });
+              },
+              icon: const Icon(Icons.close_rounded),
+            ),
+          ],
+        ),
       ),
     );
   }

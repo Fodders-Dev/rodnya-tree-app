@@ -262,7 +262,8 @@ void main() {
       expect(find.text('Родня'), findsWidgets);
       expect(find.text('Дерево активно'), findsNothing);
       expect(find.text('Поделиться с роднёй...'), findsOneWidget);
-      expect(find.widgetWithText(ChoiceChip, 'Семья'), findsOneWidget);
+      // Legacy «Семья» chip removed in Step 1 audience-mode rework.
+      expect(find.widgetWithText(ChoiceChip, 'Семья'), findsNothing);
       expect(find.text('Новый пост'), findsNothing);
       expect(find.text('День рождения'), findsOneWidget);
       expect(find.byType(FloatingActionButton), findsOneWidget);
@@ -447,8 +448,17 @@ void main() {
     },
   );
 
+  // Earlier this asserted on the «Семья / Близкие / Архив /
+  // Истории» content-type chip strip. Step 1's audience-mode
+  // rework collapsed the home feed onto a single axis — branch
+  // chips — and dropped the content-type strip entirely. The new
+  // assertion just verifies that the audience-mode load delivers
+  // every post the fake service hands back; branch-chip behavior
+  // is exercised separately when there's >1 branch in the
+  // TreeProvider (which would require a fuller fixture and a
+  // dedicated test — punted to keep this one focused).
   testWidgets(
-    'HomeScreen фильтрует ленту по аудитории постов',
+    'HomeScreen рендерит все посты из аудитории без content-type фильтра',
     (tester) async {
       await getIt.unregister<PostServiceInterface>();
       getIt.registerSingleton<PostServiceInterface>(
@@ -470,16 +480,6 @@ void main() {
               content: 'Новость круга',
               createdAt: DateTime(2026, 4, 13, 11),
               circleId: 'circle-1',
-            ),
-            Post(
-              id: 'post-branch',
-              treeId: 'tree-1',
-              authorId: 'author-3',
-              authorName: 'Мария',
-              content: 'Новость ветки',
-              createdAt: DateTime(2026, 4, 13, 12),
-              scopeType: TreeContentScopeType.branches,
-              anchorPersonIds: const ['person-1'],
             ),
             Post(
               id: 'post-public',
@@ -505,22 +505,16 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      // Reference: feed strip is fixed — Семья / Близкие / Архив / Истории.
-      expect(find.widgetWithText(ChoiceChip, 'Семья'), findsOneWidget);
-      expect(find.widgetWithText(ChoiceChip, 'Близкие'), findsOneWidget);
-      expect(find.widgetWithText(ChoiceChip, 'Архив'), findsOneWidget);
-      expect(find.widgetWithText(ChoiceChip, 'Истории'), findsOneWidget);
+      // Legacy content-type chips are gone.
+      expect(find.widgetWithText(ChoiceChip, 'Близкие'), findsNothing);
+      expect(find.widgetWithText(ChoiceChip, 'Архив'), findsNothing);
+      expect(find.widgetWithText(ChoiceChip, 'Истории'), findsNothing);
+      // Every post the fake service returned is on screen — feed
+      // doesn't narrow by content type, only by branch via the
+      // chip strip (which is hidden with a single branch).
       expect(find.text('Семейная новость'), findsOneWidget);
       expect(find.text('Новость круга'), findsOneWidget);
-
-      await tester.tap(find.widgetWithText(ChoiceChip, 'Близкие'));
-      await tester.pumpAndSettle();
-
-      // "Близкие" filter shows only posts targeted to a non-default circle.
-      expect(find.text('Новость круга'), findsOneWidget);
-      expect(find.text('Семейная новость'), findsNothing);
-      expect(find.text('Новость ветки'), findsNothing);
-      expect(find.text('Публичная новость'), findsNothing);
+      expect(find.text('Публичная новость'), findsOneWidget);
     },
   );
 

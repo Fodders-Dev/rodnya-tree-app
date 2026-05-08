@@ -219,7 +219,35 @@ class InteractiveFamilyTree extends StatefulWidget {
     this.viewportReservedTop = 64,
     this.viewportReservedBottom = 28,
     this.showInlineEditPanel = true,
+    this.selectionMode = false,
+    this.selectedPersonIds = const <String>{},
+    this.onPersonSelectionToggle,
   });
+
+  /// Multi-select mode for bulk operations on canvas (e.g. «выделить
+  /// родню по маминой линии и одной кнопкой добавить в ветку
+  /// «Мамина линия»»). When true:
+  ///   - Tap on a card calls [onPersonSelectionToggle] instead of
+  ///     [onPersonTap] — no inspector, no profile open.
+  ///   - Long-press connector (relation creation) is disabled —
+  ///     selection mode owns the gesture.
+  ///   - Cards in [selectedPersonIds] render with an accent ring +
+  ///     check overlay so the multi-select state is visible at a
+  ///     glance even when the user pans/zooms.
+  /// Edit-mode short-circuits this — the two are mutually exclusive
+  /// at the host level.
+  final bool selectionMode;
+
+  /// Person ids currently selected in selection mode. Cards check
+  /// membership at render time; the host owns the source of truth.
+  final Set<String> selectedPersonIds;
+
+  /// Callback when the user taps a card while [selectionMode] is on.
+  /// The host adds/removes the person from its selection set and
+  /// re-renders the widget with the new [selectedPersonIds]. Null
+  /// when the host doesn't support selection (read-only viewer, etc.)
+  /// — selection mode falls back to no-op tapping.
+  final void Function(FamilyPerson)? onPersonSelectionToggle;
 
   @override
   State<InteractiveFamilyTree> createState() => _InteractiveFamilyTreeState();
@@ -1738,19 +1766,72 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
     // onConnectExistingPersons callback (the public read-only viewer
     // does NOT) AND (b) we're not in edit mode (where long-press is
     // already used to drag cards into manual positions).
-    final connectorEnabled =
-        widget.onConnectExistingPersons != null && !widget.isEditMode;
+    final connectorEnabled = widget.onConnectExistingPersons != null &&
+        !widget.isEditMode &&
+        !widget.selectionMode;
     final isConnectHoverTarget =
         connectorEnabled && _connectingHoverTargetId == person.id &&
             _connectingFromPersonId != person.id;
     final isConnectSource =
         connectorEnabled && _connectingFromPersonId == person.id;
 
+    // Selection-mode visual: accent ring + check badge when the
+    // card is in the host's `selectedPersonIds`. Drawn over the
+    // base card so it's visible regardless of selected/dimmed/
+    // deceased states. The ring is intentionally chunky (3px,
+    // primary-color) so it reads from a panned-out canvas where
+    // the card is shrunk by the InteractiveViewer transform.
+    final isMultiSelected =
+        widget.selectionMode && widget.selectedPersonIds.contains(person.id);
+
     // Card with optional "drop-target glow" for connector hover state.
     final cardWithConnectAffordance = Stack(
       clipBehavior: Clip.none,
       children: [
         cardContent,
+        // Selection-mode ring around the whole card.
+        if (isMultiSelected)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: Theme.of(context).colorScheme.primary,
+                    width: 3,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        // Selection check badge in the top-right corner.
+        if (isMultiSelected)
+          Positioned(
+            top: -6,
+            right: -6,
+            child: IgnorePointer(
+              child: Container(
+                width: 22,
+                height: 22,
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.primary,
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.18),
+                      blurRadius: 4,
+                      offset: const Offset(0, 1),
+                    ),
+                  ],
+                ),
+                child: const Icon(
+                  Icons.check_rounded,
+                  size: 14,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+          ),
         // Glow ring shown when another card is being dragged onto
         // this one during edge-first connection.
         if (isConnectHoverTarget)
@@ -1780,38 +1861,56 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
       ],
     );
 
+    // Selection mode owns tap + suppresses long-press / double-tap
+    // (which would either open the inspector or start connector
+    // creation — both confusing during multi-select). Tap toggles
+    // membership in the host's selection set; the visual ring is
+    // drawn in the layered card builder above.
+    final inSelectionMode =
+        widget.selectionMode && widget.onPersonSelectionToggle != null;
+
     final tapAndDoubleTapDetector = GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onLongPressStart: widget.isEditMode
+      onLongPressStart: widget.isEditMode && !inSelectionMode
           ? (_) {
               HapticFeedback.mediumImpact();
               _handleNodeDragStart(person);
             }
           : null,
-      onLongPressMoveUpdate: widget.isEditMode
+      onLongPressMoveUpdate: widget.isEditMode && !inSelectionMode
           ? (details) => _handleNodeDragUpdate(
                 person,
                 details.offsetFromOrigin,
               )
           : null,
-      onLongPressEnd:
-          widget.isEditMode ? (_) => _handleNodeDragEnd() : null,
+      onLongPressEnd: widget.isEditMode && !inSelectionMode
+          ? (_) => _handleNodeDragEnd()
+          : null,
       onTap: () {
+        if (inSelectionMode) {
+          HapticFeedback.selectionClick();
+          widget.onPersonSelectionToggle!(person);
+          return;
+        }
         if (widget.isEditMode) {
           _selectEditPerson(person);
           return;
         }
         widget.onPersonTap(person);
       },
-      onDoubleTap: widget.isEditMode || widget.onPersonDoubleTap == null
+      onDoubleTap: widget.isEditMode ||
+              widget.onPersonDoubleTap == null ||
+              inSelectionMode
           ? null
           : () => widget.onPersonDoubleTap!(person),
       // Legacy long-press → quick-add bottom sheet. Suppressed when
       // the connector is enabled (the LongPressDraggable below
-      // takes that gesture for drag-to-connect instead).
+      // takes that gesture for drag-to-connect instead) or in
+      // selection mode (tap-to-toggle owns the gesture).
       onLongPress: widget.isEditMode ||
               !canUseLongPressQuickAdd ||
-              connectorEnabled
+              connectorEnabled ||
+              inSelectionMode
           ? null
           : () => _showQuickAddRelativeSheet(context, person),
       child: cardWithConnectAffordance,

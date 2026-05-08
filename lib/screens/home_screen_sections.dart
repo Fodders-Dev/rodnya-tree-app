@@ -180,12 +180,8 @@ extension _HomeScreenSections on _HomeScreenState {
           child: _buildComposeTeaser(),
         ),
         Padding(
-          padding: const EdgeInsets.fromLTRB(18, 0, 18, 6),
-          child: _buildFeedBranchStrip(),
-        ),
-        Padding(
           padding: const EdgeInsets.fromLTRB(18, 0, 18, 10),
-          child: _buildFeedFilterStrip(),
+          child: _buildFeedBranchStrip(),
         ),
         const SizedBox(height: 4),
         Padding(
@@ -226,12 +222,8 @@ extension _HomeScreenSections on _HomeScreenState {
           child: _buildComposeTeaser(),
         ),
         Padding(
-          padding: const EdgeInsets.fromLTRB(18, 0, 18, 6),
-          child: _buildFeedBranchStrip(),
-        ),
-        Padding(
           padding: const EdgeInsets.fromLTRB(18, 0, 18, 10),
-          child: _buildFeedFilterStrip(),
+          child: _buildFeedBranchStrip(),
         ),
         const SizedBox(height: 4),
         Padding(
@@ -799,36 +791,6 @@ extension _HomeScreenSections on _HomeScreenState {
             ],
           ),
         ),
-      ),
-    );
-  }
-
-  Widget _buildFeedFilterStrip() {
-    final filters = _HomeScreenState._feedFilters;
-    final selectedFilter =
-        filters.contains(_selectedFeedFilter) ? _selectedFeedFilter : 'Семья';
-
-    return SizedBox(
-      height: 36,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: filters.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 8),
-        itemBuilder: (context, index) {
-          final label = filters[index];
-          return Semantics(
-            button: true,
-            selected: selectedFilter == label,
-            label: 'home-feed-filter-$label',
-            child: ChoiceChip(
-              label: Text(label),
-              selected: selectedFilter == label,
-              visualDensity: VisualDensity.compact,
-              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              onSelected: (_) => _selectFeedFilter(label),
-            ),
-          );
-        },
       ),
     );
   }

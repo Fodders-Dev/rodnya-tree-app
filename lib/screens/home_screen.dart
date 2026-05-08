@@ -60,7 +60,6 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Post> _posts = [];
   List<Story> _stories = [];
   String? _selectedEventCategoryFilter;
-  String _selectedFeedFilter = 'Семья';
   bool _isLoadingEvents = true;
   bool _isLoadingPosts = false;
   // Phase 6.3: home-screen «Эта неделя в семье» strip. Loaded
@@ -198,7 +197,6 @@ class _HomeScreenState extends State<HomeScreen> {
           _upcomingEvents = [];
           _branchDigest = null;
           _selectedEventCategoryFilter = null;
-          _selectedFeedFilter = 'Семья';
         });
       }
     }
@@ -339,43 +337,13 @@ class _HomeScreenState extends State<HomeScreen> {
         .toList();
   }
 
-  // Reference: fixed strip "Семья / Близкие / Архив / Истории" — always
-  // visible regardless of post data, matching Claude design source.
-  static const List<String> _feedFilters = <String>[
-    'Семья',
-    'Близкие',
-    'Архив',
-    'Истории',
-  ];
-
-  List<Post> get _visiblePosts {
-    switch (_selectedFeedFilter) {
-      case 'Близкие':
-        // Близкие = posts to a non-default circle (favorites/inner ring).
-        return _posts.where((post) => post.circleId != null).toList();
-      case 'Архив':
-        // Архив = older posts (>30 days).
-        final cutoff = DateTime.now().subtract(const Duration(days: 30));
-        return _posts.where((post) => post.createdAt.isBefore(cutoff)).toList();
-      case 'Истории':
-        // Истории = posts with at least one photo.
-        return _posts
-            .where((post) => post.renderableImageUrls.isNotEmpty)
-            .toList();
-      case 'Семья':
-      default:
-        return _posts;
-    }
-  }
-
-  void _selectFeedFilter(String label) {
-    if (_selectedFeedFilter == label) {
-      return;
-    }
-    setState(() {
-      _selectedFeedFilter = label;
-    });
-  }
+  /// What the home feed renders. After Step 1 there's no
+  /// content-type narrowing (Семья/Близкие/Архив/Истории) — the
+  /// only feed control is the branch chip strip, which already
+  /// filters on the server side via `treeId`. Returning `_posts`
+  /// directly keeps the data path predictable: whatever
+  /// `_loadPosts` brought back is what the user sees.
+  List<Post> get _visiblePosts => _posts;
 
   String _eventCategoryKey(String label) {
     switch (label) {
@@ -422,8 +390,12 @@ class _HomeScreenState extends State<HomeScreen> {
           'selectedTreeName': selectedTreeName,
           'hasSelectedTree': hasSelectedTree,
           'isLoadingEvents': _isLoadingEvents,
-          'selectedFeedFilter': _selectedFeedFilter,
-          'availableFeedFilters': _feedFilters,
+          // After Step 1 the home feed has a single axis — branch
+          // chips. Surface the branch scope so E2E tests can assert
+          // on the chip strip directly. The legacy
+          // selectedFeedFilter / availableFeedFilters were removed
+          // along with the content-type chip strip.
+          'selectedFeedBranchId': _selectedFeedBranchId,
           'selectedEventFilter': _selectedEventCategoryFilter,
           'availableEventFilters': <String>['Все', ..._eventCategories],
           'eventRailOffset':

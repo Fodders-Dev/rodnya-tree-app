@@ -91,6 +91,29 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
 
   bool get _isFriendsTree => _currentTreeMeta?.isFriendsTree == true;
 
+  /// Live audience footprint based on the currently-selected branches.
+  /// Counts the union of `memberIds` across the primary branch
+  /// (`_currentTreeMeta`) and every branch the user toggled on in the
+  /// "Опубликовать также в" strip. The author is included — the
+  /// "увидят X человек" copy is read as "audience size" and pretending
+  /// the author isn't part of the audience confuses the count when
+  /// the user opens their own post a moment later.
+  ///
+  /// Returns `null` until the primary tree metadata loaded; the badge
+  /// stays hidden until then so we don't flash a misleading "0 человек".
+  _AudienceSummary? get _audienceSummary {
+    if (_currentTreeMeta == null) return null;
+    final viewers = <String>{..._currentTreeMeta!.memberIds};
+    var branches = 1;
+    for (final tree in _otherUserTrees) {
+      if (_additionalBranchIds.contains(tree.id)) {
+        viewers.addAll(tree.memberIds);
+        branches += 1;
+      }
+    }
+    return _AudienceSummary(viewers: viewers.length, branches: branches);
+  }
+
   String get _selectedAudienceLabel {
     final activePreset = _activePreset;
     if (activePreset != null) {
@@ -1022,6 +1045,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
         _buildBranchAudienceSection(sheetSetState: sheetSetState),
         const SizedBox(height: 16),
         _buildCrossBranchSection(theme, tokens, sheetSetState),
+        _buildAudienceSummaryBadge(theme, tokens),
         SwitchListTile.adaptive(
           contentPadding: EdgeInsets.zero,
           title: const Text('По публичной ссылке'),
@@ -1107,6 +1131,90 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
         ],
       ),
     );
+  }
+
+  /// "Этот пост увидят: X человек • N ветке/веток" — live audience
+  /// preview that reacts whenever the user toggles a cross-branch
+  /// chip or switches the primary branch. Closes the loop on the
+  /// audience model: until this badge existed, the author had to
+  /// guess how many people the fan-out reached. The number is the
+  /// union of branch.memberIds across selected branches (NOT the
+  /// circle/branch-anchored audience narrowing — that's harder to
+  /// compute correctly client-side and worth a follow-up if users
+  /// ask). Author is included — the badge reads as "audience size",
+  /// and pretending the author isn't in their own audience
+  /// confuses the count when they open their own post seconds later.
+  Widget _buildAudienceSummaryBadge(
+    ThemeData theme,
+    RodnyaDesignTokens tokens,
+  ) {
+    final summary = _audienceSummary;
+    if (summary == null) return const SizedBox.shrink();
+    final viewerLabel = _pluralizeViewers(summary.viewers);
+    final branchLabel = _pluralizeBranches(summary.branches);
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: tokens.accentSoft.withValues(alpha: 0.6),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: tokens.accent.withValues(alpha: 0.32),
+          width: 0.8,
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            Icons.visibility_outlined,
+            size: 18,
+            color: tokens.accent,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: RichText(
+              text: TextSpan(
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: tokens.ink,
+                  height: 1.3,
+                ),
+                children: [
+                  const TextSpan(text: 'Этот пост увидят '),
+                  TextSpan(
+                    text: viewerLabel,
+                    style: TextStyle(
+                      fontWeight: FontWeight.w800,
+                      color: tokens.accent,
+                    ),
+                  ),
+                  TextSpan(text: ' в $branchLabel.'),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static String _pluralizeViewers(int count) {
+    final mod10 = count % 10;
+    final mod100 = count % 100;
+    if (mod10 == 1 && mod100 != 11) return '$count человек';
+    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) {
+      return '$count человека';
+    }
+    return '$count человек';
+  }
+
+  static String _pluralizeBranches(int count) {
+    final mod10 = count % 10;
+    final mod100 = count % 100;
+    if (mod10 == 1 && mod100 != 11) return '$count ветке';
+    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) {
+      return '$count ветках';
+    }
+    return '$count ветках';
   }
 
   Widget _buildBranchAudienceSection({StateSetter? sheetSetState}) {
@@ -1961,6 +2069,16 @@ class _PostMedia {
 
   final XFile file;
   final bool isVideo;
+}
+
+/// Audience preview computed from the composer's selected branches.
+/// Carries the union member count and the branch count so the
+/// pluralization helpers can render the right grammar.
+class _AudienceSummary {
+  const _AudienceSummary({required this.viewers, required this.branches});
+
+  final int viewers;
+  final int branches;
 }
 
 class _PickedMediaPreview extends StatelessWidget {

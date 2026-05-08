@@ -283,3 +283,33 @@ N постов из active-branch». После переписки они сло
   фронт всегда шлёт `[treeId]`). Поиск по фиду (всё ещё работает
   по выбранной ветке через старый код). Эти три → отдельные
   итерации.
+
+- 2026-05-08: Step 1.5 + Step 2 implementation
+  - **Composer audience counter:** «Этот пост увидят: 17 человек в
+    2 ветках». Считает union memberIds по выбранным веткам (primary
+    + cross-branch toggles). Включён автор — это «размер аудитории»,
+    не «количество других». Pluralization helpers под русскую
+    грамматику. Падает gracefully когда primary tree meta не
+    подгрузилась (просто не показывает badge).
+  - **Снёс legacy chip strip** (Семья/Близкие/Архив/Истории). Они
+    были рудиментом другого мышления и шумели поверх branch-чипов.
+    Новый канон: одна полоса, branch-чипы, и всё. Тест на content-
+    type filter переписан под audience-mode.
+  - **Step 2 selection-mode на canvas:** новый toolbar action
+    «Выбрать несколько человек». Пока активен:
+    - tap по карточке → toggle selection (вместо открытия inspector)
+    - long-press connector выключен (selection mode владеет жестом)
+    - на карточке accent-кольцо + check-badge при выделении
+    - вместо обычного person bottom-sheet — toolbar «Выбрано: N •
+      [В ветку…] • [Закрыть]»
+  - **Bulk «Добавить в ветку…»:** тап на кнопку → bottom sheet с
+    другими ветками юзера → выбор → для каждого selected personId
+    POST `/v1/trees/:targetId/persons` с `sourcePersonId` (re-uses
+    Phase 0 cross-tree picker code path; identityId шарится автоматом).
+    Связи между скопированными карточками НЕ копируются — это
+    отдельная итерация (нужен domain-смысловый «копировать вместе с
+    edges»).
+  - **Lasso (drag по пустому месту)** отложен. Tap-to-toggle на
+    мобильном — самый прямой способ; lasso потребует разрешать
+    конфликт с pan/zoom InteractiveViewer и отдельным polygon
+    hit-test'ом. Сделаю если юзер запросит.
