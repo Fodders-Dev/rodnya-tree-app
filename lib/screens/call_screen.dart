@@ -131,22 +131,21 @@ class _CallScreenState extends State<CallScreen> {
     if (_videoChromeVisible) _scheduleVideoChromeHide();
   }
 
-  /// Start the ringer loop when the call is ringing and we're the
-  /// callee; stop it on any other state. Repeats: system alert tone +
-  /// heavy haptic every ~1.6s. Cheap, no asset dependency, works on
-  /// silent mode (haptic part) and on speaker (tone part).
+  /// Start the ringer loop when the call is ringing — incoming gets
+  /// the loud `ringtone.wav` arpeggio with haptic pulses, outgoing
+  /// gets the classic `ringback.wav` (gudok) without vibration. Stop
+  /// on any non-ringing state.
   void _syncRinger() {
     if (!mounted) return;
-    final shouldRing =
-        _isIncoming && _resolvedCall.state == CallState.ringing;
-    if (shouldRing && !_ringerActive) {
-      _startRinger();
-    } else if (!shouldRing && _ringerActive) {
+    final isRinging = _resolvedCall.state == CallState.ringing;
+    if (isRinging && !_ringerActive) {
+      _startRinger(incoming: _isIncoming);
+    } else if (!isRinging && _ringerActive) {
       _stopRinger();
     }
   }
 
-  void _startRinger() {
+  void _startRinger({required bool incoming}) {
     // Skip ringer in flutter_test's binding so widget tests don't
     // hang on the periodic Timer / pumpAndSettle. Detected via
     // binding-name comparison so we don't import flutter_test from
@@ -154,32 +153,44 @@ class _CallScreenState extends State<CallScreen> {
     final bindingName = WidgetsBinding.instance.runtimeType.toString();
     if (bindingName.contains('TestWidgetsFlutterBinding')) return;
     _ringerActive = true;
-    _ringerPlayer ??= AudioPlayer();
-    void pulse() {
-      if (!_ringerActive || !mounted) return;
-      // Stronger vibration: HapticFeedback.heavyImpact() was barely
-      // perceptible on Samsung mid-range — switched to .vibrate()
-      // which is the heaviest option Flutter exposes (≈500ms buzz).
-      // Combined with .heavyImpact() at the end for a "double-tap"
-      // rhythm.
-      HapticFeedback.vibrate();
-      Timer(const Duration(milliseconds: 700), () {
+    final player = _ringerPlayer ??= AudioPlayer();
+
+    // Bundled WAVs: ringtone.wav (~2.8s arpeggio) for incoming,
+    // ringback.wav (~4s 1s-on / 3s-off RBT pattern) for outgoing.
+    // Both loop seamlessly via ReleaseMode.loop. The asset path
+    // omits `assets/` because audioplayers' AssetSource resolves
+    // against the asset bundle root.
+    final asset = incoming ? 'audio/ringtone.wav' : 'audio/ringback.wav';
+    unawaited(() async {
+      try {
+        await player.setReleaseMode(ReleaseMode.loop);
+        // Lower volume for the gudok — it's a confirmation tone, not
+        // a wake-the-house alert. Incoming stays loud.
+        await player.setVolume(incoming ? 1.0 : 0.55);
+        await player.play(AssetSource(asset));
+      } catch (error) {
+        debugPrint('[call] ringer audio failed: $error');
+      }
+    }());
+
+    if (incoming) {
+      // Haptic pulses ride alongside the audio — works on silent
+      // mode and gives mid-range Samsung devices the «double-tap»
+      // rhythm that's easier to feel than a single buzz.
+      void pulse() {
         if (!_ringerActive || !mounted) return;
-        HapticFeedback.heavyImpact();
-      });
-      // Sound: SystemSound.alert is what Android exposes through
-      // Flutter without an extra package. Quieter than a real
-      // ringtone but consistent across devices. A bundled .mp3 +
-      // audioplayers loop would be louder; that's a follow-up.
-      SystemSound.play(SystemSoundType.alert);
-      Timer(const Duration(milliseconds: 350), () {
-        if (!_ringerActive || !mounted) return;
-        SystemSound.play(SystemSoundType.alert);
-      });
+        HapticFeedback.vibrate();
+        Timer(const Duration(milliseconds: 700), () {
+          if (!_ringerActive || !mounted) return;
+          HapticFeedback.heavyImpact();
+        });
+      }
+      pulse();
+      _ringerTimer = Timer.periodic(
+        const Duration(milliseconds: 1400),
+        (_) => pulse(),
+      );
     }
-    pulse();
-    _ringerTimer =
-        Timer.periodic(const Duration(milliseconds: 1400), (_) => pulse());
   }
 
   void _stopRinger() {
@@ -190,6 +201,23 @@ class _CallScreenState extends State<CallScreen> {
     _ringerPlayer = null;
     unawaited(player?.stop().catchError((_) {}));
     unawaited(player?.dispose().catchError((_) {}));
+  }
+
+  /// One-shot SFX for call lifecycle transitions — `connect.wav` when
+  /// the remote picks up, `hangup.wav` when the line drops. Plays on
+  /// a separate AudioPlayer so it doesn't clobber the ringer loop.
+  void _playOneShot(String asset) {
+    final bindingName = WidgetsBinding.instance.runtimeType.toString();
+    if (bindingName.contains('TestWidgetsFlutterBinding')) return;
+    final player = AudioPlayer();
+    unawaited(() async {
+      try {
+        await player.setReleaseMode(ReleaseMode.release);
+        await player.play(AssetSource(asset));
+      } catch (error) {
+        debugPrint('[call] one-shot audio failed: $error');
+      }
+    }());
   }
 
   void _handleCoordinatorChanged() {
@@ -207,6 +235,7 @@ class _CallScreenState extends State<CallScreen> {
     if (coordinatorCall.id != _resolvedCall.id) {
       return;
     }
+    final previousState = _resolvedCall.state;
     setState(() {
       _call = coordinatorCall;
     });
@@ -214,6 +243,18 @@ class _CallScreenState extends State<CallScreen> {
     // accept / decline / cancel / "joined on other device" all need
     // to silence the loop immediately.
     _syncRinger();
+    // Lifecycle SFX: a soft chime when the line connects, a closing
+    // descend when it ends. Skipped on first hop into ringing — the
+    // ringer loop itself is the audio cue at that point.
+    if (previousState != coordinatorCall.state) {
+      if (previousState == CallState.ringing &&
+          coordinatorCall.state == CallState.active) {
+        _playOneShot('audio/connect.wav');
+      } else if (!previousState.isTerminal &&
+          coordinatorCall.state.isTerminal) {
+        _playOneShot('audio/hangup.wav');
+      }
+    }
     // When a video call transitions to active, schedule the chrome
     // auto-hide so the user gets the full canvas after 3s.
     if (_isVideoCall && coordinatorCall.state == CallState.active) {

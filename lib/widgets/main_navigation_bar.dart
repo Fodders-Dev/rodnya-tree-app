@@ -1,6 +1,7 @@
 import 'dart:ui';
 
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, kIsWeb, TargetPlatform;
 import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
@@ -95,11 +96,20 @@ class MainNavigationBar extends StatelessWidget {
                       final pillLeft = (slotWidth * currentIndex) + 6;
                       final pillWidth = slotWidth - 12;
 
-                      // On web skip BackdropFilter — too expensive.
+                      // Skip BackdropFilter on web (CPU-bound) AND on
+                      // Android (mid-range GPU bound). The bar already
+                      // floats above content via box-shadow, and at
+                      // ≥0.90 alpha the underlying scroll is barely
+                      // perceptible — well worth the frame-time win
+                      // on Samsung S20 FE / Galaxy A-series. We keep
+                      // the blur on iOS + desktop where the cost is
+                      // negligible and the look is nicer.
+                      final useBlur = !kIsWeb &&
+                          defaultTargetPlatform != TargetPlatform.android;
                       final navFill = tokens.surface.withValues(
-                        alpha: kIsWeb
-                            ? (isDark ? 0.90 : 0.94)
-                            : (isDark ? 0.58 : 0.64),
+                        alpha: useBlur
+                            ? (isDark ? 0.58 : 0.64)
+                            : (isDark ? 0.90 : 0.94),
                       );
                       final borderColor = tokens.surfaceLine;
                       final navRadius = BorderRadius.circular(999);
@@ -194,7 +204,7 @@ class MainNavigationBar extends StatelessWidget {
                         ),
                       );
 
-                      if (!kIsWeb) {
+                      if (useBlur) {
                         navInner = ClipRRect(
                           borderRadius: navRadius,
                           child: BackdropFilter(

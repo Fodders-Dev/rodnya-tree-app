@@ -206,6 +206,7 @@ flutter:
 
   assets:
     - assets/
+    - assets/audio/
     - assets/backgrounds/
     - assets/fonts/
     # - assets/images/  # этот путь может быть удален, если не содержит файлов

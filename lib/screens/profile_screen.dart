@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -1305,109 +1306,119 @@ class _ProfileScreenState extends State<ProfileScreen> {
     required ThemeData theme,
     required RodnyaDesignTokens tokens,
   }) {
+    // Performance: BackdropFilter is the single biggest frame-time
+    // hit on mid-range Android (Samsung S20 FE / Galaxy A-series).
+    // Keep it on iOS / desktop where the GPU eats it for breakfast,
+    // skip it on Android — the underlying surface bumps to ~96%
+    // opacity so the visual delta is essentially imperceptible
+    // while the per-frame cost drops sharply.
+    final useBlur = defaultTargetPlatform != TargetPlatform.android;
+    final body = Container(
+      height: 76,
+      decoration: BoxDecoration(
+        color: tokens.surface.withValues(
+          alpha: theme.brightness == Brightness.dark
+              ? (useBlur ? 0.74 : 0.96)
+              : (useBlur ? 0.78 : 0.97),
+        ),
+        border: Border(
+          bottom: BorderSide(
+            color: tokens.surfaceLine.withValues(alpha: 0.5),
+            width: 0.6,
+          ),
+        ),
+      ),
+      padding: const EdgeInsets.fromLTRB(8, 8, 12, 14),
+      child: SafeArea(
+        bottom: false,
+        child: Row(
+          children: [
+            if (Navigator.of(context).canPop())
+              IconButton(
+                icon: Icon(Icons.arrow_back_rounded, color: tokens.ink),
+                tooltip: 'Назад',
+                onPressed: () {
+                  if (context.canPop()) {
+                    context.pop();
+                  } else {
+                    context.go('/');
+                  }
+                },
+              )
+            else
+              const SizedBox(width: 14),
+            Text(
+              'Профиль',
+              style: AppTheme.serif(
+                color: tokens.ink,
+                fontSize: 22,
+                fontWeight: FontWeight.w600,
+                letterSpacing: -0.22,
+              ),
+            ),
+            const Spacer(),
+            _ProfileTopbarPill(
+              tokens: tokens,
+              tooltip: 'Редактировать',
+              onTap: () => _openProfileEditSheet(),
+              child: Icon(
+                Icons.edit_outlined,
+                size: 18,
+                color: tokens.ink,
+              ),
+            ),
+            const SizedBox(width: 8),
+            PopupMenuButton<String>(
+              tooltip: 'Меню',
+              onSelected: (value) {
+                switch (value) {
+                  case 'archive':
+                    context.push('/profile/stories/archive');
+                    break;
+                  case 'settings':
+                    context.push('/profile/settings');
+                    break;
+                  case 'about':
+                    context.push('/profile/about');
+                    break;
+                  case 'logout':
+                    _signOut();
+                    break;
+                }
+              },
+              itemBuilder: (_) => [
+                const PopupMenuItem(
+                    value: 'archive', child: Text('Архив историй')),
+                const PopupMenuItem(
+                    value: 'settings', child: Text('Настройки')),
+                const PopupMenuItem(
+                    value: 'about', child: Text('О приложении')),
+                const PopupMenuItem(value: 'logout', child: Text('Выйти')),
+              ],
+              child: Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: tokens.surfaceStrong,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: tokens.surfaceLine),
+                ),
+                child: Icon(
+                  Icons.settings_outlined,
+                  size: 19,
+                  color: tokens.ink,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!useBlur) return body;
     return ClipRect(
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-        child: Container(
-          height: 76,
-          decoration: BoxDecoration(
-            color: tokens.surface.withValues(
-              alpha: theme.brightness == Brightness.dark ? 0.74 : 0.78,
-            ),
-            border: Border(
-              bottom: BorderSide(
-                color: tokens.surfaceLine.withValues(alpha: 0.5),
-                width: 0.6,
-              ),
-            ),
-          ),
-          padding: const EdgeInsets.fromLTRB(8, 8, 12, 14),
-          child: SafeArea(
-            bottom: false,
-            child: Row(
-              children: [
-                if (Navigator.of(context).canPop())
-                  IconButton(
-                    icon: Icon(Icons.arrow_back_rounded, color: tokens.ink),
-                    tooltip: 'Назад',
-                    onPressed: () {
-                      if (context.canPop()) {
-                        context.pop();
-                      } else {
-                        context.go('/');
-                      }
-                    },
-                  )
-                else
-                  const SizedBox(width: 14),
-                Text(
-                  'Профиль',
-                  style: AppTheme.serif(
-                    color: tokens.ink,
-                    fontSize: 22,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: -0.22,
-                  ),
-                ),
-                const Spacer(),
-                _ProfileTopbarPill(
-                  tokens: tokens,
-                  tooltip: 'Редактировать',
-                  onTap: () => _openProfileEditSheet(),
-                  child: Icon(
-                    Icons.edit_outlined,
-                    size: 18,
-                    color: tokens.ink,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                PopupMenuButton<String>(
-                  tooltip: 'Меню',
-                  onSelected: (value) {
-                    switch (value) {
-                      case 'archive':
-                        context.push('/profile/stories/archive');
-                        break;
-                      case 'settings':
-                        context.push('/profile/settings');
-                        break;
-                      case 'about':
-                        context.push('/profile/about');
-                        break;
-                      case 'logout':
-                        _signOut();
-                        break;
-                    }
-                  },
-                  itemBuilder: (_) => [
-                    const PopupMenuItem(
-                        value: 'archive',
-                        child: Text('Архив историй')),
-                    const PopupMenuItem(
-                        value: 'settings', child: Text('Настройки')),
-                    const PopupMenuItem(
-                        value: 'about', child: Text('О приложении')),
-                    const PopupMenuItem(value: 'logout', child: Text('Выйти')),
-                  ],
-                  child: Container(
-                    width: 38,
-                    height: 38,
-                    decoration: BoxDecoration(
-                      color: tokens.surfaceStrong,
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: tokens.surfaceLine),
-                    ),
-                    child: Icon(
-                      Icons.settings_outlined,
-                      size: 19,
-                      color: tokens.ink,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
+        child: body,
       ),
     );
   }
