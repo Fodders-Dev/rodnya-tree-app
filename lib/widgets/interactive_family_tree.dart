@@ -164,9 +164,22 @@ class InteractiveFamilyTree extends StatefulWidget {
       40; // Горизонтальное расстояние между братьями/сестрами
   static const double spouseSeparation =
       20; // Горизонтальное расстояние между супругами
-  static const double contentInsetHorizontal = 72;
+  // Horizontal canvas inset on both sides. The left side has to
+  // host the generation gutter badges ("Поколение 2 / Молчаливое /
+  // Зумеры"), which can run up to ~180px wide. With the previous
+  // 72px inset the leftmost card ended up sitting on top of its
+  // own badge — user reported "карточки перекрывают поколения".
+  // 200px gives badges a real strip on the left without crowding
+  // the cards. Bump this in lockstep with the labelLeft offset in
+  // _buildGenerationGuideWidgets if you change the gutter design.
+  static const double contentInsetHorizontal = 200;
   static const double contentInsetTop = 80;
   static const double contentInsetBottom = 40;
+  // Reserved width for the generation gutter badges on the left
+  // side of the canvas. Keep in sync with contentInsetHorizontal —
+  // labels are clamped to (gutter - 12) so they can never visually
+  // crash into the leftmost card.
+  static const double generationGutterWidth = 188;
 
   const InteractiveFamilyTree({
     super.key,
@@ -677,40 +690,62 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
     final contentLeft = nodePositions.values
         .map((offset) => offset.dx - InteractiveFamilyTree.nodeWidth / 2)
         .reduce(min);
-    final labelLeft = max(14.0, contentLeft - 118);
-    final dividerLeft = min(labelLeft + 44, stackWidth - 56);
+    // Anchor the gutter badge to the left edge of the reserved
+    // strip. With contentInsetHorizontal at 200 the leftmost card
+    // is at x=200 in canvas space, so a 188-wide badge that starts
+    // at x=14 ends at x=202 with a 12px buffer to spare. If the
+    // user manually drags a card further left, the badge clamps
+    // its width via ConstrainedBox below so it still won't overlap.
+    final labelLeft = max(
+      14.0,
+      contentLeft - InteractiveFamilyTree.generationGutterWidth + 12,
+    );
+    final badgeAvailableWidth =
+        max(60.0, contentLeft - labelLeft - 12);
+    final dividerLeft = min(
+      labelLeft + InteractiveFamilyTree.generationGutterWidth - 16,
+      stackWidth - 56,
+    );
     final dividerWidth = max(0.0, stackWidth - dividerLeft - 32);
     final guides = <Widget>[];
 
     for (var index = 0; index < levels.length; index++) {
       final levelY = levels[index];
+      // Lift the badge fully above the card row so even if the
+      // card and badge happen to share a horizontal slice the
+      // badge doesn't dip into the card area. nodeHeight/2 + 8
+      // puts the badge bottom edge ~8px above the card top.
       final labelTop = max(
         8.0,
-        levelY - InteractiveFamilyTree.nodeHeight / 2 - 26,
+        levelY - InteractiveFamilyTree.nodeHeight / 2 - 44,
       );
       guides.add(
         Positioned(
           left: labelLeft,
           top: labelTop,
           child: IgnorePointer(
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: Theme.of(context)
-                    .colorScheme
-                    .surfaceContainerHighest
-                    .withValues(alpha: 0.92),
-                borderRadius: BorderRadius.circular(999),
-                border: Border.all(
-                  color: Theme.of(context).colorScheme.outlineVariant,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: badgeAvailableWidth),
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Theme.of(context)
+                      .colorScheme
+                      .surfaceContainerHighest
+                      .withValues(alpha: 0.92),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(
+                    color: Theme.of(context).colorScheme.outlineVariant,
+                  ),
                 ),
-              ),
-              child: _GenerationGuideBadge(
-                title: _generationLabel(index, levels.length),
-                subtitle: _generationCohortLabel(
-                  _peopleForGenerationLevel(
-                    levelY: levelY,
-                    peopleById: peopleById,
+                child: _GenerationGuideBadge(
+                  title: _generationLabel(index, levels.length),
+                  subtitle: _generationCohortLabel(
+                    _peopleForGenerationLevel(
+                      levelY: levelY,
+                      peopleById: peopleById,
+                    ),
                   ),
                 ),
               ),
@@ -4180,6 +4215,8 @@ class _GenerationGuideBadge extends StatelessWidget {
               letterSpacing: 0.4,
               height: 1.0,
             ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
           if (subtitle != null && subtitle!.trim().isNotEmpty) ...[
             const SizedBox(height: 2),
@@ -4191,7 +4228,7 @@ class _GenerationGuideBadge extends StatelessWidget {
                 fontWeight: FontWeight.w600,
                 height: 1.15,
               ),
-              maxLines: 2,
+              maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
           ],
