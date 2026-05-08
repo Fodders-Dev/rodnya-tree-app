@@ -1,6 +1,10 @@
 const {
   findWithinTreeDuplicateCandidates,
 } = require("../identity-matcher");
+const {
+  enforceTextLimit,
+  enforceArrayCap,
+} = require("../input-guards");
 
 function registerTreeRoutes(
   app,
@@ -458,6 +462,80 @@ function registerTreeRoutes(
         }
         throw error;
       }
+    },
+  );
+
+  // Step 2 selection-mode: bulk-copy a set of persons from one tree
+  // to another, AND bridge any relations between the imported set
+  // (or between an imported person and someone already in the
+  // target tree via shared identityId — e.g. the user themselves).
+  // Returns the created persons + the relations that landed.
+  // Idempotent: re-running with the same selection doesn't duplicate
+  // rows on either side.
+  app.post(
+    "/v1/trees/:treeId/persons/import",
+    requireAuth,
+    async (req, res) => {
+      const targetTree = await requireTreeAccess(req, res, req.params.treeId);
+      if (!targetTree) return;
+
+      const sourceTreeIdRaw = req.body?.sourceTreeId;
+      const sourceTreeId =
+        typeof sourceTreeIdRaw === "string" && sourceTreeIdRaw.trim()
+          ? sourceTreeIdRaw.trim()
+          : null;
+      if (!sourceTreeId) {
+        res.status(400).json({message: "Нужен sourceTreeId"});
+        return;
+      }
+      const sourceTree = await requireTreeAccess(req, res, sourceTreeId);
+      if (!sourceTree) return;
+      if (sourceTree.id === targetTree.id) {
+        res.status(400).json({
+          message: "Источник и цель должны быть разными ветками",
+        });
+        return;
+      }
+
+      const sourcePersonIdsGuard = enforceArrayCap(
+        req.body?.sourcePersonIds,
+        {
+          // 64 covers any realistic lasso bulk action without
+          // letting an over-eager client request a million-row
+          // copy in a single POST.
+          max: 64,
+          itemValidator: (raw) =>
+              enforceTextLimit(raw, {
+                max: 64,
+                allowMultiline: false,
+                fieldName: "sourcePersonId",
+              }),
+          fieldName: "sourcePersonIds",
+        },
+      );
+      if (!sourcePersonIdsGuard.ok) {
+        res.status(sourcePersonIdsGuard.status).json({
+          message: sourcePersonIdsGuard.message,
+        });
+        return;
+      }
+
+      const result = await store.bulkImportPersonsToTree({
+        sourceTreeId: sourceTree.id,
+        sourcePersonIds: sourcePersonIdsGuard.value,
+        targetTreeId: targetTree.id,
+        actorId: req.auth.user.id,
+      });
+
+      if (!result) {
+        res.status(404).json({message: "Дерево не найдено"});
+        return;
+      }
+
+      res.status(201).json({
+        persons: result.persons.map(mapPerson),
+        relations: result.relations,
+      });
     },
   );
 

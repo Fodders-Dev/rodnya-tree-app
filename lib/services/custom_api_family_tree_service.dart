@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import '../backend/backend_runtime_config.dart';
 import '../backend/interfaces/blood_relation_capable_family_tree_service.dart';
 import '../backend/interfaces/branch_digest_capable_family_tree_service.dart';
+import '../backend/interfaces/bulk_import_capable_family_tree_service.dart';
 import '../backend/interfaces/cross_tree_person_search_capable_family_tree_service.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
 import '../backend/interfaces/identity_conflicts_capable_family_tree_service.dart';
@@ -42,7 +43,8 @@ class CustomApiFamilyTreeService
         IdentitySuggestionsCapableFamilyTreeService,
         IdentityConflictsCapableFamilyTreeService,
         BloodRelationCapableFamilyTreeService,
-        BranchDigestCapableFamilyTreeService {
+        BranchDigestCapableFamilyTreeService,
+        BulkImportCapableFamilyTreeService {
   CustomApiFamilyTreeService({
     required CustomApiAuthService authService,
     required BackendRuntimeConfig runtimeConfig,
@@ -312,6 +314,40 @@ class CustomApiFamilyTreeService
       if (error.statusCode == 404) return null;
       rethrow;
     }
+  }
+
+  @override
+  Future<BulkImportResult> bulkImportPersonsToTree({
+    required String sourceTreeId,
+    required String targetTreeId,
+    required List<String> sourcePersonIds,
+  }) async {
+    final response = await _requestJson(
+      method: 'POST',
+      path: '/v1/trees/$targetTreeId/persons/import',
+      body: <String, dynamic>{
+        'sourceTreeId': sourceTreeId,
+        'sourcePersonIds': sourcePersonIds,
+      },
+    );
+    final rawPersons = response['persons'];
+    final persons = rawPersons is List
+        ? rawPersons
+            .whereType<Map>()
+            .map(
+              (raw) => _personFromJson(
+                Map<String, dynamic>.from(raw),
+                fallbackTreeId: targetTreeId,
+              ),
+            )
+            .toList(growable: false)
+        : const <FamilyPerson>[];
+    final rawRelations = response['relations'];
+    final bridgedRelationCount = rawRelations is List ? rawRelations.length : 0;
+    return BulkImportResult(
+      persons: persons,
+      bridgedRelationCount: bridgedRelationCount,
+    );
   }
 
   @override

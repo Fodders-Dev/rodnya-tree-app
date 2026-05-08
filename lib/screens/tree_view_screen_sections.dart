@@ -2375,59 +2375,68 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
 
   Future<void> _runBulkAddToBranch({required FamilyTree targetTree}) async {
     final messenger = ScaffoldMessenger.of(context);
+    final sourceTreeId = _currentTreeId;
+    if (sourceTreeId == null) return;
     final selectedIds = List<String>.from(_selectedPersonIds);
-    final peopleById = {
-      for (final entry in _relativesData)
-        if (entry['person'] is FamilyPerson)
-          (entry['person'] as FamilyPerson).id: entry['person'] as FamilyPerson,
-    };
 
-    final failures = <String>[];
-    var successCount = 0;
-    for (final personId in selectedIds) {
-      final source = peopleById[personId];
-      if (source == null) {
-        failures.add(personId);
-        continue;
-      }
-      try {
-        // Pass sourcePersonId so the backend's mergePersonDataFromSource
-        // path inherits name / dates / photo from the source — we do
-        // NOT need to forward those fields explicitly. identityId is
-        // wired up on the same code path so the new card auto-merges
-        // identity-wise with the original.
-        await _familyService.addRelative(targetTree.id, <String, dynamic>{
-          'sourcePersonId': source.id,
-          'name': source.name,
-          'gender': source.gender.name,
-        });
-        successCount += 1;
-      } catch (error) {
-        debugPrint(
-          'Bulk add-to-branch failed for $personId in ${targetTree.id}: $error',
-        );
-        failures.add(personId);
-      }
+    final service = _familyService;
+    if (service is! BulkImportCapableFamilyTreeService) {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Этот сервис пока не умеет переносить нескольких людей сразу.',
+          ),
+        ),
+      );
+      return;
     }
+    // Explicit local cast — the `is!` check above is enough at the
+    // type-system level, but extension-method scopes don't always
+    // promote a final-field reference, so an explicit binding makes
+    // the call sites work uniformly across compilers.
+    final bulkImporter = service as BulkImportCapableFamilyTreeService;
 
-    if (!mounted) return;
-    _updateSectionState(() {
-      if (failures.isEmpty) {
+    try {
+      final result = await bulkImporter.bulkImportPersonsToTree(
+        sourceTreeId: sourceTreeId,
+        targetTreeId: targetTree.id,
+        sourcePersonIds: selectedIds,
+      );
+      if (!mounted) return;
+      _updateSectionState(() {
         _selectedPersonIds.clear();
         _isSelectionMode = false;
+      });
+      final relations = result.bridgedRelationCount;
+      final personsLanded = result.persons.length;
+      // Two cases worth distinguishing:
+      // - Everyone was already in target via identity (personsLanded
+      //   == 0): say so explicitly. Otherwise the user pokes the
+      //   button, sees "0", and assumes failure.
+      // - Some landed and some relations bridged: surface both
+      //   counts so the «связь со мной» case feels visible.
+      String message;
+      if (personsLanded == 0 && relations == 0) {
+        message =
+            'Эти люди уже есть в «${targetTree.name}» — там та же родня.';
+      } else if (relations > 0) {
+        message =
+            'Добавлено в «${targetTree.name}»: $personsLanded • связей подтянулось: $relations';
       } else {
-        // Keep failed ones selected so the user can retry without
-        // re-tapping each card. Drop the successes.
-        _selectedPersonIds.removeAll(
-          selectedIds.where((id) => !failures.contains(id)),
-        );
+        message = 'Добавлено в «${targetTree.name}»: $personsLanded';
       }
-    });
-
-    final message = failures.isEmpty
-        ? 'Добавлено в «${targetTree.name}»: $successCount'
-        : 'Добавлено: $successCount, не удалось: ${failures.length}.';
-    messenger.showSnackBar(SnackBar(content: Text(message)));
+      messenger.showSnackBar(SnackBar(content: Text(message)));
+    } catch (error) {
+      debugPrint('Bulk import to ${targetTree.id} failed: $error');
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            'Не удалось перенести людей в «${targetTree.name}». Попробуйте ещё раз.',
+          ),
+        ),
+      );
+    }
   }
 
   /// Bottom toolbar shown over the canvas while the user is in

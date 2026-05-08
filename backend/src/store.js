@@ -9277,6 +9277,227 @@ class FileStore {
     return structuredClone(person);
   }
 
+  /// Bulk-copy persons from one tree to another, then bridge any
+  /// source-tree relations that have at least one endpoint among
+  /// the imported set. "Bridging" means translating the relation's
+  /// endpoint personIds: if the source endpoint was just imported,
+  /// use the new target id; if it wasn't imported but already
+  /// exists in target via shared `identityId` (e.g. the user
+  /// themselves on both trees), use that existing id; otherwise
+  /// skip. The result is the natural answer to "I dragged my
+  /// girlfriend's card from the Кузнецовых tree into Родня — why
+  /// is she empty and disconnected from me?". Person data
+  /// (name / photo / dates) is fully inherited via the existing
+  /// `mergePersonDataFromSource` path.
+  ///
+  /// Idempotent on relations — if the same relation already exists
+  /// between the bridged endpoints in target it isn't duplicated.
+  /// Idempotent on persons too — picking someone who's already in
+  /// target (via identityId) results in the existing target person
+  /// being reused, not a duplicate row.
+  async bulkImportPersonsToTree({
+    sourceTreeId,
+    sourcePersonIds,
+    targetTreeId,
+    actorId,
+  }) {
+    const db = await this._read();
+    const sourceTree = db.trees.find((entry) => entry.id === sourceTreeId);
+    const targetTree = db.trees.find((entry) => entry.id === targetTreeId);
+    if (!sourceTree || !targetTree) return null;
+    if (
+      !this._userCanAccessTreeRecord(sourceTree, actorId) ||
+      !this._userCanAccessTreeRecord(targetTree, actorId)
+    ) {
+      return null;
+    }
+    if (!Array.isArray(sourcePersonIds) || sourcePersonIds.length === 0) {
+      return {persons: [], relations: []};
+    }
+    const requestedIds = Array.from(new Set(
+      sourcePersonIds
+        .map((value) => normalizeNullableString(value))
+        .filter((value) => value),
+    ));
+    const sourcePersonRecords = requestedIds
+      .map((id) => db.persons.find(
+        (entry) => entry.id === id && entry.treeId === sourceTreeId,
+      ))
+      .filter(Boolean);
+
+    // Map identityId → existing target personId. Built before we
+    // start importing so the user-themselves card on target is
+    // immediately discoverable as a relation endpoint.
+    const targetPersonsByIdentity = new Map();
+    for (const targetPerson of db.persons) {
+      if (targetPerson.treeId !== targetTreeId) continue;
+      const identity = normalizeNullableString(targetPerson.identityId);
+      if (identity) {
+        targetPersonsByIdentity.set(identity, targetPerson.id);
+      }
+    }
+
+    const sourceToTargetMap = new Map();
+    const importedPersons = [];
+
+    for (const sourcePerson of sourcePersonRecords) {
+      const identityId = normalizeNullableString(sourcePerson.identityId);
+      if (identityId && targetPersonsByIdentity.has(identityId)) {
+        // Already in target as the same human — skip the copy and
+        // map the source id to the existing target id so any
+        // source relation involving this person bridges to the
+        // existing target card.
+        sourceToTargetMap.set(
+          sourcePerson.id,
+          targetPersonsByIdentity.get(identityId),
+        );
+        continue;
+      }
+
+      // Ensure the source row has a canonical identity so the new
+      // target row can share it. Reuse the existing one if any,
+      // otherwise allocate.
+      let canonicalIdentity = null;
+      if (identityId) {
+        const identities = this._ensurePersonIdentityCollection(db);
+        canonicalIdentity = identities.find((entry) => entry.id === identityId);
+      }
+      if (!canonicalIdentity) {
+        const identities = this._ensurePersonIdentityCollection(db);
+        canonicalIdentity = createPersonIdentityRecord({
+          personIds: [sourcePerson.id],
+        });
+        identities.push(canonicalIdentity);
+        sourcePerson.identityId = canonicalIdentity.id;
+        sourcePerson.updatedAt = nowIso();
+      }
+
+      const mergedData = mergePersonDataFromSource({}, sourcePerson);
+      const newPerson = buildPersonRecord({
+        treeId: targetTreeId,
+        creatorId: actorId,
+        identityId: canonicalIdentity.id,
+        personData: mergedData,
+      });
+      db.persons.push(newPerson);
+      this._attachPersonToIdentity(db, newPerson, canonicalIdentity, null);
+      this._appendTreeChangeRecord(db, {
+        treeId: targetTreeId,
+        actorId,
+        type: "person.created",
+        personId: newPerson.id,
+        details: {
+          after: structuredClone(newPerson),
+          importedFrom: {
+            sourceTreeId,
+            sourcePersonId: sourcePerson.id,
+          },
+        },
+      });
+      sourceToTargetMap.set(sourcePerson.id, newPerson.id);
+      targetPersonsByIdentity.set(canonicalIdentity.id, newPerson.id);
+      importedPersons.push(newPerson);
+    }
+
+    // Resolve a source personId to a target personId via either
+    // (a) the just-imported map, or (b) identity bridge to a
+    // pre-existing target person (the "user themselves" case).
+    const bridgeToTarget = (sourcePersonId) => {
+      if (!sourcePersonId) return null;
+      if (sourceToTargetMap.has(sourcePersonId)) {
+        return sourceToTargetMap.get(sourcePersonId);
+      }
+      const candidate = db.persons.find(
+        (entry) =>
+          entry.id === sourcePersonId && entry.treeId === sourceTreeId,
+      );
+      const identity = normalizeNullableString(candidate?.identityId);
+      if (identity && targetPersonsByIdentity.has(identity)) {
+        return targetPersonsByIdentity.get(identity);
+      }
+      return null;
+    };
+
+    const requestedIdSet = new Set(requestedIds);
+    const importedRelations = [];
+    const sourceRelations = db.relations.filter(
+      (entry) => entry.treeId === sourceTreeId,
+    );
+    for (const sourceRelation of sourceRelations) {
+      const involvesImported =
+        requestedIdSet.has(sourceRelation.person1Id) ||
+        requestedIdSet.has(sourceRelation.person2Id);
+      if (!involvesImported) continue;
+      const newP1 = bridgeToTarget(sourceRelation.person1Id);
+      const newP2 = bridgeToTarget(sourceRelation.person2Id);
+      if (!newP1 || !newP2 || newP1 === newP2) continue;
+
+      const existingRelation = db.relations.find((entry) => {
+        return (
+          entry.treeId === targetTreeId &&
+          ((entry.person1Id === newP1 && entry.person2Id === newP2) ||
+            (entry.person1Id === newP2 && entry.person2Id === newP1))
+        );
+      });
+      if (existingRelation) continue;
+
+      const timestamp = nowIso();
+      const newRelation = {
+        id: crypto.randomUUID(),
+        treeId: targetTreeId,
+        person1Id: newP1,
+        person2Id: newP2,
+        relation1to2: sourceRelation.relation1to2,
+        relation2to1: sourceRelation.relation2to1,
+        isConfirmed: true,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        createdBy: actorId,
+        marriageDate: sourceRelation.marriageDate ?? null,
+        divorceDate: sourceRelation.divorceDate ?? null,
+        customRelationLabel1to2: sourceRelation.customRelationLabel1to2 || null,
+        customRelationLabel2to1: sourceRelation.customRelationLabel2to1 || null,
+        // Skip parent-set / union plumbing — those are derived
+        // during normalization and re-derive correctly on next
+        // read. Carrying them across trees would force us to also
+        // import sibling parents to keep the set consistent, and
+        // that's a bigger semantic call for a separate iteration.
+        parentSetId: null,
+        parentSetType: null,
+        isPrimaryParentSet: null,
+        unionId: null,
+        unionType: null,
+        unionStatus: null,
+      };
+      db.relations.push(newRelation);
+      this._appendTreeChangeRecord(db, {
+        treeId: targetTreeId,
+        actorId,
+        type: "relation.created",
+        personIds: [newP1, newP2],
+        relationId: newRelation.id,
+        details: {
+          after: structuredClone(newRelation),
+          importedFrom: {
+            sourceTreeId,
+            sourceRelationId: sourceRelation.id,
+          },
+        },
+      });
+      importedRelations.push(newRelation);
+    }
+
+    targetTree.updatedAt = nowIso();
+    ensureCirclesForTree(db, targetTree);
+    this._reconcilePersonIdentities(db);
+    await this._write(db);
+
+    return {
+      persons: importedPersons.map((entry) => structuredClone(entry)),
+      relations: importedRelations.map((entry) => structuredClone(entry)),
+    };
+  }
+
   async updatePerson(treeId, personId, personData, actorId = null) {
     const db = await this._read();
     const person = db.persons.find(

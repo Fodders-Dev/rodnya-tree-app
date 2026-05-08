@@ -7051,6 +7051,175 @@ test(
   },
 );
 
+// Step 2 selection-mode bulk-import: when the user lasso-selects a
+// few people on tree A and ships them to tree B, the new endpoint
+// (a) copies the persons WITH their photo / dates / gender (not
+// blank cards), (b) bridges any relation the imported person had
+// with someone who's already in target tree via shared identityId
+// (the user themselves being the canonical case — they want their
+// connection to the imported relative preserved).
+test(
+  "bulk-import: copies persons with full data + bridges relations to existing target persons via identity",
+  async () => {
+    const ctx = await startTestServer();
+
+    try {
+      const owner = await registerTestUser(
+        ctx,
+        "bulk-import-owner@rodnya.app",
+        "Артём",
+      );
+      const ownerHeaders = {
+        authorization: `Bearer ${owner.accessToken}`,
+        "content-type": "application/json",
+      };
+
+      const sourceTreeId = await (async () => {
+        const r = await fetch(`${ctx.baseUrl}/v1/trees`, {
+          method: "POST",
+          headers: ownerHeaders,
+          body: JSON.stringify({name: "Семья Кузнецовых", isPrivate: true}),
+        });
+        return (await r.json()).tree.id;
+      })();
+      const targetTreeId = await (async () => {
+        const r = await fetch(`${ctx.baseUrl}/v1/trees`, {
+          method: "POST",
+          headers: ownerHeaders,
+          body: JSON.stringify({name: "Родня", isPrivate: true}),
+        });
+        return (await r.json()).tree.id;
+      })();
+
+      // The user themselves on the source tree (linked via userId).
+      // Same identityId will exist on target after we put the
+      // owner there too.
+      const createPerson = async (treeId, body) => {
+        const r = await fetch(
+          `${ctx.baseUrl}/v1/trees/${treeId}/persons`,
+          {method: "POST", headers: ownerHeaders, body: JSON.stringify(body)},
+        );
+        assert.equal(r.status, 201);
+        return (await r.json()).person;
+      };
+
+      const ownerOnSource = await createPerson(sourceTreeId, {
+        firstName: "Артём",
+        lastName: "Кузнецов",
+        gender: "male",
+        userId: owner.user.id,
+      });
+      const girlfriendOnSource = await createPerson(sourceTreeId, {
+        firstName: "Настя",
+        lastName: "Шуфляк",
+        gender: "female",
+        photoUrl: "https://example.com/anya.jpg",
+        birthDate: "2000-01-01",
+      });
+
+      // Wire the partner relation on source.
+      const relationResponse = await fetch(
+        `${ctx.baseUrl}/v1/trees/${sourceTreeId}/relations`,
+        {
+          method: "POST",
+          headers: ownerHeaders,
+          body: JSON.stringify({
+            person1Id: ownerOnSource.id,
+            person2Id: girlfriendOnSource.id,
+            relation1to2: "partner",
+            relation2to1: "partner",
+          }),
+        },
+      );
+      assert.equal(relationResponse.status, 201);
+
+      // Owner also exists on target tree via the same userId →
+      // identityId match. Without this, bridge has nothing to
+      // bridge to.
+      const ownerOnTarget = await createPerson(targetTreeId, {
+        firstName: "Артём",
+        lastName: "Кузнецов",
+        gender: "male",
+        userId: owner.user.id,
+      });
+      assert.ok(
+        ownerOnTarget.identityId,
+        "owner card on target must be identity-tagged",
+      );
+
+      // The actual bulk-import call: user picks ONLY the
+      // girlfriend, expects her to land with photo + the partner
+      // relation to themselves preserved.
+      const importResponse = await fetch(
+        `${ctx.baseUrl}/v1/trees/${targetTreeId}/persons/import`,
+        {
+          method: "POST",
+          headers: ownerHeaders,
+          body: JSON.stringify({
+            sourceTreeId,
+            sourcePersonIds: [girlfriendOnSource.id],
+          }),
+        },
+      );
+      assert.equal(importResponse.status, 201);
+      const importPayload = await importResponse.json();
+      assert.equal(importPayload.persons.length, 1);
+      assert.equal(importPayload.relations.length, 1);
+
+      const importedGirlfriend = importPayload.persons[0];
+      assert.equal(
+        importedGirlfriend.photoUrl,
+        "https://example.com/anya.jpg",
+        "photo must travel along with the imported person",
+      );
+      assert.equal(importedGirlfriend.identityId, girlfriendOnSource.identityId);
+
+      const bridgedRelation = importPayload.relations[0];
+      const bridgedEndpoints = [bridgedRelation.person1Id, bridgedRelation.person2Id];
+      assert.ok(
+        bridgedEndpoints.includes(importedGirlfriend.id),
+        "bridged relation must include the newly imported girlfriend",
+      );
+      assert.ok(
+        bridgedEndpoints.includes(ownerOnTarget.id),
+        "bridged relation must connect to the existing target owner card",
+      );
+      assert.equal(bridgedRelation.relation1to2, "partner");
+      assert.equal(bridgedRelation.relation2to1, "partner");
+
+      // Idempotent: re-running the same import should NOT duplicate
+      // person rows or relations. The girlfriend is now in target
+      // via identity, so the second call short-circuits to the
+      // existing card.
+      const repeatResponse = await fetch(
+        `${ctx.baseUrl}/v1/trees/${targetTreeId}/persons/import`,
+        {
+          method: "POST",
+          headers: ownerHeaders,
+          body: JSON.stringify({
+            sourceTreeId,
+            sourcePersonIds: [girlfriendOnSource.id],
+          }),
+        },
+      );
+      assert.equal(repeatResponse.status, 201);
+      const repeatPayload = await repeatResponse.json();
+      assert.equal(
+        repeatPayload.persons.length,
+        0,
+        "second run must not create another copy of the same person",
+      );
+      assert.equal(
+        repeatPayload.relations.length,
+        0,
+        "second run must not duplicate the bridged relation",
+      );
+    } finally {
+      await stopTestServer(ctx);
+    }
+  },
+);
+
 // Audience model regression: a viewer who is a member of one of
 // the post's secondary branchIds[] (but NOT the primary post.treeId)
 // must still see the post. Earlier the visibility check only

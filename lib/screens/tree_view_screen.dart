@@ -8,6 +8,7 @@ import 'package:get_it/get_it.dart';
 
 import '../backend/backend_runtime_config.dart';
 import '../backend/interfaces/blood_relation_capable_family_tree_service.dart';
+import '../backend/interfaces/bulk_import_capable_family_tree_service.dart';
 import '../backend/interfaces/identity_conflicts_capable_family_tree_service.dart';
 import '../backend/interfaces/identity_suggestions_capable_family_tree_service.dart';
 import '../backend/models/blood_relation.dart';
