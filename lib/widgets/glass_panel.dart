@@ -1,21 +1,28 @@
 import 'dart:ui';
 
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, kIsWeb, TargetPlatform;
 import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
 
 /// Frosted-glass panel.
 ///
-/// On **native** (Android / iOS) this uses [BackdropFilter] + blur so surfaces
-/// genuinely refract what's behind them.
+/// On **iOS / desktop** this uses [BackdropFilter] + blur so surfaces
+/// genuinely refract what's behind them — those GPUs eat the cost
+/// without breaking a sweat.
 ///
 /// On **web** (Flutter CanvasKit) [BackdropFilter] is extremely expensive —
 /// each instance forces the GPU compositor to create a separate layer and run
 /// a pixel-shader blur over everything behind it.  With 10+ panels visible at
 /// once the page grinds to a halt and some panels render as gray rectangles
-/// (the compositor gives up).  On web we skip the blur entirely and compensate
-/// with a slightly higher-opacity solid fill that still reads as "glassy".
+/// (the compositor gives up).
+///
+/// On **Android** (mid-range Samsung S20 FE / Galaxy A-series in particular)
+/// the same problem happens at smaller scale — enough GlassPanels stacked on
+/// a feed scroll drop frame rate to single digits. We treat Android the same
+/// way as web: skip the blur entirely, compensate with a slightly higher-
+/// opacity solid fill that still reads as "glassy".
 class GlassPanel extends StatelessWidget {
   const GlassPanel({
     super.key,
@@ -49,7 +56,13 @@ class GlassPanel extends StatelessWidget {
     if (plain) {
       return _buildPlainPanel(context);
     }
-    return kIsWeb ? _buildWebPanel(context) : _buildNativePanel(context);
+    // Skip BackdropFilter on web AND Android — the cheap fill path
+    // is visually almost identical at the alpha levels we use, and
+    // the per-frame cost of stacking many blurred panels is the
+    // single biggest hit on mid-range Android. Keep blur on iOS /
+    // desktop where it's free.
+    final useBlur = !kIsWeb && defaultTargetPlatform != TargetPlatform.android;
+    return useBlur ? _buildNativePanel(context) : _buildWebPanel(context);
   }
 
   Widget _buildPlainPanel(BuildContext context) {
