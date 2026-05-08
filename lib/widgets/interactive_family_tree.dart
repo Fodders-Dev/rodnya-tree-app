@@ -147,11 +147,19 @@ class InteractiveFamilyTree extends StatefulWidget {
   /// fighting for the same screen real-estate.
   final bool showInlineEditPanel;
 
-  // Константы для размеров узлов и отступов - понадобятся для расчета layout
+  // Константы для размеров узлов и отступов - понадобятся для расчета layout.
+  // nodeHeight should be a tight upper bound on the rendered
+  // FamilyTreeNodeCard height — the card with avatar (40), first +
+  // last name (~28), life dates (~15), and the role pill (~18) plus
+  // padding (10+9) and border (~2) measures around 128px. Setting
+  // nodeHeight below that lets the role pill visually leak into the
+  // gap between generations, which the user noticed as "карточки
+  // налезают". Bumping to 130 + a 12px boost to levelSeparation
+  // gives the pill a clear breathing strip above the connectors.
   static const double nodeWidth = 132; // Примерная ширина карточки
-  static const double nodeHeight = 112; // Примерная высота карточки
+  static const double nodeHeight = 130; // Высота карточки с pill-ом
   static const double levelSeparation =
-      64; // Вертикальное расстояние между уровнями
+      76; // Вертикальное расстояние между уровнями
   static const double siblingSeparation =
       40; // Горизонтальное расстояние между братьями/сестрами
   static const double spouseSeparation =
@@ -238,60 +246,26 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
     setState(() => _controlDockExpanded = value);
   }
 
-  // Phase 6.2: turns a backend role label like "Мать" / "Дядя" /
-  // "Двоюродная сестра" into a viewer-personalized form like
-  // "Ваша мама" / "Ваш дядя" / "Ваша двоюродная сестра". Falls back
-  // to the original label when the role doesn't have a known
-  // personalized rewrite (e.g. "Свояк", "Партнёр") — bare role
-  // is still readable, just less warm.
-  String _personalizeRelationLabel(String roleLabel, Gender targetGender) {
-    final lower = roleLabel.toLowerCase();
-    // Hand-curated map: bare role → personalized "Ваш(а) <ours>".
-    // Keys are lowercase to be case-insensitive against backend
-    // outputs (which already normalize via fullNameFromPersonInput).
-    const map = <String, String>{
-      'мать': 'Ваша мама',
-      'мама': 'Ваша мама',
-      'отец': 'Ваш папа',
-      'папа': 'Ваш папа',
-      'сын': 'Ваш сын',
-      'дочь': 'Ваша дочь',
-      'брат': 'Ваш брат',
-      'сестра': 'Ваша сестра',
-      'дядя': 'Ваш дядя',
-      'тётя': 'Ваша тётя',
-      'тетя': 'Ваша тётя',
-      'племянник': 'Ваш племянник',
-      'племянница': 'Ваша племянница',
-      'дедушка': 'Ваш дедушка',
-      'бабушка': 'Ваша бабушка',
-      'внук': 'Ваш внук',
-      'внучка': 'Ваша внучка',
-      'прадедушка': 'Ваш прадедушка',
-      'прабабушка': 'Ваша прабабушка',
-      'правнук': 'Ваш правнук',
-      'правнучка': 'Ваша правнучка',
-      'двоюродный брат': 'Ваш двоюродный брат',
-      'двоюродная сестра': 'Ваша двоюродная сестра',
-      'двоюродный дедушка': 'Ваш двоюродный дедушка',
-      'двоюродная бабушка': 'Ваша двоюродная бабушка',
-      'троюродный брат': 'Ваш троюродный брат',
-      'троюродная сестра': 'Ваша троюродная сестра',
-      'зять': 'Ваш зять',
-      'невестка': 'Ваша невестка',
-      'свёкор': 'Ваш свёкор',
-      'свекровь': 'Ваша свекровь',
-      'тесть': 'Ваш тесть',
-      'тёща': 'Ваша тёща',
-      'теща': 'Ваша тёща',
+  // Normalizes a backend role label for the role pill on tree
+  // cards. We strip the pronoun («Ваш/Ваша») — every card lives in
+  // a tree centered on the current user, so prepending "Ваш(а)" to
+  // every label was visually noisy and pushed long roles
+  // («Ваша двоюродная сестра») past the pill's max-width into
+  // ellipsis. Also folds Soviet-style «Мать»/«Отец» to the warmer
+  // «Мама»/«Папа», fixes the missing ё in «тетя»/«теща», and
+  // capitalizes the first letter so "свояк" reads as "Свояк".
+  String _normalizeRelationLabel(String roleLabel) {
+    final lower = roleLabel.toLowerCase().trim();
+    if (lower.isEmpty) return roleLabel;
+    const friendly = <String, String>{
+      'мать': 'Мама',
+      'отец': 'Папа',
+      'тетя': 'Тётя',
+      'теща': 'Тёща',
     };
-    final mapped = map[lower];
+    final mapped = friendly[lower];
     if (mapped != null) return mapped;
-    // Fallback: derive pronoun from target gender. For unknown
-    // roles we capitalize the first letter and prepend the right
-    // pronoun so even "Свояк" reads as "Ваш свояк".
-    final pronoun = targetGender == Gender.female ? 'Ваша' : 'Ваш';
-    return '$pronoun $lower';
+    return lower[0].toUpperCase() + lower.substring(1);
   }
 
   Offset? _dragStartNodePosition;
@@ -1673,20 +1647,20 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
     final isDraggingNode = _draggingPersonId == person.id;
     final supportsHoverActions = _supportsHoverNodeActions();
     final isHoveredNode = !widget.isEditMode && _hoveredPersonId == person.id;
-    // Phase 6.2: viewer-relative pronoun in front of the role
-    // label. Backend already gives us "Мать"/"Дядя"/"Двоюродная
-    // сестра" from the viewer's perspective; we just personalize
-    // it with "Ваш(а) ..." so the user reads it as "this is YOUR
-    // mom" rather than the abstract "this person plays the role
-    // of mother". When viewerDescriptor.isBlood is false (e.g.
-    // step-/adopted-/in-law) we keep the bare role.
+    // Backend gives us role labels from the viewer's perspective
+    // ("Мать"/"Дядя"/"Двоюродная сестра"). We just normalize them
+    // for the pill — folding "Мать"→"Мама" and similar — and skip
+    // the pill entirely on the current-user node (it already shows
+    // a "Это вы" chip). The "Ваш/Ваша" pronoun used to live here
+    // but felt redundant on every card and ate horizontal space
+    // for long roles; the whole tree is rooted in the viewer so
+    // the bare role is unambiguous.
     final relationChipLabel = viewerDescriptor?.primaryRelationLabel == null ||
             viewerDescriptor!.primaryRelationLabel!.trim().isEmpty ||
             isCurrentUserNode
         ? null
-        : _personalizeRelationLabel(
+        : _normalizeRelationLabel(
               viewerDescriptor.primaryRelationLabel!.trim(),
-              displayGender,
             ) +
             (viewerDescriptor.alternatePathCount > 0
                 ? ' +${viewerDescriptor.alternatePathCount}'
