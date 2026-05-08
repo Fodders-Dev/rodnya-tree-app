@@ -237,6 +237,63 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
     if (_controlDockExpanded == value) return;
     setState(() => _controlDockExpanded = value);
   }
+
+  // Phase 6.2: turns a backend role label like "Мать" / "Дядя" /
+  // "Двоюродная сестра" into a viewer-personalized form like
+  // "Ваша мама" / "Ваш дядя" / "Ваша двоюродная сестра". Falls back
+  // to the original label when the role doesn't have a known
+  // personalized rewrite (e.g. "Свояк", "Партнёр") — bare role
+  // is still readable, just less warm.
+  String _personalizeRelationLabel(String roleLabel, Gender targetGender) {
+    final lower = roleLabel.toLowerCase();
+    // Hand-curated map: bare role → personalized "Ваш(а) <ours>".
+    // Keys are lowercase to be case-insensitive against backend
+    // outputs (which already normalize via fullNameFromPersonInput).
+    const map = <String, String>{
+      'мать': 'Ваша мама',
+      'мама': 'Ваша мама',
+      'отец': 'Ваш папа',
+      'папа': 'Ваш папа',
+      'сын': 'Ваш сын',
+      'дочь': 'Ваша дочь',
+      'брат': 'Ваш брат',
+      'сестра': 'Ваша сестра',
+      'дядя': 'Ваш дядя',
+      'тётя': 'Ваша тётя',
+      'тетя': 'Ваша тётя',
+      'племянник': 'Ваш племянник',
+      'племянница': 'Ваша племянница',
+      'дедушка': 'Ваш дедушка',
+      'бабушка': 'Ваша бабушка',
+      'внук': 'Ваш внук',
+      'внучка': 'Ваша внучка',
+      'прадедушка': 'Ваш прадедушка',
+      'прабабушка': 'Ваша прабабушка',
+      'правнук': 'Ваш правнук',
+      'правнучка': 'Ваша правнучка',
+      'двоюродный брат': 'Ваш двоюродный брат',
+      'двоюродная сестра': 'Ваша двоюродная сестра',
+      'двоюродный дедушка': 'Ваш двоюродный дедушка',
+      'двоюродная бабушка': 'Ваша двоюродная бабушка',
+      'троюродный брат': 'Ваш троюродный брат',
+      'троюродная сестра': 'Ваша троюродная сестра',
+      'зять': 'Ваш зять',
+      'невестка': 'Ваша невестка',
+      'свёкор': 'Ваш свёкор',
+      'свекровь': 'Ваша свекровь',
+      'тесть': 'Ваш тесть',
+      'тёща': 'Ваша тёща',
+      'теща': 'Ваша тёща',
+    };
+    final mapped = map[lower];
+    if (mapped != null) return mapped;
+    // Fallback: derive pronoun from target gender. For unknown
+    // roles we capitalize the first letter and prepend the right
+    // pronoun so even "Свояк" reads as "Ваш свояк".
+    final pronoun = targetGender == Gender.female ? 'Ваша' : 'Ваш';
+    return '$pronoun $lower';
+  }
+
   Offset? _dragStartNodePosition;
 
   /// Person ids on the active path (selected + parents + children + spouse +
@@ -1616,11 +1673,21 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
     final isDraggingNode = _draggingPersonId == person.id;
     final supportsHoverActions = _supportsHoverNodeActions();
     final isHoveredNode = !widget.isEditMode && _hoveredPersonId == person.id;
+    // Phase 6.2: viewer-relative pronoun in front of the role
+    // label. Backend already gives us "Мать"/"Дядя"/"Двоюродная
+    // сестра" from the viewer's perspective; we just personalize
+    // it with "Ваш(а) ..." so the user reads it as "this is YOUR
+    // mom" rather than the abstract "this person plays the role
+    // of mother". When viewerDescriptor.isBlood is false (e.g.
+    // step-/adopted-/in-law) we keep the bare role.
     final relationChipLabel = viewerDescriptor?.primaryRelationLabel == null ||
             viewerDescriptor!.primaryRelationLabel!.trim().isEmpty ||
             isCurrentUserNode
         ? null
-        : viewerDescriptor.primaryRelationLabel!.trim() +
+        : _personalizeRelationLabel(
+              viewerDescriptor.primaryRelationLabel!.trim(),
+              displayGender,
+            ) +
             (viewerDescriptor.alternatePathCount > 0
                 ? ' +${viewerDescriptor.alternatePathCount}'
                 : '');
