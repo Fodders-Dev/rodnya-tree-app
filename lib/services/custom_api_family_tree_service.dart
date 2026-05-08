@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 
 import '../backend/backend_runtime_config.dart';
 import '../backend/interfaces/blood_relation_capable_family_tree_service.dart';
+import '../backend/interfaces/branch_digest_capable_family_tree_service.dart';
 import '../backend/interfaces/cross_tree_person_search_capable_family_tree_service.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
 import '../backend/interfaces/identity_conflicts_capable_family_tree_service.dart';
@@ -13,6 +14,7 @@ import '../backend/interfaces/identity_suggestions_capable_family_tree_service.d
 import '../backend/interfaces/profile_service_interface.dart';
 import '../backend/interfaces/tree_graph_capable_family_tree_service.dart';
 import '../backend/models/blood_relation.dart';
+import '../backend/models/branch_digest.dart';
 import '../backend/models/identity_field_conflict.dart';
 import '../backend/models/identity_suggestion.dart';
 import '../backend/models/cross_tree_person_suggestion.dart';
@@ -39,7 +41,8 @@ class CustomApiFamilyTreeService
         CrossTreePersonSearchCapableFamilyTreeService,
         IdentitySuggestionsCapableFamilyTreeService,
         IdentityConflictsCapableFamilyTreeService,
-        BloodRelationCapableFamilyTreeService {
+        BloodRelationCapableFamilyTreeService,
+        BranchDigestCapableFamilyTreeService {
   CustomApiFamilyTreeService({
     required CustomApiAuthService authService,
     required BackendRuntimeConfig runtimeConfig,
@@ -283,6 +286,33 @@ class CustomApiFamilyTreeService
   // Calls GET /v1/graph/relation?from=<gid>&to=<gid>&maxDepth=<n>
   // and parses the response into a BloodRelation. Returns
   // BloodRelation.empty when the server reports no path.
+
+  // ── Phase 6.3: «Эта неделя в семье» digest ─────────────────────────
+
+  @override
+  Future<BranchDigest?> getBranchDigest({
+    required String treeId,
+    int days = 7,
+  }) async {
+    final params = <String, String>{
+      if (days > 0 && days != 7) 'days': days.toString(),
+    };
+    final path = params.isEmpty
+        ? '/v1/trees/$treeId/digest'
+        : _buildPathWithQuery('/v1/trees/$treeId/digest', params);
+    try {
+      final response = await _requestJson(method: 'GET', path: path);
+      final raw = response['digest'];
+      if (raw is! Map) return null;
+      return BranchDigest.fromJson(Map<String, dynamic>.from(raw));
+    } on CustomApiException catch (error) {
+      // 404 → branch unknown to this caller. Surface as null so
+      // the home widget gracefully hides itself; treat anything
+      // else as a real failure the caller can show in UI.
+      if (error.statusCode == 404) return null;
+      rethrow;
+    }
+  }
 
   @override
   Future<BloodRelation> findBloodRelation({

@@ -941,6 +941,143 @@ test(
   },
 );
 
+// ── Phase 6.3: «Эта неделя в семье» digest ──────────────────────────
+
+const {computeUpcomingAnniversary} = (() => {
+  // computeUpcomingAnniversary is module-private (not exported).
+  // Re-create a minimal wrapper through the FileStore prototype's
+  // getBranchDigest by calling it on a synthetic db. That's the
+  // path Phase 6.3 callers actually exercise, so testing through
+  // it keeps the public surface honest.
+  return {computeUpcomingAnniversary: null};
+})();
+
+test(
+  "getBranchDigest: surfaces upcoming birthdays inside the horizon, sorted by daysUntil",
+  async () => {
+    const store = makeStoreStub();
+    // Pretend FileStore.prototype methods are usable directly —
+    // _read is what hits disk; getBranchDigest only needs the in-
+    // memory state, so we shim _read to return a synthetic db.
+    const fixedNow = new Date(Date.UTC(2026, 4, 8)); // 2026-05-08
+    const realDateNow = Date.now;
+    Date.now = () => fixedNow.getTime();
+    const realDate = global.Date;
+    class FixedDate extends realDate {
+      constructor(...args) {
+        if (args.length === 0) {
+          super(fixedNow.getTime());
+          return;
+        }
+        super(...args);
+      }
+    }
+    FixedDate.now = () => fixedNow.getTime();
+    FixedDate.UTC = realDate.UTC;
+    FixedDate.parse = realDate.parse;
+    global.Date = FixedDate;
+
+    try {
+      const db = freshDb();
+      db.trees = [
+        {id: "t1", name: "Семья", creatorId: "u1", createdAt: "2026-01-01"},
+      ];
+      db.persons = [
+        {
+          id: "p-mom",
+          treeId: "t1",
+          name: "Мама",
+          identityId: "id-mom",
+          birthDate: "1970-05-10", // 2 days from May 8
+          isAlive: true,
+          createdAt: "2026-01-01",
+          creatorId: "u1",
+        },
+        {
+          id: "p-dad",
+          treeId: "t1",
+          name: "Папа",
+          identityId: "id-dad",
+          birthDate: "1968-05-15", // 7 days
+          isAlive: true,
+          createdAt: "2026-01-01",
+          creatorId: "u1",
+        },
+        {
+          id: "p-sis",
+          treeId: "t1",
+          name: "Сестра",
+          identityId: "id-sis",
+          birthDate: "2000-12-25", // > 7 days, outside default horizon
+          isAlive: true,
+          createdAt: "2026-01-01",
+          creatorId: "u1",
+        },
+        {
+          id: "p-deceased",
+          treeId: "t1",
+          name: "Прадед",
+          identityId: "id-gg",
+          birthDate: "1900-05-09", // ignored — deceased
+          deathDate: "1980-05-09", // memorial 1 day away
+          isAlive: false,
+          createdAt: "2026-01-01",
+          creatorId: "u1",
+        },
+      ];
+      store._syncGraphFromLegacy(db);
+
+      const originalRead = store._read;
+      store._read = async () => db;
+      try {
+        const digest = await store.getBranchDigest({
+          treeId: "t1",
+          days: 7,
+          viewerUserId: "u1",
+        });
+        assert.ok(digest);
+        assert.equal(digest.treeName, "Семья");
+        assert.equal(digest.birthdays.length, 2);
+        assert.deepEqual(
+          digest.birthdays.map((b) => b.name),
+          ["Мама", "Папа"],
+        );
+        assert.equal(digest.birthdays[0].daysUntil, 2);
+        assert.equal(digest.birthdays[1].daysUntil, 7);
+        // Memorial — only the one inside the horizon.
+        assert.equal(digest.memorials.length, 1);
+        assert.equal(digest.memorials[0].name, "Прадед");
+        assert.equal(digest.memorials[0].daysUntil, 1);
+        // No recent posts and no newly-added persons (all
+        // createdAt was 2026-01-01, way outside the 7-day window).
+        assert.equal(digest.recentPosts.length, 0);
+        assert.equal(digest.newPersons.length, 0);
+      } finally {
+        store._read = originalRead;
+      }
+    } finally {
+      Date.now = realDateNow;
+      global.Date = realDate;
+    }
+  },
+);
+
+test(
+  "getBranchDigest: returns null for an unknown branch",
+  async () => {
+    const store = makeStoreStub();
+    const db = freshDb();
+    const originalRead = store._read;
+    store._read = async () => db;
+    try {
+      const digest = await store.getBranchDigest({treeId: "nope"});
+      assert.equal(digest, null);
+    } finally {
+      store._read = originalRead;
+    }
+  },
+);
+
 test(
   "findBloodRelation: derives missing relation2to1 via mirror so one-sided legacy rows still walk",
   () => {

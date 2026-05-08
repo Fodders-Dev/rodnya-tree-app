@@ -236,6 +236,44 @@ function valuesEqualForPropagation(field, a, b) {
   return a === b;
 }
 
+// Phase 6.3: parse a date-string (YYYY-MM-DD or full ISO) and
+// return the next anniversary inside the next [now, now+horizonDays]
+// window, or null when the date is invalid / the anniversary is
+// outside the window. Birthday for living people, death anniversary
+// for memorials — same logic, different fields.
+function computeUpcomingAnniversary(rawDate, now, horizonDays) {
+  if (!rawDate) return null;
+  const parsed = new Date(rawDate);
+  if (Number.isNaN(parsed.getTime())) return null;
+  // Take month + day from the original date but anchor to the
+  // current year. If that anniversary is already in the past for
+  // this calendar year, push to next year.
+  const month = parsed.getUTCMonth();
+  const day = parsed.getUTCDate();
+  const todayUtc = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+  );
+  let anniversary = new Date(
+    Date.UTC(now.getUTCFullYear(), month, day),
+  );
+  if (anniversary.getTime() < todayUtc.getTime()) {
+    anniversary = new Date(
+      Date.UTC(now.getUTCFullYear() + 1, month, day),
+    );
+  }
+  const daysUntil = Math.round(
+    (anniversary.getTime() - todayUtc.getTime()) / 86400_000,
+  );
+  if (daysUntil > horizonDays) return null;
+  const yearsSince =
+    anniversary.getUTCFullYear() - parsed.getUTCFullYear();
+  return {
+    date: anniversary,
+    daysUntil,
+    yearsSince,
+  };
+}
+
 // ── Phase 4: blood-relation classification ────────────────────────────
 // `parent` / `child` / `sibling` are the three edges the BFS engine
 // walks to find consanguinity paths. step-/adopted-/in-law variants
@@ -11897,6 +11935,137 @@ class FileStore {
       authorId: post.authorId,
       viewerUserId,
     });
+  }
+
+  // ── Phase 6.3: «Эта неделя в семье» digest ─────────────────────────
+  // Aggregates the next-N-days events for a single branch: upcoming
+  // birthdays of living members, memorial anniversaries of those
+  // who passed, recent posts, and persons added in the last N days.
+  // Computed on read — no separate index. Cheap on small branches
+  // (≤200 persons each) and the alternative (a per-branch event
+  // table the tree code already maintains client-side via
+  // event_service.dart) was a duplicate computation; better to
+  // serve a uniform shape from the server so both home + sidebar
+  // can render the same payload.
+  async getBranchDigest({treeId, days = 7, viewerUserId = null}) {
+    const db = await this._read();
+    const tree = db.trees.find((entry) => entry.id === treeId);
+    if (!tree) return null;
+    const now = new Date();
+    const horizonDays = Math.max(1, Math.min(Number(days) || 7, 31));
+    const horizonMs = horizonDays * 86400_000;
+    const horizonEnd = new Date(now.getTime() + horizonMs);
+
+    const treePersons = db.persons.filter(
+      (entry) => entry.treeId === treeId,
+    );
+
+    const birthdays = [];
+    const memorials = [];
+    for (const person of treePersons) {
+      const event = computeUpcomingAnniversary(
+        person.birthDate,
+        now,
+        horizonDays,
+      );
+      if (event && (person.isAlive !== false) && !person.deathDate) {
+        birthdays.push({
+          personId: person.id,
+          name: person.name,
+          photoUrl: person.primaryPhotoUrl || person.photoUrl || null,
+          birthDate: person.birthDate,
+          daysUntil: event.daysUntil,
+          age: event.yearsSince,
+          eventDate: event.date.toISOString(),
+        });
+      }
+      if (person.deathDate) {
+        const memorial = computeUpcomingAnniversary(
+          person.deathDate,
+          now,
+          horizonDays,
+        );
+        if (memorial) {
+          memorials.push({
+            personId: person.id,
+            name: person.name,
+            photoUrl: person.primaryPhotoUrl || person.photoUrl || null,
+            deathDate: person.deathDate,
+            daysUntil: memorial.daysUntil,
+            yearsSince: memorial.yearsSince,
+            eventDate: memorial.date.toISOString(),
+          });
+        }
+      }
+    }
+    birthdays.sort((a, b) => a.daysUntil - b.daysUntil);
+    memorials.sort((a, b) => a.daysUntil - b.daysUntil);
+
+    // Recent posts on this branch (back-compat: branchIds OR
+    // legacy treeId — same gate as listPosts).
+    const recentPostsCutoffMs = now.getTime() - horizonMs;
+    const recentPosts = db.posts
+      .filter((post) => {
+        const branchIds = Array.isArray(post.branchIds)
+          ? post.branchIds
+          : [];
+        const inBranch = branchIds.includes(treeId) || post.treeId === treeId;
+        if (!inBranch) return false;
+        if (!this._canUserViewCirclePost(db, post, viewerUserId)) return false;
+        const created = post.createdAt
+          ? new Date(post.createdAt).getTime()
+          : 0;
+        return Number.isFinite(created) && created >= recentPostsCutoffMs;
+      })
+      .sort((left, right) =>
+        String(right.createdAt || "").localeCompare(
+          String(left.createdAt || ""),
+        ),
+      )
+      .slice(0, 8)
+      .map((post) => ({
+        postId: post.id,
+        authorId: post.authorId,
+        authorName: post.authorName,
+        authorPhotoUrl: post.authorPhotoUrl || null,
+        content: post.content,
+        imageUrls: Array.isArray(post.imageUrls) ? post.imageUrls : [],
+        createdAt: post.createdAt,
+      }));
+
+    // Newly-added persons on this branch — surfacing them on the
+    // home digest is what makes the user feel "the family is
+    // growing" rather than just "I added someone".
+    const newPersons = treePersons
+      .filter((person) => {
+        const created = person.createdAt
+          ? new Date(person.createdAt).getTime()
+          : 0;
+        return Number.isFinite(created) && created >= recentPostsCutoffMs;
+      })
+      .sort((left, right) =>
+        String(right.createdAt || "").localeCompare(
+          String(left.createdAt || ""),
+        ),
+      )
+      .slice(0, 8)
+      .map((person) => ({
+        personId: person.id,
+        name: person.name,
+        photoUrl: person.primaryPhotoUrl || person.photoUrl || null,
+        createdAt: person.createdAt,
+      }));
+
+    return {
+      treeId,
+      treeName: tree.name,
+      horizonDays,
+      generatedAt: now.toISOString(),
+      birthdays,
+      memorials,
+      recentPosts,
+      newPersons,
+    };
   }
 
   async listPosts({

@@ -359,6 +359,34 @@ function registerTreeRoutes(
   // local edit. Drives the ⚠️ badge on the canvas. Tree-scoped
   // (one HTTP call covers every visible card) — the per-person
   // shape is achievable client-side via group-by.
+  // Phase 6.3: per-branch "Эта неделя в семье" digest.
+  // Aggregates upcoming birthdays + memorial anniversaries +
+  // recent posts + newly-added persons for the branch. Computed
+  // on read so the response always reflects the latest state
+  // without a background indexer.
+  app.get(
+    "/v1/trees/:treeId/digest",
+    requireAuth,
+    async (req, res) => {
+      const tree = await requireTreeAccess(req, res, req.params.treeId);
+      if (!tree) return;
+      const requestedDays = Number(req.query.days || 7);
+      const days = Number.isFinite(requestedDays) && requestedDays > 0
+        ? Math.min(Math.floor(requestedDays), 31)
+        : 7;
+      const digest = await store.getBranchDigest({
+        treeId: tree.id,
+        days,
+        viewerUserId: req.auth.user.id,
+      });
+      if (!digest) {
+        res.status(404).json({message: "Ветка не найдена"});
+        return;
+      }
+      res.json({digest});
+    },
+  );
+
   app.get(
     "/v1/trees/:treeId/conflicts",
     requireAuth,
