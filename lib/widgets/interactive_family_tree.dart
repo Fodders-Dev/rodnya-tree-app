@@ -278,6 +278,18 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
   // Tap on the chevron expands the column.
   bool _controlDockExpanded = false;
 
+  // Lasso (Step 4 of the audience-model RFC). Active only while
+  // the host is in `selectionMode`. Drag-on-empty inside the
+  // canvas paints a translucent rectangle and live-previews which
+  // cards intersect it. On release we add every previewed person
+  // to the host's selection set via `onPersonSelectionToggle` —
+  // strictly additive: lasso never UN-picks something the user
+  // had already tapped, the gesture is for inflating selection,
+  // not toggling it.
+  Offset? _lassoStartCanvas;
+  Offset? _lassoCurrentCanvas;
+  Set<String> _lassoPreviewIds = const <String>{};
+
   /// Public toggle for the control-dock state, callable from the
   /// extension methods in interactive_family_tree_sections.dart.
   /// Direct `setState` from extensions trips the protected-member
@@ -285,6 +297,86 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
   void _setControlDockExpanded(bool value) {
     if (_controlDockExpanded == value) return;
     setState(() => _controlDockExpanded = value);
+  }
+
+  bool get _isSelectionLassoEnabled =>
+      widget.selectionMode && widget.onPersonSelectionToggle != null;
+
+  Offset _viewportToCanvas(Offset viewportPoint) {
+    return _transformationController.toScene(viewportPoint);
+  }
+
+  void _handleLassoStart(DragStartDetails details) {
+    if (!_isSelectionLassoEnabled) return;
+    final canvasPoint = _viewportToCanvas(details.localPosition);
+    setState(() {
+      _lassoStartCanvas = canvasPoint;
+      _lassoCurrentCanvas = canvasPoint;
+      _lassoPreviewIds = const <String>{};
+    });
+  }
+
+  void _handleLassoUpdate(DragUpdateDetails details) {
+    if (_lassoStartCanvas == null) return;
+    final canvasPoint = _viewportToCanvas(details.localPosition);
+    final preview = _personsInsideLassoRect(_lassoStartCanvas!, canvasPoint);
+    setState(() {
+      _lassoCurrentCanvas = canvasPoint;
+      _lassoPreviewIds = preview;
+    });
+  }
+
+  void _handleLassoEnd(DragEndDetails details) {
+    if (_lassoStartCanvas == null) return;
+    final committed = List<String>.from(_lassoPreviewIds);
+    setState(() {
+      _lassoStartCanvas = null;
+      _lassoCurrentCanvas = null;
+      _lassoPreviewIds = const <String>{};
+    });
+    if (committed.isEmpty) return;
+    final toggle = widget.onPersonSelectionToggle;
+    if (toggle == null) return;
+    final peopleById = <String, FamilyPerson>{
+      for (final entry in widget.peopleData)
+        if (entry['person'] is FamilyPerson)
+          (entry['person'] as FamilyPerson).id: entry['person'] as FamilyPerson,
+    };
+    // Strictly additive: only toggle ids the host doesn't already
+    // have. Without this guard a partially-overlapping lasso would
+    // *un-pick* the cards the user previously tapped, which is the
+    // opposite of what the gesture should do.
+    for (final id in committed) {
+      if (widget.selectedPersonIds.contains(id)) continue;
+      final person = peopleById[id];
+      if (person == null) continue;
+      toggle(person);
+    }
+  }
+
+  void _handleLassoCancel() {
+    if (_lassoStartCanvas == null) return;
+    setState(() {
+      _lassoStartCanvas = null;
+      _lassoCurrentCanvas = null;
+      _lassoPreviewIds = const <String>{};
+    });
+  }
+
+  Set<String> _personsInsideLassoRect(Offset start, Offset end) {
+    final rect = Rect.fromPoints(start, end);
+    final result = <String>{};
+    for (final entry in nodePositions.entries) {
+      final cardRect = Rect.fromCenter(
+        center: entry.value,
+        width: InteractiveFamilyTree.nodeWidth,
+        height: InteractiveFamilyTree.nodeHeight,
+      );
+      if (rect.overlaps(cardRect)) {
+        result.add(entry.key);
+      }
+    }
+    return result;
   }
 
   // Normalizes a backend role label for the role pill on tree
@@ -1783,6 +1875,14 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
     // the card is shrunk by the InteractiveViewer transform.
     final isMultiSelected =
         widget.selectionMode && widget.selectedPersonIds.contains(person.id);
+    // Live lasso preview — while the user is dragging the
+    // rectangle, every card the rect overlaps gets a softer
+    // dashed-look ring so they can see what'll be added on
+    // release. We treat already-selected cards the same as the
+    // committed-selection state so the ring doesn't double up.
+    final isLassoPreview = widget.selectionMode &&
+        _lassoPreviewIds.contains(person.id) &&
+        !isMultiSelected;
 
     // Card with optional "drop-target glow" for connector hover state.
     final cardWithConnectAffordance = Stack(
@@ -1799,6 +1899,28 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
                   border: Border.all(
                     color: Theme.of(context).colorScheme.primary,
                     width: 3,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        // Lasso-preview ring — softer than the committed-select
+        // ring (1.6px, 65% alpha) so the user can see the
+        // difference between "definitely picked, won't change"
+        // (multi-select) and "currently inside lasso, will be
+        // added on release" (preview).
+        if (isLassoPreview)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: Theme.of(context)
+                        .colorScheme
+                        .primary
+                        .withValues(alpha: 0.65),
+                    width: 1.6,
                   ),
                 ),
               ),
@@ -5078,6 +5200,49 @@ class _ConnectorPreviewPainter extends CustomPainter {
     return oldDelegate.source != source ||
         oldDelegate.target != target ||
         oldDelegate.color != color;
+  }
+}
+
+/// Lasso-rectangle overlay painted while the user is dragging in
+/// selection mode. Translucent accent fill + 1.4px accent border
+/// — enough to read the bounds against the canvas without
+/// drowning the cards underneath. Coordinates are canvas-space
+/// (already through `transformationController.toScene`) so the
+/// rectangle stays anchored when the user pans the viewport
+/// during the drag (current behaviour: pan disabled in selection
+/// mode, but the painter is correct either way).
+class _LassoRectPainter extends CustomPainter {
+  _LassoRectPainter({
+    required this.start,
+    required this.end,
+    required this.accent,
+  });
+
+  final Offset start;
+  final Offset end;
+  final Color accent;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Rect.fromPoints(start, end);
+    if (rect.isEmpty) return;
+    final fill = Paint()
+      ..color = accent.withValues(alpha: 0.12)
+      ..style = PaintingStyle.fill;
+    final stroke = Paint()
+      ..color = accent.withValues(alpha: 0.85)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.4;
+    final rounded = RRect.fromRectAndRadius(rect, const Radius.circular(6));
+    canvas.drawRRect(rounded, fill);
+    canvas.drawRRect(rounded, stroke);
+  }
+
+  @override
+  bool shouldRepaint(covariant _LassoRectPainter oldDelegate) {
+    return oldDelegate.start != start ||
+        oldDelegate.end != end ||
+        oldDelegate.accent != accent;
   }
 }
 

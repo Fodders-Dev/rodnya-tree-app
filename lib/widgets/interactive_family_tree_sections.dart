@@ -118,15 +118,28 @@ extension _InteractiveFamilyTreeSections on _InteractiveFamilyTreeState {
           // a card during connect doesn't reach this handler.
           onTap: _isConnecting ? _cancelConnecting : null,
           onDoubleTap: _fitTreeToViewport,
+          // Lasso (selection-mode only). Drag-on-empty paints a
+          // rectangle that gathers every overlapping card into the
+          // host's selection set on release. When NOT in selection
+          // mode these handlers are null and InteractiveViewer's
+          // pan keeps owning the gesture.
+          onPanStart: _isSelectionLassoEnabled ? _handleLassoStart : null,
+          onPanUpdate: _isSelectionLassoEnabled ? _handleLassoUpdate : null,
+          onPanEnd: _isSelectionLassoEnabled ? _handleLassoEnd : null,
+          onPanCancel:
+              _isSelectionLassoEnabled ? _handleLassoCancel : null,
           child: InteractiveViewer(
             transformationController: _transformationController,
             constrained: false,
             clipBehavior: Clip.none,
             boundaryMargin: EdgeInsets.all(interactionBoundary),
             panAxis: PanAxis.free,
-            // Disable pan during connect-drag so panning the canvas
-            // doesn't fight the LongPressDraggable feedback.
-            panEnabled: _draggingPersonId == null && !_isConnecting,
+            // Pan disabled in selection mode (lasso owns drag) and
+            // during connect-drag (LongPressDraggable owns it).
+            // Otherwise the standard "drag to pan" works as before.
+            panEnabled: _draggingPersonId == null &&
+                !_isConnecting &&
+                !_isSelectionLassoEnabled,
             scaleEnabled: true,
             trackpadScrollCausesScale: true,
             minScale: 0.08,
@@ -195,6 +208,20 @@ extension _InteractiveFamilyTreeSections on _InteractiveFamilyTreeState {
                 source: nodePositions[_connectingFromPersonId!]!,
                 target: _connectingPointerCanvasPosition!,
                 color: tokens.accent,
+              ),
+            ),
+          ),
+        // Lasso rectangle while the user drags in selection mode.
+        // IgnorePointer so the rectangle never swallows pointer
+        // events from cards underneath — painting only.
+        if (_lassoStartCanvas != null && _lassoCurrentCanvas != null)
+          IgnorePointer(
+            child: CustomPaint(
+              size: Size(stackWidth, stackHeight),
+              painter: _LassoRectPainter(
+                start: _lassoStartCanvas!,
+                end: _lassoCurrentCanvas!,
+                accent: tokens.accent,
               ),
             ),
           ),

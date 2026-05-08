@@ -2,11 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
-import 'package:provider/provider.dart';
 
 import '../backend/interfaces/post_service_interface.dart';
 import '../models/post.dart';
-import '../providers/tree_provider.dart';
 import '../theme/app_theme.dart';
 import '../widgets/empty_state_widget.dart';
 import '../widgets/post_card.dart';
@@ -71,16 +69,19 @@ class _PostSearchScreenState extends State<PostSearchScreen> {
   }
 
   Future<void> _runSearch(String query) async {
-    final treeId =
-        Provider.of<TreeProvider>(context, listen: false).selectedTreeId;
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
+      // Audience-mode search: hit the index across every branch
+      // the viewer belongs to instead of narrowing to the active
+      // BranchSwitcher selection. Mirror of the home feed default
+      // — for the same reason: typing «свадьба» should find the
+      // post regardless of which branch the user happens to have
+      // selected when they remembered they wanted to look it up.
       final posts = await _postService.searchPosts(
         query: query,
-        treeId: treeId,
       );
       if (!mounted || _query.trim() != query) return;
       setState(() {

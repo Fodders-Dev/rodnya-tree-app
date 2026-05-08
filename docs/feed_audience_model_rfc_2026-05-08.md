@@ -365,3 +365,49 @@ N постов из active-branch». После переписки они сло
     замок. При смене kind (семья↔друзья) выбор шаблона сбрасывается.
   - Toolbar copy в selection-mode подкручен — упоминает «Палочка
     — расширить по линии» чтобы smart-expand был discoverable.
+
+- 2026-05-08: Step 4 — lasso + audience-mode search
+  - **Lasso (drag-on-empty в selection-mode):** drag в пустом
+    месте canvas'а в selection-mode рисует translucent
+    accent-rounded rectangle через `_LassoRectPainter`. Все
+    карточки, чей bounding box (centered на nodePositions)
+    пересекается с lasso-rect'ом — подсвечиваются мягким
+    accent-кольцом (1.6px, 65% alpha) пока drag активен. На
+    pointer-up все они **строго аддитивно** добавляются в
+    селекшен через `onPersonSelectionToggle` (не делает untoggle
+    тех, кто уже был выбран — это inflate, не toggle).
+  - Чтобы не подраться с InteractiveViewer'ом за drag-жест:
+    `panEnabled = false` когда `_isSelectionLassoEnabled`
+    (selectionMode + onPersonSelectionToggle != null), внешний
+    GestureDetector на onPanStart/Update/End перехватывает
+    pointer-stream. Cards с `HitTestBehavior.opaque` забирают
+    себе tap-жест первыми, так что drag-on-card по-прежнему НЕ
+    стартует lasso — drag-on-card в selection-mode просто
+    становится no-op (тап остаётся как был — toggle).
+  - Координаты конвертируются через
+    `_transformationController.toScene(localPosition)` — lasso-
+    rect живёт в canvas-space и не уплывает при пинч-зуме.
+  - `_personsInsideLassoRect` итерирует `nodePositions.entries`
+    и проверяет `Rect.overlaps` — O(N) на frame, при 200
+    карточках это копейки.
+
+  - **Search across audience:** `post_search_screen` больше не
+    шлёт `treeId: selectedTreeId` в запрос. Search теперь
+    audience-mode по дефолту: ищет по всем веткам, в которых
+    юзер состоит. Зеркало того, что мы сделали с feed'ом — для
+    того же самого юзкейса: «вспомнил, что бабушка постила
+    свадебное фото — типаю «свадьба» в search и нахожу» вне
+    зависимости от того, какая ветка активна в BranchSwitcher.
+    Бэкенд `searchPosts` уже умел audience-mode (фильтр по
+    branchIds + legacy treeId), нужно было только перестать
+    клиенту самому себя ограничивать.
+
+- 2026-05-08: Что осталось в RFC
+  - **Step 4 phone-matching** — намеренно НЕ трогаю автономно.
+    Privacy-чувствительная фича: разрешения на контакты,
+    matching по номеру с identity-claims, two-way confirm. Нужно
+    обсудить с юзером дизайн перед кодом.
+  - **Notification fan-out по audience** — нет FCM/in-app
+    notification на post creation вообще. Когда подключим
+    push-инфраструктуру, fan-out пойдёт через тот же
+    audience-paths, что и feed.
