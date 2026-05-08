@@ -148,23 +148,30 @@ extension _ProfileScreenSections on _ProfileScreenState {
 
     final connectionLink =
         _buildProfileConnectionLink(selectedTreeId, profileCode);
-    final theme = Theme.of(context);
+    final tokens = Theme.of(context).extension<RodnyaDesignTokens>() ??
+        (Theme.of(context).brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
 
-    return GlassPanel(
+    return Container(
       padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
-      borderRadius: BorderRadius.circular(20),
+      decoration: BoxDecoration(
+        color: tokens.surfaceStrong,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: tokens.surfaceLine),
+      ),
       child: Row(
         children: [
           Container(
             width: 38,
             height: 38,
             decoration: BoxDecoration(
-              color: theme.colorScheme.secondary.withValues(alpha: 0.12),
+              color: tokens.warmSoft,
               borderRadius: BorderRadius.circular(13),
             ),
             child: Icon(
               Icons.qr_code_2_rounded,
-              color: theme.colorScheme.secondary,
+              color: tokens.warm,
               size: 21,
             ),
           ),
@@ -175,8 +182,11 @@ extension _ProfileScreenSections on _ProfileScreenState {
               children: [
                 Text(
                   'Профильный код',
-                  style: theme.textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.w800,
+                  style: AppTheme.sans(
+                    color: tokens.ink,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0,
                   ),
                 ),
                 const SizedBox(height: 2),
@@ -184,9 +194,11 @@ extension _ProfileScreenSections on _ProfileScreenState {
                   '@$profileCode',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
+                  style: AppTheme.sans(
+                    color: tokens.inkMuted,
+                    fontSize: 11.5,
                     fontWeight: FontWeight.w700,
+                    letterSpacing: 0,
                   ),
                 ),
               ],
@@ -516,20 +528,28 @@ extension _ProfileScreenSections on _ProfileScreenState {
     final status = _accountLinkingStatus;
     final hasLinkedChannel =
         status?.primaryTrustedChannel?.label.isNotEmpty == true;
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
 
-    return GlassPanel(
+    return Container(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-      borderRadius: BorderRadius.circular(20),
+      decoration: BoxDecoration(
+        color: tokens.surfaceStrong,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: tokens.surfaceLine),
+      ),
       child: Row(
         children: [
           Container(
             width: 36,
             height: 36,
             decoration: BoxDecoration(
-              color: scheme.primary.withValues(alpha: 0.12),
+              color: tokens.accentSoft,
               borderRadius: BorderRadius.circular(12),
             ),
-            child: Icon(Icons.shield_outlined, size: 20, color: scheme.primary),
+            child: Icon(Icons.shield_outlined, size: 20, color: tokens.accent),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -538,14 +558,24 @@ extension _ProfileScreenSections on _ProfileScreenState {
               children: [
                 Text(
                   hasLinkedChannel ? 'Аккаунт защищён' : 'Настройки аккаунта',
-                  style: theme.textTheme.titleSmall
-                      ?.copyWith(fontWeight: FontWeight.w800),
+                  style: AppTheme.sans(
+                    color: tokens.ink,
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0,
+                  ),
                 ),
                 if (hasLinkedChannel)
-                  Text(
-                    'Основной канал: ${status!.primaryTrustedChannel?.label}',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: scheme.onSurfaceVariant,
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                      'Основной канал: ${status!.primaryTrustedChannel?.label}',
+                      style: AppTheme.sans(
+                        color: tokens.inkMuted,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w500,
+                        letterSpacing: 0,
+                      ),
                     ),
                   ),
               ],
@@ -553,7 +583,15 @@ extension _ProfileScreenSections on _ProfileScreenState {
           ),
           TextButton(
             onPressed: () => context.push('/profile/settings'),
-            child: const Text('Настройки'),
+            child: Text(
+              'Настройки',
+              style: AppTheme.sans(
+                color: tokens.accent,
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0,
+              ),
+            ),
           ),
         ],
       ),
