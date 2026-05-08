@@ -116,11 +116,12 @@ extension _HomeScreenSections on _HomeScreenState {
                             ? () => context.go('/login')
                             : () async {
                                 _appStatusService.requestRetry();
+                                await _loadPosts(
+                                    branchId: _selectedFeedBranchId);
                                 if (_currentTreeId != null) {
                                   await Future.wait([
                                     _loadStories(_currentTreeId!),
                                     _loadEvents(_currentTreeId!),
-                                    _loadPosts(_currentTreeId!),
                                   ]);
                                 }
                               },
@@ -179,6 +180,10 @@ extension _HomeScreenSections on _HomeScreenState {
           child: _buildComposeTeaser(),
         ),
         Padding(
+          padding: const EdgeInsets.fromLTRB(18, 0, 18, 6),
+          child: _buildFeedBranchStrip(),
+        ),
+        Padding(
           padding: const EdgeInsets.fromLTRB(18, 0, 18, 10),
           child: _buildFeedFilterStrip(),
         ),
@@ -219,6 +224,10 @@ extension _HomeScreenSections on _HomeScreenState {
         Padding(
           padding: const EdgeInsets.fromLTRB(18, 6, 18, 12),
           child: _buildComposeTeaser(),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(18, 0, 18, 6),
+          child: _buildFeedBranchStrip(),
         ),
         Padding(
           padding: const EdgeInsets.fromLTRB(18, 0, 18, 10),
@@ -454,11 +463,8 @@ extension _HomeScreenSections on _HomeScreenState {
           .map(
             (post) => PostCard(
               post: post,
-              onDeleted: () {
-                if (_currentTreeId != null) {
-                  _loadPosts(_currentTreeId!);
-                }
-              },
+              onDeleted: () =>
+                  _loadPosts(branchId: _selectedFeedBranchId),
             ),
           )
           .toList(),
@@ -586,11 +592,11 @@ extension _HomeScreenSections on _HomeScreenState {
   }
 
   Future<void> _refreshCurrentPosts() async {
-    final treeId = _currentTreeId;
-    if (treeId == null) {
-      return;
-    }
-    await _loadPosts(treeId);
+    // Feed reload uses the chip-strip scope (`_selectedFeedBranchId`),
+    // not the BranchSwitcher's `_currentTreeId`. The two were sync'd
+    // before the audience-mode rework, but now feed scope is its own
+    // axis and refresh has to follow that.
+    await _loadPosts(branchId: _selectedFeedBranchId);
   }
 
   Future<void> _openCreatePost({String? action}) async {
@@ -601,8 +607,8 @@ extension _HomeScreenSections on _HomeScreenState {
     // gallery picker, video icon prefires the video picker.
     final path = action == null ? '/post/create' : '/post/create?action=$action';
     final result = await context.push(path);
-    if (result == true && _currentTreeId != null) {
-      await _loadPosts(_currentTreeId!);
+    if (result == true) {
+      await _loadPosts(branchId: _selectedFeedBranchId);
     }
   }
 
@@ -826,4 +832,74 @@ extension _HomeScreenSections on _HomeScreenState {
       ),
     );
   }
+
+  /// Branch-scope chips for the feed: «Все» (audience-mode) on the
+  /// left, then one chip per branch the viewer is in. Tapping a
+  /// branch chip narrows the feed to posts whose `branchIds[]`
+  /// includes that branch — server-side filter via the `treeId`
+  /// query param. Tapping «Все» clears the narrowing and the
+  /// viewer sees the union of every branch's posts.
+  ///
+  /// Hidden when the viewer has only one branch — the strip would
+  /// degenerate to «Все» + that branch and never affect what's
+  /// shown, so the noise isn't worth the row of UI. Keeps the home
+  /// feed clean for fresh accounts with a single tree.
+  Widget _buildFeedBranchStrip() {
+    return Consumer<TreeProvider>(
+      builder: (context, treeProvider, _) {
+        final branches = treeProvider.availableTrees;
+        if (branches.length < 2) {
+          return const SizedBox.shrink();
+        }
+        final theme = Theme.of(context);
+        final entries = <_FeedBranchChipEntry>[
+          const _FeedBranchChipEntry(id: null, label: 'Все'),
+          for (final branch in branches)
+            _FeedBranchChipEntry(id: branch.id, label: branch.name),
+        ];
+        return SizedBox(
+          height: 36,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: entries.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 8),
+            itemBuilder: (context, index) {
+              final entry = entries[index];
+              final selected = _selectedFeedBranchId == entry.id;
+              return Semantics(
+                button: true,
+                selected: selected,
+                label: 'home-feed-branch-${entry.id ?? 'all'}',
+                child: ChoiceChip(
+                  label: Text(entry.label),
+                  selected: selected,
+                  visualDensity: VisualDensity.compact,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  avatar: entry.id == null
+                      ? Icon(
+                          Icons.all_inclusive,
+                          size: 16,
+                          color: theme.colorScheme.primary,
+                        )
+                      : null,
+                  onSelected: (_) => _selectFeedBranch(entry.id),
+                ),
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Tiny value object so the chip builder doesn't reach into
+/// `FamilyTree` for trivial fields (we only need id+label) and
+/// the «Все» pseudo-entry can share the same shape as real
+/// branches.
+class _FeedBranchChipEntry {
+  const _FeedBranchChipEntry({required this.id, required this.label});
+
+  final String? id;
+  final String label;
 }

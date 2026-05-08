@@ -74,6 +74,15 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _identityReviewsUnavailable = false;
   int _pendingIdentityReviewCount = 0;
   String? _currentTreeId;
+  // Audience-mode feed filter. `null` = «Все» (post union across
+  // every branch the viewer belongs to). When set, the feed is
+  // narrowed to the chosen branch via the server-side treeId
+  // filter. Independent of `_currentTreeId` (the BranchSwitcher
+  // picks the active branch for tree-view / digest / events; the
+  // feed has its own scope so a post in a different branch doesn't
+  // silently drop out of view — that was the user-reported "тихая
+  // потеря" bug).
+  String? _selectedFeedBranchId;
   TreeProvider? _treeProviderInstance;
   final ScrollController _eventRailController = ScrollController();
   final GlobalKey _eventRailRegionKey = GlobalKey();
@@ -109,16 +118,19 @@ class _HomeScreenState extends State<HomeScreen> {
       _treeProviderInstance!.addListener(_handleTreeChange);
       _currentTreeId = _treeProviderInstance!.selectedTreeId;
       _loadIdentityReviewSummary();
+      // Feed always starts in audience mode («Все») — the viewer
+      // sees posts from every branch they belong to, no silent
+      // drops just because BranchSwitcher landed on a different
+      // branch. They can narrow via the chip strip if they want.
+      _loadPosts(branchId: null);
       if (_currentTreeId != null) {
         _loadStories(_currentTreeId!);
         _loadEvents(_currentTreeId!);
-        _loadPosts(_currentTreeId!);
         _loadBranchDigest(_currentTreeId!);
       } else {
         setState(() {
           _isLoadingStories = false;
           _isLoadingEvents = false;
-          _isLoadingPosts = false;
           _selectedEventCategoryFilter = null;
         });
       }
@@ -173,16 +185,17 @@ class _HomeScreenState extends State<HomeScreen> {
       if (_currentTreeId != null) {
         _loadStories(_currentTreeId!);
         _loadEvents(_currentTreeId!);
-        _loadPosts(_currentTreeId!);
         _loadBranchDigest(_currentTreeId!);
+        // The feed is intentionally NOT reloaded on branch change —
+        // it tracks `_selectedFeedBranchId`, not the active branch
+        // of the BranchSwitcher. This is what fixes the "выбрал
+        // мамину ветку, потерял пост из папиной" bug.
       } else {
         setState(() {
           _isLoadingStories = false;
           _isLoadingEvents = false;
-          _isLoadingPosts = false;
           _stories = [];
           _upcomingEvents = [];
-          _posts = [];
           _branchDigest = null;
           _selectedEventCategoryFilter = null;
           _selectedFeedFilter = 'Семья';
@@ -459,7 +472,13 @@ class _HomeScreenState extends State<HomeScreen> {
       ? GetIt.I<PostsCache>()
       : null;
 
-  Future<void> _loadPosts(String treeId) async {
+  /// Sentinel cache key for the audience-mode feed (no branch
+  /// filter). Real branchIds are UUIDs and never collide with this
+  /// literal, so the cache stays uniquely keyable across the «Все»
+  /// view and per-branch narrowed views.
+  static const String _audienceFeedCacheKey = '__audience__';
+
+  Future<void> _loadPosts({String? branchId}) async {
     if (!mounted) return;
     setState(() {
       _isLoadingPosts = true;
@@ -467,13 +486,16 @@ class _HomeScreenState extends State<HomeScreen> {
       // it'll flicker on every refresh. Only flip back if we actually
       // have no posts to show after the call fails.
     });
+    final cacheKey = branchId ?? _audienceFeedCacheKey;
     // Cache-first hydrate: serve disk-cached posts immediately so the
     // feed paints content even if we're offline / network is slow.
     final cache = _postsCache;
     if (cache != null && _posts.isEmpty) {
       try {
-        final cached = await cache.read(treeId);
-        if (cached.isNotEmpty && mounted && _currentTreeId == treeId) {
+        final cached = await cache.read(cacheKey);
+        if (cached.isNotEmpty &&
+            mounted &&
+            _selectedFeedBranchId == branchId) {
           setState(() {
             _posts = cached;
             _postsUnavailable = false;
@@ -484,15 +506,19 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     }
     try {
-      final posts = await _postService.getPosts(treeId: treeId);
-      if (mounted) {
-        unawaited(cache?.write(treeId, posts));
-        setState(() {
-          _posts = posts;
-          _isLoadingPosts = false;
-          _postsUnavailable = false;
-        });
+      final posts = await _postService.getPosts(treeId: branchId);
+      // Race guard: another _loadPosts may have started while this
+      // network call was in flight (user tapped a different chip).
+      // Only commit if we're still the latest load for this branch.
+      if (!mounted || _selectedFeedBranchId != branchId) {
+        return;
       }
+      unawaited(cache?.write(cacheKey, posts));
+      setState(() {
+        _posts = posts;
+        _isLoadingPosts = false;
+        _postsUnavailable = false;
+      });
     } catch (e) {
       debugPrint('Ошибка загрузки постов: $e');
       _appStatusService.reportError(
@@ -510,6 +536,19 @@ class _HomeScreenState extends State<HomeScreen> {
         });
       }
     }
+  }
+
+  /// User tapped a chip in the feed-branch strip. `null` = «Все».
+  void _selectFeedBranch(String? branchId) {
+    if (_selectedFeedBranchId == branchId) return;
+    setState(() {
+      _selectedFeedBranchId = branchId;
+      // Reset the loaded posts so the cache-first hydrate path
+      // can re-fire for the new scope; otherwise stale posts from
+      // the previous chip linger until the network call lands.
+      _posts = const <Post>[];
+    });
+    _loadPosts(branchId: branchId);
   }
 
   @override
@@ -552,11 +591,14 @@ class _HomeScreenState extends State<HomeScreen> {
         onRefresh: () async {
           await _customNotificationService?.refreshUnreadNotificationsCount();
           await _loadIdentityReviewSummary();
+          // Feed always refreshes — it's branch-independent. Stories
+          // / events / digest only refresh when there's an active
+          // branch (those are tied to the BranchSwitcher selection).
+          await _loadPosts(branchId: _selectedFeedBranchId);
           if (_currentTreeId != null) {
             await Future.wait([
               _loadStories(_currentTreeId!),
               _loadEvents(_currentTreeId!),
-              _loadPosts(_currentTreeId!),
             ]);
           }
         },

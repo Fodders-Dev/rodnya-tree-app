@@ -7051,6 +7051,126 @@ test(
   },
 );
 
+// Audience model regression: a viewer who is a member of one of
+// the post's secondary branchIds[] (but NOT the primary post.treeId)
+// must still see the post. Earlier the visibility check only
+// considered post.treeId, which silently dropped fan-out posts for
+// half the audience — the exact "тихая потеря" bug the user
+// surfaced ("выложат пост на папиной ветке, а я выбрал мамину, в
+// ленте я новость с папиной ветки просто пропущу").
+test(
+  "audience-mode feed: viewer in secondary branch sees fan-out post even when not in primary branch",
+  async () => {
+    const ctx = await startTestServer();
+
+    try {
+      const owner = await registerTestUser(
+        ctx,
+        "audience-owner@rodnya.app",
+        "Хозяин",
+      );
+      const viewer = await registerTestUser(
+        ctx,
+        "audience-viewer@rodnya.app",
+        "Зритель",
+      );
+      const ownerHeaders = {
+        authorization: `Bearer ${owner.accessToken}`,
+        "content-type": "application/json",
+      };
+      const viewerHeaders = {
+        authorization: `Bearer ${viewer.accessToken}`,
+        "content-type": "application/json",
+      };
+
+      const createTree = async (name) => {
+        const response = await fetch(`${ctx.baseUrl}/v1/trees`, {
+          method: "POST",
+          headers: ownerHeaders,
+          body: JSON.stringify({name, isPrivate: true}),
+        });
+        assert.equal(response.status, 201);
+        return (await response.json()).tree.id;
+      };
+      const treeA = await createTree("Папина линия");
+      const treeB = await createTree("Мамина линия");
+
+      // Viewer is invited to tree B only — they are NOT a member of
+      // tree A. This is the asymmetric audience that broke before
+      // the fix.
+      const inviteResponse = await fetch(
+        `${ctx.baseUrl}/v1/trees/${treeB}/invitations`,
+        {
+          method: "POST",
+          headers: ownerHeaders,
+          body: JSON.stringify({recipientUserId: viewer.user.id}),
+        },
+      );
+      assert.equal(inviteResponse.status, 201);
+      const invitationId = (await inviteResponse.json()).invitation.invitationId;
+      const acceptResponse = await fetch(
+        `${ctx.baseUrl}/v1/tree-invitations/${invitationId}/respond`,
+        {
+          method: "POST",
+          headers: viewerHeaders,
+          body: JSON.stringify({accept: true}),
+        },
+      );
+      assert.equal(acceptResponse.status, 200);
+
+      // Owner publishes into tree A but fans out to [A, B].
+      const postResponse = await fetch(`${ctx.baseUrl}/v1/posts`, {
+        method: "POST",
+        headers: ownerHeaders,
+        body: JSON.stringify({
+          treeId: treeA,
+          branchIds: [treeA, treeB],
+          content: "Свадебная фотография — и в папину, и в мамину линию",
+        }),
+      });
+      assert.equal(postResponse.status, 201);
+      const postId = (await postResponse.json()).id;
+
+      // Viewer's audience-mode feed (no treeId param): MUST contain
+      // the post. They're in tree B which is in the post's audience.
+      const audienceFeedResponse = await fetch(`${ctx.baseUrl}/v1/posts`, {
+        headers: viewerHeaders,
+      });
+      assert.equal(audienceFeedResponse.status, 200);
+      const audienceFeed = await audienceFeedResponse.json();
+      assert.ok(
+        audienceFeed.some((p) => p.id === postId),
+        "audience feed must include the fan-out post",
+      );
+
+      // Viewer's tree-B filtered feed: also visible.
+      const treeBFeedResponse = await fetch(
+        `${ctx.baseUrl}/v1/posts?treeId=${treeB}`,
+        {headers: viewerHeaders},
+      );
+      assert.equal(treeBFeedResponse.status, 200);
+      const treeBFeed = await treeBFeedResponse.json();
+      assert.ok(
+        treeBFeed.some((p) => p.id === postId),
+        "tree-B feed must include the fan-out post",
+      );
+
+      // Viewer hitting tree-A endpoint: 403 (no access at all).
+      const treeAFeedResponse = await fetch(
+        `${ctx.baseUrl}/v1/posts?treeId=${treeA}`,
+        {headers: viewerHeaders},
+      );
+      assert.equal(
+        treeAFeedResponse.status,
+        403,
+        "viewer must not be able to query tree A's feed directly",
+      );
+    } finally {
+      await stopTestServer(ctx);
+    }
+  },
+);
+
 test("post search filters by content + author + tree access", async () => {
   const ctx = await startTestServer();
 

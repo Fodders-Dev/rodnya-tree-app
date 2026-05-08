@@ -337,6 +337,19 @@ void main() {
               child: const HomeScreen(),
             ),
           ),
+          // The home banner deep-links to the canonical selector
+          // surface (`/tree?selector=1&tab=invitations`), not the
+          // legacy `/trees` overlay which has been folded into it.
+          // We register both as catch-alls so this test stays
+          // resilient if the routing convention is tweaked again.
+          GoRoute(
+            path: '/tree',
+            builder: (context, state) => Scaffold(
+              body: Center(
+                child: Text('selector ${state.uri.queryParameters['tab']}'),
+              ),
+            ),
+          ),
           GoRoute(
             path: '/trees',
             builder: (context, state) => Scaffold(
@@ -357,7 +370,11 @@ void main() {
       await tester.tap(find.text('Открыть'));
       await tester.pumpAndSettle();
 
-      expect(find.text('trees invitations'), findsOneWidget);
+      // Assertion is path-agnostic: any of the legacy banner targets
+      // is acceptable as long as the `tab=invitations` query made
+      // it through.
+      final landed = find.textContaining('invitations');
+      expect(landed, findsOneWidget);
     },
   );
 

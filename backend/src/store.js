@@ -11929,12 +11929,46 @@ class FileStore {
     if (!post) {
       return true;
     }
-    return this._canUserViewCircleContent(db, {
-      treeId: post.treeId,
-      circleId: post.circleId,
-      authorId: post.authorId,
-      viewerUserId,
-    });
+    // Audience model: a post is visible if the viewer is in the
+    // audience of ANY branch the post was published to. The primary
+    // branch (post.treeId) honors the post's targeted circle
+    // (post.circleId), so circle-targeted posts stay scoped on the
+    // tree the author chose. Additional branches in post.branchIds
+    // (Phase 3.4 multi-branch fan-out) are checked at the all_tree
+    // level — circles are per-tree by construction, so when an
+    // author fans a post out across branches they implicitly accept
+    // the broader (all-members) audience for the extra branches.
+    //
+    // Earlier this only checked post.treeId, which silently dropped
+    // posts for viewers who belonged to a secondary branch but not
+    // the primary one. User-visible bug: post in branchIds=[A, B],
+    // viewer in B only, post.treeId=A → viewer never sees it even
+    // though the author fan-out targeted B explicitly.
+    if (
+      this._canUserViewCircleContent(db, {
+        treeId: post.treeId,
+        circleId: post.circleId,
+        authorId: post.authorId,
+        viewerUserId,
+      })
+    ) {
+      return true;
+    }
+    const branchIds = Array.isArray(post.branchIds) ? post.branchIds : [];
+    for (const branchId of branchIds) {
+      if (!branchId || branchId === post.treeId) continue;
+      if (
+        this._canUserViewCircleContent(db, {
+          treeId: branchId,
+          circleId: null,
+          authorId: post.authorId,
+          viewerUserId,
+        })
+      ) {
+        return true;
+      }
+    }
+    return false;
   }
 
   // ── Phase 6.3: «Эта неделя в семье» digest ─────────────────────────

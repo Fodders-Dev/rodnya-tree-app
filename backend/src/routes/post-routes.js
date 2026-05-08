@@ -66,7 +66,17 @@ function registerPostRoutes(
       scope,
       viewerUserId: req.auth.user.id,
     });
-    const visiblePosts = posts.filter((post) => accessibleTreeIds.has(post.treeId));
+    // Audience model: a post is accessible if its primary tree OR
+    // any of its multi-branch fan-out targets is accessible to the
+    // viewer. Earlier this only checked `post.treeId`, which silently
+    // dropped posts where the viewer belonged to a secondary branch
+    // but not the primary one — see _canUserViewCirclePost for the
+    // matching fix at the visibility layer.
+    const visiblePosts = posts.filter((post) => {
+      if (accessibleTreeIds.has(post.treeId)) return true;
+      const branchIds = Array.isArray(post.branchIds) ? post.branchIds : [];
+      return branchIds.some((branchId) => accessibleTreeIds.has(branchId));
+    });
     const payload = await Promise.all(
       visiblePosts.map(async (post) => {
         const comments = await store.listPostComments(post.id);
