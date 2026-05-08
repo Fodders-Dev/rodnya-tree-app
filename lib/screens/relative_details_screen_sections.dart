@@ -754,22 +754,22 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
   }
 
   Widget _buildInfoSection(String title, List<Widget> children) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  color: Theme.of(context).primaryColor,
-                  fontWeight: FontWeight.bold,
-                ),
+    // Redesign-aligned section frame for the relative card's tail
+    // sections (Фотографии / История изменений / Связанный профиль /
+    // Связи и родство / Семья). Uppercase Manrope title + warm
+    // tinted card matches the hero / facts pattern; the children get
+    // their own internal padding via the inner Padding wrapper.
+    return ProfileSection(
+      title: title,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: children,
           ),
-          const SizedBox(height: 8),
-          ...children,
-        ],
-      ),
+        ),
+      ],
     );
   }
 

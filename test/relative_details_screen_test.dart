@@ -779,36 +779,55 @@ void main() {
         ),
         findsOneWidget,
       );
-      expect(find.text('Написать'), findsOneWidget);
-      expect(find.text('Для вас: Отец'), findsOneWidget);
-      expect(find.text('Семья'), findsOneWidget);
-      expect(find.text('Кузнецов Артем'), findsOneWidget);
-      expect(find.text('Кузнецова Валентина'), findsWidgets);
-      expect(find.text('Кузнецова Наталья Геннадьевна'), findsOneWidget);
-      expect(find.text('Сын'), findsOneWidget);
-      expect(find.text('Дочь'), findsOneWidget);
-      expect(find.text('Жена'), findsOneWidget);
-      expect(find.text('Мать'), findsWidgets);
-      expect(find.text('Фотографии'), findsOneWidget);
-      expect(find.text('2 фото'), findsOneWidget);
-      expect(find.text('История изменений'), findsOneWidget);
-      expect(find.text('Добавлено фото'), findsOneWidget);
-      expect(find.text('Открыть историю'), findsOneWidget);
-      expect(find.text('Связанный профиль'), findsOneWidget);
-      expect(find.text('Связи и родство'), findsOneWidget);
-      expect(find.text('Добавить родственника'), findsOneWidget);
-      expect(find.text('Путь родства'), findsOneWidget);
-      expect(find.text('Другие родители'), findsOneWidget);
-      expect(find.text('Несколько основных родителей'), findsOneWidget);
+      expect(find.text('Написать', skipOffstage: false), findsOneWidget);
+      expect(find.text('Для вас: Отец', skipOffstage: false), findsOneWidget);
+      // Profile Redesign: ProfileSection uppercases section titles.
+      expect(find.text('СЕМЬЯ', skipOffstage: false), findsOneWidget);
+      expect(find.text('Кузнецов Артем', skipOffstage: false), findsOneWidget);
+      expect(find.text('Кузнецова Валентина', skipOffstage: false),
+          findsWidgets);
+      expect(find.text('Кузнецова Наталья Геннадьевна', skipOffstage: false),
+          findsOneWidget);
+      expect(find.text('Сын', skipOffstage: false), findsOneWidget);
+      expect(find.text('Дочь', skipOffstage: false), findsOneWidget);
+      expect(find.text('Жена', skipOffstage: false), findsOneWidget);
+      expect(find.text('Мать', skipOffstage: false), findsWidgets);
+      expect(find.text('ФОТОГРАФИИ', skipOffstage: false), findsOneWidget);
+      expect(find.text('2 фото', skipOffstage: false), findsOneWidget);
+      expect(find.text('ИСТОРИЯ ИЗМЕНЕНИЙ', skipOffstage: false),
+          findsOneWidget);
+      expect(find.text('Добавлено фото', skipOffstage: false), findsOneWidget);
+      expect(find.text('Открыть историю', skipOffstage: false), findsOneWidget);
+      expect(find.text('СВЯЗАННЫЙ ПРОФИЛЬ', skipOffstage: false),
+          findsOneWidget);
+      expect(find.text('СВЯЗИ И РОДСТВО', skipOffstage: false), findsOneWidget);
+      expect(find.text('Добавить родственника', skipOffstage: false),
+          findsOneWidget);
+      expect(find.text('Путь родства', skipOffstage: false), findsOneWidget);
+      expect(find.text('Другие родители', skipOffstage: false), findsOneWidget);
+      expect(find.text('Несколько основных родителей', skipOffstage: false),
+          findsOneWidget);
       expect(
-        find.text('У Андрея несколько основных наборов родителей.'),
+        find.text('У Андрея несколько основных наборов родителей.',
+            skipOffstage: false),
         findsOneWidget,
       );
 
+      // The «Открыть историю» button lives below the redesigned hero,
+      // so scroll it into view before tapping.
+      await tester.scrollUntilVisible(
+        find.text('Открыть историю'),
+        300,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Открыть историю'));
       await tester.pumpAndSettle();
 
-      expect(find.text('История изменений'), findsWidgets);
+      // The bottom sheet («История изменений») uses a regular-cased
+      // header, so this find still matches the sheet title plus the
+      // section card title behind it.
+      expect(find.textContaining('стория изменений'), findsWidgets);
       expect(find.text('Все'), findsOneWidget);
       expect(find.widgetWithText(ChoiceChip, 'Фото'), findsOneWidget);
       expect(find.text('Добавлено фото'), findsWidgets);
@@ -979,7 +998,11 @@ void main() {
       );
       expect(find.text('Пригласить в Родню'), findsOneWidget);
       expect(find.text('Написать'), findsNothing);
-      expect(find.text('Связанный профиль'), findsNothing);
+      // ProfileSection title is uppercased now.
+      expect(
+        find.text('СВЯЗАННЫЙ ПРОФИЛЬ', skipOffstage: false),
+        findsNothing,
+      );
     },
   );
 
