@@ -28,6 +28,7 @@ class _CreateTreeScreenState extends State<CreateTreeScreen> {
   bool _isLoading = false;
   bool _isPrivate = true; // Значение по умолчанию - приватное дерево
   late TreeKind _treeKind;
+  String? _selectedTemplateKey;
 
   final FamilyTreeServiceInterface _familyTreeService =
       GetIt.I<FamilyTreeServiceInterface>();
@@ -36,6 +37,96 @@ class _CreateTreeScreenState extends State<CreateTreeScreen> {
   void initState() {
     super.initState();
     _treeKind = widget.initialKind;
+  }
+
+  // Pre-cooked branch ideas. Tap a chip → name + description
+  // controllers fill in. The user can edit either field after,
+  // we just save them from staring at a blank form. The keys are
+  // stable identifiers so we can highlight the active chip
+  // without comparing freeform text. Two parallel lists because
+  // the friends-tree («Круг») use case has a totally different
+  // vocabulary from blood family.
+  static const List<_BranchTemplate> _familyTemplates = <_BranchTemplate>[
+    _BranchTemplate(
+      key: 'maternal',
+      label: 'По маминой линии',
+      name: 'По маминой линии',
+      description: 'Мама и её родня — бабушка с дедом, тёти и дяди, кузены.',
+    ),
+    _BranchTemplate(
+      key: 'paternal',
+      label: 'По папиной линии',
+      name: 'По папиной линии',
+      description: 'Папа и его родня — другая половина моего дерева.',
+    ),
+    _BranchTemplate(
+      key: 'spouse',
+      label: 'Семья жены/мужа',
+      name: 'Семья жены',
+      description: 'Родные супруга — родители, братья и сёстры, племянники.',
+    ),
+    _BranchTemplate(
+      key: 'closeBlood',
+      label: 'Кровная родня',
+      name: 'Кровная родня',
+      description: 'Только кровные родственники, без свойственников.',
+    ),
+  ];
+
+  static const List<_BranchTemplate> _friendsTemplates = <_BranchTemplate>[
+    _BranchTemplate(
+      key: 'closeFriends',
+      label: 'Близкие друзья',
+      name: 'Близкие друзья',
+      description: 'Те, кому первому пишу о хороших и плохих новостях.',
+    ),
+    _BranchTemplate(
+      key: 'school',
+      label: 'Школа',
+      name: 'Школа',
+      description: 'Одноклассники и ребята со школьных лет.',
+    ),
+    _BranchTemplate(
+      key: 'uni',
+      label: 'Универ',
+      name: 'Универ',
+      description: 'Однокурсники, преподаватели, студенческая компания.',
+    ),
+    _BranchTemplate(
+      key: 'work',
+      label: 'Работа',
+      name: 'Работа',
+      description: 'Коллеги и партнёры, с которыми поддерживаю общение.',
+    ),
+  ];
+
+  List<_BranchTemplate> get _activeTemplates =>
+      _treeKind == TreeKind.friends ? _friendsTemplates : _familyTemplates;
+
+  void _applyTemplate(_BranchTemplate template) {
+    setState(() {
+      _selectedTemplateKey = template.key;
+      _nameController.text = template.name;
+      _descriptionController.text = template.description;
+    });
+    // Reset cursor positions to the END so the user can keep typing
+    // without first pressing → (small UX win, big when they tap a
+    // chip and immediately want to extend «По маминой линии» to «По
+    // маминой линии Кузнецовых»).
+    _nameController.selection = TextSelection.fromPosition(
+      TextPosition(offset: _nameController.text.length),
+    );
+    _descriptionController.selection = TextSelection.fromPosition(
+      TextPosition(offset: _descriptionController.text.length),
+    );
+  }
+
+  void _clearTemplateSelection() {
+    if (_selectedTemplateKey != null) {
+      setState(() {
+        _selectedTemplateKey = null;
+      });
+    }
   }
 
   Future<void> _createTree() async {
@@ -128,6 +219,10 @@ class _CreateTreeScreenState extends State<CreateTreeScreen> {
                 onSelectionChanged: (selection) {
                   setState(() {
                     _treeKind = selection.first;
+                    // Switching kind drops any previous template
+                    // pick — the family templates don't make sense
+                    // in the friends tab and vice versa.
+                    _selectedTemplateKey = null;
                   });
                 },
               ),
@@ -139,6 +234,41 @@ class _CreateTreeScreenState extends State<CreateTreeScreen> {
                 style: Theme.of(context).textTheme.bodySmall,
               ),
               const SizedBox(height: 20),
+              // Pre-cooked template chips. Tap one and the name +
+              // description fields below get prefilled with a
+              // sensible default — the user can edit either, the
+              // chip just saves them from staring at a blank form
+              // and inventing a name from scratch. Hidden when
+              // the template list is empty (e.g. tomorrow when
+              // somebody adds a new tree-kind without templates).
+              if (_activeTemplates.isNotEmpty) ...[
+                Text(
+                  'Шаблоны',
+                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                ),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final template in _activeTemplates)
+                      ChoiceChip(
+                        label: Text(template.label),
+                        selected: _selectedTemplateKey == template.key,
+                        onSelected: (selected) {
+                          if (selected) {
+                            _applyTemplate(template);
+                          } else {
+                            _clearTemplateSelection();
+                          }
+                        },
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+              ],
               TextFormField(
                 controller: _nameController,
                 autofocus: true,
@@ -226,4 +356,35 @@ class _CreateTreeScreenState extends State<CreateTreeScreen> {
     _descriptionController.dispose();
     super.dispose();
   }
+}
+
+/// Pre-cooked branch idea surfaced as a ChoiceChip on the create
+/// form. Tapping a chip prefills the name + description controllers
+/// — the user can keep editing afterwards, this is just a head
+/// start. `key` is a stable identifier for selection state so we
+/// can highlight the active chip without comparing freeform text.
+class _BranchTemplate {
+  const _BranchTemplate({
+    required this.key,
+    required this.label,
+    required this.name,
+    required this.description,
+  });
+
+  /// Stable identifier used to mark a chip as selected. Survives
+  /// renames of the localized `label` / `name` without breaking
+  /// the highlight.
+  final String key;
+
+  /// Short copy shown on the chip itself.
+  final String label;
+
+  /// Default branch name written into the name controller when the
+  /// chip is tapped. Often equal to `label`; kept separate so we
+  /// can have «Семья жены/мужа» on the chip but seed the safer
+  /// «Семья жены» as the actual name.
+  final String name;
+
+  /// Default description written into the description controller.
+  final String description;
 }

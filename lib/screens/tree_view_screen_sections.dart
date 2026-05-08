@@ -2491,7 +2491,7 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
                   ),
                   Text(
                     hasSelection
-                        ? 'Тапните по другим карточкам, чтобы добавить или убрать.'
+                        ? 'Тап — добавить/убрать. Палочка — расширить по линии.'
                         : 'Тапайте по карточкам, чтобы выбрать несколько человек.',
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: tokens.inkSecondary,

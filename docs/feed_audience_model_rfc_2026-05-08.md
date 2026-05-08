@@ -313,3 +313,55 @@ N постов из active-branch». После переписки они сло
     мобильном — самый прямой способ; lasso потребует разрешать
     конфликт с pan/zoom InteractiveViewer и отдельным polygon
     hit-test'ом. Сделаю если юзер запросит.
+
+- 2026-05-08: Step 2 follow-up — bulk-import endpoint
+  - **Баг 1 (пустая карточка):** старый legacy-путь
+    `POST /v1/trees/:treeId/persons` с `{sourcePersonId, name,
+    gender}` даже при merge не дотягивал photoUrl до новой
+    карточки — `mergePersonDataFromSource` срабатывал, но
+    `normalizePersonPhotoGallery` интерферировал с моими
+    явными name/gender. → Один новый эндпоинт, чистый путь.
+  - **Баг 2 (нет связи с тобой):** релейшены вообще не
+    переносились. Для канонического кейса «копирую девушку → она
+    должна быть моим партнёром на новом дереве» — не опционально.
+    → Эндпоинт `POST /v1/trees/:treeId/persons/import` теперь
+    автоматически:
+    - копирует людей с полным набором полей через тот же
+      `mergePersonDataFromSource`-merge,
+    - bridge'ит каждый source-релейшен, у которого хотя бы
+      один конец среди выбранных,
+    - транслирует endpoint personIds через два словаря:
+      sourceToNewMap (свежеимпортированные) и
+      targetPersonsByIdentity (уже есть в target через
+      `identityId` — канонический «ты сам»),
+    - идемпотентен: повторный запуск с теми же sourcePersonIds
+      не дублирует ни людей, ни связи.
+  - Тест `bulk-import: copies persons with full data + bridges
+    relations to existing target persons via identity` — зелёный.
+  - Frontend: `BulkImportCapableFamilyTreeService` mixin +
+    `BulkImportResult{persons, bridgedRelationCount}`. Snackbar
+    теперь различает: «уже все есть» / «K людей + R связей» /
+    просто «K людей».
+
+- 2026-05-08: Step 3 — smart selection + branch templates
+  - **Smart-expand на selection-mode toolbar:** новая кнопка
+    «Расширить» (волшебная палочка). Popup'ом предлагает:
+    - Все предки выделенных
+    - Все потомки выделенных
+    - Вся эта линия (предки + потомки + якоря)
+  - BFS по parent/child эджам в `_relationsData`.
+    Sibling/spouse/in-law эджи специально игнорю — иначе при
+    «по маминой линии» подцепится муж мамы и его клан, что
+    редко то, чего хочет юзер.
+  - Snackbar: «Добавлено в выбор (вся линия): 23» либо «Никого
+    нового не нашлось».
+  - **Branch templates на CreateTreeScreen:** ChoiceChip-strip
+    между сегментом семьи/друзей и инпутом названия. Тап на
+    чип префиллит и название и описание. Шаблоны:
+    - семейные: «По маминой линии», «По папиной линии»,
+      «Семья жены/мужа», «Кровная родня»
+    - дружеские: «Близкие друзья», «Школа», «Универ», «Работа»
+  - Юзер может потом править оба поля — чип это head start, не
+    замок. При смене kind (семья↔друзья) выбор шаблона сбрасывается.
+  - Toolbar copy в selection-mode подкручен — упоминает «Палочка
+    — расширить по линии» чтобы smart-expand был discoverable.
