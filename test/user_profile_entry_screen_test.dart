@@ -249,23 +249,44 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    expect(find.text('Мария Романова'), findsOneWidget);
-    expect(find.text('Написать'), findsOneWidget);
-    expect(find.text('Карточка в дереве'), findsOneWidget);
-    expect(find.text('Историческое дерево'), findsOneWidget);
+    // Profile Redesign: hero card splits the name as «Имя/Отчество\nФамилия»
+    // via a single RichText, so plain `find.text('Мария Романова')` no
+    // longer matches one Text widget — assert via textContaining instead.
+    expect(find.textContaining('Мария'), findsWidgets);
+    expect(find.textContaining('Романова'), findsWidgets);
+    expect(find.text('Написать', skipOffstage: false), findsOneWidget);
+    expect(
+      find.text('Карточка в дереве', skipOffstage: false),
+      findsOneWidget,
+    );
+    // Tree name is now woven into the rel-badge under the name.
+    expect(
+      find.textContaining('Историческое дерево', skipOffstage: false),
+      findsWidgets,
+    );
     expect(
       find.text(
           'Часть профиля скрыта настройками видимости этого пользователя.'),
       findsOneWidget,
     );
-    expect(find.text('Собирает семейные фотоархивы.'), findsOneWidget);
-    expect(find.text('Хранит дома большой семейный архив.'), findsOneWidget);
-    expect(find.text('СПбГУ'), findsOneWidget);
-    expect(find.text('Историк семьи'), findsOneWidget);
-    expect(find.text('Ярославль'), findsOneWidget);
-    expect(find.text('Русский, французский'), findsOneWidget);
     expect(
-      find.text('Архивы, старые фото, поездки по родным местам'),
+      find.text('Собирает семейные фотоархивы.', skipOffstage: false),
+      findsOneWidget,
+    );
+    expect(
+      find.text('Хранит дома большой семейный архив.', skipOffstage: false),
+      findsOneWidget,
+    );
+    expect(find.text('СПбГУ', skipOffstage: false), findsOneWidget);
+    expect(find.text('Историк семьи', skipOffstage: false), findsOneWidget);
+    expect(find.text('Ярославль', skipOffstage: false), findsOneWidget);
+    expect(
+      find.text('Русский, французский', skipOffstage: false),
+      findsOneWidget,
+    );
+    expect(
+      find.text('Архивы, старые фото, поездки по родным местам',
+          skipOffstage: false),
       findsOneWidget,
     );
     expect(find.text('user-2@example.com'), findsNothing);
@@ -354,13 +375,21 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    expect(find.text('Мария Романова'), findsOneWidget);
+    // Fallback hero uses fullName as a single Text (not the split RichText)
+    // because we don't have firstName/lastName fields on FamilyPerson.
+    expect(find.textContaining('Мария Романова'), findsWidgets);
     expect(
       find.text(
           'Профиль в приложении ещё не заполнен. Открыта карточка человека из дерева.'),
       findsOneWidget,
     );
-    expect(find.text('Историческое дерево'), findsOneWidget);
-    expect(find.text('Карточка в дереве'), findsOneWidget);
+    expect(
+      find.textContaining('Историческое дерево', skipOffstage: false),
+      findsWidgets,
+    );
+    expect(
+      find.text('Карточка в дереве', skipOffstage: false),
+      findsOneWidget,
+    );
   });
 }
