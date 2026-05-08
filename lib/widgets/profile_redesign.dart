@@ -645,6 +645,11 @@ class PillButton extends StatelessWidget {
 
     final isPrimary = variant == PillButtonVariant.primary;
     final isOutlined = variant == PillButtonVariant.outlined;
+    // Disabled state: dim primary fill, mute outlined / ghost ink so
+    // the user can tell at a glance that an action is parked
+    // (loading, pre-condition not met, etc.). PillButton callers pass
+    // `onPressed: null` to flag this.
+    final isDisabled = onPressed == null;
 
     final fg = isPrimary
         ? Colors.white
@@ -653,6 +658,7 @@ class PillButton extends StatelessWidget {
     final border = isOutlined
         ? Border.all(color: tokens.accent.withValues(alpha: 0.32), width: 1.5)
         : null;
+    final disabledOpacity = isDisabled ? 0.45 : 1.0;
 
     Widget content = Padding(
       padding: const EdgeInsets.symmetric(horizontal: 14),
@@ -678,20 +684,24 @@ class PillButton extends StatelessWidget {
       ),
     );
 
-    return Material(
-      color: bg,
-      borderRadius: BorderRadius.circular(999),
-      elevation: isPrimary ? 4 : 0,
-      shadowColor: isPrimary ? tokens.accent.withValues(alpha: 0.45) : null,
-      child: InkWell(
+    return Opacity(
+      opacity: disabledOpacity,
+      child: Material(
+        color: bg,
         borderRadius: BorderRadius.circular(999),
-        onTap: onPressed,
-        child: Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(999),
-            border: border,
+        elevation: isPrimary && !isDisabled ? 4 : 0,
+        shadowColor:
+            isPrimary && !isDisabled ? tokens.accent.withValues(alpha: 0.45) : null,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(999),
+          onTap: onPressed,
+          child: Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(999),
+              border: border,
+            ),
+            child: content,
           ),
-          child: content,
         ),
       ),
     );
