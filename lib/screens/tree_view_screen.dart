@@ -614,15 +614,15 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
                 IconButton(
                   icon: Icon(Icons.arrow_back_rounded, color: tokens.ink),
                   tooltip: 'К списку деревьев',
-                  // Plain `context.pop()` was popping back to the
-                  // shell's `/tree` route, which has a redirect
-                  // that says "if selectedTreeId exists, send the
-                  // user to /tree/view/$id" — so the user briefly
-                  // saw the tree list, then got auto-kicked back
-                  // to the view they were trying to leave. Going
-                  // to `/trees` explicitly bypasses that redirect
-                  // (different path) and lands on the real list.
-                  onPressed: () => context.go('/trees'),
+                  // `?selector=1` opts out of the `/tree` redirect
+                  // that would otherwise send a user with a
+                  // selected tree right back to the view they're
+                  // trying to leave. This is the canonical URL for
+                  // the selector screen; the legacy `/trees`
+                  // overlay was deleted to fix a UX bug where the
+                  // back-arrow led to a different visual surface
+                  // than the BranchSwitcherChip's "manage branches".
+                  onPressed: () => context.go('/tree?selector=1'),
                 ),
                 // "Дерево" / "Круг" gets natural width (short word
                 // — never wraps). The tree-name pill takes the rest

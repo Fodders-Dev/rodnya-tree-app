@@ -372,10 +372,17 @@ class AppShellRouteModule {
               }
               return redirectPath;
             },
-            pageBuilder: (context, state) => RodnyaNoTransitionPage(
-              key: state.pageKey,
-              child: TreeSelectorScreen(),
-            ),
+            pageBuilder: (context, state) {
+              // `?tab=invitations` deep-links from the home-feed
+              // banner — pass it through so the selector scrolls
+              // straight to the invitations section instead of the
+              // user having to hunt for it in the list.
+              final initialFocus = state.uri.queryParameters['tab'];
+              return RodnyaNoTransitionPage(
+                key: state.pageKey,
+                child: TreeSelectorScreen(initialFocus: initialFocus),
+              );
+            },
             routes: [
               GoRoute(
                 path: 'view/:treeId',

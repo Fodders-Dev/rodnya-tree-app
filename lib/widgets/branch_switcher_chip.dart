@@ -199,7 +199,12 @@ class _BranchSwitcherSheet extends StatelessWidget {
             FilledButton.icon(
               onPressed: () {
                 Navigator.of(context).pop();
-                outerContext.push('/trees');
+                // Canonical selector URL — same surface as the
+                // back-arrow from the tree view. Earlier this
+                // pushed `/trees`, which rendered a parallel
+                // overlay screen and split the user's mental
+                // model of where they were.
+                outerContext.push('/tree?selector=1');
               },
               icon: const Icon(Icons.add_rounded, size: 20),
               label: const Text('Создать или управлять ветками'),

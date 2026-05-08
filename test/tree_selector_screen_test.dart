@@ -4,6 +4,7 @@ import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
 import 'package:rodnya/backend/interfaces/auth_service_interface.dart';
 import 'package:rodnya/backend/interfaces/family_tree_service_interface.dart';
+import 'package:rodnya/backend/models/tree_invitation.dart';
 import 'package:rodnya/models/family_tree.dart';
 import 'package:rodnya/providers/tree_provider.dart';
 import 'package:rodnya/screens/tree_selector_screen.dart';
@@ -12,12 +13,35 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
-  _FakeFamilyTreeService(this.trees);
+  _FakeFamilyTreeService(
+    this.trees, {
+    this.invitations = const <TreeInvitation>[],
+  });
 
   final List<FamilyTree> trees;
+  final List<TreeInvitation> invitations;
+  final List<String> removedTreeIds = <String>[];
+  final List<MapEntry<String, bool>> invitationResponses =
+      <MapEntry<String, bool>>[];
 
   @override
   Future<List<FamilyTree>> getUserTrees() async => trees;
+
+  @override
+  Stream<List<TreeInvitation>> getPendingTreeInvitations() =>
+      Stream<List<TreeInvitation>>.value(invitations);
+
+  @override
+  Future<void> respondToTreeInvitation(
+      String invitationId, bool accept) async {
+    invitationResponses.add(MapEntry(invitationId, accept));
+  }
+
+  @override
+  Future<void> removeTree(String treeId) async {
+    removedTreeIds.add(treeId);
+    trees.removeWhere((tree) => tree.id == treeId);
+  }
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -62,6 +86,27 @@ FamilyTree _buildTree({
   );
 }
 
+GoRouter _buildRouter({
+  required Widget initial,
+  Widget? createScreen,
+}) {
+  return GoRouter(
+    initialLocation: '/tree',
+    routes: [
+      GoRoute(
+        path: '/tree',
+        builder: (context, state) => initial,
+      ),
+      GoRoute(
+        path: '/trees/create',
+        builder: (context, state) =>
+            createScreen ??
+            const Scaffold(body: Center(child: Text('create screen'))),
+      ),
+    ],
+  );
+}
+
 void main() {
   final getIt = GetIt.instance;
 
@@ -82,27 +127,7 @@ void main() {
       _FakeFamilyTreeService(const []),
     );
 
-    final router = GoRouter(
-      initialLocation: '/tree',
-      routes: [
-        GoRoute(
-          path: '/tree',
-          builder: (context, state) => const TreeSelectorScreen(),
-        ),
-        GoRoute(
-          path: '/trees/create',
-          builder: (context, state) => const Scaffold(
-            body: Center(child: Text('create screen')),
-          ),
-        ),
-        GoRoute(
-          path: '/trees',
-          builder: (context, state) => const Scaffold(
-            body: Center(child: Text('catalog screen')),
-          ),
-        ),
-      ],
-    );
+    final router = _buildRouter(initial: const TreeSelectorScreen());
 
     await tester.pumpWidget(
       ChangeNotifierProvider(
@@ -114,7 +139,7 @@ void main() {
 
     expect(find.text('Создайте дерево'), findsOneWidget);
     expect(find.text('Семья'), findsOneWidget);
-    expect(find.text('Приглашения'), findsOneWidget);
+    expect(find.text('Круг'), findsOneWidget);
 
     await tester.tap(find.text('Семья'));
     await tester.pumpAndSettle();
@@ -131,27 +156,7 @@ void main() {
       ]),
     );
 
-    final router = GoRouter(
-      initialLocation: '/tree',
-      routes: [
-        GoRoute(
-          path: '/tree',
-          builder: (context, state) => const TreeSelectorScreen(),
-        ),
-        GoRoute(
-          path: '/trees/create',
-          builder: (context, state) => const Scaffold(
-            body: Center(child: Text('create screen')),
-          ),
-        ),
-        GoRoute(
-          path: '/trees',
-          builder: (context, state) => const Scaffold(
-            body: Center(child: Text('catalog screen')),
-          ),
-        ),
-      ],
-    );
+    final router = _buildRouter(initial: const TreeSelectorScreen());
 
     await tester.pumpWidget(
       ChangeNotifierProvider(
@@ -200,10 +205,6 @@ void main() {
           ),
         ),
         GoRoute(
-          path: '/trees',
-          builder: (context, state) => const Scaffold(body: SizedBox.shrink()),
-        ),
-        GoRoute(
           path: '/trees/create',
           builder: (context, state) => const Scaffold(body: SizedBox.shrink()),
         ),
@@ -233,5 +234,147 @@ void main() {
     expect(find.text('Приглашение'), findsOneWidget);
     expect(find.text('Дерево родственников'), findsOneWidget);
     expect(find.text('Участник'), findsOneWidget);
+  });
+
+  testWidgets(
+      'TreeSelectorScreen показывает счётчик и карточки приглашений',
+      (tester) async {
+    getIt.registerSingleton<FamilyTreeServiceInterface>(
+      _FakeFamilyTreeService(
+        [
+          _buildTree(id: 'tree-1', name: 'Семья Кузнецовых'),
+        ],
+        invitations: [
+          TreeInvitation(
+            invitationId: 'invite-1',
+            tree: _buildTree(id: 'tree-2', name: 'Семья Шуфляк'),
+            invitedBy: 'Артём',
+          ),
+        ],
+      ),
+    );
+
+    final router = _buildRouter(initial: const TreeSelectorScreen());
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider(
+        create: (_) => TreeProvider(),
+        child: MaterialApp.router(routerConfig: router),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Приглашений: 1'), findsOneWidget);
+    expect(find.text('Семья Шуфляк'), findsOneWidget);
+    expect(find.text('Принять'), findsOneWidget);
+    expect(find.text('Отклонить'), findsOneWidget);
+  });
+
+  testWidgets(
+      'TreeSelectorScreen без своих деревьев но с приглашением показывает секцию',
+      (tester) async {
+    getIt.registerSingleton<FamilyTreeServiceInterface>(
+      _FakeFamilyTreeService(
+        [],
+        invitations: [
+          TreeInvitation(
+            invitationId: 'invite-1',
+            tree: _buildTree(id: 'tree-2', name: 'Семья Шуфляк'),
+          ),
+        ],
+      ),
+    );
+
+    final router = _buildRouter(initial: const TreeSelectorScreen());
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider(
+        create: (_) => TreeProvider(),
+        child: MaterialApp.router(routerConfig: router),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // The empty state is suppressed because the user has actionable
+    // content — the pending invitation. They should see the regular
+    // list with just the invitation card on top.
+    expect(find.text('Создайте дерево'), findsNothing);
+    expect(find.text('Приглашение'), findsOneWidget);
+    expect(find.text('Принять'), findsOneWidget);
+  });
+
+  testWidgets('TreeSelectorScreen даёт удалить своё дерево через меню',
+      (tester) async {
+    final treeService = _FakeFamilyTreeService([
+      _buildTree(id: 'tree-own', name: 'Моё дерево'),
+      _buildTree(
+        id: 'tree-member',
+        name: 'Чужое дерево',
+        creatorId: 'user-2',
+        memberIds: const ['user-1', 'user-2'],
+      ),
+    ]);
+    getIt.registerSingleton<FamilyTreeServiceInterface>(treeService);
+
+    final router = _buildRouter(initial: const TreeSelectorScreen());
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider(
+        create: (_) => TreeProvider(),
+        child: MaterialApp.router(routerConfig: router),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final menuButtons = find.byTooltip('Действия');
+    expect(menuButtons, findsNWidgets(2));
+
+    await tester.tap(menuButtons.first);
+    await tester.pumpAndSettle();
+    expect(find.text('Удалить'), findsOneWidget);
+
+    await tester.tap(find.text('Удалить'));
+    await tester.pumpAndSettle();
+    expect(find.text('Удалить дерево?'), findsOneWidget);
+
+    await tester.tap(find.text('Удалить дерево'));
+    await tester.pumpAndSettle();
+
+    expect(treeService.removedTreeIds, contains('tree-own'));
+    expect(find.text('Моё дерево'), findsNothing);
+  });
+
+  testWidgets(
+      'TreeSelectorScreen с initialFocus=invitations показывает приглашения',
+      (tester) async {
+    getIt.registerSingleton<FamilyTreeServiceInterface>(
+      _FakeFamilyTreeService(
+        [
+          _buildTree(id: 'tree-1', name: 'Семья Кузнецовых'),
+        ],
+        invitations: [
+          TreeInvitation(
+            invitationId: 'invite-1',
+            tree: _buildTree(id: 'tree-2', name: 'Rodnya QA Invite'),
+          ),
+        ],
+      ),
+    );
+
+    final router = _buildRouter(
+      initial: const TreeSelectorScreen(initialFocus: 'invitations'),
+    );
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider(
+        create: (_) => TreeProvider(),
+        child: MaterialApp.router(routerConfig: router),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Rodnya QA Invite'), findsOneWidget);
+    expect(find.text('Принять'), findsOneWidget);
+    expect(find.text('Отклонить'), findsOneWidget);
   });
 }

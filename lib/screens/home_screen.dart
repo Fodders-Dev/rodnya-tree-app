@@ -1023,7 +1023,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 const SizedBox(width: 12),
                 FilledButton.tonalIcon(
-                  onPressed: () => context.go('/trees?tab=invitations'),
+                  onPressed: () =>
+                      context.go('/tree?selector=1&tab=invitations'),
                   icon: const Icon(Icons.arrow_forward_rounded),
                   label: const Text('Открыть'),
                 ),

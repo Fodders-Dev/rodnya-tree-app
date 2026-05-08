@@ -21,7 +21,6 @@ import '../screens/public_tree_viewer_screen.dart';
 import '../screens/relative_details_screen.dart';
 import '../screens/send_relation_request_screen.dart';
 import '../screens/story_viewer_screen.dart';
-import '../screens/trees_screen.dart';
 import '../screens/user_profile_entry_screen.dart';
 import 'app_router_shared.dart';
 
@@ -92,17 +91,29 @@ class AppOverlayRouteModule {
           );
         },
       ),
+      // /trees was a parallel overlay-style branch picker that
+      // duplicated the shell-aware TreeSelectorScreen at
+      // /tree?selector=1. Two screens with the same purpose was a
+      // clear UX bug — back-arrow from the tree view went to one
+      // copy, BranchSwitcherChip's "manage branches" button went
+      // to the other. Redirect everything to the single canonical
+      // surface; subroute /trees/create still has a real page
+      // builder so direct deep-links to the create form keep
+      // working.
       GoRoute(
         path: '/trees',
-        parentNavigatorKey: rootNavigatorKey,
-        pageBuilder: (context, state) => RodnyaCustomTransitionPage(
-          key: state.pageKey,
-          constrainWidth: true,
-          child: TreesScreen(
-            initialTab: state.uri.queryParameters['tab'],
-          ),
-          transitionsBuilder: AppRouteTransitions.slide,
-        ),
+        redirect: (context, state) {
+          // Don't redirect when the user is hitting the create
+          // sub-route — /trees/create has its own page builder.
+          if (state.uri.path.startsWith('/trees/')) return null;
+          final query = Map<String, String>.from(state.uri.queryParameters);
+          query['selector'] = '1';
+          final qs = query.entries
+              .map((e) =>
+                  '${Uri.encodeQueryComponent(e.key)}=${Uri.encodeQueryComponent(e.value)}')
+              .join('&');
+          return qs.isEmpty ? '/tree?selector=1' : '/tree?$qs';
+        },
         routes: [
           GoRoute(
             path: 'create',
