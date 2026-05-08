@@ -163,4 +163,76 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('Hero with many overlapping action pills wraps cleanly',
+      (tester) async {
+    // Worst-case: relative card hero with 5 action pills (Написать /
+    // Пригласить в Родню / Предложить правку / Это моя карточка /
+    // Приватность). ProfileHeroCard wraps `actions` with Wrap so all
+    // five fit even at 360 dp.
+    await tester.pumpWidget(_wrap(
+      ProfileHeroCard(
+        fullName: 'Кузнецов Андрей',
+        firstName: 'Андрей',
+        lastName: 'Кузнецов',
+        useWarmAvatar: true,
+        relBadge: 'Для вас: Отец',
+        bio: 'Большая семья в Москве',
+        actions: [
+          PillButton(
+            label: 'Написать',
+            icon: Icons.message_outlined,
+            onPressed: () {},
+          ),
+          PillButton(
+            label: 'Пригласить в Родню',
+            icon: Icons.person_add_alt_1_outlined,
+            variant: PillButtonVariant.outlined,
+            onPressed: () {},
+          ),
+          PillButton(
+            label: 'Предложить правку',
+            icon: Icons.edit_note_outlined,
+            variant: PillButtonVariant.outlined,
+            onPressed: () {},
+          ),
+          PillButton(
+            label: 'Это моя карточка',
+            icon: Icons.verified_user_outlined,
+            variant: PillButtonVariant.outlined,
+            onPressed: () {},
+          ),
+          PillButton(
+            label: 'Приватность',
+            icon: Icons.lock_outline_rounded,
+            variant: PillButtonVariant.outlined,
+            onPressed: () {},
+          ),
+        ],
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Section with very long InfoRow value wraps', (tester) async {
+    await tester.pumpWidget(_wrap(
+      const ProfileSection(
+        title: 'Семья',
+        children: [
+          InfoRow(
+            icon: Icons.family_restroom_outlined,
+            label: 'Заметка',
+            value:
+                'Очень длинная заметка для семьи которая обязательно должна перенестись на следующую строку без обрезания текста на узком экране Samsung S20 FE — мы хотим чтобы все слова были видны полностью',
+            warm: true,
+            isFirst: true,
+            isLast: true,
+          ),
+        ],
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
 }
