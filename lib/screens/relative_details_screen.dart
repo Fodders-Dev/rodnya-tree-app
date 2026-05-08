@@ -12,7 +12,7 @@ import '../models/person_duplicate_suggestion.dart';
 import '../models/user_profile.dart';
 import '../providers/tree_provider.dart'; // Для treeId
 import 'package:go_router/go_router.dart';
-import 'package:share_plus/share_plus.dart';
+import '../utils/invitation_share.dart';
 import 'package:get_it/get_it.dart';
 import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
@@ -1479,18 +1479,12 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
       );
 
       if (mounted) {
-        final box = context.findRenderObject() as RenderBox?;
-        // share_plus 11.x replaced the static Share.share with a singleton
-        // SharePlus.instance.share(ShareParams(...)).
-        await SharePlus.instance.share(
-          ShareParams(
-            text:
-                'Присоединяйтесь к нашему семейному древу в Родне! ${inviteUrl.toString()}',
-            subject: 'Приглашение в Родню',
-            sharePositionOrigin: box != null
-                ? box.localToGlobal(Offset.zero) & box.size
-                : null,
-          ),
+        await showInviteShareSheet(
+          context,
+          inviteUrl: inviteUrl,
+          message:
+              'Присоединяйтесь к нашему семейному древу в Родне! ${inviteUrl.toString()}',
+          subject: 'Приглашение в Родню',
         );
       }
     } catch (e) {

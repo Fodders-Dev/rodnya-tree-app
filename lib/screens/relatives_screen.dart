@@ -5,7 +5,7 @@ import 'dart:async';
 import 'dart:ui';
 import 'package:get_it/get_it.dart';
 import 'package:intl/intl.dart';
-import 'package:share_plus/share_plus.dart';
+import '../utils/invitation_share.dart';
 
 import '../theme/app_theme.dart';
 import '../models/family_tree.dart';
@@ -1537,15 +1537,18 @@ class _RelativesScreenState extends State<RelativesScreen> {
         treeId: _currentTreeId!,
         personId: relative.id,
       );
-      await SharePlus.instance.share(
-        ShareParams(
-          text: (_treeProviderInstance?.selectedTreeKind == TreeKind.friends)
-              ? 'Присоединяйтесь к нашему кругу друзей в Родне: ${inviteUrl.toString()}'
-              : 'Присоединяйтесь к нашему семейному древу в Родне: ${inviteUrl.toString()}',
-          subject: _treeProviderInstance?.selectedTreeKind == TreeKind.friends
-              ? 'Приглашение в круг друзей'
-              : 'Приглашение в Родню',
-        ),
+      final isFriendsTree =
+          _treeProviderInstance?.selectedTreeKind == TreeKind.friends;
+      if (!mounted) return;
+      await showInviteShareSheet(
+        context,
+        inviteUrl: inviteUrl,
+        message: isFriendsTree
+            ? 'Присоединяйтесь к нашему кругу друзей в Родне: ${inviteUrl.toString()}'
+            : 'Присоединяйтесь к нашему семейному древу в Родне: ${inviteUrl.toString()}',
+        subject: isFriendsTree
+            ? 'Приглашение в круг друзей'
+            : 'Приглашение в Родню',
       );
     } catch (error) {
       if (!mounted) {

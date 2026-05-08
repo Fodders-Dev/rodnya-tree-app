@@ -6,7 +6,11 @@ buildscript {
     }
 
     dependencies {
-        classpath 'com.android.tools.build:gradle:8.6.0'
+        // AGP 8.9.1 to satisfy androidx libs (activity 1.12.4 /
+        // core 1.18.0 / navigationevent 1.0.2) that started requiring
+        // it after a transitive dependency bump. Gradle wrapper bumped
+        // in lockstep to 8.11.1 (the minimum AGP 8.9.x supports).
+        classpath 'com.android.tools.build:gradle:8.9.1'
         classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
     }
 }
