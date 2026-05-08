@@ -71,7 +71,9 @@ void main() {
     await tester.pumpWidget(MaterialApp.router(routerConfig: router));
     await tester.pumpAndSettle();
 
-    expect(find.text('Новое дерево'), findsOneWidget);
+    // After the «дерево»→«ветка» rebrand (commit 0a9929d) the AppBar
+    // title is «Новая ветка». Old test expectation predates the rename.
+    expect(find.text('Новая ветка'), findsOneWidget);
     expect(find.text('С чего начнём?'), findsOneWidget);
     expect(find.text('Создать и открыть'), findsOneWidget);
     expect(
