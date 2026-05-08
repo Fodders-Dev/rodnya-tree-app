@@ -12,6 +12,8 @@ function registerPostRoutes(
     composeDisplayName,
     mapPost,
     mapComment,
+    createAndDispatchNotification,
+    pushGateway,
   },
 ) {
   app.get("/v1/posts/search", requireAuth, async (req, res) => {
@@ -195,15 +197,17 @@ function registerPostRoutes(
       .map((value) => String(value || "").trim())
       .filter((value) => validPersonIds.has(value));
 
+    const authorName =
+      req.auth.user.profile?.displayName ||
+      composeDisplayName(req.auth.user.profile) ||
+      req.auth.user.email ||
+      "Аноним";
+
     const post = await store.createPost({
       treeId: tree.id,
       branchIds,
       authorId: req.auth.user.id,
-      authorName:
-        req.auth.user.profile?.displayName ||
-        composeDisplayName(req.auth.user.profile) ||
-        req.auth.user.email ||
-        "Аноним",
+      authorName,
       authorPhotoUrl: req.auth.user.profile?.photoUrl || null,
       content,
       imageUrls,
@@ -220,6 +224,48 @@ function registerPostRoutes(
     if (!post) {
       res.status(404).json({message: "Дерево не найдено"});
       return;
+    }
+
+    // Audience-mode fan-out: every member of every branch the post
+    // landed in (minus the author) gets a `post_created` row +
+    // realtime + push. Goes through `createAndDispatchNotification`
+    // — the same helper chat / call invites use — so push gateway
+    // delivery (RuStore on Android, web-push on browsers) is no
+    // longer skipped. Without this the inbox row was created but
+    // the phone never beeped, which was the user-reported bug.
+    if (typeof createAndDispatchNotification === "function") {
+      try {
+        const audienceUserIds = await store.resolvePostAudienceUserIds(
+          post.id,
+        );
+        const snippet = post.content
+          ? post.content.slice(0, 120).trim()
+          : (Array.isArray(post.imageUrls) && post.imageUrls.length > 0
+              ? "Новое фото"
+              : "");
+        const branchIdsForData =
+          Array.isArray(post.branchIds) && post.branchIds.length > 0
+            ? post.branchIds
+            : [post.treeId].filter(Boolean);
+        for (const recipientId of audienceUserIds) {
+          await createAndDispatchNotification({
+            userId: recipientId,
+            type: "post_created",
+            title: `${authorName} опубликовал`,
+            body: snippet,
+            data: {
+              postId: post.id,
+              authorId: req.auth.user.id,
+              branchIds: branchIdsForData,
+            },
+          });
+        }
+      } catch (error) {
+        // Notification fan-out is best-effort: a network blip on
+        // RuStore must not roll back the post itself. Log and
+        // move on — the post is already in the feed.
+        console.warn("post creation notification fan-out failed", error);
+      }
     }
 
     res.status(201).json(mapPost(post, 0));
@@ -289,14 +335,28 @@ function registerPostRoutes(
           req.auth.user.email ||
           null;
         const snippet = (post.content || "").trim().slice(0, 96);
-        await store.addPostReactionNotification({
-          postId: post.id,
-          postAuthorId: post.authorId,
-          actorUserId: req.auth.user.id,
-          actorName,
-          emoji,
-          postSnippet: snippet,
-        });
+        const reactionNotification = await store.addPostReactionNotification(
+          {
+            postId: post.id,
+            postAuthorId: post.authorId,
+            actorUserId: req.auth.user.id,
+            actorName,
+            emoji,
+            postSnippet: snippet,
+          },
+        );
+        // Push fan-out for reactions: addPostReactionNotification
+        // creates the inbox row (with coalesce semantics) but does
+        // not reach the push gateway, since the store layer has no
+        // access to it. Hop through the gateway here so the
+        // recipient's phone actually beeps.
+        if (reactionNotification && pushGateway) {
+          try {
+            await pushGateway.dispatchNotification(reactionNotification);
+          } catch (pushError) {
+            console.warn("post reaction push dispatch failed", pushError);
+          }
+        }
       } catch (error) {
         // Notification is best-effort — don't fail the reaction if the
         // notification write hits a transient error.
@@ -360,15 +420,26 @@ function registerPostRoutes(
               req.auth.user.email ||
               null;
             const snippet = (targetComment.content || "").trim().slice(0, 96);
-            await store.addCommentReactionNotification({
-              postId: targetComment.postId,
-              commentId: targetComment.id,
-              commentAuthorId: targetComment.authorId,
-              actorUserId: req.auth.user.id,
-              actorName,
-              emoji,
-              commentSnippet: snippet,
-            });
+            const commentReactionNotification =
+                await store.addCommentReactionNotification({
+                  postId: targetComment.postId,
+                  commentId: targetComment.id,
+                  commentAuthorId: targetComment.authorId,
+                  actorUserId: req.auth.user.id,
+                  actorName,
+                  emoji,
+                  commentSnippet: snippet,
+                });
+            if (commentReactionNotification && pushGateway) {
+              try {
+                await pushGateway.dispatchNotification(
+                    commentReactionNotification);
+              } catch (pushError) {
+                console.warn(
+                    "comment reaction push dispatch failed",
+                    pushError);
+              }
+            }
           }
         } catch (error) {
           console.warn("comment reaction notification failed", error);
@@ -485,7 +556,7 @@ function registerPostRoutes(
         });
         if (parent && parent.authorId) {
           const snippet = String(comment.content || "").slice(0, 140);
-          await store.addCommentReplyNotification({
+          const replyNotification = await store.addCommentReplyNotification({
             postId: req.params.postId,
             parentCommentId: parent.id,
             parentCommentAuthorId: parent.authorId,
@@ -494,6 +565,16 @@ function registerPostRoutes(
             actorName,
             replySnippet: snippet,
           });
+          if (replyNotification && pushGateway) {
+            try {
+              await pushGateway.dispatchNotification(replyNotification);
+            } catch (pushError) {
+              // eslint-disable-next-line no-console
+              console.warn(
+                  "[posts] comment reply push dispatch failed",
+                  pushError);
+            }
+          }
         }
       } catch (error) {
         // Don't fail the comment write on a notification hiccup — the

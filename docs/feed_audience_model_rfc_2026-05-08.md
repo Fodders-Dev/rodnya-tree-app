@@ -443,3 +443,44 @@ N постов из active-branch». После переписки они сло
     Push-инфра (FCM/RuStore) когда будет подключена — пойдёт
     через те же `db.notifications` записи, что мы только что
     фанаутим, без доп. изменений в посте.
+
+- 2026-05-08: Step 6 — push fan-out для постов / реакций / историй
+  - **Аудит push-инфры:** на самом деле PushGateway уже был
+    готов (RuStore + WebPush), endpoint `/v1/push/devices` для
+    регистрации работает, мобильный клиент через
+    `flutter_rustore_push` действительно регистрирует токен
+    после логина. Что НЕ работало — половина серверных
+    notification-сайтов создавала запись в `db.notifications`
+    но **не вызывала** `pushGateway.dispatchNotification`.
+    Поэтому юзер видел inbox-row на следующем pull'е, но
+    телефон не звенел в реальном времени.
+  - Какие types работали правильно (через
+    `createAndDispatchNotification`): `chat_message`,
+    `call_invite`, `tree_invitation`, `relation_request`,
+    `merge_proposal`. Push доезжал.
+  - Какие НЕ работали: `post_created` (только что добавил),
+    `post_reaction`, `comment_reaction`, `comment_reply`,
+    `story_reaction`. Все они шли через
+    `store.addXxxNotification(...)` → создавали row → return,
+    но push-gateway никто не дёргал.
+  - **Refactor:** перенёс post_created fan-out из
+    `store.createPost` в роутер `POST /v1/posts`. В store
+    осталось `resolvePostAudienceUserIds(postId)` — чисто
+    вычисление audience-set'а. Роутер берёт список и
+    итерирует через `createAndDispatchNotification` (тот же
+    helper что чат и звонки используют), который создаёт row,
+    публикует realtime-событие И вызывает push-gateway.
+  - Для post_reaction / comment_reaction / comment_reply /
+    story_reaction логика осталась в store (там coalesce-логика
+    «не плодить дубль если есть unread от того же актора»),
+    но routes теперь после возврата notification-record'а
+    вызывают `pushGateway.dispatchNotification(notif)`. Минимум
+    изменений в store, push покрытие закрыто.
+  - На клиенте `_registerRemotePushDevice()` уже регистрирует
+    RuStore токен на `/v1/push/devices` после логина (в
+    `startForegroundSync`). Если телефонные пуши всё ещё не
+    идут — проверить prod env'ы:
+    `RUSTORE_PUSH_PROJECT_ID` и `RUSTORE_PUSH_SERVICE_TOKEN`.
+    Без них `rustorePushEnabled = false` и
+    `_deliverRustorePush` тихо помечает delivery как
+    `not_configured`.

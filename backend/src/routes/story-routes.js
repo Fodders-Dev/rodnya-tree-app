@@ -1,6 +1,13 @@
 function registerStoryRoutes(
   app,
-  {store, requireAuth, requireTreeAccess, composeDisplayName, mapStory},
+  {
+    store,
+    requireAuth,
+    requireTreeAccess,
+    composeDisplayName,
+    mapStory,
+    pushGateway,
+  },
 ) {
   app.get("/v1/stories", requireAuth, async (req, res) => {
     const treeId = String(req.query.treeId || "").trim() || null;
@@ -155,14 +162,24 @@ function registerStoryRoutes(
           req.auth.user.email ||
           null;
         const snippet = (story.text || "").trim().slice(0, 96);
-        await store.addStoryReactionNotification({
-          storyId: story.id,
-          storyAuthorId: result.authorId,
-          actorUserId: req.auth.user.id,
-          actorName,
-          emoji,
-          storySnippet: snippet,
-        });
+        const storyReactionNotification =
+            await store.addStoryReactionNotification({
+              storyId: story.id,
+              storyAuthorId: result.authorId,
+              actorUserId: req.auth.user.id,
+              actorName,
+              emoji,
+              storySnippet: snippet,
+            });
+        if (storyReactionNotification && pushGateway) {
+          try {
+            await pushGateway.dispatchNotification(
+                storyReactionNotification);
+          } catch (pushError) {
+            console.warn(
+                "story reaction push dispatch failed", pushError);
+          }
+        }
       } catch (error) {
         console.warn("story reaction notification failed", error);
       }

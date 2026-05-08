@@ -2336,6 +2336,7 @@ function createApp({
     requireTreeAccess,
     composeDisplayName,
     mapStory,
+    pushGateway: resolvedPushGateway,
   });
 
   registerPostRoutes(app, {
@@ -2345,6 +2346,8 @@ function createApp({
     composeDisplayName,
     mapPost,
     mapComment,
+    createAndDispatchNotification,
+    pushGateway: resolvedPushGateway,
   });
 
   registerCircleRoutes(app, {
