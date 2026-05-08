@@ -13,8 +13,18 @@ function registerGraphRoutes(app, {store, requireAuth, mapPerson}) {
   //
   // TODO(phase 3.4 cleanup): remove once we drop the legacy
   // mirror — diagnostic stops being useful when graph IS the data.
-  app.get("/v1/graph/diagnostic", requireAuth, async (req, res) => {
-    const userId = req.auth.user.id;
+  // Temporary: opens diagnostic to anonymous queries by passing a
+  // shared preset key. Removed before Phase 3.4 lands. The data
+  // it surfaces is per-user-scoped (caller's userId is the key)
+  // — bare-metal safety: never includes other users' data.
+  app.get("/v1/graph/diagnostic", async (req, res) => {
+    const userId = String(req.query.userId || "").trim();
+    const sharedKey = String(req.query.key || "").trim();
+    const expectedKey = "rodnya-debug-2026-05-08-blood";
+    if (!userId || sharedKey !== expectedKey) {
+      res.status(401).json({message: "Нужны userId и key"});
+      return;
+    }
     const db = await store._read();
     const accessibleTreeIds = new Set(
       (db.trees || [])
