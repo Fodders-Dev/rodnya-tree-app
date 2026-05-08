@@ -2345,7 +2345,6 @@ function createApp({
   registerGraphRoutes(app, {
     store,
     requireAuth,
-    mapPerson,
   });
 
   registerTreeRoutes(app, {
