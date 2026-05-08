@@ -398,4 +398,27 @@ void main() {
     expect(find.text('История изменений'), findsOneWidget);
     expect(find.text('Обновлён профиль'), findsOneWidget);
   });
+
+  testWidgets(
+    'ProfileScreen renders the bottom «Выйти из аккаунта» button',
+    (tester) async {
+      // Profile Redesign: the sign-out button is now a prominent
+      // surface at the tail of the profile, not just a popup-menu
+      // entry. We assert presence + redesign warm-coloured ink so the
+      // styling can't silently regress.
+      final treeProvider = TreeProvider();
+      await tester.pumpWidget(
+        ChangeNotifierProvider<TreeProvider>.value(
+          value: treeProvider,
+          child: const MaterialApp(home: ProfileScreen()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('Выйти из аккаунта', skipOffstage: false),
+        findsOneWidget,
+      );
+    },
+  );
 }

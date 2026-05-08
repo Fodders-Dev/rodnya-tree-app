@@ -1103,4 +1103,61 @@ void main() {
       );
     },
   );
+
+  testWidgets(
+    'RelativeDetailsScreen renders inline «Связь» section under the hero',
+    (tester) async {
+      // Profile Redesign: kinship section moved inline (was hidden
+      // behind «Путь родства» button). It uses ProfileSection so the
+      // title renders uppercased. The «father» fixture has graph
+      // snapshot data that yields a kinship descriptor.
+      final treeProvider = TreeProvider();
+      await treeProvider.selectTree('tree-1', 'Семья Кузнецовых');
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider<TreeProvider>.value(
+          value: treeProvider,
+          child: const MaterialApp(
+            home: RelativeDetailsScreen(personId: 'father'),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      // Inline «Связь» (uppercased per ProfileSection) renders the
+      // kinship label + path summary as InfoRow blocks.
+      expect(find.text('СВЯЗЬ', skipOffstage: false), findsOneWidget);
+      expect(find.text('Родство', skipOffstage: false), findsOneWidget);
+      expect(find.text('Путь', skipOffstage: false), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'RelativeDetailsScreen renders bottom «Удалить из дерева» button when editable',
+    (tester) async {
+      // Profile Redesign: destructive delete got a prominent bottom
+      // button (was a tiny appbar trash icon). Only shown when the
+      // viewer can edit — `grandmother` has no linked userId so
+      // `_canDirectEditProfile` returns true.
+      final treeProvider = TreeProvider();
+      await treeProvider.selectTree('tree-1', 'Семья Кузнецовых');
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider<TreeProvider>.value(
+          value: treeProvider,
+          child: const MaterialApp(
+            home: RelativeDetailsScreen(personId: 'grandmother'),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('Удалить из дерева', skipOffstage: false),
+        findsOneWidget,
+      );
+    },
+  );
 }
