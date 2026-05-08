@@ -91,7 +91,7 @@ class _CreateTreeScreenState extends State<CreateTreeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Новое дерево')),
+      appBar: AppBar(title: const Text('Новая ветка')),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16.0),
         child: Form(
@@ -106,8 +106,8 @@ class _CreateTreeScreenState extends State<CreateTreeScreen> {
               const SizedBox(height: 8),
               Text(
                 _treeKind == TreeKind.friends
-                    ? 'Введите название и сразу откроете граф друзей для настройки связей и ручной композиции.'
-                    : 'Введите название и сразу откроете дерево для добавления родственников.',
+                    ? 'Введите название круга друзей — потом сможете добавлять и связывать людей.'
+                    : 'Введите название ветки — потом сможете добавлять родственников. У каждой ветки своя лента, истории и события.',
                 style: Theme.of(context).textTheme.bodyMedium,
               ),
               const SizedBox(height: 24),
@@ -134,8 +134,8 @@ class _CreateTreeScreenState extends State<CreateTreeScreen> {
               const SizedBox(height: 12),
               Text(
                 _treeKind == TreeKind.friends
-                    ? 'Режим друзей подходит для близкого круга, друзей, коллег и выбранной семьи. Узлы в таком дереве удобнее раскладывать вручную.'
-                    : 'Режим семьи лучше подходит для родственных связей, поколений и веток рода.',
+                    ? 'Режим друзей подходит для близкого круга, друзей, коллег и выбранной семьи. Узлы удобнее раскладывать вручную.'
+                    : 'Режим семьи лучше подходит для родственных связей и поколений. Ветка — это срез вашего общего графа: «Кровная родня», «Семья жены», «Папина линия» — и у каждой свои истории, посты и события.',
                 style: Theme.of(context).textTheme.bodySmall,
               ),
               const SizedBox(height: 20),
@@ -144,11 +144,11 @@ class _CreateTreeScreenState extends State<CreateTreeScreen> {
                 autofocus: true,
                 decoration: InputDecoration(
                   labelText: _treeKind == TreeKind.friends
-                      ? 'Название дерева друзей'
-                      : 'Название дерева',
+                      ? 'Название круга друзей'
+                      : 'Название ветки',
                   hintText: _treeKind == TreeKind.friends
                       ? 'Например: Наш круг'
-                      : 'Например: Семья Ивановых',
+                      : 'Например: Семья Ивановых, Кровная родня, Папина линия',
                   prefixIcon: Icon(
                     _treeKind == TreeKind.friends
                         ? Icons.diversity_3_outlined
@@ -158,8 +158,8 @@ class _CreateTreeScreenState extends State<CreateTreeScreen> {
                 validator: (value) {
                   if (value == null || value.trim().isEmpty) {
                     return _treeKind == TreeKind.friends
-                        ? 'Введите название дерева друзей'
-                        : 'Введите название дерева';
+                        ? 'Введите название круга друзей'
+                        : 'Введите название ветки';
                   }
                   return null;
                 },
@@ -186,11 +186,11 @@ class _CreateTreeScreenState extends State<CreateTreeScreen> {
                   });
                 },
                 title:
-                    Text(_isPrivate ? 'Приватное дерево' : 'Публичное дерево'),
+                    Text(_isPrivate ? 'Приватная ветка' : 'Публичная ветка'),
                 subtitle: Text(
                   _isPrivate
-                      ? 'Его увидят только приглашённые участники.'
-                      : 'Его можно будет открывать по ссылке.',
+                      ? 'Её увидят только приглашённые участники.'
+                      : 'Её можно будет открывать по ссылке.',
                 ),
               ),
               const SizedBox(height: 24),
