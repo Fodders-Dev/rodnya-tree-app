@@ -2261,12 +2261,37 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
     final sourceTreeId = _currentTreeId;
     if (sourceTreeId == null) return;
 
-    final treeProvider = Provider.of<TreeProvider>(context, listen: false);
-    final candidates = treeProvider.availableTrees
+    final messenger = ScaffoldMessenger.of(context);
+    // Fetch the user's trees fresh from the service. TreeProvider
+    // caches availableTrees but only fills the cache after the
+    // user explicitly opens the BranchSwitcher / hits the
+    // selector — and bulk-add can fire before either of those,
+    // which would falsely report "Нужна вторая ветка". Going
+    // straight to the service guarantees we see every branch the
+    // viewer actually owns.
+    List<FamilyTree> allTrees;
+    try {
+      allTrees = await _familyService.getUserTrees();
+    } catch (error) {
+      debugPrint('Bulk add-to-branch: failed to fetch user trees: $error');
+      if (!mounted) return;
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('Не удалось загрузить список веток. Попробуйте ещё раз.'),
+        ),
+      );
+      return;
+    }
+    if (!mounted) return;
+    // Side-effect: keep TreeProvider's cache in sync so the next
+    // BranchSwitcher open is instant.
+    Provider.of<TreeProvider>(context, listen: false)
+        .refreshAvailableTrees();
+    final candidates = allTrees
         .where((tree) => tree.id != sourceTreeId)
         .toList(growable: false);
     if (candidates.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      messenger.showSnackBar(
         const SnackBar(
           content: Text('Нужна вторая ветка — создайте её сначала.'),
         ),
