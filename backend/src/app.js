@@ -1186,6 +1186,19 @@ function createApp({
       // comment thread.
       "parentCommentId",
       "replyCommentId",
+      // Post-creation fan-out (audience-mode): the author id powers
+      // the avatar / display name on the notification card; the
+      // branchIds tell the client which slice of the user's
+      // audience the post was published into so the inbox can
+      // render an «в Семья Кузнецовых» badge.
+      "authorId",
+    ];
+
+    // Array-valued data fields. Sanitized member-by-member as
+    // strings; anything non-string in the array is dropped so a
+    // forged client can't sneak object payloads through.
+    const allowedStringArrayKeys = [
+      "branchIds",
     ];
 
     const sanitized = {};
@@ -1206,6 +1219,15 @@ function createApp({
         sanitized[key] =
           typeof value === "string" ? truncateText(value, 280) || "" : value;
       }
+    }
+    for (const key of allowedStringArrayKeys) {
+      if (!(key in data)) continue;
+      const value = data[key];
+      if (!Array.isArray(value)) continue;
+      sanitized[key] = value
+        .filter((entry) => typeof entry === "string")
+        .map((entry) => truncateText(entry, 280) || "")
+        .filter((entry) => entry.length > 0);
     }
 
     return sanitized;

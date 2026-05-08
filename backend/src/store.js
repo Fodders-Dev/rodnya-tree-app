@@ -12781,6 +12781,72 @@ class FileStore {
     }
 
     db.posts.push(post);
+
+    // In-app notification fan-out: every audience member (other
+    // than the author) gets a `post_created` row in their inbox.
+    // Audience = union of `tree.memberIds` across the branches the
+    // post was published into. Without this the audience-mode
+    // feed is silent — recipients only learn about posts when
+    // they happen to scroll, which defeats the «меньше шума,
+    // больше близких» thesis. We deliberately use in-app rows
+    // (no FCM push yet); when push lands later it fans out off
+    // the same notification rows.
+    const audienceBranchIds = new Set(
+      Array.isArray(resolvedBranchIds) && resolvedBranchIds.length > 0
+        ? resolvedBranchIds
+        : [treeId],
+    );
+    const audienceUserIds = new Set();
+    for (const branchId of audienceBranchIds) {
+      const branchTree = db.trees.find((entry) => entry.id === branchId);
+      if (!branchTree) continue;
+      const memberIds = Array.isArray(branchTree.memberIds)
+        ? branchTree.memberIds
+        : [];
+      for (const memberId of memberIds) {
+        if (!memberId) continue;
+        if (memberId === authorId) continue;
+        audienceUserIds.add(memberId);
+      }
+    }
+    if (audienceUserIds.size > 0) {
+      db.notifications = Array.isArray(db.notifications)
+        ? db.notifications
+        : [];
+      const snippet = post.content
+        ? post.content.slice(0, 120).trim()
+        : (post.imageUrls.length > 0 ? "Новое фото" : "");
+      const titleAuthor =
+        (authorName && authorName.trim()) || "Кто-то из ваших родных";
+      for (const recipientId of audienceUserIds) {
+        // Coalesce: if the same recipient already has an UNREAD
+        // post_created row for this exact post, don't add a
+        // duplicate. (Defends against a future "edit republishes"
+        // scenario or a retry on the client side.)
+        const alreadyQueued = db.notifications.some(
+          (entry) =>
+            entry.userId === recipientId &&
+            entry.type === "post_created" &&
+            !entry.readAt &&
+            entry.data?.postId === post.id,
+        );
+        if (alreadyQueued) continue;
+        db.notifications.push(
+          createNotificationRecord({
+            userId: recipientId,
+            type: "post_created",
+            title: `${titleAuthor} опубликовал`,
+            body: snippet,
+            data: {
+              postId: post.id,
+              authorId,
+              branchIds: Array.from(audienceBranchIds),
+            },
+          }),
+        );
+      }
+    }
+
     await this._write(db);
     return attachPostReactions(db, post);
   }

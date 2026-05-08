@@ -407,7 +407,39 @@ N постов из active-branch». После переписки они сло
     Privacy-чувствительная фича: разрешения на контакты,
     matching по номеру с identity-claims, two-way confirm. Нужно
     обсудить с юзером дизайн перед кодом.
-  - **Notification fan-out по audience** — нет FCM/in-app
-    notification на post creation вообще. Когда подключим
-    push-инфраструктуру, fan-out пойдёт через тот же
-    audience-paths, что и feed.
+
+- 2026-05-08: Step 5 — in-app notifications fan-out
+  - Раньше пост создавался — и НИКТО не получал ни единого
+    уведомления (ни in-app, ни push). Можно было замешкать,
+    кто-то выложил свадебное фото — и оно ушло в feed без
+    звонка. Это анти-тезис всему «меньше шума, больше близких»:
+    не shum'a — но и НЕ доходило что вообще что-то случилось.
+  - Теперь `createPost` после `db.posts.push(post)` фанаутит
+    `post_created` notification по всему audience'у:
+    union(`tree.memberIds` для каждой ветки в
+    `[post.treeId, ...post.branchIds]`), за вычетом самого
+    автора. Дедуп: один человек в нескольких ветках поста
+    получит ОДНУ запись.
+  - Coalesce'имся на pop-up retry: если у получателя уже
+    лежит unread `post_created` для этого `postId` — не плодим
+    дубль. (Работает в случае повторного клика «Опубликовать»
+    с того же черновика.)
+  - `sanitizeNotificationData` расширен: `authorId` (string) и
+    `branchIds` (string array) теперь проходят через сериализатор.
+    Раньше они дропались allow-list'ом.
+  - Frontend: иконка для `post_created` (post_add_outlined),
+    лейбл в инбоксе («Новый пост»), deep-link при тапе ведёт на
+    home (`/`). Полноценного `/post/:postId` экрана пока нет,
+    home показывает фид в audience-mode и свежий пост по
+    конструкции уже наверху списка.
+  - Test: `post creation fans out in-app notifications to
+    audience members` — проверяет что (а) член любой из
+    branchIds'ов получает уведомление, (б) автор НЕ получает,
+    (в) посторонний (не в audience'е) НЕ получает,
+    (г) `data.authorId` и `data.branchIds[]` проходят через
+    sanitizer'а нетронутыми.
+
+  - **Notification fan-out по audience** — закрыто in-app.
+    Push-инфра (FCM/RuStore) когда будет подключена — пойдёт
+    через те же `db.notifications` записи, что мы только что
+    фанаутим, без доп. изменений в посте.

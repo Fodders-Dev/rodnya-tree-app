@@ -36,6 +36,8 @@ IconData _notificationIconForType(String type) {
       return Icons.favorite_border;
     case 'comment_reply':
       return Icons.reply_outlined;
+    case 'post_created':
+      return Icons.post_add_outlined;
     default:
       return Icons.notifications_none;
   }
@@ -66,6 +68,8 @@ String _notificationLabelForType(String type) {
       return 'Реакция на историю';
     case 'comment_reply':
       return 'Ответ на комментарий';
+    case 'post_created':
+      return 'Новый пост';
     default:
       return 'Уведомление';
   }

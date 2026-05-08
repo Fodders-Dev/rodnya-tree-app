@@ -1356,6 +1356,23 @@ class CustomApiNotificationService implements NotificationServiceInterface {
       return;
     }
 
+    // Post-creation fan-out notifications + reactions / comment
+    // replies all live on the home feed (audience-mode shows
+    // every post the viewer is the audience for, regardless of
+    // selected branch). No standalone post-detail screen exists,
+    // so we land the user on home and let the post show at the
+    // top — the freshly-published one is by construction the
+    // most recent. Worth replacing with a real `/post/:postId`
+    // screen + scroll-to-post when single-post permalinks become
+    // a thing, but for now this is the most useful fallback.
+    if (type == 'post_created' ||
+        type == 'post_reaction' ||
+        type == 'comment_reaction' ||
+        type == 'comment_reply') {
+      GoRouter.of(navigatorContext).go('/');
+      return;
+    }
+
     final treeId =
         rootPayload['treeId']?.toString() ?? data['treeId']?.toString();
     if (treeId != null && treeId.isNotEmpty) {
