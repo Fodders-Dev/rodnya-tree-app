@@ -87,6 +87,20 @@ function registerGraphRoutes(app, {store, requireAuth, mapPerson}) {
       ),
     );
 
+    const allGraphPersons = Array.isArray(db.graphPersons)
+      ? db.graphPersons
+      : [];
+    const allGraphRelations = Array.isArray(db.graphRelations)
+      ? db.graphRelations
+      : [];
+    const sampleGraphPersonAny = allGraphPersons[0]
+      ? {
+          id: allGraphPersons[0].id,
+          name: allGraphPersons[0].name,
+          deletedAt: allGraphPersons[0].deletedAt,
+          legacyPersonIds: allGraphPersons[0].legacyPersonIds,
+        }
+      : null;
     res.json({
       counts: {
         accessibleTrees: accessibleTreeIds.size,
@@ -100,10 +114,16 @@ function registerGraphRoutes(app, {store, requireAuth, mapPerson}) {
           (r) => !r.deletedAt,
         ).length,
         legacyRelationsForUser: legacyRelationsForUser.length,
+        // Totals across the whole DB so we can tell "graph never
+        // populated" from "populated but ids don't match".
+        totalGraphPersons: allGraphPersons.length,
+        totalGraphRelations: allGraphRelations.length,
       },
+      sampleGraphPersonAny,
       sampleGraphRelation,
       sampleLegacyRelation,
       distinctRelationTypes,
+      identitySample: Array.from(accessibleIdentityIds).slice(0, 3),
     });
   });
 
