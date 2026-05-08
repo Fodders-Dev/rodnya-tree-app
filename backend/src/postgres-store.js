@@ -1695,6 +1695,15 @@ class PostgresStore extends FileStore {
       normalizedState.sessions = await this._selectProjectedSessionsArray();
       this._lastUsersProjectionHash = computeProjectionHash(normalizedState.users);
       this._lastSessionsProjectionHash = computeProjectionHash(normalizedState.sessions);
+      // Phase 3.1c: keep the unified-graph mirror eventually
+      // consistent with the legacy collections. The base FileStore
+      // calls this in its own _read; PostgresStore overrides _read
+      // entirely, so we have to mirror the call here or the graph
+      // never gets populated on the prod backend (which is exactly
+      // what was happening — Phase 4 BFS saw 0 graphRelations on
+      // prod even though backend was deployed). Idempotent — no-op
+      // when the graph already matches the legacy side.
+      this._syncGraphFromLegacy(normalizedState);
       this._cachedState = structuredClone(normalizedState);
       await this._persistSnapshotCache(this._cachedState);
       return normalizedState;
@@ -1704,6 +1713,15 @@ class PostgresStore extends FileStore {
   }
 
   async _write(data) {
+    // Phase 3.1c: mirror legacy → graph on the OUT-bound side too,
+    // so the persisted snapshot already has the graph rows that
+    // mirror whatever legacy mutation the caller just made. Safe
+    // to call before _enqueueWrite — sync is idempotent and doesn't
+    // touch I/O. (FileStore._write does the same; PostgresStore
+    // overrides _write entirely so we have to mirror the call here.)
+    if (data && typeof data === "object") {
+      this._syncGraphFromLegacy(data);
+    }
     return this._enqueueWrite("_stateWriteQueue", async () => {
       await this.initialize();
       const nextUsersHash = computeProjectionHash(data?.users);
