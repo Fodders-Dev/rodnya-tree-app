@@ -87,6 +87,19 @@ function registerGraphRoutes(app, {store, requireAuth, mapPerson}) {
       ),
     );
 
+    // Manually run the sync helper so we can compare "before
+    // store._read sync" vs "after explicit sync" — if the
+    // helper mutates the snapshot now, we'll know _read wasn't
+    // running it (or was overriding it).
+    const beforeManualSyncGraphCount = Array.isArray(db.graphPersons)
+      ? db.graphPersons.length
+      : -1;
+    if (typeof store._syncGraphFromLegacy === "function") {
+      store._syncGraphFromLegacy(db);
+    }
+    const afterManualSyncGraphCount = Array.isArray(db.graphPersons)
+      ? db.graphPersons.length
+      : -1;
     const allGraphPersons = Array.isArray(db.graphPersons)
       ? db.graphPersons
       : [];
@@ -118,6 +131,10 @@ function registerGraphRoutes(app, {store, requireAuth, mapPerson}) {
         // populated" from "populated but ids don't match".
         totalGraphPersons: allGraphPersons.length,
         totalGraphRelations: allGraphRelations.length,
+        // Diff probe: did _read run sync? If not, manual sync
+        // brings totals from 0 to >0.
+        beforeManualSyncGraphCount,
+        afterManualSyncGraphCount,
       },
       sampleGraphPersonAny,
       sampleGraphRelation,
