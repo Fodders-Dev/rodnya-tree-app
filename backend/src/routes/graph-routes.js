@@ -5,6 +5,99 @@
 // than the legacy per-tree shape.
 
 function registerGraphRoutes(app, {store, requireAuth, mapPerson}) {
+  // Temporary diagnostic — reports the size + sample of the
+  // unified-graph collections AS THE SERVER SEES THEM, scoped to
+  // the trees the caller can read. Helpful for debugging "Родство
+  // не найдено" symptoms when the BFS is wired correctly but the
+  // graph mirror lags behind the legacy data.
+  //
+  // TODO(phase 3.4 cleanup): remove once we drop the legacy
+  // mirror — diagnostic stops being useful when graph IS the data.
+  app.get("/v1/graph/diagnostic", requireAuth, async (req, res) => {
+    const userId = req.auth.user.id;
+    const db = await store._read();
+    const accessibleTreeIds = new Set(
+      (db.trees || [])
+        .filter((tree) =>
+          tree.creatorId === userId ||
+          (tree.memberIds || []).includes(userId) ||
+          (tree.members || []).includes(userId),
+        )
+        .map((tree) => tree.id),
+    );
+    const accessiblePersons = (db.persons || []).filter((p) =>
+      accessibleTreeIds.has(p.treeId),
+    );
+    const accessibleIdentityIds = new Set(
+      accessiblePersons
+        .map((p) => p.identityId)
+        .filter(Boolean),
+    );
+    const accessibleLegacyPersonIds = new Set(
+      accessiblePersons.map((p) => p.id),
+    );
+    const graphPersonsForUser = (db.graphPersons || []).filter((g) =>
+      accessibleIdentityIds.has(g.id),
+    );
+    const graphRelationsForUser = (db.graphRelations || []).filter(
+      (r) =>
+        accessibleIdentityIds.has(r.person1Id) &&
+        accessibleIdentityIds.has(r.person2Id),
+    );
+    const legacyRelationsForUser = (db.relations || []).filter(
+      (r) =>
+        accessibleLegacyPersonIds.has(r.person1Id) &&
+        accessibleLegacyPersonIds.has(r.person2Id),
+    );
+
+    const sampleGraphRelation = graphRelationsForUser[0]
+      ? {
+          id: graphRelationsForUser[0].id,
+          person1Id: graphRelationsForUser[0].person1Id,
+          person2Id: graphRelationsForUser[0].person2Id,
+          relation1to2: graphRelationsForUser[0].relation1to2,
+          relation2to1: graphRelationsForUser[0].relation2to1,
+          deletedAt: graphRelationsForUser[0].deletedAt,
+        }
+      : null;
+    const sampleLegacyRelation = legacyRelationsForUser[0]
+      ? {
+          id: legacyRelationsForUser[0].id,
+          person1Id: legacyRelationsForUser[0].person1Id,
+          person2Id: legacyRelationsForUser[0].person2Id,
+          relation1to2: legacyRelationsForUser[0].relation1to2,
+          relation2to1: legacyRelationsForUser[0].relation2to1,
+        }
+      : null;
+    const distinctRelationTypes = Array.from(
+      new Set(
+        legacyRelationsForUser
+          .flatMap((r) => [r.relation1to2, r.relation2to1])
+          .filter(Boolean),
+      ),
+    );
+
+    res.json({
+      counts: {
+        accessibleTrees: accessibleTreeIds.size,
+        accessiblePersons: accessiblePersons.length,
+        accessibleIdentityIds: accessibleIdentityIds.size,
+        graphPersonsForUser: graphPersonsForUser.length,
+        graphPersonsAlive: graphPersonsForUser.filter((g) => !g.deletedAt)
+          .length,
+        graphRelationsForUser: graphRelationsForUser.length,
+        graphRelationsAlive: graphRelationsForUser.filter(
+          (r) => !r.deletedAt,
+        ).length,
+        legacyRelationsForUser: legacyRelationsForUser.length,
+      },
+      sampleGraphRelation,
+      sampleLegacyRelation,
+      distinctRelationTypes,
+    });
+  });
+
+
   // GET /v1/graph/relation?from=<graphPersonId>&to=<graphPersonId>
   // Walks the blood-relation graph (parent/child/sibling edges) to
   // find the shortest consanguinity path between two persons.
