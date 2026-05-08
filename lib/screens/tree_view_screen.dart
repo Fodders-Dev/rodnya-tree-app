@@ -53,6 +53,17 @@ enum _TreeToolbarAction {
   resetLayout,
 }
 
+/// Smart-selection options surfaced in the selection toolbar's
+/// «Расширить» popup. Each one expands the user's current
+/// selection set by walking parent / child edges from the
+/// already-picked anchors — turning «one tap on mama» into «mama +
+/// all her line».
+enum _SelectionExpand {
+  ancestors,
+  descendants,
+  lineage,
+}
+
 class SectionTitle extends StatelessWidget {
   final String title;
 
@@ -201,6 +212,123 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
 
   void _updateSectionState(VoidCallback update) {
     setState(update);
+  }
+
+  /// Selection-mode "smart expansion" helpers — used by the toolbar
+  /// «Расширить» action. Walking parent/child edges across the
+  /// loaded `_relationsData` is enough; we don't need the full
+  /// graph snapshot because relations on a single tree are a
+  /// closed set. Sibling / spouse / in-law edges are intentionally
+  /// IGNORED here — the user's intent in selecting "по маминой
+  /// линии" is the blood lineage, and folding spouses in means
+  /// the partner's whole family climbs aboard, which is rarely
+  /// what they want at this step.
+  Set<String> _expandSelectionWithAncestors(Iterable<String> seedIds) {
+    final parentsOf = _buildParentEdges();
+    final result = <String>{...seedIds};
+    final queue = <String>[...seedIds];
+    while (queue.isNotEmpty) {
+      final current = queue.removeAt(0);
+      final parents = parentsOf[current];
+      if (parents == null) continue;
+      for (final parent in parents) {
+        if (result.add(parent)) {
+          queue.add(parent);
+        }
+      }
+    }
+    return result;
+  }
+
+  Set<String> _expandSelectionWithDescendants(Iterable<String> seedIds) {
+    final childrenOf = _buildChildEdges();
+    final result = <String>{...seedIds};
+    final queue = <String>[...seedIds];
+    while (queue.isNotEmpty) {
+      final current = queue.removeAt(0);
+      final children = childrenOf[current];
+      if (children == null) continue;
+      for (final child in children) {
+        if (result.add(child)) {
+          queue.add(child);
+        }
+      }
+    }
+    return result;
+  }
+
+  Set<String> _expandSelectionWithLineage(Iterable<String> seedIds) {
+    final withAncestors = _expandSelectionWithAncestors(seedIds);
+    return _expandSelectionWithDescendants(withAncestors);
+  }
+
+  Map<String, Set<String>> _buildParentEdges() {
+    final edges = <String, Set<String>>{};
+    void link(String childId, String parentId) {
+      edges.putIfAbsent(childId, () => <String>{}).add(parentId);
+    }
+    for (final relation in _relationsData) {
+      if (relation.relation1to2 == RelationType.parent) {
+        link(relation.person2Id, relation.person1Id);
+      } else if (relation.relation1to2 == RelationType.child) {
+        link(relation.person1Id, relation.person2Id);
+      }
+    }
+    return edges;
+  }
+
+  Map<String, Set<String>> _buildChildEdges() {
+    final edges = <String, Set<String>>{};
+    void link(String parentId, String childId) {
+      edges.putIfAbsent(parentId, () => <String>{}).add(childId);
+    }
+    for (final relation in _relationsData) {
+      if (relation.relation1to2 == RelationType.parent) {
+        link(relation.person1Id, relation.person2Id);
+      } else if (relation.relation1to2 == RelationType.child) {
+        link(relation.person2Id, relation.person1Id);
+      }
+    }
+    return edges;
+  }
+
+  void _handleSelectionExpand(_SelectionExpand option) {
+    if (_selectedPersonIds.isEmpty) return;
+    final beforeCount = _selectedPersonIds.length;
+    Set<String> expanded;
+    String descriptor;
+    switch (option) {
+      case _SelectionExpand.ancestors:
+        expanded = _expandSelectionWithAncestors(_selectedPersonIds);
+        descriptor = 'предки';
+        break;
+      case _SelectionExpand.descendants:
+        expanded = _expandSelectionWithDescendants(_selectedPersonIds);
+        descriptor = 'потомки';
+        break;
+      case _SelectionExpand.lineage:
+        expanded = _expandSelectionWithLineage(_selectedPersonIds);
+        descriptor = 'вся линия';
+        break;
+    }
+    final added = expanded.length - beforeCount;
+    setState(() {
+      _selectedPersonIds
+        ..clear()
+        ..addAll(expanded);
+    });
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 2),
+        content: Text(
+          added > 0
+              ? 'Добавлено в выбор ($descriptor): $added'
+              : 'Никого нового не нашлось — связи уже выбраны.',
+        ),
+      ),
+    );
   }
 
   void _selectTreePerson(FamilyPerson person) {

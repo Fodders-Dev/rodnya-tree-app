@@ -2504,6 +2504,67 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
               ),
             ),
             const SizedBox(width: 8),
+            // «Расширить» — smart selection. Tap once on Mama,
+            // tap «По её линии» → toolbar swallows all of mama's
+            // ancestors + their descendants into the selection
+            // set. Saves the user from individually tapping ~30
+            // relatives when they want a slice like «мамина линия».
+            // Disabled when the selection is empty (nothing to
+            // expand from); always enabled when ≥1 person picked.
+            PopupMenuButton<_SelectionExpand>(
+              tooltip: 'Расширить выбор',
+              enabled: hasSelection,
+              onSelected: _handleSelectionExpand,
+              itemBuilder: (_) => const <PopupMenuEntry<_SelectionExpand>>[
+                PopupMenuItem<_SelectionExpand>(
+                  value: _SelectionExpand.ancestors,
+                  child: Row(
+                    children: [
+                      Icon(Icons.arrow_upward_rounded, size: 18),
+                      SizedBox(width: 10),
+                      Expanded(child: Text('Все предки выделенных')),
+                    ],
+                  ),
+                ),
+                PopupMenuItem<_SelectionExpand>(
+                  value: _SelectionExpand.descendants,
+                  child: Row(
+                    children: [
+                      Icon(Icons.arrow_downward_rounded, size: 18),
+                      SizedBox(width: 10),
+                      Expanded(child: Text('Все потомки выделенных')),
+                    ],
+                  ),
+                ),
+                PopupMenuItem<_SelectionExpand>(
+                  value: _SelectionExpand.lineage,
+                  child: Row(
+                    children: [
+                      Icon(Icons.account_tree_outlined, size: 18),
+                      SizedBox(width: 10),
+                      Expanded(child: Text('Вся эта линия')),
+                    ],
+                  ),
+                ),
+              ],
+              child: Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: hasSelection
+                      ? accent.withValues(alpha: 0.18)
+                      : tokens.surfaceLine,
+                  shape: BoxShape.circle,
+                ),
+                alignment: Alignment.center,
+                child: Icon(
+                  Icons.auto_fix_high_outlined,
+                  size: 20,
+                  color: hasSelection ? accent : tokens.inkMuted,
+                ),
+              ),
+            ),
+            const SizedBox(width: 6),
             FilledButton.icon(
               onPressed:
                   hasSelection ? _openBulkAddToBranchSheet : null,
