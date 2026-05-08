@@ -26,58 +26,56 @@ class RodnyaDesignTokens extends ThemeExtension<RodnyaDesignTokens> {
     required this.radiusLg,
   });
 
+  // Profile Redesign tokens (teal accent + honey warm).
+  // Source: docs/design_handoff/Profile Redesign.html design tokens, which
+  // describe the canonical Rodnya palette. Earlier the app used a sage-green
+  // accent; the redesign moves us to the teal-and-honey identity that the
+  // hero gradient + brand work all build on.
   static const light = RodnyaDesignTokens(
-    // Brighter linen — was 0xFFF3ECDB (cream), now 0xFFF8F1E0 (lighter cream).
-    // Reference styles.css uses #f3ecdb but renders inside a phone mock with
-    // surrounding dark backdrop; on a full-bleed web canvas the same hex
-    // reads as too dim, so we lift it a couple of steps.
-    bgBase: Color(0xFFF8F1E0),
-    bgTintWarm: Color(0xFFFCF8EC),
-    bgTintSage: Color(0xFFE8EFDC),
+    bgBase: Color(0xFFF3F5F1),
+    bgTintWarm: Color(0xFFF9FBF8),
+    bgTintSage: Color(0xFFEBF0EB),
     bgTintHoney: Color(0xFFF8E6B5),
-    // Ink tones tuned for readability on the warm cream canvas. Reference uses
-    // oklch(0.20 / 0.40 / 0.55) but those values read as washed-out olive on
-    // our brighter bgBase, so we deepen the warm tones a step.
-    ink: Color(0xFF1F2A1C),
-    inkSecondary: Color(0xFF3D4A37),
-    inkMuted: Color(0xFF5C6753),
-    inkLine: Color(0x1F293327),
-    accent: Color(0xFF3F8E52),
-    accentStrong: Color(0xFF2F7644),
-    accentSoft: Color(0x223F8E52),
+    ink: Color(0xFF18201E),
+    inkSecondary: Color(0xFF3D4845),
+    inkMuted: Color(0xFF5B6863),
+    inkLine: Color(0xFFD7DED9),
+    accent: Color(0xFF129A8D),
+    accentStrong: Color(0xFF0E857A),
+    accentSoft: Color(0x1A129A8D),
     accentInk: Color(0xFFFFFFFF),
-    warm: Color(0xFFD7A33A),
-    warmSoft: Color(0x33D7A33A),
-    surface: Color(0xA3FFFCF5),
-    surfaceStrong: Color(0xE0FFFCF5),
-    surfaceLine: Color(0x1F46381F),
-    radiusXs: 10,
+    warm: Color(0xFFC9A84C),
+    warmSoft: Color(0x21C9A84C),
+    surface: Color(0xFFFFFFFF),
+    surfaceStrong: Color(0xFFFFFFFF),
+    surfaceLine: Color(0xFFD7DED9),
+    radiusXs: 8,
     radiusSm: 14,
-    radiusMd: 20,
+    radiusMd: 18,
     radiusLg: 28,
   );
 
   static const dark = RodnyaDesignTokens(
-    bgBase: Color(0xFF14110D),
-    bgTintWarm: Color(0xFF352719),
-    bgTintSage: Color(0xFF17342B),
-    bgTintHoney: Color(0xFF302415),
-    ink: Color(0xFFF7F1E6),
-    inkSecondary: Color(0xFFD1C7B8),
-    inkMuted: Color(0xFFA69B8C),
-    inkLine: Color(0x1FF7F1E6),
-    accent: Color(0xFF72D49D),
-    accentStrong: Color(0xFF56B980),
-    accentSoft: Color(0x2972D49D),
-    accentInk: Color(0xFF102618),
-    warm: Color(0xFFE3B75E),
-    warmSoft: Color(0x2EE3B75E),
-    surface: Color(0x8C1C1812),
-    surfaceStrong: Color(0xD11C1812),
-    surfaceLine: Color(0x1FF7F1E6),
-    radiusXs: 10,
+    bgBase: Color(0xFF101513),
+    bgTintWarm: Color(0xFF1B2320),
+    bgTintSage: Color(0xFF26312D),
+    bgTintHoney: Color(0xFF2A2418),
+    ink: Color(0xFFF1F5F3),
+    inkSecondary: Color(0xFFC8D4CF),
+    inkMuted: Color(0xFFB2BDB8),
+    inkLine: Color(0xFF33403B),
+    accent: Color(0xFF65D4C6),
+    accentStrong: Color(0xFF4CBDB0),
+    accentSoft: Color(0x1F65D4C6),
+    accentInk: Color(0xFF0A1816),
+    warm: Color(0xFFD4A84C),
+    warmSoft: Color(0x24D4A84C),
+    surface: Color(0xFF161D1B),
+    surfaceStrong: Color(0xFF1B2320),
+    surfaceLine: Color(0xFF33403B),
+    radiusXs: 8,
     radiusSm: 14,
-    radiusMd: 20,
+    radiusMd: 18,
     radiusLg: 28,
   );
 
@@ -213,15 +211,19 @@ class RodnyaDesignTokens extends ThemeExtension<RodnyaDesignTokens> {
 }
 
 class AppTheme {
-  static const Color accent = Color(0xFF3F8E52);
-  static const Color accentStrong = Color(0xFF2F7644);
-  static const Color accentSoft = Color(0xFFE4F0DF);
-  static const Color warmCanvas = Color(0xFFF3ECDB);
-  static const Color warmSurface = Color(0xFFFFFCF5);
-  static const Color warmLine = Color(0xFFDDD3BE);
-  static const Color warmText = Color(0xFF1F2A1C);
-  static const Color warmMuted = Color(0xFF4D5648);
-  static const Color warm = Color(0xFFD7A33A);
+  // Profile Redesign palette — teal accent + honey warm. The
+  // RodnyaDesignTokens above already use these values; the
+  // legacy AppTheme.* constants stay in lockstep so widgets
+  // pulling from either source render the same brand.
+  static const Color accent = Color(0xFF129A8D);
+  static const Color accentStrong = Color(0xFF0E857A);
+  static const Color accentSoft = Color(0xFFE0F4F1);
+  static const Color warmCanvas = Color(0xFFF3F5F1);
+  static const Color warmSurface = Color(0xFFFFFFFF);
+  static const Color warmLine = Color(0xFFD7DED9);
+  static const Color warmText = Color(0xFF18201E);
+  static const Color warmMuted = Color(0xFF5B6863);
+  static const Color warm = Color(0xFFC9A84C);
   // Fallback chains list ONLY fonts we either bundle (Manrope, Lora) or that
   // every target browser ships with. Listing Noto entries triggers Flutter
   // web to issue "Could not find a set of Noto fonts" warnings every time a
