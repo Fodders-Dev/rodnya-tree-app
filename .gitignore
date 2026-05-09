@@ -74,3 +74,5 @@ app.*.map.json
 node_modules
 .tmp/
 .local_dev_creds
+
+.claude/
