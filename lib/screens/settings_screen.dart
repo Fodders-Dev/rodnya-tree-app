@@ -1,5 +1,7 @@
 // ignore_for_file: constant_identifier_names, unused_field, use_build_context_synchronously
 // ignore_for_file: library_private_types_in_public_api
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:livekit_client/livekit_client.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -1012,16 +1014,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   List<Widget> _buildPrimarySections(ThemeProvider themeProvider) {
     return [
       _buildSectionCard('Внешний вид', [
-        _buildSwitchRow(
-          icon: themeProvider.isDarkMode
-              ? Icons.dark_mode
-              : Icons.light_mode,
-          title: 'Тёмная тема',
-          subtitle:
-              themeProvider.isDarkMode ? 'Тёмная схема' : 'Светлая схема',
-          value: themeProvider.isDarkMode,
-          onChanged: (_) => themeProvider.toggleTheme(),
-        ),
+        _buildThemePicker(themeProvider),
       ]),
       _buildSectionCard('Уведомления и доступ', [
         _buildSwitchRow(
@@ -1376,6 +1369,97 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  /// Трёхвариантный selector темы: «как в системе / светлая / тёмная».
+  /// Раньше был Switch «Тёмная тема» который не учитывал system mode
+  /// и принудительно нормализовал любое значение в light/dark — юзер
+  /// был заперт в чьём-то частном случае.
+  Widget _buildThemePicker(ThemeProvider themeProvider) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final mode = themeProvider.themeMode;
+
+    final options = <_ThemePickerOption>[
+      _ThemePickerOption(
+        mode: ThemeMode.system,
+        label: 'Как в системе',
+        icon: Icons.brightness_auto_rounded,
+      ),
+      _ThemePickerOption(
+        mode: ThemeMode.light,
+        label: 'Светлая',
+        icon: Icons.light_mode_rounded,
+      ),
+      _ThemePickerOption(
+        mode: ThemeMode.dark,
+        label: 'Тёмная',
+        icon: Icons.dark_mode_rounded,
+      ),
+    ];
+
+    String subtitle;
+    switch (mode) {
+      case ThemeMode.system:
+        subtitle = 'Тема приложения совпадает с настройками телефона';
+        break;
+      case ThemeMode.light:
+        subtitle = 'Всегда светлая, независимо от системы';
+        break;
+      case ThemeMode.dark:
+        subtitle = 'Всегда тёмная, независимо от системы';
+        break;
+    }
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerLowest.withValues(alpha: 0.88),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.palette_outlined, color: scheme.primary, size: 20),
+                const SizedBox(width: 10),
+                Text(
+                  'Тема',
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              subtitle,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                for (var i = 0; i < options.length; i++) ...[
+                  Expanded(
+                    child: _ThemePickerChip(
+                      option: options[i],
+                      selected: options[i].mode == mode,
+                      onTap: () =>
+                          unawaited(themeProvider.setThemeMode(options[i].mode)),
+                    ),
+                  ),
+                  if (i != options.length - 1) const SizedBox(width: 8),
+                ],
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildSwitchRow({
     required IconData icon,
     required String title,
@@ -1494,4 +1578,80 @@ class _CallSettingsChoice {
   final String label;
   final String subtitle;
   final IconData icon;
+}
+
+class _ThemePickerOption {
+  const _ThemePickerOption({
+    required this.mode,
+    required this.label,
+    required this.icon,
+  });
+
+  final ThemeMode mode;
+  final String label;
+  final IconData icon;
+}
+
+class _ThemePickerChip extends StatelessWidget {
+  const _ThemePickerChip({
+    required this.option,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final _ThemePickerOption option;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final activeColor = scheme.primary;
+    final activeOnColor = scheme.onPrimary;
+    return Material(
+      color: selected
+          ? activeColor.withValues(alpha: 0.16)
+          : scheme.surfaceContainerHighest.withValues(alpha: 0.6),
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOutCubic,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: selected ? activeColor : Colors.transparent,
+              width: 1.5,
+            ),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                option.icon,
+                size: 22,
+                color: selected ? activeColor : scheme.onSurfaceVariant,
+              ),
+              const SizedBox(height: 6),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  option.label,
+                  style: theme.textTheme.labelMedium?.copyWith(
+                    fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+                    color: selected ? activeOnColor : scheme.onSurface,
+                    letterSpacing: -0.1,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
