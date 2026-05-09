@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import '../backend/interfaces/family_tree_service_interface.dart';
+import '../models/family_person.dart';
 import '../models/family_relation.dart';
 
 /// In-memory undo/redo стек для мутаций дерева. Запись делается
@@ -52,6 +53,75 @@ class TreeMutationHistory extends ChangeNotifier {
     required FamilyRelation deleted,
   }) {
     _push(_HistoryEntry.relationDeleted(treeId: treeId, relation: deleted));
+  }
+
+  /// Записать что юзер только что ДОБАВИЛ человека в дерево. На
+  /// undo person удаляется; на redo создаётся заново через
+  /// `addRelative` с тем же payload (новый id).
+  ///
+  /// Связи, созданные одновременно с person'ом (например,
+  /// «новый-сын — child of mama»), записываются ОТДЕЛЬНЫМИ
+  /// `recordRelationCreated` записями. Это значит на undo надо
+  /// сначала отменить связи, потом сам person — стек уже это
+  /// делает в правильном порядке (LIFO).
+  void recordPersonAdded({
+    required String treeId,
+    required String personId,
+    required Map<String, dynamic> personData,
+  }) {
+    _push(_HistoryEntry.personAdded(
+      treeId: treeId,
+      personId: personId,
+      personData: personData,
+    ));
+  }
+
+  /// Записать что юзер только что ОТРЕДАКТИРОВАЛ поля человека.
+  /// На undo поля возвращаются к своим прежним значениям; на redo
+  /// — снова к новым.
+  void recordPersonUpdated({
+    required String treeId,
+    required String personId,
+    required Map<String, dynamic> beforeFields,
+    required Map<String, dynamic> afterFields,
+  }) {
+    _push(_HistoryEntry.personUpdated(
+      treeId: treeId,
+      personId: personId,
+      beforeFields: beforeFields,
+      afterFields: afterFields,
+    ));
+  }
+
+  /// Записать что юзер только что УДАЛИЛ человека из дерева. На
+  /// undo person пересоздаётся через `addRelative` с сохранённым
+  /// payload (получит новый id). Связи, которые на сервере
+  /// удалились вместе с person'ом каскадом, undo НЕ восстановит —
+  /// для этого юзеру нужно вручную добавить связи или сделать
+  /// несколько Ctrl+Z назад до момента когда они были созданы.
+  void recordPersonDeleted({
+    required String treeId,
+    required FamilyPerson deleted,
+  }) {
+    final payload = <String, dynamic>{
+      'name': deleted.name,
+      if (deleted.maidenName != null && deleted.maidenName!.isNotEmpty)
+        'maidenName': deleted.maidenName,
+      'gender': deleted.gender.name,
+      if (deleted.birthDate != null)
+        'birthDate': deleted.birthDate!.toIso8601String(),
+      if (deleted.deathDate != null)
+        'deathDate': deleted.deathDate!.toIso8601String(),
+      if (deleted.birthPlace != null && deleted.birthPlace!.isNotEmpty)
+        'birthPlace': deleted.birthPlace,
+      if (deleted.deathPlace != null && deleted.deathPlace!.isNotEmpty)
+        'deathPlace': deleted.deathPlace,
+      if (deleted.bio != null && deleted.bio!.isNotEmpty) 'bio': deleted.bio,
+      if (deleted.notes != null && deleted.notes!.isNotEmpty)
+        'notes': deleted.notes,
+      'isAlive': deleted.isAlive,
+    };
+    _push(_HistoryEntry.personDeleted(treeId: treeId, personData: payload));
   }
 
   void _push(_HistoryEntry entry) {
@@ -219,6 +289,68 @@ class _HistoryEntry {
         return _HistoryEntry.relationCreated(
           treeId: treeId,
           relation: restored,
+        );
+      },
+    );
+  }
+
+  /// Person был добавлен. Inverse — удалить его. На redo заново
+  /// добавить через сохранённый payload (новый id, который мы
+  /// тут же оборачиваем в новый snapshot для следующего undo).
+  factory _HistoryEntry.personAdded({
+    required String treeId,
+    required String personId,
+    required Map<String, dynamic> personData,
+  }) {
+    return _HistoryEntry._(
+      description: 'Добавление человека',
+      applyInverse: (service) async {
+        await service.deleteRelative(treeId, personId);
+        return _HistoryEntry.personDeleted(
+          treeId: treeId,
+          personData: personData,
+        );
+      },
+    );
+  }
+
+  /// Person был удалён (либо изначально юзером, либо как результат
+  /// undo для personAdded). Inverse — пересоздать из сохранённого
+  /// payload. Возвращаем personAdded для следующего undo.
+  factory _HistoryEntry.personDeleted({
+    required String treeId,
+    required Map<String, dynamic> personData,
+  }) {
+    return _HistoryEntry._(
+      description: 'Удаление человека',
+      applyInverse: (service) async {
+        final newId = await service.addRelative(treeId, personData);
+        return _HistoryEntry.personAdded(
+          treeId: treeId,
+          personId: newId,
+          personData: personData,
+        );
+      },
+    );
+  }
+
+  /// Person был обновлён. Inverse — применить старые поля. Возвращаем
+  /// «обновлено в обратку» для redo.
+  factory _HistoryEntry.personUpdated({
+    required String treeId,
+    required String personId,
+    required Map<String, dynamic> beforeFields,
+    required Map<String, dynamic> afterFields,
+  }) {
+    return _HistoryEntry._(
+      description: 'Изменение карточки',
+      applyInverse: (service) async {
+        await service.updateRelative(personId, beforeFields);
+        return _HistoryEntry.personUpdated(
+          treeId: treeId,
+          personId: personId,
+          beforeFields: afterFields,
+          afterFields: beforeFields,
         );
       },
     );

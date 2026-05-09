@@ -350,7 +350,17 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
             ),
           if (_canUnlinkUser())
             IconButton(
-              icon: const Icon(Icons.link_off_rounded),
+              // Иконка раньше была `Icons.link_off_rounded` —
+              // прозрачная в текущем tree-shaken Material font'е,
+              // юзер видел невидимую кнопку. `person_remove_outlined`
+              // — стандартный glyph, гарантированно отрисовывается.
+              // Цвет — Material's amber для acent, чтобы выделялась
+              // на фоне дефолтного навыков иконок и явно сигналила
+              // «осторожнее, действие меняет связь юзера».
+              icon: const Icon(
+                Icons.person_remove_outlined,
+                color: Colors.orangeAccent,
+              ),
               tooltip: 'Отвязать пользователя',
               onPressed: _unlinkUser,
             ),
@@ -1483,7 +1493,19 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
         _isLoading = true;
       });
       try {
+        // Snapshot ДО удаления — для undo'а через
+        // TreeMutationHistory. Связи каскадно стираются на
+        // backend'е и undo их НЕ восстановит — только сам person
+        // вернётся как новая карточка с новым id (пустыми связями).
+        final personSnapshot = _person;
         await _familyService.deleteRelative(_currentTreeId!, widget.personId);
+        if (personSnapshot != null &&
+            GetIt.I.isRegistered<TreeMutationHistory>()) {
+          GetIt.I<TreeMutationHistory>().recordPersonDeleted(
+            treeId: _currentTreeId!,
+            deleted: personSnapshot,
+          );
+        }
         if (mounted) {
           _showRelativeSnackBar('Карточка ${_person!.displayName} удалена.');
           context.pop();

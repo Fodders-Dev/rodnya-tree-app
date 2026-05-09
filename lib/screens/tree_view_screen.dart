@@ -869,49 +869,58 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
                     color: tokens.ink,
                   ),
                 ),
-                // Undo / redo пилюли — появляются только когда есть
-                // что отменять / повторять, чтобы не съедать место в
-                // топбаре на узких экранах. ListenableBuilder
-                // подписан на TreeMutationHistory, перерисовывается
-                // на push/pop стека.
+                // Undo / redo пилюли — всегда видны (disabled если
+                // стек пуст), чтобы юзер сразу понимал что эта
+                // функциональность есть в дереве. Без визуала
+                // пользователь жаловался «нет кнопок возвратов».
+                // ListenableBuilder подписан на TreeMutationHistory,
+                // перерисовывается на push/pop стека (enabled state
+                // меняется в реальном времени).
                 if (selectedTreeId != null &&
                     GetIt.I.isRegistered<TreeMutationHistory>())
                   ListenableBuilder(
                     listenable: GetIt.I<TreeMutationHistory>(),
                     builder: (context, _) {
                       final history = GetIt.I<TreeMutationHistory>();
-                      if (!history.canUndo && !history.canRedo) {
-                        return const SizedBox.shrink();
-                      }
                       return Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          if (history.canUndo) ...[
-                            const SizedBox(width: 8),
-                            _TreeTopbarPill(
-                              tokens: tokens,
-                              tooltip: 'Отменить · Ctrl+Z',
-                              onTap: () => unawaited(_performUndo()),
-                              child: Icon(
-                                Icons.undo_rounded,
-                                size: 19,
-                                color: tokens.ink,
-                              ),
+                          const SizedBox(width: 8),
+                          _TreeTopbarPill(
+                            tokens: tokens,
+                            tooltip: history.canUndo
+                                ? 'Отменить · Ctrl+Z'
+                                : 'Нечего отменять',
+                            onTap: history.canUndo
+                                ? () => unawaited(_performUndo())
+                                : null,
+                            child: Icon(
+                              Icons.undo_rounded,
+                              size: 19,
+                              color: history.canUndo
+                                  ? tokens.ink
+                                  : tokens.inkSecondary
+                                      .withValues(alpha: 0.4),
                             ),
-                          ],
-                          if (history.canRedo) ...[
-                            const SizedBox(width: 8),
-                            _TreeTopbarPill(
-                              tokens: tokens,
-                              tooltip: 'Повторить · Ctrl+Shift+Z',
-                              onTap: () => unawaited(_performRedo()),
-                              child: Icon(
-                                Icons.redo_rounded,
-                                size: 19,
-                                color: tokens.ink,
-                              ),
+                          ),
+                          const SizedBox(width: 6),
+                          _TreeTopbarPill(
+                            tokens: tokens,
+                            tooltip: history.canRedo
+                                ? 'Повторить · Ctrl+Shift+Z'
+                                : 'Нечего повторять',
+                            onTap: history.canRedo
+                                ? () => unawaited(_performRedo())
+                                : null,
+                            child: Icon(
+                              Icons.redo_rounded,
+                              size: 19,
+                              color: history.canRedo
+                                  ? tokens.ink
+                                  : tokens.inkSecondary
+                                      .withValues(alpha: 0.4),
                             ),
-                          ],
+                          ),
                         ],
                       );
                     },
@@ -1909,16 +1918,24 @@ class _TreeTopbarPill extends StatelessWidget {
   final RodnyaDesignTokens tokens;
   final Widget child;
   final String tooltip;
-  final VoidCallback onTap;
+
+  /// `null` означает disabled-state — пилюля всё ещё видна
+  /// (приглушенный фон, серая рамка), но не реагирует на тап.
+  /// Нужно для undo/redo кнопок которые всегда должны быть в
+  /// топбаре, чтобы юзер видел что функциональность есть.
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
+    final isEnabled = onTap != null;
     return Tooltip(
       message: tooltip,
       child: Material(
-        color: tokens.surfaceStrong,
+        color: tokens.surfaceStrong.withValues(alpha: isEnabled ? 1.0 : 0.5),
         shape: RoundedRectangleBorder(
-          side: BorderSide(color: tokens.surfaceLine),
+          side: BorderSide(
+            color: tokens.surfaceLine.withValues(alpha: isEnabled ? 1.0 : 0.4),
+          ),
           borderRadius: BorderRadius.circular(14),
         ),
         child: InkWell(

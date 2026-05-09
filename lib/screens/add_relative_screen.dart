@@ -339,6 +339,38 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
     );
   }
 
+  /// Reads the current value of `key` from a FamilyPerson — used to
+  /// build `beforeFields` snapshot for undo when an edit operation
+  /// overwrites a known set of keys. Возвращает null если ключа
+  /// нет / не маппится — null в beforeFields пройдёт обратно как
+  /// «очистить поле», что для большинства optional-полей корректно.
+  dynamic _readPersonFieldFor(FamilyPerson person, String key) {
+    switch (key) {
+      case 'name':
+        return person.name;
+      case 'maidenName':
+        return person.maidenName;
+      case 'gender':
+        return person.gender.name;
+      case 'birthDate':
+        return person.birthDate?.toIso8601String();
+      case 'deathDate':
+        return person.deathDate?.toIso8601String();
+      case 'birthPlace':
+        return person.birthPlace;
+      case 'deathPlace':
+        return person.deathPlace;
+      case 'bio':
+        return person.bio;
+      case 'notes':
+        return person.notes;
+      case 'isAlive':
+        return person.isAlive;
+      default:
+        return null;
+    }
+  }
+
   Future<void> _loadTreeState() async {
     try {
       final relatives = await _familyService.getRelatives(widget.treeId);
@@ -572,7 +604,23 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
               'Значение _selectedGender перед сохранением: $_selectedGender',
             );
             debugPrint('Данные для сохранения (personData): $personData');
+            // Capture beforeFields (limited to keys we're about to
+            // overwrite) so undo can put them back. Не дёргаем
+            // полный snapshot, чтобы updateRelative с beforeFields
+            // не поломал поля, которые пришли из других источников.
+            final beforeFields = <String, dynamic>{};
+            for (final key in personData.keys) {
+              beforeFields[key] = _readPersonFieldFor(widget.person!, key);
+            }
             await _familyService.updateRelative(widget.person!.id, personData);
+            if (GetIt.I.isRegistered<TreeMutationHistory>()) {
+              GetIt.I<TreeMutationHistory>().recordPersonUpdated(
+                treeId: widget.treeId,
+                personId: widget.person!.id,
+                beforeFields: beforeFields,
+                afterFields: personData,
+              );
+            }
             await _uploadQueuedMedia(widget.person!.id);
 
             // 2. Обновляем связь, если она изменилась
