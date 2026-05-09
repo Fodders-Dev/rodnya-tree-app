@@ -4460,10 +4460,27 @@ class _ChatScreenState extends State<ChatScreen> {
       onLongPressEnd: _voiceModeIsKruzhok
           ? null
           : _handleRecordingLongPressEnd,
-      child: Tooltip(
-        message: isKruzhokMode
-            ? 'Зажмите для кружочка · тап чтобы переключить'
-            : 'Зажмите для голосового · тап чтобы переключить',
+      // User-reported on Samsung: «зажатием не записывается, появляется
+      // только облачко 'зажмите для голосового' и всё». На ПК
+      // мышью работало, на телефоне — нет.
+      //
+      // Корень: Material `Tooltip` на Android по умолчанию сам
+      // открывается на long-press через свой собственный
+      // LongPressGestureRecognizer. В gesture arena он конкурирует
+      // с нашим GestureDetector — и часто выигрывает на чувствительных
+      // экранах Samsung'а, поэтому `onLongPressStart` никогда не
+      // вызывался: жест уходил Tooltip'у, наш recorder молчал.
+      //
+      // Заменили Tooltip на Semantics: TalkBack/screen-reader
+      // прочитают тот же текст подсказки, но никаких gesture
+      // recognizer-ов на child больше нет — long-press идёт нашему
+      // GestureDetector'у напрямую.
+      child: Semantics(
+        button: true,
+        label: isKruzhokMode ? 'Кружочек' : 'Голосовое сообщение',
+        hint: isKruzhokMode
+            ? 'Зажмите для кружочка, тап чтобы переключить на голосовое'
+            : 'Зажмите для голосового, тап чтобы переключить на кружочек',
         child: Container(
           width: 48,
           height: 48,
