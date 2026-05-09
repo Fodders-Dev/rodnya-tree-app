@@ -1072,21 +1072,26 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 
   Widget _buildCompactLayout(ThemeData theme) {
-    // User-reported: «Все еще блоки накладываются друг на друга».
-    // Was using a Transform.translate(0, -28) to pull the auth card
-    // visually up over the hero gradient — looked clean on the
-    // reference screen but on real devices the «Вход / Регистрация»
-    // pill ended up sitting on top of the green hero card with no
-    // breathing room. Drop the negative translate and just stack
-    // the card below the hero with no overlap.
+    // User-reported: «Зеленый блок выглядит острым ... надо бы
+    // дизайн переделать фонов этих». Hero used to span edge-to-edge
+    // with sharp side corners, dark forest gradient bottoming out in
+    // a hard horizontal line. Now it's a floating card — 12 dp side
+    // margins, all-rounded 28 dp corners, softer sage gradient that
+    // doesn't crush into deep forest at the bottom — sitting on the
+    // scaffold's cream background. The auth card below is also a
+    // floating card with the same 12 dp side margin so the pair
+    // visually breathe.
     return SingleChildScrollView(
       padding: EdgeInsets.zero,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _buildHeroPanel(theme, compact: true),
           Padding(
-            padding: const EdgeInsets.fromLTRB(0, 0, 0, 16),
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 16),
+            child: _buildHeroPanel(theme, compact: true),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
             child: _buildAuthCard(theme, compact: true),
           ),
         ],
@@ -1101,43 +1106,42 @@ class _AuthScreenState extends State<AuthScreen> {
     // feature inventory — the sheet below has all the action surface.
     return Container(
       width: double.infinity,
-      // Compact hero takes a generous ~360 minimum so the wordmark + tagline
-      // breathe properly. Desktop wide retains the prior padded card.
+      // Compact hero is now a floating card — fixed minimum so the
+      // wordmark + tagline breathe; gradient softened so the bottom
+      // doesn't crash into deep forest right where the cream
+      // scaffold meets it.
       constraints: compact
-          ? const BoxConstraints(minHeight: 380)
+          ? const BoxConstraints(minHeight: 320)
           : const BoxConstraints(),
       padding: EdgeInsets.fromLTRB(
         compact ? 22 : 28,
-        compact ? 50 : 28,
+        compact ? 32 : 28,
         compact ? 22 : 28,
-        compact ? 60 : 28,
+        compact ? 36 : 28,
       ),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
           begin: Alignment(-0.6, -1.0),
           end: Alignment(0.4, 1.0),
           colors: [
-            Color(0xFF4F8A6E), // light sage top
-            Color(0xFF2F6F58), // mid teal
-            Color(0xFF1F4F40), // deep forest at bottom
+            Color(0xFF5A9778), // softer sage top
+            Color(0xFF3F8265), // mid forest
+            Color(0xFF2F6753), // deep but not crushed
           ],
         ),
-        // Compact: only top corners are radiused; the sheet below sits
-        // flush with no border-radius on the bottom of the hero. Wide:
-        // a full 32-radius card with shadow.
-        borderRadius: compact
-            ? BorderRadius.zero
-            : BorderRadius.circular(32),
-        boxShadow: compact
-            ? null
-            : [
-                BoxShadow(
-                  color: colorScheme.primary.withValues(alpha: 0.18),
-                  blurRadius: 30,
-                  offset: const Offset(0, 18),
-                ),
-              ],
+        // Both compact AND wide get all-rounded corners now — the
+        // hero is a floating card on cream, not a fused header.
+        borderRadius: BorderRadius.circular(28),
+        boxShadow: [
+          BoxShadow(
+            color: colorScheme.primary.withValues(alpha: compact ? 0.14 : 0.18),
+            blurRadius: compact ? 24 : 30,
+            offset: Offset(0, compact ? 12 : 18),
+            spreadRadius: -4,
+          ),
+        ],
       ),
+      clipBehavior: Clip.antiAlias,
       child: Stack(
         clipBehavior: Clip.hardEdge,
         children: [
