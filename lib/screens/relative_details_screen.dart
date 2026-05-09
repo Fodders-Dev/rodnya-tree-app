@@ -494,11 +494,15 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
   /// Кнопка «Отвязать пользователя» доступна когда:
   /// 1) к слоту привязан какой-то аккаунт (есть userId)
   /// 2) этот аккаунт — НЕ текущий юзер (себя нельзя)
-  /// 3) caller имеет право редактировать дерево (canEditOrDelete)
   ///
-  /// Полезно когда invite link случайно прилетел не на тот слот:
-  /// владелец дерева отвязывает чужой userId одной кнопкой, потом
-  /// правит имя/гендер карточки и шлёт новую ссылку.
+  /// Дополнительный гейт по правам — на бэкенде: эндпоинт
+  /// `DELETE /v1/trees/.../user-link` сам отдаёт 403 если caller
+  /// не tree.creatorId. Раньше я гейтил здесь по `_canEditOrDelete()`
+  /// который зависит от поля `canEditFamilyFields` в dossier — а
+  /// dossier для чужой карточки в чужом дереве может вернуться
+  /// с false. Из-за этого кнопка не показывалась владельцу дерева.
+  /// Теперь показываем оптимистично, бэкенд отшибёт несанкционированных
+  /// с понятным toast'ом.
   bool _canUnlinkUser() {
     final userId = _person?.userId;
     if (userId == null || userId.isEmpty) {
@@ -507,7 +511,7 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
     if (userId == _authService.currentUserId) {
       return false;
     }
-    return _canEditOrDelete();
+    return true;
   }
 
   String _describeRelativeActionError(
