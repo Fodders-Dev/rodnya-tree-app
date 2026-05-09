@@ -94,7 +94,8 @@ class CustomApiRealtimeEvent {
       type == 'chat.draft.updated' ||
       type == 'chat.pin.updated';
 
-  bool get isNotificationEvent => type == 'notification.created';
+  bool get isNotificationEvent =>
+      type == 'notification.created' || type == 'notification.bulk-read';
 
   bool get isCallEvent =>
       type == 'call.invite.created' || type == 'call.state.updated';

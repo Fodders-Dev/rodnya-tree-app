@@ -280,6 +280,14 @@ class CustomApiNotificationService implements NotificationServiceInterface {
       _realtimeSubscription = _realtimeService!.events
           .where((event) => event.isNotificationEvent)
           .listen((event) {
+        // Bulk-read события — сервер сообщает что N уведомлений
+        // юзера погасились (например, после открытия чата). UI
+        // обновляет счётчик. Сами notification снапшоты в этом
+        // событии не приходят — это лёгкий сигнал «пересчитай».
+        if (event.type == 'notification.bulk-read') {
+          unawaited(refreshUnreadNotificationsCount());
+          return;
+        }
         final notification = event.notification;
         if (notification == null) {
           return;

@@ -1047,6 +1047,43 @@ function registerChatRoutes(
       });
     }
     await publishUnreadChanged(resolved?.chat || chat);
+
+    // Auto-погашение уведомлений «новое сообщение» по этому чату.
+    // Когда юзер открывает chat-screen и сообщения помечаются
+    // прочитанными, нет смысла оставлять «новое сообщение от X»
+    // в ленте активности — он только что это прочитал. До этого
+    // фикса лента забивалась, юзеру приходилось тапать «Прочитать
+    // всё».
+    if (typeof store.markNotificationsReadByDataKey === "function") {
+      try {
+        const markedCount = await store.markNotificationsReadByDataKey({
+          userId: req.auth.user.id,
+          dataKey: "chatId",
+          dataValue: resolvedChatId,
+          types: ["chat_message", "chat"],
+        });
+        if (markedCount > 0 && realtimeHub?.publishToUser) {
+          // Бамп для bell-badge: клиент попросит свежий
+          // unread-count и счётчик обновится сразу, а не на
+          // следующем 20-секундном поллинге.
+          realtimeHub.publishToUser(req.auth.user.id, {
+            type: "notification.bulk-read",
+            scope: "chat",
+            chatId: resolvedChatId,
+            count: markedCount,
+          });
+        }
+      } catch (error) {
+        // Лог + продолжаем — основной chat-read-flow выше уже
+        // отработал. Вторая попытка случится на следующем
+        // открытии чата.
+        console.warn(
+          "[backend] markNotificationsReadByDataKey failed",
+          error?.message || error,
+        );
+      }
+    }
+
     res.json({ok: true});
   });
 }

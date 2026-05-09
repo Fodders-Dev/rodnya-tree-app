@@ -12034,6 +12034,52 @@ class FileStore {
     return structuredClone(notification);
   }
 
+  /// Bulk mark — отмечает прочитанными все уведомления юзера, у
+  /// которых `data.<dataKey>` === `dataValue` И тип входит в
+  /// `types` (если задан). Возвращает количество отмеченных
+  /// записей. Используется для авто-погашения уведомлений когда
+  /// юзер видит источник в приложении (например, открыл чат →
+  /// гасим все «новое сообщение» по этому chatId).
+  ///
+  /// User-reported: «много в активностях остаётся оповещений
+  /// которые были уже просмотрены в приложении» — раньше клиент
+  /// должен был тапать каждое сообщение по отдельности или
+  /// нажимать «Прочитать всё», что было неудобно и часто
+  /// забывалось.
+  async markNotificationsReadByDataKey({
+    userId,
+    dataKey,
+    dataValue,
+    types = null,
+  }) {
+    if (!userId || !dataKey) return 0;
+    const normalizedValue = dataValue == null ? null : String(dataValue);
+    const typeFilter = Array.isArray(types) && types.length > 0
+      ? new Set(types.map((entry) => String(entry)))
+      : null;
+
+    const db = await this._read();
+    const now = nowIso();
+    let markedCount = 0;
+    for (const notification of db.notifications) {
+      if (notification.userId !== userId) continue;
+      if (notification.readAt) continue;
+      if (typeFilter && !typeFilter.has(String(notification.type || ""))) {
+        continue;
+      }
+      const data = notification.data || {};
+      const candidate = data[dataKey];
+      if (candidate == null) continue;
+      if (String(candidate) !== normalizedValue) continue;
+      notification.readAt = now;
+      markedCount += 1;
+    }
+    if (markedCount > 0) {
+      await this._write(db);
+    }
+    return markedCount;
+  }
+
   async listUserBlocks(userId) {
     const db = await this._read();
     return db.blocks
