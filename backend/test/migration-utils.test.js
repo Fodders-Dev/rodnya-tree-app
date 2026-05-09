@@ -436,6 +436,284 @@ test(
   },
 );
 
+test(
+  "migrateTreesToGraphAndBranches renames tree.creatorId → branch.ownerId",
+  () => {
+    // Phase 5 RFC ритуал: «creatorId» — устаревший термин, branches
+    // должны открываться полем «ownerId». Проверка явная — потому
+    // что rename легко потерять при одном неудачном merge.
+    const snapshot = {
+      personIdentities: [],
+      persons: [],
+      relations: [],
+      trees: [{id: "t1", creatorId: "user-owner", name: "Семья"}],
+    };
+    migrateTreesToGraphAndBranches(snapshot);
+    assert.equal(snapshot.branches[0].ownerId, "user-owner");
+    assert.equal(snapshot.branches[0].legacyTreeId, "t1");
+  },
+);
+
+test(
+  "migrateTreesToGraphAndBranches mirrors tree.memberIds onto branch.memberIds",
+  () => {
+    const snapshot = {
+      personIdentities: [],
+      persons: [],
+      relations: [],
+      trees: [
+        {
+          id: "t1",
+          creatorId: "u1",
+          name: "T1",
+          memberIds: ["u1", "u2", "u3"],
+        },
+      ],
+    };
+    migrateTreesToGraphAndBranches(snapshot);
+    assert.deepEqual(snapshot.branches[0].memberIds, ["u1", "u2", "u3"]);
+  },
+);
+
+test(
+  "migrateTreesToGraphAndBranches falls back from missing memberIds to legacy 'members' alias",
+  () => {
+    // Очень старые snapshot'ы держали `members` (без Ids суффикса) —
+    // back-compat fallback нужно явно зафиксировать тестом, чтобы
+    // случайный refactor его не сломал.
+    const snapshot = {
+      personIdentities: [],
+      persons: [],
+      relations: [],
+      trees: [
+        {id: "t1", creatorId: "u1", name: "T1", members: ["u1", "u2"]},
+      ],
+    };
+    migrateTreesToGraphAndBranches(snapshot);
+    assert.deepEqual(snapshot.branches[0].memberIds, ["u1", "u2"]);
+  },
+);
+
+test(
+  "migrateTreesToGraphAndBranches preserves publicSlug, isCertified, certificationNote",
+  () => {
+    const snapshot = {
+      personIdentities: [],
+      persons: [],
+      relations: [],
+      trees: [
+        {
+          id: "t1",
+          creatorId: "u1",
+          name: "T1",
+          publicSlug: "my-public-tree",
+          isCertified: true,
+          certificationNote: "Verified by archive",
+          isPrivate: false,
+          kind: "family",
+          description: "Описание",
+        },
+      ],
+    };
+    migrateTreesToGraphAndBranches(snapshot);
+    const branch = snapshot.branches[0];
+    assert.equal(branch.publicSlug, "my-public-tree");
+    assert.equal(branch.isCertified, true);
+    assert.equal(branch.certificationNote, "Verified by archive");
+    assert.equal(branch.isPrivate, false);
+    assert.equal(branch.kind, "family");
+    assert.equal(branch.description, "Описание");
+  },
+);
+
+test(
+  "migrateTreesToGraphAndBranches picks the user-claimed person as canonical",
+  () => {
+    // Identity ↔ user — это «настоящий человек» владеет этим
+    // graphPerson'ом. Если оба linked-person'а на разных деревьях, но
+    // один из них = user, в graphPerson едут поля user-record'а.
+    const snapshot = {
+      personIdentities: [
+        {
+          id: "id-self",
+          userId: "u-self",
+          personIds: ["self-tree-a", "self-tree-b"],
+        },
+      ],
+      persons: [
+        {
+          id: "self-tree-a",
+          treeId: "tree-a",
+          identityId: "id-self",
+          userId: "u-self",
+          name: "Я (canonical)",
+          birthDate: "1990-01-01",
+          createdAt: "2026-04-01T00:00:00.000Z",
+          updatedAt: "2026-04-15T00:00:00.000Z",
+        },
+        {
+          id: "self-tree-b",
+          treeId: "tree-b",
+          identityId: "id-self",
+          userId: null,
+          name: "Я (чужие глазами)",
+          birthDate: "1990-01-01",
+          // Note: more recently updated than self-tree-a, but should
+          // NOT win — claimed user record always beats updatedAt.
+          createdAt: "2026-04-02T00:00:00.000Z",
+          updatedAt: "2026-04-30T00:00:00.000Z",
+        },
+      ],
+      relations: [],
+      trees: [
+        {id: "tree-a", creatorId: "u-self", name: "A"},
+        {id: "tree-b", creatorId: "u-self", name: "B"},
+      ],
+    };
+    migrateTreesToGraphAndBranches(snapshot);
+    const graphPerson = snapshot.graphPersons.find(
+      (g) => g.id === "id-self",
+    );
+    assert.equal(graphPerson.name, "Я (canonical)");
+    assert.equal(graphPerson.userId, "u-self");
+  },
+);
+
+test(
+  "migrateTreesToGraphAndBranches falls back to most-recently-updated person without claim",
+  () => {
+    const snapshot = {
+      personIdentities: [
+        {
+          id: "id-mom",
+          userId: null,
+          personIds: ["mom-tree-a", "mom-tree-b"],
+        },
+      ],
+      persons: [
+        {
+          id: "mom-tree-a",
+          treeId: "tree-a",
+          identityId: "id-mom",
+          name: "Мама (старая запись)",
+          updatedAt: "2026-04-15T00:00:00.000Z",
+        },
+        {
+          id: "mom-tree-b",
+          treeId: "tree-b",
+          identityId: "id-mom",
+          name: "Мама (свежая запись)",
+          updatedAt: "2026-04-30T00:00:00.000Z",
+        },
+      ],
+      relations: [],
+      trees: [
+        {id: "tree-a", creatorId: "u1", name: "A"},
+        {id: "tree-b", creatorId: "u1", name: "B"},
+      ],
+    };
+    migrateTreesToGraphAndBranches(snapshot);
+    const momGraph = snapshot.graphPersons.find((g) => g.id === "id-mom");
+    assert.equal(momGraph.name, "Мама (свежая запись)");
+  },
+);
+
+test(
+  "migrateTreesToGraphAndBranches handles an empty snapshot without crashing",
+  () => {
+    const snapshot = {};
+    const result = migrateTreesToGraphAndBranches(snapshot, {
+      now: () => "2026-05-09T00:00:00.000Z",
+    });
+    assert.equal(result.changed, true);
+    assert.deepEqual(snapshot.graphPersons, []);
+    assert.deepEqual(snapshot.graphRelations, []);
+    assert.deepEqual(snapshot.branches, []);
+    assert.deepEqual(snapshot.branchPersonViews, []);
+    assert.equal(snapshot.migrationStatus.treesToGraph, "complete");
+  },
+);
+
+test(
+  "migrateTreesToGraphAndBranches treats non-snapshot input safely",
+  () => {
+    // Defensive: null/undefined/scalar must not crash; should
+    // return a minimally-populated snapshot.
+    const result = migrateTreesToGraphAndBranches(null);
+    assert.equal(result.changed, true);
+    assert.deepEqual(result.snapshot.graphPersons, []);
+    assert.equal(result.snapshot.migrationStatus.treesToGraph, "complete");
+  },
+);
+
+test(
+  "migrateTreesToGraphAndBranches preserves graphPerson canonical fields after sync",
+  () => {
+    const snapshot = {
+      personIdentities: [
+        {id: "id-x", personIds: ["px"]},
+      ],
+      persons: [
+        {
+          id: "px",
+          treeId: "t1",
+          identityId: "id-x",
+          name: "X",
+          birthDate: "1980-01-01",
+          deathDate: "2050-12-31",
+          isAlive: false,
+          birthPlace: "СПб",
+          deathPlace: "Москва",
+          photoUrl: "https://example.com/x.jpg",
+          primaryPhotoUrl: "https://example.com/x-primary.jpg",
+          photoGallery: [
+            {url: "https://example.com/g1.jpg"},
+            {url: "https://example.com/g2.jpg"},
+          ],
+          maidenName: "Y",
+          gender: "female",
+          // Editorial — not on graph, должны попасть в branchPersonView.
+          notes: "редкая запись",
+          familySummary: "семейная сводка",
+          bio: "биография",
+          visibility: "tree",
+        },
+      ],
+      relations: [],
+      trees: [{id: "t1", creatorId: "u1", name: "T1"}],
+    };
+    migrateTreesToGraphAndBranches(snapshot);
+    const graph = snapshot.graphPersons.find((g) => g.id === "id-x");
+    assert.equal(graph.name, "X");
+    assert.equal(graph.birthDate, "1980-01-01");
+    assert.equal(graph.deathDate, "2050-12-31");
+    assert.equal(graph.isAlive, false);
+    assert.equal(graph.birthPlace, "СПб");
+    assert.equal(graph.deathPlace, "Москва");
+    assert.equal(graph.photoUrl, "https://example.com/x.jpg");
+    assert.equal(graph.primaryPhotoUrl, "https://example.com/x-primary.jpg");
+    assert.equal(graph.maidenName, "Y");
+    assert.equal(graph.gender, "female");
+    assert.deepEqual(graph.photoGallery, [
+      {url: "https://example.com/g1.jpg"},
+      {url: "https://example.com/g2.jpg"},
+    ]);
+    // Editorial fields — НЕ на graphPerson row, а на branchPersonView.
+    assert.equal(graph.notes, undefined);
+    assert.equal(graph.familySummary, undefined);
+    assert.equal(graph.bio, undefined);
+    assert.equal(graph.visibility, undefined);
+
+    const view = snapshot.branchPersonViews.find(
+      (v) => v.legacyPersonId === "px",
+    );
+    assert.equal(view.notes, "редкая запись");
+    assert.equal(view.familySummary, "семейная сводка");
+    assert.equal(view.bio, "биография");
+    assert.equal(view.visibility, "tree");
+  },
+);
+
 test("collectLocalMediaObjects maps bucket-relative media layout", async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "rodnya-media-"));
   const imagePath = path.join(tempDir, "chat", "2026", "photo.jpg");
