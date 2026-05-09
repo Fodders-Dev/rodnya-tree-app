@@ -7893,9 +7893,33 @@ class FileStore {
       return structuredClone(person);
     }
 
+    const detachedUserId = person.userId;
     person.userId = null;
     person.identityId = null;
     person.updatedAt = nowIso();
+
+    // Если у юзера больше нет ни одной person-карточки в этом
+    // дереве — он перестаёт быть «членом» дерева. Иначе у него в
+    // available-trees висит дерево, в которое он зайти зайдёт, а
+    // увидит пустоту: нет своего person'а, нет «Это вы» индикатора.
+    // Юзер-репорт: «раз я Степу отвязал, он не должен видеть дерево».
+    const stillHasPersonInTree = db.persons.some(
+      (entry) => entry.treeId === treeId && entry.userId === detachedUserId,
+    );
+    if (!stillHasPersonInTree) {
+      if (Array.isArray(tree.memberIds)) {
+        tree.memberIds = tree.memberIds.filter(
+          (entry) => entry !== detachedUserId,
+        );
+      }
+      if (Array.isArray(tree.members)) {
+        tree.members = tree.members.filter(
+          (entry) => entry !== detachedUserId,
+        );
+      }
+      tree.updatedAt = nowIso();
+    }
+
     this._reconcilePersonIdentities(db);
 
     await this._write(db);
