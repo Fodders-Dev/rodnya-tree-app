@@ -4238,7 +4238,25 @@ class _ChatScreenState extends State<ChatScreen> {
                         controller: _messageController,
                         focusNode: _messageFocusNode,
                         onChanged: (_) => setState(() {}),
-                        decoration: InputDecoration.collapsed(
+                        // User-reported: «зачем на овал в овале нарисованный».
+                        // `InputDecoration.collapsed` clears `border` but
+                        // not `enabledBorder` / `focusedBorder`, so the
+                        // global InputDecorationTheme's stadium borders
+                        // were drawing INSIDE the composer's outer
+                        // border — that's the second oval the user saw.
+                        // Explicitly nuke every border + the fill so
+                        // the TextField is purely transparent.
+                        decoration: InputDecoration(
+                          isCollapsed: true,
+                          filled: false,
+                          fillColor: Colors.transparent,
+                          contentPadding: EdgeInsets.zero,
+                          border: InputBorder.none,
+                          enabledBorder: InputBorder.none,
+                          focusedBorder: InputBorder.none,
+                          errorBorder: InputBorder.none,
+                          disabledBorder: InputBorder.none,
+                          focusedErrorBorder: InputBorder.none,
                           hintText: 'Сообщение',
                           hintStyle: TextStyle(
                             color: Theme.of(context)

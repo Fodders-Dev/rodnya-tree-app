@@ -17,13 +17,15 @@ import '../theme/app_theme.dart';
 /// listeners, so feed/relatives/tree all reload under the new
 /// branch with no additional wiring.
 class BranchSwitcherChip extends StatelessWidget {
-  const BranchSwitcherChip({super.key, this.maxNameWidth = 180});
+  const BranchSwitcherChip({super.key, this.maxNameWidth});
 
   /// Max width for the branch-name label. The chip auto-truncates
-  /// with an ellipsis when the name doesn't fit. Pass smaller
-  /// values for cramped top bars (default 180 is comfortable on
-  /// the 320–768px column widths the home/relatives screens use).
-  final double maxNameWidth;
+  /// with an ellipsis when the name doesn't fit. When omitted, the
+  /// chip picks a value adaptively from the device width — narrow
+  /// (< 400 dp) phones cap at 90 dp so the chip doesn't push the
+  /// topbar's icon-button cluster off-screen on Samsung S20 FE-class
+  /// devices, wider screens get 180 dp like before.
+  final double? maxNameWidth;
 
   @override
   Widget build(BuildContext context) {
@@ -32,6 +34,9 @@ class BranchSwitcherChip extends StatelessWidget {
         (theme.brightness == Brightness.dark
             ? RodnyaDesignTokens.dark
             : RodnyaDesignTokens.light);
+    final screenWidth = MediaQuery.of(context).size.width;
+    final effectiveMaxNameWidth = maxNameWidth ??
+        (screenWidth < 400 ? 90.0 : (screenWidth < 600 ? 130.0 : 180.0));
 
     return Consumer<TreeProvider>(
       builder: (context, treeProvider, _) {
@@ -77,7 +82,7 @@ class BranchSwitcherChip extends StatelessWidget {
                   ),
                   const SizedBox(width: 6),
                   ConstrainedBox(
-                    constraints: BoxConstraints(maxWidth: maxNameWidth),
+                    constraints: BoxConstraints(maxWidth: effectiveMaxNameWidth),
                     child: Text(
                       label,
                       style: theme.textTheme.labelLarge?.copyWith(

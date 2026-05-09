@@ -2659,8 +2659,14 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
     final verticalScale =
         (viewport.height - _viewportReservedTop - _viewportReservedBottom) /
             contentHeight;
+    // User-reported: «дерево у нас так далеко при открытии, можно
+    // ближе». The previous 0.2 lower clamp rendered medium-sized
+    // trees at ~20% of viewport — readable on desktop, but on a
+    // 360 dp phone the names became unreadable squiggles. Bump the
+    // floor to 0.55 so even a 30-person tree fills enough of the
+    // viewport that the user can read top-row names without zooming.
     final targetScale = min(horizontalScale, verticalScale * 1.14);
-    final safeScale = targetScale.clamp(0.2, _maxViewportFitScale(viewport));
+    final safeScale = targetScale.clamp(0.55, _maxViewportFitScale(viewport));
 
     final translateX = (viewport.width - contentWidth * safeScale) / 2;
     final availableHeight =
@@ -2723,13 +2729,17 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
       return 1.26;
     }
 
+    // Mobile (≤ 1180 dp width): allow noticeably bigger initial
+    // scale than the previous 1.08-1.20 ceiling so the first frame
+    // doesn't drop the user into a faraway aerial view of the tree.
+    // The user can always pinch out for a wider overview.
     if (peopleCount <= 6) {
-      return 1.2;
+      return 1.6;
     }
     if (peopleCount <= 12) {
-      return 1.12;
+      return 1.4;
     }
-    return 1.08;
+    return 1.25;
   }
 
   double _focusScaleForViewport(Size viewport) {
