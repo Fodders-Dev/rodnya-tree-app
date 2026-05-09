@@ -1072,26 +1072,22 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 
   Widget _buildCompactLayout(ThemeData theme) {
-    // Reference layout: hero owns ~52% of viewport, the auth sheet pulls
-    // up over it by 28px with a 32-radius top corner. Feature cards moved
-    // into a single subtitle line — the hero is meant to deliver brand
-    // gravity, not feature inventory. The sheet is where the user
-    // actually does work.
+    // User-reported: «Все еще блоки накладываются друг на друга».
+    // Was using a Transform.translate(0, -28) to pull the auth card
+    // visually up over the hero gradient — looked clean on the
+    // reference screen but on real devices the «Вход / Регистрация»
+    // pill ended up sitting on top of the green hero card with no
+    // breathing room. Drop the negative translate and just stack
+    // the card below the hero with no overlap.
     return SingleChildScrollView(
       padding: EdgeInsets.zero,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _buildHeroPanel(theme, compact: true),
-          Transform.translate(
-            offset: const Offset(0, -28),
-            child: Container(
-              decoration: const BoxDecoration(
-                color: Colors.transparent,
-              ),
-              padding: const EdgeInsets.fromLTRB(0, 0, 0, 16),
-              child: _buildAuthCard(theme, compact: true),
-            ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(0, 0, 0, 16),
+            child: _buildAuthCard(theme, compact: true),
           ),
         ],
       ),
