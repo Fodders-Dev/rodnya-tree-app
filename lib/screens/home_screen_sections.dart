@@ -200,17 +200,10 @@ extension _HomeScreenSections on _HomeScreenState {
             padding: const EdgeInsets.fromLTRB(14, 4, 14, 10),
             child: _buildIdentityReviewBanner(),
           ),
-        // Phase 6.3: digest above the compose teaser even on the
-        // wide layout — sidebar still has the bare events list,
-        // but the digest is the warmer "this is what's going on
-        // RIGHT NOW" surface and belongs in the user's reading flow.
-        if (_branchDigest != null)
-          BranchDigestStrip(
-            digest: _branchDigest!,
-            onTapPerson: (id) =>
-                context.push('/relative/details/$id'),
-            onTapPost: (id) => context.push('/post/$id'),
-          ),
+        // «Эта неделя в семье» убран и из wide-варианта тоже —
+        // юзер просил полностью снять блок. Backend wiring и сам
+        // BranchDigestStrip widget остаются на случай если позже
+        // вернёмся к этой идее в другом форм-факторе.
         Padding(
           padding: const EdgeInsets.fromLTRB(18, 6, 18, 12),
           child: _buildComposeTeaser(),
