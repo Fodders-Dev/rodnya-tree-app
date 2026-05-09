@@ -63,6 +63,7 @@ import 'custom_api_safety_service.dart';
 import 'custom_api_story_service.dart';
 import 'custom_api_storage_service.dart';
 import 'invitation_service.dart';
+import 'tree_mutation_history.dart';
 import 'invitation_link_service.dart';
 import 'incoming_call_watcher.dart';
 import 'local_storage_service.dart';
@@ -96,6 +97,7 @@ class AppStartupService implements AppStartupServiceInterface {
 
     final invitationService = InvitationService();
     _registerOrReplaceSingleton<InvitationService>(invitationService);
+    _registerOrReplaceSingleton<TreeMutationHistory>(TreeMutationHistory());
     _registerOrReplaceSingleton<InvitationLinkServiceInterface>(
       HttpInvitationLinkService(runtimeConfig: runtimeConfig),
     );

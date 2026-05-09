@@ -32,6 +32,7 @@ import '../backend/interfaces/tree_graph_capable_family_tree_service.dart';
 import '../services/app_status_service.dart';
 import '../services/public_tree_link_service.dart';
 import '../services/local_storage_service.dart';
+import '../services/tree_mutation_history.dart';
 import '../models/tree_graph_snapshot.dart';
 import '../theme/app_theme.dart';
 import '../utils/user_facing_error.dart';
@@ -437,12 +438,17 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
     super.dispose();
   }
 
-  /// Returns true to consume the event so it doesn't bubble. We only
-  /// consume Esc when there's actually something to clear — otherwise
-  /// the back gesture / dialog dismissal still works as expected.
+  /// Returns true to consume the event so it doesn't bubble. Handles
+  /// three desktop shortcuts:
+  ///   * Esc — clear branch focus / edit selection
+  ///   * Ctrl+Z (or Cmd+Z) — undo last tree mutation
+  ///   * Ctrl+Shift+Z (or Cmd+Shift+Z) — redo
+  /// Все три consume жест ТОЛЬКО когда есть что отменять / закрывать,
+  /// иначе нормальное поведение клавиш (back gesture, browser-zoom)
+  /// сохраняется.
   bool _handleTreeKeyEvent(KeyEvent event) {
     if (!mounted || event is! KeyDownEvent) return false;
-    if (event.logicalKey != LogicalKeyboardKey.escape) return false;
+
     final focused = FocusManager.instance.primaryFocus;
     final inEditable = focused?.context?.widget is EditableText ||
         (focused?.context != null &&
@@ -450,14 +456,71 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
                     .findAncestorWidgetOfExactType<EditableText>() !=
                 null);
     if (inEditable) return false;
-    final hadEditSelection = _selectedEditPersonId != null;
-    final hadBranchFocus = _branchRootPersonId != null;
-    if (!hadEditSelection && !hadBranchFocus) return false;
-    setState(() {
-      _selectedEditPersonId = null;
-      _branchRootPersonId = null;
-    });
+
+    if (event.logicalKey == LogicalKeyboardKey.escape) {
+      final hadEditSelection = _selectedEditPersonId != null;
+      final hadBranchFocus = _branchRootPersonId != null;
+      if (!hadEditSelection && !hadBranchFocus) return false;
+      setState(() {
+        _selectedEditPersonId = null;
+        _branchRootPersonId = null;
+      });
+      return true;
+    }
+
+    final keyZ = LogicalKeyboardKey.keyZ;
+    if (event.logicalKey != keyZ) return false;
+    final keys = HardwareKeyboard.instance.logicalKeysPressed;
+    final hasCmdOrCtrl = keys.contains(LogicalKeyboardKey.controlLeft) ||
+        keys.contains(LogicalKeyboardKey.controlRight) ||
+        keys.contains(LogicalKeyboardKey.metaLeft) ||
+        keys.contains(LogicalKeyboardKey.metaRight);
+    if (!hasCmdOrCtrl) return false;
+    final hasShift = keys.contains(LogicalKeyboardKey.shiftLeft) ||
+        keys.contains(LogicalKeyboardKey.shiftRight);
+    if (!GetIt.I.isRegistered<TreeMutationHistory>()) return false;
+    if (hasShift) {
+      unawaited(_performRedo());
+    } else {
+      unawaited(_performUndo());
+    }
     return true;
+  }
+
+  Future<void> _performUndo() async {
+    final history = GetIt.I<TreeMutationHistory>();
+    if (!history.canUndo) return;
+    final desc = await history.undoForUi(_familyService);
+    if (!mounted) return;
+    if (_currentTreeId != null) {
+      await _loadData(_currentTreeId!);
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(desc != null ? 'Отменено: $desc' : 'Не удалось отменить'),
+        duration: const Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  Future<void> _performRedo() async {
+    final history = GetIt.I<TreeMutationHistory>();
+    if (!history.canRedo) return;
+    final desc = await history.redoForUi(_familyService);
+    if (!mounted) return;
+    if (_currentTreeId != null) {
+      await _loadData(_currentTreeId!);
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(desc != null ? 'Повторено: $desc' : 'Не удалось повторить'),
+        duration: const Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
   Future<void> _syncTreeFromRouteOrProvider() async {
@@ -806,6 +869,53 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
                     color: tokens.ink,
                   ),
                 ),
+                // Undo / redo пилюли — появляются только когда есть
+                // что отменять / повторять, чтобы не съедать место в
+                // топбаре на узких экранах. ListenableBuilder
+                // подписан на TreeMutationHistory, перерисовывается
+                // на push/pop стека.
+                if (selectedTreeId != null &&
+                    GetIt.I.isRegistered<TreeMutationHistory>())
+                  ListenableBuilder(
+                    listenable: GetIt.I<TreeMutationHistory>(),
+                    builder: (context, _) {
+                      final history = GetIt.I<TreeMutationHistory>();
+                      if (!history.canUndo && !history.canRedo) {
+                        return const SizedBox.shrink();
+                      }
+                      return Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (history.canUndo) ...[
+                            const SizedBox(width: 8),
+                            _TreeTopbarPill(
+                              tokens: tokens,
+                              tooltip: 'Отменить · Ctrl+Z',
+                              onTap: () => unawaited(_performUndo()),
+                              child: Icon(
+                                Icons.undo_rounded,
+                                size: 19,
+                                color: tokens.ink,
+                              ),
+                            ),
+                          ],
+                          if (history.canRedo) ...[
+                            const SizedBox(width: 8),
+                            _TreeTopbarPill(
+                              tokens: tokens,
+                              tooltip: 'Повторить · Ctrl+Shift+Z',
+                              onTap: () => unawaited(_performRedo()),
+                              child: Icon(
+                                Icons.redo_rounded,
+                                size: 19,
+                                color: tokens.ink,
+                              ),
+                            ),
+                          ],
+                        ],
+                      );
+                    },
+                  ),
                 if (selectedTreeId != null) ...[
                   const SizedBox(width: 8),
                   PopupMenuButton<_TreeToolbarAction>(
@@ -1356,13 +1466,19 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
     }
 
     try {
-      await _familyService.createRelation(
+      final created = await _familyService.createRelation(
         treeId: treeId,
         person1Id: sourcePersonId,
         person2Id: targetPersonId,
         relation1to2: relation1to2,
         isConfirmed: true,
       );
+      if (GetIt.I.isRegistered<TreeMutationHistory>()) {
+        GetIt.I<TreeMutationHistory>().recordRelationCreated(
+          treeId: treeId,
+          created: created,
+        );
+      }
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(

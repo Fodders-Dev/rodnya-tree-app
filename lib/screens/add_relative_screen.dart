@@ -10,6 +10,7 @@ import 'package:get_it/get_it.dart';
 import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/cross_tree_person_search_capable_family_tree_service.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
+import '../services/tree_mutation_history.dart';
 import '../backend/interfaces/profile_service_interface.dart';
 import '../backend/interfaces/storage_service_interface.dart';
 import '../backend/models/cross_tree_person_suggestion.dart';
@@ -610,7 +611,7 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
                     return;
                   }
                 }
-                await _familyService.createRelation(
+                final updatedRelation = await _familyService.createRelation(
                   treeId: widget.treeId,
                   person1Id: widget.person!.id,
                   person2Id: userId,
@@ -619,6 +620,12 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
                   customRelationLabel1to2: customLabels?.relation1to2,
                   customRelationLabel2to1: customLabels?.relation2to1,
                 );
+                if (GetIt.I.isRegistered<TreeMutationHistory>()) {
+                  GetIt.I<TreeMutationHistory>().recordRelationCreated(
+                    treeId: widget.treeId,
+                    created: updatedRelation,
+                  );
+                }
                 // Обновляем _initialRelationType после успешного сохранения
                 _initialRelationType = _selectedRelationType;
                 debugPrint('Связь успешно обновлена.');
@@ -723,7 +730,7 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
                 }
               }
 
-              await _familyService.createRelation(
+              final mainRelation = await _familyService.createRelation(
                 treeId: widget.treeId,
                 person1Id: newPersonId,
                 person2Id: person2Id,
@@ -734,6 +741,12 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
                 customRelationLabel1to2: customLabels?.relation1to2,
                 customRelationLabel2to1: customLabels?.relation2to1,
               );
+              if (GetIt.I.isRegistered<TreeMutationHistory>()) {
+                GetIt.I<TreeMutationHistory>().recordRelationCreated(
+                  treeId: widget.treeId,
+                  created: mainRelation,
+                );
+              }
               debugPrint(
                 'Основная связь создана: $newPersonId ($relationType) -> $person2Id',
               );

@@ -47,6 +47,15 @@ abstract class FamilyTreeServiceInterface {
     String? customRelationLabel1to2,
     String? customRelationLabel2to1,
   });
+
+  /// Snip a relation between two persons. Mirrors the existing method
+  /// on `TreeGraphCapableFamilyTreeService` but exposed via the main
+  /// interface so generic mutation handlers (undo/redo etc.) can use
+  /// it without depending on the graph mixin.
+  Future<void> disconnectRelation({
+    required String treeId,
+    required String relationId,
+  });
   Future<List<FamilyPerson>> getOfflineProfilesByCreator(
     String treeId,
     String creatorId,

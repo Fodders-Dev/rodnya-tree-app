@@ -11,6 +11,7 @@ import '../models/person_dossier.dart';
 import '../models/person_duplicate_suggestion.dart';
 import '../models/user_profile.dart';
 import '../providers/tree_provider.dart'; // Для treeId
+import '../services/tree_mutation_history.dart';
 import 'package:go_router/go_router.dart';
 import '../utils/invitation_share.dart';
 import 'package:get_it/get_it.dart';
@@ -1133,10 +1134,19 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
     if (_currentTreeId == null || _graphTreeService == null) {
       return;
     }
+    // Снапшот связи ДО удаления — нужен для undo (восстановить с
+    // теми же person'ами и типом).
+    final relationSnapshot = link.relation;
     await _graphTreeService!.disconnectRelation(
       treeId: _currentTreeId!,
       relationId: link.relation.id,
     );
+    if (GetIt.I.isRegistered<TreeMutationHistory>()) {
+      GetIt.I<TreeMutationHistory>().recordRelationDeleted(
+        treeId: _currentTreeId!,
+        deleted: relationSnapshot,
+      );
+    }
     if (!mounted) {
       return;
     }

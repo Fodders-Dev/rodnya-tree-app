@@ -341,6 +341,14 @@ class PendingBackendFamilyTreeService implements FamilyTreeServiceInterface {
   }
 
   @override
+  Future<void> disconnectRelation({
+    required String treeId,
+    required String relationId,
+  }) {
+    throw UnsupportedError(_pendingProviderMessage('tree'));
+  }
+
+  @override
   Future<String?> findSpouseId(String treeId, String personId) async => null;
 
   @override
