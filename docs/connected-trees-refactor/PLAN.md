@@ -1,3 +1,11 @@
+> ⚠️ **SUPERSEDED — этот план был написан без знания о RFC
+> [`docs/tree_model_overhaul_rfc.md`](../tree_model_overhaul_rfc.md).
+> Не использовать. Источник правды — RFC.**
+>
+> Решение зафиксировано 2026-05-09 в [DECISIONS.md](DECISIONS.md).
+> Текущий код находится на пути RFC (Phase 0/1.1/1.2/3.1/3.4/6.1
+> уже сделаны), и graphPersons + branches слой остаётся.
+
 # Connected Per-User Trees — архитектурный рефакторинг
 
 Целевой документ для многонедельной работы. Любой агент, работающий

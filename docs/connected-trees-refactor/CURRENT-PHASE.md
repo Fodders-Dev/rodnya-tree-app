@@ -1,32 +1,33 @@
 # Текущая фаза рефакторинга
 
-**Phase**: 0 — design & audit
-**Статус**: not started
-**Начато**: —
-**Цель завершения**: TBD после первой sync-сессии с user'ом
+> ⚠️ Важно: PLAN.md этой папки SUPERSEDED. Источник правды —
+> [`docs/tree_model_overhaul_rfc.md`](../tree_model_overhaul_rfc.md).
+> См. [DECISIONS.md](DECISIONS.md) от 2026-05-09.
 
-## Что НЕ сделано
+**Phase**: 1.3 — edit-time conflict surfacing (по RFC) — **CLOSED**
+**Статус**: complete (полностью реализован в коде до этой сессии,
+2026-05-09 audit + verify завершён)
+**Следующая фаза**: Phase 3 (TREE → BRANCH миграция) — **BLOCKED**
+до ответов на 4 RFC-вопроса (см. [DECISIONS.md](DECISIONS.md))
 
-* `AUDIT.md` — полный список файлов которые трогают `treeId` /
-  `creatorId` / `memberIds`.
-* `IDENTITY-MATCHER.md` — что сейчас умеет identity-matcher,
-  какие сигналы использует.
-* `SCHEMA.md` — ER-диаграммы текущей и целевой БД.
-* `DECISIONS.md` — пустой, заполняется по ходу.
+## Что уже сделано
 
-## Чего ждём от user-а
+* Phase 0 audit (artefacts: AUDIT.md, IDENTITY-MATCHER.md, SCHEMA.md).
+* Запись decisions от 2026-05-09 в DECISIONS.md.
+* PLAN.md помечен SUPERSEDED.
+* **Phase 1.3 закрыт** — audit показал что полностью реализован в
+  коде (включая UI bottom-sheet для resolve, который RFC помечал
+  как «отложить»). См. [PROGRESS.md](PROGRESS.md) от 2026-05-09.
+  * Backend: 100/101 тест зелёных (один Windows-flake unrelated).
+  * Flutter: analyze на main 8 pre-existing issues, ничего из 1.3.
 
-* Confirmation целевой архитектуры (см. PLAN.md → «Целевая
-  архитектура»).
-* Решение по multi-tree legacy: оставляем для существующих
-  юзеров или принудительно сливаем при миграции?
-* Бюджет на риски в migration phase (Phase 6) — нужен
-  staging-environment с реальной структурой данных или
-  ограничимся синтетикой?
+## Что делаем сейчас
 
-## Чего НЕ делать на этом этапе
+Ничего. Phase 1.3 закрыт. Phase 3 заблокирован.
 
-* НЕ менять схему БД.
-* НЕ удалять deprecated codepath'ы.
-* НЕ начинать клиентский UI без backend готов.
+## Чего НЕ делать
+
+* НЕ лезть в Phase 3 (TREE → BRANCH миграция) — заблокировано 4
+  нерешёнными вопросами в DECISIONS.md.
+* НЕ депрекейтить graph-слой (он остаётся).
 * НЕ принимать архитектурные решения без записи в DECISIONS.md.
