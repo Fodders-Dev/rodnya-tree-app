@@ -52,6 +52,47 @@
     }
   </style>
 
+  <!--
+    Legacy invite link redirect.
+
+    The web app uses hash URL strategy (rodnya-tree.ru/#/...). Older
+    invite links were generated as path-segment URLs:
+    https://rodnya-tree.ru/invite?treeId=...&personId=...
+    When opened in a browser, nginx falls back to index.html, but
+    Flutter web's hash routing then sees an empty fragment and
+    drops the recipient on the home screen — treeId/personId are
+    lost.
+
+    This tiny pre-bootstrap script detects that pattern and rewrites
+    to the hash form BEFORE Flutter loads, so links already in the
+    wild (sent over WhatsApp/Telegram before the link-builder fix
+    was deployed) still work. Cheap and reversible: when nobody is
+    holding a stale link anymore, this block can come out.
+  -->
+  <script>
+    (function () {
+      try {
+        var path = window.location.pathname || '';
+        var search = window.location.search || '';
+        var hash = window.location.hash || '';
+        // Only rewrite if /invite is the path tail AND we have invite
+        // params AND the hash isn't already pointing at the invite
+        // route. Avoids loops if Flutter ever pushes path back.
+        var isInvitePath = /(?:^|\/)invite\/?$/.test(path);
+        var hasInviteParams = /[?&](?:treeId|personId)=/.test(search);
+        var alreadyHashed = /^#\/invite/.test(hash);
+        if (isInvitePath && hasInviteParams && !alreadyHashed) {
+          var basePath = path.replace(/\/?invite\/?$/, '/');
+          if (!basePath || basePath === '') basePath = '/';
+          if (!basePath.endsWith('/')) basePath += '/';
+          window.location.replace(basePath + '#/invite' + search);
+        }
+      } catch (_) {
+        // Never block app boot on a redirect heuristic.
+      }
+    })();
+  </script>
+
 </head>
 <body>
   <script src="flutter_bootstrap.js" async></script>
