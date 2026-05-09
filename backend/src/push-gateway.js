@@ -304,6 +304,18 @@ class PushGateway {
       payload.timeSensitive = "true";
       payload.event = "incoming_call";
       payload.collapseKey = this._notificationTag(notification);
+      // Calls go data-only (see _deliverRustorePush) — when we drop
+      // `message.notification` the native side loses access to
+      // `message.notification.title`, which used to carry the caller
+      // name. Mirror it explicitly so RodnyaPushService.kt can show
+      // «Артем А.» instead of falling back to the generic «Звонок»
+      // label when the app is killed/backgrounded.
+      if (notification.title) {
+        payload.callerName = String(notification.title);
+      }
+      if (notification.body) {
+        payload.callerBody = String(notification.body);
+      }
     }
 
     return payload;

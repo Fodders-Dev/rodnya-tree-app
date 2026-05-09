@@ -83,14 +83,23 @@ class RodnyaPushService : RuStoreMessagingService() {
         val chatId = (message.data["chatId"]
             ?: extractFromPayload(message.data["payload"], "chatId"))
             ?.trim()?.takeIf { it.isNotEmpty() }
+        // Calls now go data-only (notification.* dropped server-side
+        // so onMessageReceived fires when the app is killed). The
+        // backend mirrors the original notification title/body into
+        // data.callerName / data.callerBody, so we read those first
+        // and only fall back to message.notification.* for legacy
+        // pushes that pre-date the data-only switch.
         val callerName = (
-            message.notification?.title
-                ?: message.data["callerName"]
+            message.data["callerName"]
+                ?: message.notification?.title
                 ?: extractFromPayload(message.data["payload"], "callerName")
+                ?: extractFromPayload(message.data["payload"], "title")
             )?.trim().orEmpty().ifEmpty { "Звонок" }
         val body = (
-            message.notification?.body
+            message.data["callerBody"]
                 ?: message.data["body"]
+                ?: message.notification?.body
+                ?: extractFromPayload(message.data["payload"], "body")
                 ?: "Входящий звонок"
             ).trim()
         val isVideo = message.data["isVideo"] == "true" ||

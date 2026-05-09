@@ -144,6 +144,16 @@ class CallCoordinatorService extends ChangeNotifier
   bool _joinedOnAnotherDevice = false;
   String? _lastIncomingVibrationCallId;
   final Set<String> _visibleCallScreenIds = <String>{};
+  // Caller display names captured from VKPNS push payloads, keyed
+  // by callId. Push delivery beats the realtime hydrate (the push
+  // arrives before the GET /v1/calls/:id response lands), so we
+  // park the name here and pull it out when the Telecom-side
+  // showIncomingCall fires from _applyCall.
+  final Map<String, String> _pushCallerNames = <String, String>{};
+  // De-dupe Telecom showIncomingCall — a single call can fan out
+  // both via push and notification.created realtime, and we don't
+  // want addNewIncomingCall to fire twice for the same callId.
+  String? _lastNativeIncomingCallId;
 
   String? get currentUserId => _callService.currentUserId;
   CallInvite? get currentCall => _currentCall;
@@ -563,6 +573,10 @@ class CallCoordinatorService extends ChangeNotifier
     if (nextCall == null) {
       if (currentCall != null) {
         unawaited(_androidIncomingCallService?.dismissCall(currentCall.id));
+        _pushCallerNames.remove(currentCall.id);
+        if (_lastNativeIncomingCallId == currentCall.id) {
+          _lastNativeIncomingCallId = null;
+        }
       }
       _cancelRingingRecovery();
       _cancelActiveCallRecovery();
@@ -592,6 +606,10 @@ class CallCoordinatorService extends ChangeNotifier
         return;
       }
       unawaited(_androidIncomingCallService?.dismissCall(nextCall.id));
+      _pushCallerNames.remove(nextCall.id);
+      if (_lastNativeIncomingCallId == nextCall.id) {
+        _lastNativeIncomingCallId = null;
+      }
       _cancelRingingRecovery();
       _cancelActiveCallRecovery();
       _currentCall = null;
@@ -618,6 +636,20 @@ class CallCoordinatorService extends ChangeNotifier
       _scheduleRingingRecovery(nextCall);
       _cancelActiveCallRecovery();
       unawaited(_maybeVibrateForIncomingCall(nextCall));
+      // User-reported: «приложение свернуто — звонок на устройство
+      // не проходит». Корень: в backgrounded состоянии CallScreen
+      // не примонтирован к навигатору, поэтому
+      // `notifyListeners` не приводит к появлению UI. Раньше единственный
+      // путь к лаунчеру системного звонка проходил через
+      // `notification.created` → notification_service →
+      // showIncomingCallNotification → AndroidIncomingCallService.
+      // Но push приходит как push-message и попадает сюда напрямую,
+      // обходя notification.created. Пингуем Telecom отсюда — он
+      // самостоятельный и работает поверх любого app state.
+      // addNewIncomingCall идемпотентен по callId (через registry),
+      // так что параллельный путь из notification_service не
+      // создаст дубль.
+      unawaited(_maybeShowNativeIncomingCall(nextCall));
     } else {
       _cancelRingingRecovery();
       if (_lastIncomingVibrationCallId == nextCall.id) {
@@ -1192,6 +1224,49 @@ class CallCoordinatorService extends ChangeNotifier
     } catch (_) {}
   }
 
+  /// Lift the system-level incoming-call UI (Telecom self-managed
+  /// connection) for an incoming ringing call. Idempotent per
+  /// callId so a parallel `notification.created` path doesn't
+  /// trigger a second `addNewIncomingCall`.
+  ///
+  /// This is the path that lets the user see + answer the call
+  /// when the app is BACKGROUNDED (process alive, no UI mounted).
+  /// Without it, push delivery hydrates the call into Dart state
+  /// and notifies listeners, but no one is rendering — so the user
+  /// gets vibration and silence. With Telecom in the picture, the
+  /// system itself shows the native ringer screen over whatever
+  /// the user is doing, identical to a phone call.
+  Future<void> _maybeShowNativeIncomingCall(CallInvite call) async {
+    final service = _androidIncomingCallService;
+    if (service == null || !service.isSupported) {
+      return;
+    }
+    final currentUser = currentUserId;
+    if (currentUser == null || !call.isIncomingFor(currentUser)) {
+      return;
+    }
+    if (_lastNativeIncomingCallId == call.id) {
+      return;
+    }
+    _lastNativeIncomingCallId = call.id;
+    final callerName = _pushCallerNames[call.id]?.trim().isNotEmpty == true
+        ? _pushCallerNames[call.id]!
+        : (call.initiatorId.isNotEmpty ? call.initiatorId : 'Родня');
+    try {
+      await service.showIncomingCall(
+        callId: call.id,
+        callerName: callerName,
+        isVideo: call.mediaMode.isVideo,
+        chatId: call.chatId,
+      );
+    } catch (_) {
+      // Telecom registration races vs. permissions are non-fatal —
+      // the native push service builds a full-screen intent
+      // notification as a parallel safety net so the user still
+      // sees the call.
+    }
+  }
+
   static Future<void> _switchLiveKitCameraPosition(
     LocalVideoTrack track,
     CameraPosition position,
@@ -1256,9 +1331,22 @@ class CallCoordinatorService extends ChangeNotifier
     if (!message.isCallInvite) {
       return;
     }
+    final callId = message.callId;
+    if (callId != null && callId.isNotEmpty) {
+      // Stash the caller name from the push payload before we
+      // hydrate — _applyCall will read it back from this cache
+      // when it fires the native Telecom UI. CallInvite from
+      // /v1/calls/:id only carries initiatorId, not the display
+      // name, so without this hop the lockscreen would show the
+      // raw user id (or worse, a generic «Звонок» fallback).
+      final pushCallerName = message.data['callerName']?.trim();
+      if (pushCallerName != null && pushCallerName.isNotEmpty) {
+        _pushCallerNames[callId] = pushCallerName;
+      }
+    }
     unawaited(
       hydrateIncomingCall(
-        callId: message.callId,
+        callId: callId,
         chatId: message.chatId,
       ),
     );
