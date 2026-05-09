@@ -162,6 +162,29 @@ Flutter:
   toggle цикл system→light→dark→system, resolvedBrightness override
   в explicit modes + follow MediaQuery в system mode, AppTheme
   readability.
+* ✅ Backend regression baseline: identity-matcher.test.js (2 → 25
+  тестов, +23) + migration-utils.test.js (9 → 18, +9). Покрытие:
+  threshold edges, biographical gate, FP guards (claimed/already-linked
+  skip), cross-tree privacy gate, ё/е normalization, branch.ownerId
+  rename, memberIds mirror + legacy 'members' fallback, canonical
+  person picking (claimed user wins, fallback по updatedAt), empty
+  snapshot defensive. Полный backend suite после добавлений:
+  227/229 pass, 2 fail — известные Windows ENOTEMPTY race на rmdir
+  WS-серверов (упомянуты в RFC как unrelated flake).
+* ⚠️ Pre-existing failure (НЕ из-за моих изменений): 3 теста в
+  [test/custom_api_notification_service_test.dart](test/custom_api_notification_service_test.dart)
+  падают и на `main`, и в worktree:
+  - `polls unread notifications and deduplicates delivered ids`
+  - `suppresses muted chat notifications`
+  - `forwards silent mode to chat notifications`
+
+  Все три ожидают `hasLength(1)` от `shownChatNotifications` /
+  `shownGenericNotifications` callbacks, но callbacks не
+  вызываются. Это business-logic mismatch в notification service
+  flow, не quick fix — требует debugging внутреннего sync pipeline.
+  Полный flutter test suite: **379 pass, 3 fail** (все 3 — этот
+  файл). Не блокирует connected-trees-refactor работу;
+  кандидат на отдельный bug-fix session.
 * В worktree `flutter analyze` показывает **дополнительные 25
   errors** (33 total) про двойные пути к `FamilyPerson`/`Gender`.
   Это worktree-specific issue: `.dart_tool/package_config.json`
