@@ -163,6 +163,38 @@ class _CallScreenState extends State<CallScreen> {
     final asset = incoming ? 'audio/ringtone.wav' : 'audio/ringback.wav';
     unawaited(() async {
       try {
+        // Critical: route through the telephony usage type so
+        // Android plays the audio on the **ringtone stream** (or
+        // VoIP stream for ringback). Without this, audioplayers
+        // defaults to `usageType: media` which is silenced when the
+        // device is on Vibrate-only or DND, *and* gets ducked when
+        // any media is playing — that's why the user reported
+        // «никакого аудио нет». On iOS, set the playAndRecord
+        // category with default-to-speaker so the ringer comes out
+        // of the loudspeaker even mid-call.
+        await player.setAudioContext(
+          AudioContext(
+            android: AudioContextAndroid(
+              isSpeakerphoneOn: true,
+              audioMode: incoming
+                  ? AndroidAudioMode.ringtone
+                  : AndroidAudioMode.inCommunication,
+              stayAwake: true,
+              contentType: AndroidContentType.music,
+              usageType: incoming
+                  ? AndroidUsageType.notificationRingtone
+                  : AndroidUsageType.voiceCommunicationSignalling,
+              audioFocus: AndroidAudioFocus.gainTransientMayDuck,
+            ),
+            iOS: AudioContextIOS(
+              category: AVAudioSessionCategory.playAndRecord,
+              options: const {
+                AVAudioSessionOptions.defaultToSpeaker,
+                AVAudioSessionOptions.allowBluetooth,
+              },
+            ),
+          ),
+        );
         await player.setReleaseMode(ReleaseMode.loop);
         // Lower volume for the gudok — it's a confirmation tone, not
         // a wake-the-house alert. Incoming stays loud.
@@ -212,6 +244,24 @@ class _CallScreenState extends State<CallScreen> {
     final player = AudioPlayer();
     unawaited(() async {
       try {
+        // Same telephony-aware routing as the loop. `voiceCommunicationSignalling`
+        // is exactly what Android telephony uses for connect/disconnect tones.
+        await player.setAudioContext(
+          AudioContext(
+            android: const AudioContextAndroid(
+              isSpeakerphoneOn: true,
+              audioMode: AndroidAudioMode.inCommunication,
+              stayAwake: true,
+              contentType: AndroidContentType.music,
+              usageType: AndroidUsageType.voiceCommunicationSignalling,
+              audioFocus: AndroidAudioFocus.gainTransientMayDuck,
+            ),
+            iOS: AudioContextIOS(
+              category: AVAudioSessionCategory.playAndRecord,
+              options: const {AVAudioSessionOptions.defaultToSpeaker},
+            ),
+          ),
+        );
         await player.setReleaseMode(ReleaseMode.release);
         await player.play(AssetSource(asset));
       } catch (error) {
