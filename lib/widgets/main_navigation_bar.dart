@@ -92,9 +92,24 @@ class MainNavigationBar extends StatelessWidget {
                       // weird split-screen layouts.
                       final showLabels = constraints.maxWidth >= 280;
                       final navHeight = showLabels ? 70.0 : 62.0;
-                      final slotWidth = constraints.maxWidth / items.length;
-                      final pillLeft = (slotWidth * currentIndex) + 6;
-                      final pillWidth = slotWidth - 12;
+                      // User-reported: «домик с лентой находятся
+                      // правее этой зеленой области». The pill used
+                      // `constraints.maxWidth / items.length` for its
+                      // slot, but the Row of nav items lives inside a
+                      // `Padding(horizontal: 6 or 4)` — so each
+                      // NavItem's actual slot was `(maxWidth - 2 *
+                      // padding) / items.length`. The pill ended up
+                      // 9–10 dp narrower than the item, so the icon
+                      // sat off-center to the right of the green
+                      // pill. Recompute using the same denominator.
+                      final rowPadding = showLabels ? 6.0 : 4.0;
+                      final itemSlotWidth =
+                          (constraints.maxWidth - 2 * rowPadding) /
+                              items.length;
+                      const pillInset = 6.0;
+                      final pillLeft =
+                          rowPadding + itemSlotWidth * currentIndex + pillInset;
+                      final pillWidth = itemSlotWidth - 2 * pillInset;
 
                       // Skip BackdropFilter on web (CPU-bound) AND on
                       // Android (mid-range GPU bound). The bar already

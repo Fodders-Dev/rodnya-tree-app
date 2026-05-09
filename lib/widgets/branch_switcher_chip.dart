@@ -37,6 +37,14 @@ class BranchSwitcherChip extends StatelessWidget {
     final screenWidth = MediaQuery.of(context).size.width;
     final effectiveMaxNameWidth = maxNameWidth ??
         (screenWidth < 400 ? 90.0 : (screenWidth < 600 ? 130.0 : 180.0));
+    // User-reported: «если название не вмещается, то может сделаем
+    // по цветам? разным деревам разный цвет, чтобы текстом не
+    // вставлять, раз не влезает. А текст в веб версии держать».
+    // Below 380 dp width we drop the text part and render a tiny
+    // color dot derived from the tree id — same identifier-to-color
+    // approach as Telegram's avatar tints, so the same branch
+    // always gets the same dot.
+    final useColorOnly = screenWidth < 380;
 
     return Consumer<TreeProvider>(
       builder: (context, treeProvider, _) {
@@ -53,6 +61,7 @@ class BranchSwitcherChip extends StatelessWidget {
         final label = selectedName?.trim().isNotEmpty == true
             ? selectedName!.trim()
             : 'Выберите ветку';
+        final dotColor = _branchDotColor(selectedId);
         return Material(
           color: Colors.transparent,
           child: InkWell(
@@ -63,7 +72,9 @@ class BranchSwitcherChip extends StatelessWidget {
               tokens: tokens,
             ),
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              padding: useColorOnly
+                  ? const EdgeInsets.symmetric(horizontal: 8, vertical: 6)
+                  : const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               decoration: BoxDecoration(
                 color: tokens.surfaceStrong.withValues(alpha: 0.6),
                 borderRadius: BorderRadius.circular(999),
@@ -75,25 +86,47 @@ class BranchSwitcherChip extends StatelessWidget {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(
-                    Icons.account_tree_outlined,
-                    size: 16,
-                    color: tokens.accent,
-                  ),
-                  const SizedBox(width: 6),
-                  ConstrainedBox(
-                    constraints: BoxConstraints(maxWidth: effectiveMaxNameWidth),
-                    child: Text(
-                      label,
-                      style: theme.textTheme.labelLarge?.copyWith(
-                        fontWeight: FontWeight.w700,
-                        color: tokens.ink,
+                  // On narrow screens use a per-branch coloured dot
+                  // instead of the generic tree icon — combined with
+                  // hidden text it still tells you which branch you're
+                  // on at a glance, derived from a hash of the branch
+                  // id so the same branch always gets the same hue.
+                  if (useColorOnly)
+                    Container(
+                      width: 14,
+                      height: 14,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: dotColor,
+                        border: Border.all(
+                          color: Colors.white.withValues(alpha: 0.7),
+                          width: 1,
+                        ),
                       ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                    )
+                  else
+                    Icon(
+                      Icons.account_tree_outlined,
+                      size: 16,
+                      color: tokens.accent,
                     ),
-                  ),
-                  const SizedBox(width: 4),
+                  if (!useColorOnly) ...[
+                    const SizedBox(width: 6),
+                    ConstrainedBox(
+                      constraints:
+                          BoxConstraints(maxWidth: effectiveMaxNameWidth),
+                      child: Text(
+                        label,
+                        style: theme.textTheme.labelLarge?.copyWith(
+                          fontWeight: FontWeight.w700,
+                          color: tokens.ink,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                  SizedBox(width: useColorOnly ? 2 : 4),
                   Icon(
                     Icons.expand_more_rounded,
                     size: 18,
@@ -106,6 +139,32 @@ class BranchSwitcherChip extends StatelessWidget {
         );
       },
     );
+  }
+
+  /// Hash the branch id into a stable colour so the dot mode picks
+  /// the same hue for the same branch every time. We avoid pure
+  /// reds / yellows that would clash with notification badges, and
+  /// stay in saturated mid-tones so the dot stays legible on warm
+  /// cream and dark backgrounds alike.
+  Color _branchDotColor(String? branchId) {
+    if (branchId == null || branchId.isEmpty) {
+      return const Color(0xFF3F8E52); // sage fallback
+    }
+    var hash = 0;
+    for (final code in branchId.codeUnits) {
+      hash = (hash * 31 + code) & 0xFFFFFFF;
+    }
+    const palette = <Color>[
+      Color(0xFF3F8E52), // sage green
+      Color(0xFF4A7DBF), // family blue
+      Color(0xFFA15FBF), // heritage purple
+      Color(0xFFD7783A), // warm copper
+      Color(0xFF2BA1A1), // teal
+      Color(0xFF8E6C3F), // coffee
+      Color(0xFFC4A030), // honey
+      Color(0xFFB85B7C), // dusty rose
+    ];
+    return palette[hash % palette.length];
   }
 
   Future<void> _openSwitcherSheet(

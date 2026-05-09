@@ -241,6 +241,16 @@ class _ChatScreenState extends State<ChatScreen> {
   static const double _recordingLockThreshold = 52;
   static const double _recordingCancelThreshold = 72;
 
+  /// Telegram-style toggle for the composer's primary action button.
+  /// Tap flips between voice (false) and kruzhok / video-note (true);
+  /// long-press starts the corresponding recording flow. Was hard-
+  /// coded to «tap = kruzhok» before, which forced users to long-
+  /// press for a voice message every time. The user reported:
+  /// «нажимаю на голосувуху - открывается запись кружочка... по тапу
+  /// они должны меняться (как в тг), а вот при удержании
+  /// записываться».
+  bool _voiceModeIsKruzhok = false;
+
   @override
   void initState() {
     super.initState();
@@ -4408,9 +4418,12 @@ class _ChatScreenState extends State<ChatScreen> {
       );
     }
 
-    // Mic button: long-press to record (Telegram style), tap to swap
-    // to кружочек capture (the user's request "одним нажатием на
-    // кнопку голосовухи она менялась на кружочек").
+    // Mic / Kruzhok composer button — Telegram-style two-state.
+    //   tap   → flip mode (voice ↔ kruzhok), no recording starts
+    //   hold  → start recording in the current mode (voice loops
+    //           through ChatRecordingController; kruzhok opens the
+    //           video-note capture UI which is itself press-and-
+    //           hold inside)
     //
     // We render the visual via a plain Material+Container instead of
     // IconButton + GestureDetector — the previous combo had IconButton's
@@ -4421,19 +4434,36 @@ class _ChatScreenState extends State<ChatScreen> {
     // GestureDetector owns the gesture cleanly.
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final isKruzhokMode = _voiceModeIsKruzhok;
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: () {
-        // Single tap → record a kruzhok. Same one-press feel TG's
-        // mic-button has when you tap-swap to video-note.
-        HapticFeedback.lightImpact();
-        unawaited(_pickVideoNote());
+        // Tap toggles the mode (no recording yet).
+        HapticFeedback.selectionClick();
+        setState(() {
+          _voiceModeIsKruzhok = !_voiceModeIsKruzhok;
+        });
       },
-      onLongPressStart: _handleRecordingLongPressStart,
-      onLongPressMoveUpdate: _handleRecordingLongPressMoveUpdate,
-      onLongPressEnd: _handleRecordingLongPressEnd,
+      onLongPressStart: (details) {
+        if (_voiceModeIsKruzhok) {
+          // Kruzhok mode: open the video-note recorder. Hold-to-
+          // record happens inside the recorder UI itself.
+          HapticFeedback.mediumImpact();
+          unawaited(_pickVideoNote());
+        } else {
+          _handleRecordingLongPressStart(details);
+        }
+      },
+      onLongPressMoveUpdate: _voiceModeIsKruzhok
+          ? null
+          : _handleRecordingLongPressMoveUpdate,
+      onLongPressEnd: _voiceModeIsKruzhok
+          ? null
+          : _handleRecordingLongPressEnd,
       child: Tooltip(
-        message: 'Зажмите для голосового, тап для кружочка',
+        message: isKruzhokMode
+            ? 'Зажмите для кружочка · тап чтобы переключить'
+            : 'Зажмите для голосового · тап чтобы переключить',
         child: Container(
           width: 48,
           height: 48,
@@ -4444,7 +4474,9 @@ class _ChatScreenState extends State<ChatScreen> {
           child: Icon(
             recordingState == ChatRecordingState.recording
                 ? Icons.lock_open_rounded
-                : Icons.mic_none_rounded,
+                : (isKruzhokMode
+                    ? Icons.videocam_outlined
+                    : Icons.mic_none_rounded),
             color: scheme.onPrimary,
           ),
         ),
@@ -8022,6 +8054,24 @@ class _ChatBubble extends StatelessWidget {
     return false;
   }
 
+  /// True when the message is "naked" media — only photos / videos,
+  /// no text, no reply, no reactions to display via the meta footer.
+  /// User-reported: «у картинок нет границ сообщения. Картинка (и
+  /// прочее медиа) без рамок как правило отправляется. Рамки нужны
+  /// по факту, чтобы текст читать». Same TG / WA behaviour: pure
+  /// media floats on the canvas without a bubble around it.
+  bool get _isNakedMediaOnly {
+    if (text.trim().isNotEmpty) return false;
+    if (replyTo != null) return false;
+    final hasNonMediaRemote = remoteAttachments.any((a) =>
+        a.type != ChatAttachmentType.image &&
+        a.type != ChatAttachmentType.video);
+    if (hasNonMediaRemote) return false;
+    final hasAnyMedia = remoteAttachments.isNotEmpty ||
+        localAttachments.isNotEmpty;
+    return hasAnyMedia;
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -8171,10 +8221,13 @@ class _ChatBubble extends StatelessWidget {
                   // entirely (no padding, no background, no border) and
                   // renders just the round video tile — same TG / WA
                   // behaviour where video notes float on the canvas.
-                  padding: _isVideoNoteOnly
+                  // Naked media (photos / videos with no text, no
+                  // reply, no other content) drops the bubble like
+                  // video notes do — TG / WA convention.
+                  padding: (_isVideoNoteOnly || _isNakedMediaOnly)
                       ? EdgeInsets.zero
                       : const EdgeInsets.fromLTRB(13, 9, 13, 8),
-                  decoration: _isVideoNoteOnly
+                  decoration: (_isVideoNoteOnly || _isNakedMediaOnly)
                       ? null
                       : BoxDecoration(
                     color: outgoingGradient == null ? bubbleColor : null,
@@ -8237,11 +8290,13 @@ class _ChatBubble extends StatelessWidget {
                       ],
                       if (remoteAttachments.isNotEmpty) ...[
                         _buildRemoteAttachments(context),
-                        const SizedBox(height: 8),
+                        if (!_isNakedMediaOnly && !_isVideoNoteOnly)
+                          const SizedBox(height: 8),
                       ],
                       if (localAttachments.isNotEmpty) ...[
                         _buildLocalAttachments(context),
-                        const SizedBox(height: 8),
+                        if (!_isNakedMediaOnly && !_isVideoNoteOnly)
+                          const SizedBox(height: 8),
                       ],
                       if (text.isNotEmpty)
                         _HighlightedMessageText(
@@ -8276,6 +8331,12 @@ class _ChatBubble extends StatelessWidget {
                               .toList(),
                         ),
                       ],
+                      // Naked media skips the in-bubble meta footer
+                      // (timestamp + read receipt) — the message
+                      // floats as just media. Time/read-state still
+                      // visible on tap via the lightbox / message
+                      // detail sheet.
+                      if (!_isNakedMediaOnly && !_isVideoNoteOnly) ...[
                       const SizedBox(height: 4),
                       Row(
                         mainAxisSize: MainAxisSize.min,
@@ -8320,6 +8381,7 @@ class _ChatBubble extends StatelessWidget {
                             color: metaColor,
                           ),
                         ),
+                      ],
                       ],
                     ],
                   ),

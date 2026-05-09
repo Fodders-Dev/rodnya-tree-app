@@ -1538,18 +1538,10 @@ class _AuthScreenState extends State<AuthScreen> {
                       )
                     : Text(_isLogin ? 'Войти' : 'Создать аккаунт'),
               ),
-              if (_isLogin) ...[
-                const SizedBox(height: 6),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: TextButton(
-                    onPressed: _isLoading
-                        ? null
-                        : () => context.push('/password_reset'),
-                    child: const Text('Забыли пароль?'),
-                  ),
-                ),
-              ],
+              // The inline «Забыли?» link above the password field
+              // already covers password reset; the second one below
+              // the submit button was a duplicate (user-reported:
+              // «нахуя нам два забыли?»). Removed.
               const SizedBox(height: 16),
               Row(
                 children: [
@@ -1742,8 +1734,14 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 
   Widget _buildModeToggle(ThemeData theme) {
+    // User-reported: «Вход / Регистрация tabs выезжают за rounded
+    // edges». The outer pill had no clipBehavior, so the inner
+    // active-tab AnimatedContainer painted over the parent's
+    // rounded corners on the left and right edges. Clip the parent
+    // so the active pill is bounded by the same stadium shape.
     return Container(
       padding: const EdgeInsets.all(4),
+      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.7),
         borderRadius: BorderRadius.circular(999),
