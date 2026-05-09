@@ -193,42 +193,54 @@ class PushGateway {
       return;
     }
 
-    // Build the VKPNS message envelope. The `android` block lets the
-    // OS wake the device with the right priority + TTL when the app is
-    // killed; without it, RuStore still delivers but the system can
-    // delay or coalesce the message indefinitely. Calls go on a
-    // dedicated channel ("calls") so the user actually hears the
-    // ringer when the app is in the background.
+    // Build the VKPNS message envelope.
+    //
+    // VKPNS follows Firebase's split: a message with `notification`
+    // (top-level) is auto-displayed by the OS *and* skips our
+    // `RodnyaPushService.onMessageReceived` when the app is killed.
+    // A `data`-only message *always* wakes our service.
+    //
+    // For incoming calls we MUST go data-only — the native subclass
+    // builds a full-screen `setFullScreenIntent` notification with
+    // accept/reject actions that the OS auto-display can't reproduce.
+    // Skipping our service when the app is killed is exactly the
+    // «звоню себе на телефон, а приложение закрыто — и я просто не
+    // вижу звонок» bug the user reported.
+    //
+    // For everything else (chats, post replies, etc.) we keep the
+    // notification field so the OS displays a clean heads-up even
+    // when our process is dead.
     const isIncomingCall = this._isIncomingCallNotification(notification);
     const androidConfig = {
       priority: isIncomingCall ? "HIGH" : "NORMAL",
       ttl: `${this._notificationTtlSeconds(notification)}s`,
-      notification: {
-        title: notification.title || "Родня",
-        body: notification.body || "",
-        channel_id: isIncomingCall ? "calls" : "general",
-        sound: isIncomingCall ? "ringtone" : "default",
-        tag: this._notificationTag(notification),
-        // Calls show a public, fullscreen-eligible notification so the
-        // OS can launch our intent over the lockscreen on Android 13+.
-        ...(isIncomingCall
-          ? {
-              visibility: "PUBLIC",
-              notification_priority: "PRIORITY_MAX",
-              default_sound: false,
-              default_vibrate_timings: false,
-              vibrate_timings: ["0s", "0.6s", "0.4s", "0.6s"],
-            }
-          : {}),
-      },
+      // Only set the system-display notification block for non-call
+      // pushes. Calls render their own UI from native code.
+      ...(isIncomingCall
+        ? {}
+        : {
+            notification: {
+              title: notification.title || "Родня",
+              body: notification.body || "",
+              channel_id: this._androidChannelId(notification),
+              sound: "default",
+              tag: this._notificationTag(notification),
+            },
+          }),
     };
     const requestBody = {
       message: {
         token: String(device.token || "").trim(),
-        notification: {
-          title: notification.title || "Родня",
-          body: notification.body || "",
-        },
+        // Same logic at the message root: data-only for calls, mixed
+        // payload for everything else.
+        ...(isIncomingCall
+          ? {}
+          : {
+              notification: {
+                title: notification.title || "Родня",
+                body: notification.body || "",
+              },
+            }),
         data: this._buildRustoreDataPayload(notification),
         android: androidConfig,
       },
@@ -318,6 +330,43 @@ class PushGateway {
   _isIncomingCallNotification(notification) {
     const type = String(notification?.type || "").trim();
     return type === "call_invite" || type === "call";
+  }
+
+  /**
+   * Map a notification type to the matching native Android channel.
+   *
+   * The channels are declared in `RodnyaNotificationChannels.kt` and
+   * the IDs MUST match — Android silently drops a push whose channel
+   * doesn't exist on the device. The split mirrors the user's mental
+   * model: high-urgency «кто-то прямо сейчас обращается ко мне» (chat,
+   * call ringer fallback) on its own channel, social/feed updates on
+   * a softer channel, system/admin chatter on a quiet channel.
+   *
+   * Calls aren't routed through here — they go data-only and build
+   * their own NotificationCompat entry on the calls channel from
+   * RodnyaPushService.kt.
+   */
+  _androidChannelId(notification) {
+    const type = String(notification?.type || "").trim();
+    if (this._isIncomingCallNotification(notification)) {
+      return "calls";
+    }
+    if (type === "chat_message" || type === "chat") {
+      return "chats";
+    }
+    if (
+      type === "post_like" ||
+      type === "post_comment" ||
+      type === "comment_reply" ||
+      type === "story_view" ||
+      type === "story_reaction" ||
+      type === "relative_added" ||
+      type === "tree_invitation" ||
+      type === "birthday"
+    ) {
+      return "social";
+    }
+    return "system";
   }
 
   _notificationUrgency(notification) {
