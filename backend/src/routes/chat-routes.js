@@ -814,35 +814,62 @@ function registerChatRoutes(
       (participantId) => participantId !== req.auth.user.id,
     );
     if (!isDeduplicated) {
+      // Порядок важен: сначала шлём WS-нотификации, потом пуш.
+      // Раньше было наоборот — пуш улетал первым через VKPNS
+      // (мгновенная фоновая доставка), а WS-message прохож-
+      // дил через Express + Node event loop ещё несколько
+      // сотен миллисекунд. На клиенте получалось «buzz в
+      // шторке раньше чем bubble в чате» — пользователь
+      // жалуется именно на это.
+      const resolved = await publishChatUpdated(message.chatId, chat);
+      await publishChatPayload(message.chatId, {
+        type: "chat.message.created",
+        chatId: message.chatId,
+        chat: resolved?.mappedChat || mapChatRecord(chat),
+        message: mappedMessage,
+      });
+      await publishUnreadChanged(resolved?.chat || chat);
+
+      const firstAttachment = Array.isArray(mappedMessage.attachments)
+        ? mappedMessage.attachments.find((attachment) =>
+            String(attachment?.url || "").trim(),
+          )
+        : null;
+      const resolvedNotificationBody =
+        message.text ||
+        (firstAttachment?.presentation === "video_note"
+          ? "Видеосообщение"
+          : firstAttachment?.presentation === "voice_note"
+            ? "Голосовое"
+            : firstAttachment?.type === "video"
+              ? "Видео"
+              : firstAttachment?.type === "audio"
+                ? "Голосовое"
+                : firstAttachment?.type === "file"
+                  ? "Файл"
+                  : Array.isArray(message.mediaUrls) &&
+                      message.mediaUrls.length > 0
+                    ? "Фото"
+                    : "Новое сообщение");
+      const resolvedNotificationTitle =
+        chat.type === "group" || chat.type === "branch"
+          ? chat.title || message.senderName || "Групповой чат"
+          : message.senderName || "Новое сообщение";
+
       for (const recipientId of recipientIds) {
-        const firstAttachment = Array.isArray(mappedMessage.attachments)
-          ? mappedMessage.attachments.find((attachment) =>
-              String(attachment?.url || "").trim(),
-            )
-          : null;
+        // Если получатель прямо сейчас открыт в этом же чате на
+        // любом своём устройстве (ChatScreen объявил
+        // `chat.active.set` через WS), пуш ему не нужен — он уже
+        // видел сообщение через WS-доставку выше. Закрывает жалобу
+        // «нахуя они вообще шлются когда я в чате уже».
+        if (realtimeHub?.isUserActiveInChat?.(recipientId, message.chatId)) {
+          continue;
+        }
         await createAndDispatchNotification({
           userId: recipientId,
           type: "chat_message",
-          title:
-            chat.type === "group" || chat.type === "branch"
-              ? chat.title || message.senderName || "Групповой чат"
-              : message.senderName || "Новое сообщение",
-          body:
-            message.text ||
-            (firstAttachment?.presentation === "video_note"
-              ? "Видеосообщение"
-              : firstAttachment?.presentation === "voice_note"
-                ? "Голосовое"
-                : firstAttachment?.type === "video"
-                  ? "Видео"
-                  : firstAttachment?.type === "audio"
-                    ? "Голосовое"
-                    : firstAttachment?.type === "file"
-                      ? "Файл"
-                      : Array.isArray(message.mediaUrls) &&
-                          message.mediaUrls.length > 0
-                        ? "Фото"
-                        : "Новое сообщение"),
+          title: resolvedNotificationTitle,
+          body: resolvedNotificationBody,
           data: {
             chatId: message.chatId,
             chatType: chat.type || "direct",
@@ -854,15 +881,6 @@ function registerChatRoutes(
           },
         });
       }
-
-      const resolved = await publishChatUpdated(message.chatId, chat);
-      await publishChatPayload(message.chatId, {
-        type: "chat.message.created",
-        chatId: message.chatId,
-        chat: resolved?.mappedChat || mapChatRecord(chat),
-        message: mappedMessage,
-      });
-      await publishUnreadChanged(resolved?.chat || chat);
     }
 
     res.status(isDeduplicated ? 200 : 201).json({message: mappedMessage});

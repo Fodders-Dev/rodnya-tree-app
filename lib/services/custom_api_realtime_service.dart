@@ -221,6 +221,38 @@ class CustomApiRealtimeService {
     );
   }
 
+  /// Сообщает серверу что юзер прямо сейчас открыт в чате.
+  /// Сервер использует это в push-gateway: для исходящих сообщений
+  /// в этот чат push не дёргается, потому что юзер и так увидит
+  /// realtime-доставку в открытом окне. Закрывает жалобу
+  /// «нахуя пуши когда я уже в чате».
+  Future<void> setActiveChat(String chatId) async {
+    if (_disposed || chatId.trim().isEmpty) return;
+    await connect();
+    final channel = _channel;
+    if (channel == null) return;
+    channel.sink.add(
+      jsonEncode({
+        'action': 'chat.active.set',
+        'chatId': chatId,
+      }),
+    );
+  }
+
+  /// Снимает active-флажок. `chatId` опционально — пустой clears
+  /// всё (полезно при logout / переходе в фон).
+  Future<void> clearActiveChat({String? chatId}) async {
+    if (_disposed) return;
+    final channel = _channel;
+    if (channel == null) return;
+    channel.sink.add(
+      jsonEncode({
+        'action': 'chat.active.clear',
+        if (chatId != null) 'chatId': chatId,
+      }),
+    );
+  }
+
   Uri _buildUri(String accessToken) {
     final normalizedBase = _runtimeConfig.webSocketBaseUrl.replaceAll(
       RegExp(r'/$'),

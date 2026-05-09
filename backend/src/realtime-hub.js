@@ -6,7 +6,24 @@ class RealtimeHub {
     this.store = store;
     this.logger = logger;
     this.userSockets = new Map();
+    // Map<userId, Set<activeChatId>>. Юзер может одновременно быть
+    // открыт в одном чате на телефоне и другом на ПК — Set покрывает
+    // оба. Заполняется по `chat.active.set` от клиента (см.
+    // ChatScreen.initState/dispose), очищается на disconnect.
+    this.userActiveChats = new Map();
     this.wss = null;
+  }
+
+  /// `true` если у юзера хотя бы одна WS-сессия объявила этот chatId
+  /// активным. Используется push-gateway чтобы не слать пуш для
+  /// сообщения, которое получатель прямо сейчас читает в открытом
+  /// окне чата — иначе на телефоне раздаётся buzz из шторки в тот
+  /// момент когда сообщение и так уже видно на экране.
+  isUserActiveInChat(userId, chatId) {
+    if (!userId || !chatId) return false;
+    const chats = this.userActiveChats.get(userId);
+    if (!chats) return false;
+    return chats.has(String(chatId));
   }
 
   _scheduleSessionTouch(token, {userId = null} = {}) {
@@ -324,6 +341,10 @@ class RealtimeHub {
     const wasOnline = this.isUserOnline(userId);
     this._unregisterSocket(userId, socket);
     if (wasOnline && !this.isUserOnline(userId)) {
+      // Последний сокет ушёл — стираем active-chats тоже, иначе
+      // backgrounded-сессия с памятью «я в чате X» останется
+      // висеть и неправильно гасить пуши после reconnect.
+      this.userActiveChats.delete(userId);
       await this._broadcastPresenceUpdate(userId, false);
     }
   }
@@ -385,6 +406,41 @@ class RealtimeHub {
 
     if (payload.action === "chat.typing.set") {
       await this._handleTypingEvent(userId, payload);
+      return;
+    }
+
+    if (payload.action === "chat.active.set") {
+      this._handleActiveChatSet(userId, payload);
+      return;
+    }
+    if (payload.action === "chat.active.clear") {
+      this._handleActiveChatClear(userId, payload);
+      return;
+    }
+  }
+
+  _handleActiveChatSet(userId, payload) {
+    const chatId = String(payload?.chatId || "").trim();
+    if (!chatId) return;
+    let chats = this.userActiveChats.get(userId);
+    if (!chats) {
+      chats = new Set();
+      this.userActiveChats.set(userId, chats);
+    }
+    chats.add(chatId);
+  }
+
+  _handleActiveChatClear(userId, payload) {
+    const chatId = String(payload?.chatId || "").trim();
+    const chats = this.userActiveChats.get(userId);
+    if (!chats) return;
+    if (chatId) {
+      chats.delete(chatId);
+    } else {
+      chats.clear();
+    }
+    if (chats.size === 0) {
+      this.userActiveChats.delete(userId);
     }
   }
 

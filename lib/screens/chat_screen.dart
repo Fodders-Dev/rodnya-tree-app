@@ -299,6 +299,9 @@ class _ChatScreenState extends State<ChatScreen> {
     final activeChatIdToClear = _chatId;
     if (activeChatIdToClear != null && activeChatIdToClear.isNotEmpty) {
       ActiveChatTracker.instance.clearActive(activeChatIdToClear);
+      unawaited(
+        _realtimeService?.clearActiveChat(chatId: activeChatIdToClear),
+      );
     }
     _draftSaveTimer?.cancel();
     _pinnedMessageHighlightTimer?.cancel();
@@ -895,6 +898,12 @@ class _ChatScreenState extends State<ChatScreen> {
       // dispose() снимет флажок (с защитой от race с другим экраном
       // чата, открытым подряд).
       ActiveChatTracker.instance.setActive(resolvedChatId);
+
+      // Сообщаем серверу через WS чтобы он тоже не слал пуш для
+      // сообщений из этого чата — без этого пуш улетал в VKPNS до
+      // того как WS-doставка успевала, и на телефоне раздавался buzz
+      // даже при открытом окне чата.
+      unawaited(_realtimeService?.setActiveChat(resolvedChatId));
 
       // Очищаем шторку от прошлых нотификаций этого чата — юзер
       // зашёл сам, читать он начнёт прямо сейчас.
