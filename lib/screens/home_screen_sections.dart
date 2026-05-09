@@ -161,16 +161,10 @@ extension _HomeScreenSections on _HomeScreenState {
             padding: const EdgeInsets.fromLTRB(14, 4, 14, 10),
             child: _buildIdentityReviewBanner(),
           ),
-        // Phase 6.3: «Эта неделя в семье» digest above the stories
-        // rail. Self-hides when there's nothing happening this
-        // week, so the home stays clean for quiet branches.
-        if (_branchDigest != null)
-          BranchDigestStrip(
-            digest: _branchDigest!,
-            onTapPerson: (id) =>
-                context.push('/relative/details/$id'),
-            onTapPost: (id) => context.push('/post/$id'),
-          ),
+        // «Эта неделя в семье» digest removed at user's request — the
+        // block ate vertical space without earning it. The
+        // BranchDigestStrip widget + backend wiring stay parked for
+        // a possible later re-introduction in a different shape.
         _buildStoriesSection(),
         const SizedBox(height: 6),
         _buildUpcomingEventsSection(isWideLayout: isWideLayout),

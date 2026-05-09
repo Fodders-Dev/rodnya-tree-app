@@ -258,51 +258,60 @@ class CustomApiProfileService implements ProfileServiceInterface {
 
   @override
   Future<void> updateUserProfile(String userId, UserProfile profile) async {
+    final formData = ProfileFormData(
+      userId: userId,
+      email: profile.email,
+      firstName: profile.firstName,
+      lastName: profile.lastName,
+      middleName: profile.middleName,
+      displayName: profile.displayName,
+      username: profile.username,
+      phoneNumber: profile.phoneNumber,
+      countryCode: profile.countryCode,
+      countryName: profile.country,
+      city: profile.city ?? '',
+      photoUrl: profile.photoURL,
+      coverPhotoUrl: profile.coverPhotoURL,
+      gender: profile.gender ?? Gender.unknown,
+      birthDate: profile.birthDate,
+      birthPlace: profile.birthPlace ?? '',
+      bio: profile.bio,
+      familyStatus: profile.familyStatus,
+      aboutFamily: profile.aboutFamily,
+      education: profile.education,
+      work: profile.work,
+      hometown: profile.hometown,
+      languages: profile.languages,
+      values: profile.values,
+      religion: profile.religion,
+      interests: profile.interests,
+      profileContributionPolicy: profile.profileContributionPolicy,
+      primaryTrustedChannel: null,
+      profileVisibilityScopes:
+          profile.profileVisibilityScopes ?? _defaultProfileVisibilityScopes,
+      profileVisibilityTreeIds:
+          profile.profileVisibilityTreeIds ?? _emptyProfileVisibilityTargets,
+      profileVisibilityBranchRootIds:
+          profile.profileVisibilityBranchRootIds ??
+              _emptyProfileVisibilityTargets,
+      profileVisibilityUserIds:
+          profile.profileVisibilityUserIds ?? _emptyProfileVisibilityTargets,
+    );
     await _requestJson(
       method: 'PATCH',
       path: '/v1/users/$userId/profile',
-      body: _profilePayload(
-        ProfileFormData(
-          userId: userId,
-          email: profile.email,
-          firstName: profile.firstName,
-          lastName: profile.lastName,
-          middleName: profile.middleName,
-          displayName: profile.displayName,
-          username: profile.username,
-          phoneNumber: profile.phoneNumber,
-          countryCode: profile.countryCode,
-          countryName: profile.country,
-          city: profile.city ?? '',
-          photoUrl: profile.photoURL,
-          coverPhotoUrl: profile.coverPhotoURL,
-          gender: profile.gender ?? Gender.unknown,
-          birthDate: profile.birthDate,
-          birthPlace: profile.birthPlace ?? '',
-          bio: profile.bio,
-          familyStatus: profile.familyStatus,
-          aboutFamily: profile.aboutFamily,
-          education: profile.education,
-          work: profile.work,
-          hometown: profile.hometown,
-          languages: profile.languages,
-          values: profile.values,
-          religion: profile.religion,
-          interests: profile.interests,
-          profileContributionPolicy: profile.profileContributionPolicy,
-          primaryTrustedChannel: null,
-          profileVisibilityScopes: profile.profileVisibilityScopes ??
-              _defaultProfileVisibilityScopes,
-          profileVisibilityTreeIds: profile.profileVisibilityTreeIds ??
-              _emptyProfileVisibilityTargets,
-          profileVisibilityBranchRootIds:
-              profile.profileVisibilityBranchRootIds ??
-                  _emptyProfileVisibilityTargets,
-          profileVisibilityUserIds: profile.profileVisibilityUserIds ??
-              _emptyProfileVisibilityTargets,
-        ),
-      ),
+      body: _profilePayload(formData),
     );
+    // Cache invalidation: getCurrentUserProfile reads from
+    // _profileStorageKey first and only falls through to the network
+    // when the cache is empty. Without rewriting the cache here every
+    // call to _loadUserData after a save would resurrect the
+    // pre-edit values until the bootstrap cache happened to expire.
+    // User-reported: «когда профиль я дозаполняю, то изменения не
+    // сохраняются». Refresh the cache with the just-saved form.
+    if (userId == _authService.currentUserId) {
+      await _cacheProfileForm(formData);
+    }
   }
 
   @override

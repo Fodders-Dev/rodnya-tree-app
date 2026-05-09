@@ -684,7 +684,7 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
       return Scaffold(
         backgroundColor: Colors.transparent,
         appBar: PreferredSize(
-          preferredSize: const Size.fromHeight(76),
+          preferredSize: Size.fromHeight(AppTheme.topbarHeight(context)),
           child: _buildTreeTopbar(
             theme: theme,
             tokens: tokens,
@@ -735,7 +735,6 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
     // even more here than on lighter screens.
     final useBlur = defaultTargetPlatform != TargetPlatform.android;
     final body = Container(
-      height: 76,
       decoration: BoxDecoration(
         color: tokens.surface.withValues(
           alpha: theme.brightness == Brightness.dark
@@ -749,29 +748,19 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
           ),
         ),
       ),
-      padding: const EdgeInsets.fromLTRB(8, 8, 12, 14),
       child: SafeArea(
-            bottom: false,
+        bottom: false,
+        child: SizedBox(
+          height: AppTheme.topbarContentHeight,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(8, 8, 12, 8),
             child: Row(
               children: [
                 IconButton(
                   icon: Icon(Icons.arrow_back_rounded, color: tokens.ink),
                   tooltip: 'К списку деревьев',
-                  // `?selector=1` opts out of the `/tree` redirect
-                  // that would otherwise send a user with a
-                  // selected tree right back to the view they're
-                  // trying to leave. This is the canonical URL for
-                  // the selector screen; the legacy `/trees`
-                  // overlay was deleted to fix a UX bug where the
-                  // back-arrow led to a different visual surface
-                  // than the BranchSwitcherChip's "manage branches".
                   onPressed: () => context.go('/tree?selector=1'),
                 ),
-                // "Дерево" / "Круг" gets natural width (short word
-                // — never wraps). The tree-name pill takes the rest
-                // of the row via Expanded so long names like "Семья
-                // Кузнецовых" ellipsise gracefully instead of forcing
-                // the title to "Дер..." and the pill to "Семья Ку...".
                 Text(
                   _isFriendsTree ? 'Круг' : 'Дерево',
                   style: AppTheme.serif(
@@ -818,11 +807,6 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
                   ),
                 ),
                 if (selectedTreeId != null) ...[
-                  // The "+ Add person" button used to live here too, but it
-                  // duplicated the green circle in the secondary toolbar
-                  // and the "Добавить" tile in the Quick Actions card.
-                  // Keeping just the toolbar copy — that's the primary
-                  // entry point next to the canvas.
                   const SizedBox(width: 8),
                   PopupMenuButton<_TreeToolbarAction>(
                     tooltip: 'Действия дерева',
@@ -848,7 +832,9 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
               ],
             ),
           ),
-        );
+        ),
+      ),
+    );
     if (!useBlur) return body;
     return ClipRect(
       child: BackdropFilter(

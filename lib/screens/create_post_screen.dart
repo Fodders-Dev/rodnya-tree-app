@@ -679,7 +679,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
       data: composeTheme,
       child: Scaffold(
         appBar: PreferredSize(
-          preferredSize: const Size.fromHeight(76),
+          preferredSize: Size.fromHeight(AppTheme.topbarHeight(context)),
           child: _buildComposeTopbar(
             theme: composeTheme,
             tokens: composeTokens,
@@ -1979,7 +1979,6 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     // Same Android perf bypass as other topbars.
     final useBlur = defaultTargetPlatform != TargetPlatform.android;
     final body = Container(
-      height: 76,
       decoration: BoxDecoration(
         color: tokens.surface.withValues(
           alpha: theme.brightness == Brightness.dark
@@ -1993,10 +1992,13 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
           ),
         ),
       ),
-      padding: const EdgeInsets.fromLTRB(8, 8, 12, 14),
       child: SafeArea(
         bottom: false,
-        child: Row(
+        child: SizedBox(
+          height: AppTheme.topbarContentHeight,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(8, 8, 12, 8),
+            child: Row(
           children: [
             IconButton(
               icon: Icon(Icons.arrow_back_rounded, color: tokens.ink),
@@ -2054,6 +2056,8 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
               ),
             ),
           ],
+        ),
+          ),
         ),
       ),
     );

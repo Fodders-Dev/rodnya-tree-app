@@ -546,7 +546,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       backgroundColor: Colors.transparent,
       appBar: PreferredSize(
-        preferredSize: const Size.fromHeight(76),
+        preferredSize: Size.fromHeight(AppTheme.topbarHeight(context)),
         child: _buildHomeTopbar(theme: theme, tokens: tokens),
       ),
       floatingActionButton: hasSelectedTree
@@ -603,7 +603,6 @@ class _HomeScreenState extends State<HomeScreen> {
     // to ~96% so the look is essentially preserved.
     final useBlur = defaultTargetPlatform != TargetPlatform.android;
     final body = Container(
-      height: 76,
       decoration: BoxDecoration(
         color: tokens.surface.withValues(
           alpha: theme.brightness == Brightness.dark
@@ -617,10 +616,13 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
       ),
-      padding: const EdgeInsets.fromLTRB(18, 12, 12, 14),
       child: SafeArea(
         bottom: false,
-        child: Row(
+        child: SizedBox(
+          height: AppTheme.topbarContentHeight,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(18, 8, 12, 8),
+            child: Row(
           children: [
             Text(
               'Родня',
@@ -667,6 +669,8 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
           ],
+        ),
+          ),
         ),
       ),
     );

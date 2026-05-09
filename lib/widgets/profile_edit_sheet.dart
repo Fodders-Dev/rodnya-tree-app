@@ -15,7 +15,10 @@
 // snapshot and an `onSave` callback that gets the next draft. The
 // host owns persistence (UserProfile vs FamilyPerson) and validation.
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+
+import '../utils/photo_url.dart';
 
 import '../models/family_person.dart';
 import '../theme/app_theme.dart';
@@ -738,14 +741,16 @@ class _ProfileEditSheetState extends State<_ProfileEditSheet> {
   }
 
   Widget _buildStepMedia(RodnyaDesignTokens tokens) {
+    final avatarUrl = _draft.photoUrl;
+    final coverUrl = _draft.coverPhotoUrl;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
           padding: const EdgeInsets.only(bottom: 14),
           child: Text(
-            'Первое фото — главное. Подписи к фото можно добавить '
-            'из карточки родственника после публикации.',
+            'Главное фото — это аватар, обложка — фон карточки. '
+            'Тапните по плитке, чтобы заменить.',
             style: AppTheme.sans(
               color: tokens.inkMuted,
               fontSize: 13,
@@ -755,66 +760,62 @@ class _ProfileEditSheetState extends State<_ProfileEditSheet> {
             ),
           ),
         ),
-        Container(
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            color: tokens.bgTintWarm,
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: tokens.surfaceLine),
-          ),
-          child: Column(
-            children: [
-              Icon(
-                Icons.photo_library_outlined,
-                size: 40,
-                color: tokens.inkMuted,
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Управление фотогалереей',
-                style: AppTheme.sans(
-                  color: tokens.ink,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 0,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                'Откроется в полноэкранной галерее карточки. '
-                'Здесь — основное фото и обложка.',
-                textAlign: TextAlign.center,
-                style: AppTheme.sans(
-                  color: tokens.inkMuted,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
-                  letterSpacing: 0,
-                  height: 1.4,
-                ),
-              ),
-            ],
-          ),
+        // Cover preview — bigger, clickable. Replaces the previous
+        // generic "Управление фотогалереей" placeholder.
+        _MediaSlot(
+          tokens: tokens,
+          imageUrl: coverUrl,
+          height: 130,
+          fallbackIcon: Icons.wallpaper_outlined,
+          fallbackLabel: 'Добавьте обложку',
+          isCover: true,
+          onTap: widget.onPickCoverPhoto == null ? null : _pickCover,
         ),
-        const SizedBox(height: 14),
+        const SizedBox(height: 12),
+        // Avatar preview — square, smaller, side-by-side with the
+        // pick button so the user can see the current photo and
+        // replace it without leaving the sheet.
         Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            Expanded(
-              child: PillButton(
-                label: 'Главное фото',
-                icon: Icons.account_circle_outlined,
-                variant: PillButtonVariant.outlined,
-                expanded: true,
-                onPressed: widget.onPickPhoto == null ? null : _pickAvatar,
-              ),
+            _MediaSlot(
+              tokens: tokens,
+              imageUrl: avatarUrl,
+              height: 96,
+              width: 96,
+              fallbackIcon: Icons.account_circle_outlined,
+              fallbackLabel: 'Главное фото',
+              isCover: false,
+              onTap: widget.onPickPhoto == null ? null : _pickAvatar,
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 14),
             Expanded(
-              child: PillButton(
-                label: 'Обложка',
-                icon: Icons.wallpaper_outlined,
-                variant: PillButtonVariant.outlined,
-                expanded: true,
-                onPressed: widget.onPickCoverPhoto == null ? null : _pickCover,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Главное фото',
+                    style: AppTheme.sans(
+                      color: tokens.ink,
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    avatarUrl == null || avatarUrl.trim().isEmpty
+                        ? 'Покажите близким своё лицо — фото видно семье и родным в дереве.'
+                        : 'Тапните по фото, чтобы заменить. Ваше фото видно семье и родным в дереве.',
+                    style: AppTheme.sans(
+                      color: tokens.inkMuted,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                      letterSpacing: 0,
+                      height: 1.4,
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
@@ -1240,6 +1241,123 @@ class _ContributionToggle extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Tap-to-replace media tile used by step 2 («Медиа») of the edit
+/// sheet. Renders the current photo when one exists, otherwise a
+/// dotted-outline placeholder with the design's icon + label. Clicks
+/// route to the host-supplied picker.
+class _MediaSlot extends StatelessWidget {
+  const _MediaSlot({
+    required this.tokens,
+    required this.imageUrl,
+    required this.height,
+    this.width,
+    required this.fallbackIcon,
+    required this.fallbackLabel,
+    required this.isCover,
+    required this.onTap,
+  });
+
+  final RodnyaDesignTokens tokens;
+  final String? imageUrl;
+  final double height;
+  final double? width;
+  final IconData fallbackIcon;
+  final String fallbackLabel;
+  final bool isCover;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasImage = imageUrl != null && imageUrl!.trim().isNotEmpty;
+    final radius = isCover ? 18.0 : 14.0;
+    final url = hasImage ? (normalizePhotoUrl(imageUrl!) ?? imageUrl!) : null;
+    final placeholder = Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(fallbackIcon, color: tokens.inkMuted, size: 28),
+          const SizedBox(height: 6),
+          Text(
+            fallbackLabel,
+            textAlign: TextAlign.center,
+            style: AppTheme.sans(
+              color: tokens.inkMuted,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0,
+            ),
+          ),
+        ],
+      ),
+    );
+    final body = ClipRRect(
+      borderRadius: BorderRadius.circular(radius),
+      child: SizedBox(
+        height: height,
+        width: width,
+        child: hasImage
+            ? Stack(
+                fit: StackFit.expand,
+                children: [
+                  CachedNetworkImage(
+                    imageUrl: url!,
+                    fit: BoxFit.cover,
+                    placeholder: (_, __) => Container(color: tokens.bgTintWarm),
+                    errorWidget: (_, __, ___) => placeholder,
+                  ),
+                  Positioned(
+                    top: 8,
+                    right: 8,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 9, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.45),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: const [
+                          Icon(Icons.photo_camera_outlined,
+                              color: Colors.white, size: 12),
+                          SizedBox(width: 4),
+                          Text(
+                            'заменить',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              )
+            : Container(
+                decoration: BoxDecoration(
+                  color: tokens.bgTintWarm,
+                  borderRadius: BorderRadius.circular(radius),
+                  border: Border.all(
+                    color: tokens.surfaceLine,
+                    style: BorderStyle.solid,
+                    width: 1.2,
+                  ),
+                ),
+                child: placeholder,
+              ),
+      ),
+    );
+
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(radius),
+      child: body,
     );
   }
 }

@@ -685,10 +685,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ? RodnyaDesignTokens.dark
             : RodnyaDesignTokens.light);
 
+    // Topbar = 76 dp content height + the device's actual status bar
+    // height. Was hard-coded at 76 which on Samsung S20 FE / Galaxy
+    // mid-range left ~36 dp for content after the system insets ate
+    // their cut — the title and pill buttons came out squished. We
+    // now ask the device for `padding.top` and let the topbar grow.
+    final statusBarHeight = MediaQuery.of(context).padding.top;
     return Scaffold(
       backgroundColor: Colors.transparent,
       appBar: PreferredSize(
-        preferredSize: const Size.fromHeight(76),
+        preferredSize: Size.fromHeight(76 + statusBarHeight),
         child: _buildProfileTopbar(theme: theme, tokens: tokens),
       ),
       body: _isLoading
@@ -1314,7 +1320,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     // while the per-frame cost drops sharply.
     final useBlur = defaultTargetPlatform != TargetPlatform.android;
     final body = Container(
-      height: 76,
       decoration: BoxDecoration(
         color: tokens.surface.withValues(
           alpha: theme.brightness == Brightness.dark
@@ -1328,10 +1333,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
         ),
       ),
-      padding: const EdgeInsets.fromLTRB(8, 8, 12, 14),
       child: SafeArea(
         bottom: false,
-        child: Row(
+        child: SizedBox(
+          height: 62,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(8, 8, 12, 8),
+            child: Row(
           children: [
             if (Navigator.of(context).canPop())
               IconButton(
@@ -1411,6 +1419,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ),
             ),
           ],
+        ),
+          ),
         ),
       ),
     );
