@@ -27,6 +27,7 @@ import 'backend/interfaces/story_service_interface.dart';
 import 'backend/backend_runtime_config.dart';
 import 'services/app_startup_service.dart';
 import 'services/call_coordinator_service.dart';
+import 'services/invitation_service.dart';
 import 'startup/startup_failure_policy.dart';
 import 'startup/app_warmup_coordinator.dart';
 import 'widgets/call_runtime_host.dart';
@@ -186,6 +187,7 @@ class MyApp extends StatefulWidget {
 class _MyAppState extends State<MyApp> {
   late final AppRouter _appRouter;
   VoidCallback? _routerE2EListener;
+  StreamSubscription<InvitationProcessOutcome>? _invitationOutcomesSub;
 
   @override
   void initState() {
@@ -200,6 +202,10 @@ class _MyAppState extends State<MyApp> {
         GetIt.I<AppWarmupCoordinator>().start(scaffoldMessengerKey),
       );
     });
+
+    // Subscribe to invitation outcomes ASAP so we don't miss the
+    // event that fires right after OAuth-callback resumes the app.
+    _subscribeToInvitationOutcomes();
   }
 
   @override
@@ -211,7 +217,84 @@ class _MyAppState extends State<MyApp> {
     if (GetIt.I.isRegistered<AppWarmupCoordinator>()) {
       unawaited(GetIt.I<AppWarmupCoordinator>().dispose());
     }
+    unawaited(_invitationOutcomesSub?.cancel());
+    _invitationOutcomesSub = null;
     super.dispose();
+  }
+
+  /// Listen to invitation-link processing results so the user gets
+  /// visible feedback when they tap an invite URL. Without this the
+  /// brother (Степа in the bug report) saw nothing happen — the API
+  /// call was either silently swallowed or successfully ran but the
+  /// branch picker never refreshed to show the newly-joined tree.
+  void _subscribeToInvitationOutcomes() {
+    if (!GetIt.I.isRegistered<InvitationService>()) {
+      return;
+    }
+    final service = GetIt.I<InvitationService>();
+    _invitationOutcomesSub =
+        service.outcomes.listen(_handleInvitationOutcome);
+  }
+
+  Future<void> _handleInvitationOutcome(
+    InvitationProcessOutcome outcome,
+  ) async {
+    final messengerState = scaffoldMessengerKey.currentState;
+
+    if (outcome.isSuccess) {
+      // Refresh the tree list so the branch switcher chip shows the
+      // newly-joined tree, then auto-select it — the user clicked a
+      // link to JOIN this specific family, so dropping them on it
+      // is the obviously-right behavior.
+      if (GetIt.I.isRegistered<TreeProvider>()) {
+        final treeProvider = GetIt.I<TreeProvider>();
+        try {
+          await treeProvider.refreshAvailableTrees();
+          if (outcome.treeId != null && outcome.treeId!.isNotEmpty) {
+            await treeProvider.selectTree(
+              outcome.treeId,
+              outcome.treeName,
+            );
+          }
+        } catch (error, stackTrace) {
+          debugPrint(
+            'Failed to refresh trees after invitation: $error',
+          );
+          debugPrintStack(stackTrace: stackTrace);
+        }
+      }
+      messengerState?.showSnackBar(
+        SnackBar(
+          content: Text('Вы присоединились к ${outcome.treeName ?? "дереву"}'),
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    } else {
+      // Map common backend errors to user-friendly text. Always
+      // surface SOMETHING — never the silent failure that left
+      // Степа staring at his old tree wondering what happened.
+      final code = outcome.errorCode ?? 'unknown';
+      String message;
+      if (code == 'http_409') {
+        message = 'Этот профиль в дереве уже привязан к другому пользователю.';
+      } else if (code == 'http_404') {
+        message = 'Приглашение устарело. Попросите отправить новую ссылку.';
+      } else if (code == 'http_400') {
+        message = 'Ссылка-приглашение повреждена.';
+      } else {
+        message = outcome.errorMessage ??
+            'Не удалось обработать приглашение. Попробуйте ещё раз.';
+      }
+      messengerState?.showSnackBar(
+        SnackBar(
+          content: Text(message),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Theme.of(context).colorScheme.errorContainer,
+          duration: const Duration(seconds: 5),
+        ),
+      );
+    }
   }
 
   void _configureE2EBridge() {

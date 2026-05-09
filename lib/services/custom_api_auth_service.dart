@@ -1110,22 +1110,89 @@ class CustomApiAuthService implements AuthServiceInterface {
 
   @override
   Future<void> processPendingInvitation() async {
+    // Может ещё ничего не загрузилось с диска (cold-start после
+    // OAuth-возврата). Подождём первого чтения, чтобы не
+    // пропустить приглашение, которое только что вернулось из
+    // персистного стора.
+    await _invitationService.ready;
+
     if (_session == null || !_invitationService.hasPendingInvitation) {
       return;
     }
 
+    final treeId = _invitationService.pendingTreeId;
+    final personId = _invitationService.pendingPersonId;
+
     try {
-      await _requestJson(
+      final response = await _requestJson(
         method: 'POST',
         path: '/v1/invitations/pending/process',
         authenticated: true,
         body: {
-          'treeId': _invitationService.pendingTreeId,
-          'personId': _invitationService.pendingPersonId,
+          'treeId': treeId,
+          'personId': personId,
         },
       );
+
+      String? treeName;
+      final tree = response['tree'];
+      if (tree is Map) {
+        final raw = tree['name']?.toString().trim();
+        if (raw != null && raw.isNotEmpty) {
+          treeName = raw;
+        }
+      }
+
       _invitationService.clearPendingInvitation();
-    } catch (_) {}
+      _invitationService.emitOutcome(
+        InvitationProcessOutcome.success(
+          treeId: treeId ?? '',
+          treeName: treeName ?? 'Семейная ветка',
+          personId: personId ?? '',
+        ),
+      );
+    } on CustomApiException catch (error) {
+      // Ошибки больше не глушим в `catch (_) {}`. Если backend
+      // вернул 404 («Профиль приглашения не найден») или 409 («Этот
+      // профиль уже связан с другим пользователем»), юзеру важно
+      // это видеть — иначе он, как Степа в чате, тапает по ссылке
+      // и не понимает, почему ничего не происходит.
+      debugPrint(
+        '[CustomApiAuthService] processPendingInvitation API error: '
+        'status=${error.statusCode}, message=${error.message}',
+      );
+      // Сохраняем pending для возможной повторной попытки на 5xx
+      // (transient). На 4xx чистим, чтобы не повторять заведомо
+      // невозможную операцию на каждом /-redirect'е.
+      final isClientError = (error.statusCode ?? 0) >= 400 &&
+          (error.statusCode ?? 0) < 500;
+      if (isClientError) {
+        _invitationService.clearPendingInvitation();
+      }
+      _invitationService.emitOutcome(
+        InvitationProcessOutcome.failure(
+          errorCode: error.statusCode != null
+              ? 'http_${error.statusCode}'
+              : 'http_unknown',
+          errorMessage: error.message,
+          treeId: treeId,
+          personId: personId,
+        ),
+      );
+    } catch (error, stackTrace) {
+      debugPrint(
+        '[CustomApiAuthService] processPendingInvitation unexpected: $error',
+      );
+      debugPrintStack(stackTrace: stackTrace);
+      _invitationService.emitOutcome(
+        InvitationProcessOutcome.failure(
+          errorCode: 'unknown',
+          errorMessage: 'Не удалось обработать приглашение. Попробуйте ещё раз.',
+          treeId: treeId,
+          personId: personId,
+        ),
+      );
+    }
   }
 
   @override
