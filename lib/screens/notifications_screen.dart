@@ -341,6 +341,17 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Активность'),
+        // User-reported: «когда заходишь через уведомление, кнопки
+        // вернуться нет». Push-нотификация навигирует через
+        // `router.go('/notifications')` — это REPLACES весь стек,
+        // поэтому `automaticallyImplyLeading` не рисует стрелку
+        // (Navigator.canPop = false) и юзер залипает на экране.
+        // Явный leading с fallback на главную закрывает оба пути:
+        // если стек есть (пришли через context.push из home) —
+        // обычный pop; если стека нет (пришли через тап
+        // уведомления) — улетаем на главный shell-route, где
+        // снова видна нижняя навигация.
+        leading: _BackToHomeLeading(),
         actions: [
           if (_notifications.isNotEmpty)
             IconButton(
@@ -412,7 +423,11 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         description:
             'Сюда придут приглашения в $graphLabel, новые сообщения и $eventLabel.',
         actionLabel: 'На главную',
-        onPressed: () => Navigator.of(context).maybePop(),
+        // Was Navigator.maybePop — silently a no-op when the
+        // user landed here via push notification (empty stack).
+        // context.go('/') always lands on the feed shell route
+        // regardless of how we got here.
+        onPressed: () => context.go('/'),
       );
     }
 
@@ -1029,6 +1044,33 @@ class _NotificationsOverviewCard extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// AppBar leading that prefers Navigator.pop when there's a stack
+/// (regular in-app push), and falls back to `context.go('/')` when
+/// there isn't (push-notification deep-link replaced the whole
+/// stack). Replaces the default `automaticallyImplyLeading`, which
+/// silently disappears when the stack is empty — leaving the user
+/// stranded on the screen with no way back to the feed.
+class _BackToHomeLeading extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      tooltip: 'Назад',
+      icon: const Icon(Icons.arrow_back_rounded),
+      onPressed: () {
+        final navigator = Navigator.of(context);
+        if (navigator.canPop()) {
+          navigator.pop();
+          return;
+        }
+        // No stack to pop — we got here via a push-notification
+        // deep-link. Go back to the home shell route so the user
+        // sees the bottom nav again.
+        context.go('/');
+      },
     );
   }
 }
