@@ -155,15 +155,29 @@ class CustomApiNotificationService implements NotificationServiceInterface {
   final StreamController<int> _unreadNotificationsCountController =
       StreamController<int>.broadcast();
 
-  static const String _channelIdGeneral = 'rodnya_custom_general';
-  static const String _channelNameGeneral = 'Родня уведомления';
-  static const String _channelDescGeneral =
-      'Локальные уведомления приложения Родня';
+  // Channel IDs mirror RodnyaNotificationChannels.kt 1:1 — same
+  // entries in Android Settings whether the notification was rendered
+  // by VKPNS in the background or replayed locally from Dart, so the
+  // user has ONE place to mute «Активность» without losing chats or
+  // calls. The native side registers them on cold-start; the Dart
+  // calls below are belt-and-suspenders for the rare case where a
+  // local notification fires before MainActivity has run.
+  static const String _channelIdCalls = 'calls';
+  static const String _channelNameCalls = 'Звонки';
+  static const String _channelDescCalls = 'Входящие аудио и видеозвонки';
 
-  static const String _channelIdEvents = 'rodnya_custom_events';
-  static const String _channelNameEvents = 'Родня события';
-  static const String _channelDescEvents =
-      'Напоминания о событиях семьи и локальные уведомления чатов';
+  static const String _channelIdChats = 'chats';
+  static const String _channelNameChats = 'Сообщения';
+  static const String _channelDescChats = 'Новые сообщения от родных и друзей';
+
+  static const String _channelIdSocial = 'social';
+  static const String _channelNameSocial = 'Активность';
+  static const String _channelDescSocial =
+      'Реакции, ответы, дни рождения и обновления дерева';
+
+  static const String _channelIdSystem = 'system';
+  static const String _channelNameSystem = 'Системные';
+  static const String _channelDescSystem = 'Объявления и тихие напоминания';
 
   @override
   Future<void> initialize() async {
@@ -204,20 +218,40 @@ class CustomApiNotificationService implements NotificationServiceInterface {
 
     final androidPlugin = _plugin.resolvePlatformSpecificImplementation<
         AndroidFlutterLocalNotificationsPlugin>();
+    // createNotificationChannel is idempotent — if MainActivity has
+    // already registered them via RodnyaNotificationChannels these
+    // calls are no-ops. The order goes urgent → quiet so the
+    // Settings screen shows them in the right hierarchy.
     await androidPlugin?.createNotificationChannel(
       const AndroidNotificationChannel(
-        _channelIdGeneral,
-        _channelNameGeneral,
-        description: _channelDescGeneral,
+        _channelIdCalls,
+        _channelNameCalls,
+        description: _channelDescCalls,
+        importance: Importance.high,
+      ),
+    );
+    await androidPlugin?.createNotificationChannel(
+      const AndroidNotificationChannel(
+        _channelIdChats,
+        _channelNameChats,
+        description: _channelDescChats,
+        importance: Importance.high,
+      ),
+    );
+    await androidPlugin?.createNotificationChannel(
+      const AndroidNotificationChannel(
+        _channelIdSocial,
+        _channelNameSocial,
+        description: _channelDescSocial,
         importance: Importance.defaultImportance,
       ),
     );
     await androidPlugin?.createNotificationChannel(
       const AndroidNotificationChannel(
-        _channelIdEvents,
-        _channelNameEvents,
-        description: _channelDescEvents,
-        importance: Importance.high,
+        _channelIdSystem,
+        _channelNameSystem,
+        description: _channelDescSystem,
+        importance: Importance.low,
       ),
     );
     await _ensureAndroidNotificationSurfacePermissions(
@@ -328,6 +362,22 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     }
   }
 
+  /// Anything older than this is shown only in the in-app feed —
+  /// never replayed as a system notification. Catches the user's
+  /// «их заёбывает уведомлениями по хуйне» complaint where a fresh
+  /// install pulled 20 unread items and the OS pinged 20 times in
+  /// a row. The number is generous enough that a missed call from
+  /// last night still buzzes when the user opens the app in the
+  /// morning, but tight enough that week-old «X лайкнул вашу
+  /// историю» dies quietly.
+  static const Duration _maxReplayAge = Duration(hours: 24);
+
+  /// Hard ceiling on how many local notifications we replay per
+  /// foreground sync, regardless of age. Even within the 24h
+  /// window, dumping 20 system notifications at once is jarring —
+  /// Telegram coalesces silently past ~3-5 from the same source.
+  static const int _maxReplayBatch = 5;
+
   Future<void> syncPendingNotifications() async {
     final authService = _authService;
     final runtimeConfig = _runtimeConfig;
@@ -358,6 +408,10 @@ class CustomApiNotificationService implements NotificationServiceInterface {
       }
       _updateUnreadNotificationsCount(rawNotifications.length);
 
+      final now = DateTime.now();
+      final cutoff = now.subtract(_maxReplayAge);
+      final isFirstSync = _deliveredNotificationIds.isEmpty;
+
       final notifications = rawNotifications
           .whereType<Map<String, dynamic>>()
           .where((notification) {
@@ -365,16 +419,51 @@ class CustomApiNotificationService implements NotificationServiceInterface {
         return id.isNotEmpty && !_deliveredNotificationIds.contains(id);
       }).toList()
         ..sort((left, right) {
-          return (left['createdAt']?.toString() ?? '')
-              .compareTo(right['createdAt']?.toString() ?? '');
+          // Newest first — so when we cap at _maxReplayBatch we
+          // surface the most recent items, not the oldest.
+          return (right['createdAt']?.toString() ?? '')
+              .compareTo(left['createdAt']?.toString() ?? '');
         });
 
+      var shown = 0;
       for (final notification in notifications) {
-        await _showBackendNotification(notification);
         final id = notification['id']!.toString();
+
+        // Always mark as «delivered» so the next sync doesn't
+        // reconsider it — even if we decide to suppress the system
+        // notification this round, replaying it on the next poll
+        // would just defer the flood by 20 seconds.
         _deliveredNotificationIds.add(id);
-        await _persistDeliveredNotificationIds();
+
+        // Calls bypass age + batch limits entirely. A missed call
+        // from a few minutes ago still matters; if anything we
+        // want it surfaced immediately (the native side already
+        // builds a full-screen intent — this branch handles the
+        // foreground/just-launched case).
+        final type = notification['type']?.toString() ?? '';
+        final isCall = type == 'call_invite' || type == 'call';
+
+        if (!isCall) {
+          // Skip stale items. They stay visible in /v1/notifications
+          // for the in-app feed, just don't ping the OS.
+          final createdAt = _parseIso(notification['createdAt']);
+          if (createdAt != null && createdAt.isBefore(cutoff)) {
+            continue;
+          }
+          // First-time sync after install / re-login: avoid
+          // dumping the entire backlog on the user's lockscreen.
+          // After the first batch lands, subsequent syncs only
+          // see new items anyway, so this only bites on day one.
+          if (isFirstSync && shown >= _maxReplayBatch) {
+            continue;
+          }
+        }
+
+        await _showBackendNotification(notification);
+        shown += 1;
       }
+
+      await _persistDeliveredNotificationIds();
     } on CustomApiException catch (error) {
       if (await _handleUnauthorizedError(error)) {
         _updateUnreadNotificationsCount(0);
@@ -382,6 +471,13 @@ class CustomApiNotificationService implements NotificationServiceInterface {
       }
       rethrow;
     }
+  }
+
+  DateTime? _parseIso(dynamic raw) {
+    if (raw == null) return null;
+    final text = raw.toString().trim();
+    if (text.isEmpty) return null;
+    return DateTime.tryParse(text)?.toLocal();
   }
 
   bool get notificationsEnabled => _notificationsEnabled;
@@ -585,13 +681,16 @@ class CustomApiNotificationService implements NotificationServiceInterface {
       id: person.id.hashCode,
       title: 'День рождения',
       body: 'Сегодня день рождения у ${person.name}',
+      // Birthdays are social activity, not «right now answer me»
+      // — route through the social channel so the user can mute
+      // them independently from chats and calls.
       notificationDetails: const NotificationDetails(
         android: AndroidNotificationDetails(
-          _channelIdEvents,
-          _channelNameEvents,
-          channelDescription: _channelDescEvents,
-          importance: Importance.high,
-          priority: Priority.high,
+          _channelIdSocial,
+          _channelNameSocial,
+          channelDescription: _channelDescSocial,
+          importance: Importance.defaultImportance,
+          priority: Priority.defaultPriority,
           icon: _androidNotificationIcon,
         ),
         iOS: DarwinNotificationDetails(
@@ -659,20 +758,32 @@ class CustomApiNotificationService implements NotificationServiceInterface {
       title: senderName,
       body: shortText,
       notificationDetails: NotificationDetails(
+        // Chat messages live on the dedicated chats channel — high
+        // importance so they show as a heads-up, but the user can
+        // still mute it without losing call alerts.
         android: AndroidNotificationDetails(
-          _channelIdGeneral,
-          _channelNameGeneral,
-          channelDescription: _channelDescGeneral,
+          _channelIdChats,
+          _channelNameChats,
+          channelDescription: _channelDescChats,
           importance:
               playSound ? Importance.high : Importance.defaultImportance,
           priority: playSound ? Priority.high : Priority.defaultPriority,
           playSound: playSound,
+          // groupKey lets Android collapse multiple notifications
+          // from the SAME chat under a single header («2 новых
+          // сообщения») instead of stacking them as separate cards.
+          // The conversation tag also rate-limits the per-chat
+          // notification id to one — newer messages update the
+          // existing entry rather than push a new one.
+          groupKey: 'rodnya.chat.$chatId',
+          tag: 'rodnya.chat.$chatId',
           icon: _androidNotificationIcon,
         ),
         iOS: DarwinNotificationDetails(
           presentAlert: true,
           presentBadge: true,
           presentSound: playSound,
+          threadIdentifier: 'rodnya.chat.$chatId',
         ),
       ),
       payload: payload,
@@ -723,11 +834,15 @@ class CustomApiNotificationService implements NotificationServiceInterface {
       id: callId.hashCode,
       title: resolvedCallerName,
       body: body,
+      // Calls go on the dedicated «calls» channel — bypasses DND,
+      // uses the system ringtone, and the channel-level config in
+      // RodnyaNotificationChannels.kt ensures lockscreen visibility
+      // and full-screen-intent permissions are respected.
       notificationDetails: const NotificationDetails(
         android: AndroidNotificationDetails(
-          _channelIdEvents,
-          _channelNameEvents,
-          channelDescription: _channelDescEvents,
+          _channelIdCalls,
+          _channelNameCalls,
+          channelDescription: _channelDescCalls,
           importance: Importance.max,
           priority: Priority.max,
           category: AndroidNotificationCategory.call,
@@ -738,6 +853,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
           presentAlert: true,
           presentBadge: true,
           presentSound: true,
+          interruptionLevel: InterruptionLevel.timeSensitive,
         ),
       ),
       payload: payload,
@@ -841,7 +957,68 @@ class CustomApiNotificationService implements NotificationServiceInterface {
       body: body,
       notificationId: id.hashCode,
       payload: payload,
+      type: type,
     );
+  }
+
+  /// Pick the matching native channel ID for a notification type.
+  /// Mirrors `PushGateway._androidChannelId` on the backend so a
+  /// foreground replay lands on the same channel as the original
+  /// VKPNS push would have.
+  String _channelForType(String type) {
+    switch (type) {
+      case 'call_invite':
+      case 'call':
+        return _channelIdCalls;
+      case 'chat_message':
+      case 'chat':
+        return _channelIdChats;
+      case 'post_like':
+      case 'post_comment':
+      case 'comment_reply':
+      case 'story_view':
+      case 'story_reaction':
+      case 'relative_added':
+      case 'tree_invitation':
+      case 'birthday':
+        return _channelIdSocial;
+      default:
+        return _channelIdSystem;
+    }
+  }
+
+  _ChannelMeta _channelMetaFor(String channelId) {
+    switch (channelId) {
+      case _channelIdCalls:
+        return const _ChannelMeta(
+          name: _channelNameCalls,
+          description: _channelDescCalls,
+          importance: Importance.max,
+          priority: Priority.max,
+        );
+      case _channelIdChats:
+        return const _ChannelMeta(
+          name: _channelNameChats,
+          description: _channelDescChats,
+          importance: Importance.high,
+          priority: Priority.high,
+        );
+      case _channelIdSocial:
+        return const _ChannelMeta(
+          name: _channelNameSocial,
+          description: _channelDescSocial,
+          importance: Importance.defaultImportance,
+          priority: Priority.defaultPriority,
+        );
+      case _channelIdSystem:
+      default:
+        return const _ChannelMeta(
+          name: _channelNameSystem,
+          description: _channelDescSystem,
+          importance: Importance.low,
+          priority: Priority.low,
+        );
+    }
   }
 
   Future<void> _registerRemotePushDevice() async {
@@ -1130,6 +1307,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     required String body,
     required int notificationId,
     String? payload,
+    String type = 'generic',
   }) async {
     if (!_notificationsEnabled) {
       return;
@@ -1155,23 +1333,35 @@ class CustomApiNotificationService implements NotificationServiceInterface {
       return;
     }
 
+    final channelId = _channelForType(type);
+    final meta = _channelMetaFor(channelId);
+    final isQuiet = channelId == _channelIdSystem;
+
     await _plugin.show(
       id: notificationId,
       title: title,
       body: body,
-      notificationDetails: const NotificationDetails(
+      notificationDetails: NotificationDetails(
         android: AndroidNotificationDetails(
-          _channelIdGeneral,
-          _channelNameGeneral,
-          channelDescription: _channelDescGeneral,
-          importance: Importance.high,
-          priority: Priority.high,
+          channelId,
+          meta.name,
+          channelDescription: meta.description,
+          importance: meta.importance,
+          priority: meta.priority,
+          playSound: !isQuiet,
+          enableVibration: !isQuiet,
           icon: _androidNotificationIcon,
+          // System / social cards collapse under one app header so a
+          // burst of «X лайкнул» notifications doesn't bury chats.
+          groupKey: 'rodnya.$channelId',
         ),
         iOS: DarwinNotificationDetails(
           presentAlert: true,
           presentBadge: true,
-          presentSound: true,
+          presentSound: !isQuiet,
+          interruptionLevel: isQuiet
+              ? InterruptionLevel.passive
+              : InterruptionLevel.active,
         ),
       ),
       payload: payload,
@@ -1555,4 +1745,23 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     await stopForegroundSync();
     await _unreadNotificationsCountController.close();
   }
+}
+
+/// Bundles per-channel display metadata so `_showGenericNotification`
+/// can pick the right name/description/priority/importance from a
+/// channel id without a giant switch at every call site. Using a
+/// const-friendly class instead of records keeps us compatible with
+/// the project's pre-Dart-3 analyzer config.
+class _ChannelMeta {
+  const _ChannelMeta({
+    required this.name,
+    required this.description,
+    required this.importance,
+    required this.priority,
+  });
+
+  final String name;
+  final String description;
+  final Importance importance;
+  final Priority priority;
 }
