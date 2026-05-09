@@ -1448,9 +1448,9 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     final rootPayload = _tryDecodePayload(payload);
     final type = rootPayload['type']?.toString() ?? '';
     final data = _asStringDynamicMap(rootPayload['data']);
+    final router = GoRouter.of(navigatorContext);
 
     if (type == 'chat' || type == 'chat_message') {
-      final router = GoRouter.of(navigatorContext);
       final chatId =
           rootPayload['chatId']?.toString() ?? data['chatId']?.toString() ?? '';
       final chatType = rootPayload['chatType']?.toString() ??
@@ -1470,7 +1470,8 @@ class CustomApiNotificationService implements NotificationServiceInterface {
       if (chatId.isNotEmpty) {
         final userQuery =
             senderId != null && senderId.isNotEmpty ? '&userId=$senderId' : '';
-        router.go(
+        _navigateOverHome(
+          router,
           '/chats/view/$chatId?type=$chatType&title=$encodedTitle$userQuery',
         );
         return;
@@ -1482,12 +1483,15 @@ class CustomApiNotificationService implements NotificationServiceInterface {
 
       final relativeId = await _resolveRelativeIdForUser(senderId);
       if (relativeId == null || relativeId.isEmpty) {
-        router.go('/user/$senderId');
+        _navigateOverHome(router, '/user/$senderId');
         return;
       }
 
       final encodedName = Uri.encodeComponent(senderName);
-      router.go('/chat/$senderId?relativeId=$relativeId&name=$encodedName');
+      _navigateOverHome(
+        router,
+        '/chat/$senderId?relativeId=$relativeId&name=$encodedName',
+      );
       return;
     }
 
@@ -1513,7 +1517,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
       final personId =
           rootPayload['personId']?.toString() ?? data['personId']?.toString();
       if (personId != null && personId.isNotEmpty) {
-        GoRouter.of(navigatorContext).go('/relative/details/$personId');
+        _navigateOverHome(router, '/relative/details/$personId');
       }
       return;
     }
@@ -1522,18 +1526,18 @@ class CustomApiNotificationService implements NotificationServiceInterface {
       final treeId =
           rootPayload['treeId']?.toString() ?? data['treeId']?.toString();
       if (treeId != null && treeId.isNotEmpty) {
-        GoRouter.of(navigatorContext).go('/relatives/requests/$treeId');
+        _navigateOverHome(router, '/relatives/requests/$treeId');
       }
       return;
     }
 
     if (type == 'tree_invitation') {
-      GoRouter.of(navigatorContext).go('/trees?tab=invitations');
+      _navigateOverHome(router, '/trees?tab=invitations');
       return;
     }
 
     if (type == 'merge_proposal' || type == 'identity_claim') {
-      GoRouter.of(navigatorContext).go('/identity/review');
+      _navigateOverHome(router, '/identity/review');
       return;
     }
 
@@ -1541,7 +1545,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
       final treeId =
           rootPayload['treeId']?.toString() ?? data['treeId']?.toString();
       if (treeId != null && treeId.isNotEmpty) {
-        GoRouter.of(navigatorContext).go('/tree/view/$treeId');
+        _navigateOverHome(router, '/tree/view/$treeId');
       }
       return;
     }
@@ -1559,15 +1563,60 @@ class CustomApiNotificationService implements NotificationServiceInterface {
         type == 'post_reaction' ||
         type == 'comment_reaction' ||
         type == 'comment_reply') {
-      GoRouter.of(navigatorContext).go('/');
+      router.go('/');
       return;
     }
 
     final treeId =
         rootPayload['treeId']?.toString() ?? data['treeId']?.toString();
     if (treeId != null && treeId.isNotEmpty) {
-      GoRouter.of(navigatorContext).go('/tree/view/$treeId');
+      _navigateOverHome(router, '/tree/view/$treeId');
     }
+  }
+
+  /// Navigate to a deep-link target while preserving a sane
+  /// back-stack: home → target. Pop/swipe-back from the target
+  /// returns the user to the feed instead of stranding them.
+  ///
+  /// User-reported: «нажимаю на уведомление о сообщении, перехожу
+  /// в чат и из этого чата я никуда не могу выйти». Корень: payload
+  /// navigation использовал `router.go(...)`, а GoRouter.go REPLACES
+  /// весь стек — на target экране Navigator.canPop() = false, кнопка
+  /// «назад» исчезает / не работает.
+  ///
+  /// `pushReplacement('/')` сначала ставит home как корень, затем
+  /// `push(location)` кладёт target поверх. Стэк [home, target] —
+  /// pop возвращает в home shell с нижней навигацией.
+  ///
+  /// Для cold-start (приложение запущено через тап push'а из killed
+  /// state) initial location уже на '/', так что pushReplacement
+  /// безопасен. Для warm-start (юзер был в app и тапнул по
+  /// уведомлению в шторке) поведение тоже консистентно: текущая
+  /// branch заменяется на home, далее target кладётся поверх.
+  /// Идеальный «вернуться к экрану ДО клика» требовал бы хранить
+  /// стек до payload navigation — это уже мульти-уровневый Navigator
+  /// rework, оставляем под отдельную задачу.
+  void _navigateOverHome(GoRouter router, String location) {
+    // Если уже на target — ничего не делаем (повторный тап по тому же
+    // уведомлению).
+    final currentUri =
+        router.routerDelegate.currentConfiguration.uri.toString();
+    if (currentUri == location) {
+      return;
+    }
+    final isAtRoot = currentUri == '/' || currentUri.startsWith('/?');
+    if (isAtRoot) {
+      // Уже на корне — просто push поверх.
+      router.push(location);
+      return;
+    }
+    // Сбрасываем стек до '/' через replace, потом кладём target
+    // поверх в следующем кадре чтобы GoRouter успел обработать
+    // первый переход.
+    router.pushReplacement('/');
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      router.push(location);
+    });
   }
 
   Future<String?> _resolveRelativeIdForUser(String userId) async {
