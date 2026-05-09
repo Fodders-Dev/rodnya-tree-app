@@ -1167,6 +1167,33 @@ class CustomApiFamilyTreeService
   }
 
   @override
+  Future<FamilyPerson> unlinkUserFromPerson({
+    required String treeId,
+    required String personId,
+  }) async {
+    final resolvedPersonId = await _resolvePersonIdForTree(treeId, personId);
+    if (resolvedPersonId == null) {
+      throw const CustomApiException(
+        'Не удалось найти этого человека в дереве',
+      );
+    }
+
+    final response = await _requestJson(
+      method: 'DELETE',
+      path: '/v1/trees/$treeId/persons/$resolvedPersonId/user-link',
+    );
+    final personJson = response['person'];
+    if (personJson is! Map<String, dynamic>) {
+      throw const CustomApiException(
+        'Сервер вернул некорректный ответ при отвязке пользователя',
+      );
+    }
+    final updated = _personFromJson(personJson, fallbackTreeId: treeId);
+    _graphSnapshotCache.remove(treeId);
+    return updated;
+  }
+
+  @override
   Future<FamilyPerson> addRelativeMedia({
     required String treeId,
     required String personId,

@@ -84,6 +84,16 @@ abstract class FamilyTreeServiceInterface {
   });
   Future<void> removeTree(String treeId);
   Future<void> deleteRelative(String treeId, String personId);
+
+  /// Detach a user account from a person record. Owner-only. Use to
+  /// recover when an invite link landed on the wrong slot — the
+  /// person record stays in the tree (with whatever name/gender the
+  /// owner originally set), the user account gets unhooked and is
+  /// free to be linked elsewhere via a fresh invite.
+  Future<FamilyPerson> unlinkUserFromPerson({
+    required String treeId,
+    required String personId,
+  });
   Future<FamilyPerson> addRelativeMedia({
     required String treeId,
     required String personId,

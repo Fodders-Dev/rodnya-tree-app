@@ -271,6 +271,14 @@ class PendingBackendFamilyTreeService implements FamilyTreeServiceInterface {
   }
 
   @override
+  Future<FamilyPerson> unlinkUserFromPerson({
+    required String treeId,
+    required String personId,
+  }) {
+    throw UnsupportedError(_pendingProviderMessage('tree'));
+  }
+
+  @override
   Future<FamilyPerson> addRelativeMedia({
     required String treeId,
     required String personId,

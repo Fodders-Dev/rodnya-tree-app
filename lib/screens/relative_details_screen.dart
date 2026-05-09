@@ -347,6 +347,12 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
               tooltip: 'Редактировать профиль',
               onPressed: _editRelative,
             ),
+          if (_canUnlinkUser())
+            IconButton(
+              icon: const Icon(Icons.link_off_rounded),
+              tooltip: 'Отвязать пользователя',
+              onPressed: _unlinkUser,
+            ),
           if (_canDirectEditProfile())
             IconButton(
               icon: Icon(Icons.delete_outline, color: Colors.redAccent),
@@ -483,6 +489,25 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
         _person!.isAlive &&
         (userId == null || userId.isEmpty) &&
         _person!.id != _currentUserPersonId;
+  }
+
+  /// Кнопка «Отвязать пользователя» доступна когда:
+  /// 1) к слоту привязан какой-то аккаунт (есть userId)
+  /// 2) этот аккаунт — НЕ текущий юзер (себя нельзя)
+  /// 3) caller имеет право редактировать дерево (canEditOrDelete)
+  ///
+  /// Полезно когда invite link случайно прилетел не на тот слот:
+  /// владелец дерева отвязывает чужой userId одной кнопкой, потом
+  /// правит имя/гендер карточки и шлёт новую ссылку.
+  bool _canUnlinkUser() {
+    final userId = _person?.userId;
+    if (userId == null || userId.isEmpty) {
+      return false;
+    }
+    if (userId == _authService.currentUserId) {
+      return false;
+    }
+    return _canEditOrDelete();
   }
 
   String _describeRelativeActionError(
@@ -1464,6 +1489,76 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
           });
         }
       }
+    }
+  }
+
+  Future<void> _unlinkUser() async {
+    if (!_canUnlinkUser() || _currentTreeId == null) return;
+
+    final personLabel = _person!.displayName.trim().isEmpty
+        ? 'этого человека'
+        : _person!.displayName;
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Отвязать пользователя?'),
+        content: Text(
+          'Аккаунт, привязанный к карточке «$personLabel», '
+          'будет отвязан от дерева. Сама карточка останется на месте — '
+          'имя, фото и связи не изменятся, можно будет пригласить '
+          'другого человека или этого же заново.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Отмена'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text(
+              'Отвязать',
+              style: TextStyle(color: Colors.redAccent),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      final updated = await _familyService.unlinkUserFromPerson(
+        treeId: _currentTreeId!,
+        personId: _person!.id,
+      );
+      if (!mounted) return;
+      setState(() {
+        _person = updated;
+        _isLoading = false;
+      });
+      _showRelativeSnackBar(
+        'Аккаунт отвязан от карточки «$personLabel». '
+        'Теперь можно пригласить нужного человека.',
+      );
+    } catch (error, stackTrace) {
+      debugPrint('Ошибка отвязки пользователя: $error');
+      debugPrintStack(stackTrace: stackTrace);
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+      });
+      _showRelativeSnackBar(
+        _describeRelativeActionError(
+          error,
+          fallbackMessage:
+              'Не удалось отвязать пользователя. Попробуйте ещё раз.',
+        ),
+      );
     }
   }
 
