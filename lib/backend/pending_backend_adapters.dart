@@ -964,6 +964,9 @@ class NoopNotificationService implements NotificationServiceInterface {
     required int notificationId,
     bool playSound = true,
   }) async {}
+
+  @override
+  Future<void> dismissChatNotifications(String chatId) async {}
 }
 
 class PendingBackendSafetyService implements SafetyServiceInterface {

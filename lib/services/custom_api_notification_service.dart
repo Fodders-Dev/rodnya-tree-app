@@ -16,6 +16,7 @@ import '../models/app_notification_item.dart';
 import '../models/family_person.dart' as rodnya_models;
 import '../navigation/app_router_shared.dart';
 import '../providers/tree_provider.dart';
+import 'active_chat_tracker.dart';
 import 'android_incoming_call_service.dart';
 import 'call_coordinator_service.dart';
 import 'chat_notification_settings_store.dart';
@@ -753,8 +754,15 @@ class CustomApiNotificationService implements NotificationServiceInterface {
         ? '${messageText.substring(0, 117)}...'
         : messageText;
 
+    // Использую `chatId.hashCode` как notification id, чтобы все
+    // сообщения из одного чата ОБНОВЛЯЛИ одну и ту же запись в
+    // шторке (Android matches notification by id+tag — раньше
+    // notificationId был производным от server id и каждое
+    // сообщение создавало отдельную карточку, забивая шторку).
+    // Telegram-style: «1 уведомление = 1 чат».
+    final stableId = chatId.trim().isEmpty ? notificationId : chatId.hashCode;
     await _plugin.show(
-      id: notificationId,
+      id: stableId,
       title: senderName,
       body: shortText,
       notificationDetails: NotificationDetails(
@@ -769,12 +777,6 @@ class CustomApiNotificationService implements NotificationServiceInterface {
               playSound ? Importance.high : Importance.defaultImportance,
           priority: playSound ? Priority.high : Priority.defaultPriority,
           playSound: playSound,
-          // groupKey lets Android collapse multiple notifications
-          // from the SAME chat under a single header («2 новых
-          // сообщения») instead of stacking them as separate cards.
-          // The conversation tag also rate-limits the per-chat
-          // notification id to one — newer messages update the
-          // existing entry rather than push a new one.
           groupKey: 'rodnya.chat.$chatId',
           tag: 'rodnya.chat.$chatId',
           icon: _androidNotificationIcon,
@@ -870,6 +872,28 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     await _plugin.cancel(id: callId.hashCode);
   }
 
+  /// Снимает system-уведомление для конкретного чата. Зовётся когда
+  /// юзер открывает экран чата — старая нотификация в шторке больше
+  /// не нужна, он сейчас читает сам. Используется одинаковый
+  /// `chatId.hashCode` как id, тот же что и в
+  /// `showChatMessageNotification` ниже — Android matches by id+tag.
+  @override
+  Future<void> dismissChatNotifications(String chatId) async {
+    final normalized = chatId.trim();
+    if (normalized.isEmpty || kIsWeb) {
+      return;
+    }
+    await initialize();
+    try {
+      await _plugin.cancel(
+        id: normalized.hashCode,
+        tag: 'rodnya.chat.$normalized',
+      );
+    } catch (error) {
+      debugPrint('Failed to dismiss chat notifications: $error');
+    }
+  }
+
   Future<void> _handleRealtimeNotification(
     Map<String, dynamic> notification,
   ) async {
@@ -922,6 +946,13 @@ class CustomApiNotificationService implements NotificationServiceInterface {
       final chatData =
           data is Map<String, dynamic> ? data : const <String, dynamic>{};
       final chatId = chatData['chatId']?.toString() ?? '';
+      // User-reported: «нахуя они вообще шлются, когда я в чате уже
+      // с ним?». Если юзер прямо сейчас открыт в этом чате — он
+      // увидит сообщение в timeline'е через realtime, ОС-нотификация
+      // только мигнёт сверху и помешает. Глушим.
+      if (ActiveChatTracker.instance.isActive(chatId)) {
+        return;
+      }
       final deliveryLevel = await _resolveChatNotificationLevel(chatId);
       if (deliveryLevel == ChatNotificationLevel.muted) {
         return;

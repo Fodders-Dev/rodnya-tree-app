@@ -11,4 +11,9 @@ abstract class NotificationServiceInterface {
     required int notificationId,
     bool playSound = true,
   });
+
+  /// Снять все system-уведомления для конкретного чата. Зовётся
+  /// при открытии чата, чтобы шторка не зависала с устаревшими
+  /// нотификациями.
+  Future<void> dismissChatNotifications(String chatId);
 }

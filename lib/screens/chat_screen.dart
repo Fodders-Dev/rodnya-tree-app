@@ -39,6 +39,8 @@ import '../models/chat_message_search_result.dart';
 import '../models/chat_send_progress.dart';
 import '../models/family_tree.dart';
 import '../providers/tree_provider.dart';
+import '../backend/interfaces/notification_service_interface.dart';
+import '../services/active_chat_tracker.dart';
 import '../services/app_status_service.dart';
 import '../services/call_coordinator_service.dart';
 import '../services/chat_auto_delete_store.dart';
@@ -290,6 +292,14 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    // Снимаем активность чата ДО прочих очисток. Pass `_chatId` —
+    // если пользователь свайпнулся в другой чат, и его initState
+    // уже выставил новый id, наш expected mismatch'нется и мы
+    // не затрём его флажок.
+    final activeChatIdToClear = _chatId;
+    if (activeChatIdToClear != null && activeChatIdToClear.isNotEmpty) {
+      ActiveChatTracker.instance.clearActive(activeChatIdToClear);
+    }
     _draftSaveTimer?.cancel();
     _pinnedMessageHighlightTimer?.cancel();
     _serverSearchDebounce?.cancel();
@@ -879,6 +889,21 @@ class _ChatScreenState extends State<ChatScreen> {
         _chatId = resolvedChatId;
         _isBootstrapping = false;
       });
+
+      // Помечаем чат активным — пуши и system-replays для входящих
+      // от этого чата теперь будут глушиться, пока юзер тут.
+      // dispose() снимет флажок (с защитой от race с другим экраном
+      // чата, открытым подряд).
+      ActiveChatTracker.instance.setActive(resolvedChatId);
+
+      // Очищаем шторку от прошлых нотификаций этого чата — юзер
+      // зашёл сам, читать он начнёт прямо сейчас.
+      if (GetIt.I.isRegistered<NotificationServiceInterface>()) {
+        unawaited(
+          GetIt.I<NotificationServiceInterface>()
+              .dismissChatNotifications(resolvedChatId),
+        );
+      }
 
       unawaited(_sendQueue.restoreChat(resolvedChatId));
       _bindTimelineController(resolvedChatId);

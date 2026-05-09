@@ -332,6 +332,38 @@ function registerTreeRoutes(
     },
   );
 
+  // Снять привязку юзера от person record. Используется владельцем
+  // дерева когда инвайт-ссылка случайно прилетела на чужой слот
+  // (например, юзер тапнул не ту карточку при «поделиться»). Имя,
+  // гендер и фото остаются — после additive-фикса в linkPersonToUser
+  // их и так не должны были перезаписать.
+  app.delete(
+    "/v1/trees/:treeId/persons/:personId/user-link",
+    requireAuth,
+    async (req, res) => {
+      const result = await store.unlinkUserFromPerson({
+        treeId: req.params.treeId,
+        personId: req.params.personId,
+        actorId: req.auth.user.id,
+      });
+      if (result === null) {
+        res.status(404).json({message: "Дерево не найдено"});
+        return;
+      }
+      if (result === undefined) {
+        res.status(404).json({message: "Человек не найден в дереве"});
+        return;
+      }
+      if (result === false) {
+        res.status(403).json({
+          message: "Только владелец дерева может отвязывать пользователей",
+        });
+        return;
+      }
+      res.json({person: mapPerson(result)});
+    },
+  );
+
   // Dismiss a 💡 suggestion — the user said "these are different
   // people". We record the per-user dismissal so the same
   // suggestion doesn't keep surfacing.

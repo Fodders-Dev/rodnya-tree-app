@@ -1846,23 +1846,52 @@ function buildLinkedPersonCanonicalPatchFromProfile(profile = {}) {
 
 function applyCanonicalProfileToPerson(person, profile = {}, {
   touchUpdatedAt = true,
+  // `additive: true` — никогда не перезатирать уже существующие поля
+  // person (name, gender, birthDate, ...). Только заполнять пустые.
+  // Используется при `linkPersonToUser`, чтобы вход нового юзера в
+  // чужой существующий слот в дереве НЕ переписывал генеалогические
+  // данные, проставленные владельцем дерева.
+  //
+  // Bug-репорт: «приглашённый Степа стал отцом, фото мамы». Корень —
+  // ссылка-приглашение указывала на мамин personId, мамин слот не
+  // имел userId, linkPersonToUser принял его, и без additive — затёр
+  // мамино имя на «Моздуков Степка» и её гендер на male, из-за чего
+  // движок отношений переписал её роль с «Мама» на «Папа». Photo
+  // выжило случайно — у Степы в профиле не было своего фото.
+  //
+  // `additive: false` (по умолчанию для совместимости с
+  // buildCanonicalPersonView) — старое поведение полного оверлея,
+  // нужно для render-only вызовов на клонированных person'ах.
+  additive = false,
 } = {}) {
   if (!person || !profile || typeof profile !== "object") {
     return person;
   }
 
   const patch = buildLinkedPersonCanonicalPatchFromProfile(profile);
+  const fillIfEmpty = (current, candidate) => {
+    if (!additive) return candidate;
+    const trimmed = current === null || current === undefined
+      ? ""
+      : String(current).trim();
+    if (trimmed.length > 0) return current;
+    return candidate;
+  };
+
   if (patch.name) {
-    person.name = patch.name;
+    person.name = fillIfEmpty(person.name, patch.name);
   }
-  person.maidenName = patch.maidenName;
+  person.maidenName = fillIfEmpty(person.maidenName, patch.maidenName);
   if (patch.photoUrl) {
-    person.photoUrl = patch.photoUrl;
-    person.primaryPhotoUrl = patch.primaryPhotoUrl;
+    person.photoUrl = fillIfEmpty(person.photoUrl, patch.photoUrl);
+    person.primaryPhotoUrl = fillIfEmpty(
+      person.primaryPhotoUrl,
+      patch.primaryPhotoUrl,
+    );
   }
-  person.gender = patch.gender;
-  person.birthDate = patch.birthDate;
-  person.birthPlace = patch.birthPlace;
+  person.gender = fillIfEmpty(person.gender, patch.gender);
+  person.birthDate = fillIfEmpty(person.birthDate, patch.birthDate);
+  person.birthPlace = fillIfEmpty(person.birthPlace, patch.birthPlace);
   if (touchUpdatedAt) {
     person.updatedAt = nowIso();
   }
@@ -7809,7 +7838,11 @@ class FileStore {
     }
 
     person.userId = userId;
-    applyCanonicalProfileToPerson(person, user.profile);
+    // additive=true: НЕ перезатирать имя/гендер/birthDate/фото
+    // существующего слота в дереве. Если владелец дерева заполнил
+    // поля под этого человека, они остаются как есть. Если что-то
+    // пусто — заполняем из профиля нового пользователя.
+    applyCanonicalProfileToPerson(person, user.profile, {additive: true});
     if (!this._attachPersonToIdentity(db, person, canonicalIdentity, userId)) {
       return false;
     }
@@ -7823,6 +7856,46 @@ class FileStore {
       tree.members.push(userId);
     }
     tree.updatedAt = nowIso();
+    this._reconcilePersonIdentities(db);
+
+    await this._write(db);
+    return structuredClone(person);
+  }
+
+  /// Снимает привязку пользователя с person record. Имя/гендер/фото
+  /// person'а НЕ трогаются — после нового additive-фикса в
+  /// linkPersonToUser они и так не должны были быть переписаны;
+  /// если до фикса перезаписались, владелец дерева может править их
+  /// руками через обычный edit.
+  ///
+  /// Возвращает:
+  ///   * `null` — нет дерева
+  ///   * `undefined` — нет такого person'а в дереве
+  ///   * `false` — caller (actorId) не имеет прав отвязывать в этом
+  ///     дереве (он не владелец)
+  ///   * person snapshot после отвязки — успех
+  async unlinkUserFromPerson({treeId, personId, actorId}) {
+    const db = await this._read();
+    const tree = db.trees.find((entry) => entry.id === treeId);
+    if (!tree) {
+      return null;
+    }
+    if (tree.creatorId !== actorId) {
+      return false;
+    }
+    const person = db.persons.find(
+      (entry) => entry.id === personId && entry.treeId === treeId,
+    );
+    if (!person) {
+      return undefined;
+    }
+    if (!person.userId) {
+      return structuredClone(person);
+    }
+
+    person.userId = null;
+    person.identityId = null;
+    person.updatedAt = nowIso();
     this._reconcilePersonIdentities(db);
 
     await this._write(db);
@@ -7846,7 +7919,11 @@ class FileStore {
     );
     if (existingPerson) {
       const user = db.users.find((entry) => entry.id === userId);
-      applyCanonicalProfileToPerson(existingPerson, user?.profile);
+      // additive=true по той же причине что и в linkPersonToUser —
+      // не затирать имя/гендер существующего person record.
+      applyCanonicalProfileToPerson(existingPerson, user?.profile, {
+        additive: true,
+      });
       this._attachPersonToIdentity(db, existingPerson, canonicalIdentity, userId);
       tree.memberIds = Array.isArray(tree.memberIds) ? tree.memberIds : [];
       tree.members = Array.isArray(tree.members) ? tree.members : [];
