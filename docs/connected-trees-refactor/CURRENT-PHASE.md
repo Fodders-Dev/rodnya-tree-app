@@ -4,11 +4,13 @@
 > [`docs/tree_model_overhaul_rfc.md`](../tree_model_overhaul_rfc.md).
 > См. [DECISIONS.md](DECISIONS.md) от 2026-05-09.
 
-**Phase**: 3.2 — Owner-model enforcement gates на routes
+**Phase**: 3.4 — Flutter UI для visibility / grants / branch wizard
 **Статус**: design proposal готов, **ожидает review Артёма**
 **Phase 1.3**: closed (2026-05-09)
-**Phase 3.1**: closed (2026-05-10, commit `0d5acec`) — schema +
-migration + helpers + 28 new branch-include-rules tests + dry-run script
+**Phase 3.1**: closed (2026-05-10, commit `0d5acec`)
+**Phase 3.2**: closed (2026-05-10, commit `a40a429`) — owner-model
+enforcement gates на routes + grants/visibility endpoints +
+18 new tests включая pre/post-claim regression + 100-person smoke
 **Phase 3 разблокирован**: 2026-05-10 ответы A–D в [DECISIONS.md](DECISIONS.md)
 
 ## Что уже сделано
@@ -24,39 +26,43 @@ migration + helpers + 28 new branch-include-rules tests + dry-run script
 
 ## Что делаем сейчас
 
-* ✅ Phase 1.3 закрыт.
-* ✅ Phase 3 разблокирован (ответы A–D от Артёма 2026-05-10).
-* ✅ Phase 3.1 закрыт (commit `0d5acec`).
-* ✅ [PHASE-3.2-ENFORCEMENT-PROPOSAL.md](PHASE-3.2-ENFORCEMENT-PROPOSAL.md)
-  — design proposal по enforcement gates готов. Ожидает review.
+* ✅ Phase 1.3 / 3.1 / 3.2 закрыты.
+* ✅ [PHASE-3.4-UI-PROPOSAL.md](PHASE-3.4-UI-PROPOSAL.md) — design
+  proposal по Flutter UI для visibility / grants / branch wizard +
+  conflict badge surface + sensitive contacts section + migration
+  strings story «Дерево» → «Ветка». Ожидает review.
 
 ## Cutover plan (Артём 2026-05-10)
 
 ```
-3.1 (done)  → pre-prod (миграция + schema, legacy clients work)
-3.2 (this)  → pre-prod (enforcement, новые grants endpoints)
-3.4         → pre-prod + prod (Flutter UI для visibility, grants, wizard)
+3.1 (done)  → pre-prod (миграция + schema)
+3.2 (done)  → pre-prod (enforcement gates + grants endpoints)
+3.4 (this)  → pre-prod + prod (Flutter UI — visibility, grants, wizard,
+              conflict surface, migration strings)
+3.6         → pre-prod + prod (hard-delete background job; can ship
+              independently после 3.4)
 ```
 
-Между 3.2 и 3.4 — NO user-visible regression. Legacy UI продолжает
-работать на anonymous persons; claimed получают 403 на edit-as-stranger
-(это правильное поведение, не regression).
+Между 3.2 и 3.4 — NO user-visible regression на anonymous persons.
+В 3.4 юзер получает UI handle к Phase 3.1+3.2 механикам.
 
-## Что делаем дальше (после approve proposal'а 3.2)
+## Что делаем дальше (после approve proposal'а 3.4)
 
 В указанном порядке:
-1. Helpers `requireGraphPersonEdit` + `requireGraphPersonRead` + store-side
-   `findGraphPersonByLegacy`.
-2. Gating всех existing routes из §1 proposal'а.
-3. Новые endpoints `POST/GET/DELETE /v1/graph-persons/:id/grants` +
-   `PATCH /v1/graph-persons/:id/visibility` + `GET /v1/me/edit-grants`.
-4. Sensitive attributes filter на READ + WRITE.
-5. Audit existing api.test.js — adjust expectations для claimed-edit-as-stranger.
-6. Новый `owner-model-enforcement.test.js`.
-7. Smoke benchmark на per-row visibility cost.
-8. Diff на показ перед commit.
+1. Backend addendum (если approved) — `includeRules` в `POST /trees`,
+   `GET /v1/me/issued-grants`.
+2. Flutter services / models (capability mixin, DTO).
+3. Migration strings story (single commit «UI: Дерево → Ветка»).
+4. Visibility toggle section на relative card.
+5. Sensitive contacts section (`Видно тебе` badges).
+6. Branch creation wizard (расширение CreateTreeScreen).
+7. Edit-grants screen + routing `/profile/access`.
+8. Conflict badge surface на не-canvas screens (relative_details,
+   relatives_screen).
+9. flutter analyze + flutter test (расширенные).
+10. Diff на показ перед commit.
 
-Никакого кода до approve [PHASE-3.2-ENFORCEMENT-PROPOSAL.md](PHASE-3.2-ENFORCEMENT-PROPOSAL.md).
+Никакого кода до approve [PHASE-3.4-UI-PROPOSAL.md](PHASE-3.4-UI-PROPOSAL.md).
 
 ## Чего НЕ делать
 
