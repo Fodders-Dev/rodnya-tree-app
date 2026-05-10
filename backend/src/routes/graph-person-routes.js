@@ -8,7 +8,38 @@
 // случай «owner удалил аккаунт → права переходят к ближайшему
 // кровному родственнику» — out of scope, deferred к Phase 3.6.
 
-function registerGraphPersonRoutes(app, {store, requireAuth}) {
+function registerGraphPersonRoutes(app, {store, requireAuth, requireGraphPersonRead}) {
+  // Phase 3.4 chunk 2: read-state endpoint для visibility toggle UI.
+  // Visibility check переиспользует requireGraphPersonRead — владелец
+  // / grantee / blood-graph viewer / public видят. Прочие — 403.
+  app.get(
+    "/v1/graph-persons/:graphPersonId",
+    requireAuth,
+    async (req, res) => {
+      const graphPerson = await requireGraphPersonRead(
+        req,
+        res,
+        req.params.graphPersonId,
+      );
+      if (!graphPerson) return;
+      res.json({
+        graphPerson: {
+          id: graphPerson.id,
+          userId: graphPerson.userId || null,
+          createdBy: graphPerson.createdBy || null,
+          visibility: graphPerson.visibility || "connected-via-blood-graph",
+          visibilityOverride: graphPerson.visibilityOverride === true,
+          isAlive: graphPerson.isAlive !== false,
+          // Безопасные поля; phone/email/contacts gating'уется через
+          // отдельный sensitive-attributes path. Здесь только то что
+          // нужно UI'ю для visibility section render'а.
+          name: graphPerson.name || null,
+          birthDate: graphPerson.birthDate || null,
+        },
+      });
+    },
+  );
+
   // ── Grants CRUD ────────────────────────────────────────────────
 
   app.post(

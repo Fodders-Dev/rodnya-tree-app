@@ -323,6 +323,20 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
                     _buildDirectFamilyRows(),
                   ),
                 ),
+              // Phase 3.4 chunk 2 (PHASE-3.4-UI-PROPOSAL §2.2):
+              // visibility toggle section. Скрывается если viewer не
+              // owner графа (widget сам gate'ит через
+              // GraphPersonAccessSnapshot.effectiveOwnerUserId), либо
+              // если backend без Phase 3.4-prep capability.
+              if (person.identityId != null && person.identityId!.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 18, 16, 0),
+                  child: VisibilityToggleSection(
+                    graphPersonId: person.identityId!,
+                    viewerUserId: _authService.currentUserId ?? '',
+                    familyTreeService: _familyService,
+                  ),
+                ),
               // Profile Redesign: prominent «Удалить из дерева»
               // button at the tail of the card. Only shown when the
               // viewer can edit (mirrors the appbar trash icon's

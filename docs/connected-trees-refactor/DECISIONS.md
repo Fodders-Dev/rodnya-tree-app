@@ -425,6 +425,62 @@ surface как новая DECISION, не молча решать.
 
 ---
 
+## 2026-05-10: два независимых maxHops
+
+**Контекст**: при wiring chunk 2 visibility toggle UI всплыл
+вопрос — какое значение писать в russianHint для visibility
+варианта `connected-via-blood-graph`. Initial draft указывал
+«до 5 колен» (по аналогии с `branch.includeRules.maxHops`
+default'ом), но backend visibility BFS использует 4.
+
+В системе **СОЗНАТЕЛЬНО** используются **два разных
+hop-limit'а** для разных целей:
+
+* `FileStore._connectedVisibilityMaxHops = 4` — для
+  `_userCanSeeGraphPerson` через blood-graph BFS. Контроль
+  «кто может видеть карточку при visibility=connected-via-blood-graph».
+  **Tight (4 поколения)**, потому что privacy: ширина видимости
+  должна быть стабильно узкой, не configurable юзером.
+
+* `branch.includeRules.maxHops` — default 5, slider 3..8 в
+  Phase 3.4 wizard'е. Для `_buildBranchVisiblePersonIds` при
+  `type === "blood-from-me" / "descendants-of" / "ancestors-of"`.
+  Контроль «кто показывается в ветке». **Шире (5 default,
+  до 8)**, потому что юзер сам выбирает scope своей ветки —
+  это его UX choice, не privacy invariant.
+
+### Не путать. Не unify'ить.
+
+* Visibility — privacy gate, server-side, **не expose**'нуть в UI.
+  Если когда-то понадобится ослабить (5 hops) — это change в
+  privacy semantics, требует отдельного DECISION.
+* Branch maxHops — UX dial. Юзер двигает slider 3..8.
+
+Тесты cover'ят **обе границы отдельно**:
+* `branch-include-rules.test.js` — visibility BFS на 4 hops.
+* `migration-utils.test.js` + `owner-model-enforcement.test.js`
+  — branch maxHops boundaries (3, 8, 0→1, 100→20, undefined→5).
+
+### Зачем эта запись
+
+Без неё через 3 месяца кто-то (включая Артёма / Claude)
+увидит «4 vs 5» в коде и попробует «починить inconsistency»
+— сломает либо privacy (если расширит visibility до 5), либо
+UX (если сузит branch default'ом). Эта DECISION фиксирует:
+inconsistency **deliberate**.
+
+### russianHint строка
+
+UI hint для visibility-варианта говорит «до 4 поколений»
+(`lib/backend/models/visibility_choice.dart`). Branch wizard'у
+slider показывает 3..8 (`lib/screens/family_tree/create_tree_screen.dart`).
+Числа в UI **разные**, потому что концепции разные.
+
+**Принято**: Артём (user) 2026-05-10 (после chunk 2 verify-2
+review).
+
+---
+
 ## 2026-05-10: Phase 3.2 implementation surfaced edge — createPerson-with-userId followed by createRelation as creator
 
 **Контекст**: при wiring enforcement gates всплыл legitimate

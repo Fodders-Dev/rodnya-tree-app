@@ -2471,6 +2471,7 @@ function createApp({
   registerGraphPersonRoutes(app, {
     store,
     requireAuth,
+    requireGraphPersonRead,
   });
 
   registerTreeRoutes(app, {

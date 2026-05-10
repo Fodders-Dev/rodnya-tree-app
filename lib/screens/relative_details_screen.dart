@@ -30,6 +30,7 @@ import '../widgets/glass_panel.dart';
 import '../widgets/media_lightbox.dart';
 import '../widgets/profile_redesign.dart';
 import '../widgets/tree_history_sheet.dart';
+import '../widgets/visibility_toggle_section.dart';
 import '../theme/app_theme.dart';
 import '../utils/photo_url.dart';
 import '../utils/user_facing_error.dart';
