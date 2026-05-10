@@ -309,8 +309,12 @@ function registerTreeRoutes(
       // payload is fetched on demand via /v1/trees/:id/persons/:id
       // when the user actually picks. Keeps this hot path tiny
       // even for users with many trees / hundreds of persons.
+      // Phase 3.4 (DECISIONS.md ответ Q4): добавлен `identityId`
+      // — branch wizard'у нужен canonical graphPerson.id (=
+      // identityId) для anchor descendants-of/ancestors-of rule.
       persons: visiblePersons.map((person) => ({
         id: person.id,
+        identityId: person.identityId || null,
         treeId: person.treeId,
         treeName: person.treeName || "",
         displayName: person.name || "",

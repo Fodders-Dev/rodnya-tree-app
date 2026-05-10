@@ -13,6 +13,7 @@ class CrossTreePersonSuggestion {
     required this.treeId,
     required this.treeName,
     required this.displayName,
+    this.identityId,
     this.photoUrl,
     this.birthDate,
     this.gender = 'unknown',
@@ -23,6 +24,12 @@ class CrossTreePersonSuggestion {
   /// which causes the backend to share an `identityId` between the
   /// source and the new card.
   final String id;
+
+  /// Phase 3.4 (DECISIONS.md ответ Q4): canonical graphPerson.id (=
+  /// identityId) — нужен branch wizard'у для anchor
+  /// descendants-of/ancestors-of. На старых backend'ах без Phase 3.4
+  /// addendum'а — null; UI gracefully fall back на «выбор недоступен».
+  final String? identityId;
   final String treeId;
   final String treeName;
   final String displayName;
@@ -37,8 +44,12 @@ class CrossTreePersonSuggestion {
   final String gender;
 
   factory CrossTreePersonSuggestion.fromJson(Map<String, dynamic> json) {
+    final rawIdentityId = json['identityId'];
     return CrossTreePersonSuggestion(
       id: (json['id'] ?? '').toString(),
+      identityId: rawIdentityId is String && rawIdentityId.isNotEmpty
+          ? rawIdentityId
+          : null,
       treeId: (json['treeId'] ?? '').toString(),
       treeName: (json['treeName'] ?? '').toString(),
       displayName: (json['displayName'] ?? '').toString(),

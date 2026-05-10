@@ -19,6 +19,7 @@ import '../backend/models/branch_digest.dart';
 import '../backend/models/identity_field_conflict.dart';
 import '../backend/models/identity_suggestion.dart';
 import '../backend/models/cross_tree_person_suggestion.dart';
+import '../backend/models/include_rules.dart';
 import '../backend/models/selectable_tree.dart';
 import '../backend/models/tree_invitation.dart';
 import '../models/family_person.dart';
@@ -84,16 +85,27 @@ class CustomApiFamilyTreeService
     required String description,
     required bool isPrivate,
     TreeKind kind = TreeKind.family,
+    IncludeRules? includeRules,
   }) async {
+    // Phase 3.4 (DECISIONS.md ответ Q4 + fix-1): передаём
+    // includeRules только когда они явно заданы wizard'ом. Missing
+    // payload field → backend применит legacy default manual.
+    // Malformed payload → backend вернёт 400, мы пропустим
+    // exception вверх к UI как обычный network error.
+    final body = <String, dynamic>{
+      'name': name,
+      'description': description,
+      'isPrivate': isPrivate,
+      'kind': kind.name,
+    };
+    if (includeRules != null) {
+      body['includeRules'] = includeRules.toJson();
+    }
+
     final response = await _requestJson(
       method: 'POST',
       path: '/v1/trees',
-      body: {
-        'name': name,
-        'description': description,
-        'isPrivate': isPrivate,
-        'kind': kind.name,
-      },
+      body: body,
     );
 
     final tree = _treeFromResponse(response);

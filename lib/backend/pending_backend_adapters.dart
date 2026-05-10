@@ -44,6 +44,7 @@ import 'interfaces/notification_service_interface.dart';
 import 'interfaces/post_service_interface.dart';
 import 'interfaces/safety_service_interface.dart';
 import 'interfaces/story_service_interface.dart';
+import 'models/include_rules.dart';
 import 'models/profile_form_data.dart';
 import 'models/selectable_tree.dart';
 import 'models/tree_invitation.dart';
@@ -261,6 +262,7 @@ class PendingBackendFamilyTreeService implements FamilyTreeServiceInterface {
     required String description,
     required bool isPrivate,
     TreeKind kind = TreeKind.family,
+    IncludeRules? includeRules,
   }) {
     throw UnsupportedError(_pendingProviderMessage('tree'));
   }
