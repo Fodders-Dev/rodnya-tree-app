@@ -4,10 +4,11 @@
 > [`docs/tree_model_overhaul_rfc.md`](../tree_model_overhaul_rfc.md).
 > См. [DECISIONS.md](DECISIONS.md) от 2026-05-09.
 
-**Phase**: 3.1 — Schema design (graphPersons / branches /
-graphPersonEditGrants / branch.includeRules расширение)
+**Phase**: 3.2 — Owner-model enforcement gates на routes
 **Статус**: design proposal готов, **ожидает review Артёма**
 **Phase 1.3**: closed (2026-05-09)
+**Phase 3.1**: closed (2026-05-10, commit `0d5acec`) — schema +
+migration + helpers + 28 new branch-include-rules tests + dry-run script
 **Phase 3 разблокирован**: 2026-05-10 ответы A–D в [DECISIONS.md](DECISIONS.md)
 
 ## Что уже сделано
@@ -25,24 +26,37 @@ graphPersonEditGrants / branch.includeRules расширение)
 
 * ✅ Phase 1.3 закрыт.
 * ✅ Phase 3 разблокирован (ответы A–D от Артёма 2026-05-10).
-* ✅ [PHASE-3.1-SCHEMA-PROPOSAL.md](PHASE-3.1-SCHEMA-PROPOSAL.md)
-  — design proposal по schema changes готов. Ожидает review.
+* ✅ Phase 3.1 закрыт (commit `0d5acec`).
+* ✅ [PHASE-3.2-ENFORCEMENT-PROPOSAL.md](PHASE-3.2-ENFORCEMENT-PROPOSAL.md)
+  — design proposal по enforcement gates готов. Ожидает review.
 
-## Что делаем дальше (после approve proposal'а)
+## Cutover plan (Артём 2026-05-10)
+
+```
+3.1 (done)  → pre-prod (миграция + schema, legacy clients work)
+3.2 (this)  → pre-prod (enforcement, новые grants endpoints)
+3.4         → pre-prod + prod (Flutter UI для visibility, grants, wizard)
+```
+
+Между 3.2 и 3.4 — NO user-visible regression. Legacy UI продолжает
+работать на anonymous persons; claimed получают 403 на edit-as-stranger
+(это правильное поведение, не regression).
+
+## Что делаем дальше (после approve proposal'а 3.2)
 
 В указанном порядке:
-1. Расширить `EMPTY_DB` + `normalizeDbState` новыми полями.
-2. Переписать `pickCanonicalPerson` → `pickCanonicalFieldsAndCollectConflicts`.
-3. Дописать `migrateTreesToGraphAndBranches` под answer B (per-field
-   selection + conflict generation + lastPropagatedFields).
-4. Обновить incremental sync helpers с новыми полями.
-5. Написать `_userCanSeeGraphPerson` + `_userCanEditGraphPerson` helpers.
-6. Написать `_buildBranchVisiblePersonIds` helper (D).
-7. Расширить тесты (см. proposal §6).
-8. Dry-run миграции на синтетических данных + reset → re-run idempotency check.
-9. Показать diff + test results Артёму перед commit.
+1. Helpers `requireGraphPersonEdit` + `requireGraphPersonRead` + store-side
+   `findGraphPersonByLegacy`.
+2. Gating всех existing routes из §1 proposal'а.
+3. Новые endpoints `POST/GET/DELETE /v1/graph-persons/:id/grants` +
+   `PATCH /v1/graph-persons/:id/visibility` + `GET /v1/me/edit-grants`.
+4. Sensitive attributes filter на READ + WRITE.
+5. Audit existing api.test.js — adjust expectations для claimed-edit-as-stranger.
+6. Новый `owner-model-enforcement.test.js`.
+7. Smoke benchmark на per-row visibility cost.
+8. Diff на показ перед commit.
 
-Никакого кода до approve [PHASE-3.1-SCHEMA-PROPOSAL.md](PHASE-3.1-SCHEMA-PROPOSAL.md).
+Никакого кода до approve [PHASE-3.2-ENFORCEMENT-PROPOSAL.md](PHASE-3.2-ENFORCEMENT-PROPOSAL.md).
 
 ## Чего НЕ делать
 
