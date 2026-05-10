@@ -193,15 +193,31 @@ Flutter:
 
 ---
 
-## Открытые вопросы перед стартом Phase 3
+## 2026-05-10 — Phase 3 разблокирован, Phase 3.1 proposal готов
 
-См. [DECISIONS.md](DECISIONS.md) → запись «Phase 3 заблокирован 4
-нерешёнными вопросами»:
+**Сессия**: продолжение claude/infallible-pike-41360c
 
-1. Privacy escape hatch на graphPerson (`owner` / `connected` / `public`).
-2. Migration conflict strategy при initial merge противоречивых данных.
-3. Owner-model thresholds — реально ли «≤2 hops auto» работает в
-   большой семье (200+ родственников).
-4. BFS depth для blood-branch визуализации (4-5 hops, не 10).
+**Что изменилось**:
+* Артём ответил на 4 RFC-вопроса (см. [DECISIONS.md](DECISIONS.md)
+  запись 2026-05-10):
+  - **A**: privacy = `connected-via-blood-graph` default (≤4 hops),
+    sensitive fields owner-only, deceased + >100лет = public auto,
+    owner override через UI.
+  - **B**: migration conflicts через highest-completeness wins
+    per-field, divergent → identityFieldConflicts (Phase 1.3 reuse).
+  - **C**: default owner-only edit, без auto-extension по hops.
+    Owner extension через explicit grants. Merge — двусторонний
+    consent. 30-day soft-delete.
+  - **D**: branch.includeRules.maxHops default 5, slider 3..8 в UI;
+    findBloodRelation maxDepth=10 не меняется.
+* Создан [PHASE-3.1-SCHEMA-PROPOSAL.md](PHASE-3.1-SCHEMA-PROPOSAL.md)
+  — полный design proposal по schema changes. **Ожидает review
+  Артёма перед началом кода.**
 
-Phase 3 (TREE → BRANCH миграция) **до ответов не лезем**.
+**Что НЕ сделано**: ничего в коде. Никакого implementation до
+approve proposal.
+
+**Открытые вопросы в proposal'е** (минимум):
+* Q1: re-run миграции v1→v2 целиком при cutover, или incremental
+  patch?
+* Q3: ОК что visibility override недоступен между Phase 3.1 и 3.4?
