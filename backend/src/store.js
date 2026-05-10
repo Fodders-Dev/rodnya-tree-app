@@ -1858,6 +1858,85 @@ function buildLinkedPersonCanonicalPatchFromProfile(profile = {}) {
   };
 }
 
+// Phase 3.4-prep (DECISIONS.md 2026-05-10 Q3/Q4): валидирует и
+// применяет incoming `includeRules` поверх существующих rules
+// branch'а. Не перетирает manualPersonIds на blood/descendants/
+// ancestors (stash для возможного rollback на manual). Validation:
+//   - type ∈ {manual, blood-from-me, descendants-of, ancestors-of}
+//   - maxHops 1..20 (default 5 если invalid/missing)
+//   - anchorPersonId — string или null
+// Возвращает true если что-то реально изменилось, false если no-op.
+const VALID_INCLUDE_RULE_TYPES = new Set([
+  "manual",
+  "blood-from-me",
+  "descendants-of",
+  "ancestors-of",
+]);
+
+function applyIncludeRulesToBranch(branch, incoming) {
+  if (!branch || !incoming || typeof incoming !== "object") {
+    return false;
+  }
+  const before = JSON.stringify(branch.includeRules || {});
+
+  if (
+    !branch.includeRules ||
+    typeof branch.includeRules !== "object"
+  ) {
+    branch.includeRules = {
+      type: "manual",
+      manualPersonIds: [],
+      anchorPersonId: null,
+      maxHops: 5,
+    };
+  }
+  const next = branch.includeRules;
+
+  // Type validation (DECISIONS.md 2026-05-10 fix-1):
+  //   - missing / null / empty → silent default (caller relies on
+  //     existing type, или `_syncTreeToBranch` initialize'нул "manual").
+  //     Это backward-compat для legacy callers без includeRules.
+  //   - explicit non-empty но не-allowed → throw INVALID_RULE_TYPE.
+  //     Malformed value = client-bug, должен surface'иться 400'ой,
+  //     не silent fallback'ом.
+  if (incoming.type !== undefined && incoming.type !== null) {
+    const requestedType = String(incoming.type).trim();
+    if (requestedType !== "") {
+      if (!VALID_INCLUDE_RULE_TYPES.has(requestedType)) {
+        throw new Error("INVALID_RULE_TYPE");
+      }
+      next.type = requestedType;
+    }
+  }
+
+  if (incoming.anchorPersonId === null) {
+    next.anchorPersonId = null;
+  } else if (typeof incoming.anchorPersonId === "string") {
+    const trimmed = incoming.anchorPersonId.trim();
+    next.anchorPersonId = trimmed || null;
+  }
+
+  // maxHops — continuous int с clamp 1..20 (не throw на out-of-range,
+  // в отличие от type). DECISIONS.md fix-2: out-of-range — это
+  // valid input behavior, не client-bug; sanity-bound и идём дальше.
+  if (Number.isFinite(incoming.maxHops)) {
+    const clamped = Math.max(1, Math.min(20, Math.floor(incoming.maxHops)));
+    next.maxHops = clamped;
+  } else if (next.maxHops === undefined || next.maxHops === null) {
+    next.maxHops = 5;
+  }
+
+  if (Array.isArray(incoming.manualPersonIds)) {
+    next.manualPersonIds = Array.from(
+      new Set(incoming.manualPersonIds.filter(Boolean)),
+    );
+  } else if (!Array.isArray(next.manualPersonIds)) {
+    next.manualPersonIds = [];
+  }
+
+  return JSON.stringify(next) !== before;
+}
+
 function applyCanonicalProfileToPerson(person, profile = {}, {
   touchUpdatedAt = true,
   // `additive: true` — никогда не перезатирать уже существующие поля
@@ -7342,7 +7421,24 @@ class FileStore {
     return collectOwnedMediaUrlsForUser(db, userId);
   }
 
-  async createTree({creatorId, name, description, isPrivate, kind}) {
+  async createTree({creatorId, name, description, isPrivate, kind, includeRules = null}) {
+    // Phase 3.4-prep fix-1: pre-flight validation на includeRules
+    // ДО touch'а DB. `applyIncludeRulesToBranch` throws на explicit
+    // invalid type — нужно catch'нуть здесь, чтобы caller (POST
+    // /v1/trees route) превратил в 400 БЕЗ partial side-effects
+    // (tree уже push'нутый в db, person'а ещё нет, и т.д.).
+    if (includeRules && typeof includeRules === "object") {
+      const probeBranch = {
+        includeRules: {
+          type: "manual",
+          manualPersonIds: [],
+          anchorPersonId: null,
+          maxHops: 5,
+        },
+      };
+      applyIncludeRulesToBranch(probeBranch, includeRules);
+    }
+
     const db = await this._read();
     const createdAt = nowIso();
     const normalizedKind = String(kind || "family").trim().toLowerCase() === "friends"
@@ -7391,6 +7487,18 @@ class FileStore {
       this._attachPersonToIdentity(db, creatorPerson, creatorIdentity, creatorId);
     } else {
       this._reconcilePersonIdentities(db);
+    }
+
+    // Phase 3.4-prep (DECISIONS.md 2026-05-10 ответ Q4):
+    // если caller передал `includeRules`, применяем поверх default
+    // manual rule, который ставит `_syncTreeToBranch`. Делаем после
+    // `_attachPersonToIdentity`, чтобы branch уже существовал.
+    if (includeRules && typeof includeRules === "object") {
+      this._syncTreeToBranch(db, tree);
+      const branch = (db.branches || []).find((b) => b.id === tree.id);
+      if (branch) {
+        applyIncludeRulesToBranch(branch, includeRules);
+      }
     }
     this._appendTreeChangeRecord(db, {
       treeId: tree.id,
@@ -10109,7 +10217,16 @@ class FileStore {
         description: tree.description || "",
         isPrivate: tree.isPrivate !== false,
         kind: tree.kind || "family",
-        includeRules: {type: "manual", manualPersonIds: []},
+        // Phase 3.1 (DECISIONS.md ответ D): includeRules с
+        // полным shape (anchorPersonId / maxHops). Совпадает с
+        // migration-utils.buildBranchFromTree — incremental mirror
+        // и one-shot migration пишут идентичную форму.
+        includeRules: {
+          type: "manual",
+          manualPersonIds: [],
+          anchorPersonId: null,
+          maxHops: 5,
+        },
         memberIds,
         publicSlug: tree.publicSlug || null,
         isCertified: tree.isCertified === true,
@@ -10131,6 +10248,23 @@ class FileStore {
     branch.certificationNote = tree.certificationNote || null;
     branch.updatedAt = tree.updatedAt;
     branch.deletedAt = null;
+    // Phase 3.1 lazy-fill для existing branches без новых rule
+    // полей. ??= triggers только на undefined/null — не overwrite'ит
+    // user-set значения.
+    if (!branch.includeRules || typeof branch.includeRules !== "object") {
+      branch.includeRules = {
+        type: "manual",
+        manualPersonIds: [],
+        anchorPersonId: null,
+        maxHops: 5,
+      };
+    } else {
+      branch.includeRules.anchorPersonId ??= null;
+      branch.includeRules.maxHops ??= 5;
+      if (!Array.isArray(branch.includeRules.manualPersonIds)) {
+        branch.includeRules.manualPersonIds = [];
+      }
+    }
   }
 
   _markPersonDeletedInGraph(db, legacyPerson, actorUserId = null) {
@@ -10672,6 +10806,115 @@ class FileStore {
     return (db.graphPersonEditGrants || [])
       .filter((entry) => entry.graphPersonId === normalizedGraphPersonId)
       .map((entry) => structuredClone(entry));
+  }
+
+  // Phase 3.4-prep (DECISIONS.md 2026-05-10 Q3): grantor-side список
+  // grants выписанных текущим юзером. Симметричен `listMyGrantsForUser`
+  // (grantee-side). Пагинируется не только активными — включаем
+  // revoked за 30d window для audit visibility «недавно отозвал».
+  async listMyIssuedGrants({userId, includeRevokedSinceDays = 30}) {
+    const normalizedUser = normalizeNullableString(userId);
+    if (!normalizedUser) return [];
+    const db = await this._read();
+    const cutoff = new Date(Date.now() - includeRevokedSinceDays * 86_400_000);
+    return (db.graphPersonEditGrants || [])
+      .filter((entry) => entry.grantorUserId === normalizedUser)
+      .filter((entry) => {
+        if (!entry.revokedAt) return true;
+        const revoked = new Date(entry.revokedAt);
+        return Number.isFinite(revoked.getTime()) && revoked >= cutoff;
+      })
+      .map((entry) => structuredClone(entry));
+  }
+
+  // Phase 3.4-prep (Q4): edit branch.includeRules с owner-only check.
+  // Used by PATCH /v1/trees/:treeId/include-rules. Отдельный store
+  // entry-point чтобы UI не лазил через generic updateTree (которого
+  // нет — tree updates идут через _syncTreeToBranch + create flow).
+  async updateBranchIncludeRules({treeId, rules, actorUserId}) {
+    const normalizedTreeId = normalizeNullableString(treeId);
+    const normalizedActor = normalizeNullableString(actorUserId);
+    if (!normalizedTreeId || !normalizedActor) return null;
+    const db = await this._read();
+    const tree = (db.trees || []).find((entry) => entry.id === normalizedTreeId);
+    if (!tree) return null;
+    if (tree.creatorId !== normalizedActor) {
+      throw new Error("NOT_OWNER");
+    }
+    if (!rules || typeof rules !== "object") {
+      throw new Error("INVALID_RULES");
+    }
+    const requestedType = String(rules.type || "").trim();
+    if (!VALID_INCLUDE_RULE_TYPES.has(requestedType)) {
+      throw new Error("INVALID_RULE_TYPE");
+    }
+
+    // Sync first — гарантируем что branch row существует.
+    this._syncTreeToBranch(db, tree);
+    const branch = (db.branches || []).find(
+      (entry) => entry.id === normalizedTreeId,
+    );
+    if (!branch) return null;
+
+    const changed = applyIncludeRulesToBranch(branch, rules);
+    if (changed) {
+      branch.updatedAt = nowIso();
+      tree.updatedAt = branch.updatedAt;
+      await this._write(db);
+    }
+    return structuredClone(branch);
+  }
+
+  // Phase 3.4-prep (Q4 warning preview): возвращает counts ДО и
+  // ПОСЛЕ применения новых rules БЕЗ commit'а. Helps UX warn'нуть
+  // юзера «X родственников появятся, Y исчезнут» перед apply.
+  async previewBranchIncludeRules({treeId, rules, viewerUserId}) {
+    const normalizedTreeId = normalizeNullableString(treeId);
+    const normalizedViewer = normalizeNullableString(viewerUserId);
+    if (!normalizedTreeId || !normalizedViewer) return null;
+    if (!rules || typeof rules !== "object") {
+      throw new Error("INVALID_RULES");
+    }
+    const requestedType = String(rules.type || "").trim();
+    if (!VALID_INCLUDE_RULE_TYPES.has(requestedType)) {
+      throw new Error("INVALID_RULE_TYPE");
+    }
+    const db = await this._read();
+    const branch = (db.branches || []).find(
+      (entry) => entry.id === normalizedTreeId,
+    );
+    if (!branch) return null;
+    if (
+      branch.ownerId !== normalizedViewer &&
+      !(Array.isArray(branch.memberIds) && branch.memberIds.includes(normalizedViewer))
+    ) {
+      throw new Error("FORBIDDEN");
+    }
+
+    const beforeSet = this._buildBranchVisiblePersonIds(
+      db,
+      branch,
+      normalizedViewer,
+    );
+
+    // Симулируем новый branch через deep-clone и apply (без write'а).
+    const previewBranch = structuredClone(branch);
+    applyIncludeRulesToBranch(previewBranch, rules);
+    const afterSet = this._buildBranchVisiblePersonIds(
+      db,
+      previewBranch,
+      normalizedViewer,
+    );
+
+    const added = [...afterSet].filter((id) => !beforeSet.has(id));
+    const removed = [...beforeSet].filter((id) => !afterSet.has(id));
+
+    return {
+      addedCount: added.length,
+      removedCount: removed.length,
+      totalBeforeCount: beforeSet.size,
+      totalAfterCount: afterSet.size,
+    };
   }
 
   // /v1/me/edit-grants: каждый grantee видит свои active + revoked

@@ -24,22 +24,134 @@ function registerTreeRoutes(
   },
 ) {
   app.post("/v1/trees", requireAuth, async (req, res) => {
-    const {name, description, isPrivate, kind} = req.body || {};
+    const {name, description, isPrivate, kind, includeRules} = req.body || {};
     if (!String(name || "").trim()) {
       res.status(400).json({message: "Нужно название дерева"});
       return;
     }
 
-    const tree = await store.createTree({
-      creatorId: req.auth.user.id,
-      name,
-      description,
-      isPrivate,
-      kind,
-    });
-
-    res.status(201).json({tree: mapTree(tree)});
+    // Phase 3.4-prep (DECISIONS.md 2026-05-10 Q4 + fix-1): branch
+    // wizard передаёт includeRules — applied поверх default manual.
+    // Missing/null includeRules → silent default (legacy backward-
+    // compat для клиентов без поля). Explicit-but-invalid type →
+    // 400 (client-bug surface'ится, не silent fallback).
+    try {
+      const tree = await store.createTree({
+        creatorId: req.auth.user.id,
+        name,
+        description,
+        isPrivate,
+        kind,
+        includeRules:
+          includeRules && typeof includeRules === "object" ? includeRules : null,
+      });
+      res.status(201).json({tree: mapTree(tree)});
+    } catch (error) {
+      if (error?.message === "INVALID_RULE_TYPE") {
+        res.status(400).json({
+          message:
+            "type должен быть 'manual', 'blood-from-me', 'descendants-of' или 'ancestors-of'",
+        });
+        return;
+      }
+      throw error;
+    }
   });
+
+  // Phase 3.4-prep (Q4): PATCH branch.includeRules для уже
+  // существующего дерева. Owner-only. UX-warning preview через
+  // отдельный GET endpoint ниже.
+  app.patch(
+    "/v1/trees/:treeId/include-rules",
+    requireAuth,
+    async (req, res) => {
+      try {
+        const updated = await store.updateBranchIncludeRules({
+          treeId: req.params.treeId,
+          rules: req.body?.includeRules || req.body || {},
+          actorUserId: req.auth.user.id,
+        });
+        if (!updated) {
+          res.status(404).json({message: "Ветка не найдена"});
+          return;
+        }
+        res.json({
+          branchId: updated.id,
+          includeRules: updated.includeRules,
+          updatedAt: updated.updatedAt,
+        });
+      } catch (error) {
+        if (error?.message === "NOT_OWNER") {
+          res.status(403).json({
+            message: "Только владелец ветки может менять её состав",
+          });
+          return;
+        }
+        if (
+          error?.message === "INVALID_RULES" ||
+          error?.message === "INVALID_RULE_TYPE"
+        ) {
+          res.status(400).json({
+            message:
+              "type должен быть 'manual', 'blood-from-me', 'descendants-of' или 'ancestors-of'",
+          });
+          return;
+        }
+        throw error;
+      }
+    },
+  );
+
+  // Phase 3.4-prep (Q4 UX warning): preview affected count для
+  // нового includeRules БЕЗ commit'а. Помогает UI показать «X
+  // родственников появятся, Y исчезнут» прежде чем apply. Доступ —
+  // любой member ветки (читать состав branch'а до/после может тот,
+  // кто ветку видит).
+  app.get(
+    "/v1/trees/:treeId/include-rules-preview",
+    requireAuth,
+    async (req, res) => {
+      const type = String(req.query.type || "").trim();
+      const anchorPersonIdRaw = req.query.anchorPersonId;
+      const maxHopsRaw = Number(req.query.maxHops);
+      const rules = {
+        type,
+        anchorPersonId:
+          typeof anchorPersonIdRaw === "string"
+            ? anchorPersonIdRaw.trim() || null
+            : null,
+        maxHops: Number.isFinite(maxHopsRaw) ? maxHopsRaw : 5,
+      };
+      try {
+        const preview = await store.previewBranchIncludeRules({
+          treeId: req.params.treeId,
+          rules,
+          viewerUserId: req.auth.user.id,
+        });
+        if (!preview) {
+          res.status(404).json({message: "Ветка не найдена"});
+          return;
+        }
+        res.json({preview});
+      } catch (error) {
+        if (error?.message === "FORBIDDEN") {
+          res.status(403).json({message: "Доступ к ветке запрещён"});
+          return;
+        }
+        if (
+          error?.message === "INVALID_RULES" ||
+          error?.message === "INVALID_RULE_TYPE"
+        ) {
+          res.status(400).json({
+            message:
+              "type должен быть 'manual', 'blood-from-me', 'descendants-of' или 'ancestors-of'",
+          });
+          return;
+        }
+        throw error;
+      }
+    },
+  );
 
   app.get("/v1/trees", requireAuth, async (req, res) => {
     const trees = await store.listUserTrees(req.auth.user.id);

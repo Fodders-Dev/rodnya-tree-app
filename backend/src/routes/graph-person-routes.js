@@ -133,6 +133,55 @@ function registerGraphPersonRoutes(app, {store, requireAuth}) {
 
   // ── Grantee-side: список собственных прав ─────────────────────
 
+  // Phase 3.4-prep (DECISIONS.md 2026-05-10 Q3): grantor-side
+  // список grants выписанных текущим viewer'ом. Симметричен
+  // /v1/me/edit-grants. Без него Phase 3.4 outgoing-таб делал бы
+  // N+1 round-trip per graphPerson; этот endpoint даёт flat list
+  // в одном запросе. Включаем revoked-since-30d для audit transparency.
+  app.get("/v1/me/issued-grants", requireAuth, async (req, res) => {
+    const sinceDaysRaw = Number(req.query.includeRevokedSinceDays || 30);
+    const sinceDays =
+      Number.isFinite(sinceDaysRaw) && sinceDaysRaw > 0
+        ? Math.min(Math.floor(sinceDaysRaw), 365)
+        : 30;
+    const grants = await store.listMyIssuedGrants({
+      userId: req.auth.user.id,
+      includeRevokedSinceDays: sinceDays,
+    });
+
+    const previewIds = Array.from(
+      new Set(grants.map((entry) => entry.graphPersonId).filter(Boolean)),
+    );
+    const previews = await store.previewGraphPersonsByIds(previewIds, {
+      viewerUserId: req.auth.user.id,
+    });
+    const previewById = new Map(previews.map((entry) => [entry.id, entry]));
+
+    // Hydrate grantee profile previews для каждого grant'а.
+    const granteeIds = Array.from(
+      new Set(grants.map((entry) => entry.granteeUserId).filter(Boolean)),
+    );
+    const granteeById = new Map();
+    for (const granteeId of granteeIds) {
+      const user = await store.findUserById(granteeId);
+      if (user) {
+        granteeById.set(granteeId, {
+          id: user.id,
+          displayName: user.profile?.displayName || user.email || "",
+          photoUrl: user.profile?.photoUrl || null,
+        });
+      }
+    }
+
+    res.json({
+      grants: grants.map((grant) => ({
+        ...grant,
+        graphPerson: previewById.get(grant.graphPersonId) || null,
+        grantee: granteeById.get(grant.granteeUserId) || null,
+      })),
+    });
+  });
+
   app.get("/v1/me/edit-grants", requireAuth, async (req, res) => {
     const sinceDaysRaw = Number(req.query.includeRevokedSinceDays || 30);
     const sinceDays =

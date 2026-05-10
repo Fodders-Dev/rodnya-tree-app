@@ -910,6 +910,430 @@ test(
 
 // ── Sensitive contacts attribute (owner-only-всегда) ─────────────────
 
+// ── Phase 3.4-prep: includeRules + issued-grants endpoints ──────────
+
+test(
+  "POST /v1/trees: includeRules в payload применяется к новому branch",
+  async () => {
+    const ctx = await startTestServer();
+    try {
+      const owner = await registerUser(ctx, "ir-owner@test.app", "Owner");
+      const response = await fetch(`${ctx.baseUrl}/v1/trees`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${owner.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          name: "Кровная семья",
+          description: "Только моя кровная родня",
+          isPrivate: true,
+          includeRules: {
+            type: "blood-from-me",
+            anchorPersonId: null,
+            maxHops: 4,
+          },
+        }),
+      });
+      assert.equal(response.status, 201);
+      const tree = (await response.json()).tree;
+      // Tree-level shape без изменений; rules живут на branch.
+      // Читаем backend state напрямую, чтобы убедиться что
+      // includeRules применились.
+      const db = await ctx.store._read();
+      const branch = db.branches.find((b) => b.id === tree.id);
+      assert.ok(branch);
+      assert.equal(branch.includeRules.type, "blood-from-me");
+      assert.equal(branch.includeRules.maxHops, 4);
+      assert.equal(branch.includeRules.anchorPersonId, null);
+    } finally {
+      await stopTestServer(ctx);
+    }
+  },
+);
+
+test(
+  "POST /v1/trees: invalid includeRules.type → 400 (client-bug surface, не silent fallback)",
+  async () => {
+    // Phase 3.4-prep fix-1: malformed type — это client-bug,
+    // НЕ silent default. Missing/null поле — другая история
+    // (silent default manual для legacy backward-compat),
+    // отдельный тест ниже.
+    const ctx = await startTestServer();
+    try {
+      const owner = await registerUser(ctx, "ir2-owner@test.app", "Owner");
+      const response = await fetch(`${ctx.baseUrl}/v1/trees`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${owner.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          name: "Тест",
+          isPrivate: true,
+          includeRules: {type: "delete-everything", maxHops: 5},
+        }),
+      });
+      assert.equal(response.status, 400);
+    } finally {
+      await stopTestServer(ctx);
+    }
+  },
+);
+
+test(
+  "POST /v1/trees: missing includeRules → 201 + default manual rule (legacy back-compat)",
+  async () => {
+    const ctx = await startTestServer();
+    try {
+      const owner = await registerUser(ctx, "ir3-owner@test.app", "Owner");
+      const response = await fetch(`${ctx.baseUrl}/v1/trees`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${owner.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          name: "Без rules",
+          isPrivate: true,
+          // includeRules: omitted — pre-3.4 legacy client behaviour.
+        }),
+      });
+      assert.equal(response.status, 201);
+      const tree = (await response.json()).tree;
+      const db = await ctx.store._read();
+      const branch = db.branches.find((b) => b.id === tree.id);
+      assert.equal(branch.includeRules.type, "manual");
+      // Default maxHops=5 за counts (RFC §D).
+      assert.equal(branch.includeRules.maxHops, 5);
+    } finally {
+      await stopTestServer(ctx);
+    }
+  },
+);
+
+// ── maxHops boundary clamping ───────────────────────────────────────
+// Phase 3.4-prep fix-2: maxHops — continuous int с clamp 1..20.
+// Out-of-range values НЕ throw (в отличие от type, который throws);
+// clamp в обозримые границы. Для type — discrete enum, invalid =
+// client-bug; для maxHops — continuous range, out-of-range = caller
+// pushed slider beyond UI-allowed bounds, sane bound + continue.
+
+test(
+  "applyIncludeRulesToBranch: maxHops=0 clamps to 1 (lower bound)",
+  async () => {
+    const ctx = await startTestServer();
+    try {
+      const owner = await registerUser(ctx, "mh1-owner@test.app", "O");
+      const response = await fetch(`${ctx.baseUrl}/v1/trees`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${owner.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          name: "Lower",
+          isPrivate: true,
+          includeRules: {type: "blood-from-me", maxHops: 0},
+        }),
+      });
+      assert.equal(response.status, 201);
+      const tree = (await response.json()).tree;
+      const db = await ctx.store._read();
+      const branch = db.branches.find((b) => b.id === tree.id);
+      assert.equal(branch.includeRules.maxHops, 1);
+    } finally {
+      await stopTestServer(ctx);
+    }
+  },
+);
+
+test(
+  "applyIncludeRulesToBranch: maxHops=100 clamps to 20 (upper bound)",
+  async () => {
+    const ctx = await startTestServer();
+    try {
+      const owner = await registerUser(ctx, "mh2-owner@test.app", "O");
+      const response = await fetch(`${ctx.baseUrl}/v1/trees`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${owner.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          name: "Upper",
+          isPrivate: true,
+          includeRules: {type: "blood-from-me", maxHops: 100},
+        }),
+      });
+      assert.equal(response.status, 201);
+      const tree = (await response.json()).tree;
+      const db = await ctx.store._read();
+      const branch = db.branches.find((b) => b.id === tree.id);
+      assert.equal(branch.includeRules.maxHops, 20);
+    } finally {
+      await stopTestServer(ctx);
+    }
+  },
+);
+
+test(
+  "applyIncludeRulesToBranch: maxHops=-5 clamps to 1 (negative)",
+  async () => {
+    const ctx = await startTestServer();
+    try {
+      const owner = await registerUser(ctx, "mh3-owner@test.app", "O");
+      const response = await fetch(`${ctx.baseUrl}/v1/trees`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${owner.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          name: "Negative",
+          isPrivate: true,
+          includeRules: {type: "blood-from-me", maxHops: -5},
+        }),
+      });
+      assert.equal(response.status, 201);
+      const tree = (await response.json()).tree;
+      const db = await ctx.store._read();
+      const branch = db.branches.find((b) => b.id === tree.id);
+      assert.equal(branch.includeRules.maxHops, 1);
+    } finally {
+      await stopTestServer(ctx);
+    }
+  },
+);
+
+test(
+  "applyIncludeRulesToBranch: maxHops omitted with blood-from-me → default 5",
+  async () => {
+    const ctx = await startTestServer();
+    try {
+      const owner = await registerUser(ctx, "mh4-owner@test.app", "O");
+      const response = await fetch(`${ctx.baseUrl}/v1/trees`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${owner.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          name: "Defaults",
+          isPrivate: true,
+          // type без maxHops — должен взять default 5.
+          includeRules: {type: "blood-from-me"},
+        }),
+      });
+      assert.equal(response.status, 201);
+      const tree = (await response.json()).tree;
+      const db = await ctx.store._read();
+      const branch = db.branches.find((b) => b.id === tree.id);
+      assert.equal(branch.includeRules.type, "blood-from-me");
+      assert.equal(branch.includeRules.maxHops, 5);
+    } finally {
+      await stopTestServer(ctx);
+    }
+  },
+);
+
+test(
+  "PATCH /v1/trees/:treeId/include-rules: owner-only, меняет тип ветки",
+  async () => {
+    const ctx = await startTestServer();
+    try {
+      const owner = await registerUser(ctx, "irp-owner@test.app", "Owner");
+      const stranger = await registerUser(
+        ctx,
+        "irp-stranger@test.app",
+        "Stranger",
+      );
+      const tree = await createTree(ctx, owner);
+      // Stranger без access — 404 (requireTreeAccess upstream).
+      const strangerResponse = await fetch(
+        `${ctx.baseUrl}/v1/trees/${tree.id}/include-rules`,
+        {
+          method: "PATCH",
+          headers: {
+            authorization: `Bearer ${stranger.accessToken}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            includeRules: {type: "blood-from-me", maxHops: 5},
+          }),
+        },
+      );
+      // Stranger даже не member → updateBranchIncludeRules → NOT_OWNER 403.
+      assert.equal(strangerResponse.status, 403);
+
+      // Owner — successful patch.
+      const ownerResponse = await fetch(
+        `${ctx.baseUrl}/v1/trees/${tree.id}/include-rules`,
+        {
+          method: "PATCH",
+          headers: {
+            authorization: `Bearer ${owner.accessToken}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            includeRules: {type: "blood-from-me", maxHops: 6},
+          }),
+        },
+      );
+      assert.equal(ownerResponse.status, 200);
+      const payload = await ownerResponse.json();
+      assert.equal(payload.includeRules.type, "blood-from-me");
+      assert.equal(payload.includeRules.maxHops, 6);
+    } finally {
+      await stopTestServer(ctx);
+    }
+  },
+);
+
+test(
+  "PATCH /v1/trees/:treeId/include-rules: invalid type → 400",
+  async () => {
+    const ctx = await startTestServer();
+    try {
+      const owner = await registerUser(ctx, "irpe-owner@test.app", "Owner");
+      const tree = await createTree(ctx, owner);
+      const response = await fetch(
+        `${ctx.baseUrl}/v1/trees/${tree.id}/include-rules`,
+        {
+          method: "PATCH",
+          headers: {
+            authorization: `Bearer ${owner.accessToken}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            includeRules: {type: "wat-is-this", maxHops: 5},
+          }),
+        },
+      );
+      assert.equal(response.status, 400);
+    } finally {
+      await stopTestServer(ctx);
+    }
+  },
+);
+
+test(
+  "GET /v1/trees/:treeId/include-rules-preview: возвращает counts без mutate'а",
+  async () => {
+    const ctx = await startTestServer();
+    try {
+      const owner = await registerUser(ctx, "irpr-owner@test.app", "Owner");
+      const tree = await createTree(ctx, owner);
+      // У ветки сейчас manual rule с self-person'ом (1 шт.).
+      // Preview переключения на blood-from-me: ожидаем такой же 1
+      // (self без relations).
+      const response = await fetch(
+        `${ctx.baseUrl}/v1/trees/${tree.id}/include-rules-preview?type=blood-from-me&maxHops=5`,
+        {headers: {authorization: `Bearer ${owner.accessToken}`}},
+      );
+      assert.equal(response.status, 200);
+      const payload = await response.json();
+      assert.ok(payload.preview);
+      assert.equal(typeof payload.preview.addedCount, "number");
+      assert.equal(typeof payload.preview.removedCount, "number");
+      assert.equal(typeof payload.preview.totalAfterCount, "number");
+      assert.equal(typeof payload.preview.totalBeforeCount, "number");
+
+      // Sanity: mutate не произошёл — branch остался manual.
+      const branchAfterPreview = await ctx.store._read();
+      const branch = branchAfterPreview.branches.find((b) => b.id === tree.id);
+      assert.equal(branch.includeRules.type, "manual");
+    } finally {
+      await stopTestServer(ctx);
+    }
+  },
+);
+
+test(
+  "GET /v1/trees/:treeId/include-rules-preview: stranger без tree-access → 403",
+  async () => {
+    const ctx = await startTestServer();
+    try {
+      const owner = await registerUser(ctx, "irpra-owner@test.app", "Owner");
+      const stranger = await registerUser(
+        ctx,
+        "irpra-stranger@test.app",
+        "X",
+      );
+      const tree = await createTree(ctx, owner);
+      const response = await fetch(
+        `${ctx.baseUrl}/v1/trees/${tree.id}/include-rules-preview?type=manual`,
+        {headers: {authorization: `Bearer ${stranger.accessToken}`}},
+      );
+      assert.equal(response.status, 403);
+    } finally {
+      await stopTestServer(ctx);
+    }
+  },
+);
+
+test(
+  "GET /v1/me/issued-grants: возвращает grants выписанные viewer'ом",
+  async () => {
+    const ctx = await startTestServer();
+    try {
+      const owner = await registerUser(ctx, "ig-owner@test.app", "Owner");
+      const grantee = await registerUser(ctx, "ig-grantee@test.app", "G");
+      const tree = await createTree(ctx, owner);
+      const person = await createPerson(ctx, owner.accessToken, tree.id, {
+        firstName: "Self",
+        userId: owner.user.id,
+      });
+      const personRead = await fetch(
+        `${ctx.baseUrl}/v1/trees/${tree.id}/persons/${person.id}`,
+        {headers: {authorization: `Bearer ${owner.accessToken}`}},
+      );
+      const graphPersonId = (await personRead.json()).person.identityId;
+      await fetch(
+        `${ctx.baseUrl}/v1/graph-persons/${graphPersonId}/grants`,
+        {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${owner.accessToken}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            granteeUserId: grantee.user.id,
+            scope: "edit",
+          }),
+        },
+      );
+
+      // Owner reads issued-grants — sees own grant + grantee preview
+      // + graphPerson preview.
+      const issuedResponse = await fetch(
+        `${ctx.baseUrl}/v1/me/issued-grants`,
+        {headers: {authorization: `Bearer ${owner.accessToken}`}},
+      );
+      assert.equal(issuedResponse.status, 200);
+      const issued = await issuedResponse.json();
+      assert.equal(issued.grants.length, 1);
+      assert.equal(issued.grants[0].grantorUserId, owner.user.id);
+      assert.equal(issued.grants[0].granteeUserId, grantee.user.id);
+      assert.ok(issued.grants[0].graphPerson);
+      assert.equal(issued.grants[0].graphPerson.id, graphPersonId);
+      assert.ok(issued.grants[0].grantee);
+      assert.equal(issued.grants[0].grantee.id, grantee.user.id);
+
+      // Grantee reads issued-grants — пусто (он не grantor).
+      const granteeIssuedResponse = await fetch(
+        `${ctx.baseUrl}/v1/me/issued-grants`,
+        {headers: {authorization: `Bearer ${grantee.accessToken}`}},
+      );
+      assert.equal(granteeIssuedResponse.status, 200);
+      const granteeIssued = await granteeIssuedResponse.json();
+      assert.equal(granteeIssued.grants.length, 0);
+    } finally {
+      await stopTestServer(ctx);
+    }
+  },
+);
+
 // ── Smoke benchmark: cross-tree visibility filter cost ──────────────
 
 test(

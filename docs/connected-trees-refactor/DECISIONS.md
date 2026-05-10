@@ -588,3 +588,105 @@ divergence» и user-resolution.
 relations не cross-branch propagate.
 
 ---
+
+## 2026-05-10: Phase 3.4 — answers Q1-Q5 + backend addendum strategy + migration conservative
+
+**Контекст**: после approve PHASE-3.4-UI-PROPOSAL.md (commit
+`30d8415`). Артём ответил на 5 open questions + дал scope для
+backend addendum.
+
+### Q1: `/tree/view` URL → KEEP
+
+Legacy invite-link'и в дикой природе ходят минимум 3 месяца.
+Ломать URL = ломать конкретных юзеров. Согласовано с RFC
+«Совместимость» (старый treeId API живёт 6 месяцев минимум).
+URL-migration в `/branch/view` отложен до Phase 6 cleanup.
+
+### Q2: `auth_screen` «семейное дерево» → KEEP
+
+Marketing-poetry в onboarding hero — не nav-element. Замена
+«семейная ветка» в маркетинговом контексте звучит как
+тех-жаргон, обратная задача от цели «human-readable».
+
+### Q3: `GET /v1/me/issued-grants` → ADD
+
+Без него outgoing-таб edit-grants screen = N+1 round-trip'а:
+плохо UX (slow load) и плохо ops (нагрузка). Симметрия с
+`/v1/me/edit-grants` чистая. Добавляется в backend addendum
+до Phase 3.4 UI commits.
+
+### Q4: Branch edit с warning'ом → YES
+
+`PATCH /v1/trees/:treeId` с расширенным `includeRules` shape.
+Warning-формулировка: «Некоторые родственники могут исчезнуть
+из ветки или появиться» + **preview affected count** перед
+apply. Юзеры делают мисклики при создании ветки; force-recreate
+= bad UX. Preview endpoint — `GET /v1/trees/:treeId/include-rules-preview`
+с `?type=...&maxHops=...&anchorPersonId=...` query, возвращает
+counts (added / removed / total) для UX warning.
+
+### Q5: Per-row + header conflict badge → BOTH с fallback note
+
+Per-row = «где конкретно», header = «сколько в этой ветке».
+Оба полезны для разных моментов user attention.
+
+**Fallback note для post-deploy**: после первой недели в pre-prod
+подавать метрику «conflict count per branch». Если медиана > 5,
+**отключаем per-row**, оставляем header-only — слишком noisy.
+Добавить в operational checklist.
+
+### Backend addendum strategy
+
+**SEPARATE pre-3.4 backend commit**, не часть UI.
+
+Reasons:
+* Phase 3.2 был 100% backend, Phase 3.4 должен быть 100% UI с
+  минимальным backend touch. Чистая ментальная модель «фазы по
+  слоям, не по фичам».
+* Backend deployed first → UI build тестирует против реального
+  endpoint'а, не stub'а.
+* Atomic rollback — если UI commit вызывает проблему, backend
+  не нужно откатывать.
+* ~20 строк = low risk, отдельный commit не replace blocker'ом.
+
+Commit name: `feat(phase-3.4-prep): tree includeRules in POST +
+issued-grants endpoint`. Сразу после него — Phase 3.4 UI commits.
+
+Что делает backend addendum:
+* `POST /v1/trees` принимает `includeRules` в payload (validate
+  type ∈ {manual, blood-from-me, descendants-of, ancestors-of},
+  maxHops 1..20, anchorPersonId optional).
+* `PATCH /v1/trees/:treeId/include-rules` — owner edit с
+  расширенным includeRules. Owner-only (tree.creatorId).
+* `GET /v1/trees/:treeId/include-rules-preview` — query params,
+  возвращает `{addedCount, removedCount, totalAfterCount,
+  totalBeforeCount}` без mutate'а. Для Q4 warning UX.
+* `GET /v1/me/issued-grants` — список grants выписанных viewer'ом
+  (group by graphPersonId), включая revoked-since-30d (TTL
+  совпадает с Q3).
+
+### Migration strings → CONSERVATIVE
+
+Per Артёмовому правилу «если в каком-то месте сомневаешься —
+оставь "дерево"»:
+
+**Rename** только в:
+* Navigation/wizard/actions UI: «Создать ветку», «Переключить на
+  ветку», «Ветка X из Y».
+* Settings → «Мои ветки» (вместо «Мои деревья»).
+* Sheet bottom-action «Создать ветку».
+* Tree-edit screen → «Параметры ветки».
+
+**KEEP**:
+* URL'ы (`/tree/view`).
+* `auth_screen` poetic context («семейное дерево» в onboarding hero).
+* Kind toggle («Семья / Круг»).
+* Legacy переменные в коде (`treeId`, `TreeProvider`) — не rename,
+  чтобы не плодить мега-diff'ы.
+
+**Aggressive pass отложен** — потом проще добавить migration в
+один коммит, чем откатывать misnamed strings когда юзер пожалуется.
+
+**Принято**: Артём (user) 2026-05-10.
+
+---
