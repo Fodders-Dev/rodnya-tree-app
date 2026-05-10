@@ -10453,9 +10453,10 @@ class FileStore {
   // Only the bare minimum — name + photo + dates — so the client
   // can render a relationship-path strip without leaking editorial
   // fields from non-accessible branches.
-  async previewGraphPersonsByIds(graphPersonIds) {
+  async previewGraphPersonsByIds(graphPersonIds, {viewerUserId = null} = {}) {
     const db = await this._read();
     const ids = Array.isArray(graphPersonIds) ? graphPersonIds : [];
+    const normalizedViewer = normalizeNullableString(viewerUserId);
     return ids.map((id) => {
       const graphPerson = (db.graphPersons || []).find((g) => g.id === id);
       if (!graphPerson || graphPerson.deletedAt) {
@@ -10468,6 +10469,27 @@ class FileStore {
           photoUrl: null,
         };
       }
+      // Phase 3.2: chain hydration (BFS, /v1/graph/relation,
+      // future /v1/me/extended-family) — каждый node идёт через
+      // visibility gate. Hidden node возвращается с пустыми
+      // canonical полями + `hidden: true`, чтобы UI знал «здесь
+      // звено есть, но имя не показано». Chain shape сохраняется,
+      // BFS-степень всё ещё считается — это всё, что нужно для
+      // «троюродная сестра через скрытого предка».
+      if (
+        normalizedViewer &&
+        !this._userCanSeeGraphPerson(db, graphPerson, normalizedViewer)
+      ) {
+        return {
+          id: graphPerson.id,
+          name: null,
+          gender: null,
+          birthDate: null,
+          deathDate: null,
+          photoUrl: null,
+          hidden: true,
+        };
+      }
       return {
         id: graphPerson.id,
         name: graphPerson.name,
@@ -10477,6 +10499,311 @@ class FileStore {
         photoUrl:
           graphPerson.primaryPhotoUrl || graphPerson.photoUrl || null,
       };
+    });
+  }
+
+  // ── Phase 3.2: graph-person resolution + grants + visibility ──────
+  // Owner-model enforcement (DECISIONS.md 2026-05-10 ответ C):
+  // default owner-only edit, без auto-extension по hops; explicit
+  // grants per-scope ("edit" / "merge-consent" / "soft-delete");
+  // merge — двусторонний consent через mergeProposals; visibility —
+  // owner-only-всегда (никаких grants даже на toggle).
+
+  // Resolve a legacy person id to its canonical graphPerson row.
+  // Returns null when the legacy person doesn't exist or its
+  // graphPerson has been soft-deleted. Used by route gates that
+  // need to call _userCanEditGraphPerson on a (treeId, personId)
+  // pair from the URL.
+  async findGraphPersonByLegacy(legacyPersonId) {
+    const normalizedId = normalizeNullableString(legacyPersonId);
+    if (!normalizedId) return null;
+    const db = await this._read();
+    const legacyPerson = (db.persons || []).find(
+      (entry) => entry.id === normalizedId,
+    );
+    const identityId = legacyPerson
+      ? normalizeNullableString(legacyPerson.identityId)
+      : null;
+
+    let graphPerson = identityId
+      ? (db.graphPersons || []).find((g) => g.id === identityId)
+      : null;
+
+    if (!graphPerson) {
+      // Edge case: legacy row exists but graphPerson hasn't been
+      // synced yet (e.g. first read after a fresh migration). Falling
+      // back to a `legacyPersonIds` reverse lookup keeps gates
+      // working until the next _syncPersonToGraph pass.
+      graphPerson = (db.graphPersons || []).find(
+        (g) =>
+          Array.isArray(g.legacyPersonIds) &&
+          g.legacyPersonIds.includes(normalizedId),
+      );
+    }
+    return graphPerson ? structuredClone(graphPerson) : null;
+  }
+
+  async findGraphPersonById(graphPersonId) {
+    const normalizedId = normalizeNullableString(graphPersonId);
+    if (!normalizedId) return null;
+    const db = await this._read();
+    const graphPerson = (db.graphPersons || []).find(
+      (entry) => entry.id === normalizedId,
+    );
+    return graphPerson ? structuredClone(graphPerson) : null;
+  }
+
+  // ─── Grant CRUD (POST/DELETE/GET /v1/graph-persons/:id/grants) ──
+
+  async addGraphPersonGrant({
+    graphPersonId,
+    grantorUserId,
+    granteeUserId,
+    scope,
+  }) {
+    const normalizedScope = String(scope || "").trim();
+    if (!["edit", "merge-consent", "soft-delete"].includes(normalizedScope)) {
+      throw new Error("INVALID_SCOPE");
+    }
+    const normalizedGraphPersonId = normalizeNullableString(graphPersonId);
+    const normalizedGrantor = normalizeNullableString(grantorUserId);
+    const normalizedGrantee = normalizeNullableString(granteeUserId);
+    if (!normalizedGraphPersonId || !normalizedGrantor || !normalizedGrantee) {
+      throw new Error("INVALID_INPUT");
+    }
+    if (normalizedGrantor === normalizedGrantee) {
+      throw new Error("SELF_GRANT");
+    }
+    const db = await this._read();
+    const graphPerson = (db.graphPersons || []).find(
+      (entry) => entry.id === normalizedGraphPersonId,
+    );
+    if (!graphPerson || graphPerson.deletedAt) return null;
+
+    const owner = this._graphPersonOwnerUserId(graphPerson);
+    if (owner !== normalizedGrantor) {
+      throw new Error("NOT_OWNER");
+    }
+
+    if (!Array.isArray(db.graphPersonEditGrants)) {
+      db.graphPersonEditGrants = [];
+    }
+
+    // Idempotency: re-issuing an active grant on the same triple
+    // returns the existing row. A revoked row with the same triple
+    // is left alone (audit trail) and a fresh row gets pushed.
+    const activeExisting = db.graphPersonEditGrants.find(
+      (entry) =>
+        entry.graphPersonId === normalizedGraphPersonId &&
+        entry.granteeUserId === normalizedGrantee &&
+        entry.scope === normalizedScope &&
+        !entry.revokedAt,
+    );
+    if (activeExisting) {
+      return {grant: structuredClone(activeExisting), created: false};
+    }
+
+    const grant = {
+      id: crypto.randomUUID(),
+      graphPersonId: normalizedGraphPersonId,
+      grantorUserId: normalizedGrantor,
+      granteeUserId: normalizedGrantee,
+      scope: normalizedScope,
+      grantedAt: nowIso(),
+      revokedAt: null,
+      origin: "owner-grant",
+    };
+    db.graphPersonEditGrants.push(grant);
+    await this._write(db);
+    return {grant: structuredClone(grant), created: true};
+  }
+
+  async revokeGraphPersonGrant({graphPersonId, grantId, actorUserId}) {
+    const normalizedGraphPersonId = normalizeNullableString(graphPersonId);
+    const normalizedGrantId = normalizeNullableString(grantId);
+    const normalizedActor = normalizeNullableString(actorUserId);
+    if (!normalizedGraphPersonId || !normalizedGrantId || !normalizedActor) {
+      return null;
+    }
+    const db = await this._read();
+    const graphPerson = (db.graphPersons || []).find(
+      (entry) => entry.id === normalizedGraphPersonId,
+    );
+    if (!graphPerson) return null;
+
+    const owner = this._graphPersonOwnerUserId(graphPerson);
+    if (owner !== normalizedActor) {
+      throw new Error("NOT_OWNER");
+    }
+
+    if (!Array.isArray(db.graphPersonEditGrants)) {
+      db.graphPersonEditGrants = [];
+    }
+    const grant = db.graphPersonEditGrants.find(
+      (entry) =>
+        entry.id === normalizedGrantId &&
+        entry.graphPersonId === normalizedGraphPersonId,
+    );
+    if (!grant) return null;
+
+    if (grant.revokedAt) {
+      // Idempotent — already revoked, no rewrite of the timestamp.
+      return structuredClone(grant);
+    }
+    grant.revokedAt = nowIso();
+    await this._write(db);
+    return structuredClone(grant);
+  }
+
+  async listGraphPersonGrants({graphPersonId, viewerUserId}) {
+    const normalizedGraphPersonId = normalizeNullableString(graphPersonId);
+    const normalizedViewer = normalizeNullableString(viewerUserId);
+    if (!normalizedGraphPersonId || !normalizedViewer) return null;
+    const db = await this._read();
+    const graphPerson = (db.graphPersons || []).find(
+      (entry) => entry.id === normalizedGraphPersonId,
+    );
+    if (!graphPerson) return null;
+
+    const owner = this._graphPersonOwnerUserId(graphPerson);
+    if (owner !== normalizedViewer) {
+      throw new Error("NOT_OWNER");
+    }
+    return (db.graphPersonEditGrants || [])
+      .filter((entry) => entry.graphPersonId === normalizedGraphPersonId)
+      .map((entry) => structuredClone(entry));
+  }
+
+  // /v1/me/edit-grants: каждый grantee видит свои active + revoked
+  // за последние N дней (default 30 — DECISIONS.md 2026-05-10 Q3
+  // намеренно совпадает с hardDeleteScheduledAt window). Старее —
+  // в audit-only state, не отдаём в UI.
+  async listMyGrantsForUser({userId, includeRevokedSinceDays = 30}) {
+    const normalizedUser = normalizeNullableString(userId);
+    if (!normalizedUser) return [];
+    const db = await this._read();
+    const cutoff = new Date(Date.now() - includeRevokedSinceDays * 86_400_000);
+    return (db.graphPersonEditGrants || [])
+      .filter((entry) => entry.granteeUserId === normalizedUser)
+      .filter((entry) => {
+        if (!entry.revokedAt) return true;
+        const revoked = new Date(entry.revokedAt);
+        return Number.isFinite(revoked.getTime()) && revoked >= cutoff;
+      })
+      .map((entry) => structuredClone(entry));
+  }
+
+  // ─── Visibility update (owner-only, не grants) ──────────────────
+
+  async setGraphPersonVisibility({
+    graphPersonId,
+    visibility,
+    actorUserId,
+  }) {
+    if (
+      !["owner-only", "connected-via-blood-graph", "public"].includes(
+        String(visibility || "").trim(),
+      )
+    ) {
+      throw new Error("INVALID_VISIBILITY");
+    }
+    const normalizedGraphPersonId = normalizeNullableString(graphPersonId);
+    const normalizedActor = normalizeNullableString(actorUserId);
+    if (!normalizedGraphPersonId || !normalizedActor) return null;
+    const db = await this._read();
+    const graphPerson = (db.graphPersons || []).find(
+      (entry) => entry.id === normalizedGraphPersonId,
+    );
+    if (!graphPerson || graphPerson.deletedAt) return null;
+
+    const owner = this._graphPersonOwnerUserId(graphPerson);
+    if (owner !== normalizedActor) {
+      throw new Error("NOT_OWNER");
+    }
+    graphPerson.visibility = visibility;
+    graphPerson.visibilityOverride = true;
+    graphPerson.updatedAt = nowIso();
+    await this._write(db);
+    return structuredClone(graphPerson);
+  }
+
+  async clearGraphPersonVisibilityOverride({
+    graphPersonId,
+    actorUserId,
+  }) {
+    const normalizedGraphPersonId = normalizeNullableString(graphPersonId);
+    const normalizedActor = normalizeNullableString(actorUserId);
+    if (!normalizedGraphPersonId || !normalizedActor) return null;
+    const db = await this._read();
+    const graphPerson = (db.graphPersons || []).find(
+      (entry) => entry.id === normalizedGraphPersonId,
+    );
+    if (!graphPerson || graphPerson.deletedAt) return null;
+
+    const owner = this._graphPersonOwnerUserId(graphPerson);
+    if (owner !== normalizedActor) {
+      throw new Error("NOT_OWNER");
+    }
+    graphPerson.visibilityOverride = false;
+    graphPerson.updatedAt = nowIso();
+    await this._write(db);
+    return structuredClone(graphPerson);
+  }
+
+  // ─── Sensitive-attributes-aware reads ───────────────────────────
+
+  // Filter sensitive attribute fields (`field === "contacts"`)
+  // when viewer isn't the graphPerson owner. Used by attributes
+  // endpoint. Non-sensitive fields проходят без дополнительной
+  // gate'и — посетитель уже прошёл `requireTreeAccess`, значит
+  // имеет право видеть базовые поля person'а в этом дереве.
+  filterSensitiveAttributesForViewer({
+    db,
+    graphPerson,
+    viewerUserId,
+    attributes,
+  }) {
+    if (!Array.isArray(attributes)) return [];
+    return attributes.filter((attr) =>
+      this._userCanSeeSensitiveAttributeField(
+        db,
+        graphPerson,
+        viewerUserId,
+        attr?.field,
+      ),
+    );
+  }
+
+  // ─── Cross-tree visibility filter for legacy-shape lists ────────
+
+  // Bulk visibility check: для list-cross-tree-results (search,
+  // identity-suggestions). Фильтрует persons по
+  // `_userCanSeeGraphPerson`. Persons без graphPerson (mid-sync
+  // edge case) — оставляем (fail-open до следующего sync'а).
+  // Возвращает только legacy persons, которые viewer может видеть.
+  // Один _read() на whole list — без N+1 на каждый person.
+  async filterLegacyPersonsByGraphVisibility(persons, viewerUserId) {
+    if (!Array.isArray(persons) || persons.length === 0) return [];
+    const normalizedViewer = normalizeNullableString(viewerUserId);
+    if (!normalizedViewer) return [];
+    const db = await this._read();
+    const graphPersonsByIdentity = new Map(
+      (db.graphPersons || []).map((entry) => [entry.id, entry]),
+    );
+    const graphPersonsByLegacy = new Map();
+    for (const entry of db.graphPersons || []) {
+      for (const legacyId of entry.legacyPersonIds || []) {
+        graphPersonsByLegacy.set(legacyId, entry);
+      }
+    }
+    return persons.filter((person) => {
+      const identityId = normalizeNullableString(person?.identityId);
+      const graphPerson =
+        (identityId && graphPersonsByIdentity.get(identityId)) ||
+        graphPersonsByLegacy.get(person?.id) ||
+        null;
+      if (!graphPerson) return true; // Pre-sync — fail-open.
+      return this._userCanSeeGraphPerson(db, graphPerson, normalizedViewer);
     });
   }
 
@@ -10522,17 +10849,20 @@ class FileStore {
     return 4;
   }
 
-  // ответ A.1: контактные поля живут в `personAttributes` и
-  // отдельно gate'аются. Хранится здесь, чтобы любой read-path
-  // мог подтвердить «sensitive» по одному key-set'у.
-  static get _sensitiveAttributeKeys() {
-    return new Set([
-      "phone",
-      "phoneNumber",
-      "email",
-      "currentAddress",
-      "homeAddress",
-    ]);
+  // ответ A.1: контактные поля (телефон, e-mail, текущий адрес)
+  // в `personAttributes` живут под полем `field === "contacts"`
+  // — это category-level, а не отдельные ключи. Phase 3.2 enforce'ит
+  // owner-only-всегда на эту category регardless `visibility` поля
+  // attribute'а: даже если кто-то ставит attribute'у visibility
+  // "public", не-owner всё равно её не видит. Это «privacy escape
+  // hatch на чувствительные поля» из ответа A.3.
+  static get _sensitiveAttributeFields() {
+    return new Set(["contacts"]);
+  }
+
+  // Public probe для route handlers — не leak'ает Set instance.
+  static isSensitiveAttributeField(field) {
+    return FileStore._sensitiveAttributeFields.has(String(field || ""));
   }
 
   // Helper: кто owner данного graphPerson? Если узел представляет
@@ -10647,13 +10977,23 @@ class FileStore {
     );
   }
 
-  // ответ A.3: sensitive (phone/email/currentAddress) — owner-only
-  // ВСЕГДА, независимо от node visibility. Public-node всё равно
-  // не показывает домашний телефон.
-  _userCanSeeSensitiveAttribute(db, graphPerson, viewerUserId, attributeKey) {
-    if (!FileStore._sensitiveAttributeKeys.has(String(attributeKey || ""))) {
-      // Не sensitive — обычный visibility check.
-      return this._userCanSeeGraphPerson(db, graphPerson, viewerUserId);
+  // ответ A.3: sensitive attribute fields (category=contacts —
+  // содержит телефон, e-mail, адрес) — owner-only ВСЕГДА,
+  // независимо от node visibility. Public-узел всё равно не
+  // показывает домашний телефон.
+  //
+  // Контракт: для не-sensitive field возвращает true БЕЗ
+  // дополнительного visibility check. Visibility-уровень gate
+  // на cross-tree READ paths делается отдельно (в
+  // filterLegacyPersonsByGraphVisibility); этот метод —
+  // category-only filter поверх уже-passed access path. Иначе
+  // tree-creator после claim чужим юзером терял бы read-access
+  // на собственные дерево-attributes (он не owner graphPerson'а
+  // больше, но он tree-creator, и через requireTreeAccess уже
+  // прошёл).
+  _userCanSeeSensitiveAttributeField(db, graphPerson, viewerUserId, attributeField) {
+    if (!FileStore._sensitiveAttributeFields.has(String(attributeField || ""))) {
+      return true;
     }
     if (!graphPerson) return false;
     const normalizedViewer = normalizeNullableString(viewerUserId);

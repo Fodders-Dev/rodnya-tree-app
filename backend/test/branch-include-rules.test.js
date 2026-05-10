@@ -400,42 +400,61 @@ test("_userCanEditGraphPerson: deletedAt blocks edit even for owner", () => {
   assert.equal(store._userCanEditGraphPerson(db, node, "u-self"), false);
 });
 
-// ── _userCanSeeSensitiveAttribute ─────────────────────────────────────
+// ── _userCanSeeSensitiveAttributeField ───────────────────────────────
+// Phase 3.2: sensitive — это category-level (`field === "contacts"`)
+// потому что telephone/email/address aggregated в одну attribute row
+// в personAttributes. Не-owner не видит contacts attribute даже на
+// public-узле — это "owner-only-всегда" из ответа A.3. Прочие
+// fields (name/photo/birthDate/etc.) проходят без дополнительного
+// gate'а — они уже gating'уются через requireTreeAccess (для own
+// tree paths) или filterLegacyPersonsByGraphVisibility (для
+// cross-tree paths).
 
-test("_userCanSeeSensitiveAttribute: phone owner-only even on public node", () => {
+test("_userCanSeeSensitiveAttributeField: contacts owner-only even on public node", () => {
   const store = makeStoreStub();
   const db = freshDb();
   seedKinship(db);
   const node = db.graphPersons.find((g) => g.id === "id-mom");
   node.visibility = "public";
   node.visibilityOverride = true;
-  // Phone is sensitive — owner-only по DECISIONS.md ответ A.3.
+  // contacts — sensitive category. Stranger (даже на public node) не видит.
   assert.equal(
-    store._userCanSeeSensitiveAttribute(db, node, "u-stranger", "phone"),
+    store._userCanSeeSensitiveAttributeField(
+      db,
+      node,
+      "u-stranger",
+      "contacts",
+    ),
     false,
   );
   // Owner видит.
   assert.equal(
-    store._userCanSeeSensitiveAttribute(db, node, "u-self", "phone"),
+    store._userCanSeeSensitiveAttributeField(
+      db,
+      node,
+      "u-self",
+      "contacts",
+    ),
     true,
   );
 });
 
-test("_userCanSeeSensitiveAttribute: non-sensitive falls through to visibility check", () => {
+test("_userCanSeeSensitiveAttributeField: non-sensitive returns true without visibility re-check", () => {
   const store = makeStoreStub();
   const db = freshDb();
   seedKinship(db);
   const node = db.graphPersons.find((g) => g.id === "id-mom");
-  // birthDate — не sensitive, не в SENSITIVE_KEYS.
-  // Default visibility connected-via-blood-graph → u-self (1 hop) видит.
+  // name/birthDate — не sensitive. Контракт: возвращаем true — gating
+  // делается на уровне route'а / cross-tree фильтра, не повторно
+  // здесь. Даже u-stranger получает true (он отфильтруется на
+  // cross-tree visibility filter, если он не имеет access).
   assert.equal(
-    store._userCanSeeSensitiveAttribute(db, node, "u-self", "birthDate"),
+    store._userCanSeeSensitiveAttributeField(db, node, "u-self", "name"),
     true,
   );
-  // u-stranger через default visibility не видит.
   assert.equal(
-    store._userCanSeeSensitiveAttribute(db, node, "u-stranger", "birthDate"),
-    false,
+    store._userCanSeeSensitiveAttributeField(db, node, "u-stranger", "name"),
+    true,
   );
 });
 

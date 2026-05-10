@@ -333,3 +333,258 @@ Diff на показ перед коммитом — обязательно.
 * Порядок: любой, Артём подскажет.
 
 ---
+
+## 2026-05-10: Phase 3.2 first, не 3.4 — schema без enforcement = corruption surface
+
+**Контекст**: после approve Phase 3.1 (commit 0d5acec) встал
+выбор приоритета: 3.2 (route enforcement) vs 3.4 (Flutter UI).
+
+**Решение**: 3.2 first. Никаких вариантов.
+
+Логика:
+* Schema 3.1 без enforcement = любой client может писать
+  `graphPerson.visibility` что угодно через curl/Postman, обходя
+  любые UI ограничения. Это не «permission feedback в runtime» —
+  это data corruption surface.
+* 3.4 без 3.2 = security theater: красивый toggle в UI который
+  ничего не enforce'ит на сервере. Ничему не учит, лживо
+  обещает privacy.
+* 3.2 standalone testable end-to-end через API tests без UI.
+  Faster validation cycle.
+
+**Cutover plan**:
+1. 3.1 → pre-prod уже сейчас (миграция + schema, ничего не ломает).
+2. 3.2 → pre-prod (enforcement gates + новые grants endpoints).
+   Старые UI продолжают работать на anonymous (`graphPerson.userId
+   === null`) persons. Claimed получают 403 на edit-as-stranger —
+   правильное поведение, не regression.
+3. 3.4 → pre-prod + prod (Flutter UI для visibility, grants, wizard).
+
+Между 3.2 и 3.4 — NO user-visible regression на anonymous persons.
+Claimed-edit-as-stranger 403 — ровно тот случай, что уже частично
+fixнул `additive: true` коммит, теперь финально enforced.
+
+**Принято**: Артём (user) 2026-05-10.
+
+---
+
+## 2026-05-10: Phase 3.2 — Q1/Q3 + nice-to-have pre/post-claim test
+
+После approve PHASE-3.2-ENFORCEMENT-PROPOSAL.md.
+
+### Q1: keep backward-compat для anonymous persons
+
+**Решение**: anonymous (`graphPerson.userId === null`) — edit через
+`requireTreeAccess` (creator + memberIds). Claimed (`userId !=
+null`) — только owner или active grant per scope.
+
+**Обоснование Артёма**: «семьи строят дерево совместно — Артём
+создал слот "прабабушка Лида", Дарья добавила её девичью фамилию
+которую она помнит лучше, кто-то ещё фотографию загрузил. Если
+запретим — collaboration ломается, RFC модель «общими усилиями»
+теряет смысл».
+
+`additive: true` фикс предотвращал DATA-CORRUPTION (затирание
+полей чужого слота). Phase 3.2 закрывает orthogonal surface —
+editorial vandalism на claimed карточках. Это **не regression**,
+а целевой behavior из RFC.
+
+### Q3: 30 days revoked window для /v1/me/edit-grants
+
+**Решение**: 30 дней OK, и **намеренно совпадает** с
+`hardDeleteScheduledAt` window из Phase 3.1. Один TTL на оба
+audit-флоу = simpler mental model для юзера: «всё что произошло
+с моими правами / моими записями за последний месяц видно».
+
+Если потом UX покажет что 30 шумно — снизим до 14, но не больше.
+
+### Nice-to-have: explicit pre-claim/post-claim regression test
+
+**Решение**: в `owner-model-enforcement.test.js` явный test:
+1. Member-of-tree (не creator) делает PATCH на person которая
+   anonymous (graphPerson.userId === null) → success.
+2. Кто-то отдельно claim'ит эту person через invite/relation-request
+   flow → graphPerson.userId становится claimer.
+3. Тот же member делает PATCH снова → 403.
+
+Это самый болевой regression risk и Артём явно хочет видеть его
+зафиксированным test'ом, не только в комментарии.
+
+### Self-resolved Q2/Q4/Q5
+
+* Q2 (create new person) — keep as-is, member может создать
+  anonymous → становится owner.
+* Q4 (`tree.memberIds` после 3.2) — не удаляем, фейдится в
+  Phase 5/6.
+* Q5 (`merge-consent` отдельный scope) — keep отдельным от `edit`.
+
+Если что-то из этих окажется неочевидным при implementation —
+surface как новая DECISION, не молча решать.
+
+**Принято**: Артём (user) 2026-05-10.
+
+---
+
+## 2026-05-10: Phase 3.2 implementation surfaced edge — createPerson-with-userId followed by createRelation as creator
+
+**Контекст**: при wiring enforcement gates всплыл legitimate
+use-case в existing api.test.js:
+
+```
+Alice (owner of tree-a) creates person with `userId: bob.user.id`
+  → person.userId = bob (claimed by Bob through this single POST)
+  → graphPerson.userId = bob (after _syncPersonToGraph)
+  → owner of graphPerson = Bob
+
+Alice immediately creates relation:
+  POST /v1/trees/tree-a/relations {person1Id: alicePerson, person2Id: bobPerson, ...}
+  → mid Phase 3.2 gate: person2 claimed by Bob, Alice has no grant
+  → 403
+```
+
+Это паттерн «Alice invites Bob через создание linked-person'а +
+relation' к нему за один flow». Pre-Phase-3.2 работало (route не
+проверял claim'нутость на relation creation). После — reject как
+claimed-edit-as-stranger.
+
+Конкретные failing tests на момент implementation:
+* `tree graph snapshot syncs profile fields and normalizes family
+  units` (api.test.js:9271) — Alice создаёт spouse через
+  `userId: bob.user.id` + relation alice↔spouse spouse.
+* `branch chat endpoint reuses branch thread and limits participants
+  to that branch` (api.test.js:11011) — same shape: Alice creates
+  Bob person through `userId: bob.user.id` + relation.
+* `auto circles follow tree relations and filter audience content`
+  (api.test.js:7747) — same.
+
+### Решение
+
+Эти тесты отражают **legacy invite-via-creation flow** который
+Phase 3 RFC явно депрекейтит (см. tree_model_overhaul_rfc.md Phase
+3 «invite semantics»). Правильный flow — Bob receive invite,
+claim'ит slot из своего аккаунта, тогда graphPerson.userId
+обновляется через consent'ный path. Alice создаёт **anonymous**
+slot, Bob его потом claim'ит.
+
+Поэтому **adjust expectations** в тестах: либо убрать
+`userId: bob.user.id` из POST /persons (создаём anonymous и Bob
+claim'ит позже), либо явно ожидать 403 как новое правильное
+поведение enforcement'а.
+
+Это **не add auto-grant exemption** для creator. Auto-grants
+противоречат ответу C («без auto-extension по hops, только
+explicit grants»). Если pre-claim creation + immediate relation
+понадобится — Phase 3.4 UI добавит «Создать как anonymous» как
+default для unfamiliar email/userId.
+
+### Альтернатива (отвергнут)
+
+Auto-issue limited grant Alice'е при `POST /persons` с `userId`:
+* Pro: backward-compat with one-shot invite-via-creation flow.
+* Con: нарушает Артёмову Q1/C invariant «без auto-extension». Любая
+  exemption «creator получает initial grant» легко становится
+  vandal vector — особенно если creator потом revoke'ит и не
+  ставит новые grants. Пусть pre-claim Alice работает как
+  anonymous; claim — explicit consent step, как в RFC.
+
+**Принято**: Claude (implementation), документирую как DECISION
+для review Артёмом. Если он не согласен — поправим до commit'а.
+Не молчу — surface как просили.
+
+---
+
+## 2026-05-10: Phase 3.2 follow-up — POST/DELETE relations = tree-level, не двойной edit-gate
+
+**Контекст**: при wiring двойного edit-gate на `POST /relations`
++ `DELETE /relations/:id` всплыли legitimate failures на:
+* `auto circles follow tree relations and filter audience content`
+  (api.test.js:7747) — Alice (tree-creator) creates relations
+  alice↔Bob (Bob claimed his own person), alice↔Carol, partner↔Bob.
+* `branch chat endpoint` (11011) — same pattern.
+* `tree graph snapshot syncs profile fields` (9271) — same.
+
+Это паттерн «tree-creator расставляет родственные связи между
+participants дерева» — Bob и Carol уже в дереве с claimed
+self-persons, Alice прокладывает kinship structure. По исходному
+proposal'у двойной edit-gate этот flow blocking — Alice не owner
+Bob'а / Carol'ы.
+
+### Решение
+
+**Relation creation/deletion — tree-level STRUCTURAL операция,
+не editorial mutation на конкретных persons.** Per Артёмовой Q1
+(«семьи строят дерево совместно — кто-то добавил девичью фамилию,
+кто-то фотографию, ... запретим — collaboration ломается»), эта
+философия распространяется и на построение связей: один член семьи
+часто знает структуру лучше других, но это не значит что он должен
+получить explicit grant от каждого relative'а сначала.
+
+`POST /v1/trees/:treeId/relations` + `DELETE .../:relationId` —
+требуют только `requireTreeAccess(treeId)`, без gate per-person.
+
+### Защита от identity-merge vandalism
+
+Опасный case — «vandal link'ает Alice'ин self-person к чужой
+бабушке как identity»:
+* Это **identity merge**, не relation. Делается через
+  `POST /v1/trees/:treeId/persons/:personId/link-identity` —
+  отдельный endpoint, который Phase 3.2 gates'ит **двусторонним
+  merge-consent**.
+* Простой POST /relations пишет только parent/child/sibling/spouse
+  edge между **двумя existing person rows**. Identity link'ом не
+  становится; viewer не может через relation создать «Alice = моя
+  чужая бабушка». Identity-merge surface — отдельный, защищён.
+
+Так что dropping relation gates **не открывает identity-merge
+vandalism vector**. Editorial-on-claimed остаётся защищённым через
+`PATCH person`. Visibility — через `PATCH /v1/graph-persons/:id/
+visibility` (owner-only-всегда). Sensitive contacts — через field
+gate. Все три остаются enforced.
+
+### Альтернатива (отвергнут)
+
+Двойной edit-gate с per-person check на относительных endpoints:
+* Pro: theoretically tighter.
+* Con: ломает collaborative tree-building flow. Tree-creator не
+  может расставить родственные связи между already-claimed members
+  своей семьи без сбора N grants. UX-катастрофа.
+
+### Что остаётся в Phase 3.2 enforcement (для ясности)
+
+* `PATCH /v1/trees/:treeId/persons/:personId` — claimed = owner/grant.
+* `DELETE /v1/trees/:treeId/persons/:personId` — soft-delete scope.
+* `POST/PATCH/DELETE /v1/trees/:treeId/persons/:personId/media` —
+  edit scope.
+* `POST /v1/trees/:treeId/persons/:personId/link-identity` —
+  двусторонний merge-consent.
+* `PUT /v1/trees/:treeId/persons/:personId/attributes` — edit scope
+  + sensitive (contacts) owner-only-всегда.
+* `PATCH /v1/graph-persons/:id/visibility` — owner-only-всегда.
+* Cross-tree READ paths — visibility filter.
+
+**Принято**: Claude (implementation), документирую для review
+Артёмом. Это conservative loosening от первоначального proposal'а
+— surface потому что это narrowing of enforcement, не expansion.
+
+### Caveat для будущей фазы (Артём 2026-05-10 после approve)
+
+DECISION 2 верна для **current-scope**: relations в Phase 3.1
+branch-scoped через `legacyRelationIds`. Каждый legacy relation
+живёт внутри одного `tree`/`branch`, и tree-creator имеет
+структурную authority внутри своего branch'а — collaborative,
+но не propagating across branches.
+
+Если в будущей фазе `graphRelations` станут **truly cross-branch
+propagating** (Артём рисует ребро в своей ветке → Дарья видит
+его в своей), модель «односторонняя tree-authority» может
+потребовать пересмотра — возможно через **conflict log
+per-relation** аналогичный Phase 1.3 для canonical fields.
+Сценарий: Артём создаёт relation `мама spouse Иван`, Дарья
+утверждает что `мама spouse Пётр` — нужен flow «edit-time
+divergence» и user-resolution.
+
+**Re-evaluate в Phase 6** (где branch sharing proectируется).
+До тех пор — current-scope tree-authority валидна, потому что
+relations не cross-branch propagate.
+
+---
