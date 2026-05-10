@@ -276,3 +276,60 @@ deliberately conservative starting point.
 до явного approve.
 
 ---
+
+## 2026-05-10: Phase 3.1 proposal approved + Q1/Q3 + pre-flight check
+
+**Контекст**: PHASE-3.1-SCHEMA-PROPOSAL.md вышел на review.
+Артём approve целиком + два уточнения + один nice-to-have.
+
+### Q1: re-run миграции v1→v2 ЦЕЛИКОМ
+
+* `complete-v2` ledger ещё не существует — старый `complete` после
+  Phase 3.1 трактуется как «нужно пересобрать с новой logic'ой».
+* Re-run полностью deterministic + idempotent + покрывается dry-run
+  diff'ом.
+* В существующих v2-данных ничего критичного не накопилось, что
+  нельзя пересобрать из v1 + новой logic'и.
+* **Если что-то ВДРУГ всплывёт после rerun (data drift между rebuild
+  и старой v2) — фиксируем как новую DECISION в DECISIONS.md и
+  обсуждаем. Не молча правим.**
+
+### Q3: accept gap между Phase 3.1 и 3.4
+
+* Default `connected-via-blood-graph` + sensitive fields owner-only
+  через personAttributes — conservative enough.
+* Юзеры не получат worse-than-current state: сейчас escape hatch'а
+  на чужие деревья нет вообще.
+* Рисковый случай (deceased ancestor которого хотят owner-only)
+  встретится у мизерного числа юзеров. Если жалоб не будет —
+  вообще не делаем admin escape.
+
+### Nice-to-have: pre-flight count check в migrateTreesToGraphAndBranches
+
+Перед write проверяет:
+* `graphPersons.length === uniqueIdentitiesWithLinkedPersons + personsWithoutIdentity`
+* `graphRelations.length === dedup(relations)` (учитывая orphan-drop)
+* `branches.length === trees.length`
+
+Если расхождение — **abort** с clear error сообщением, **не write**.
+Это страховка от тихого data loss при переписывании canonical-picking
+логики.
+
+**Принято**: Артём (user) 2026-05-10.
+
+**Следующий шаг**: implementation в порядке из CURRENT-PHASE.md
+(EMPTY_DB → migration → store helpers → tests → dry-run → diff).
+Diff на показ перед коммитом — обязательно.
+
+---
+
+## Roadmap после Phase 3.1
+
+После implementation 3.1 backend и migration done, schema заморожена.
+Дальше:
+* **Phase 3.2** — owner-model permissions enforcement (route gates,
+  edit-grants UI flow на стороне backend).
+* **Phase 3.4** — UI для visibility/edit grants на клиенте.
+* Порядок: любой, Артём подскажет.
+
+---

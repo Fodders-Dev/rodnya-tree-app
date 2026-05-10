@@ -90,10 +90,21 @@ const EMPTY_DB = {
   graphRelations: [],
   branches: [],
   branchPersonViews: [],
+  // Phase 3.1 owner-model: explicit grants from a graphPerson's
+  // owner to other users for `edit` / `merge-consent` / `soft-delete`
+  // scopes. Default: only the owner (graphPerson.userId or
+  // graphPerson.createdBy) can mutate. Auto-extension by hops was
+  // explicitly rejected in DECISIONS.md (2026-05-10 ответ C) — every
+  // additional editor has to be granted access by the owner.
+  graphPersonEditGrants: [],
   // One-shot migration ledger: tracks which schema migrations have
   // already run so re-reads on startup don't redo idempotent work.
-  // Phase 3.1 sets `treesToGraph: "complete"` once the migration
-  // has built the new collections from the legacy ones.
+  // Phase 3.1 sets `treesToGraph: "complete-v2"` once the new
+  // per-field highest-completeness migration has built the graph
+  // collections from the legacy ones. The legacy "complete" value
+  // marks an old v1 migration whose canonical-picking was record-
+  // level (claimed user → updatedAt); v1 snapshots get re-built
+  // automatically on next startup so they pick up the new logic.
   migrationStatus: {},
   trees: [],
   persons: [],
@@ -150,6 +161,9 @@ function normalizeDbState(parsed) {
     branches: Array.isArray(parsed?.branches) ? parsed.branches : [],
     branchPersonViews: Array.isArray(parsed?.branchPersonViews)
       ? parsed.branchPersonViews
+      : [],
+    graphPersonEditGrants: Array.isArray(parsed?.graphPersonEditGrants)
+      ? parsed.graphPersonEditGrants
       : [],
     migrationStatus:
       parsed?.migrationStatus && typeof parsed.migrationStatus === "object"
@@ -9955,12 +9969,24 @@ class FileStore {
         updatedAt: legacyPerson.updatedAt,
         version: 0,
         deletedAt: null,
+        // Phase 3.1 (DECISIONS.md ответ C): 30-day soft-delete
+        // window, set on soft-delete, cleared on undo. Hard-delete
+        // background job (Phase 3.6) will pick up rows whose
+        // hardDeleteScheduledAt < now.
+        hardDeleteScheduledAt: null,
+        deletedByUserId: null,
         mergedInto: null,
         userId: legacyPerson.userId || null,
         legacyPersonIds: [legacyPerson.id],
         contactPrivacy: "owner-only",
         isPublic: false,
         source: "manual",
+        // Phase 3.1 (DECISIONS.md ответ A): default privacy
+        // "connected-via-blood-graph" (≤4 hops видят узел). Owner
+        // override через UI поднимает до "owner-only" с
+        // visibilityOverride=true.
+        visibility: "connected-via-blood-graph",
+        visibilityOverride: false,
       };
       for (const field of GRAPH_PERSON_CANONICAL_FIELDS) {
         graphPerson[field] = legacyPerson[field] ?? null;
@@ -9997,7 +10023,19 @@ class FileStore {
         // canonical node. Most likely path: a soft-delete the user
         // reverted, or a sibling person re-created on another branch.
         graphPerson.deletedAt = null;
+        graphPerson.hardDeleteScheduledAt = null;
+        graphPerson.deletedByUserId = null;
       }
+      // Phase 3.1 lazy-fill: snapshots created before this fix won't
+      // carry visibility / hardDeleteScheduledAt. Fill defaults via
+      // null-coalescing — if a future admin path sets `visibility:
+      // "owner-only"` directly, we MUST NOT clobber that to default.
+      // `??=` triggers only on undefined/null; explicit values
+      // (including `false` for visibilityOverride) survive.
+      graphPerson.visibility ??= "connected-via-blood-graph";
+      graphPerson.visibilityOverride ??= false;
+      graphPerson.hardDeleteScheduledAt ??= null;
+      graphPerson.deletedByUserId ??= null;
     }
 
     // Per-(branch, person) editorial slot.
@@ -10095,7 +10133,7 @@ class FileStore {
     branch.deletedAt = null;
   }
 
-  _markPersonDeletedInGraph(db, legacyPerson) {
+  _markPersonDeletedInGraph(db, legacyPerson, actorUserId = null) {
     if (!legacyPerson) return;
     if (!Array.isArray(db.graphPersons)) db.graphPersons = [];
     if (!Array.isArray(db.branchPersonViews)) db.branchPersonViews = [];
@@ -10131,9 +10169,12 @@ class FileStore {
     }
 
     // Soft-delete the graphPerson when no legacy row anywhere ties
-    // to its identity. Final hard-delete is deferred to the 30-day
-    // undo window referenced in the RFC; for now `deletedAt` lets
-    // read paths filter the row out and lets an undo flip it back.
+    // to its identity. Phase 3.1 (DECISIONS.md ответ C): hard-delete
+    // is deferred to a 30-day window — `hardDeleteScheduledAt` is
+    // set now+30d so the future Phase 3.6 background job can pick
+    // up rows past their window. Undo flips both deletedAt and
+    // hardDeleteScheduledAt back to null (handled in _syncPersonToGraph
+    // resurrect path).
     const stillReferenced = (db.persons || []).some(
       (p) =>
         p.id !== legacyPerson.id &&
@@ -10142,7 +10183,13 @@ class FileStore {
     if (!stillReferenced) {
       const graphPerson = db.graphPersons.find((g) => g.id === identityId);
       if (graphPerson && !graphPerson.deletedAt) {
-        graphPerson.deletedAt = nowIso();
+        const deletedTs = nowIso();
+        graphPerson.deletedAt = deletedTs;
+        const expirationDate = new Date(Date.parse(deletedTs));
+        expirationDate.setUTCDate(expirationDate.getUTCDate() + 30);
+        graphPerson.hardDeleteScheduledAt = expirationDate.toISOString();
+        graphPerson.deletedByUserId =
+          normalizeNullableString(actorUserId) || null;
       }
     }
   }
@@ -10460,6 +10507,285 @@ class FileStore {
     if (target.legacyRelationIds.length === 0 && !target.deletedAt) {
       target.deletedAt = nowIso();
     }
+  }
+
+  // ── Phase 3.1: privacy / owner-model / branch-rules helpers ─────────
+  // DECISIONS.md 2026-05-10 ответы A / C / D: visibility default
+  // "connected-via-blood-graph" (≤ MAX hops видят узел), owner-only
+  // edit без auto-extension по hops, branch.includeRules с
+  // blood/descendants/ancestors типами и maxHops slider.
+
+  // ответ A.4: "≤4 hops по кровным рёбрам видят узел". Per-call
+  // override через optional argument когда тестам или будущим UX
+  // экспериментам нужен другой radius.
+  static get _connectedVisibilityMaxHops() {
+    return 4;
+  }
+
+  // ответ A.1: контактные поля живут в `personAttributes` и
+  // отдельно gate'аются. Хранится здесь, чтобы любой read-path
+  // мог подтвердить «sensitive» по одному key-set'у.
+  static get _sensitiveAttributeKeys() {
+    return new Set([
+      "phone",
+      "phoneNumber",
+      "email",
+      "currentAddress",
+      "homeAddress",
+    ]);
+  }
+
+  // Helper: кто owner данного graphPerson? Если узел представляет
+  // user-аккаунт — это он. Иначе — кто его создал в графе
+  // (e.g. deceased ancestor добавил юзер X).
+  _graphPersonOwnerUserId(graphPerson) {
+    if (!graphPerson) return null;
+    return graphPerson.userId || graphPerson.createdBy || null;
+  }
+
+  // Какой graphPerson «представляет» данного user-аккаунта? Это
+  // его self-node, идентичен `users[userId].identityId`.
+  // Используется как стартовая точка blood-BFS для visibility check.
+  _selfGraphPersonIdForUser(db, userId) {
+    const normalizedUserId = normalizeNullableString(userId);
+    if (!normalizedUserId) return null;
+    const user = (db.users || []).find((entry) => entry.id === normalizedUserId);
+    if (!user) return null;
+    const identityId = normalizeNullableString(user.identityId);
+    if (!identityId) return null;
+    const graphPerson = (db.graphPersons || []).find(
+      (entry) => entry.id === identityId && !entry.deletedAt,
+    );
+    return graphPerson ? graphPerson.id : null;
+  }
+
+  // ответ A.1: visibility derive — поле в БД не пересчитывается
+  // background job'ом. Auto-public для исторических узлов
+  // (isAlive=false + birthYear < now-100) применяется в read path
+  // если owner НЕ выставил `visibilityOverride: true`. Stored
+  // `visibility` остаётся «connected-via-blood-graph» — старение
+  // само переключает effective без backfill.
+  _effectiveGraphPersonVisibility(graphPerson) {
+    if (!graphPerson) return "owner-only";
+    const stored = graphPerson.visibility || "connected-via-blood-graph";
+    if (graphPerson.visibilityOverride === true) {
+      return stored;
+    }
+    if (graphPerson.isAlive === false) {
+      const birthYear = parseInt(
+        String(graphPerson.birthDate || "").slice(0, 4),
+        10,
+      );
+      if (Number.isFinite(birthYear)) {
+        const yearsAgo = new Date().getFullYear() - birthYear;
+        if (yearsAgo > 100) return "public";
+      }
+    }
+    return stored;
+  }
+
+  // ответ A: «может ли viewer видеть этот graphPerson»? Owner и
+  // grants — всегда yes. Иначе — visibility level + (для
+  // connected-via-blood-graph) BFS до MAX hops.
+  // Вызывается из cross-tree picker / identity-suggestions /
+  // /v1/graph/relation chain hydration / future /me/extended-family.
+  _userCanSeeGraphPerson(db, graphPerson, viewerUserId) {
+    if (!graphPerson || graphPerson.deletedAt) return false;
+    const normalizedViewer = normalizeNullableString(viewerUserId);
+    if (!normalizedViewer) return false;
+
+    const owner = this._graphPersonOwnerUserId(graphPerson);
+    if (owner === normalizedViewer) return true;
+
+    // Любой active edit/view grant даёт visibility — без этого
+    // owner-only узел нельзя показать даже granted-юзеру, который
+    // должен его редактировать.
+    const hasGrant = (db.graphPersonEditGrants || []).some(
+      (entry) =>
+        entry.graphPersonId === graphPerson.id &&
+        entry.granteeUserId === normalizedViewer &&
+        !entry.revokedAt,
+    );
+    if (hasGrant) return true;
+
+    const visibility = this._effectiveGraphPersonVisibility(graphPerson);
+    if (visibility === "public") return true;
+    if (visibility === "owner-only") return false;
+
+    // connected-via-blood-graph (default).
+    const viewerSelfId = this._selfGraphPersonIdForUser(db, normalizedViewer);
+    if (!viewerSelfId) return false;
+    if (viewerSelfId === graphPerson.id) return true;
+
+    const path = this._findBloodRelationBetween(
+      db,
+      viewerSelfId,
+      graphPerson.id,
+      {maxDepth: FileStore._connectedVisibilityMaxHops},
+    );
+    return path !== null;
+  }
+
+  // ответ C: «может ли viewer редактировать этот graphPerson»?
+  // Default — только owner. `scope` отделяет «edit canonical
+  // fields» / «approve merge-proposal» / «soft-delete», грант
+  // выписывается под конкретный scope.
+  _userCanEditGraphPerson(db, graphPerson, viewerUserId, scope = "edit") {
+    if (!graphPerson || graphPerson.deletedAt) return false;
+    const normalizedViewer = normalizeNullableString(viewerUserId);
+    if (!normalizedViewer) return false;
+
+    const owner = this._graphPersonOwnerUserId(graphPerson);
+    if (owner === normalizedViewer) return true;
+
+    return (db.graphPersonEditGrants || []).some(
+      (entry) =>
+        entry.graphPersonId === graphPerson.id &&
+        entry.granteeUserId === normalizedViewer &&
+        entry.scope === scope &&
+        !entry.revokedAt,
+    );
+  }
+
+  // ответ A.3: sensitive (phone/email/currentAddress) — owner-only
+  // ВСЕГДА, независимо от node visibility. Public-node всё равно
+  // не показывает домашний телефон.
+  _userCanSeeSensitiveAttribute(db, graphPerson, viewerUserId, attributeKey) {
+    if (!FileStore._sensitiveAttributeKeys.has(String(attributeKey || ""))) {
+      // Не sensitive — обычный visibility check.
+      return this._userCanSeeGraphPerson(db, graphPerson, viewerUserId);
+    }
+    if (!graphPerson) return false;
+    const normalizedViewer = normalizeNullableString(viewerUserId);
+    if (!normalizedViewer) return false;
+    const owner = this._graphPersonOwnerUserId(graphPerson);
+    return owner === normalizedViewer;
+  }
+
+  // ответ D: вычисление актуального set'а graphPerson IDs внутри
+  // branch'а с учётом includeRules.type. Phase 3.1 поддерживает
+  // все четыре типа; UI wizard для не-manual типов прилетит в
+  // Phase 6.4. До тех пор миграция оставляет все existing
+  // branches с type=manual (см. buildBranchFromTree).
+  _buildBranchVisiblePersonIds(db, branch, viewerUserId) {
+    if (!branch) return new Set();
+    const rules = branch.includeRules || {
+      type: "manual",
+      manualPersonIds: [],
+    };
+    const maxHops = Number.isFinite(rules.maxHops) ? rules.maxHops : 5;
+
+    switch (rules.type) {
+      case "manual":
+        return new Set(
+          (rules.manualPersonIds || []).filter(Boolean),
+        );
+
+      case "blood-from-me": {
+        const selfId = this._selfGraphPersonIdForUser(db, viewerUserId);
+        if (!selfId) return new Set();
+        return this._collectBloodPersonsWithinHops(db, selfId, maxHops);
+      }
+
+      case "descendants-of": {
+        const anchor = normalizeNullableString(rules.anchorPersonId);
+        if (!anchor) return new Set();
+        return this._collectDescendantsWithinHops(db, anchor, maxHops);
+      }
+
+      case "ancestors-of": {
+        const anchor = normalizeNullableString(rules.anchorPersonId);
+        if (!anchor) return new Set();
+        return this._collectAncestorsWithinHops(db, anchor, maxHops);
+      }
+
+      default:
+        // Unknown type — empty set, не падать. Логируем для
+        // observability на случай если UI отправил мусорный rules
+        // (i18n strings, опечатки, etc.).
+        return new Set();
+    }
+  }
+
+  // BFS наружу по обеим сторонам кровных рёбер (parent/child/sibling)
+  // — нужно для blood-from-me: попадают и предки, и потомки, и
+  // siblings и их потомки в пределах N hops. То есть всё, что в
+  // твоём кровном круге не дальше maxHops.
+  _collectBloodPersonsWithinHops(db, anchorGraphPersonId, maxHops) {
+    const result = new Set();
+    if (!anchorGraphPersonId) return result;
+    const adjacency = this._buildBloodAdjacency(db);
+    if (!adjacency.has(anchorGraphPersonId)) {
+      // Узел изолированный (нет blood-edges) — branch включает только сам якорь.
+      result.add(anchorGraphPersonId);
+      return result;
+    }
+    const queue = [{node: anchorGraphPersonId, depth: 0}];
+    const visited = new Set([anchorGraphPersonId]);
+    result.add(anchorGraphPersonId);
+    while (queue.length) {
+      const current = queue.shift();
+      if (current.depth >= maxHops) continue;
+      const neighbors = adjacency.get(current.node) || [];
+      for (const {neighbor} of neighbors) {
+        if (visited.has(neighbor)) continue;
+        visited.add(neighbor);
+        result.add(neighbor);
+        queue.push({node: neighbor, depth: current.depth + 1});
+      }
+    }
+    return result;
+  }
+
+  _collectDescendantsWithinHops(db, anchorGraphPersonId, maxHops) {
+    return this._collectDirectionalWithinHops(
+      db,
+      anchorGraphPersonId,
+      maxHops,
+      "child",
+    );
+  }
+
+  _collectAncestorsWithinHops(db, anchorGraphPersonId, maxHops) {
+    return this._collectDirectionalWithinHops(
+      db,
+      anchorGraphPersonId,
+      maxHops,
+      "parent",
+    );
+  }
+
+  // Direction-aware BFS: walks edges where the TARGET role matches
+  // direction. _buildBloodAdjacency пишет
+  //   adjacency[child] += {neighbor: parent, edgeType: "parent"}
+  //   adjacency[parent] += {neighbor: child, edgeType: "child"}
+  // direction="child" значит идём вниз по потомкам; "parent" —
+  // вверх по предкам. siblings игнорируются (включаем только
+  // прямую вертикаль для descendants-of/ancestors-of).
+  _collectDirectionalWithinHops(db, anchorGraphPersonId, maxHops, direction) {
+    const result = new Set();
+    if (!anchorGraphPersonId) return result;
+    const adjacency = this._buildBloodAdjacency(db);
+    if (!adjacency.has(anchorGraphPersonId)) {
+      result.add(anchorGraphPersonId);
+      return result;
+    }
+    const queue = [{node: anchorGraphPersonId, depth: 0}];
+    const visited = new Set([anchorGraphPersonId]);
+    result.add(anchorGraphPersonId);
+    while (queue.length) {
+      const current = queue.shift();
+      if (current.depth >= maxHops) continue;
+      const neighbors = adjacency.get(current.node) || [];
+      for (const {neighbor, edgeType} of neighbors) {
+        if (edgeType !== direction) continue;
+        if (visited.has(neighbor)) continue;
+        visited.add(neighbor);
+        result.add(neighbor);
+        queue.push({node: neighbor, depth: current.depth + 1});
+      }
+    }
+    return result;
   }
 
   // ── Phase 3.1d: graph-first read helper ─────────────────────────────
