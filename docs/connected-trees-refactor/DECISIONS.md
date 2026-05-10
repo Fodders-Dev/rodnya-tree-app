@@ -746,3 +746,57 @@ Per Артёмовому правилу «если в каком-то месте
 **Принято**: Артём (user) 2026-05-10.
 
 ---
+
+## 2026-05-10 (chunk 3 follow-ups) — TODO list
+
+Зафиксированы по итогам chunk 3 review (edit-grants screen).
+Не блокеры для самого chunk 3, но обязаны быть закрыты до
+финального cut-off Phase 3.4.
+
+### TODO 1 — backend: hydrate grantor preview в /v1/me/edit-grants
+
+Сейчас `/v1/me/edit-grants` возвращает grants с
+`graphPerson` preview, но БЕЗ `grantor` preview. Симметрия с
+`/v1/me/issued-grants` нарушена — там grantee hydrate'ится, а
+здесь grantor нет. Incoming-таб экрана «Доступы» из-за этого
+показывает «вы можете редактировать карточку X» без context'а
+«потому что Y разрешил».
+
+**Объём**: ~30 строк в `backend/src/routes/graph-person-routes.js`
+(`/v1/me/edit-grants` handler) — собрать `Set<grantorUserId>`,
+`store.findUserById(...)` для каждого, добавить `grantor` поле в
+response payload. Frontend часть готова: `EditGrant.fromJson`
+уже парсит `grantor` field (см. lib/backend/models/edit_grant.dart
+строки 119–121, 142–145), `_IncomingCard` нужно расширить чтобы
+показать «X разрешил» row выше chips'ов.
+
+**Когда**: до выпуска Phase 3.4. Не блокер для chunk 3 commit'а,
+но «functional → обоснованный» — UX gap.
+
+**Тесты**: расширить `backend/test/owner-model-enforcement.test.js`
+секцию /v1/me/edit-grants чтобы проверить что grantor включён.
+
+### TODO 2 — extract russian plural helpers
+
+`_pluralDays` / `_pluralWeeks` / `_revokedAgoLabel` сейчас дублируются
+в `lib/widgets/access_grants_outgoing_tab.dart` и
+`lib/widgets/access_grants_incoming_tab.dart` (3 функции × 2 файла).
+
+**Когда extract**: при следующем месте использования. Кандидаты:
+* notifications screen (timestamp'ы «N минут назад»)
+* history view / activity log (когда добавим audit trail для
+  graphPerson edit'ов)
+* comments timeline (Phase 4+)
+
+**Куда**: `lib/utils/russian_plural.dart` (или `russian_dates.dart`
+если набирается critical mass функций про даты).
+
+**Аргумент против преждевременного extract**: chunk 3 уже
+~1370 LOC новых widgets + tests, не размывать. Дублирование двух
+файлов — приемлемая цена за tighter chunk diff. Третий call-site
+делает extract естественным — копировать в третий раз начинает
+явно болеть, и дисциплина вытаскивает helper.
+
+**Принято**: Артём (user) 2026-05-10 (chunk 3 review).
+
+---

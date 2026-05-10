@@ -12,6 +12,7 @@ import '../backend/interfaces/family_tree_service_interface.dart';
 import '../models/family_person.dart';
 import '../providers/tree_provider.dart';
 import '../screens/about_screen.dart';
+import '../screens/access_grants_screen.dart';
 import '../screens/add_relative_screen.dart';
 import '../screens/blocked_users_screen.dart';
 import '../screens/qr_login_scan_screen.dart';
@@ -463,6 +464,19 @@ class AppShellRouteModule {
                   key: state.pageKey,
                   constrainWidth: true,
                   child: const SettingsScreen(),
+                  transitionsBuilder: AppRouteTransitions.slide,
+                ),
+              ),
+              // Phase 3.4 chunk 3: «Доступы» — outgoing/incoming
+              // edit grants. Owner-of-graphPerson отзывает,
+              // grantee только смотрит.
+              GoRoute(
+                path: 'access',
+                parentNavigatorKey: rootNavigatorKey,
+                pageBuilder: (context, state) => RodnyaCustomTransitionPage(
+                  key: state.pageKey,
+                  constrainWidth: true,
+                  child: const AccessGrantsScreen(),
                   transitionsBuilder: AppRouteTransitions.slide,
                 ),
               ),
