@@ -9,6 +9,7 @@ import '../backend/interfaces/branch_digest_capable_family_tree_service.dart';
 import '../backend/interfaces/bulk_import_capable_family_tree_service.dart';
 import '../backend/interfaces/cross_tree_person_search_capable_family_tree_service.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
+import '../backend/interfaces/graph_person_access_capable_family_tree_service.dart';
 import '../backend/interfaces/identity_conflicts_capable_family_tree_service.dart';
 import '../backend/interfaces/identity_duplicate_capable_family_tree_service.dart';
 import '../backend/interfaces/identity_suggestions_capable_family_tree_service.dart';
@@ -16,9 +17,12 @@ import '../backend/interfaces/profile_service_interface.dart';
 import '../backend/interfaces/tree_graph_capable_family_tree_service.dart';
 import '../backend/models/blood_relation.dart';
 import '../backend/models/branch_digest.dart';
+import '../backend/models/edit_grant.dart';
 import '../backend/models/identity_field_conflict.dart';
 import '../backend/models/identity_suggestion.dart';
 import '../backend/models/cross_tree_person_suggestion.dart';
+import '../backend/models/include_rules.dart';
+import '../backend/models/visibility_choice.dart';
 import '../backend/models/selectable_tree.dart';
 import '../backend/models/tree_invitation.dart';
 import '../models/family_person.dart';
@@ -44,7 +48,8 @@ class CustomApiFamilyTreeService
         IdentityConflictsCapableFamilyTreeService,
         BloodRelationCapableFamilyTreeService,
         BranchDigestCapableFamilyTreeService,
-        BulkImportCapableFamilyTreeService {
+        BulkImportCapableFamilyTreeService,
+        GraphPersonAccessCapableFamilyTreeService {
   CustomApiFamilyTreeService({
     required CustomApiAuthService authService,
     required BackendRuntimeConfig runtimeConfig,
@@ -84,16 +89,27 @@ class CustomApiFamilyTreeService
     required String description,
     required bool isPrivate,
     TreeKind kind = TreeKind.family,
+    IncludeRules? includeRules,
   }) async {
+    // Phase 3.4 (DECISIONS.md ответ Q4 + fix-1): передаём
+    // includeRules только когда они явно заданы wizard'ом. Missing
+    // payload field → backend применит legacy default manual.
+    // Malformed payload → backend вернёт 400, мы пропустим
+    // exception вверх к UI как обычный network error.
+    final body = <String, dynamic>{
+      'name': name,
+      'description': description,
+      'isPrivate': isPrivate,
+      'kind': kind.name,
+    };
+    if (includeRules != null) {
+      body['includeRules'] = includeRules.toJson();
+    }
+
     final response = await _requestJson(
       method: 'POST',
       path: '/v1/trees',
-      body: {
-        'name': name,
-        'description': description,
-        'isPrivate': isPrivate,
-        'kind': kind.name,
-      },
+      body: body,
     );
 
     final tree = _treeFromResponse(response);
@@ -2174,5 +2190,150 @@ class CustomApiFamilyTreeService
       return value.map(_normalizeJsonValue).toList();
     }
     return value;
+  }
+
+  // ── Phase 3.4 (chunk 2/3): graph-person owner-model endpoints ──
+
+  @override
+  Future<GraphPersonAccessSnapshot?> getGraphPersonAccessSnapshot({
+    required String graphPersonId,
+  }) async {
+    try {
+      final response = await _requestJson(
+        method: 'GET',
+        path: '/v1/graph-persons/$graphPersonId',
+      );
+      final raw = response['graphPerson'];
+      if (raw is! Map<String, dynamic>) return null;
+      return GraphPersonAccessSnapshot.fromJson(raw);
+    } catch (error) {
+      // Visibility-gated read: 403/404 = viewer не имеет access.
+      // UI gracefully скрывает visibility section. Network errors
+      // тоже свернутся в null — лучше скрыть control, чем
+      // показать broken UI.
+      return null;
+    }
+  }
+
+  @override
+  Future<GraphPersonVisibility> setGraphPersonVisibility({
+    required String graphPersonId,
+    required VisibilityChoice choice,
+  }) async {
+    final response = await _requestJson(
+      method: 'PATCH',
+      path: '/v1/graph-persons/$graphPersonId/visibility',
+      body: {'visibility': choice.serverValue},
+    );
+    final raw = response['graphPerson'];
+    if (raw is! Map<String, dynamic>) {
+      throw const FormatException(
+        'Ожидался объект graphPerson в ответе на PATCH visibility',
+      );
+    }
+    return GraphPersonVisibility.fromJson(raw);
+  }
+
+  @override
+  Future<GraphPersonVisibility> clearGraphPersonVisibilityOverride({
+    required String graphPersonId,
+  }) async {
+    final response = await _requestJson(
+      method: 'DELETE',
+      path: '/v1/graph-persons/$graphPersonId/visibility-override',
+    );
+    final raw = response['graphPerson'];
+    if (raw is! Map<String, dynamic>) {
+      throw const FormatException(
+        'Ожидался объект graphPerson в ответе на DELETE visibility-override',
+      );
+    }
+    return GraphPersonVisibility.fromJson(raw);
+  }
+
+  @override
+  Future<EditGrant> addGraphPersonGrant({
+    required String graphPersonId,
+    required String granteeUserId,
+    required EditGrantScope scope,
+  }) async {
+    final response = await _requestJson(
+      method: 'POST',
+      path: '/v1/graph-persons/$graphPersonId/grants',
+      body: {
+        'granteeUserId': granteeUserId,
+        'scope': scope.serverValue,
+      },
+    );
+    final raw = response['grant'];
+    if (raw is! Map<String, dynamic>) {
+      throw const FormatException(
+        'Ожидался объект grant в ответе на POST grants',
+      );
+    }
+    final granteePreview = response['grantee'];
+    final merged = Map<String, dynamic>.from(raw);
+    if (granteePreview is Map<String, dynamic>) {
+      merged['grantee'] = granteePreview;
+    }
+    return EditGrant.fromJson(merged);
+  }
+
+  @override
+  Future<EditGrant> revokeGraphPersonGrant({
+    required String graphPersonId,
+    required String grantId,
+  }) async {
+    final response = await _requestJson(
+      method: 'DELETE',
+      path: '/v1/graph-persons/$graphPersonId/grants/$grantId',
+    );
+    final raw = response['grant'];
+    if (raw is! Map<String, dynamic>) {
+      throw const FormatException(
+        'Ожидался объект grant в ответе на DELETE grant',
+      );
+    }
+    return EditGrant.fromJson(raw);
+  }
+
+  @override
+  Future<List<EditGrant>> listGraphPersonGrants({
+    required String graphPersonId,
+  }) async {
+    final response = await _requestJson(
+      method: 'GET',
+      path: '/v1/graph-persons/$graphPersonId/grants',
+    );
+    final raw = response['grants'];
+    if (raw is! List) return const <EditGrant>[];
+    return raw
+        .whereType<Map<String, dynamic>>()
+        .map(EditGrant.fromJson)
+        .toList(growable: false);
+  }
+
+  @override
+  Future<List<EditGrant>> listMyEditGrants() async {
+    final response =
+        await _requestJson(method: 'GET', path: '/v1/me/edit-grants');
+    final raw = response['grants'];
+    if (raw is! List) return const <EditGrant>[];
+    return raw
+        .whereType<Map<String, dynamic>>()
+        .map(EditGrant.fromJson)
+        .toList(growable: false);
+  }
+
+  @override
+  Future<List<EditGrant>> listMyIssuedGrants() async {
+    final response =
+        await _requestJson(method: 'GET', path: '/v1/me/issued-grants');
+    final raw = response['grants'];
+    if (raw is! List) return const <EditGrant>[];
+    return raw
+        .whereType<Map<String, dynamic>>()
+        .map(EditGrant.fromJson)
+        .toList(growable: false);
   }
 }

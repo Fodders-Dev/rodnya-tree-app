@@ -90,10 +90,21 @@ const EMPTY_DB = {
   graphRelations: [],
   branches: [],
   branchPersonViews: [],
+  // Phase 3.1 owner-model: explicit grants from a graphPerson's
+  // owner to other users for `edit` / `merge-consent` / `soft-delete`
+  // scopes. Default: only the owner (graphPerson.userId or
+  // graphPerson.createdBy) can mutate. Auto-extension by hops was
+  // explicitly rejected in DECISIONS.md (2026-05-10 ответ C) — every
+  // additional editor has to be granted access by the owner.
+  graphPersonEditGrants: [],
   // One-shot migration ledger: tracks which schema migrations have
   // already run so re-reads on startup don't redo idempotent work.
-  // Phase 3.1 sets `treesToGraph: "complete"` once the migration
-  // has built the new collections from the legacy ones.
+  // Phase 3.1 sets `treesToGraph: "complete-v2"` once the new
+  // per-field highest-completeness migration has built the graph
+  // collections from the legacy ones. The legacy "complete" value
+  // marks an old v1 migration whose canonical-picking was record-
+  // level (claimed user → updatedAt); v1 snapshots get re-built
+  // automatically on next startup so they pick up the new logic.
   migrationStatus: {},
   trees: [],
   persons: [],
@@ -150,6 +161,9 @@ function normalizeDbState(parsed) {
     branches: Array.isArray(parsed?.branches) ? parsed.branches : [],
     branchPersonViews: Array.isArray(parsed?.branchPersonViews)
       ? parsed.branchPersonViews
+      : [],
+    graphPersonEditGrants: Array.isArray(parsed?.graphPersonEditGrants)
+      ? parsed.graphPersonEditGrants
       : [],
     migrationStatus:
       parsed?.migrationStatus && typeof parsed.migrationStatus === "object"
@@ -1842,6 +1856,85 @@ function buildLinkedPersonCanonicalPatchFromProfile(profile = {}) {
     birthDate: normalizeIsoDate(profile.birthDate),
     birthPlace: normalizeNullableString(profile.birthPlace),
   };
+}
+
+// Phase 3.4-prep (DECISIONS.md 2026-05-10 Q3/Q4): валидирует и
+// применяет incoming `includeRules` поверх существующих rules
+// branch'а. Не перетирает manualPersonIds на blood/descendants/
+// ancestors (stash для возможного rollback на manual). Validation:
+//   - type ∈ {manual, blood-from-me, descendants-of, ancestors-of}
+//   - maxHops 1..20 (default 5 если invalid/missing)
+//   - anchorPersonId — string или null
+// Возвращает true если что-то реально изменилось, false если no-op.
+const VALID_INCLUDE_RULE_TYPES = new Set([
+  "manual",
+  "blood-from-me",
+  "descendants-of",
+  "ancestors-of",
+]);
+
+function applyIncludeRulesToBranch(branch, incoming) {
+  if (!branch || !incoming || typeof incoming !== "object") {
+    return false;
+  }
+  const before = JSON.stringify(branch.includeRules || {});
+
+  if (
+    !branch.includeRules ||
+    typeof branch.includeRules !== "object"
+  ) {
+    branch.includeRules = {
+      type: "manual",
+      manualPersonIds: [],
+      anchorPersonId: null,
+      maxHops: 5,
+    };
+  }
+  const next = branch.includeRules;
+
+  // Type validation (DECISIONS.md 2026-05-10 fix-1):
+  //   - missing / null / empty → silent default (caller relies on
+  //     existing type, или `_syncTreeToBranch` initialize'нул "manual").
+  //     Это backward-compat для legacy callers без includeRules.
+  //   - explicit non-empty но не-allowed → throw INVALID_RULE_TYPE.
+  //     Malformed value = client-bug, должен surface'иться 400'ой,
+  //     не silent fallback'ом.
+  if (incoming.type !== undefined && incoming.type !== null) {
+    const requestedType = String(incoming.type).trim();
+    if (requestedType !== "") {
+      if (!VALID_INCLUDE_RULE_TYPES.has(requestedType)) {
+        throw new Error("INVALID_RULE_TYPE");
+      }
+      next.type = requestedType;
+    }
+  }
+
+  if (incoming.anchorPersonId === null) {
+    next.anchorPersonId = null;
+  } else if (typeof incoming.anchorPersonId === "string") {
+    const trimmed = incoming.anchorPersonId.trim();
+    next.anchorPersonId = trimmed || null;
+  }
+
+  // maxHops — continuous int с clamp 1..20 (не throw на out-of-range,
+  // в отличие от type). DECISIONS.md fix-2: out-of-range — это
+  // valid input behavior, не client-bug; sanity-bound и идём дальше.
+  if (Number.isFinite(incoming.maxHops)) {
+    const clamped = Math.max(1, Math.min(20, Math.floor(incoming.maxHops)));
+    next.maxHops = clamped;
+  } else if (next.maxHops === undefined || next.maxHops === null) {
+    next.maxHops = 5;
+  }
+
+  if (Array.isArray(incoming.manualPersonIds)) {
+    next.manualPersonIds = Array.from(
+      new Set(incoming.manualPersonIds.filter(Boolean)),
+    );
+  } else if (!Array.isArray(next.manualPersonIds)) {
+    next.manualPersonIds = [];
+  }
+
+  return JSON.stringify(next) !== before;
 }
 
 function applyCanonicalProfileToPerson(person, profile = {}, {
@@ -7328,7 +7421,24 @@ class FileStore {
     return collectOwnedMediaUrlsForUser(db, userId);
   }
 
-  async createTree({creatorId, name, description, isPrivate, kind}) {
+  async createTree({creatorId, name, description, isPrivate, kind, includeRules = null}) {
+    // Phase 3.4-prep fix-1: pre-flight validation на includeRules
+    // ДО touch'а DB. `applyIncludeRulesToBranch` throws на explicit
+    // invalid type — нужно catch'нуть здесь, чтобы caller (POST
+    // /v1/trees route) превратил в 400 БЕЗ partial side-effects
+    // (tree уже push'нутый в db, person'а ещё нет, и т.д.).
+    if (includeRules && typeof includeRules === "object") {
+      const probeBranch = {
+        includeRules: {
+          type: "manual",
+          manualPersonIds: [],
+          anchorPersonId: null,
+          maxHops: 5,
+        },
+      };
+      applyIncludeRulesToBranch(probeBranch, includeRules);
+    }
+
     const db = await this._read();
     const createdAt = nowIso();
     const normalizedKind = String(kind || "family").trim().toLowerCase() === "friends"
@@ -7377,6 +7487,18 @@ class FileStore {
       this._attachPersonToIdentity(db, creatorPerson, creatorIdentity, creatorId);
     } else {
       this._reconcilePersonIdentities(db);
+    }
+
+    // Phase 3.4-prep (DECISIONS.md 2026-05-10 ответ Q4):
+    // если caller передал `includeRules`, применяем поверх default
+    // manual rule, который ставит `_syncTreeToBranch`. Делаем после
+    // `_attachPersonToIdentity`, чтобы branch уже существовал.
+    if (includeRules && typeof includeRules === "object") {
+      this._syncTreeToBranch(db, tree);
+      const branch = (db.branches || []).find((b) => b.id === tree.id);
+      if (branch) {
+        applyIncludeRulesToBranch(branch, includeRules);
+      }
     }
     this._appendTreeChangeRecord(db, {
       treeId: tree.id,
@@ -9955,12 +10077,24 @@ class FileStore {
         updatedAt: legacyPerson.updatedAt,
         version: 0,
         deletedAt: null,
+        // Phase 3.1 (DECISIONS.md ответ C): 30-day soft-delete
+        // window, set on soft-delete, cleared on undo. Hard-delete
+        // background job (Phase 3.6) will pick up rows whose
+        // hardDeleteScheduledAt < now.
+        hardDeleteScheduledAt: null,
+        deletedByUserId: null,
         mergedInto: null,
         userId: legacyPerson.userId || null,
         legacyPersonIds: [legacyPerson.id],
         contactPrivacy: "owner-only",
         isPublic: false,
         source: "manual",
+        // Phase 3.1 (DECISIONS.md ответ A): default privacy
+        // "connected-via-blood-graph" (≤4 hops видят узел). Owner
+        // override через UI поднимает до "owner-only" с
+        // visibilityOverride=true.
+        visibility: "connected-via-blood-graph",
+        visibilityOverride: false,
       };
       for (const field of GRAPH_PERSON_CANONICAL_FIELDS) {
         graphPerson[field] = legacyPerson[field] ?? null;
@@ -9997,7 +10131,19 @@ class FileStore {
         // canonical node. Most likely path: a soft-delete the user
         // reverted, or a sibling person re-created on another branch.
         graphPerson.deletedAt = null;
+        graphPerson.hardDeleteScheduledAt = null;
+        graphPerson.deletedByUserId = null;
       }
+      // Phase 3.1 lazy-fill: snapshots created before this fix won't
+      // carry visibility / hardDeleteScheduledAt. Fill defaults via
+      // null-coalescing — if a future admin path sets `visibility:
+      // "owner-only"` directly, we MUST NOT clobber that to default.
+      // `??=` triggers only on undefined/null; explicit values
+      // (including `false` for visibilityOverride) survive.
+      graphPerson.visibility ??= "connected-via-blood-graph";
+      graphPerson.visibilityOverride ??= false;
+      graphPerson.hardDeleteScheduledAt ??= null;
+      graphPerson.deletedByUserId ??= null;
     }
 
     // Per-(branch, person) editorial slot.
@@ -10071,7 +10217,16 @@ class FileStore {
         description: tree.description || "",
         isPrivate: tree.isPrivate !== false,
         kind: tree.kind || "family",
-        includeRules: {type: "manual", manualPersonIds: []},
+        // Phase 3.1 (DECISIONS.md ответ D): includeRules с
+        // полным shape (anchorPersonId / maxHops). Совпадает с
+        // migration-utils.buildBranchFromTree — incremental mirror
+        // и one-shot migration пишут идентичную форму.
+        includeRules: {
+          type: "manual",
+          manualPersonIds: [],
+          anchorPersonId: null,
+          maxHops: 5,
+        },
         memberIds,
         publicSlug: tree.publicSlug || null,
         isCertified: tree.isCertified === true,
@@ -10093,9 +10248,26 @@ class FileStore {
     branch.certificationNote = tree.certificationNote || null;
     branch.updatedAt = tree.updatedAt;
     branch.deletedAt = null;
+    // Phase 3.1 lazy-fill для existing branches без новых rule
+    // полей. ??= triggers только на undefined/null — не overwrite'ит
+    // user-set значения.
+    if (!branch.includeRules || typeof branch.includeRules !== "object") {
+      branch.includeRules = {
+        type: "manual",
+        manualPersonIds: [],
+        anchorPersonId: null,
+        maxHops: 5,
+      };
+    } else {
+      branch.includeRules.anchorPersonId ??= null;
+      branch.includeRules.maxHops ??= 5;
+      if (!Array.isArray(branch.includeRules.manualPersonIds)) {
+        branch.includeRules.manualPersonIds = [];
+      }
+    }
   }
 
-  _markPersonDeletedInGraph(db, legacyPerson) {
+  _markPersonDeletedInGraph(db, legacyPerson, actorUserId = null) {
     if (!legacyPerson) return;
     if (!Array.isArray(db.graphPersons)) db.graphPersons = [];
     if (!Array.isArray(db.branchPersonViews)) db.branchPersonViews = [];
@@ -10131,9 +10303,12 @@ class FileStore {
     }
 
     // Soft-delete the graphPerson when no legacy row anywhere ties
-    // to its identity. Final hard-delete is deferred to the 30-day
-    // undo window referenced in the RFC; for now `deletedAt` lets
-    // read paths filter the row out and lets an undo flip it back.
+    // to its identity. Phase 3.1 (DECISIONS.md ответ C): hard-delete
+    // is deferred to a 30-day window — `hardDeleteScheduledAt` is
+    // set now+30d so the future Phase 3.6 background job can pick
+    // up rows past their window. Undo flips both deletedAt and
+    // hardDeleteScheduledAt back to null (handled in _syncPersonToGraph
+    // resurrect path).
     const stillReferenced = (db.persons || []).some(
       (p) =>
         p.id !== legacyPerson.id &&
@@ -10142,7 +10317,13 @@ class FileStore {
     if (!stillReferenced) {
       const graphPerson = db.graphPersons.find((g) => g.id === identityId);
       if (graphPerson && !graphPerson.deletedAt) {
-        graphPerson.deletedAt = nowIso();
+        const deletedTs = nowIso();
+        graphPerson.deletedAt = deletedTs;
+        const expirationDate = new Date(Date.parse(deletedTs));
+        expirationDate.setUTCDate(expirationDate.getUTCDate() + 30);
+        graphPerson.hardDeleteScheduledAt = expirationDate.toISOString();
+        graphPerson.deletedByUserId =
+          normalizeNullableString(actorUserId) || null;
       }
     }
   }
@@ -10406,9 +10587,10 @@ class FileStore {
   // Only the bare minimum — name + photo + dates — so the client
   // can render a relationship-path strip without leaking editorial
   // fields from non-accessible branches.
-  async previewGraphPersonsByIds(graphPersonIds) {
+  async previewGraphPersonsByIds(graphPersonIds, {viewerUserId = null} = {}) {
     const db = await this._read();
     const ids = Array.isArray(graphPersonIds) ? graphPersonIds : [];
+    const normalizedViewer = normalizeNullableString(viewerUserId);
     return ids.map((id) => {
       const graphPerson = (db.graphPersons || []).find((g) => g.id === id);
       if (!graphPerson || graphPerson.deletedAt) {
@@ -10421,6 +10603,27 @@ class FileStore {
           photoUrl: null,
         };
       }
+      // Phase 3.2: chain hydration (BFS, /v1/graph/relation,
+      // future /v1/me/extended-family) — каждый node идёт через
+      // visibility gate. Hidden node возвращается с пустыми
+      // canonical полями + `hidden: true`, чтобы UI знал «здесь
+      // звено есть, но имя не показано». Chain shape сохраняется,
+      // BFS-степень всё ещё считается — это всё, что нужно для
+      // «троюродная сестра через скрытого предка».
+      if (
+        normalizedViewer &&
+        !this._userCanSeeGraphPerson(db, graphPerson, normalizedViewer)
+      ) {
+        return {
+          id: graphPerson.id,
+          name: null,
+          gender: null,
+          birthDate: null,
+          deathDate: null,
+          photoUrl: null,
+          hidden: true,
+        };
+      }
       return {
         id: graphPerson.id,
         name: graphPerson.name,
@@ -10430,6 +10633,420 @@ class FileStore {
         photoUrl:
           graphPerson.primaryPhotoUrl || graphPerson.photoUrl || null,
       };
+    });
+  }
+
+  // ── Phase 3.2: graph-person resolution + grants + visibility ──────
+  // Owner-model enforcement (DECISIONS.md 2026-05-10 ответ C):
+  // default owner-only edit, без auto-extension по hops; explicit
+  // grants per-scope ("edit" / "merge-consent" / "soft-delete");
+  // merge — двусторонний consent через mergeProposals; visibility —
+  // owner-only-всегда (никаких grants даже на toggle).
+
+  // Resolve a legacy person id to its canonical graphPerson row.
+  // Returns null when the legacy person doesn't exist or its
+  // graphPerson has been soft-deleted. Used by route gates that
+  // need to call _userCanEditGraphPerson on a (treeId, personId)
+  // pair from the URL.
+  async findGraphPersonByLegacy(legacyPersonId) {
+    const normalizedId = normalizeNullableString(legacyPersonId);
+    if (!normalizedId) return null;
+    const db = await this._read();
+    const legacyPerson = (db.persons || []).find(
+      (entry) => entry.id === normalizedId,
+    );
+    const identityId = legacyPerson
+      ? normalizeNullableString(legacyPerson.identityId)
+      : null;
+
+    let graphPerson = identityId
+      ? (db.graphPersons || []).find((g) => g.id === identityId)
+      : null;
+
+    if (!graphPerson) {
+      // Edge case: legacy row exists but graphPerson hasn't been
+      // synced yet (e.g. first read after a fresh migration). Falling
+      // back to a `legacyPersonIds` reverse lookup keeps gates
+      // working until the next _syncPersonToGraph pass.
+      graphPerson = (db.graphPersons || []).find(
+        (g) =>
+          Array.isArray(g.legacyPersonIds) &&
+          g.legacyPersonIds.includes(normalizedId),
+      );
+    }
+    return graphPerson ? structuredClone(graphPerson) : null;
+  }
+
+  async findGraphPersonById(graphPersonId) {
+    const normalizedId = normalizeNullableString(graphPersonId);
+    if (!normalizedId) return null;
+    const db = await this._read();
+    const graphPerson = (db.graphPersons || []).find(
+      (entry) => entry.id === normalizedId,
+    );
+    return graphPerson ? structuredClone(graphPerson) : null;
+  }
+
+  // ─── Grant CRUD (POST/DELETE/GET /v1/graph-persons/:id/grants) ──
+
+  async addGraphPersonGrant({
+    graphPersonId,
+    grantorUserId,
+    granteeUserId,
+    scope,
+  }) {
+    const normalizedScope = String(scope || "").trim();
+    if (!["edit", "merge-consent", "soft-delete"].includes(normalizedScope)) {
+      throw new Error("INVALID_SCOPE");
+    }
+    const normalizedGraphPersonId = normalizeNullableString(graphPersonId);
+    const normalizedGrantor = normalizeNullableString(grantorUserId);
+    const normalizedGrantee = normalizeNullableString(granteeUserId);
+    if (!normalizedGraphPersonId || !normalizedGrantor || !normalizedGrantee) {
+      throw new Error("INVALID_INPUT");
+    }
+    if (normalizedGrantor === normalizedGrantee) {
+      throw new Error("SELF_GRANT");
+    }
+    const db = await this._read();
+    const graphPerson = (db.graphPersons || []).find(
+      (entry) => entry.id === normalizedGraphPersonId,
+    );
+    if (!graphPerson || graphPerson.deletedAt) return null;
+
+    const owner = this._graphPersonOwnerUserId(graphPerson);
+    if (owner !== normalizedGrantor) {
+      throw new Error("NOT_OWNER");
+    }
+
+    if (!Array.isArray(db.graphPersonEditGrants)) {
+      db.graphPersonEditGrants = [];
+    }
+
+    // Idempotency: re-issuing an active grant on the same triple
+    // returns the existing row. A revoked row with the same triple
+    // is left alone (audit trail) and a fresh row gets pushed.
+    const activeExisting = db.graphPersonEditGrants.find(
+      (entry) =>
+        entry.graphPersonId === normalizedGraphPersonId &&
+        entry.granteeUserId === normalizedGrantee &&
+        entry.scope === normalizedScope &&
+        !entry.revokedAt,
+    );
+    if (activeExisting) {
+      return {grant: structuredClone(activeExisting), created: false};
+    }
+
+    const grant = {
+      id: crypto.randomUUID(),
+      graphPersonId: normalizedGraphPersonId,
+      grantorUserId: normalizedGrantor,
+      granteeUserId: normalizedGrantee,
+      scope: normalizedScope,
+      grantedAt: nowIso(),
+      revokedAt: null,
+      origin: "owner-grant",
+    };
+    db.graphPersonEditGrants.push(grant);
+    await this._write(db);
+    return {grant: structuredClone(grant), created: true};
+  }
+
+  async revokeGraphPersonGrant({graphPersonId, grantId, actorUserId}) {
+    const normalizedGraphPersonId = normalizeNullableString(graphPersonId);
+    const normalizedGrantId = normalizeNullableString(grantId);
+    const normalizedActor = normalizeNullableString(actorUserId);
+    if (!normalizedGraphPersonId || !normalizedGrantId || !normalizedActor) {
+      return null;
+    }
+    const db = await this._read();
+    const graphPerson = (db.graphPersons || []).find(
+      (entry) => entry.id === normalizedGraphPersonId,
+    );
+    if (!graphPerson) return null;
+
+    const owner = this._graphPersonOwnerUserId(graphPerson);
+    if (owner !== normalizedActor) {
+      throw new Error("NOT_OWNER");
+    }
+
+    if (!Array.isArray(db.graphPersonEditGrants)) {
+      db.graphPersonEditGrants = [];
+    }
+    const grant = db.graphPersonEditGrants.find(
+      (entry) =>
+        entry.id === normalizedGrantId &&
+        entry.graphPersonId === normalizedGraphPersonId,
+    );
+    if (!grant) return null;
+
+    if (grant.revokedAt) {
+      // Idempotent — already revoked, no rewrite of the timestamp.
+      return structuredClone(grant);
+    }
+    grant.revokedAt = nowIso();
+    await this._write(db);
+    return structuredClone(grant);
+  }
+
+  async listGraphPersonGrants({graphPersonId, viewerUserId}) {
+    const normalizedGraphPersonId = normalizeNullableString(graphPersonId);
+    const normalizedViewer = normalizeNullableString(viewerUserId);
+    if (!normalizedGraphPersonId || !normalizedViewer) return null;
+    const db = await this._read();
+    const graphPerson = (db.graphPersons || []).find(
+      (entry) => entry.id === normalizedGraphPersonId,
+    );
+    if (!graphPerson) return null;
+
+    const owner = this._graphPersonOwnerUserId(graphPerson);
+    if (owner !== normalizedViewer) {
+      throw new Error("NOT_OWNER");
+    }
+    return (db.graphPersonEditGrants || [])
+      .filter((entry) => entry.graphPersonId === normalizedGraphPersonId)
+      .map((entry) => structuredClone(entry));
+  }
+
+  // Phase 3.4-prep (DECISIONS.md 2026-05-10 Q3): grantor-side список
+  // grants выписанных текущим юзером. Симметричен `listMyGrantsForUser`
+  // (grantee-side). Пагинируется не только активными — включаем
+  // revoked за 30d window для audit visibility «недавно отозвал».
+  async listMyIssuedGrants({userId, includeRevokedSinceDays = 30}) {
+    const normalizedUser = normalizeNullableString(userId);
+    if (!normalizedUser) return [];
+    const db = await this._read();
+    const cutoff = new Date(Date.now() - includeRevokedSinceDays * 86_400_000);
+    return (db.graphPersonEditGrants || [])
+      .filter((entry) => entry.grantorUserId === normalizedUser)
+      .filter((entry) => {
+        if (!entry.revokedAt) return true;
+        const revoked = new Date(entry.revokedAt);
+        return Number.isFinite(revoked.getTime()) && revoked >= cutoff;
+      })
+      .map((entry) => structuredClone(entry));
+  }
+
+  // Phase 3.4-prep (Q4): edit branch.includeRules с owner-only check.
+  // Used by PATCH /v1/trees/:treeId/include-rules. Отдельный store
+  // entry-point чтобы UI не лазил через generic updateTree (которого
+  // нет — tree updates идут через _syncTreeToBranch + create flow).
+  async updateBranchIncludeRules({treeId, rules, actorUserId}) {
+    const normalizedTreeId = normalizeNullableString(treeId);
+    const normalizedActor = normalizeNullableString(actorUserId);
+    if (!normalizedTreeId || !normalizedActor) return null;
+    const db = await this._read();
+    const tree = (db.trees || []).find((entry) => entry.id === normalizedTreeId);
+    if (!tree) return null;
+    if (tree.creatorId !== normalizedActor) {
+      throw new Error("NOT_OWNER");
+    }
+    if (!rules || typeof rules !== "object") {
+      throw new Error("INVALID_RULES");
+    }
+    const requestedType = String(rules.type || "").trim();
+    if (!VALID_INCLUDE_RULE_TYPES.has(requestedType)) {
+      throw new Error("INVALID_RULE_TYPE");
+    }
+
+    // Sync first — гарантируем что branch row существует.
+    this._syncTreeToBranch(db, tree);
+    const branch = (db.branches || []).find(
+      (entry) => entry.id === normalizedTreeId,
+    );
+    if (!branch) return null;
+
+    const changed = applyIncludeRulesToBranch(branch, rules);
+    if (changed) {
+      branch.updatedAt = nowIso();
+      tree.updatedAt = branch.updatedAt;
+      await this._write(db);
+    }
+    return structuredClone(branch);
+  }
+
+  // Phase 3.4-prep (Q4 warning preview): возвращает counts ДО и
+  // ПОСЛЕ применения новых rules БЕЗ commit'а. Helps UX warn'нуть
+  // юзера «X родственников появятся, Y исчезнут» перед apply.
+  async previewBranchIncludeRules({treeId, rules, viewerUserId}) {
+    const normalizedTreeId = normalizeNullableString(treeId);
+    const normalizedViewer = normalizeNullableString(viewerUserId);
+    if (!normalizedTreeId || !normalizedViewer) return null;
+    if (!rules || typeof rules !== "object") {
+      throw new Error("INVALID_RULES");
+    }
+    const requestedType = String(rules.type || "").trim();
+    if (!VALID_INCLUDE_RULE_TYPES.has(requestedType)) {
+      throw new Error("INVALID_RULE_TYPE");
+    }
+    const db = await this._read();
+    const branch = (db.branches || []).find(
+      (entry) => entry.id === normalizedTreeId,
+    );
+    if (!branch) return null;
+    if (
+      branch.ownerId !== normalizedViewer &&
+      !(Array.isArray(branch.memberIds) && branch.memberIds.includes(normalizedViewer))
+    ) {
+      throw new Error("FORBIDDEN");
+    }
+
+    const beforeSet = this._buildBranchVisiblePersonIds(
+      db,
+      branch,
+      normalizedViewer,
+    );
+
+    // Симулируем новый branch через deep-clone и apply (без write'а).
+    const previewBranch = structuredClone(branch);
+    applyIncludeRulesToBranch(previewBranch, rules);
+    const afterSet = this._buildBranchVisiblePersonIds(
+      db,
+      previewBranch,
+      normalizedViewer,
+    );
+
+    const added = [...afterSet].filter((id) => !beforeSet.has(id));
+    const removed = [...beforeSet].filter((id) => !afterSet.has(id));
+
+    return {
+      addedCount: added.length,
+      removedCount: removed.length,
+      totalBeforeCount: beforeSet.size,
+      totalAfterCount: afterSet.size,
+    };
+  }
+
+  // /v1/me/edit-grants: каждый grantee видит свои active + revoked
+  // за последние N дней (default 30 — DECISIONS.md 2026-05-10 Q3
+  // намеренно совпадает с hardDeleteScheduledAt window). Старее —
+  // в audit-only state, не отдаём в UI.
+  async listMyGrantsForUser({userId, includeRevokedSinceDays = 30}) {
+    const normalizedUser = normalizeNullableString(userId);
+    if (!normalizedUser) return [];
+    const db = await this._read();
+    const cutoff = new Date(Date.now() - includeRevokedSinceDays * 86_400_000);
+    return (db.graphPersonEditGrants || [])
+      .filter((entry) => entry.granteeUserId === normalizedUser)
+      .filter((entry) => {
+        if (!entry.revokedAt) return true;
+        const revoked = new Date(entry.revokedAt);
+        return Number.isFinite(revoked.getTime()) && revoked >= cutoff;
+      })
+      .map((entry) => structuredClone(entry));
+  }
+
+  // ─── Visibility update (owner-only, не grants) ──────────────────
+
+  async setGraphPersonVisibility({
+    graphPersonId,
+    visibility,
+    actorUserId,
+  }) {
+    if (
+      !["owner-only", "connected-via-blood-graph", "public"].includes(
+        String(visibility || "").trim(),
+      )
+    ) {
+      throw new Error("INVALID_VISIBILITY");
+    }
+    const normalizedGraphPersonId = normalizeNullableString(graphPersonId);
+    const normalizedActor = normalizeNullableString(actorUserId);
+    if (!normalizedGraphPersonId || !normalizedActor) return null;
+    const db = await this._read();
+    const graphPerson = (db.graphPersons || []).find(
+      (entry) => entry.id === normalizedGraphPersonId,
+    );
+    if (!graphPerson || graphPerson.deletedAt) return null;
+
+    const owner = this._graphPersonOwnerUserId(graphPerson);
+    if (owner !== normalizedActor) {
+      throw new Error("NOT_OWNER");
+    }
+    graphPerson.visibility = visibility;
+    graphPerson.visibilityOverride = true;
+    graphPerson.updatedAt = nowIso();
+    await this._write(db);
+    return structuredClone(graphPerson);
+  }
+
+  async clearGraphPersonVisibilityOverride({
+    graphPersonId,
+    actorUserId,
+  }) {
+    const normalizedGraphPersonId = normalizeNullableString(graphPersonId);
+    const normalizedActor = normalizeNullableString(actorUserId);
+    if (!normalizedGraphPersonId || !normalizedActor) return null;
+    const db = await this._read();
+    const graphPerson = (db.graphPersons || []).find(
+      (entry) => entry.id === normalizedGraphPersonId,
+    );
+    if (!graphPerson || graphPerson.deletedAt) return null;
+
+    const owner = this._graphPersonOwnerUserId(graphPerson);
+    if (owner !== normalizedActor) {
+      throw new Error("NOT_OWNER");
+    }
+    graphPerson.visibilityOverride = false;
+    graphPerson.updatedAt = nowIso();
+    await this._write(db);
+    return structuredClone(graphPerson);
+  }
+
+  // ─── Sensitive-attributes-aware reads ───────────────────────────
+
+  // Filter sensitive attribute fields (`field === "contacts"`)
+  // when viewer isn't the graphPerson owner. Used by attributes
+  // endpoint. Non-sensitive fields проходят без дополнительной
+  // gate'и — посетитель уже прошёл `requireTreeAccess`, значит
+  // имеет право видеть базовые поля person'а в этом дереве.
+  filterSensitiveAttributesForViewer({
+    db,
+    graphPerson,
+    viewerUserId,
+    attributes,
+  }) {
+    if (!Array.isArray(attributes)) return [];
+    return attributes.filter((attr) =>
+      this._userCanSeeSensitiveAttributeField(
+        db,
+        graphPerson,
+        viewerUserId,
+        attr?.field,
+      ),
+    );
+  }
+
+  // ─── Cross-tree visibility filter for legacy-shape lists ────────
+
+  // Bulk visibility check: для list-cross-tree-results (search,
+  // identity-suggestions). Фильтрует persons по
+  // `_userCanSeeGraphPerson`. Persons без graphPerson (mid-sync
+  // edge case) — оставляем (fail-open до следующего sync'а).
+  // Возвращает только legacy persons, которые viewer может видеть.
+  // Один _read() на whole list — без N+1 на каждый person.
+  async filterLegacyPersonsByGraphVisibility(persons, viewerUserId) {
+    if (!Array.isArray(persons) || persons.length === 0) return [];
+    const normalizedViewer = normalizeNullableString(viewerUserId);
+    if (!normalizedViewer) return [];
+    const db = await this._read();
+    const graphPersonsByIdentity = new Map(
+      (db.graphPersons || []).map((entry) => [entry.id, entry]),
+    );
+    const graphPersonsByLegacy = new Map();
+    for (const entry of db.graphPersons || []) {
+      for (const legacyId of entry.legacyPersonIds || []) {
+        graphPersonsByLegacy.set(legacyId, entry);
+      }
+    }
+    return persons.filter((person) => {
+      const identityId = normalizeNullableString(person?.identityId);
+      const graphPerson =
+        (identityId && graphPersonsByIdentity.get(identityId)) ||
+        graphPersonsByLegacy.get(person?.id) ||
+        null;
+      if (!graphPerson) return true; // Pre-sync — fail-open.
+      return this._userCanSeeGraphPerson(db, graphPerson, normalizedViewer);
     });
   }
 
@@ -10460,6 +11077,298 @@ class FileStore {
     if (target.legacyRelationIds.length === 0 && !target.deletedAt) {
       target.deletedAt = nowIso();
     }
+  }
+
+  // ── Phase 3.1: privacy / owner-model / branch-rules helpers ─────────
+  // DECISIONS.md 2026-05-10 ответы A / C / D: visibility default
+  // "connected-via-blood-graph" (≤ MAX hops видят узел), owner-only
+  // edit без auto-extension по hops, branch.includeRules с
+  // blood/descendants/ancestors типами и maxHops slider.
+
+  // ответ A.4: "≤4 hops по кровным рёбрам видят узел". Per-call
+  // override через optional argument когда тестам или будущим UX
+  // экспериментам нужен другой radius.
+  static get _connectedVisibilityMaxHops() {
+    return 4;
+  }
+
+  // ответ A.1: контактные поля (телефон, e-mail, текущий адрес)
+  // в `personAttributes` живут под полем `field === "contacts"`
+  // — это category-level, а не отдельные ключи. Phase 3.2 enforce'ит
+  // owner-only-всегда на эту category регardless `visibility` поля
+  // attribute'а: даже если кто-то ставит attribute'у visibility
+  // "public", не-owner всё равно её не видит. Это «privacy escape
+  // hatch на чувствительные поля» из ответа A.3.
+  static get _sensitiveAttributeFields() {
+    return new Set(["contacts"]);
+  }
+
+  // Public probe для route handlers — не leak'ает Set instance.
+  static isSensitiveAttributeField(field) {
+    return FileStore._sensitiveAttributeFields.has(String(field || ""));
+  }
+
+  // Helper: кто owner данного graphPerson? Если узел представляет
+  // user-аккаунт — это он. Иначе — кто его создал в графе
+  // (e.g. deceased ancestor добавил юзер X).
+  _graphPersonOwnerUserId(graphPerson) {
+    if (!graphPerson) return null;
+    return graphPerson.userId || graphPerson.createdBy || null;
+  }
+
+  // Какой graphPerson «представляет» данного user-аккаунта? Это
+  // его self-node, идентичен `users[userId].identityId`.
+  // Используется как стартовая точка blood-BFS для visibility check.
+  _selfGraphPersonIdForUser(db, userId) {
+    const normalizedUserId = normalizeNullableString(userId);
+    if (!normalizedUserId) return null;
+    const user = (db.users || []).find((entry) => entry.id === normalizedUserId);
+    if (!user) return null;
+    const identityId = normalizeNullableString(user.identityId);
+    if (!identityId) return null;
+    const graphPerson = (db.graphPersons || []).find(
+      (entry) => entry.id === identityId && !entry.deletedAt,
+    );
+    return graphPerson ? graphPerson.id : null;
+  }
+
+  // ответ A.1: visibility derive — поле в БД не пересчитывается
+  // background job'ом. Auto-public для исторических узлов
+  // (isAlive=false + birthYear < now-100) применяется в read path
+  // если owner НЕ выставил `visibilityOverride: true`. Stored
+  // `visibility` остаётся «connected-via-blood-graph» — старение
+  // само переключает effective без backfill.
+  _effectiveGraphPersonVisibility(graphPerson) {
+    if (!graphPerson) return "owner-only";
+    const stored = graphPerson.visibility || "connected-via-blood-graph";
+    if (graphPerson.visibilityOverride === true) {
+      return stored;
+    }
+    if (graphPerson.isAlive === false) {
+      const birthYear = parseInt(
+        String(graphPerson.birthDate || "").slice(0, 4),
+        10,
+      );
+      if (Number.isFinite(birthYear)) {
+        const yearsAgo = new Date().getFullYear() - birthYear;
+        if (yearsAgo > 100) return "public";
+      }
+    }
+    return stored;
+  }
+
+  // ответ A: «может ли viewer видеть этот graphPerson»? Owner и
+  // grants — всегда yes. Иначе — visibility level + (для
+  // connected-via-blood-graph) BFS до MAX hops.
+  // Вызывается из cross-tree picker / identity-suggestions /
+  // /v1/graph/relation chain hydration / future /me/extended-family.
+  _userCanSeeGraphPerson(db, graphPerson, viewerUserId) {
+    if (!graphPerson || graphPerson.deletedAt) return false;
+    const normalizedViewer = normalizeNullableString(viewerUserId);
+    if (!normalizedViewer) return false;
+
+    const owner = this._graphPersonOwnerUserId(graphPerson);
+    if (owner === normalizedViewer) return true;
+
+    // Любой active edit/view grant даёт visibility — без этого
+    // owner-only узел нельзя показать даже granted-юзеру, который
+    // должен его редактировать.
+    const hasGrant = (db.graphPersonEditGrants || []).some(
+      (entry) =>
+        entry.graphPersonId === graphPerson.id &&
+        entry.granteeUserId === normalizedViewer &&
+        !entry.revokedAt,
+    );
+    if (hasGrant) return true;
+
+    const visibility = this._effectiveGraphPersonVisibility(graphPerson);
+    if (visibility === "public") return true;
+    if (visibility === "owner-only") return false;
+
+    // connected-via-blood-graph (default).
+    const viewerSelfId = this._selfGraphPersonIdForUser(db, normalizedViewer);
+    if (!viewerSelfId) return false;
+    if (viewerSelfId === graphPerson.id) return true;
+
+    const path = this._findBloodRelationBetween(
+      db,
+      viewerSelfId,
+      graphPerson.id,
+      {maxDepth: FileStore._connectedVisibilityMaxHops},
+    );
+    return path !== null;
+  }
+
+  // ответ C: «может ли viewer редактировать этот graphPerson»?
+  // Default — только owner. `scope` отделяет «edit canonical
+  // fields» / «approve merge-proposal» / «soft-delete», грант
+  // выписывается под конкретный scope.
+  _userCanEditGraphPerson(db, graphPerson, viewerUserId, scope = "edit") {
+    if (!graphPerson || graphPerson.deletedAt) return false;
+    const normalizedViewer = normalizeNullableString(viewerUserId);
+    if (!normalizedViewer) return false;
+
+    const owner = this._graphPersonOwnerUserId(graphPerson);
+    if (owner === normalizedViewer) return true;
+
+    return (db.graphPersonEditGrants || []).some(
+      (entry) =>
+        entry.graphPersonId === graphPerson.id &&
+        entry.granteeUserId === normalizedViewer &&
+        entry.scope === scope &&
+        !entry.revokedAt,
+    );
+  }
+
+  // ответ A.3: sensitive attribute fields (category=contacts —
+  // содержит телефон, e-mail, адрес) — owner-only ВСЕГДА,
+  // независимо от node visibility. Public-узел всё равно не
+  // показывает домашний телефон.
+  //
+  // Контракт: для не-sensitive field возвращает true БЕЗ
+  // дополнительного visibility check. Visibility-уровень gate
+  // на cross-tree READ paths делается отдельно (в
+  // filterLegacyPersonsByGraphVisibility); этот метод —
+  // category-only filter поверх уже-passed access path. Иначе
+  // tree-creator после claim чужим юзером терял бы read-access
+  // на собственные дерево-attributes (он не owner graphPerson'а
+  // больше, но он tree-creator, и через requireTreeAccess уже
+  // прошёл).
+  _userCanSeeSensitiveAttributeField(db, graphPerson, viewerUserId, attributeField) {
+    if (!FileStore._sensitiveAttributeFields.has(String(attributeField || ""))) {
+      return true;
+    }
+    if (!graphPerson) return false;
+    const normalizedViewer = normalizeNullableString(viewerUserId);
+    if (!normalizedViewer) return false;
+    const owner = this._graphPersonOwnerUserId(graphPerson);
+    return owner === normalizedViewer;
+  }
+
+  // ответ D: вычисление актуального set'а graphPerson IDs внутри
+  // branch'а с учётом includeRules.type. Phase 3.1 поддерживает
+  // все четыре типа; UI wizard для не-manual типов прилетит в
+  // Phase 6.4. До тех пор миграция оставляет все existing
+  // branches с type=manual (см. buildBranchFromTree).
+  _buildBranchVisiblePersonIds(db, branch, viewerUserId) {
+    if (!branch) return new Set();
+    const rules = branch.includeRules || {
+      type: "manual",
+      manualPersonIds: [],
+    };
+    const maxHops = Number.isFinite(rules.maxHops) ? rules.maxHops : 5;
+
+    switch (rules.type) {
+      case "manual":
+        return new Set(
+          (rules.manualPersonIds || []).filter(Boolean),
+        );
+
+      case "blood-from-me": {
+        const selfId = this._selfGraphPersonIdForUser(db, viewerUserId);
+        if (!selfId) return new Set();
+        return this._collectBloodPersonsWithinHops(db, selfId, maxHops);
+      }
+
+      case "descendants-of": {
+        const anchor = normalizeNullableString(rules.anchorPersonId);
+        if (!anchor) return new Set();
+        return this._collectDescendantsWithinHops(db, anchor, maxHops);
+      }
+
+      case "ancestors-of": {
+        const anchor = normalizeNullableString(rules.anchorPersonId);
+        if (!anchor) return new Set();
+        return this._collectAncestorsWithinHops(db, anchor, maxHops);
+      }
+
+      default:
+        // Unknown type — empty set, не падать. Логируем для
+        // observability на случай если UI отправил мусорный rules
+        // (i18n strings, опечатки, etc.).
+        return new Set();
+    }
+  }
+
+  // BFS наружу по обеим сторонам кровных рёбер (parent/child/sibling)
+  // — нужно для blood-from-me: попадают и предки, и потомки, и
+  // siblings и их потомки в пределах N hops. То есть всё, что в
+  // твоём кровном круге не дальше maxHops.
+  _collectBloodPersonsWithinHops(db, anchorGraphPersonId, maxHops) {
+    const result = new Set();
+    if (!anchorGraphPersonId) return result;
+    const adjacency = this._buildBloodAdjacency(db);
+    if (!adjacency.has(anchorGraphPersonId)) {
+      // Узел изолированный (нет blood-edges) — branch включает только сам якорь.
+      result.add(anchorGraphPersonId);
+      return result;
+    }
+    const queue = [{node: anchorGraphPersonId, depth: 0}];
+    const visited = new Set([anchorGraphPersonId]);
+    result.add(anchorGraphPersonId);
+    while (queue.length) {
+      const current = queue.shift();
+      if (current.depth >= maxHops) continue;
+      const neighbors = adjacency.get(current.node) || [];
+      for (const {neighbor} of neighbors) {
+        if (visited.has(neighbor)) continue;
+        visited.add(neighbor);
+        result.add(neighbor);
+        queue.push({node: neighbor, depth: current.depth + 1});
+      }
+    }
+    return result;
+  }
+
+  _collectDescendantsWithinHops(db, anchorGraphPersonId, maxHops) {
+    return this._collectDirectionalWithinHops(
+      db,
+      anchorGraphPersonId,
+      maxHops,
+      "child",
+    );
+  }
+
+  _collectAncestorsWithinHops(db, anchorGraphPersonId, maxHops) {
+    return this._collectDirectionalWithinHops(
+      db,
+      anchorGraphPersonId,
+      maxHops,
+      "parent",
+    );
+  }
+
+  // Direction-aware BFS: walks edges where the TARGET role matches
+  // direction. _buildBloodAdjacency пишет
+  //   adjacency[child] += {neighbor: parent, edgeType: "parent"}
+  //   adjacency[parent] += {neighbor: child, edgeType: "child"}
+  // direction="child" значит идём вниз по потомкам; "parent" —
+  // вверх по предкам. siblings игнорируются (включаем только
+  // прямую вертикаль для descendants-of/ancestors-of).
+  _collectDirectionalWithinHops(db, anchorGraphPersonId, maxHops, direction) {
+    const result = new Set();
+    if (!anchorGraphPersonId) return result;
+    const adjacency = this._buildBloodAdjacency(db);
+    if (!adjacency.has(anchorGraphPersonId)) {
+      result.add(anchorGraphPersonId);
+      return result;
+    }
+    const queue = [{node: anchorGraphPersonId, depth: 0}];
+    const visited = new Set([anchorGraphPersonId]);
+    result.add(anchorGraphPersonId);
+    while (queue.length) {
+      const current = queue.shift();
+      if (current.depth >= maxHops) continue;
+      const neighbors = adjacency.get(current.node) || [];
+      for (const {neighbor, edgeType} of neighbors) {
+        if (edgeType !== direction) continue;
+        if (visited.has(neighbor)) continue;
+        visited.add(neighbor);
+        result.add(neighbor);
+        queue.push({node: neighbor, depth: current.depth + 1});
+      }
+    }
+    return result;
   }
 
   // ── Phase 3.1d: graph-first read helper ─────────────────────────────

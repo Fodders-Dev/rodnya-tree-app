@@ -30,6 +30,24 @@ function registerGraphRoutes(app, {store, requireAuth}) {
         ? Math.min(Math.floor(maxDepthRaw), 16)
         : 10;
 
+    // Phase 3.2: endpoints chain — viewer должен иметь visibility
+    // на оба конца. Если хотя бы один blocked — 403, чтобы не
+    // leak'ить «существует ли узел X» через chain-discovery.
+    const fromGraph = await store.findGraphPersonById(fromId);
+    const toGraph = await store.findGraphPersonById(toId);
+    if (!fromGraph || !toGraph) {
+      res.json({found: false});
+      return;
+    }
+    const dbForGate = await store._read();
+    if (
+      !store._userCanSeeGraphPerson(dbForGate, fromGraph, req.auth.user.id) ||
+      !store._userCanSeeGraphPerson(dbForGate, toGraph, req.auth.user.id)
+    ) {
+      res.status(403).json({message: "Карточка скрыта приватностью"});
+      return;
+    }
+
     const result = await store.findBloodRelation({
       fromGraphPersonId: fromId,
       toGraphPersonId: toId,
@@ -42,8 +60,12 @@ function registerGraphRoutes(app, {store, requireAuth}) {
 
     // Hydrate the chain into person previews so the client can
     // render the "you → mom → her brother → his daughter" path
-    // without a second roundtrip per graphPersonId.
-    const chainPreviews = await store.previewGraphPersonsByIds(result.chain);
+    // without a second roundtrip per graphPersonId. Phase 3.2:
+    // intermediate hidden nodes anonymized via viewer gate —
+    // chain length и edge sequence сохраняются.
+    const chainPreviews = await store.previewGraphPersonsByIds(result.chain, {
+      viewerUserId: req.auth.user.id,
+    });
 
     res.json({
       found: true,

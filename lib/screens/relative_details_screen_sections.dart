@@ -280,6 +280,18 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
                     const EdgeInsets.fromLTRB(16, 12, 16, 0),
                 child: headerStatus,
               ),
+              // Phase 3.4 chunk 5: conflict header-banner.
+              // Showcase'ит «у этого человека N расхождений с
+              // другими ветками» с CTA «Посмотреть и решить» →
+              // открывает reusable IdentityConflictsSheet.
+              if (_personConflicts.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 18, 16, 0),
+                  child: IdentityConflictsHeaderBanner(
+                    count: _personConflicts.length,
+                    onTap: _showPersonConflictsSheet,
+                  ),
+                ),
               if (_duplicateSuggestions.isNotEmpty)
                 Padding(
                   padding:
@@ -321,6 +333,42 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
                   child: _buildInfoSection(
                     'Семья',
                     _buildDirectFamilyRows(),
+                  ),
+                ),
+              // Phase 3.4 chunk 2 (PHASE-3.4-UI-PROPOSAL §2.2):
+              // visibility toggle section. Скрывается если viewer не
+              // owner графа (widget сам gate'ит через
+              // GraphPersonAccessSnapshot.effectiveOwnerUserId), либо
+              // если backend без Phase 3.4-prep capability.
+              if (person.identityId != null && person.identityId!.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 18, 16, 0),
+                  child: VisibilityToggleSection(
+                    graphPersonId: person.identityId!,
+                    viewerUserId: _authService.currentUserId ?? '',
+                    familyTreeService: _familyService,
+                  ),
+                ),
+              // Phase 3.4 chunk 4 (PHASE-3.4-UI-PROPOSAL §2.4):
+              // sensitive contacts section с явным «Видно тебе»
+              // badge. Owner-only-всегда (даже edit grant не
+              // открывает). Показываем только когда viewer === self
+              // (т.е. это карточка собственного аккаунта juzer'а),
+              // потому что phone/email лежат в его UserProfile.
+              // Anonymous person'ы (userId == null) не имеют
+              // contacts payload'а в текущей схеме — sensitive
+              // attribute поверх PersonAttribute(field:'contacts')
+              // возможен, но deferred (TODO когда появится UI для
+              // anonymous person contact entry).
+              if (_isViewerOwnPerson(person))
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 18, 16, 0),
+                  child: SensitiveContactsSection(
+                    isOwner: true,
+                    phoneNumber: _userProfile?.phoneNumber,
+                    email: _userProfile?.email,
+                    addressLine: _composeAddressLine(_userProfile),
+                    onEdit: () => context.push('/profile/edit'),
                   ),
                 ),
               // Profile Redesign: prominent «Удалить из дерева»

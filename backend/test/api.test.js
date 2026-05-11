@@ -5600,9 +5600,15 @@ test("identity claims, person privacy attributes and public discovery are opt-in
     const reviewedClaim = await reviewClaimResponse.json();
     assert.equal(reviewedClaim.claim.status, "approved");
 
+    // Phase 3.2 (DECISIONS.md 2026-05-10 ответ A.3): после approve
+    // claim'а person.userId стал claimant'ом → graphPerson owner =
+    // claimant. Sensitive `contacts` attribute теперь owner-only-
+    // всегда; tree-creator больше не видит чужие контакты, даже на
+    // собственном дереве. Читаем от имени claimant'а — он реальный
+    // владелец после claim.
     const attributesResponse = await fetch(
       `${ctx.baseUrl}/v1/trees/${treeId}/persons/${personId}/attributes`,
-      {headers: {authorization: `Bearer ${owner.accessToken}`}},
+      {headers: {authorization: `Bearer ${claimant.accessToken}`}},
     );
     assert.equal(attributesResponse.status, 200);
     const attributesPayload = await attributesResponse.json();
@@ -5612,12 +5618,31 @@ test("identity claims, person privacy attributes and public discovery are opt-in
       ),
     );
 
+    // Sanity: tree-creator (owner) sees non-sensitive attributes
+    // (name/photo/etc.) but NOT contacts after claim. Это Phase 3.2
+    // privacy promise.
+    const ownerAttrsAfterClaim = await fetch(
+      `${ctx.baseUrl}/v1/trees/${treeId}/persons/${personId}/attributes`,
+      {headers: {authorization: `Bearer ${owner.accessToken}`}},
+    );
+    assert.equal(ownerAttrsAfterClaim.status, 200);
+    const ownerAttrsPayload = await ownerAttrsAfterClaim.json();
+    assert.equal(
+      ownerAttrsPayload.attributes.some((attr) => attr.field === "contacts"),
+      false,
+      "tree-creator must not see claimant's contacts attribute after claim",
+    );
+
+    // Phase 3.2: после claim'а claimant — сам управляет своими
+    // attributes (это его privacy controls). Tree-creator may
+    // edit non-sensitive (name/birthYear) но не contacts. Здесь
+    // claimant пишет полный set с contacts=private.
     const updateAttributesResponse = await fetch(
       `${ctx.baseUrl}/v1/trees/${treeId}/persons/${personId}/attributes`,
       {
         method: "PUT",
         headers: {
-          authorization: `Bearer ${owner.accessToken}`,
+          authorization: `Bearer ${claimant.accessToken}`,
           "content-type": "application/json",
         },
         body: JSON.stringify({

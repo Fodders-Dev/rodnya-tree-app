@@ -37,6 +37,7 @@ const {registerChatRoutes} = require("./routes/chat-routes");
 const {registerCircleRoutes} = require("./routes/circle-routes");
 const {registerGoogleAuthRoutes} = require("./routes/google-auth-routes");
 const {registerGraphRoutes} = require("./routes/graph-routes");
+const {registerGraphPersonRoutes} = require("./routes/graph-person-routes");
 const {registerIdentityRoutes} = require("./routes/identity-routes");
 const {registerMaxAuthRoutes} = require("./routes/max-auth-routes");
 const {registerMergeRoutes} = require("./routes/merge-routes");
@@ -1735,6 +1736,99 @@ function createApp({
     return tree;
   }
 
+  // Phase 3.2 (DECISIONS.md 2026-05-10 ответы C/Q1): owner-model
+  // gate для mutate-routes на graphPerson canonical / soft-delete /
+  // merge. Layered:
+  //   1. requireTreeAccess(treeId) — viewer должен быть на дереве
+  //      (creator/member). Без этого даже active grant не открывает
+  //      route — grants выписываются на graphPerson, но HTTP-shape
+  //      требует tree-context.
+  //   2. graphPerson lookup. Если null (между migration и первым
+  //      sync'ом) — fall through на legacy gate (tree-access уже
+  //      пройден); claimed-protection кикnется на следующем read'е.
+  //   3. Backward-compat: anonymous (graphPerson.userId === null) —
+  //      tree-access достаточен (collaborative editing на «общими
+  //      усилиями» dummy slots). Claimed (userId !== null) — только
+  //      owner или active grant per scope. Это ровно то поведение,
+  //      которое Артём защитил `additive: true` фиксом + ответом
+  //      Q1 от 2026-05-10.
+  async function requireGraphPersonEdit(req, res, treeId, personId, scope) {
+    const normalizedScope = String(scope || "edit").trim();
+    const tree = await requireTreeAccess(req, res, treeId);
+    if (!tree) return null;
+
+    const legacyPerson = await store.findPerson(treeId, personId);
+    if (!legacyPerson) {
+      res.status(404).json({message: "Человек не найден"});
+      return null;
+    }
+
+    const graphPerson = await store.findGraphPersonByLegacy(personId);
+    if (!graphPerson) {
+      // Edge case — graph mirror ещё не догнал legacy write.
+      // Tree-access уже пройден; на anonymous этого достаточно по
+      // backward-compat правилу. Возвращаем legacy-only context.
+      return {tree, legacyPerson, graphPerson: null};
+    }
+
+    const isAnonymous = !graphPerson.userId;
+    if (isAnonymous) {
+      return {tree, legacyPerson, graphPerson};
+    }
+
+    const owner = graphPerson.userId || graphPerson.createdBy || null;
+    if (owner === req.auth.user.id) {
+      return {tree, legacyPerson, graphPerson};
+    }
+
+    // Claimed: только active grant per scope.
+    const dbForGrants = await store._read();
+    const grants = Array.isArray(dbForGrants.graphPersonEditGrants)
+      ? dbForGrants.graphPersonEditGrants
+      : [];
+    const hasGrant = grants.some(
+      (entry) =>
+        entry.graphPersonId === graphPerson.id &&
+        entry.granteeUserId === req.auth.user.id &&
+        entry.scope === normalizedScope &&
+        !entry.revokedAt,
+    );
+    if (hasGrant) {
+      return {tree, legacyPerson, graphPerson};
+    }
+
+    res.status(403).json({
+      message:
+        normalizedScope === "soft-delete"
+          ? "Только владелец карточки может удалить её"
+          : normalizedScope === "merge-consent"
+              ? "Объединение требует согласия владельца карточки"
+              : "Только владелец карточки может её редактировать",
+    });
+    return null;
+  }
+
+  // Cross-tree READ gate: один graphPerson по id, без tree-context.
+  // Используется new graph-person endpoints + future cross-tree
+  // chain hydration. Read paths которые list'ят (search,
+  // identity-suggestions) не вызывают этот helper напрямую — они
+  // фильтруют через `_userCanSeeGraphPerson` в bulk, чтобы скрытый
+  // person тихо выпал из результата, а не вернул 403 (последнее
+  // leak'ает существование).
+  async function requireGraphPersonRead(req, res, graphPersonId) {
+    const graphPerson = await store.findGraphPersonById(graphPersonId);
+    if (!graphPerson || graphPerson.deletedAt) {
+      res.status(404).json({message: "Карточка не найдена"});
+      return null;
+    }
+    const db = await store._read();
+    if (!store._userCanSeeGraphPerson(db, graphPerson, req.auth.user.id)) {
+      res.status(403).json({message: "Карточка скрыта приватностью"});
+      return null;
+    }
+    return graphPerson;
+  }
+
   async function requireChatAccess(req, res, chatId) {
     const chat = await store.findChat(chatId);
     if (!chat) {
@@ -2359,12 +2453,14 @@ function createApp({
   registerMergeRoutes(app, {
     store,
     requireAuth,
+    requireGraphPersonEdit,
   });
 
   registerIdentityRoutes(app, {
     store,
     requireAuth,
     requireTreeAccess,
+    requireGraphPersonEdit,
   });
 
   registerGraphRoutes(app, {
@@ -2372,10 +2468,17 @@ function createApp({
     requireAuth,
   });
 
+  registerGraphPersonRoutes(app, {
+    store,
+    requireAuth,
+    requireGraphPersonRead,
+  });
+
   registerTreeRoutes(app, {
     store,
     requireAuth,
     requireTreeAccess,
+    requireGraphPersonEdit,
     requirePublicTree,
     mapTree,
     mapPerson,

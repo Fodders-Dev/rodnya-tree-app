@@ -12,6 +12,7 @@ function registerTreeRoutes(
     store,
     requireAuth,
     requireTreeAccess,
+    requireGraphPersonEdit,
     requirePublicTree,
     mapTree,
     mapPerson,
@@ -23,22 +24,134 @@ function registerTreeRoutes(
   },
 ) {
   app.post("/v1/trees", requireAuth, async (req, res) => {
-    const {name, description, isPrivate, kind} = req.body || {};
+    const {name, description, isPrivate, kind, includeRules} = req.body || {};
     if (!String(name || "").trim()) {
       res.status(400).json({message: "Нужно название дерева"});
       return;
     }
 
-    const tree = await store.createTree({
-      creatorId: req.auth.user.id,
-      name,
-      description,
-      isPrivate,
-      kind,
-    });
-
-    res.status(201).json({tree: mapTree(tree)});
+    // Phase 3.4-prep (DECISIONS.md 2026-05-10 Q4 + fix-1): branch
+    // wizard передаёт includeRules — applied поверх default manual.
+    // Missing/null includeRules → silent default (legacy backward-
+    // compat для клиентов без поля). Explicit-but-invalid type →
+    // 400 (client-bug surface'ится, не silent fallback).
+    try {
+      const tree = await store.createTree({
+        creatorId: req.auth.user.id,
+        name,
+        description,
+        isPrivate,
+        kind,
+        includeRules:
+          includeRules && typeof includeRules === "object" ? includeRules : null,
+      });
+      res.status(201).json({tree: mapTree(tree)});
+    } catch (error) {
+      if (error?.message === "INVALID_RULE_TYPE") {
+        res.status(400).json({
+          message:
+            "type должен быть 'manual', 'blood-from-me', 'descendants-of' или 'ancestors-of'",
+        });
+        return;
+      }
+      throw error;
+    }
   });
+
+  // Phase 3.4-prep (Q4): PATCH branch.includeRules для уже
+  // существующего дерева. Owner-only. UX-warning preview через
+  // отдельный GET endpoint ниже.
+  app.patch(
+    "/v1/trees/:treeId/include-rules",
+    requireAuth,
+    async (req, res) => {
+      try {
+        const updated = await store.updateBranchIncludeRules({
+          treeId: req.params.treeId,
+          rules: req.body?.includeRules || req.body || {},
+          actorUserId: req.auth.user.id,
+        });
+        if (!updated) {
+          res.status(404).json({message: "Ветка не найдена"});
+          return;
+        }
+        res.json({
+          branchId: updated.id,
+          includeRules: updated.includeRules,
+          updatedAt: updated.updatedAt,
+        });
+      } catch (error) {
+        if (error?.message === "NOT_OWNER") {
+          res.status(403).json({
+            message: "Только владелец ветки может менять её состав",
+          });
+          return;
+        }
+        if (
+          error?.message === "INVALID_RULES" ||
+          error?.message === "INVALID_RULE_TYPE"
+        ) {
+          res.status(400).json({
+            message:
+              "type должен быть 'manual', 'blood-from-me', 'descendants-of' или 'ancestors-of'",
+          });
+          return;
+        }
+        throw error;
+      }
+    },
+  );
+
+  // Phase 3.4-prep (Q4 UX warning): preview affected count для
+  // нового includeRules БЕЗ commit'а. Помогает UI показать «X
+  // родственников появятся, Y исчезнут» прежде чем apply. Доступ —
+  // любой member ветки (читать состав branch'а до/после может тот,
+  // кто ветку видит).
+  app.get(
+    "/v1/trees/:treeId/include-rules-preview",
+    requireAuth,
+    async (req, res) => {
+      const type = String(req.query.type || "").trim();
+      const anchorPersonIdRaw = req.query.anchorPersonId;
+      const maxHopsRaw = Number(req.query.maxHops);
+      const rules = {
+        type,
+        anchorPersonId:
+          typeof anchorPersonIdRaw === "string"
+            ? anchorPersonIdRaw.trim() || null
+            : null,
+        maxHops: Number.isFinite(maxHopsRaw) ? maxHopsRaw : 5,
+      };
+      try {
+        const preview = await store.previewBranchIncludeRules({
+          treeId: req.params.treeId,
+          rules,
+          viewerUserId: req.auth.user.id,
+        });
+        if (!preview) {
+          res.status(404).json({message: "Ветка не найдена"});
+          return;
+        }
+        res.json({preview});
+      } catch (error) {
+        if (error?.message === "FORBIDDEN") {
+          res.status(403).json({message: "Доступ к ветке запрещён"});
+          return;
+        }
+        if (
+          error?.message === "INVALID_RULES" ||
+          error?.message === "INVALID_RULE_TYPE"
+        ) {
+          res.status(400).json({
+            message:
+              "type должен быть 'manual', 'blood-from-me', 'descendants-of' или 'ancestors-of'",
+          });
+          return;
+        }
+        throw error;
+      }
+    },
+  );
 
   app.get("/v1/trees", requireAuth, async (req, res) => {
     const trees = await store.listUserTrees(req.auth.user.id);
@@ -180,14 +293,28 @@ function registerTreeRoutes(
       limit,
     });
 
+    // Phase 3.2: bulk visibility filter. Узлы с
+    // visibility=owner-only от чужого owner'а (no grant) тихо
+    // выпадают — НЕ возвращаем 403, чтобы не leak'ить
+    // существование. Anonymous (graphPerson.userId=null) и
+    // accessible-tree узлы остаются.
+    const visiblePersons = await store.filterLegacyPersonsByGraphVisibility(
+      persons,
+      req.auth.user.id,
+    );
+
     res.json({
       // Trim to the lightweight summary shape — the picker only
       // needs name + photo + tree name to render. Full Person
       // payload is fetched on demand via /v1/trees/:id/persons/:id
       // when the user actually picks. Keeps this hot path tiny
       // even for users with many trees / hundreds of persons.
-      persons: persons.map((person) => ({
+      // Phase 3.4 (DECISIONS.md ответ Q4): добавлен `identityId`
+      // — branch wizard'у нужен canonical graphPerson.id (=
+      // identityId) для anchor descendants-of/ancestors-of rule.
+      persons: visiblePersons.map((person) => ({
         id: person.id,
+        identityId: person.identityId || null,
         treeId: person.treeId,
         treeName: person.treeName || "",
         displayName: person.name || "",
@@ -258,8 +385,23 @@ function registerTreeRoutes(
         personId: req.params.personId,
         limit,
       });
+
+      // Phase 3.2: filter cross-tree suggestions через visibility.
+      // targetPerson который claimed чужим owner'ом и не имеет
+      // grant'а для viewer'а — тихо выпадает. Это сохраняет 💡
+      // mehanic'у без leak о existence privately-held nodes.
+      const targetPersons = suggestions.map((s) => s.targetPerson);
+      const visibleTargets = await store.filterLegacyPersonsByGraphVisibility(
+        targetPersons,
+        req.auth.user.id,
+      );
+      const visibleTargetIds = new Set(visibleTargets.map((p) => p.id));
+      const visibleSuggestions = suggestions.filter((s) =>
+        visibleTargetIds.has(s.targetPerson.id),
+      );
+
       res.json({
-        suggestions: suggestions.map((suggestion) => ({
+        suggestions: visibleSuggestions.map((suggestion) => ({
           sourcePersonId: suggestion.sourcePersonId,
           sourceTreeId: suggestion.sourceTreeId,
           targetPersonId: suggestion.targetPersonId,
@@ -301,6 +443,27 @@ function registerTreeRoutes(
       // Auth: verify the user can access the target tree too.
       const targetTree = await requireTreeAccess(req, res, targetTreeId);
       if (!targetTree) return;
+
+      // Phase 3.2 (DECISIONS.md ответ C): identity link = merge,
+      // требует двустороннего merge-consent. Source side — viewer
+      // обычно owner или granted; target side — может быть claimed
+      // someone else'ом, и без consent'а grant'нуть слияние нельзя.
+      const sourceCtx = await requireGraphPersonEdit(
+        req,
+        res,
+        tree.id,
+        req.params.personId,
+        "merge-consent",
+      );
+      if (!sourceCtx) return;
+      const targetCtx = await requireGraphPersonEdit(
+        req,
+        res,
+        targetTree.id,
+        targetPersonId,
+        "merge-consent",
+      );
+      if (!targetCtx) return;
 
       try {
         const result = await store.linkPersonsByIdentity({
@@ -659,10 +822,18 @@ function registerTreeRoutes(
     "/v1/trees/:treeId/persons/:personId",
     requireAuth,
     async (req, res) => {
-      const tree = await requireTreeAccess(req, res, req.params.treeId);
-      if (!tree) {
-        return;
-      }
+      // Phase 3.2: layered owner-model gate. Anonymous (graphPerson.userId
+      // === null) — allowed для tree-creator/member (collaborative
+      // editorial); claimed — только owner или active grant per "edit".
+      const ctx = await requireGraphPersonEdit(
+        req,
+        res,
+        req.params.treeId,
+        req.params.personId,
+        "edit",
+      );
+      if (!ctx) return;
+      const {tree} = ctx;
 
       const person = await store.updatePerson(
         tree.id,
@@ -744,10 +915,17 @@ function registerTreeRoutes(
     "/v1/trees/:treeId/persons/:personId",
     requireAuth,
     async (req, res) => {
-      const tree = await requireTreeAccess(req, res, req.params.treeId);
-      if (!tree) {
-        return;
-      }
+      // Phase 3.2: soft-delete scope. Anonymous person — tree-access
+      // достаточен; claimed — только owner или grant per "soft-delete".
+      const ctx = await requireGraphPersonEdit(
+        req,
+        res,
+        req.params.treeId,
+        req.params.personId,
+        "soft-delete",
+      );
+      if (!ctx) return;
+      const {tree} = ctx;
 
       const deleted = await store.deletePerson(
         tree.id,
@@ -767,10 +945,17 @@ function registerTreeRoutes(
     "/v1/trees/:treeId/persons/:personId/media",
     requireAuth,
     async (req, res) => {
-      const tree = await requireTreeAccess(req, res, req.params.treeId);
-      if (!tree) {
-        return;
-      }
+      // Phase 3.2: media upload — edit scope (фото канонически
+      // мигрируют в graphPerson через identity propagation).
+      const ctx = await requireGraphPersonEdit(
+        req,
+        res,
+        req.params.treeId,
+        req.params.personId,
+        "edit",
+      );
+      if (!ctx) return;
+      const {tree} = ctx;
 
       const url =
         req.body?.url || req.body?.mediaUrl || req.body?.photoUrl || null;
@@ -806,10 +991,15 @@ function registerTreeRoutes(
     "/v1/trees/:treeId/persons/:personId/media/:mediaId",
     requireAuth,
     async (req, res) => {
-      const tree = await requireTreeAccess(req, res, req.params.treeId);
-      if (!tree) {
-        return;
-      }
+      const ctx = await requireGraphPersonEdit(
+        req,
+        res,
+        req.params.treeId,
+        req.params.personId,
+        "edit",
+      );
+      if (!ctx) return;
+      const {tree} = ctx;
 
       const result = await store.updatePersonMedia({
         treeId: tree.id,
@@ -839,10 +1029,15 @@ function registerTreeRoutes(
     "/v1/trees/:treeId/persons/:personId/media/:mediaId",
     requireAuth,
     async (req, res) => {
-      const tree = await requireTreeAccess(req, res, req.params.treeId);
-      if (!tree) {
-        return;
-      }
+      const ctx = await requireGraphPersonEdit(
+        req,
+        res,
+        req.params.treeId,
+        req.params.personId,
+        "edit",
+      );
+      if (!ctx) return;
+      const {tree} = ctx;
 
       // Clients that cached person data before real UUIDs were added may send
       // a synthetic ID like "photo-1". Fall back to URL-based lookup in that case.
@@ -928,6 +1123,14 @@ function registerTreeRoutes(
       return;
     }
 
+    // Phase 3.2 (DECISIONS.md 2026-05-10 follow-up): relation creation
+    // — tree-level STRUCTURAL операция (по Артёмовой Q1: «семьи
+    // строят дерево совместно»), не editorial mutation на каких-либо
+    // конкретных persons. Tree-access достаточен. Защита от
+    // identity-merge vandalism (link Alice к чужой бабушке как
+    // identity) идёт через отдельный POST /link-identity с двойным
+    // merge-consent. POST /relations пишет только parent/child/
+    // sibling/spouse rib, не объединяет identity.
     const {
       person1Id,
       person2Id,
@@ -1017,6 +1220,10 @@ function registerTreeRoutes(
         return;
       }
 
+      // Phase 3.2 (DECISIONS.md follow-up): relation deletion — то же
+      // tree-level structural operation как create, без edit-gate на
+      // отдельные persons. Tree-access достаточен; collaborative
+      // adjustment родственных связей не блокируется claim'нутостью.
       const deletedRelation = await store.deleteRelation(
         tree.id,
         req.params.relationId,

@@ -1043,6 +1043,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
           subtitle: 'Личные блокировки',
           onTap: () => GoRouter.of(context).push('/profile/blocks'),
         ),
+        // Phase 3.4 chunk 3: edit grants outgoing/incoming.
+        // Subtitle намеренно privacy-first — outgoing-таб (контроль
+        // прав на свои карточки) важнее incoming'а (списка где
+        // тебе разрешено редактировать). Юзер открывает screen
+        // ради защиты, а не discovery.
+        _buildActionRow(
+          icon: Icons.key_rounded,
+          title: 'Доступы',
+          subtitle: 'Кто редактирует ваши карточки',
+          onTap: () => GoRouter.of(context).push('/profile/access'),
+        ),
         _buildActionRow(
           icon: Icons.devices_rounded,
           title: 'Активные сеансы',

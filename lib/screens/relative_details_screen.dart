@@ -17,8 +17,10 @@ import '../utils/invitation_share.dart';
 import 'package:get_it/get_it.dart';
 import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
+import '../backend/interfaces/identity_conflicts_capable_family_tree_service.dart';
 import '../backend/interfaces/identity_service_interface.dart';
 import '../backend/interfaces/identity_duplicate_capable_family_tree_service.dart';
+import '../backend/models/identity_field_conflict.dart';
 import '../backend/interfaces/invitation_link_service_interface.dart';
 import '../backend/interfaces/profile_service_interface.dart';
 import '../backend/interfaces/storage_service_interface.dart';
@@ -27,9 +29,13 @@ import '../models/tree_change_record.dart';
 import '../models/tree_graph_snapshot.dart';
 import '../widgets/custom_relation_label_dialog.dart';
 import '../widgets/glass_panel.dart';
+import '../widgets/identity_conflicts_badge.dart';
+import '../widgets/identity_conflicts_sheet.dart';
 import '../widgets/media_lightbox.dart';
 import '../widgets/profile_redesign.dart';
+import '../widgets/sensitive_contacts_section.dart';
 import '../widgets/tree_history_sheet.dart';
+import '../widgets/visibility_toggle_section.dart';
 import '../theme/app_theme.dart';
 import '../utils/photo_url.dart';
 import '../utils/user_facing_error.dart';
@@ -104,6 +110,11 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
   List<FamilyRelation> _relations = [];
   List<TreeChangeRecord> _historyRecords = [];
   UserProfile? _userProfile;
+  // Phase 3.4 chunk 5: unresolved conflicts на этом person'е,
+  // фильтрованные по targetPersonId. Загружаются в _loadData;
+  // banner + badge сами рендерят SizedBox.shrink если пусто.
+  List<IdentityFieldConflict> _personConflicts =
+      const <IdentityFieldConflict>[];
   PersonDossier? _dossier;
   List<PersonDuplicateSuggestion> _duplicateSuggestions =
       const <PersonDuplicateSuggestion>[];
@@ -169,6 +180,7 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
       _viewerRelationLabel = null;
       _currentUserPersonId = null;
       _isLoadingHistory = true;
+      _personConflicts = const <IdentityFieldConflict>[];
     });
 
     if (_currentTreeId == null) {
@@ -256,6 +268,28 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
             'Не удалось загрузить возможные совпадения для ${widget.personId}: $duplicateError',
           );
           _duplicateSuggestions = const <PersonDuplicateSuggestion>[];
+        }
+      }
+
+      // Phase 3.4 chunk 5: load identity conflicts for this person.
+      // Best-effort — failure ничего не блокирует (badge/banner
+      // просто не появятся). Filter by targetPersonId — это
+      // конкретный person на текущей tree'е.
+      if (_person != null && _familyService is IdentityConflictsCapableFamilyTreeService) {
+        try {
+          final capable =
+              _familyService as IdentityConflictsCapableFamilyTreeService;
+          final allConflicts = await capable.getIdentityConflictsForTree(
+            treeId: _currentTreeId!,
+          );
+          _personConflicts = allConflicts
+              .where((c) => c.targetPersonId == _person!.id && !c.isResolved)
+              .toList(growable: false);
+        } catch (conflictsError) {
+          debugPrint(
+            'Не удалось загрузить расхождения для ${widget.personId}: $conflictsError',
+          );
+          _personConflicts = const <IdentityFieldConflict>[];
         }
       }
 
@@ -472,6 +506,95 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
 
   bool _canEditOrDelete() {
     return _person != null && (_dossier?.canEditFamilyFields ?? true);
+  }
+
+  /// Phase 3.4 chunk 5: открывает reusable conflict-resolution
+  /// sheet для текущего person'а. После choice'а — refetch
+  /// conflicts (and full data on overwrite, чтобы поля обновились).
+  Future<void> _showPersonConflictsSheet() async {
+    final treeId = _currentTreeId;
+    final service = _familyService;
+    if (treeId == null ||
+        _person == null ||
+        service is! IdentityConflictsCapableFamilyTreeService ||
+        _personConflicts.isEmpty) {
+      return;
+    }
+    final capable = service as IdentityConflictsCapableFamilyTreeService;
+    await showIdentityConflictsSheet(
+      context: context,
+      conflicts: _personConflicts,
+      onChoice: (sheetContext, conflict, choice) async {
+        try {
+          await capable.resolveIdentityConflict(
+            treeId: treeId,
+            conflictId: conflict.id,
+            choice: choice,
+          );
+        } catch (error) {
+          if (sheetContext.mounted) {
+            ScaffoldMessenger.of(sheetContext).showSnackBar(
+              SnackBar(content: Text('Не удалось применить выбор: $error')),
+            );
+          }
+          return;
+        }
+        if (sheetContext.mounted) {
+          Navigator.of(sheetContext).pop();
+        }
+        // overwrite → данные person'а изменились, full reload.
+        // keep → достаточно re-fetch'а conflicts.
+        if (choice == 'overwrite') {
+          await _loadData();
+        } else if (mounted) {
+          try {
+            final fresh = await capable.getIdentityConflictsForTree(
+              treeId: treeId,
+            );
+            if (!mounted) return;
+            setState(() {
+              _personConflicts = fresh
+                  .where((c) =>
+                      c.targetPersonId == _person!.id && !c.isResolved)
+                  .toList(growable: false);
+            });
+          } catch (_) {
+            // best-effort: refetch failed — sheet всё равно закрыт,
+            // badge обновится на следующем _loadData.
+          }
+        }
+      },
+    );
+  }
+
+  /// Phase 3.4 chunk 4 (PHASE-3.4-UI-PROPOSAL §2.4): true когда
+  /// карта связана с user-аккаунтом, и viewer — этот же аккаунт.
+  /// Используется для gating'а sensitive contacts section: phone/
+  /// email лежат в собственном UserProfile, и показывать их можно
+  /// только себе (даже creator'у чужой карточки нельзя — это его
+  /// данные не его).
+  bool _isViewerOwnPerson(FamilyPerson person) {
+    final ownerId = person.userId;
+    final viewerId = _authService.currentUserId;
+    if (ownerId == null || ownerId.isEmpty) return false;
+    if (viewerId == null || viewerId.isEmpty) return false;
+    return ownerId == viewerId;
+  }
+
+  /// Phase 3.4 chunk 4: build «city, country» либо single component
+  /// либо null. UserProfile не имеет точного «адреса» поля —
+  /// city+country это самое близкое к локации. Если оба пусты —
+  /// addressLine null, sensitive section покажет empty-state с
+  /// invite to «Добавить» (ведёт в profile editor).
+  String? _composeAddressLine(UserProfile? profile) {
+    if (profile == null) return null;
+    final parts = <String>[];
+    final city = profile.city?.trim();
+    final country = profile.country?.trim();
+    if (city != null && city.isNotEmpty) parts.add(city);
+    if (country != null && country.isNotEmpty) parts.add(country);
+    if (parts.isEmpty) return null;
+    return parts.join(', ');
   }
 
   bool _canDirectEditProfile() {

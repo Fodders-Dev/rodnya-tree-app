@@ -4,15 +4,22 @@ import '../../models/relation_request.dart';
 import '../../models/family_tree.dart';
 import '../../models/person_dossier.dart';
 import '../../models/tree_change_record.dart';
+import '../models/include_rules.dart';
 import '../models/selectable_tree.dart';
 import '../models/tree_invitation.dart';
 
 abstract class FamilyTreeServiceInterface {
+  /// Phase 3.4 (DECISIONS.md ответ Q4): wizard передаёт
+  /// [includeRules] чтобы новая ветка получила BFS-rule сразу
+  /// при создании. Если `null` — backend применит default
+  /// `manual` rule (legacy behaviour). Серверная валидация:
+  /// invalid `type` → 400 (см. PHASE-3.4-PROPOSAL §2.1).
   Future<String> createTree({
     required String name,
     required String description,
     required bool isPrivate,
     TreeKind kind = TreeKind.family,
+    IncludeRules? includeRules,
   });
   Future<List<FamilyTree>> getUserTrees();
   Future<List<FamilyPerson>> getRelatives(String treeId);
