@@ -280,6 +280,18 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
                     const EdgeInsets.fromLTRB(16, 12, 16, 0),
                 child: headerStatus,
               ),
+              // Phase 3.4 chunk 5: conflict header-banner.
+              // Showcase'ит «у этого человека N расхождений с
+              // другими ветками» с CTA «Посмотреть и решить» →
+              // открывает reusable IdentityConflictsSheet.
+              if (_personConflicts.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 18, 16, 0),
+                  child: IdentityConflictsHeaderBanner(
+                    count: _personConflicts.length,
+                    onTap: _showPersonConflictsSheet,
+                  ),
+                ),
               if (_duplicateSuggestions.isNotEmpty)
                 Padding(
                   padding:

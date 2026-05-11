@@ -839,3 +839,58 @@ gate должен быть на `userId == viewer` (актуальный owner),
 **Принято**: Артём (user) 2026-05-11 (chunk 4 review).
 
 ---
+
+## 2026-05-11 (chunk 5 review) — TODO list
+
+Зафиксированы по итогам chunk 5 review (conflict badges на не-canvas
+screens). Не блокеры для chunk 5 commit'а, но обязаны быть
+закрыты до Phase 4 cut-off.
+
+### TODO 3 — cache invalidation strategy для conflict counts
+
+**Где**: `lib/screens/relatives_screen.dart` (`_conflictCounts` +
+`_treeConflictsCache`) — кэш не invalidate'ится автоматически
+если юзер resolve'нул конфликт через sheet и вернулся на
+relatives_screen. Sheet onChoice вызывает `_refreshConflictCounts`,
+но **только когда sheet открыт из relatives_screen**. Если юзер
+открыл sheet с relative_details (тот же widget, тот же
+endpoint), вернулся на relatives_screen pull'ом back — там cache
+stale.
+
+**Симптом**: «5 карточек требуют внимания» banner, реально уже 4.
+Confusing.
+
+**Простой fix**: добавить refresh-on-resume на focus event
+(`WidgetsBindingObserver.didChangeAppLifecycleState` либо
+`RouteAware.didPopNext`). Альтернатива — global event bus
+«conflictsChanged» что подписываются и canvas, и relative_details,
+и relatives_screen.
+
+**Когда**: Phase 4 либо когда первый юзер feedback'нет. Не
+блокер для Phase 3.4 cut-off — pull-to-refresh пока работает.
+
+### TODO 4 — performance audit при большом дереве
+
+**Симптом**: у юзера 200+ persons, у 50 из них конфликты. На
+mid-range Android (e.g. Redmi 9A class) build per-row badge x 50 +
+`getIdentityConflictsForTree` fetch + JSON parse → возможно
+заметные janks при scroll.
+
+**Где будет хуже**: Phase 4 (extended-family network через identity
+граф) — там дерево 500+ persons.
+
+**Когда**: измерить на Phase 4 testing pass. Если slow:
+* **Lazy badge fetch** — count'ы только для visible viewport
+  (`ScrollController` + `RenderSliver` viewport check).
+* **Skip render if count > threshold** — header banner показывает
+  «50+ карточек», per-row badges suppressed.
+* **Server-side aggregation** — `/v1/trees/:id/identity-conflict-counts`
+  endpoint, который вернёт `Map<personId, count>` плоско, без
+  full conflict bodies. Эконом ~10x payload, parse быстрее.
+
+**Не блокер** для Phase 3.4 cut-off. Sub-100ms build на синтетике
+50 badge'ей измерен (Material standard cost).
+
+**Принято**: Артём (user) 2026-05-11 (chunk 5 review).
+
+---

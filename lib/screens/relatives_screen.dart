@@ -19,12 +19,16 @@ import '../widgets/glass_panel.dart';
 import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/chat_service_interface.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
+import '../backend/interfaces/identity_conflicts_capable_family_tree_service.dart';
 import '../backend/interfaces/invitation_link_service_interface.dart';
+import '../backend/models/identity_field_conflict.dart';
 import '../services/app_status_service.dart';
 import '../utils/photo_url.dart';
 import '../utils/snackbar.dart';
 import '../utils/user_facing_error.dart';
 import '../widgets/branch_switcher_chip.dart';
+import '../widgets/identity_conflicts_badge.dart';
+import '../widgets/identity_conflicts_sheet.dart';
 
 part 'relatives_screen_sections.dart';
 
@@ -90,6 +94,13 @@ class _RelativesScreenState extends State<RelativesScreen> {
   bool _isPendingRequestsLoading = true;
   String _searchQuery = '';
   late final TextEditingController _searchController;
+  // Phase 3.4 chunk 5: per-row + header conflict badges.
+  // `_conflictCounts` keyed by personId → unresolved count.
+  // `_treeConflictsCache` — flat list для sheet'а (filtered by
+  // targetPersonId при открытии).
+  Map<String, int> _conflictCounts = const <String, int>{};
+  List<IdentityFieldConflict> _treeConflictsCache =
+      const <IdentityFieldConflict>[];
 
   @override
   void initState() {
@@ -177,9 +188,12 @@ class _RelativesScreenState extends State<RelativesScreen> {
       _isRelationsReady = false;
       _isChatsReady = false;
       _isPendingRequestsLoading = true;
+      _conflictCounts = const <String, int>{};
+      _treeConflictsCache = const <IdentityFieldConflict>[];
     });
 
     unawaited(_checkPendingRequests(treeId));
+    unawaited(_refreshConflictCounts(treeId));
     try {
       await _setupDataListeners(treeId, _currentUserId!);
     } catch (e) {
@@ -199,6 +213,134 @@ class _RelativesScreenState extends State<RelativesScreen> {
         });
       }
     }
+  }
+
+  /// Phase 3.4 chunk 5: best-effort fetch identity conflicts на
+  /// текущем tree'е. Сlient fail-safe: при ошибке cache stays
+  /// empty, badge'ов нет. Backend без capability — silently
+  /// skip'аем (старый сервер).
+  Future<void> _refreshConflictCounts(String treeId) async {
+    final service = _familyService;
+    if (service is! IdentityConflictsCapableFamilyTreeService) return;
+    final capable = service as IdentityConflictsCapableFamilyTreeService;
+    List<IdentityFieldConflict> conflicts;
+    try {
+      conflicts = await capable.getIdentityConflictsForTree(treeId: treeId);
+    } catch (_) {
+      return;
+    }
+    if (!mounted || _currentTreeId != treeId) return;
+    final unresolved =
+        conflicts.where((c) => !c.isResolved).toList(growable: false);
+    final counts = <String, int>{};
+    for (final conflict in unresolved) {
+      counts[conflict.targetPersonId] =
+          (counts[conflict.targetPersonId] ?? 0) + 1;
+    }
+    setState(() {
+      _conflictCounts = counts;
+      _treeConflictsCache = unresolved;
+    });
+  }
+
+  /// Открывает sheet с conflicts конкретного person'а — тот же
+  /// reusable widget что и на canvas.
+  Future<void> _showConflictsSheet(String personId) async {
+    final treeId = _currentTreeId;
+    final service = _familyService;
+    if (treeId == null ||
+        service is! IdentityConflictsCapableFamilyTreeService) {
+      return;
+    }
+    final personConflicts = _treeConflictsCache
+        .where((c) => c.targetPersonId == personId && !c.isResolved)
+        .toList(growable: false);
+    if (personConflicts.isEmpty) {
+      // Cache stale — refresh и выходим (badge исчезнет на следующем
+      // setState).
+      await _refreshConflictCounts(treeId);
+      return;
+    }
+    final capable = service as IdentityConflictsCapableFamilyTreeService;
+    await showIdentityConflictsSheet(
+      context: context,
+      conflicts: personConflicts,
+      onChoice: (sheetContext, conflict, choice) async {
+        try {
+          await capable.resolveIdentityConflict(
+            treeId: treeId,
+            conflictId: conflict.id,
+            choice: choice,
+          );
+        } catch (error) {
+          if (sheetContext.mounted) {
+            ScaffoldMessenger.of(sheetContext).showSnackBar(
+              SnackBar(content: Text('Не удалось применить выбор: $error')),
+            );
+          }
+          return;
+        }
+        if (sheetContext.mounted) {
+          Navigator.of(sheetContext).pop();
+        }
+        await _refreshConflictCounts(treeId);
+      },
+    );
+  }
+
+  /// Открывает summary sheet'е со ВСЕМИ unresolved conflict'ами
+  /// дерева — без разбивки по person'у. Используется header
+  /// banner'ом «N карточек требуют внимания».
+  Future<void> _showAllTreeConflicts() async {
+    final treeId = _currentTreeId;
+    final service = _familyService;
+    if (treeId == null ||
+        service is! IdentityConflictsCapableFamilyTreeService ||
+        _treeConflictsCache.isEmpty) {
+      return;
+    }
+    final capable = service as IdentityConflictsCapableFamilyTreeService;
+    await showIdentityConflictsSheet(
+      context: context,
+      conflicts: _treeConflictsCache,
+      onChoice: (sheetContext, conflict, choice) async {
+        try {
+          await capable.resolveIdentityConflict(
+            treeId: treeId,
+            conflictId: conflict.id,
+            choice: choice,
+          );
+        } catch (error) {
+          if (sheetContext.mounted) {
+            ScaffoldMessenger.of(sheetContext).showSnackBar(
+              SnackBar(content: Text('Не удалось применить выбор: $error')),
+            );
+          }
+          return;
+        }
+        if (sheetContext.mounted) {
+          Navigator.of(sheetContext).pop();
+        }
+        await _refreshConflictCounts(treeId);
+      },
+    );
+  }
+
+  /// Phase 3.4 chunk 5: tree-level summary banner. Возвращает
+  /// SizedBox.shrink если conflict'ов нет — caller's wrap'ы
+  /// padding'и schum'ятся autoMagic'ом (banner сам decide'ит).
+  Widget _maybeConflictTreeBanner() {
+    if (_conflictCounts.isEmpty || _treeConflictsCache.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: IdentityConflictsHeaderBanner(
+        count: _conflictCounts.length,
+        onTap: _showAllTreeConflicts,
+        scope: ConflictBannerScope.tree,
+      ),
+    );
   }
 
   Future<void> _checkPendingRequests(String treeId) async {
@@ -410,6 +552,7 @@ class _RelativesScreenState extends State<RelativesScreen> {
                                       isFriendsTree: isFriendsTree,
                                       relativesCount: visibleRelatives.length,
                                     ),
+                                    _maybeConflictTreeBanner(),
                                     if (_showSecondaryLoadingStrip) ...[
                                       const SizedBox(height: 12),
                                       _buildSecondaryLoadingStrip(),
@@ -459,6 +602,7 @@ class _RelativesScreenState extends State<RelativesScreen> {
                                       isFriendsTree: isFriendsTree,
                                       relativesCount: visibleRelatives.length,
                                     ),
+                                    _maybeConflictTreeBanner(),
                                     if (_showSecondaryLoadingStrip) ...[
                                       const SizedBox(height: 10),
                                       _buildSecondaryLoadingStrip(),
@@ -1342,6 +1486,17 @@ class _RelativesScreenState extends State<RelativesScreen> {
                     : Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
+                          // Phase 3.4 chunk 5: per-row conflict
+                          // badge. Compact = icon-only (число
+                          // уходит в Semantics label, чтобы не
+                          // загромождать строку). Tap → sheet
+                          // конкретного person'а.
+                          if ((_conflictCounts[relative.id] ?? 0) > 0)
+                            IdentityConflictsBadge(
+                              count: _conflictCounts[relative.id]!,
+                              compact: true,
+                              onTap: () => _showConflictsSheet(relative.id),
+                            ),
                           if (canStartChat)
                             IconButton(
                               icon: const Icon(Icons.message_outlined),
