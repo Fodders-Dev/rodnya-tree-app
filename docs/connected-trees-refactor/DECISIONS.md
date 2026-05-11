@@ -800,3 +800,42 @@ response payload. Frontend часть готова: `EditGrant.fromJson`
 **Принято**: Артём (user) 2026-05-10 (chunk 3 review).
 
 ---
+
+## 2026-05-11 (chunk 4 review): ownership ≠ creator для privacy data
+
+**Универсальный invariant**: для любых sensitive / private fields
+gate должен быть на `userId == viewer` (актуальный owner), а не
+`createdBy == viewer` (исторический создатель).
+
+**Сценарий**: Алиса создаёт anonymous person'а для своего деда.
+Дед потом регистрируется и claim'ит карточку — `userId` shift'ится
+с null на `bob.id`, `createdBy` остаётся `alice.id`. После claim'а
+Алиса теряет privacy access к дедовым contacts'ам. Это **deliberate**,
+не bug — creator's role «инициатор записи», а не «вечный custodian».
+
+**Применяется к**:
+* Sensitive contacts (chunk 4) — phone/email/address gate'ятся
+  на `_isViewerOwnPerson`, который checks `userId == currentUserId`.
+* Visibility toggle (chunk 2) — `effectiveOwnerUserId =
+  userId ?? createdBy` для anonymous case, но после claim — userId.
+* Phase 3.6 hard-delete background job — actor должен быть
+  актуальный owner, не creator.
+* Phase 4+ notification-feed privacy filters — кому показывать
+  «X обновил Y's профиль».
+
+**Anonymous case (userId == null)**:
+* Creator в роли owner для privacy data — это temporary state до
+  момента claim'а. После claim — owner shifts. До тех пор —
+  `createdBy` это и есть «текущий» owner на отсутствие userId'а.
+* `effectiveOwnerUserId` formula (chunk 2 helper) уже отражает
+  это правильно: `userId ?? createdBy`.
+
+**Не-применяется к**:
+* Tree-level structural data (relations, branches) — те остаются
+  под `tree.creatorId` (DECISION 2 follow-up 2026-05-10).
+* Audit trail (kто и когда menjal) — creator там остаётся
+  навсегда как historical record, это не privacy data.
+
+**Принято**: Артём (user) 2026-05-11 (chunk 4 review).
+
+---

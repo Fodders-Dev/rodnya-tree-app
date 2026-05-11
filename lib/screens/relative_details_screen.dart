@@ -29,6 +29,7 @@ import '../widgets/custom_relation_label_dialog.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/media_lightbox.dart';
 import '../widgets/profile_redesign.dart';
+import '../widgets/sensitive_contacts_section.dart';
 import '../widgets/tree_history_sheet.dart';
 import '../widgets/visibility_toggle_section.dart';
 import '../theme/app_theme.dart';
@@ -473,6 +474,36 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
 
   bool _canEditOrDelete() {
     return _person != null && (_dossier?.canEditFamilyFields ?? true);
+  }
+
+  /// Phase 3.4 chunk 4 (PHASE-3.4-UI-PROPOSAL §2.4): true когда
+  /// карта связана с user-аккаунтом, и viewer — этот же аккаунт.
+  /// Используется для gating'а sensitive contacts section: phone/
+  /// email лежат в собственном UserProfile, и показывать их можно
+  /// только себе (даже creator'у чужой карточки нельзя — это его
+  /// данные не его).
+  bool _isViewerOwnPerson(FamilyPerson person) {
+    final ownerId = person.userId;
+    final viewerId = _authService.currentUserId;
+    if (ownerId == null || ownerId.isEmpty) return false;
+    if (viewerId == null || viewerId.isEmpty) return false;
+    return ownerId == viewerId;
+  }
+
+  /// Phase 3.4 chunk 4: build «city, country» либо single component
+  /// либо null. UserProfile не имеет точного «адреса» поля —
+  /// city+country это самое близкое к локации. Если оба пусты —
+  /// addressLine null, sensitive section покажет empty-state с
+  /// invite to «Добавить» (ведёт в profile editor).
+  String? _composeAddressLine(UserProfile? profile) {
+    if (profile == null) return null;
+    final parts = <String>[];
+    final city = profile.city?.trim();
+    final country = profile.country?.trim();
+    if (city != null && city.isNotEmpty) parts.add(city);
+    if (country != null && country.isNotEmpty) parts.add(country);
+    if (parts.isEmpty) return null;
+    return parts.join(', ');
   }
 
   bool _canDirectEditProfile() {
