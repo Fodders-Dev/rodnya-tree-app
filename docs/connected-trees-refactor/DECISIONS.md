@@ -894,3 +894,135 @@ mid-range Android (e.g. Redmi 9A class) build per-row badge x 50 +
 **Принято**: Артём (user) 2026-05-11 (chunk 5 review).
 
 ---
+
+## 2026-05-12 — Phase 4 архитектурные answers
+
+Закрыты review-revise циклом с Артёмом по итогам Phase 4 proposal
+v1 (`docs/connected-trees-refactor/PHASE-4-PROPOSAL.md` baseline
+commit `32a8f8d`). Принципы — для всех Phase 4 implementation
+chunks; cross-reference'аются из proposal v2 §5/§6/§7.
+
+### Q1.B — privacy fence respected
+
+Phase 4 = **visualization layer** на том, что юзер уже может
+видеть через `_connectedVisibilityMaxHops = 4`. Никакого
+relaxation'а fence'а.
+
+**Reasoning**: если Phase 4 relax'ает fence, мы получаем privacy
+regression — viewer видит бабушек friends'ов которых не должен.
+Расширенная сеть = красивая визуализация existing visibility, не
+extension её scope'а. Fence остаётся фундаментальным privacy
+invariant'ом из Phase 3.1.
+
+### Q1.A — emergent property из Q1.B
+
+Public-frontier walk **за fence** фундаментально невозможен.
+
+**Сценарий**: node X с `visibility=public`, его родитель Y с
+`visibility=connected-via-blood-graph`, viewer вне connected
+set'а Y. Можно ли BFS-walk «прыгнуть X→Y» через public node X?
+
+**Ответ**: нет. `Y.visibility` resolves **per-target-node**, не
+per-path. Public node X не служит как «портал» к приватному Y —
+fence режет render самого Y (или его sensitive fields)
+независимо от того, через что walker к нему пришёл. Это
+**emergent property** Q1.B, не отдельное решение.
+
+### Q6.A — depth slider == privacy fence
+
+Range **`2..4`**, default `4`. Точно совпадает с
+`_connectedVisibilityMaxHops = 4` как hard cap.
+
+**Reasoning**:
+* Slider за пределы fence misleading — юзер тянет до 6/10,
+  ничего нового не появляется, frustration.
+* `min = 2` (не 1) — hop 1 = self + immediate (parents/kids/
+  spouse) = 3-5 nodes; feels broken, не focused.
+* `2 hops`: + grandparents + siblings + niblings (≈ 7-10 typical).
+* `3 hops`: + great-grandparents + cousins.
+* `4 hops`: full extended (default).
+
+Расширение fence за 4 hops — Phase 5+ feature с consent flow,
+не Phase 4.
+
+### Q3.A — node tap для relation sheet
+
+**Edge tap НЕ используется**. Sheet «как этот человек связан со
+мной» открывается через tap на **node**.
+
+**Reasoning**: edges на mobile микроскопические, попасть пальцем
+сложно. Tap на node открывает sheet с identity + relation-to-me
+(lazy compute via existing `/v1/trees/:id/relation-path`,
+Phase 2). Edge tap технически интересен, UX-вред.
+
+### Q4.A — нет «Попросить доступ» stub в Phase 4
+
+Foreign node tap-sheet **не** включает «Попросить доступ»
+button до Phase 5+.
+
+**Reasoning**: lure без выполнения = ложное обещание UX. Юзер
+тапает foreign node → sheet с owner identity row + «Написать»
+button (chat existing flow) + «Открыть карточку» (read-only
+person card). Real edit-request flow — Phase 5+ когда есть
+real implementation на backend'е (notification ping owner'у +
+inbox для request'а).
+
+### Q5.A — client-side search filter ≤ 1000 persons
+
+Search в extended view фильтрует **client-side по уже-fetched
+slice'у**. Server-side search endpoint и пагинация — **Phase 5+**.
+
+**Reasoning**: у тестовых users < 100 persons. Production случаев
+slice > 1000 не будет в обозримом времени. Premature optimization
+сейчас. Document'ируем limit в proposal'е, если real data покажет
+slice > 1000 в realistic flow — Phase 4.1 addendum.
+
+### Q7.A — chips horizontal scrollable
+
+Filter chips для branches / generations — горизонтально
+scrollable container (`SingleChildScrollView(scrollDirection:
+Axis.horizontal)` либо `Wrap` с overflow). Standard Material
+Design Filter Chips pattern.
+
+**Reasoning**: dropdown для filters compact'нее, но скрывает
+options. Chips более скан'абельны и tap-friendly на mobile.
+Scrollable обходит cramping на narrow. Dropdown как fallback —
+только если 5+ filters и clearly hierarchical (сейчас 3-4 filter
+— chips OK).
+
+### Q8.A — per-tree persist для mode toggle
+
+View mode (`mine` / `extendedNetwork`) сохраняется **per-tree**
+через SharedPreferences с key'ом `extended_mode_${treeId}`.
+Default «Моё дерево» при отсутствии preference'а — opt-in явный.
+
+**Reasoning**: у разных tree'ев (family vs friends vs round)
+могут быть разные предпочтения. Friends-tree вряд ли нужен
+extended (там мало identity-cross-link'ов); blood-tree —
+наоборот, главное место использования. Global preference
+теряет per-tree intent.
+
+### Q8.B — URL shareability deferred
+
+Phase 4 v1 не реализует shareable URL для extended slice
+(`/tree/view/:treeId?mode=extended&depth=N`). **Phase 5+ если
+понадобится**.
+
+**Reasoning**: дополнительная surface — routing + permission
+check на recipient'е (если recipient вне privacy fence —
+fallback на default view + warning). Сценарий «look at my
+tree this way» пока гипотетический, не блокирует Phase 4.
+
+### Q8.C — narrow mobile layout test in implementation
+
+AppBar segmented control «Моё / Все» (short labels, font
+scaling). Layout testing откладывается до implementation chunk —
+не reschedule заранее.
+
+**Fallback**: если на 320dp выглядит cramped → icon-only
+(`mode_outlined` / `network_check_outlined`) с tooltip'ами.
+Decide on actual implementation, не блокер для proposal'а.
+
+**Принято**: Артём (user) 2026-05-12 (Phase 4 proposal v1 review).
+
+---
