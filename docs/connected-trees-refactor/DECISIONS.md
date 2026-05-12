@@ -1025,4 +1025,50 @@ Decide on actual implementation, не блокер для proposal'а.
 
 **Принято**: Артём (user) 2026-05-12 (Phase 4 proposal v1 review).
 
+### Chunk 1 implementation decisions (2026-05-12, follow-up)
+
+Принятые внутри chunk 1 implementation (по Артёмову «think about»
+блоку в approve message'е, surfaced before coding):
+
+**Sparse ownerMap (nice-to-have #1, IMPLEMENTED)**:
+* Response payload содержит entries в `ownerMap` **только для
+  foreign nodes** (owner !== viewer). Viewer-owned nodes — implicit,
+  resolve через `slice.getOwnerInfo(id) == null` client-side.
+* На 90%+ typical viewer'а экономит payload + memory.
+* DTO helper `ExtendedNetworkSlice.isForeignNode(id)` + `getOwnerInfo(id)`
+  делает sparse pattern API-clean для UI.
+
+**Cache 60s TTL без invalidation (nice-to-have #2, IMPLEMENTED)**:
+* In-memory Map в route closure scope; key = `${treeId}:${viewerId}:${maxHops}:${includeAnonymous}:${branchIds}`.
+* 60s window после mutation acceptable: Phase 4 — view layer, **не**
+  edit canvas. Edit чужих nodes — only через grants и через my-only
+  view (relative_details), где cache не релевантен.
+* GC: каждые 200+ entries старые expired удаляются. Простая
+  protection от unbounded memory growth.
+* Без invalidation hooks на mutation endpoints — invalidation
+  через event bus / pub-sub был бы over-engineering для текущей
+  storage layer (JSONB + lazy postgres-store).
+
+**`branchIds` query param**:
+* В chunk 1 — placeholder для cross-branch filtering. v1 ignored
+  unless explicitly matches treeId (current schema mirror'ит trees
+  1:1 на branches).
+* Phase 4.1+: при наличии truly cross-branch graphPersons (e.g.
+  юзер участвует в Машиной branch'е через grant) — этот param
+  будет filter'ить по branch ID.
+
+**Test coverage (nice-to-have #3, IMPLEMENTED)**:
+* `backend/test/extended-network-endpoint.test.js` — 10 tests:
+  auth (401 no token, 403 non-member, 200 member), maxHops clamp
+  (1→2, 10→4, garbage→default), privacy isolation (stranger's
+  tree persons not in slice), sparse ownerMap, cap behavior (cap=3
+  fixture → capReached=true), cache 60s TTL functional.
+* `test/extended_network_slice_test.dart` — 10 DTO tests: fromJson
+  full payload, sparse helpers, defensive parsing, malformed
+  entries, isAlive default, hopDistance coercion, nullable strings,
+  round-trip, stats coercion.
+
+**Принято**: Claude (chunk 1 implementation, surface'нуто к Артёмову
+review в commit'е chunk 1).
+
 ---

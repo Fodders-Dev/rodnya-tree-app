@@ -393,6 +393,13 @@ Q8.A). SharedPreferences keyed `tree_${treeId}_extendedFilters`.
 }
 ```
 
+**`ownerMap` is sparse** (chunk 1 implementation choice, DECISIONS.md
+2026-05-12 nice-to-have #1): map содержит entries **только для
+foreign nodes** (где `owner !== viewer`). Viewer-owned nodes
+implicit'но resolve'ятся через `slice.getOwnerInfo(id) == null`
+client-side. На 90%+ typical viewer'е это даёт значимую экономию
+payload + memory.
+
 **Gating logic** (server-side, Q1.B closed):
 1. Privacy BFS от viewer'а на `_connectedVisibilityMaxHops = 4`
    определяет «whom viewer is allowed to read» — privacy fence,
