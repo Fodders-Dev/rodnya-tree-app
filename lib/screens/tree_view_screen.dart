@@ -21,9 +21,11 @@ import '../models/family_relation.dart';
 import '../models/family_tree.dart';
 import '../widgets/identity_conflicts_sheet.dart';
 import '../backend/interfaces/extended_network_capable_family_tree_service.dart';
+import '../backend/models/extended_network_slice.dart';
 import '../providers/extended_network_controller.dart';
 import '../widgets/extended_network_filter_sheet.dart';
 import '../widgets/extended_network_filter_sidebar.dart';
+import '../widgets/extended_network_search_sheet.dart';
 import '../widgets/extended_network_toggle.dart';
 import '../widgets/foreign_node_sheet.dart';
 import '../widgets/interactive_family_tree.dart';
@@ -1023,6 +1025,13 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
                   ChangeNotifierProvider<ExtendedNetworkController>.value(
                     value: _extendedNetworkController!,
                     child: const ExtendedNetworkToggle(),
+                  ),
+                ],
+                if (selectedTreeId != null && _shouldShowSearchButton()) ...[
+                  const SizedBox(width: 4),
+                  _ExtendedSearchButton(
+                    tokens: tokens,
+                    onTap: () => _openSearchSheet(),
                   ),
                 ],
                 if (selectedTreeId != null && _shouldShowFiltersButton()) ...[
@@ -2074,6 +2083,95 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
     );
   }
 
+  // ── Phase 4 chunk 4b: search sheet handler ──────────────────────
+
+  bool _shouldShowSearchButton() {
+    final controller = _extendedNetworkController;
+    if (controller == null || !controller.isCapable) return false;
+    // Search only meaningful в extended mode когда slice non-empty.
+    return controller.mode == ExtendedNetworkMode.extended &&
+        controller.slice != null &&
+        controller.slice!.graphPersons.isNotEmpty;
+  }
+
+  Future<void> _openSearchSheet() async {
+    final controller = _extendedNetworkController;
+    if (controller == null) return;
+    final slice = controller.slice;
+    if (slice == null) return;
+    await showExtendedNetworkSearchSheet(
+      context,
+      slice: slice,
+      onPersonSelected: _handleSearchResult,
+    );
+  }
+
+  void _handleSearchResult(String graphPersonId) {
+    // graphPersonId = identityId per slice. Route depending on
+    // foreign-ness:
+    //   • foreign → fabricate FamilyPerson + open foreign sheet.
+    //   • own → lookup actual FamilyPerson в _treePeople +
+    //     select + recenter canvas via existing flow.
+    final controller = _extendedNetworkController;
+    final slice = controller?.slice;
+    if (slice == null) return;
+    if (slice.isForeignNode(graphPersonId)) {
+      final preview = slice.graphPersons.firstWhere(
+        (p) => p.id == graphPersonId,
+        orElse: () => const ExtendedNetworkPerson(
+          id: '',
+          name: '?',
+          gender: null,
+          birthDate: null,
+          deathDate: null,
+          photoUrl: null,
+          isAlive: true,
+          hopDistance: 0,
+        ),
+      );
+      // Fabricate FamilyPerson из preview — foreign sheet uses
+      // только identityId/name/photoUrl/dates/isAlive (see chunk 4a).
+      final fabricated = FamilyPerson(
+        id: preview.id,
+        treeId: '', // foreign — no specific tree from current viewer scope
+        userId: null,
+        identityId: preview.id,
+        name: preview.name ?? '',
+        gender: _genderFromString(preview.gender),
+        isAlive: preview.isAlive,
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
+      );
+      unawaited(_handleForeignNodeTap(fabricated));
+      return;
+    }
+    // Own: find tree person by identityId (graphPersonId).
+    FamilyPerson? ownPerson;
+    for (final p in _treePeople) {
+      if (p.identityId == graphPersonId) {
+        ownPerson = p;
+        break;
+      }
+    }
+    if (ownPerson == null) return; // Defensive — slice mismatch.
+    final resolved = ownPerson;
+    setState(() {
+      _recenterOnPersonIdAfterReload = resolved.id;
+    });
+    _selectTreePerson(resolved);
+  }
+
+  Gender _genderFromString(String? raw) {
+    switch (raw) {
+      case 'male':
+        return Gender.male;
+      case 'female':
+        return Gender.female;
+      default:
+        return Gender.unknown;
+    }
+  }
+
   Future<void> _openFilterSheet() async {
     final controller = _extendedNetworkController;
     if (controller == null) return;
@@ -2087,6 +2185,38 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
       // cross-branch). Текущая модель — branch === tree, и tree уже
       // выбран; chip «Все» один без content'а.
       branchOptions: const <BranchFilterOption>[],
+    );
+  }
+}
+
+class _ExtendedSearchButton extends StatelessWidget {
+  const _ExtendedSearchButton({required this.tokens, required this.onTap});
+
+  final RodnyaDesignTokens tokens;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        width: 38,
+        height: 38,
+        decoration: BoxDecoration(
+          color: tokens.surfaceStrong,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: tokens.surfaceLine),
+        ),
+        child: Tooltip(
+          message: 'Поиск в расширенной сети',
+          child: Icon(
+            Icons.search_rounded,
+            size: 19,
+            color: tokens.ink,
+          ),
+        ),
+      ),
     );
   }
 }

@@ -320,20 +320,41 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
         widget.networkSlice != null;
   }
 
-  /// Phase 4 chunk 3c (backport): foreign-node id Set, computed
-  /// ONCE per slice change. О(1) lookup для card tint (chunk 3b)
-  /// + edge tint (chunk 3c). Replace chunk 3b's `slice.graphPersons.any()`
-  /// linear scan (DECISIONS.md 2026-05-12 O(N²) trigger fix —
-  /// applied early as part of chunk 3c bonus refactor).
+  /// Phase 4 chunk 4b hotfix: foreign-node Set keyed на **legacy
+  /// tree-scoped person.id** (NOT identity id). Painter receives
+  /// FamilyConnection.fromId/toId которые tree-scoped; card consumer
+  /// получает `person.id`. Set must align с tree-scoped scheme.
   ///
-  /// Slice's `ownerMap` is sparse — keys ARE foreign node ids
-  /// (viewer-owned nodes implicit). Reuse pattern даёт зеро
-  /// cost для both consumers.
+  /// Earlier chunk 3b/3c versions returned `slice.ownerMap.keys.toSet()`
+  /// (identity ids) — bug. Card tint never activated в production
+  /// (`person.id ∉ identityIds` for most persons). Surface'нулся
+  /// при chunk 4b design analysis (DECISIONS.md 2026-05-12 chunk 4b
+  /// follow-up — see commit message).
+  ///
+  /// Algorithm: take slice's foreign identityIds set → map к tree-
+  /// scoped person.id values via `_treePeople` lookup. Person'ы
+  /// чьё identityId matches foreign set → их legacy person.id в
+  /// результат.
+  ///
+  /// Slice's `ownerMap` остаётся sparse — keys identityIds (viewer-
+  /// owned implicit). O(1) lookup preserved для both consumers.
   Set<String> get _foreignPersonIds {
     if (!_isExtendedRenderActive) return const <String>{};
     final slice = widget.networkSlice;
     if (slice == null) return const <String>{};
-    return slice.ownerMap.keys.toSet();
+    final foreignIdentityIds = slice.ownerMap.keys.toSet();
+    if (foreignIdentityIds.isEmpty) return const <String>{};
+    final result = <String>{};
+    for (final entry in widget.peopleData) {
+      final person = entry['person'];
+      if (person is FamilyPerson) {
+        final iid = person.identityId;
+        if (iid != null && foreignIdentityIds.contains(iid)) {
+          result.add(person.id);
+        }
+      }
+    }
+    return result;
   }
 
   /// Phase 4 chunk 3b: foreign-node detection per-person.
