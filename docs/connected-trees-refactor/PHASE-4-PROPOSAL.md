@@ -63,8 +63,10 @@ visualization layer, не scope extension. §7 open questions = 0.
   AppBar (per Q8.A — per-tree persist; Q8.C narrow mobile fallback
   decision'ится in implementation).
 * В extended режиме user видит чужие nodes с явным визуальным
-  signal'ом (colour tint warm/cool + 18×18 owner-avatar badge,
-  Q2).
+  signal'ом — **colour tint warm (my) vs cool (foreign)** + muted
+  edge color для cross-tree edges. Без always-visible owner badge
+  на canvas (chunk 3 prep review tightened, см. §5.A — badge на
+  on-tap в chunk 4 sheet'е).
 * Tap на чужой node → sheet с owner identity + «Написать» (chat
   flow) + «Открыть карточку» (read-only person card). **Никаких
   «Попросить доступ» stub'ов** (Q4.A).
@@ -197,33 +199,32 @@ DECISIONS.md 2026-05-12.
 
 **Q2 — визуальное разделение my vs others' nodes**:
 
-**Рекомендация**: **colour tint + small owner-avatar badge** в
-углу узла. Чем выделяем:
+V2 proposal'е был blanket «colour tint + 18×18 owner-avatar badge +
+dashed edges». Артёмов review (chunk 3 prep, 2026-05-12) tightened
+visual palette до tablular per-item explicit-approval decisions —
+«не подкидывай 5 визуальных элементов вместе, может «протащиться»
+через одобрение комплекта».
 
-* **Цвет**: my nodes — `primaryContainer` (warm beige по design tokens
-  RodnyaDesignTokens). Others' nodes — `surfaceContainerLow` (cool
-  muted neutral). Контраст ≥ 3:1 на обоих themes.
-* **Avatar badge**: 18×18 круглый avatar owner'а в правом нижнем
-  углу узла. Без подписи (имя в tap-sheet'е).
-* **Не использовать**: border ring (избыточно, и border уже
-  используется для conflict ⚠ badge'ей Phase 1.3).
-* **Edge style**: my-to-my edges — solid. Cross-tree edges
-  (any-to-other либо other-to-other) — dashed. Это уже было в
-  RFC §...
+Полная visual palette chunk 3 в **§5.A chunk 3 visual design** ниже
+(после Q-table в §6/§7) — там 5 элементов с pro/con/verdict и
+explicit-approval request'ом на каждый.
 
-**Wireframe**:
+**Wireframe (target после chunk 3 implementation)**:
 ```
    ┌──────────────────┐         ┌──────────────────┐
-   │ [Я]    Иван П.   │ ──────  │ [@] Маша П.      │
-   │  warm bg         │  solid  │  cool bg + 👤    │
-   └──────────────────┘         └──────────────────┘
-                                       ╎
-                                       ╎ dashed (cross-tree)
-                                       ╎
+   │ [Я]    Иван П.   │ ──────  │ ░░ Маша П.    ░░ │
+   │  warm beige bg   │ primary │ ░ cool grey bg ░ │  <- tint only
+   └──────────────────┘  edge   └──────────────────┘  no badge
+                                       │
+                                       │ muted edge color
+                                       │ (solid, не dashed)
+                                       ▼
                               ┌──────────────────┐
-                              │ [@]  Дед Семён   │
-                              │  cool + 👤       │
+                              │ ░░ Дед Семён   ░░ │
+                              │ ░ cool grey bg ░  │
                               └──────────────────┘
+
+   Tap на foreign node → expanded sheet с owner avatar + chat (chunk 4).
 ```
 
 **Q3 — edge resolution для cross-tree relations**:
@@ -443,9 +444,13 @@ mobile-class workload.
 
 **Changes в existing**:
 * `lib/widgets/interactive_family_tree.dart` — добавляется param
-  `viewMode` (enum `BranchViewMode.mine | extendedNetwork`),
-  node rendering ветвится на colour tint + owner avatar
-  badge. Edges: dashed для cross-tree.
+  `viewMode` (enum `BranchViewMode.mine | extendedNetwork`) + per-
+  node `ownerInfo`. Rendering за feature-flag `useExtendedRenderPath`:
+  - Node fill: warm (my) vs cool grey-blue (foreign).
+  - Edge color: primary (my-to-my) vs surfaceVariant (cross-tree),
+    solid (НЕ dashed — chunk 3 prep tightened, см. §5.A Element 2).
+  - **Без overlay badge'ей на canvas** (Element 3 ON DEMAND only —
+    owner avatar в chunk 4 tap-sheet'е).
 * `lib/services/custom_api_family_tree_service.dart` — implements
   ExtendedNetwork capability.
 * `lib/providers/tree_provider.dart` — `viewMode` per-tree
@@ -581,6 +586,123 @@ Anonymous person'ы (graphPerson без `userId`, owned by `createdBy`):
 
 ---
 
+## 5.A Chunk 3 visual design — tabular per-item approval
+
+Артёмов review (2026-05-12, chunk 3 prep) после reading chunk 2
+commit'а tightened визуальную палитру chunk 3. V1 proposal'е был
+blanket «colour tint + 18×18 owner-avatar badge + dashed cross-tree
+edges»; review раскрыл его в 5 **независимых** decisions с pro/con
+analysis. Per Артёмов request: «не подкидывай 5 визуальных
+элементов вместе — может «протащиться» через одобрение комплекта».
+
+Каждый элемент ниже — **отдельный approval gate** перед chunk 3
+implementation. Status `Pending` означает «жду explicit approval».
+`Approved (2026-05-12)` — закрытый decision, в DECISIONS.md.
+
+### Element 1: Colour tint own vs foreign nodes — ESSENTIAL
+
+**Verdict (Артёмов review)**: **Approved (2026-05-12)** — обязателен.
+
+**Reasoning**: без tint'а foreign nodes визуально идентичны своим;
+юзер путает «это я добавил» vs «это Степа добавил». Без него весь
+extended mode бессмыслен — юзер просто видит больше нод без
+понимания откуда они.
+
+**Implementation**:
+* My nodes — current warm beige (`primaryContainer` из
+  RodnyaDesignTokens). Не меняется.
+* Foreign nodes — cool grey-blue tint (low saturation,
+  `surfaceContainerLow` либо custom token). НЕ яркий — оттенок,
+  не цвет.
+* Контраст ≥ 3:1 на обоих themes (Material Design accessibility
+  baseline).
+* На большой дистанции (≥10 nodes) должен оставаться читаем
+  без eye strain.
+
+### Element 2: Edge color tint (cross-tree edges) — ESSENTIAL
+
+**Verdict (Артёмов review)**: **Approved as replacement (2026-05-12)** —
+edge color tint вместо dashed pattern. Solid edges, но muted
+цвет для cross-tree.
+
+**Reasoning**: dashed pattern на тонкой 1-2px line почти не виден,
+плюс рендеринг dashed Path в Flutter Canvas дороже solid (extra
+path operations при каждом фрейме scroll'а). Edge color дешевле,
+видимее, semantically точно.
+
+**Implementation**:
+* My-to-my edges — `primary` palette (current).
+* Cross-tree edges — `surfaceVariant` (приглушённый neutral).
+* Solid lines both, без dashed patterns.
+* Stroke width одинаков (1.5px либо как сейчас в legacy).
+
+### Element 3: Owner avatar badge — ON DEMAND, не always-visible
+
+**Verdict (Артёмов review)**: **Approved as on-tap only (2026-05-12)**.
+
+**Reasoning v1 (proposed)**: 18×18 owner-avatar badge всегда видим
+на foreign nodes — даёт context «кто добавил».
+
+**Reasoning v2 (chunk 3 prep)**:
+* Pro: «кто это добавил» сразу видно.
+* Con: на slice с 50+ foreign nodes — 50 микро-аватарок = visual
+  noise. На 320dp 18×18 badge может накладываться на text карточки.
+* **Compromise**: показывать ТОЛЬКО на hover/tap. По умолчанию
+  foreign node только с tint'ом, БЕЗ аватарки. Tap → expanded
+  card с owner avatar full size + name + chat button (chunk 4
+  работа на самом sheet'е).
+
+**Implementation**:
+* Никаких overlay badge'ей на canvas nodes по умолчанию.
+* Tap → foreign node action sheet (chunk 4) рендерит owner avatar
+  full size.
+
+### Element 4: Conflict ⚠ badge — KEEP existing (Phase 3.4 chunk 5)
+
+**Verdict**: **Approved (existing, no change, 2026-05-12)**.
+
+Phase 3.4 chunk 5 уже реализовал conflict badge на canvas (per-node
+warning icon с count'ом). Chunk 3 не trogает — badge продолжает
+работать для both my и foreign nodes (если у них unresolved
+identity-field conflicts).
+
+### Element 5: Deleted state — KEEP existing
+
+**Verdict**: **Approved (existing, no change, 2026-05-12)**.
+
+Existing deleted-state UI (фон + текст «Удалено») сохраняется.
+Extended view не показывает `deletedAt != null` graphPersons
+(они отсеяны на backend'е), так что в practice deleted-state в
+extended mode не появится — но defensive code path остаётся.
+
+### DROPPED elements (chunk 3 prep review)
+
+| Element | Reason for drop |
+|---|---|
+| Dashed cross-tree edges | Заменён на edge color tint (Element 2). Dashed на тонкой line почти не виден + рендеринг дороже. |
+| Always-visible owner badge | Заменён на on-tap (Element 3). Always-visible = noise на 50+ foreign nodes. |
+
+### Chunk 3 implementation gates
+
+Перед coding chunk 3 — обязательны:
+
+1. **Perf baseline** — synthetic fixture'ы 100 / 500 / 1000 persons,
+   измерить first paint + scroll FPS на legacy code path (before
+   ANY changes). Save baseline number. Если new render path
+   regress'нёт legacy view (mine mode) — RED FLAG, halt chunk 3.
+2. **Visual snapshot tests** — golden file per state:
+   * own node (tint warm)
+   * foreign node (tint cool, без badge)
+   * own + conflict ⚠
+   * foreign + conflict ⚠
+   * deleted (legacy)
+3. **Feature-flag** `useExtendedRenderPath` (`bool` const либо runtime).
+   При `false` — legacy code path, identical bit-for-bit. Защита
+   от regression во время review. После chunk 4 (или + 1 prod
+   week) flag удаляется.
+
+---
+
 ## 6. UX considerations
 
 ### 6.A: Семантика «Расширенной сети» (Q1) — recap
@@ -589,12 +711,15 @@ Anonymous person'ы (graphPerson без `userId`, owned by `createdBy`):
 slider **2..4 default 4** (== privacy fence). DECISIONS.md
 2026-05-12 Q1.B/Q6.A.
 
-### 6.B: Avatar badge layout (Q2)
+### 6.B: Avatar badge layout — DROPPED (chunk 3 prep)
 
-Avatar badge 18×18 в правом нижнем углу node'а. Node size — 64×64
-(current). Badge размер компромисс между recognizability и не-
-закрывать-name. Если node размер ≠ 64×64 на разных zoom levels —
-badge scale'ится пропорционально, min 12×12 чтобы не disappear'ить.
+V1 plan: 18×18 always-visible owner avatar в углу foreign node'а.
+Chunk 3 prep review (2026-05-12) **dropped** этот element:
+50+ foreign nodes × 18×18 = visual noise + risk overlap на narrow
+viewport. Replaced на **on-tap only** в chunk 4 foreign node sheet'е
+(там avatar full size + displayName + chat button).
+
+См. **§5.A Element 3** + DECISIONS.md 2026-05-12.
 
 ### 6.C: Edge tap target (Q3)
 
@@ -604,15 +729,15 @@ too fiddly target на canvas, особенно на mobile.
 
 ### 6.D: Foreign node tap-sheet actions (Q4)
 
-Order priority:
+Order priority (Q4.A closed: НЕТ «Попросить доступ» stub в Phase 4):
 1. Owner identity (avatar + displayName + «@username» либо «без
    аккаунта»).
 2. Relation-to-me row (lazy compute on sheet open).
 3. «Открыть карточку» — переход на person card view (read-only
    variant).
 4. «Написать @username» — если canStartChat.
-5. «Попросить доступ» — feature stub, Phase 5 implementation.
-6. (skip «Открыть в дереве владельца» — privacy regression).
+5. (skip «Открыть в дереве владельца» — privacy regression).
+6. (skip «Попросить доступ» — Phase 5+ feature, DECISIONS.md Q4.A).
 
 ### 6.E: Mode toggle (Q8) — recap
 
@@ -679,7 +804,9 @@ DECISIONS.md.
 * `test/extended_network_controller_test.dart` — fetch + filter +
   invalidation.
 * `test/interactive_family_tree_extended_test.dart` — viewport
-  bounds check + colour tint + dashed cross-tree edges.
+  bounds check + colour tint (warm/cool) + edge color tint
+  (primary/surfaceVariant) + feature-flag off/on diff. Golden
+  files per state (см. §5.A implementation gates).
 
 **Integration**:
 * `integration_test/extended_network_flow_test.dart` — toggle →
@@ -750,13 +877,31 @@ DECISIONS.md.
 
   ### Chunk 3 — extended rendering на canvas
 
-  * `lib/widgets/interactive_family_tree.dart` — добавляется
-    param `viewMode`, colour tint (warm vs cool), 18×18 owner-
-    avatar badge на чужих nodes, dashed cross-tree edges.
+  Visual palette tightened review'ом (см. **§5.A**). Реализуем
+  только **Approved** элементы; **Dropped** не trogano.
+
+  **Pre-implementation gates** (см. §5.A «Chunk 3 implementation gates»):
+  1. Perf baseline 100/500/1000 fixture'ы (legacy mine view) —
+     CI artifact, threshold для regression check'а.
+  2. Visual snapshot tests (golden files) — own/foreign/conflict/
+     deleted states.
+  3. Feature-flag `useExtendedRenderPath` — runtime либо const,
+     false → legacy bit-identical path.
+
+  **Implementation tasks**:
+  * `lib/widgets/interactive_family_tree.dart` — добавляется param
+    `viewMode` + per-node `ownerInfo`. Внутри:
+    - Node fill: warm beige (my) либо cool grey-blue (foreign).
+      Tint logic за feature-flag.
+    - Edge color: primary (my-to-my) либо surfaceVariant (cross-tree).
+      Solid, без dashed.
+    - **НЕТ overlay badge'ей на canvas** — owner avatar только
+      в chunk 4 tap-sheet'е (Element 3 ON DEMAND).
   * Viewport-based rendering (RenderObject visible-bounds check)
-    для 500+ persons performance.
-  * Synthetic performance fixture 500/1000/2000 persons; CI
-    fails если first paint > 1.5s.
+    для 500+ persons performance — нужно если baseline покажет
+    regression. Может оказаться overkill при slice cap=1000.
+  * Synthetic performance fixture 500/1000 persons; CI fails если
+    first paint regress'нёт > 10% от baseline.
 
   ### Chunk 4 — foreign node tap-sheet + relation-to-me + search
 

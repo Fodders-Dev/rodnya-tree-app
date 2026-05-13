@@ -1071,4 +1071,63 @@ Decide on actual implementation, не блокер для proposal'а.
 **Принято**: Claude (chunk 1 implementation, surface'нуто к Артёмову
 review в commit'е chunk 1).
 
+### Chunk 3 visual design (2026-05-12, follow-up)
+
+Reviewer Артём после chunk 2 push'а surface'ил визуальный design
+chunk 3 в **per-element table** вместо v1 «colour tint + 18×18 badge
++ dashed edges» blanket. Каждое из 5 элементов — независимый
+approval gate, чтобы «не подкидывать всё вместе» (комплект может
+«протащиться» через одобрение). Полная developer-facing reference
+в **PHASE-4-PROPOSAL.md §5.A**.
+
+**Element 1 — Colour tint own vs foreign nodes**: **APPROVED**
+(essential). My nodes — warm beige (`primaryContainer`, current
+default); foreign — cool grey-blue (low saturation
+`surfaceContainerLow`). Контраст ≥ 3:1, читаем без eye strain на
+≥10 nodes distance. Это **signal, не шум**. Без него extended mode
+бессмыслен.
+
+**Element 2 — Edge color tint (cross-tree)**: **APPROVED as
+replacement for dashed**. My-to-my edges — `primary` palette
+(current). Cross-tree — `surfaceVariant` (muted). Solid lines both,
+no dashed pattern. Дешевле рендер, лучше viewability на 1-2px
+strokes. Замена dashed (см. dropped).
+
+**Element 3 — Owner avatar badge**: **APPROVED as on-tap only,
+NOT always-visible**. По умолчанию foreign node только с tint'ом,
+без badge'а. Tap → foreign node sheet (chunk 4) рендерит owner
+avatar full size. Reasoning: 50+ foreign nodes × 18×18 badge =
+visual noise, на 320dp может overlapping с text.
+
+**Element 4 — Conflict ⚠ badge**: **APPROVED (existing, no change)**.
+Phase 3.4 chunk 5 уже реализовал. Продолжает работать для both my
+и foreign nodes в chunk 3.
+
+**Element 5 — Deleted state**: **APPROVED (existing, no change)**.
+Existing UI остаётся; в practice deleted-state в extended mode не
+появится (backend filter'ит `deletedAt != null`), но defensive
+code path сохраняется.
+
+**DROPPED** (chunk 3 visual review):
+* **Dashed cross-tree edges** — replaced Element 2 edge color tint.
+  Dashed на тонкой 1-2px line почти не виден; рендеринг dashed Path
+  в Flutter Canvas дороже solid (extra path operations × per
+  frame).
+* **Always-visible owner badge на foreign nodes** — replaced
+  Element 3 on-tap. Always-visible = noise на 50+ foreign nodes
+  + risk overlap на narrow viewport.
+
+**Chunk 3 implementation gates** (per Артёмов request, обязательны
+перед coding):
+1. **Perf baseline** на legacy mine view — synthetic fixture'ы
+   100/500/1000 persons, first paint + scroll FPS. Если new
+   render path regress'нёт legacy mine — halt chunk 3.
+2. **Visual snapshot tests** — golden files per state (own / foreign
+   tint / own+conflict / foreign+conflict / deleted).
+3. **Feature-flag `useExtendedRenderPath`** — `false` daje legacy
+   bit-identical path. Защита от regression во время review.
+   Удаляется после chunk 4 либо +1 prod week.
+
+**Принято**: Артём (user) 2026-05-12 (chunk 3 prep visual review).
+
 ---
