@@ -1,26 +1,41 @@
-/// Phase 4 feature flags. Const-only сейчас (compile-time) — для
-/// chunk 3 нам нужно bit-identical legacy path на flag=false, и
-/// const ensures dead-code elimination когда flag = false.
+import 'package:flutter/foundation.dart';
+
+/// Phase 4 feature flags. Default false → legacy bit-identical
+/// path. Override через [testOverrideExtendedRenderPath]
+/// (@visibleForTesting) для widget tests / golden tests / perf
+/// benchmarks которые exercise'ят flag-on rendering.
 ///
 /// Cleanup commit после chunk 4 manual smoke + 1 prod week
 /// observation period (DECISIONS.md 2026-05-12 flag removal
 /// sequence): step 5 удаляет flag + legacy code path
 /// (irreversible).
 ///
-/// Тесты которые нужно run'нуть с flag=true override'ят через
-/// widget parameter (`InteractiveFamilyTree.extendedRenderPathOverride`)
-/// — это позволяет golden tests / perf benchmarks с flag ON без
-/// мутации global state.
+/// Goldens / unit tests могут также pass override через
+/// `InteractiveFamilyTree.extendedRenderPathOverride` widget
+/// parameter (more precise — affects single widget instance).
+/// Global `testOverrideExtendedRenderPath` нужен для integration
+/// tests которые exercise multiple widget instances (e.g.
+/// TreeViewScreen → tree_view_screen_sections → InteractiveFamilyTree).
 class FeatureFlags {
   const FeatureFlags._();
+
+  static const bool _productionUseExtendedRenderPath = false;
+
+  /// Test-only global override. Set в test setUp:
+  ///   `FeatureFlags.testOverrideExtendedRenderPath = true;`
+  /// Reset в tearDown либо setUp следующего теста.
+  /// **Никогда** не set'ить в production code paths.
+  @visibleForTesting
+  static bool? testOverrideExtendedRenderPath;
 
   /// Phase 4 chunk 3 (visual elements 1-5 в PHASE-4-PROPOSAL.md
   /// §5.A). Default `false` → legacy InteractiveFamilyTree код
   /// идёт unchanged. `true` → tint + edge color + foreign-aware
   /// rendering (incremental implementation 3b → 3c → 3d).
   ///
-  /// Никогда **не** mutate'ить эту константу runtime'ом — pure
-  /// compile-time switch для clean tree-shaking. Override для тестов
-  /// идёт через widget parameter, не через касание этой константы.
-  static const bool useExtendedRenderPath = false;
+  /// Production читает `_productionUseExtendedRenderPath` (compile-
+  /// time const). Tests могут override через
+  /// [testOverrideExtendedRenderPath].
+  static bool get useExtendedRenderPath =>
+      testOverrideExtendedRenderPath ?? _productionUseExtendedRenderPath;
 }
