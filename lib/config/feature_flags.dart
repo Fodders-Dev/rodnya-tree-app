@@ -19,7 +19,11 @@ import 'package:flutter/foundation.dart';
 class FeatureFlags {
   const FeatureFlags._();
 
-  static const bool _productionUseExtendedRenderPath = false;
+  // Phase 4 observation window (per DECISIONS.md 2026-05-12 flag
+  // removal sequence step 2): default flipped to `true` после
+  // squash-merge на main. Cleanup commit step 5 удалит const +
+  // legacy code path после 1 week observation без regressions.
+  static const bool _productionUseExtendedRenderPath = true;
 
   /// Test-only global override. Set в test setUp:
   ///   `FeatureFlags.testOverrideExtendedRenderPath = true;`
