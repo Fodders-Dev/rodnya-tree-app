@@ -178,6 +178,12 @@ extension _InteractiveFamilyTreeSections on _InteractiveFamilyTreeState {
             mutedLineColor: tokens.inkMuted,
             spouseColor: tokens.warm,
             junctionColor: tokens.inkSecondary,
+            // Phase 4 chunk 3c: cross-tree edge tint.
+            // foreignPersonIds = empty Set когда flag=false либо mine
+            // mode → painter всегда выбирает legacy warm paints
+            // (bit-identical legacy).
+            foreignEdgeColor: tokens.edgeForeignTint,
+            foreignPersonIds: _foreignPersonIds,
           ),
         ),
         if ((widget.selectedPersonId ?? '').isNotEmpty)

@@ -308,27 +308,47 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
         widget.networkSlice != null;
   }
 
+  /// Phase 4 chunk 3c (backport): foreign-node id Set, computed
+  /// ONCE per slice change. О(1) lookup для card tint (chunk 3b)
+  /// + edge tint (chunk 3c). Replace chunk 3b's `slice.graphPersons.any()`
+  /// linear scan (DECISIONS.md 2026-05-12 O(N²) trigger fix —
+  /// applied early as part of chunk 3c bonus refactor).
+  ///
+  /// Slice's `ownerMap` is sparse — keys ARE foreign node ids
+  /// (viewer-owned nodes implicit). Reuse pattern даёт зеро
+  /// cost для both consumers.
+  Set<String> get _foreignPersonIds {
+    if (!_isExtendedRenderActive) return const <String>{};
+    final slice = widget.networkSlice;
+    if (slice == null) return const <String>{};
+    return slice.ownerMap.keys.toSet();
+  }
+
   /// Phase 4 chunk 3b: foreign-node detection per-person.
   /// Defensive default-to-own (DECISIONS.md 2026-05-12 Q2):
   ///   • если slice null → all own (mine mode либо not capable).
-  ///   • если person.id отсутствует в slice → treat as own,
-  ///     debugPrint warning для surface upstream inconsistency.
-  ///   • иначе read `slice.isForeignNode(id)`.
+  ///   • если person.id отсутствует в slice.graphPersons →
+  ///     treat as own, debugPrint warning для surface upstream
+  ///     inconsistency.
+  ///   • иначе O(1) check через cached Set.
   bool _isPersonForeign(String personId) {
     if (!_isExtendedRenderActive) return false;
     final slice = widget.networkSlice;
     if (slice == null) return false;
-    final personInSlice =
+    final foreignIds = _foreignPersonIds;
+    if (foreignIds.contains(personId)) return true;
+    // Defensive: validate that person.id is at all in slice (own
+    // OR foreign). If not — data inconsistency.
+    final personIsInSlice =
         slice.graphPersons.any((entry) => entry.id == personId);
-    if (!personInSlice) {
+    if (!personIsInSlice) {
       debugPrint(
-        '[phase-4 chunk 3b] person $personId rendered but not '
+        '[phase-4 chunk 3b/3c] person $personId rendered but not '
         'in extended slice — possible data inconsistency. Falling '
         'back to "own" tint.',
       );
-      return false;
     }
-    return slice.isForeignNode(personId);
+    return false;
   }
 
   // Данные для CustomPainter
@@ -4554,9 +4574,23 @@ class FamilyTreePainter extends CustomPainter {
   final Paint spousePastLinePaint;
   final Paint familyLinePaint;
   final Paint mutedFamilyLinePaint;
+
+  /// Phase 4 chunk 3c: cross-tree paint variants. Cool slate, alpha
+  /// equivalent legacy paints. Selected per-edge когда `at least
+  /// one endpoint ∈ foreignPersonIds`.
+  final Paint foreignFamilyLinePaint;
+  final Paint foreignSpouseLinePaint;
+
   final Paint junctionPaint;
   final Paint mutedJunctionPaint;
   final Color tokenInk;
+
+  /// Phase 4 chunk 3c: set of graphPerson ids считающихся foreign
+  /// (not owned by viewer). Painter dumb — when empty Set → always
+  /// returns default warm paints (legacy behavior). Source of
+  /// truth — `_InteractiveFamilyTreeState._foreignPersonIds` (cached
+  /// per slice).
+  final Set<String> foreignPersonIds;
 
   FamilyTreePainter(
     this.nodePositions,
@@ -4567,6 +4601,8 @@ class FamilyTreePainter extends CustomPainter {
     Color? mutedLineColor,
     Color? spouseColor,
     Color junctionColor = const Color(0xFF8E9588),
+    Color foreignEdgeColor = const Color(0xFF7E8896),
+    this.foreignPersonIds = const <String>{},
   })  : tokenInk = lineColor ?? const Color(0xFF6E7766),
         // Reference lines: ink-muted at ~50% opacity, subtle warm undertone
         // for spouse vs family. We pull base colors from design tokens via
@@ -4597,6 +4633,21 @@ class FamilyTreePainter extends CustomPainter {
           ..strokeJoin = StrokeJoin.round
           ..isAntiAlias = true
           ..style = PaintingStyle.stroke,
+        // Phase 4 chunk 3c cross-tree paints. Same stroke width
+        // как legacy для visual continuity (только color shifted).
+        foreignFamilyLinePaint = Paint()
+          ..color = foreignEdgeColor.withValues(alpha: 0.45)
+          ..strokeWidth = 1.6
+          ..strokeCap = StrokeCap.round
+          ..strokeJoin = StrokeJoin.round
+          ..isAntiAlias = true
+          ..style = PaintingStyle.stroke,
+        foreignSpouseLinePaint = Paint()
+          ..color = foreignEdgeColor.withValues(alpha: 0.45)
+          ..strokeWidth = 1.4
+          ..strokeCap = StrokeCap.round
+          ..isAntiAlias = true
+          ..style = PaintingStyle.stroke,
         junctionPaint = Paint()
           ..color = junctionColor.withValues(alpha: 0.55)
           ..isAntiAlias = true
@@ -4605,6 +4656,16 @@ class FamilyTreePainter extends CustomPainter {
           ..color = junctionColor.withValues(alpha: 0.32)
           ..isAntiAlias = true
           ..style = PaintingStyle.fill;
+
+  /// Phase 4 chunk 3c: edge cross-tree check. At-least-one-endpoint-
+  /// foreign per Артёмов definition (DECISIONS.md 2026-05-12 §5.A
+  /// Element 2). Empty Set → all edges legacy warm — guarantees
+  /// bit-identical rendering при flag=false либо mine mode.
+  bool _isCrossTreeEdge(String fromId, String toId) {
+    if (foreignPersonIds.isEmpty) return false;
+    return foreignPersonIds.contains(fromId) ||
+        foreignPersonIds.contains(toId);
+  }
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -4627,7 +4688,11 @@ class FamilyTreePainter extends CustomPainter {
       }
 
       if (connection.type == RelationType.spouse) {
-        _drawSpouseLine(canvas, startNodePos, endNodePos, spouseLinePaint);
+        // Phase 4 chunk 3c: cross-tree spouse → foreign tint.
+        final isCrossTree =
+            _isCrossTreeEdge(connection.fromId, connection.toId);
+        final paint = isCrossTree ? foreignSpouseLinePaint : spouseLinePaint;
+        _drawSpouseLine(canvas, startNodePos, endNodePos, paint);
       } else if (connection.type == RelationType.parent) {
         final key = connection.toId;
         final unit = familyUnits.putIfAbsent(
@@ -4657,11 +4722,17 @@ class FamilyTreePainter extends CustomPainter {
         continue;
       }
       if (paintedFamilyKeys.add(groupedKey)) {
+        // Phase 4 chunk 3c: family-unit cross-tree if any endpoint
+        // foreign (parent либо child). Same rule as spouse.
+        final hasForeignEndpoint = parentIds.any(foreignPersonIds.contains) ||
+            childIds.any(foreignPersonIds.contains);
+        final paint =
+            hasForeignEndpoint ? foreignFamilyLinePaint : familyLinePaint;
         _drawFamilyUnit(
           canvas,
           parentIds: parentIds,
           childIds: childIds,
-          linePaint: familyLinePaint,
+          linePaint: paint,
           pointPaint: junctionPaint,
         );
       }
@@ -4687,8 +4758,6 @@ class FamilyTreePainter extends CustomPainter {
             nodePositions[left]!.dx.compareTo(nodePositions[right]!.dx));
 
       if (parentIds.length > 1) {
-        final linePaint =
-            unit.unionStatus == 'past' ? spousePastLinePaint : spouseLinePaint;
         for (var index = 0; index < parentIds.length - 1; index++) {
           final pairIds = [parentIds[index], parentIds[index + 1]]..sort();
           final pairKey = pairIds.join('::');
@@ -4700,6 +4769,17 @@ class FamilyTreePainter extends CustomPainter {
           if (firstPosition == null || secondPosition == null) {
             continue;
           }
+          // Phase 4 chunk 3c: per-pair cross-tree check. unionStatus
+          // past keeps legacy muted variant — cross-tree active edge
+          // takes precedence over past styling (semantic priority:
+          // ownership > status).
+          final isCrossTree =
+              _isCrossTreeEdge(pairIds.first, pairIds.last);
+          final linePaint = isCrossTree
+              ? foreignSpouseLinePaint
+              : (unit.unionStatus == 'past'
+                  ? spousePastLinePaint
+                  : spouseLinePaint);
           _drawSpouseLine(canvas, firstPosition, secondPosition, linePaint);
           paintedAnything = true;
         }
@@ -4714,8 +4794,15 @@ class FamilyTreePainter extends CustomPainter {
         continue;
       }
 
-      final linePaint =
-          unit.unionStatus == 'past' ? mutedFamilyLinePaint : familyLinePaint;
+      // Phase 4 chunk 3c: family-unit cross-tree if any parent либо
+      // child foreign.
+      final hasForeignEndpoint = parentIds.any(foreignPersonIds.contains) ||
+          childIds.any(foreignPersonIds.contains);
+      final linePaint = hasForeignEndpoint
+          ? foreignFamilyLinePaint
+          : (unit.unionStatus == 'past'
+              ? mutedFamilyLinePaint
+              : familyLinePaint);
       final junctionPaintForUnit =
           unit.unionStatus == 'past' ? mutedJunctionPaint : junctionPaint;
       final dashed = (unit.parentSetType ?? '').trim().isNotEmpty &&
@@ -4948,11 +5035,14 @@ class FamilyTreePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant FamilyTreePainter oldDelegate) {
-    // Перерисовываем, если изменились позиции узлов или сами связи
+    // Перерисовываем, если изменились позиции узлов или сами связи.
+    // Phase 4 chunk 3c: foreignPersonIds change → repaint (mode toggle
+    // либо slice update меняет которые edges cross-tree).
     return oldDelegate.nodePositions != nodePositions ||
         oldDelegate.connections != connections ||
         oldDelegate.graphSnapshot != graphSnapshot ||
-        oldDelegate.relations != relations;
+        oldDelegate.relations != relations ||
+        oldDelegate.foreignPersonIds != foreignPersonIds;
   }
 } // <- Скобка закрывает класс FamilyTreePainter
 

@@ -21,6 +21,7 @@ class RodnyaDesignTokens extends ThemeExtension<RodnyaDesignTokens> {
     required this.surfaceStrong,
     required this.surfaceLine,
     required this.surfaceForeignTint,
+    required this.edgeForeignTint,
     required this.radiusXs,
     required this.radiusSm,
     required this.radiusMd,
@@ -55,6 +56,11 @@ class RodnyaDesignTokens extends ThemeExtension<RodnyaDesignTokens> {
     // moderate ~1.6:1 contrast vs surfaceStrong для subtle
     // «foreign node» signal. Cool grey-blue, low saturation.
     surfaceForeignTint: Color(0xFFC5CDD9),
+    // Phase 4 chunk 3c: cross-tree edge tint. Cool slate
+    // applied @ alpha 0.45 на existing line paint width. Color-
+    // temperature shift vs warm inkSecondary edges = primary
+    // differentiation signal.
+    edgeForeignTint: Color(0xFF7E8896),
     radiusXs: 10,
     radiusSm: 14,
     radiusMd: 20,
@@ -83,6 +89,9 @@ class RodnyaDesignTokens extends ThemeExtension<RodnyaDesignTokens> {
     // dark surfaceStrong). Reverse direction от light по Material
     // dark-theme convention.
     surfaceForeignTint: Color(0xFF424A57),
+    // Phase 4 chunk 3c — dark variant: lighter cool slate
+    // (visible vs dark warm surface @ alpha 0.45).
+    edgeForeignTint: Color(0xFFA6B0BD),
     radiusXs: 10,
     radiusSm: 14,
     radiusMd: 20,
@@ -113,6 +122,13 @@ class RodnyaDesignTokens extends ThemeExtension<RodnyaDesignTokens> {
   /// Light theme: ~1.62:1 contrast vs `surfaceStrong`. Dark theme:
   /// ~1.83:1. DECISIONS.md 2026-05-12 Option B.
   final Color surfaceForeignTint;
+
+  /// Phase 4 chunk 3c: cool slate edge color для cross-tree
+  /// edges (where at least one endpoint is foreign). Applied @
+  /// alpha 0.45 на existing stroke width. Color-temperature
+  /// shift vs warm inkSecondary primary edges = differentiation
+  /// signal даже при близком luminance.
+  final Color edgeForeignTint;
 
   final double radiusXs;
   final double radiusSm;
@@ -163,6 +179,7 @@ class RodnyaDesignTokens extends ThemeExtension<RodnyaDesignTokens> {
     Color? surfaceStrong,
     Color? surfaceLine,
     Color? surfaceForeignTint,
+    Color? edgeForeignTint,
     double? radiusXs,
     double? radiusSm,
     double? radiusMd,
@@ -187,6 +204,7 @@ class RodnyaDesignTokens extends ThemeExtension<RodnyaDesignTokens> {
       surfaceStrong: surfaceStrong ?? this.surfaceStrong,
       surfaceLine: surfaceLine ?? this.surfaceLine,
       surfaceForeignTint: surfaceForeignTint ?? this.surfaceForeignTint,
+      edgeForeignTint: edgeForeignTint ?? this.edgeForeignTint,
       radiusXs: radiusXs ?? this.radiusXs,
       radiusSm: radiusSm ?? this.radiusSm,
       radiusMd: radiusMd ?? this.radiusMd,
@@ -224,6 +242,8 @@ class RodnyaDesignTokens extends ThemeExtension<RodnyaDesignTokens> {
       surfaceLine: Color.lerp(surfaceLine, other.surfaceLine, t)!,
       surfaceForeignTint:
           Color.lerp(surfaceForeignTint, other.surfaceForeignTint, t)!,
+      edgeForeignTint:
+          Color.lerp(edgeForeignTint, other.edgeForeignTint, t)!,
       radiusXs: lerpDoubleValue(radiusXs, other.radiusXs),
       radiusSm: lerpDoubleValue(radiusSm, other.radiusSm),
       radiusMd: lerpDoubleValue(radiusMd, other.radiusMd),
