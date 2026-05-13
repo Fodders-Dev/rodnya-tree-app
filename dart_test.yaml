@@ -1,0 +1,16 @@
+# Phase 4 chunk 3b (DECISIONS.md 2026-05-12 «100-node noise — D Accept»):
+# `perf` tag annotates timing-sensitive tests, которые на widget-test
+# environment страдают от σ noise (особенно 100-node fixture, σ ≈ 25%).
+# По default они skip'ятся — `flutter test` без path runs только
+# correctness tests.
+#
+# Manual execution:
+#   flutter test --tags=perf            # run perf tests
+#   flutter test test/perf/             # equivalent (direct path)
+#
+# Re-evaluate если perf tests интегрируются в CI (см. DECISIONS.md
+# 100-node options A/B/E).
+
+tags:
+  perf:
+    skip: "Perf tests run manually via --tags=perf либо direct path"

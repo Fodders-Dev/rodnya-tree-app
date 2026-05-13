@@ -27,6 +27,7 @@ class FamilyTreeNodeCard extends StatelessWidget {
     this.isDeceased = false,
     this.isPending = false,
     this.isDimmed = false,
+    this.isForeignNode = false,
   });
 
   final String displayName;
@@ -42,6 +43,17 @@ class FamilyTreeNodeCard extends StatelessWidget {
   final bool isDeceased;
   final bool isPending;
   final bool isDimmed;
+
+  /// Phase 4 chunk 3b: signal что node принадлежит другому юзеру
+  /// (per `slice.isForeignNode(id)`). When `true` AND
+  /// `_isExtendedRenderActive` (computed в parent InteractiveFamilyTree),
+  /// card background switches на `tokens.surfaceForeignTint` (cool
+  /// grey-blue) вместо warm beige `tokens.surfaceStrong`. Все other
+  /// visual logic unchanged.
+  ///
+  /// Default `false` — legacy bit-identical path. Активирован
+  /// только через caller'а в extended mode + slice non-null.
+  final bool isForeignNode;
 
   @override
   Widget build(BuildContext context) {
@@ -69,9 +81,20 @@ class FamilyTreeNodeCard extends StatelessWidget {
                 ? 2.0
                 : 1.0;
 
-    final surfaceColor = isCurrentUserNode
-        ? tokens.accentSoft.withValues(alpha: 0.65)
-        : tokens.surfaceStrong.withValues(alpha: 0.92);
+    // Phase 4 chunk 3b: foreign node tint takes precedence over
+    // default surface; current-user node retains its accentSoft
+    // (user всегда сам себе own, не foreign — caller passes
+    // isForeignNode=false для self-node).
+    final Color surfaceColor;
+    if (isForeignNode) {
+      // Cool grey-blue tint vs default warm. Same opacity as default
+      // surface чтобы не ломать shadow / border interplay.
+      surfaceColor = tokens.surfaceForeignTint.withValues(alpha: 0.92);
+    } else if (isCurrentUserNode) {
+      surfaceColor = tokens.accentSoft.withValues(alpha: 0.65);
+    } else {
+      surfaceColor = tokens.surfaceStrong.withValues(alpha: 0.92);
+    }
 
     // Reference `.tn-card.sel`: accent border + 2.5px ring + drop shadow.
     final shadows = <BoxShadow>[

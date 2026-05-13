@@ -294,20 +294,41 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
   double get _viewportReservedTop => widget.viewportReservedTop;
   double get _viewportReservedBottom => widget.viewportReservedBottom;
 
-  /// Phase 4 chunk 3a: единственная точка где render path branches
-  /// на feature flag. Сейчас (chunk 3a) NOT consumed — chunk 3b/3c
-  /// added rendering branches. Defined here чтобы:
-  ///   • test'ам было что override'ить (`extendedRenderPathOverride`).
-  ///   • subsequent chunks (3b/3c) добавляли branches на single getter.
-  ///   • const false → tree-shaking eliminates extended path в release
-  ///     build pre-flag-removal.
-  // ignore: unused_element  (chunk 3b/3c will consume)
+  /// Phase 4 chunk 3a/3b: единственная точка где render path
+  /// branches на feature flag.
+  ///   • test'ам override'ит через `extendedRenderPathOverride`.
+  ///   • chunk 3b использует это в card constructor для tint.
+  ///   • const false (production default) → tree-shaking eliminates
+  ///     extended path в release build pre-flag-removal.
   bool get _isExtendedRenderActive {
     final override = widget.extendedRenderPathOverride;
     if (override != null) return override;
     return FeatureFlags.useExtendedRenderPath &&
         widget.viewMode == ExtendedNetworkMode.extended &&
         widget.networkSlice != null;
+  }
+
+  /// Phase 4 chunk 3b: foreign-node detection per-person.
+  /// Defensive default-to-own (DECISIONS.md 2026-05-12 Q2):
+  ///   • если slice null → all own (mine mode либо not capable).
+  ///   • если person.id отсутствует в slice → treat as own,
+  ///     debugPrint warning для surface upstream inconsistency.
+  ///   • иначе read `slice.isForeignNode(id)`.
+  bool _isPersonForeign(String personId) {
+    if (!_isExtendedRenderActive) return false;
+    final slice = widget.networkSlice;
+    if (slice == null) return false;
+    final personInSlice =
+        slice.graphPersons.any((entry) => entry.id == personId);
+    if (!personInSlice) {
+      debugPrint(
+        '[phase-4 chunk 3b] person $personId rendered but not '
+        'in extended slice — possible data inconsistency. Falling '
+        'back to "own" tint.',
+      );
+      return false;
+    }
+    return slice.isForeignNode(personId);
   }
 
   // Данные для CustomPainter
@@ -1902,6 +1923,10 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
       isDeceased: isDeceasedPerson,
       isPending: isPendingPerson,
       isDimmed: isDimmed,
+      // Phase 4 chunk 3b: foreign tint signal. _isPersonForeign
+      // returns false когда `_isExtendedRenderActive` (flag/mode/
+      // slice gates) → legacy bit-identical.
+      isForeignNode: _isPersonForeign(person.id),
     );
 
     // Edge-first connector is enabled when (a) the host wired the

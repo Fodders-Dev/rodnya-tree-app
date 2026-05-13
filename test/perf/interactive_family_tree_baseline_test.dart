@@ -20,6 +20,8 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:rodnya/backend/models/extended_network_slice.dart';
+import 'package:rodnya/providers/extended_network_controller.dart';
 import 'package:rodnya/widgets/interactive_family_tree.dart';
 
 import 'fixtures.dart';
@@ -130,10 +132,47 @@ void _writeBaseline(Map<String, dynamic> data) {
 /// methodology refinement).
 const int _measurementRuns = 3;
 
+/// Constructs an ExtendedNetworkSlice с graphPersons matching the
+/// fixture's people. Все nodes treated as own (no ownerMap entries),
+/// чтобы measure cost feature-flag branching alone — render result
+/// identical к flag=false (defensive default-to-own).
+ExtendedNetworkSlice _allOwnSlice(PerfFixture fixture) {
+  final persons = fixture.peopleData
+      .map((entry) {
+        final person = entry['person'];
+        return ExtendedNetworkPerson(
+          id: (person as dynamic).id as String,
+          name: null,
+          gender: null,
+          birthDate: null,
+          deathDate: null,
+          photoUrl: null,
+          isAlive: true,
+          hopDistance: 0,
+        );
+      })
+      .toList(growable: false);
+  return ExtendedNetworkSlice(
+    graphPersons: persons,
+    graphRelations: const <ExtendedNetworkRelation>[],
+    branchMembership: const <String, List<String>>{},
+    ownerMap: const <String, ExtendedNetworkOwnerInfo>{}, // all own
+    stats: ExtendedNetworkStats(
+      totalCount: persons.length,
+      myCount: persons.length,
+      extendedCount: 0,
+      anonymousCount: 0,
+      maxHopsReached: false,
+      capReached: false,
+    ),
+  );
+}
+
 Future<int> _singleMeasurement(
   WidgetTester tester,
-  PerfFixture fixture,
-) async {
+  PerfFixture fixture, {
+  bool extendedFlagOn = false,
+}) async {
   // Pinned variables (DECISIONS.md 2026-05-12 Gate 2 caveat).
   tester.view.physicalSize = const Size(1920, 1080);
   tester.view.devicePixelRatio = 1.0;
@@ -164,6 +203,7 @@ Future<int> _singleMeasurement(
   );
   await tester.pumpWidget(const SizedBox.shrink());
 
+  final slice = extendedFlagOn ? _allOwnSlice(fixture) : null;
   final stopwatch = Stopwatch()..start();
   await tester.pumpWidget(
     MaterialApp(
@@ -184,6 +224,11 @@ Future<int> _singleMeasurement(
             currentUserIsInTree: true,
             onAddSelfTapWithType: (_, __) async {},
             currentUserId: 'perf-user',
+            viewMode: extendedFlagOn
+                ? ExtendedNetworkMode.extended
+                : ExtendedNetworkMode.mine,
+            networkSlice: slice,
+            extendedRenderPathOverride: extendedFlagOn,
           ),
         ),
       ),
@@ -198,20 +243,26 @@ Future<int> _singleMeasurement(
 /// allowing 10% threshold to be stable.
 Future<int> _measureFirstPaintMs(
   WidgetTester tester,
-  PerfFixture fixture,
-) async {
+  PerfFixture fixture, {
+  bool extendedFlagOn = false,
+}) async {
   addTearDown(() {
     tester.view.reset();
   });
   final samples = <int>[];
   for (var i = 0; i < _measurementRuns; i++) {
-    final ms = await _singleMeasurement(tester, fixture);
+    final ms = await _singleMeasurement(
+      tester,
+      fixture,
+      extendedFlagOn: extendedFlagOn,
+    );
     samples.add(ms);
   }
   final sum = samples.fold<int>(0, (a, b) => a + b);
   final mean = (sum / samples.length).round();
+  final flagLabel = extendedFlagOn ? '[flag-on]' : '[flag-off]';
   debugPrint(
-    '[perf-baseline] ${fixture.nodeCount} nodes → samples '
+    '[perf-baseline] $flagLabel ${fixture.nodeCount} nodes → samples '
     '${samples.join(", ")} ms; mean $mean ms',
   );
   return mean;
@@ -230,7 +281,8 @@ void main() {
 
   testWidgets(
       'Phase 4 chunk 3 prep — InteractiveFamilyTree perf baseline '
-      '(legacy mine view, 100/500/1000 chain)', (tester) async {
+      '(legacy mine view, 100/500/1000 chain)',
+      tags: 'perf', (tester) async {
     final updateBaseline =
         Platform.environment['UPDATE_PERF_BASELINE'] == '1';
     final results = <String, int>{};
@@ -297,6 +349,50 @@ void main() {
             'observed=$observed ms, threshold=${threshold}ms (+10%). '
             'Если это ожидаемая cost (e.g. chunk 3 implementation), '
             'обнови baseline через UPDATE_PERF_BASELINE=1.',
+      );
+    }
+  });
+
+  // Phase 4 chunk 3b: secondary perf check — flag ON path. All nodes
+  // resolve as own (empty ownerMap → defensive default-to-own) →
+  // visual result identical к flag-off. Measures cost overhead от
+  // `_isPersonForeign` invoke + slice.graphPersons.any() scan
+  // O(N²) total на 1000 nodes.
+  //
+  // Threshold к existing baseline (mine view), не отдельный baseline.
+  // Если flag-on regression > 10% — нужен optimization (e.g. Set<id>
+  // cache в slice вместо linear scan). Surface перед chunk 3c.
+  testWidgets(
+      'Phase 4 chunk 3b — InteractiveFamilyTree perf (flag ON, all nodes '
+      'own → render bit-identical к flag OFF, branch overhead measured)',
+      tags: 'perf', (tester) async {
+    final baseline = _readBaseline();
+    if (baseline == null) {
+      debugPrint(
+        '[perf-baseline] no baseline.json — skipping flag-on regression check',
+      );
+      return;
+    }
+    final baselineMs =
+        Map<String, dynamic>.from(baseline['firstPaintMsPerNodeCount'] as Map);
+
+    for (final size in sizes) {
+      final fixture = generateLinearChain(count: size);
+      final meanMs = await _measureFirstPaintMs(
+        tester,
+        fixture,
+        extendedFlagOn: true,
+      );
+      final key = size.toString();
+      final baselineValue = (baselineMs[key] as num).toInt();
+      final threshold = (baselineValue * 1.10).round();
+      expect(
+        meanMs,
+        lessThanOrEqualTo(threshold),
+        reason: 'Flag-ON path regression на $size nodes: baseline=$baselineValue '
+            'ms (mine view), observed=$meanMs ms, threshold=${threshold}ms (+10%). '
+            'Это указывает что branch overhead `_isPersonForeign` либо `any(...)` '
+            'scan дорогой. Рассмотри optimization (Set<id> вместо list scan).',
       );
     }
   });
