@@ -20,6 +20,11 @@ import '../models/family_person.dart';
 import '../models/family_relation.dart';
 import '../models/family_tree.dart';
 import '../widgets/identity_conflicts_sheet.dart';
+import '../backend/interfaces/extended_network_capable_family_tree_service.dart';
+import '../providers/extended_network_controller.dart';
+import '../widgets/extended_network_filter_sheet.dart';
+import '../widgets/extended_network_filter_sidebar.dart';
+import '../widgets/extended_network_toggle.dart';
 import '../widgets/interactive_family_tree.dart';
 import '../widgets/tree_history_sheet.dart';
 import '../widgets/glass_panel.dart';
@@ -164,12 +169,40 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
 
   bool get _isFriendsTree => _currentTreeMeta?.isFriendsTree == true;
 
+  // Phase 4 chunk 2: per-tree state для mode toggle + filter panel.
+  // Создаётся когда tree selected (см. _syncExtendedNetworkController),
+  // dispose'ится в State.dispose(). НЕ менять interactive_family_tree
+  // — это chunk 3 work.
+  ExtendedNetworkController? _extendedNetworkController;
+
   TreeGraphCapableFamilyTreeService? get _graphTreeService {
     final service = _familyService;
     if (service is TreeGraphCapableFamilyTreeService) {
       return service as TreeGraphCapableFamilyTreeService;
     }
     return null;
+  }
+
+  ExtendedNetworkCapableFamilyTreeService? get _extendedNetworkService {
+    final service = _familyService;
+    if (service is ExtendedNetworkCapableFamilyTreeService) {
+      return service as ExtendedNetworkCapableFamilyTreeService;
+    }
+    return null;
+  }
+
+  void _syncExtendedNetworkController(String? treeId) {
+    if (treeId == null || treeId.isEmpty) {
+      _extendedNetworkController?.dispose();
+      _extendedNetworkController = null;
+      return;
+    }
+    if (_extendedNetworkController?.treeId == treeId) return;
+    _extendedNetworkController?.dispose();
+    _extendedNetworkController = ExtendedNetworkController(
+      treeId: treeId,
+      service: _extendedNetworkService,
+    );
   }
 
   String _describeTreeActionError(
@@ -436,6 +469,7 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_handleTreeKeyEvent);
     _treeProviderInstance?.removeListener(_handleTreeChange); // Отписываемся
+    _extendedNetworkController?.dispose();
     super.dispose();
   }
 
@@ -545,11 +579,13 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
       }
 
       _currentTreeId = routeTreeId;
+      _syncExtendedNetworkController(routeTreeId);
       await _loadData(routeTreeId);
       return;
     }
 
     _currentTreeId = provider.selectedTreeId;
+    _syncExtendedNetworkController(_currentTreeId);
     if (_currentTreeId != null) {
       await _loadData(_currentTreeId!);
     } else {
@@ -568,6 +604,7 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
         'TreeView: Обнаружено изменение дерева с $_currentTreeId на $newTreeId',
       );
       _currentTreeId = newTreeId;
+      _syncExtendedNetworkController(newTreeId);
       if (_currentTreeId != null) {
         _loadData(_currentTreeId!);
       } else {
@@ -782,7 +819,44 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
         ),
       ),
       body: SafeArea(
-        child: _buildTreeBody(selectedTreeId: selectedTreeId),
+        child: _wrapWithExtendedNetworkLayout(
+          context,
+          _buildTreeBody(selectedTreeId: selectedTreeId),
+        ),
+      ),
+    );
+  }
+
+  /// Phase 4 chunk 2: wrap body в Provider + (optional) sidebar для
+  /// wide layout + extended mode. Sidebar показывается ТОЛЬКО когда:
+  ///   • controller существует и capable;
+  ///   • mode == extended;
+  ///   • screen width >= 1500 (== relatives_screen breakpoint).
+  ///
+  /// Sidebar НЕ менял canvas rendering — это chunk 3. Sidebar
+  /// добавляется справа от existing body, занимая 280px.
+  Widget _wrapWithExtendedNetworkLayout(BuildContext context, Widget body) {
+    final controller = _extendedNetworkController;
+    if (controller == null) return body;
+    return ChangeNotifierProvider<ExtendedNetworkController>.value(
+      value: controller,
+      child: Consumer<ExtendedNetworkController>(
+        builder: (context, ctrl, _) {
+          final isWide = MediaQuery.of(context).size.width >= 1500;
+          final showSidebar = isWide &&
+              ctrl.isCapable &&
+              ctrl.mode == ExtendedNetworkMode.extended;
+          if (!showSidebar) return body;
+          return Row(
+            children: [
+              Expanded(child: body),
+              const ExtendedNetworkFilterSidebar(
+                branchOptions:
+                    <BranchFilterOption>[],
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -926,6 +1000,26 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
                       );
                     },
                   ),
+                if (selectedTreeId != null && _extendedNetworkController != null) ...[
+                  const SizedBox(width: 8),
+                  // Phase 4 chunk 2: mode toggle. Toggle вверху appbar'а —
+                  // постоянно видимый «эта функция есть». Скрывается если
+                  // backend service не implements capability mixin.
+                  ChangeNotifierProvider<ExtendedNetworkController>.value(
+                    value: _extendedNetworkController!,
+                    child: const ExtendedNetworkToggle(),
+                  ),
+                ],
+                if (selectedTreeId != null && _shouldShowFiltersButton()) ...[
+                  const SizedBox(width: 4),
+                  ChangeNotifierProvider<ExtendedNetworkController>.value(
+                    value: _extendedNetworkController!,
+                    child: _FiltersButton(
+                      tokens: tokens,
+                      onTap: () => _openFilterSheet(),
+                    ),
+                  ),
+                ],
                 if (selectedTreeId != null) ...[
                   const SizedBox(width: 8),
                   PopupMenuButton<_TreeToolbarAction>(
@@ -1900,6 +1994,64 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
     }
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Публичная ссылка скопирована.')),
+    );
+  }
+
+  // ── Phase 4 chunk 2: filter button helpers ───────────────────────
+
+  bool _shouldShowFiltersButton() {
+    final controller = _extendedNetworkController;
+    if (controller == null || !controller.isCapable) return false;
+    // Кнопку «Фильтры» показываем только если юзер в extended mode'е
+    // (mine mode controls не нужны).
+    return controller.mode == ExtendedNetworkMode.extended;
+  }
+
+  Future<void> _openFilterSheet() async {
+    final controller = _extendedNetworkController;
+    if (controller == null) return;
+    // На narrow — bottom sheet; на wide layout sidebar и так persistent,
+    // но кнопка всё равно открывает sheet (часть пользователей предпочитает
+    // bottom sheet'ы). Не реквесь UX consistency сверх меры.
+    await showExtendedNetworkFilterSheet(
+      context,
+      controller: controller,
+      // v1 — branch options пустые (placeholder для Phase 4.1+
+      // cross-branch). Текущая модель — branch === tree, и tree уже
+      // выбран; chip «Все» один без content'а.
+      branchOptions: const <BranchFilterOption>[],
+    );
+  }
+}
+
+class _FiltersButton extends StatelessWidget {
+  const _FiltersButton({required this.tokens, required this.onTap});
+
+  final RodnyaDesignTokens tokens;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        width: 38,
+        height: 38,
+        decoration: BoxDecoration(
+          color: tokens.surfaceStrong,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: tokens.surfaceLine),
+        ),
+        child: Tooltip(
+          message: 'Фильтры расширенной сети',
+          child: Icon(
+            Icons.tune_rounded,
+            size: 19,
+            color: tokens.ink,
+          ),
+        ),
+      ),
     );
   }
 }
