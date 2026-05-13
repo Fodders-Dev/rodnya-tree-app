@@ -124,19 +124,44 @@ void _writeBaseline(Map<String, dynamic> data) {
   file.writeAsStringSync(JsonEncoder.withIndent('  ').convert(data));
 }
 
-Future<int> _measureFirstPaintMs(
+/// Number of measurement runs per fixture size. Mean из 3 runs даёт
+/// σ/√3 ≈ 8.7% (если single-run σ ≈ 15%) — это устойчиво держит
+/// 10% threshold ниже variance ceiling'а (DECISIONS.md 2026-05-12
+/// methodology refinement).
+const int _measurementRuns = 3;
+
+Future<int> _singleMeasurement(
   WidgetTester tester,
   PerfFixture fixture,
 ) async {
   // Pinned variables (DECISIONS.md 2026-05-12 Gate 2 caveat).
   tester.view.physicalSize = const Size(1920, 1080);
   tester.view.devicePixelRatio = 1.0;
-  addTearDown(() {
-    tester.view.reset();
-  });
 
-  // Warm-up pump чтобы Flutter не amortize'нул setup overhead в
-  // первое измерение.
+  // Multi-stage warm-up: empty pump → small InteractiveFamilyTree
+  // pump → empty pump → real measurement. Two-pump warmup даёт
+  // framework time на JIT compile InteractiveFamilyTree code paths
+  // и avatar/edge rendering. Без этого первое measurement каждого
+  // run'а в 2-3x slow чем стабильное steady-state — что dominates
+  // mean of 3.
+  await tester.pumpWidget(const SizedBox.shrink());
+  final warmupFixture = generateLinearChain(count: 10);
+  await tester.pumpWidget(
+    MaterialApp(
+      home: Scaffold(
+        body: InteractiveFamilyTree(
+          peopleData: warmupFixture.peopleData,
+          relations: warmupFixture.relations,
+          onPersonTap: (_) {},
+          isEditMode: false,
+          onAddRelativeTapWithType: (_, __) {},
+          currentUserIsInTree: true,
+          onAddSelfTapWithType: (_, __) async {},
+          currentUserId: 'perf-user',
+        ),
+      ),
+    ),
+  );
   await tester.pumpWidget(const SizedBox.shrink());
 
   final stopwatch = Stopwatch()..start();
@@ -168,6 +193,30 @@ Future<int> _measureFirstPaintMs(
   return stopwatch.elapsedMilliseconds;
 }
 
+/// Returns mean of `_measurementRuns` independent measurements.
+/// Single-run variance σ ≈ 15% noisy, mean of 3 даёт σ/√3 ≈ 8.7%,
+/// allowing 10% threshold to be stable.
+Future<int> _measureFirstPaintMs(
+  WidgetTester tester,
+  PerfFixture fixture,
+) async {
+  addTearDown(() {
+    tester.view.reset();
+  });
+  final samples = <int>[];
+  for (var i = 0; i < _measurementRuns; i++) {
+    final ms = await _singleMeasurement(tester, fixture);
+    samples.add(ms);
+  }
+  final sum = samples.fold<int>(0, (a, b) => a + b);
+  final mean = (sum / samples.length).round();
+  debugPrint(
+    '[perf-baseline] ${fixture.nodeCount} nodes → samples '
+    '${samples.join(", ")} ms; mean $mean ms',
+  );
+  return mean;
+}
+
 void main() {
   final originalHttpOverrides = HttpOverrides.current;
   setUpAll(() {
@@ -188,9 +237,10 @@ void main() {
 
     for (final size in sizes) {
       final fixture = generateLinearChain(count: size);
-      final ms = await _measureFirstPaintMs(tester, fixture);
-      results[size.toString()] = ms;
-      debugPrint('[perf-baseline] $size nodes → first paint $ms ms');
+      final meanMs = await _measureFirstPaintMs(tester, fixture);
+      results[size.toString()] = meanMs;
+      // Mean logged from inside _measureFirstPaintMs along с raw
+      // samples — repeated debugPrint избыточен.
     }
 
     if (updateBaseline) {
@@ -198,6 +248,12 @@ void main() {
         'description':
             'Phase 4 chunk 3 prep baseline на legacy InteractiveFamilyTree '
             '(mine view). Synthetic linear chain fixtures.',
+        'methodology':
+            'Mean of $_measurementRuns measurement runs per fixture size. '
+            'Single-run variance σ ≈ 15% (widget-test environment noise); '
+            'mean of $_measurementRuns даёт σ/√$_measurementRuns ≈ 8.7%, '
+            'устойчиво держа 10% regression threshold ниже noise ceiling. '
+            'Per Артёмов methodology refinement 2026-05-12.',
         'pinnedVariables': {
           'themeMode': 'light',
           'physicalSize': '1920x1080',
@@ -210,7 +266,9 @@ void main() {
             'Numbers — widget-test environment first-pumpWidget durations, не '
             'real-device frame timings. Используются как regression early-'
             'warning baseline. Chunk 3 implementation должен оставаться '
-            'within 10% от baseline на mine view при feature-flag OFF.',
+            'within 10% от baseline на mine view при feature-flag OFF. '
+            'Shape sensitivity (wide-balanced vs linear-chain) — defer'
+            "'нут на chunk 3.5 follow-up.",
       });
       return;
     }

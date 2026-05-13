@@ -1,5 +1,6 @@
 {
   "description": "Phase 4 chunk 3 prep baseline на legacy InteractiveFamilyTree (mine view). Synthetic linear chain fixtures.",
+  "methodology": "Mean of 3 measurement runs per fixture size. Single-run variance σ ≈ 15% (widget-test environment noise); mean of 3 даёт σ/√3 ≈ 8.7%, устойчиво держа 10% regression threshold ниже noise ceiling. Per Артёмов methodology refinement 2026-05-12.",
   "pinnedVariables": {
     "themeMode": "light",
     "physicalSize": "1920x1080",
@@ -7,10 +8,10 @@
     "textScaler": "noScaling"
   },
   "firstPaintMsPerNodeCount": {
-    "100": 549,
-    "500": 938,
-    "1000": 1591
+    "100": 191,
+    "500": 617,
+    "1000": 1215
   },
   "capturedAtBranch": "claude/quiet-meridian-7a91b3",
-  "notes": "Numbers — widget-test environment first-pumpWidget durations, не real-device frame timings. Используются как regression early-warning baseline. Chunk 3 implementation должен оставаться within 10% от baseline на mine view при feature-flag OFF."
+  "notes": "Numbers — widget-test environment first-pumpWidget durations, не real-device frame timings. Используются как regression early-warning baseline. Chunk 3 implementation должен оставаться within 10% от baseline на mine view при feature-flag OFF. Shape sensitivity (wide-balanced vs linear-chain) — defer'нут на chunk 3.5 follow-up."
 }
