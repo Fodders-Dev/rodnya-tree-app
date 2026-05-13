@@ -1130,4 +1130,53 @@ code path сохраняется.
 
 **Принято**: Артём (user) 2026-05-12 (chunk 3 prep visual review).
 
+### Chunk 3 follow-up caveats + flag removal (2026-05-12)
+
+После 5/5 per-element approvals + 3/3 gates approvals, два
+follow-up caveat'а и flag removal sequence:
+
+**Caveat 1 (Element 1 tint contrast)**: WCAG 3:1 contrast — non-text
+UI минимум, **но визуально проверь на 50% zoom** (scroll-out view).
+Если tint становится indistinguishable на scrolled-out — увеличить
+saturation. Test'ируем в golden snapshot на 2-3 zoom levels (1.0,
+0.5, 0.25). Не полагаемся на абстрактные WCAG-цифры — глазная
+проверка на realistic zoom.
+
+**Caveat 2 (Gate 2 golden snapshots — pin variables)**: Golden file
+snapshots в **одной теме** consistently — light. Dark mode subtle
+rendering precision (shadow / blur) drift'ит на разных dev машинах
+и CI runner'ах. Fixed in test setup:
+* `ThemeMode.light` (force, не system).
+* Fixed window size (1920×1080 для desktop snapshots, 390×844 для
+  mobile snapshots — стандарты iPhone/Android current).
+* Fixed font scale (`MediaQueryData.textScaler = TextScaler.noScaling`).
+
+Это даёт reproducible golden files. Любой drift на CI = real visual
+regression, не environment noise.
+
+**Flag removal sequence для `useExtendedRenderPath`**:
+
+```
+1. Chunk 3 merged в feature branch с flag=false (legacy default).
+2. Chunk 4 merged в feature branch с flag=false (legacy default).
+3. Feature branch → main (squash, all commits flag=false).
+4. Manual smoke на production:
+   - toggle flag=true для test аккаунтов (Артём + Степа).
+   - Verify extended mode работает end-to-end.
+   - Watch metrics +1 week (no error spike, no perf regression
+     alerts).
+5. Если +1 week clean → cleanup commit:
+   refactor(phase-4): remove useExtendedRenderPath feature flag,
+                       extended is now default
+6. Step 5 удаляет flag + legacy code path. Irreversible.
+```
+
+Rollback path до step 5: deploy с `flag=false` → bit-identical legacy
+behavior в один CI cycle. После step 5 (legacy code path removed) —
+rollback требует revert step 5 commit'а либо git revert на feature
+branch.
+
+**Принято**: Артём (user) 2026-05-12 (chunk 3 prep — caveats + flag
+removal confirmation).
+
 ---
