@@ -122,6 +122,14 @@ const EMPTY_DB = {
   messages: [],
   messageReactions: [],
   relationRequests: [],
+  // Phase 6 BFS «мы родственники?» bilateral consent flow.
+  // Different semantic от relationRequests (invite-to-tree).
+  // DECISIONS.md 2026-05-13: kinshipChecks naming + state-based
+  // idempotency.
+  kinshipChecks: [],
+  // Phase 6 wizard progress per-user. State-based idempotency
+  // gate для /onboarding/seed.
+  onboardingStates: [],
   treeInvitations: [],
   treeChangeRecords: [],
   notifications: [],
@@ -200,6 +208,12 @@ function normalizeDbState(parsed) {
       : [],
     relationRequests: Array.isArray(parsed?.relationRequests)
       ? parsed.relationRequests
+      : [],
+    kinshipChecks: Array.isArray(parsed?.kinshipChecks)
+      ? parsed.kinshipChecks
+      : [],
+    onboardingStates: Array.isArray(parsed?.onboardingStates)
+      ? parsed.onboardingStates
       : [],
     treeInvitations: Array.isArray(parsed?.treeInvitations)
       ? parsed.treeInvitations
@@ -16674,6 +16688,423 @@ class FileStore {
       .map((user) => structuredClone(user));
   }
 
+  // ── Phase 6 chunk 1: onboarding + kinship-checks ────────────────
+
+  /// State-based idempotent seed (DECISIONS.md 2026-05-13). User
+  /// retry на network fail → returns existing tree. Incomplete
+  /// previous attempt → replaced (transaction rollback).
+  ///
+  /// payload = {
+  ///   profile: {name, gender, birthDate},
+  ///   relatives: [{name, gender, birthDate, relationToMe}],
+  /// }
+  /// relationToMe ∈ {'mother','father','sibling','child','grandmother','grandfather'}.
+  async seedOnboarding({userId, payload}) {
+    const normalizedUser = normalizeNullableString(userId);
+    if (!normalizedUser) return {error: "NO_USER"};
+    const db = await this._read();
+    const user = db.users.find((u) => u.id === normalizedUser);
+    if (!user) return {error: "USER_NOT_FOUND"};
+
+    // State-based idempotency check.
+    const existingState = (db.onboardingStates || []).find(
+      (s) => s.userId === normalizedUser,
+    );
+    if (existingState && existingState.completed === true) {
+      // Idempotent re-call — return existing tree.
+      return {
+        treeId: existingState.treeId,
+        personIds: existingState.personIds || [],
+        idempotent: true,
+      };
+    }
+
+    // Incomplete previous attempt → replace. Wipe previous tree's
+    // persons + relations to avoid ghost tree.
+    if (existingState && existingState.treeId) {
+      const prevTreeId = existingState.treeId;
+      db.persons = (db.persons || []).filter((p) => p.treeId !== prevTreeId);
+      db.relations = (db.relations || []).filter(
+        (r) => r.treeId !== prevTreeId,
+      );
+      db.trees = (db.trees || []).filter((t) => t.id !== prevTreeId);
+    }
+
+    // Apply profile to user record (additive — не затирать существующее).
+    const profile = payload?.profile || {};
+    user.profile = user.profile || {};
+    if (profile.name) user.profile.displayName = String(profile.name).trim();
+    if (profile.gender) user.profile.gender = String(profile.gender);
+    if (profile.birthDate) {
+      user.profile.birthDate = String(profile.birthDate);
+    }
+
+    // Create tree.
+    const treeId = crypto.randomUUID();
+    const now = nowIso();
+    const tree = {
+      id: treeId,
+      name: "Моя семья",
+      description: "",
+      creatorId: normalizedUser,
+      memberIds: [normalizedUser],
+      members: [normalizedUser],
+      createdAt: now,
+      updatedAt: now,
+      isPrivate: true,
+    };
+    db.trees = db.trees || [];
+    db.trees.push(tree);
+
+    // Create self-person.
+    const selfIdentity = this._ensureUserIdentity(db, normalizedUser);
+    const selfPerson = {
+      id: crypto.randomUUID(),
+      treeId,
+      userId: normalizedUser,
+      identityId: selfIdentity?.id || null,
+      name: String(profile.name || user.profile?.displayName || "").trim(),
+      gender: String(profile.gender || "unknown"),
+      birthDate: profile.birthDate || null,
+      isAlive: true,
+      createdAt: now,
+      updatedAt: now,
+      creatorId: normalizedUser,
+    };
+    db.persons = db.persons || [];
+    db.persons.push(selfPerson);
+
+    // Create relatives + relations.
+    const relatives = Array.isArray(payload?.relatives) ? payload.relatives : [];
+    const createdPersonIds = [selfPerson.id];
+    db.relations = db.relations || [];
+    for (const rel of relatives) {
+      const relativeId = crypto.randomUUID();
+      const relativePerson = {
+        id: relativeId,
+        treeId,
+        userId: null,
+        identityId: null, // No identity-matching during wizard (Q9).
+        name: String(rel.name || "").trim(),
+        gender: String(rel.gender || "unknown"),
+        birthDate: rel.birthDate || null,
+        isAlive: true,
+        createdAt: now,
+        updatedAt: now,
+        creatorId: normalizedUser,
+      };
+      db.persons.push(relativePerson);
+      createdPersonIds.push(relativeId);
+
+      // Encode relation per relationToMe (relative → self).
+      const relationToMe = String(rel.relationToMe || "other");
+      const relationPair = this._inferRelationPair(relationToMe);
+      if (relationPair) {
+        db.relations.push({
+          id: crypto.randomUUID(),
+          treeId,
+          person1Id: relativeId,
+          person2Id: selfPerson.id,
+          relation1to2: relationPair.relativeToSelf,
+          relation2to1: relationPair.selfToRelative,
+          isConfirmed: true,
+          createdAt: now,
+          createdBy: normalizedUser,
+        });
+      }
+    }
+
+    // Persist onboarding state.
+    db.onboardingStates = db.onboardingStates || [];
+    const stateIndex = db.onboardingStates.findIndex(
+      (s) => s.userId === normalizedUser,
+    );
+    const state = {
+      userId: normalizedUser,
+      completed: true,
+      currentStep: "done",
+      treeId,
+      personIds: createdPersonIds,
+      completedAt: now,
+      updatedAt: now,
+    };
+    if (stateIndex >= 0) {
+      db.onboardingStates[stateIndex] = state;
+    } else {
+      db.onboardingStates.push(state);
+    }
+
+    await this._write(db);
+    return {treeId, personIds: createdPersonIds, idempotent: false};
+  }
+
+  _inferRelationPair(relationToMe) {
+    switch (relationToMe) {
+      case "mother":
+      case "father":
+        return {relativeToSelf: "parent", selfToRelative: "child"};
+      case "sibling":
+        return {relativeToSelf: "sibling", selfToRelative: "sibling"};
+      case "child":
+        return {relativeToSelf: "child", selfToRelative: "parent"};
+      case "grandmother":
+      case "grandfather":
+        return {relativeToSelf: "grandparent", selfToRelative: "grandchild"};
+      case "spouse":
+        return {relativeToSelf: "spouse", selfToRelative: "spouse"};
+      default:
+        return null;
+    }
+  }
+
+  async getOnboardingState({userId}) {
+    const normalizedUser = normalizeNullableString(userId);
+    if (!normalizedUser) return null;
+    const db = await this._read();
+    const state = (db.onboardingStates || []).find(
+      (s) => s.userId === normalizedUser,
+    );
+    if (!state) {
+      return {
+        userId: normalizedUser,
+        completed: false,
+        currentStep: "welcome",
+        treeId: null,
+        personIds: [],
+      };
+    }
+    return structuredClone(state);
+  }
+
+  async updateOnboardingState({userId, currentStep}) {
+    const normalizedUser = normalizeNullableString(userId);
+    const normalizedStep = String(currentStep || "").trim();
+    const validSteps = ["welcome", "profile", "relatives", "finish", "done"];
+    if (!normalizedUser || !validSteps.includes(normalizedStep)) {
+      return null;
+    }
+    const db = await this._read();
+    db.onboardingStates = db.onboardingStates || [];
+    const idx = db.onboardingStates.findIndex(
+      (s) => s.userId === normalizedUser,
+    );
+    const now = nowIso();
+    if (idx >= 0) {
+      db.onboardingStates[idx].currentStep = normalizedStep;
+      db.onboardingStates[idx].updatedAt = now;
+      if (normalizedStep === "done") {
+        db.onboardingStates[idx].completed = true;
+      }
+    } else {
+      db.onboardingStates.push({
+        userId: normalizedUser,
+        completed: normalizedStep === "done",
+        currentStep: normalizedStep,
+        treeId: null,
+        personIds: [],
+        updatedAt: now,
+      });
+    }
+    await this._write(db);
+    return structuredClone(
+      db.onboardingStates.find((s) => s.userId === normalizedUser),
+    );
+  }
+
+  // ── Kinship checks (BFS «мы родственники?») ─────────────────────
+
+  static get _kinshipCheckTtlMs() {
+    return 14 * 86_400_000; // 14 days
+  }
+
+  static get _kinshipRejectionCooldownMs() {
+    return 30 * 86_400_000; // 30 days anti-harassment
+  }
+
+  /// On-read expiry mutation — sweeps pending → expired когда now >
+  /// expiresAt. Notifications dispatched at endpoint layer (store
+  /// returns ids of newly-expired для caller to notify).
+  _sweepExpiredKinshipChecks(db) {
+    const now = Date.now();
+    const newlyExpired = [];
+    for (const check of db.kinshipChecks || []) {
+      if (check.status !== "pending") continue;
+      const expiresAt = new Date(check.expiresAt || 0).getTime();
+      if (Number.isFinite(expiresAt) && now > expiresAt) {
+        check.status = "expired";
+        check.expiredAt = nowIso();
+        newlyExpired.push(check.id);
+      }
+    }
+    return newlyExpired;
+  }
+
+  async createKinshipCheck({initiatorUserId, targetUserId}) {
+    const normalizedInitiator = normalizeNullableString(initiatorUserId);
+    const normalizedTarget = normalizeNullableString(targetUserId);
+    if (!normalizedInitiator || !normalizedTarget) {
+      return {error: "INVALID_INPUT"};
+    }
+    if (normalizedInitiator === normalizedTarget) {
+      return {error: "SELF_CHECK_FORBIDDEN"};
+    }
+    const db = await this._read();
+    const targetUser = db.users.find((u) => u.id === normalizedTarget);
+    if (!targetUser) return {error: "TARGET_NOT_FOUND"};
+
+    // Lazy expiry sweep before duplicate/cooldown checks.
+    this._sweepExpiredKinshipChecks(db);
+
+    // Idempotency: same pending pair → return existing.
+    const existingPending = (db.kinshipChecks || []).find(
+      (c) =>
+        c.initiatorUserId === normalizedInitiator &&
+        c.targetUserId === normalizedTarget &&
+        c.status === "pending",
+    );
+    if (existingPending) {
+      await this._write(db); // persist sweep results
+      return {check: structuredClone(existingPending), created: false};
+    }
+
+    // Anti-harassment: 30d cooldown after rejection.
+    const lastRejected = (db.kinshipChecks || [])
+      .filter(
+        (c) =>
+          c.initiatorUserId === normalizedInitiator &&
+          c.targetUserId === normalizedTarget &&
+          c.status === "rejected",
+      )
+      .sort(
+        (a, b) =>
+          new Date(b.respondedAt || 0).getTime() -
+          new Date(a.respondedAt || 0).getTime(),
+      )[0];
+    if (lastRejected) {
+      const elapsed =
+        Date.now() - new Date(lastRejected.respondedAt || 0).getTime();
+      if (elapsed < FileStore._kinshipRejectionCooldownMs) {
+        return {
+          error: "REJECTION_COOLDOWN",
+          retryAfterMs: FileStore._kinshipRejectionCooldownMs - elapsed,
+        };
+      }
+    }
+
+    const now = nowIso();
+    const check = {
+      id: crypto.randomUUID(),
+      initiatorUserId: normalizedInitiator,
+      targetUserId: normalizedTarget,
+      status: "pending",
+      createdAt: now,
+      expiresAt: new Date(
+        Date.now() + FileStore._kinshipCheckTtlMs,
+      ).toISOString(),
+      respondedAt: null,
+      expiredAt: null,
+      result: null,
+    };
+    db.kinshipChecks = db.kinshipChecks || [];
+    db.kinshipChecks.push(check);
+    await this._write(db);
+    return {check: structuredClone(check), created: true};
+  }
+
+  async listKinshipChecksForUser({userId, role, status}) {
+    const normalizedUser = normalizeNullableString(userId);
+    if (!normalizedUser) return [];
+    const normalizedRole = role === "target" ? "target" : "initiator";
+    const db = await this._read();
+    const newlyExpired = this._sweepExpiredKinshipChecks(db);
+    if (newlyExpired.length > 0) await this._write(db);
+
+    const field =
+      normalizedRole === "target" ? "targetUserId" : "initiatorUserId";
+    let filtered = (db.kinshipChecks || []).filter(
+      (c) => c[field] === normalizedUser,
+    );
+    if (status) {
+      filtered = filtered.filter((c) => c.status === String(status));
+    }
+    return filtered.map((c) => structuredClone(c));
+  }
+
+  async findKinshipCheck({checkId}) {
+    const normalizedId = normalizeNullableString(checkId);
+    if (!normalizedId) return null;
+    const db = await this._read();
+    this._sweepExpiredKinshipChecks(db);
+    const check = (db.kinshipChecks || []).find((c) => c.id === normalizedId);
+    if (!check) return null;
+    return structuredClone(check);
+  }
+
+  /// Respond to pending check. Decision ∈ {'accepted','rejected'}.
+  /// On accept — compute BFS via findBloodRelation(maxDepth=4) +
+  /// store result. On reject — mark rejected.
+  /// Permission: only target can respond. Caller must verify
+  /// req.auth.user.id === check.targetUserId.
+  async respondToKinshipCheck({checkId, decision}) {
+    const normalizedId = normalizeNullableString(checkId);
+    const normalizedDecision = String(decision || "").trim();
+    if (!normalizedId || !["accepted", "rejected"].includes(normalizedDecision)) {
+      return {error: "INVALID_INPUT"};
+    }
+    const db = await this._read();
+    this._sweepExpiredKinshipChecks(db);
+    const check = (db.kinshipChecks || []).find((c) => c.id === normalizedId);
+    if (!check) return {error: "NOT_FOUND"};
+    if (check.status !== "pending") {
+      return {error: "NOT_PENDING", currentStatus: check.status};
+    }
+
+    const now = nowIso();
+    check.status = normalizedDecision;
+    check.respondedAt = now;
+
+    if (normalizedDecision === "accepted") {
+      // Compute BFS на 4 hops cap (Q10 decision).
+      const initiatorSelfId = this._selfGraphPersonIdForUser(
+        db,
+        check.initiatorUserId,
+      );
+      const targetSelfId = this._selfGraphPersonIdForUser(
+        db,
+        check.targetUserId,
+      );
+      if (!initiatorSelfId || !targetSelfId) {
+        check.result = {found: false, label: "Не удалось определить связь", degree: 0};
+      } else {
+        const path = this._findBloodRelationBetween(
+          db,
+          initiatorSelfId,
+          targetSelfId,
+          {maxDepth: FileStore._connectedVisibilityMaxHops},
+        );
+        if (path === null) {
+          check.result = {
+            found: false,
+            label: "Связь не найдена",
+            degree: 0,
+            chain: [],
+            edges: [],
+          };
+        } else {
+          check.result = {
+            found: true,
+            label: path.label,
+            degree: path.degree,
+            chain: path.chain,
+            edges: path.edges,
+          };
+        }
+      }
+    }
+
+    await this._write(db);
+    return {check: structuredClone(check)};
+  }
 }
 
 module.exports = {

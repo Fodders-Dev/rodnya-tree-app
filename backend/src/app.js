@@ -38,6 +38,8 @@ const {registerCircleRoutes} = require("./routes/circle-routes");
 const {registerGoogleAuthRoutes} = require("./routes/google-auth-routes");
 const {registerGraphRoutes} = require("./routes/graph-routes");
 const {registerGraphPersonRoutes} = require("./routes/graph-person-routes");
+const {registerOnboardingRoutes} = require("./routes/onboarding-routes");
+const {registerKinshipChecksRoutes} = require("./routes/kinship-checks-routes");
 const {registerIdentityRoutes} = require("./routes/identity-routes");
 const {registerMaxAuthRoutes} = require("./routes/max-auth-routes");
 const {registerMergeRoutes} = require("./routes/merge-routes");
@@ -2472,6 +2474,18 @@ function createApp({
     store,
     requireAuth,
     requireGraphPersonRead,
+  });
+
+  // Phase 6 chunk 1 (PHASE-6-PROPOSAL.md §3.2).
+  registerOnboardingRoutes(app, {
+    store,
+    requireAuth,
+  });
+
+  registerKinshipChecksRoutes(app, {
+    store,
+    requireAuth,
+    createAndDispatchNotification,
   });
 
   registerTreeRoutes(app, {

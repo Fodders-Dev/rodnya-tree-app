@@ -1263,3 +1263,47 @@ helper) — surface это deterministic field вместо client-side scan
 **Принято**: Артём (user) 2026-05-12 (chunk 4a approve follow-up).
 
 ---
+
+## 2026-05-13: Phase 6 chunk 1 — naming + idempotency
+
+### Collection naming: kinshipChecks vs relationRequests
+
+**Existing `relationRequests`** (Phase 1) — flow **invite-to-tree**
+(recipient joins sender's tree as user-linked person). Endpoint
+family `/v1/trees/:treeId/relation-requests` + `/v1/relation-requests/*`.
+
+**Phase 6 BFS «мы родственники?»** — semantic mismatch (discovery
+shortest-path consent), не invite. Different state machine, different
+side effects.
+
+**Решение**: new collection **`kinshipChecks`** + endpoint family
+**`/v1/kinship-checks/*`**. Existing `relationRequests` unchanged.
+
+**User-facing strings** — «проверка родства», «Проверить, родственники
+ли мы», «Запрос на подтверждение родственной связи». **No backend
+jargon в UI** («kinship», «probe», «BFS», «check» — все backend-only
+terms).
+
+### Idempotency: state-based для /onboarding/seed
+
+**Pattern**: state-based вместо header `Idempotency-Key`. Wizard
+natural state (completed/incomplete) maps к idempotency boundary
+cleanly.
+
+* `POST /v1/onboarding/seed`:
+  - If `onboardingStates[userId].completed === true` → return
+    existing `{treeId, personIds}` (idempotent re-call).
+  - If incomplete attempt exists (previous tree partial) →
+    **replace**: delete previous tree + persons, then create new
+    с current request payload. User не должен иметь ghost дерево
+    с half-сохранённой попыткой.
+  - If absent → fresh atomic seed.
+
+**Rejected alternative**: header `Idempotency-Key`. UUID generation
+client-side + TTL cleanup window — over-engineering для wizard
+scenario.
+
+**Принято**: Артём (user) 2026-05-13 (Phase 6 chunk 1 pre-coding
+verify approve).
+
+---
