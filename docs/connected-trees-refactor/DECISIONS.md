@@ -894,3 +894,372 @@ mid-range Android (e.g. Redmi 9A class) build per-row badge x 50 +
 **Принято**: Артём (user) 2026-05-11 (chunk 5 review).
 
 ---
+
+## 2026-05-12 — Phase 4 архитектурные answers
+
+Закрыты review-revise циклом с Артёмом по итогам Phase 4 proposal
+v1 (`docs/connected-trees-refactor/PHASE-4-PROPOSAL.md` baseline
+commit `32a8f8d`). Принципы — для всех Phase 4 implementation
+chunks; cross-reference'аются из proposal v2 §5/§6/§7.
+
+### Q1.B — privacy fence respected
+
+Phase 4 = **visualization layer** на том, что юзер уже может
+видеть через `_connectedVisibilityMaxHops = 4`. Никакого
+relaxation'а fence'а.
+
+**Reasoning**: если Phase 4 relax'ает fence, мы получаем privacy
+regression — viewer видит бабушек friends'ов которых не должен.
+Расширенная сеть = красивая визуализация existing visibility, не
+extension её scope'а. Fence остаётся фундаментальным privacy
+invariant'ом из Phase 3.1.
+
+### Q1.A — emergent property из Q1.B
+
+Public-frontier walk **за fence** фундаментально невозможен.
+
+**Сценарий**: node X с `visibility=public`, его родитель Y с
+`visibility=connected-via-blood-graph`, viewer вне connected
+set'а Y. Можно ли BFS-walk «прыгнуть X→Y» через public node X?
+
+**Ответ**: нет. `Y.visibility` resolves **per-target-node**, не
+per-path. Public node X не служит как «портал» к приватному Y —
+fence режет render самого Y (или его sensitive fields)
+независимо от того, через что walker к нему пришёл. Это
+**emergent property** Q1.B, не отдельное решение.
+
+### Q6.A — depth slider == privacy fence
+
+Range **`2..4`**, default `4`. Точно совпадает с
+`_connectedVisibilityMaxHops = 4` как hard cap.
+
+**Reasoning**:
+* Slider за пределы fence misleading — юзер тянет до 6/10,
+  ничего нового не появляется, frustration.
+* `min = 2` (не 1) — hop 1 = self + immediate (parents/kids/
+  spouse) = 3-5 nodes; feels broken, не focused.
+* `2 hops`: + grandparents + siblings + niblings (≈ 7-10 typical).
+* `3 hops`: + great-grandparents + cousins.
+* `4 hops`: full extended (default).
+
+Расширение fence за 4 hops — Phase 5+ feature с consent flow,
+не Phase 4.
+
+### Q3.A — node tap для relation sheet
+
+**Edge tap НЕ используется**. Sheet «как этот человек связан со
+мной» открывается через tap на **node**.
+
+**Reasoning**: edges на mobile микроскопические, попасть пальцем
+сложно. Tap на node открывает sheet с identity + relation-to-me
+(lazy compute via existing `/v1/trees/:id/relation-path`,
+Phase 2). Edge tap технически интересен, UX-вред.
+
+### Q4.A — нет «Попросить доступ» stub в Phase 4
+
+Foreign node tap-sheet **не** включает «Попросить доступ»
+button до Phase 5+.
+
+**Reasoning**: lure без выполнения = ложное обещание UX. Юзер
+тапает foreign node → sheet с owner identity row + «Написать»
+button (chat existing flow) + «Открыть карточку» (read-only
+person card). Real edit-request flow — Phase 5+ когда есть
+real implementation на backend'е (notification ping owner'у +
+inbox для request'а).
+
+### Q5.A — client-side search filter ≤ 1000 persons
+
+Search в extended view фильтрует **client-side по уже-fetched
+slice'у**. Server-side search endpoint и пагинация — **Phase 5+**.
+
+**Reasoning**: у тестовых users < 100 persons. Production случаев
+slice > 1000 не будет в обозримом времени. Premature optimization
+сейчас. Document'ируем limit в proposal'е, если real data покажет
+slice > 1000 в realistic flow — Phase 4.1 addendum.
+
+### Q7.A — chips horizontal scrollable
+
+Filter chips для branches / generations — горизонтально
+scrollable container (`SingleChildScrollView(scrollDirection:
+Axis.horizontal)` либо `Wrap` с overflow). Standard Material
+Design Filter Chips pattern.
+
+**Reasoning**: dropdown для filters compact'нее, но скрывает
+options. Chips более скан'абельны и tap-friendly на mobile.
+Scrollable обходит cramping на narrow. Dropdown как fallback —
+только если 5+ filters и clearly hierarchical (сейчас 3-4 filter
+— chips OK).
+
+### Q8.A — per-tree persist для mode toggle
+
+View mode (`mine` / `extendedNetwork`) сохраняется **per-tree**
+через SharedPreferences с key'ом `extended_mode_${treeId}`.
+Default «Моё дерево» при отсутствии preference'а — opt-in явный.
+
+**Reasoning**: у разных tree'ев (family vs friends vs round)
+могут быть разные предпочтения. Friends-tree вряд ли нужен
+extended (там мало identity-cross-link'ов); blood-tree —
+наоборот, главное место использования. Global preference
+теряет per-tree intent.
+
+### Q8.B — URL shareability deferred
+
+Phase 4 v1 не реализует shareable URL для extended slice
+(`/tree/view/:treeId?mode=extended&depth=N`). **Phase 5+ если
+понадобится**.
+
+**Reasoning**: дополнительная surface — routing + permission
+check на recipient'е (если recipient вне privacy fence —
+fallback на default view + warning). Сценарий «look at my
+tree this way» пока гипотетический, не блокирует Phase 4.
+
+### Q8.C — narrow mobile layout test in implementation
+
+AppBar segmented control «Моё / Все» (short labels, font
+scaling). Layout testing откладывается до implementation chunk —
+не reschedule заранее.
+
+**Fallback**: если на 320dp выглядит cramped → icon-only
+(`mode_outlined` / `network_check_outlined`) с tooltip'ами.
+Decide on actual implementation, не блокер для proposal'а.
+
+**Принято**: Артём (user) 2026-05-12 (Phase 4 proposal v1 review).
+
+### Chunk 1 implementation decisions (2026-05-12, follow-up)
+
+Принятые внутри chunk 1 implementation (по Артёмову «think about»
+блоку в approve message'е, surfaced before coding):
+
+**Sparse ownerMap (nice-to-have #1, IMPLEMENTED)**:
+* Response payload содержит entries в `ownerMap` **только для
+  foreign nodes** (owner !== viewer). Viewer-owned nodes — implicit,
+  resolve через `slice.getOwnerInfo(id) == null` client-side.
+* На 90%+ typical viewer'а экономит payload + memory.
+* DTO helper `ExtendedNetworkSlice.isForeignNode(id)` + `getOwnerInfo(id)`
+  делает sparse pattern API-clean для UI.
+
+**Cache 60s TTL без invalidation (nice-to-have #2, IMPLEMENTED)**:
+* In-memory Map в route closure scope; key = `${treeId}:${viewerId}:${maxHops}:${includeAnonymous}:${branchIds}`.
+* 60s window после mutation acceptable: Phase 4 — view layer, **не**
+  edit canvas. Edit чужих nodes — only через grants и через my-only
+  view (relative_details), где cache не релевантен.
+* GC: каждые 200+ entries старые expired удаляются. Простая
+  protection от unbounded memory growth.
+* Без invalidation hooks на mutation endpoints — invalidation
+  через event bus / pub-sub был бы over-engineering для текущей
+  storage layer (JSONB + lazy postgres-store).
+
+**`branchIds` query param**:
+* В chunk 1 — placeholder для cross-branch filtering. v1 ignored
+  unless explicitly matches treeId (current schema mirror'ит trees
+  1:1 на branches).
+* Phase 4.1+: при наличии truly cross-branch graphPersons (e.g.
+  юзер участвует в Машиной branch'е через grant) — этот param
+  будет filter'ить по branch ID.
+
+**Test coverage (nice-to-have #3, IMPLEMENTED)**:
+* `backend/test/extended-network-endpoint.test.js` — 10 tests:
+  auth (401 no token, 403 non-member, 200 member), maxHops clamp
+  (1→2, 10→4, garbage→default), privacy isolation (stranger's
+  tree persons not in slice), sparse ownerMap, cap behavior (cap=3
+  fixture → capReached=true), cache 60s TTL functional.
+* `test/extended_network_slice_test.dart` — 10 DTO tests: fromJson
+  full payload, sparse helpers, defensive parsing, malformed
+  entries, isAlive default, hopDistance coercion, nullable strings,
+  round-trip, stats coercion.
+
+**Принято**: Claude (chunk 1 implementation, surface'нуто к Артёмову
+review в commit'е chunk 1).
+
+### Chunk 3 visual design (2026-05-12, follow-up)
+
+Reviewer Артём после chunk 2 push'а surface'ил визуальный design
+chunk 3 в **per-element table** вместо v1 «colour tint + 18×18 badge
++ dashed edges» blanket. Каждое из 5 элементов — независимый
+approval gate, чтобы «не подкидывать всё вместе» (комплект может
+«протащиться» через одобрение). Полная developer-facing reference
+в **PHASE-4-PROPOSAL.md §5.A**.
+
+**Element 1 — Colour tint own vs foreign nodes**: **APPROVED**
+(essential). My nodes — warm beige (`primaryContainer`, current
+default); foreign — cool grey-blue (low saturation
+`surfaceContainerLow`). Контраст ≥ 3:1, читаем без eye strain на
+≥10 nodes distance. Это **signal, не шум**. Без него extended mode
+бессмыслен.
+
+**Element 2 — Edge color tint (cross-tree)**: **APPROVED as
+replacement for dashed**. My-to-my edges — `primary` palette
+(current). Cross-tree — `surfaceVariant` (muted). Solid lines both,
+no dashed pattern. Дешевле рендер, лучше viewability на 1-2px
+strokes. Замена dashed (см. dropped).
+
+**Element 3 — Owner avatar badge**: **APPROVED as on-tap only,
+NOT always-visible**. По умолчанию foreign node только с tint'ом,
+без badge'а. Tap → foreign node sheet (chunk 4) рендерит owner
+avatar full size. Reasoning: 50+ foreign nodes × 18×18 badge =
+visual noise, на 320dp может overlapping с text.
+
+**Element 4 — Conflict ⚠ badge**: **APPROVED (existing, no change)**.
+Phase 3.4 chunk 5 уже реализовал. Продолжает работать для both my
+и foreign nodes в chunk 3.
+
+**Element 5 — Deleted state**: **APPROVED (existing, no change)**.
+Existing UI остаётся; в practice deleted-state в extended mode не
+появится (backend filter'ит `deletedAt != null`), но defensive
+code path сохраняется.
+
+**DROPPED** (chunk 3 visual review):
+* **Dashed cross-tree edges** — replaced Element 2 edge color tint.
+  Dashed на тонкой 1-2px line почти не виден; рендеринг dashed Path
+  в Flutter Canvas дороже solid (extra path operations × per
+  frame).
+* **Always-visible owner badge на foreign nodes** — replaced
+  Element 3 on-tap. Always-visible = noise на 50+ foreign nodes
+  + risk overlap на narrow viewport.
+
+**Chunk 3 implementation gates** (per Артёмов request, обязательны
+перед coding):
+1. **Perf baseline** на legacy mine view — synthetic fixture'ы
+   100/500/1000 persons, first paint + scroll FPS. Если new
+   render path regress'нёт legacy mine — halt chunk 3.
+2. **Visual snapshot tests** — golden files per state (own / foreign
+   tint / own+conflict / foreign+conflict / deleted).
+3. **Feature-flag `useExtendedRenderPath`** — `false` daje legacy
+   bit-identical path. Защита от regression во время review.
+   Удаляется после chunk 4 либо +1 prod week.
+
+**Принято**: Артём (user) 2026-05-12 (chunk 3 prep visual review).
+
+### Chunk 3 follow-up caveats + flag removal (2026-05-12)
+
+После 5/5 per-element approvals + 3/3 gates approvals, два
+follow-up caveat'а и flag removal sequence:
+
+**Caveat 1 (Element 1 tint contrast)**: WCAG 3:1 contrast — non-text
+UI минимум, **но визуально проверь на 50% zoom** (scroll-out view).
+Если tint становится indistinguishable на scrolled-out — увеличить
+saturation. Test'ируем в golden snapshot на 2-3 zoom levels (1.0,
+0.5, 0.25). Не полагаемся на абстрактные WCAG-цифры — глазная
+проверка на realistic zoom.
+
+**Caveat 2 (Gate 2 golden snapshots — pin variables)**: Golden file
+snapshots в **одной теме** consistently — light. Dark mode subtle
+rendering precision (shadow / blur) drift'ит на разных dev машинах
+и CI runner'ах. Fixed in test setup:
+* `ThemeMode.light` (force, не system).
+* Fixed window size (1920×1080 для desktop snapshots, 390×844 для
+  mobile snapshots — стандарты iPhone/Android current).
+* Fixed font scale (`MediaQueryData.textScaler = TextScaler.noScaling`).
+
+Это даёт reproducible golden files. Любой drift на CI = real visual
+regression, не environment noise.
+
+**Flag removal sequence для `useExtendedRenderPath`**:
+
+```
+1. Chunk 3 merged в feature branch с flag=false (legacy default).
+2. Chunk 4 merged в feature branch с flag=false (legacy default).
+3. Feature branch → main (squash, all commits flag=false).
+4. Manual smoke на production:
+   - toggle flag=true для test аккаунтов (Артём + Степа).
+   - Verify extended mode работает end-to-end.
+   - Watch metrics +1 week (no error spike, no perf regression
+     alerts).
+5. Если +1 week clean → cleanup commit:
+   refactor(phase-4): remove useExtendedRenderPath feature flag,
+                       extended is now default
+6. Step 5 удаляет flag + legacy code path. Irreversible.
+```
+
+Rollback path до step 5: deploy с `flag=false` → bit-identical legacy
+behavior в один CI cycle. После step 5 (legacy code path removed) —
+rollback требует revert step 5 commit'а либо git revert на feature
+branch.
+
+**Принято**: Артём (user) 2026-05-12 (chunk 3 prep — caveats + flag
+removal confirmation).
+
+### 100-node fixture noise — D Accept (2026-05-12)
+
+Mean-of-3 + stronger warmup даёт σ ≈ 25% raw / ~14% effective
+(σ/√3) для 100-node fixture (vs ~5% для 500/1000). 10% regression
+threshold потенциально flake'ает на 100-node case.
+
+**Решение**: **accept noise**. Perf tests в `test/perf/` directory,
+**not в CI default run** — manual execution only. Premature
+engineering против noise когда tests не блокируют builds = тратим
+время на не-проблему.
+
+**Если в будущем перейдут в CI и flake'нут на 100-node**:
+* **Option A** — drop 100-node fixture entirely. Typical
+  case, но signal слабый для realistic perf assessment.
+* **Option B** — per-fixture threshold (15% для 100, 10% для
+  500/1000).
+* **Option E** — keep 100-node как smoke run без threshold
+  comparison (catch crashes / hangs, ignore timing).
+
+Re-evaluate когда CI integration perf tests'ов спроектирована.
+
+**Принято**: Артём (user) 2026-05-12 (methodology fix follow-up,
+после Claude's surface of 100-node noise).
+
+### 25% zoom golden test deferred (2026-05-12 chunk 3b follow-up)
+
+Transform.scale в widget test **не reflects** real InteractiveViewer
+scroll-out rendering. Capture native 25% zoom требует controller-
+based transformation matrix setup в test harness (~50-100 LOC
+дополнительно + cognitive overhead).
+
+**Решение**: defer на chunk 3d либо post-Phase-4 visual smoke pass.
+100% и 50% goldens (16 snapshots chunk 3b) покрывают critical zoom
+levels где differentiation matters. На 25% overview view individual
+card tint signal already marginal — acceptable melt.
+
+**Принято**: Артём (user) 2026-05-12 (chunk 3b approve follow-up).
+
+### Slice scan O(N²) overhead — deferred trigger-based fix (2026-05-12)
+
+`_isPersonForeign` в `interactive_family_tree.dart` вызывает
+`slice.graphPersons.any((g) => g.id == personId)` per card render.
+Это O(N) per card → O(N²) total для full tree. На 1000-node slice
+(cap maximum) теоретическое overhead ~1M comparisons ≈ ~50ms.
+
+На typical 7-100 nodes (DECISIONS.md 2026-05-12 §4 slice size
+re-estimate) — микросекунды cost, hidden в variance noise. Не
+проблема.
+
+**Решение**: defer fix до **measured trigger**:
+* Если perf re-baseline в chunk 3c либо 3d покажет flag-on
+  regression > 10% vs flag-off на 500/1000 fixture'ах →
+  Set<id> cache в `ExtendedNetworkSlice` (~15 LOC fix, обратимо).
+
+Premature optimization для worst case который для типичного юзера
+никогда не возникнет — wait для actual signal.
+
+**Принято**: Артём (user) 2026-05-12 (chunk 3b approve follow-up).
+
+### Phase 4 backend addendum — viewerSelfGraphPersonId (2026-05-12)
+
+`getExtendedNetworkSlice` response добавляет
+`viewerSelfGraphPersonId: string | null` поле.
+
+**Reason**: client-side `slice.graphPersons.firstWhere((p) =>
+p.userId == auth.currentUserId)` требует `userId` field в
+`ExtendedNetworkPerson` DTO, которого там нет (sparse design — DTO
+public preview только, без full ownership). Backend уже знает
+viewer's identityId → self-node mapping (`_selfGraphPersonIdForUser`
+helper) — surface это deterministic field вместо client-side scan
+который требует расширения DTO.
+
+**Properties**:
+* Single contract field (~12 LOC backend + 11 LOC DTO).
+* Versionable: clients ignoring field continue working (null-safe
+  defaults).
+* Null когда viewer не имеет claimed self-node (edge case —
+  anonymous tester либо account без identity yet).
+* Used в chunk 4a foreign node sheet для `from` parameter `/v1/graph/
+  relation` lazy fetch'а.
+
+**Принято**: Артём (user) 2026-05-12 (chunk 4a approve follow-up).
+
+---

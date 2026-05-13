@@ -1430,6 +1430,20 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
                     }
                   });
                 },
+                // Phase 4 chunk 3a infrastructure: viewMode + slice
+                // прокидываются из ExtendedNetworkController. Chunk 3a
+                // не использует их в render — FeatureFlags.useExtendedRenderPath
+                // = false const. Chunk 3b/3c добавят real branching.
+                viewMode: _extendedNetworkController?.mode ??
+                    ExtendedNetworkMode.mine,
+                networkSlice: _extendedNetworkController?.slice,
+                // Phase 4 chunk 4a: foreign node tap intercept.
+                // Host owns sheet — `_handleForeignNodeTap` opens
+                // ForeignNodeSheet через showModalBottomSheet.
+                onForeignNodeTap:
+                    _extendedNetworkController?.isCapable == true
+                        ? _handleForeignNodeTap
+                        : null,
               ),
               Positioned(
                 left: 12,

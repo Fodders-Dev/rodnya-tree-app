@@ -20,6 +20,14 @@ import '../models/family_person.dart';
 import '../models/family_relation.dart';
 import '../models/family_tree.dart';
 import '../widgets/identity_conflicts_sheet.dart';
+import '../backend/interfaces/extended_network_capable_family_tree_service.dart';
+import '../backend/models/extended_network_slice.dart';
+import '../providers/extended_network_controller.dart';
+import '../widgets/extended_network_filter_sheet.dart';
+import '../widgets/extended_network_filter_sidebar.dart';
+import '../widgets/extended_network_search_sheet.dart';
+import '../widgets/extended_network_toggle.dart';
+import '../widgets/foreign_node_sheet.dart';
 import '../widgets/interactive_family_tree.dart';
 import '../widgets/tree_history_sheet.dart';
 import '../widgets/glass_panel.dart';
@@ -164,12 +172,53 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
 
   bool get _isFriendsTree => _currentTreeMeta?.isFriendsTree == true;
 
+  // Phase 4 chunk 2: per-tree state для mode toggle + filter panel.
+  // Создаётся когда tree selected (см. _syncExtendedNetworkController),
+  // dispose'ится в State.dispose(). НЕ менять interactive_family_tree
+  // — это chunk 3 work.
+  ExtendedNetworkController? _extendedNetworkController;
+
   TreeGraphCapableFamilyTreeService? get _graphTreeService {
     final service = _familyService;
     if (service is TreeGraphCapableFamilyTreeService) {
       return service as TreeGraphCapableFamilyTreeService;
     }
     return null;
+  }
+
+  ExtendedNetworkCapableFamilyTreeService? get _extendedNetworkService {
+    final service = _familyService;
+    if (service is ExtendedNetworkCapableFamilyTreeService) {
+      return service as ExtendedNetworkCapableFamilyTreeService;
+    }
+    return null;
+  }
+
+  void _syncExtendedNetworkController(String? treeId) {
+    if (treeId == null || treeId.isEmpty) {
+      _extendedNetworkController?.removeListener(_onExtendedNetworkChange);
+      _extendedNetworkController?.dispose();
+      _extendedNetworkController = null;
+      return;
+    }
+    if (_extendedNetworkController?.treeId == treeId) return;
+    _extendedNetworkController?.removeListener(_onExtendedNetworkChange);
+    _extendedNetworkController?.dispose();
+    _extendedNetworkController = ExtendedNetworkController(
+      treeId: treeId,
+      service: _extendedNetworkService,
+    );
+    _extendedNetworkController!.addListener(_onExtendedNetworkChange);
+  }
+
+  void _onExtendedNetworkChange() {
+    // Phase 4 chunk 3a: controller updates (mode / filter / slice
+    // fetch result) → tree_view_screen rebuild чтобы пробросить
+    // свежие viewMode / networkSlice в InteractiveFamilyTree.
+    // Chunk 3a const flag = false; rebuild по сути no-op для canvas.
+    // Chunk 3b/3c активирует actual render branching.
+    if (!mounted) return;
+    setState(() {});
   }
 
   String _describeTreeActionError(
@@ -436,6 +485,8 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_handleTreeKeyEvent);
     _treeProviderInstance?.removeListener(_handleTreeChange); // Отписываемся
+    _extendedNetworkController?.removeListener(_onExtendedNetworkChange);
+    _extendedNetworkController?.dispose();
     super.dispose();
   }
 
@@ -545,11 +596,13 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
       }
 
       _currentTreeId = routeTreeId;
+      _syncExtendedNetworkController(routeTreeId);
       await _loadData(routeTreeId);
       return;
     }
 
     _currentTreeId = provider.selectedTreeId;
+    _syncExtendedNetworkController(_currentTreeId);
     if (_currentTreeId != null) {
       await _loadData(_currentTreeId!);
     } else {
@@ -568,6 +621,7 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
         'TreeView: Обнаружено изменение дерева с $_currentTreeId на $newTreeId',
       );
       _currentTreeId = newTreeId;
+      _syncExtendedNetworkController(newTreeId);
       if (_currentTreeId != null) {
         _loadData(_currentTreeId!);
       } else {
@@ -782,7 +836,44 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
         ),
       ),
       body: SafeArea(
-        child: _buildTreeBody(selectedTreeId: selectedTreeId),
+        child: _wrapWithExtendedNetworkLayout(
+          context,
+          _buildTreeBody(selectedTreeId: selectedTreeId),
+        ),
+      ),
+    );
+  }
+
+  /// Phase 4 chunk 2: wrap body в Provider + (optional) sidebar для
+  /// wide layout + extended mode. Sidebar показывается ТОЛЬКО когда:
+  ///   • controller существует и capable;
+  ///   • mode == extended;
+  ///   • screen width >= 1500 (== relatives_screen breakpoint).
+  ///
+  /// Sidebar НЕ менял canvas rendering — это chunk 3. Sidebar
+  /// добавляется справа от existing body, занимая 280px.
+  Widget _wrapWithExtendedNetworkLayout(BuildContext context, Widget body) {
+    final controller = _extendedNetworkController;
+    if (controller == null) return body;
+    return ChangeNotifierProvider<ExtendedNetworkController>.value(
+      value: controller,
+      child: Consumer<ExtendedNetworkController>(
+        builder: (context, ctrl, _) {
+          final isWide = MediaQuery.of(context).size.width >= 1500;
+          final showSidebar = isWide &&
+              ctrl.isCapable &&
+              ctrl.mode == ExtendedNetworkMode.extended;
+          if (!showSidebar) return body;
+          return Row(
+            children: [
+              Expanded(child: body),
+              const ExtendedNetworkFilterSidebar(
+                branchOptions:
+                    <BranchFilterOption>[],
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -926,6 +1017,33 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
                       );
                     },
                   ),
+                if (selectedTreeId != null && _extendedNetworkController != null) ...[
+                  const SizedBox(width: 8),
+                  // Phase 4 chunk 2: mode toggle. Toggle вверху appbar'а —
+                  // постоянно видимый «эта функция есть». Скрывается если
+                  // backend service не implements capability mixin.
+                  ChangeNotifierProvider<ExtendedNetworkController>.value(
+                    value: _extendedNetworkController!,
+                    child: const ExtendedNetworkToggle(),
+                  ),
+                ],
+                if (selectedTreeId != null && _shouldShowSearchButton()) ...[
+                  const SizedBox(width: 4),
+                  _ExtendedSearchButton(
+                    tokens: tokens,
+                    onTap: () => _openSearchSheet(),
+                  ),
+                ],
+                if (selectedTreeId != null && _shouldShowFiltersButton()) ...[
+                  const SizedBox(width: 4),
+                  ChangeNotifierProvider<ExtendedNetworkController>.value(
+                    value: _extendedNetworkController!,
+                    child: _FiltersButton(
+                      tokens: tokens,
+                      onTap: () => _openFilterSheet(),
+                    ),
+                  ),
+                ],
                 if (selectedTreeId != null) ...[
                   const SizedBox(width: 8),
                   PopupMenuButton<_TreeToolbarAction>(
@@ -1900,6 +2018,237 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
     }
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Публичная ссылка скопирована.')),
+    );
+  }
+
+  // ── Phase 4 chunk 2: filter button helpers ───────────────────────
+
+  bool _shouldShowFiltersButton() {
+    final controller = _extendedNetworkController;
+    if (controller == null || !controller.isCapable) return false;
+    // Кнопку «Фильтры» показываем только если юзер в extended mode'е
+    // (mine mode controls не нужны).
+    return controller.mode == ExtendedNetworkMode.extended;
+  }
+
+  // ── Phase 4 chunk 4a: foreign node tap handler ──────────────────
+
+  Future<void> _handleForeignNodeTap(FamilyPerson person) async {
+    final controller = _extendedNetworkController;
+    if (controller == null) return;
+    final slice = controller.slice;
+    if (slice == null) return;
+    final bloodService = _familyService;
+    if (bloodService is! BloodRelationCapableFamilyTreeService) return;
+    final blood = bloodService as BloodRelationCapableFamilyTreeService;
+    await showForeignNodeSheet(
+      context,
+      person: person,
+      slice: slice,
+      bloodRelationService: blood,
+      onOpenCard: () {
+        if (!mounted) return;
+        context.push('/relative/details/${person.id}');
+      },
+      onWriteToOwner: (ownerUserId) async {
+        if (!mounted) return;
+        try {
+          final chatId = await _chatService.getOrCreateChat(ownerUserId);
+          if (chatId == null || chatId.isEmpty) {
+            throw StateError('Не удалось открыть чат');
+          }
+          if (!mounted) return;
+          // Найти display name из slice ownerMap для title.
+          final ownerInfo = slice.getOwnerInfo(person.identityId ?? person.id);
+          final title = ownerInfo?.displayName?.trim().isNotEmpty == true
+              ? ownerInfo!.displayName!
+              : 'Чат';
+          context.push(
+            '/chats/view/$chatId?type=direct&title=${Uri.encodeComponent(title)}&userId=$ownerUserId',
+          );
+        } catch (error) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                _describeTreeActionError(
+                  error,
+                  fallbackMessage: 'Не удалось открыть чат.',
+                ),
+              ),
+            ),
+          );
+        }
+      },
+    );
+  }
+
+  // ── Phase 4 chunk 4b: search sheet handler ──────────────────────
+
+  bool _shouldShowSearchButton() {
+    final controller = _extendedNetworkController;
+    if (controller == null || !controller.isCapable) return false;
+    // Search only meaningful в extended mode когда slice non-empty.
+    return controller.mode == ExtendedNetworkMode.extended &&
+        controller.slice != null &&
+        controller.slice!.graphPersons.isNotEmpty;
+  }
+
+  Future<void> _openSearchSheet() async {
+    final controller = _extendedNetworkController;
+    if (controller == null) return;
+    final slice = controller.slice;
+    if (slice == null) return;
+    await showExtendedNetworkSearchSheet(
+      context,
+      slice: slice,
+      onPersonSelected: _handleSearchResult,
+    );
+  }
+
+  void _handleSearchResult(String graphPersonId) {
+    // graphPersonId = identityId per slice. Route depending on
+    // foreign-ness:
+    //   • foreign → fabricate FamilyPerson + open foreign sheet.
+    //   • own → lookup actual FamilyPerson в _treePeople +
+    //     select + recenter canvas via existing flow.
+    final controller = _extendedNetworkController;
+    final slice = controller?.slice;
+    if (slice == null) return;
+    if (slice.isForeignNode(graphPersonId)) {
+      final preview = slice.graphPersons.firstWhere(
+        (p) => p.id == graphPersonId,
+        orElse: () => const ExtendedNetworkPerson(
+          id: '',
+          name: '?',
+          gender: null,
+          birthDate: null,
+          deathDate: null,
+          photoUrl: null,
+          isAlive: true,
+          hopDistance: 0,
+        ),
+      );
+      // Fabricate FamilyPerson из preview — foreign sheet uses
+      // только identityId/name/photoUrl/dates/isAlive (see chunk 4a).
+      final fabricated = FamilyPerson(
+        id: preview.id,
+        treeId: '', // foreign — no specific tree from current viewer scope
+        userId: null,
+        identityId: preview.id,
+        name: preview.name ?? '',
+        gender: _genderFromString(preview.gender),
+        isAlive: preview.isAlive,
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
+      );
+      unawaited(_handleForeignNodeTap(fabricated));
+      return;
+    }
+    // Own: find tree person by identityId (graphPersonId).
+    FamilyPerson? ownPerson;
+    for (final p in _treePeople) {
+      if (p.identityId == graphPersonId) {
+        ownPerson = p;
+        break;
+      }
+    }
+    if (ownPerson == null) return; // Defensive — slice mismatch.
+    final resolved = ownPerson;
+    setState(() {
+      _recenterOnPersonIdAfterReload = resolved.id;
+    });
+    _selectTreePerson(resolved);
+  }
+
+  Gender _genderFromString(String? raw) {
+    switch (raw) {
+      case 'male':
+        return Gender.male;
+      case 'female':
+        return Gender.female;
+      default:
+        return Gender.unknown;
+    }
+  }
+
+  Future<void> _openFilterSheet() async {
+    final controller = _extendedNetworkController;
+    if (controller == null) return;
+    // На narrow — bottom sheet; на wide layout sidebar и так persistent,
+    // но кнопка всё равно открывает sheet (часть пользователей предпочитает
+    // bottom sheet'ы). Не реквесь UX consistency сверх меры.
+    await showExtendedNetworkFilterSheet(
+      context,
+      controller: controller,
+      // v1 — branch options пустые (placeholder для Phase 4.1+
+      // cross-branch). Текущая модель — branch === tree, и tree уже
+      // выбран; chip «Все» один без content'а.
+      branchOptions: const <BranchFilterOption>[],
+    );
+  }
+}
+
+class _ExtendedSearchButton extends StatelessWidget {
+  const _ExtendedSearchButton({required this.tokens, required this.onTap});
+
+  final RodnyaDesignTokens tokens;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        width: 38,
+        height: 38,
+        decoration: BoxDecoration(
+          color: tokens.surfaceStrong,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: tokens.surfaceLine),
+        ),
+        child: Tooltip(
+          message: 'Поиск в расширенной сети',
+          child: Icon(
+            Icons.search_rounded,
+            size: 19,
+            color: tokens.ink,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _FiltersButton extends StatelessWidget {
+  const _FiltersButton({required this.tokens, required this.onTap});
+
+  final RodnyaDesignTokens tokens;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        width: 38,
+        height: 38,
+        decoration: BoxDecoration(
+          color: tokens.surfaceStrong,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: tokens.surfaceLine),
+        ),
+        child: Tooltip(
+          message: 'Фильтры расширенной сети',
+          child: Icon(
+            Icons.tune_rounded,
+            size: 19,
+            color: tokens.ink,
+          ),
+        ),
+      ),
     );
   }
 }

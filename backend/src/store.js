@@ -10936,6 +10936,293 @@ class FileStore {
       .map((entry) => structuredClone(entry));
   }
 
+  // ─── Phase 4: extended network slice ────────────────────────────
+  //
+  // BFS slice от self-node viewer'а через blood adjacency. Каждый
+  // потенциальный target gate'ится через `_userCanSeeGraphPerson`
+  // (privacy fence — Phase 3.1 invariant, не relax'ается). graphRelations
+  // включаются только когда **оба** endpoints в slice — никаких
+  // «public node как портал» leak'ов (DECISIONS.md 2026-05-12 Q1.A).
+  //
+  // ownerMap **sparse**: содержит только узлы где owner !== viewer
+  // (foreign nodes). 90%+ узлов typical viewer'а — own; sparse pattern
+  // экономит payload + memory на клиенте (DECISIONS.md 2026-05-12,
+  // nice-to-have #1).
+  //
+  // Slice cap = 1000 persons (Phase 4 DECISIONS Q5.A). Если BFS hit
+  // cap — truncate + `stats.capReached: true` для UX hint'а.
+  //
+  // maxHops clamp 2..4 на route layer'е (см. tree-routes.js); store
+  // doubles down defensively (`max(2, min(4, value))`) на случай
+  // прямого invocation'а с тестов.
+  async getExtendedNetworkSlice({
+    viewerUserId,
+    treeId,
+    maxHops = 4,
+    includeAnonymous = true,
+    branchIds = null,
+    sliceCap = 1000,
+  } = {}) {
+    const normalizedViewer = normalizeNullableString(viewerUserId);
+    const normalizedTree = normalizeNullableString(treeId);
+    if (!normalizedViewer || !normalizedTree) {
+      return null;
+    }
+    // Server-side clamp под privacy fence (Q6.A: slider 2..4).
+    const fence = FileStore._connectedVisibilityMaxHops;
+    let clampedMaxHops = Number.isFinite(Number(maxHops))
+      ? Math.floor(Number(maxHops))
+      : fence;
+    clampedMaxHops = Math.max(2, Math.min(fence, clampedMaxHops));
+
+    const db = await this._read();
+    const tree = (db.trees || []).find((t) => t.id === normalizedTree);
+    if (!tree) return null;
+
+    // Tree membership check: viewer должен быть либо creator'ом
+    // либо иметь хотя бы один person'а в этом дереве (Phase 3.2
+    // owner-model). Если нет — endpoint вернёт 403.
+    const treePersons = (db.persons || []).filter(
+      (p) => p.treeId === normalizedTree && !p.deletedAt,
+    );
+    const isCreator = tree.creatorId === normalizedViewer;
+    const isMember = treePersons.some((p) => p.userId === normalizedViewer);
+    if (!isCreator && !isMember) {
+      return {error: "NOT_TREE_MEMBER"};
+    }
+
+    // BFS roots: все persons моей tree → их identityId. Так slice
+    // включает «моё дерево полностью» + соседей через identity граф.
+    const myIdentityIds = new Set();
+    for (const person of treePersons) {
+      const identityId = normalizeNullableString(person.identityId);
+      if (identityId) myIdentityIds.add(identityId);
+    }
+    if (myIdentityIds.size === 0) {
+      // Свежее дерево, viewer ещё не добавил себя — пустой slice.
+      return {
+        graphPersons: [],
+        graphRelations: [],
+        branchMembership: {},
+        ownerMap: {},
+        viewerSelfGraphPersonId: null,
+        stats: {
+          totalCount: 0,
+          myCount: 0,
+          extendedCount: 0,
+          anonymousCount: 0,
+          maxHopsReached: false,
+          capReached: false,
+        },
+      };
+    }
+
+    // Optional branch filter: если caller передал branchIds, только
+    // identity'ы из этих веток считаем «моими» (для tree roots).
+    const filteredBranchIds = Array.isArray(branchIds)
+      ? new Set(
+          branchIds
+            .map((b) => normalizeNullableString(b))
+            .filter((b) => b !== null),
+        )
+      : null;
+    // На текущей schema'е branches mirror trees 1:1; branchIds filter
+    // — placeholder для post-Phase-4.1 cross-branch filtering. v1
+    // ignored unless explicitly matches treeId.
+    if (
+      filteredBranchIds !== null &&
+      filteredBranchIds.size > 0 &&
+      !filteredBranchIds.has(normalizedTree)
+    ) {
+      return {
+        graphPersons: [],
+        graphRelations: [],
+        branchMembership: {},
+        ownerMap: {},
+        viewerSelfGraphPersonId: null,
+        stats: {
+          totalCount: 0,
+          myCount: 0,
+          extendedCount: 0,
+          anonymousCount: 0,
+          maxHopsReached: false,
+          capReached: false,
+        },
+      };
+    }
+
+    const effectiveSliceCap = Number.isFinite(Number(sliceCap))
+      ? Math.max(1, Math.floor(Number(sliceCap)))
+      : 1000;
+    const adjacency = this._buildBloodAdjacency(db);
+    const visited = new Map(); // graphPersonId → hop distance
+    const queue = [];
+    let capReached = false;
+    // Cap check на initial roots — если у viewer'а tree персон больше
+    // чем cap, мы должны это поймать ДО BFS expansion'а. Иначе initial
+    // visited.size может превысить cap молча.
+    for (const rootId of myIdentityIds) {
+      if (visited.size >= effectiveSliceCap) {
+        capReached = true;
+        break;
+      }
+      visited.set(rootId, 0);
+      queue.push({id: rootId, depth: 0});
+    }
+
+    let maxHopsReached = false;
+
+    while (queue.length > 0) {
+      const current = queue.shift();
+      if (current.depth >= clampedMaxHops) {
+        maxHopsReached = true;
+        continue;
+      }
+      const neighbors = adjacency.get(current.id) || [];
+      for (const {neighbor} of neighbors) {
+        if (visited.has(neighbor)) continue;
+        if (visited.size >= effectiveSliceCap) {
+          capReached = true;
+          break;
+        }
+        visited.set(neighbor, current.depth + 1);
+        queue.push({id: neighbor, depth: current.depth + 1});
+      }
+      if (capReached) break;
+    }
+
+    // Privacy gate per-target. Apply ПОСЛЕ BFS чтобы adjacency
+    // traversal остался дешёвым; gate отсеивает hidden targets как
+    // финальный filter. (Альтернатива — гейтить inside BFS — даёт
+    // меньше work, но edge case: viewer self-node остаётся в slice
+    // даже если по какой-то причине not seen by him — defensive.)
+    const allowedIds = new Set();
+    const graphPersonsOut = [];
+    const ownerMapOut = {};
+    let anonymousCount = 0;
+    let myCount = 0;
+
+    for (const [graphPersonId, hopDistance] of visited.entries()) {
+      const graphPerson = (db.graphPersons || []).find(
+        (g) => g.id === graphPersonId && !g.deletedAt,
+      );
+      if (!graphPerson) continue;
+      // Privacy fence applied per-target-node (Q1.B). Self-node viewer'а
+      // всегда allowed (owner === viewer); reused gate consistent с
+      // другими read paths.
+      if (!this._userCanSeeGraphPerson(db, graphPerson, normalizedViewer)) {
+        continue;
+      }
+      // Skip anonymous nodes если includeAnonymous=false.
+      const owner = this._graphPersonOwnerUserId(graphPerson);
+      const isAnonymous = !graphPerson.userId;
+      if (isAnonymous && !includeAnonymous) continue;
+
+      allowedIds.add(graphPersonId);
+      graphPersonsOut.push({
+        id: graphPerson.id,
+        name: graphPerson.name || null,
+        gender: graphPerson.gender || null,
+        birthDate: graphPerson.birthDate || null,
+        deathDate: graphPerson.deathDate || null,
+        photoUrl: graphPerson.photoUrl || null,
+        isAlive: graphPerson.isAlive !== false,
+        hopDistance,
+      });
+      if (isAnonymous) anonymousCount += 1;
+      if (owner === normalizedViewer) {
+        myCount += 1;
+      } else {
+        // Sparse ownerMap: только foreign nodes.
+        ownerMapOut[graphPerson.id] = {
+          userId: owner,
+          displayName: null, // hydrate'ится ниже
+          photoUrl: null,
+        };
+      }
+    }
+
+    // Hydrate owner displayNames + photo (только для foreign nodes).
+    const foreignOwnerIds = new Set();
+    for (const entry of Object.values(ownerMapOut)) {
+      if (entry.userId) foreignOwnerIds.add(entry.userId);
+    }
+    for (const ownerUserId of foreignOwnerIds) {
+      const user = (db.users || []).find((u) => u.id === ownerUserId);
+      if (!user) continue;
+      const profile = user.profile || {};
+      for (const entry of Object.values(ownerMapOut)) {
+        if (entry.userId === ownerUserId) {
+          entry.displayName = profile.displayName || user.email || null;
+          entry.photoUrl = profile.photoUrl || null;
+        }
+      }
+    }
+
+    // graphRelations: только когда оба endpoints in allowed set.
+    const graphRelationsOut = [];
+    for (const relation of db.graphRelations || []) {
+      if (!relation || relation.deletedAt) continue;
+      if (
+        allowedIds.has(relation.person1Id) &&
+        allowedIds.has(relation.person2Id)
+      ) {
+        graphRelationsOut.push({
+          id: relation.id,
+          person1Id: relation.person1Id,
+          person2Id: relation.person2Id,
+          relation1to2: relation.relation1to2,
+          relation2to1: relation.relation2to1,
+        });
+      }
+    }
+
+    // branchMembership: для каждого graphPersonId — список trees, где
+    // он представлен через persons.identityId. Это даёт UI'ю signal
+    // «этот узел также есть в ветке X».
+    const branchMembershipOut = {};
+    for (const graphPersonId of allowedIds) {
+      const branches = new Set();
+      for (const person of db.persons || []) {
+        if (
+          person.identityId === graphPersonId &&
+          !person.deletedAt &&
+          person.treeId
+        ) {
+          branches.add(person.treeId);
+        }
+      }
+      if (branches.size > 0) {
+        branchMembershipOut[graphPersonId] = Array.from(branches);
+      }
+    }
+
+    // Phase 4 chunk 4a: viewer self-node id для UI lazy-fetch
+    // relation-to-me (через /v1/graph/relation). Single deterministic
+    // value — слой DTO не делает client-side filter through
+    // graphPersons. May be null если viewer не имеет claimed
+    // identity (edge case — anonymous tester либо account без
+    // self-node ещё не создан).
+    const viewerSelfGraphPersonId =
+        this._selfGraphPersonIdForUser(db, normalizedViewer);
+
+    return {
+      graphPersons: graphPersonsOut,
+      graphRelations: graphRelationsOut,
+      branchMembership: branchMembershipOut,
+      ownerMap: ownerMapOut,
+      viewerSelfGraphPersonId,
+      stats: {
+        totalCount: graphPersonsOut.length,
+        myCount,
+        extendedCount: graphPersonsOut.length - myCount,
+        anonymousCount,
+        maxHopsReached,
+        capReached,
+      },
+    };
+  }
+
   // ─── Visibility update (owner-only, не grants) ──────────────────
 
   async setGraphPersonVisibility({

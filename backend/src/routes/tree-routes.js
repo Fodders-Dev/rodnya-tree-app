@@ -1117,6 +1117,80 @@ function registerTreeRoutes(
     });
   });
 
+  // Phase 4 chunk 1: extended network slice. BFS от viewer'а через
+  // identity-граф в radius'е maxHops (clamp 2..4 == privacy fence),
+  // privacy gate per-target. См. PHASE-4-PROPOSAL.md §3.1.
+  //
+  // 60s TTL in-memory cache per cache key. Без invalidation — Phase 4
+  // — view layer, не edit canvas; edit чужих nodes идёт через my-only
+  // через grants. 60s stale window acceptable (DECISIONS.md 2026-05-12,
+  // nice-to-have #2).
+  const extendedNetworkCache = new Map();
+  const EXTENDED_NETWORK_TTL_MS = 60_000;
+  app.get(
+    "/v1/trees/:treeId/extended-network",
+    requireAuth,
+    async (req, res) => {
+      const tree = await requireTreeAccess(req, res, req.params.treeId);
+      if (!tree) {
+        return;
+      }
+
+      // Defensive parsing: clamp maxHops к 2..4 (server doubles down
+      // на store-side clamp).
+      const maxHopsRaw = Number(req.query.maxHops);
+      const maxHops = Number.isFinite(maxHopsRaw)
+        ? Math.max(2, Math.min(4, Math.floor(maxHopsRaw)))
+        : 4;
+      const includeAnonymous = req.query.includeAnonymous !== "false";
+      const branchIdsRaw = String(req.query.branchIds || "").trim();
+      const branchIds = branchIdsRaw
+        ? branchIdsRaw.split(",").map((s) => s.trim()).filter(Boolean)
+        : null;
+
+      const cacheKey = `${tree.id}:${req.auth.user.id}:${maxHops}:${includeAnonymous}:${branchIdsRaw || "*"}`;
+      const cached = extendedNetworkCache.get(cacheKey);
+      if (cached && cached.expiresAt > Date.now()) {
+        res.json({slice: cached.slice});
+        return;
+      }
+
+      const slice = await store.getExtendedNetworkSlice({
+        viewerUserId: req.auth.user.id,
+        treeId: tree.id,
+        maxHops,
+        includeAnonymous,
+        branchIds,
+      });
+      if (!slice) {
+        res.status(404).json({message: "Дерево не найдено"});
+        return;
+      }
+      if (slice.error === "NOT_TREE_MEMBER") {
+        // requireTreeAccess уже гейтит, но defensive — store
+        // double-checks. 403 здесь не должен случиться в healthy
+        // flow.
+        res.status(403).json({message: "Нет доступа к этому дереву"});
+        return;
+      }
+
+      extendedNetworkCache.set(cacheKey, {
+        slice,
+        expiresAt: Date.now() + EXTENDED_NETWORK_TTL_MS,
+      });
+      // Garbage collect старые entries раз в N requests'ов. Простая
+      // protection от unbounded memory growth — production scenario
+      // у нас тестовые users, OK.
+      if (extendedNetworkCache.size > 200) {
+        const now = Date.now();
+        for (const [key, value] of extendedNetworkCache.entries()) {
+          if (value.expiresAt <= now) extendedNetworkCache.delete(key);
+        }
+      }
+      res.json({slice});
+    },
+  );
+
   app.post("/v1/trees/:treeId/relations", requireAuth, async (req, res) => {
     const tree = await requireTreeAccess(req, res, req.params.treeId);
     if (!tree) {

@@ -8,6 +8,7 @@ import '../backend/interfaces/blood_relation_capable_family_tree_service.dart';
 import '../backend/interfaces/branch_digest_capable_family_tree_service.dart';
 import '../backend/interfaces/bulk_import_capable_family_tree_service.dart';
 import '../backend/interfaces/cross_tree_person_search_capable_family_tree_service.dart';
+import '../backend/interfaces/extended_network_capable_family_tree_service.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
 import '../backend/interfaces/graph_person_access_capable_family_tree_service.dart';
 import '../backend/interfaces/identity_conflicts_capable_family_tree_service.dart';
@@ -18,6 +19,7 @@ import '../backend/interfaces/tree_graph_capable_family_tree_service.dart';
 import '../backend/models/blood_relation.dart';
 import '../backend/models/branch_digest.dart';
 import '../backend/models/edit_grant.dart';
+import '../backend/models/extended_network_slice.dart';
 import '../backend/models/identity_field_conflict.dart';
 import '../backend/models/identity_suggestion.dart';
 import '../backend/models/cross_tree_person_suggestion.dart';
@@ -49,7 +51,8 @@ class CustomApiFamilyTreeService
         BloodRelationCapableFamilyTreeService,
         BranchDigestCapableFamilyTreeService,
         BulkImportCapableFamilyTreeService,
-        GraphPersonAccessCapableFamilyTreeService {
+        GraphPersonAccessCapableFamilyTreeService,
+        ExtendedNetworkCapableFamilyTreeService {
   CustomApiFamilyTreeService({
     required CustomApiAuthService authService,
     required BackendRuntimeConfig runtimeConfig,
@@ -2335,5 +2338,41 @@ class CustomApiFamilyTreeService
         .whereType<Map<String, dynamic>>()
         .map(EditGrant.fromJson)
         .toList(growable: false);
+  }
+
+  // ── Phase 4 chunk 1: extended network slice ────────────────────
+
+  @override
+  Future<ExtendedNetworkSlice?> getExtendedNetworkSlice({
+    required String treeId,
+    int maxHops = 4,
+    bool includeAnonymous = true,
+    List<String>? branchIds,
+  }) async {
+    // Clamp client-side (defensive — server тоже clamp'ит до
+    // 2..4, но избегаем посылать ?maxHops=12 «на удачу»).
+    final clamped = maxHops.clamp(2, 4);
+    final queryParams = <String, String>{
+      'maxHops': clamped.toString(),
+      if (!includeAnonymous) 'includeAnonymous': 'false',
+      if (branchIds != null && branchIds.isNotEmpty)
+        'branchIds': branchIds.join(','),
+    };
+    final queryString = queryParams.entries
+        .map((e) => '${e.key}=${Uri.encodeComponent(e.value)}')
+        .join('&');
+    final path = queryString.isEmpty
+        ? '/v1/trees/$treeId/extended-network'
+        : '/v1/trees/$treeId/extended-network?$queryString';
+    try {
+      final response = await _requestJson(method: 'GET', path: path);
+      final sliceRaw = response['slice'];
+      if (sliceRaw is! Map<String, dynamic>) return null;
+      return ExtendedNetworkSlice.fromJson(sliceRaw);
+    } catch (_) {
+      // Capability detection: старый сервер без endpoint'а — 404.
+      // Любая network/auth ошибка → null чтобы UI graceful disable.
+      return null;
+    }
   }
 }
