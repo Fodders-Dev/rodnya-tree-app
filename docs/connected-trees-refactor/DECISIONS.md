@@ -1203,4 +1203,39 @@ Re-evaluate когда CI integration perf tests'ов спроектирован
 **Принято**: Артём (user) 2026-05-12 (methodology fix follow-up,
 после Claude's surface of 100-node noise).
 
+### 25% zoom golden test deferred (2026-05-12 chunk 3b follow-up)
+
+Transform.scale в widget test **не reflects** real InteractiveViewer
+scroll-out rendering. Capture native 25% zoom требует controller-
+based transformation matrix setup в test harness (~50-100 LOC
+дополнительно + cognitive overhead).
+
+**Решение**: defer на chunk 3d либо post-Phase-4 visual smoke pass.
+100% и 50% goldens (16 snapshots chunk 3b) покрывают critical zoom
+levels где differentiation matters. На 25% overview view individual
+card tint signal already marginal — acceptable melt.
+
+**Принято**: Артём (user) 2026-05-12 (chunk 3b approve follow-up).
+
+### Slice scan O(N²) overhead — deferred trigger-based fix (2026-05-12)
+
+`_isPersonForeign` в `interactive_family_tree.dart` вызывает
+`slice.graphPersons.any((g) => g.id == personId)` per card render.
+Это O(N) per card → O(N²) total для full tree. На 1000-node slice
+(cap maximum) теоретическое overhead ~1M comparisons ≈ ~50ms.
+
+На typical 7-100 nodes (DECISIONS.md 2026-05-12 §4 slice size
+re-estimate) — микросекунды cost, hidden в variance noise. Не
+проблема.
+
+**Решение**: defer fix до **measured trigger**:
+* Если perf re-baseline в chunk 3c либо 3d покажет flag-on
+  regression > 10% vs flag-off на 500/1000 fixture'ах →
+  Set<id> cache в `ExtendedNetworkSlice` (~15 LOC fix, обратимо).
+
+Premature optimization для worst case который для типичного юзера
+никогда не возникнет — wait для actual signal.
+
+**Принято**: Артём (user) 2026-05-12 (chunk 3b approve follow-up).
+
 ---
