@@ -25,6 +25,7 @@ import '../providers/extended_network_controller.dart';
 import '../widgets/extended_network_filter_sheet.dart';
 import '../widgets/extended_network_filter_sidebar.dart';
 import '../widgets/extended_network_toggle.dart';
+import '../widgets/foreign_node_sheet.dart';
 import '../widgets/interactive_family_tree.dart';
 import '../widgets/tree_history_sheet.dart';
 import '../widgets/glass_panel.dart';
@@ -2019,6 +2020,58 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
     // Кнопку «Фильтры» показываем только если юзер в extended mode'е
     // (mine mode controls не нужны).
     return controller.mode == ExtendedNetworkMode.extended;
+  }
+
+  // ── Phase 4 chunk 4a: foreign node tap handler ──────────────────
+
+  Future<void> _handleForeignNodeTap(FamilyPerson person) async {
+    final controller = _extendedNetworkController;
+    if (controller == null) return;
+    final slice = controller.slice;
+    if (slice == null) return;
+    final bloodService = _familyService;
+    if (bloodService is! BloodRelationCapableFamilyTreeService) return;
+    final blood = bloodService as BloodRelationCapableFamilyTreeService;
+    await showForeignNodeSheet(
+      context,
+      person: person,
+      slice: slice,
+      bloodRelationService: blood,
+      onOpenCard: () {
+        if (!mounted) return;
+        context.push('/relative/details/${person.id}');
+      },
+      onWriteToOwner: (ownerUserId) async {
+        if (!mounted) return;
+        try {
+          final chatId = await _chatService.getOrCreateChat(ownerUserId);
+          if (chatId == null || chatId.isEmpty) {
+            throw StateError('Не удалось открыть чат');
+          }
+          if (!mounted) return;
+          // Найти display name из slice ownerMap для title.
+          final ownerInfo = slice.getOwnerInfo(person.identityId ?? person.id);
+          final title = ownerInfo?.displayName?.trim().isNotEmpty == true
+              ? ownerInfo!.displayName!
+              : 'Чат';
+          context.push(
+            '/chats/view/$chatId?type=direct&title=${Uri.encodeComponent(title)}&userId=$ownerUserId',
+          );
+        } catch (error) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                _describeTreeActionError(
+                  error,
+                  fallbackMessage: 'Не удалось открыть чат.',
+                ),
+              ),
+            ),
+          );
+        }
+      },
+    );
   }
 
   Future<void> _openFilterSheet() async {

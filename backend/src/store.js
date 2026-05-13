@@ -11005,6 +11005,7 @@ class FileStore {
         graphRelations: [],
         branchMembership: {},
         ownerMap: {},
+        viewerSelfGraphPersonId: null,
         stats: {
           totalCount: 0,
           myCount: 0,
@@ -11038,6 +11039,7 @@ class FileStore {
         graphRelations: [],
         branchMembership: {},
         ownerMap: {},
+        viewerSelfGraphPersonId: null,
         stats: {
           totalCount: 0,
           myCount: 0,
@@ -11195,11 +11197,21 @@ class FileStore {
       }
     }
 
+    // Phase 4 chunk 4a: viewer self-node id для UI lazy-fetch
+    // relation-to-me (через /v1/graph/relation). Single deterministic
+    // value — слой DTO не делает client-side filter through
+    // graphPersons. May be null если viewer не имеет claimed
+    // identity (edge case — anonymous tester либо account без
+    // self-node ещё не создан).
+    const viewerSelfGraphPersonId =
+        this._selfGraphPersonIdForUser(db, normalizedViewer);
+
     return {
       graphPersons: graphPersonsOut,
       graphRelations: graphRelationsOut,
       branchMembership: branchMembershipOut,
       ownerMap: ownerMapOut,
+      viewerSelfGraphPersonId,
       stats: {
         totalCount: graphPersonsOut.length,
         myCount,

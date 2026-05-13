@@ -232,6 +232,12 @@ class InteractiveFamilyTree extends StatefulWidget {
     this.viewMode = ExtendedNetworkMode.mine,
     this.networkSlice,
     this.extendedRenderPathOverride,
+    // Phase 4 chunk 4a: foreign node tap callback. Когда extended
+    // render active && tapped person is foreign → invoke ПЕРЕД
+    // legacy onPersonTap. Host (`tree_view_screen`) attaches
+    // showModalBottomSheet с ForeignNodeSheet. Null → fallback на
+    // legacy onPersonTap (e.g. при flag off либо own person).
+    this.onForeignNodeTap,
   });
 
   /// Multi-select mode for bulk operations on canvas (e.g. «выделить
@@ -282,6 +288,12 @@ class InteractiveFamilyTree extends StatefulWidget {
   /// const'ы.
   @visibleForTesting
   final bool? extendedRenderPathOverride;
+
+  /// Phase 4 chunk 4a: foreign node tap callback. Host owns sheet
+  /// lifecycle (`showModalBottomSheet`, navigation на chat / details,
+  /// services). Widget просто detects + delegates. Когда `null` либо
+  /// extended render inactive → fallback на [onPersonTap].
+  final ValueChanged<FamilyPerson>? onForeignNodeTap;
 
   @override
   State<InteractiveFamilyTree> createState() => _InteractiveFamilyTreeState();
@@ -2111,6 +2123,16 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
         }
         if (widget.isEditMode) {
           _selectEditPerson(person);
+          return;
+        }
+        // Phase 4 chunk 4a: foreign node intercept ПЕРЕД legacy.
+        // Order: selection > edit > foreign-sheet > legacy. Edit
+        // mode wins over foreign (per A reasoning — foreign carды
+        // нельзя edit без grants, но если user в edit mode явно
+        // — он сам разберётся).
+        if (_isPersonForeign(person.id) &&
+            widget.onForeignNodeTap != null) {
+          widget.onForeignNodeTap!(person);
           return;
         }
         widget.onPersonTap(person);

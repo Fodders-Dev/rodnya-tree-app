@@ -1437,6 +1437,13 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
                 viewMode: _extendedNetworkController?.mode ??
                     ExtendedNetworkMode.mine,
                 networkSlice: _extendedNetworkController?.slice,
+                // Phase 4 chunk 4a: foreign node tap intercept.
+                // Host owns sheet — `_handleForeignNodeTap` opens
+                // ForeignNodeSheet через showModalBottomSheet.
+                onForeignNodeTap:
+                    _extendedNetworkController?.isCapable == true
+                        ? _handleForeignNodeTap
+                        : null,
               ),
               Positioned(
                 left: 12,

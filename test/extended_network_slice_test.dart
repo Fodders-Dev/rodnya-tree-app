@@ -3,6 +3,18 @@ import 'package:rodnya/backend/models/extended_network_slice.dart';
 
 void main() {
   group('ExtendedNetworkSlice.fromJson', () {
+    test('viewerSelfGraphPersonId parsed when provided', () {
+      final slice = ExtendedNetworkSlice.fromJson({
+        'viewerSelfGraphPersonId': 'me-self-id',
+      });
+      expect(slice.viewerSelfGraphPersonId, 'me-self-id');
+    });
+
+    test('viewerSelfGraphPersonId null when omitted', () {
+      final slice = ExtendedNetworkSlice.fromJson({});
+      expect(slice.viewerSelfGraphPersonId, isNull);
+    });
+
     test('parse полного payload\'а с graphPersons, edges, ownerMap', () {
       final slice = ExtendedNetworkSlice.fromJson({
         'graphPersons': [

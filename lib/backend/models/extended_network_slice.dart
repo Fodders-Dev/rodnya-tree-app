@@ -18,6 +18,7 @@ class ExtendedNetworkSlice {
     required this.branchMembership,
     required this.ownerMap,
     required this.stats,
+    this.viewerSelfGraphPersonId,
   });
 
   final List<ExtendedNetworkPerson> graphPersons;
@@ -31,6 +32,14 @@ class ExtendedNetworkSlice {
   /// Sparse: только foreign nodes. Lookup через
   /// [getOwnerInfo] (returns null для viewer-owned).
   final Map<String, ExtendedNetworkOwnerInfo> ownerMap;
+
+  /// Phase 4 chunk 4a: viewer's self-node graphPerson id. Используется
+  /// в foreign node sheet для lazy-fetch relation-to-me через
+  /// `BloodRelationCapableFamilyTreeService.findBloodRelation` (`from`
+  /// = self id, `to` = foreign person id). May be `null` если viewer
+  /// не имеет claimed identity (edge case — sheet показывает «Связь
+  /// не найдена в видимом графе»).
+  final String? viewerSelfGraphPersonId;
 
   final ExtendedNetworkStats stats;
 
@@ -104,6 +113,7 @@ class ExtendedNetworkSlice {
       branchMembership: branchMembership,
       ownerMap: ownerMap,
       stats: stats,
+      viewerSelfGraphPersonId: _nullableString(json['viewerSelfGraphPersonId']),
     );
   }
 
@@ -115,6 +125,7 @@ class ExtendedNetworkSlice {
       'ownerMap': {
         for (final entry in ownerMap.entries) entry.key: entry.value.toJson(),
       },
+      'viewerSelfGraphPersonId': viewerSelfGraphPersonId,
       'stats': stats.toJson(),
     };
   }
