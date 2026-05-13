@@ -1238,4 +1238,28 @@ Premature optimization для worst case который для типичног�
 
 **Принято**: Артём (user) 2026-05-12 (chunk 3b approve follow-up).
 
+### Phase 4 backend addendum — viewerSelfGraphPersonId (2026-05-12)
+
+`getExtendedNetworkSlice` response добавляет
+`viewerSelfGraphPersonId: string | null` поле.
+
+**Reason**: client-side `slice.graphPersons.firstWhere((p) =>
+p.userId == auth.currentUserId)` требует `userId` field в
+`ExtendedNetworkPerson` DTO, которого там нет (sparse design — DTO
+public preview только, без full ownership). Backend уже знает
+viewer's identityId → self-node mapping (`_selfGraphPersonIdForUser`
+helper) — surface это deterministic field вместо client-side scan
+который требует расширения DTO.
+
+**Properties**:
+* Single contract field (~12 LOC backend + 11 LOC DTO).
+* Versionable: clients ignoring field continue working (null-safe
+  defaults).
+* Null когда viewer не имеет claimed self-node (edge case —
+  anonymous tester либо account без identity yet).
+* Used в chunk 4a foreign node sheet для `from` parameter `/v1/graph/
+  relation` lazy fetch'а.
+
+**Принято**: Артём (user) 2026-05-12 (chunk 4a approve follow-up).
+
 ---
