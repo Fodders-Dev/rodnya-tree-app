@@ -1179,4 +1179,28 @@ branch.
 **Принято**: Артём (user) 2026-05-12 (chunk 3 prep — caveats + flag
 removal confirmation).
 
+### 100-node fixture noise — D Accept (2026-05-12)
+
+Mean-of-3 + stronger warmup даёт σ ≈ 25% raw / ~14% effective
+(σ/√3) для 100-node fixture (vs ~5% для 500/1000). 10% regression
+threshold потенциально flake'ает на 100-node case.
+
+**Решение**: **accept noise**. Perf tests в `test/perf/` directory,
+**not в CI default run** — manual execution only. Premature
+engineering против noise когда tests не блокируют builds = тратим
+время на не-проблему.
+
+**Если в будущем перейдут в CI и flake'нут на 100-node**:
+* **Option A** — drop 100-node fixture entirely. Typical
+  case, но signal слабый для realistic perf assessment.
+* **Option B** — per-fixture threshold (15% для 100, 10% для
+  500/1000).
+* **Option E** — keep 100-node как smoke run без threshold
+  comparison (catch crashes / hangs, ignore timing).
+
+Re-evaluate когда CI integration perf tests'ов спроектирована.
+
+**Принято**: Артём (user) 2026-05-12 (methodology fix follow-up,
+после Claude's surface of 100-node noise).
+
 ---

@@ -193,16 +193,29 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
 
   void _syncExtendedNetworkController(String? treeId) {
     if (treeId == null || treeId.isEmpty) {
+      _extendedNetworkController?.removeListener(_onExtendedNetworkChange);
       _extendedNetworkController?.dispose();
       _extendedNetworkController = null;
       return;
     }
     if (_extendedNetworkController?.treeId == treeId) return;
+    _extendedNetworkController?.removeListener(_onExtendedNetworkChange);
     _extendedNetworkController?.dispose();
     _extendedNetworkController = ExtendedNetworkController(
       treeId: treeId,
       service: _extendedNetworkService,
     );
+    _extendedNetworkController!.addListener(_onExtendedNetworkChange);
+  }
+
+  void _onExtendedNetworkChange() {
+    // Phase 4 chunk 3a: controller updates (mode / filter / slice
+    // fetch result) → tree_view_screen rebuild чтобы пробросить
+    // свежие viewMode / networkSlice в InteractiveFamilyTree.
+    // Chunk 3a const flag = false; rebuild по сути no-op для canvas.
+    // Chunk 3b/3c активирует actual render branching.
+    if (!mounted) return;
+    setState(() {});
   }
 
   String _describeTreeActionError(
@@ -469,6 +482,7 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_handleTreeKeyEvent);
     _treeProviderInstance?.removeListener(_handleTreeChange); // Отписываемся
+    _extendedNetworkController?.removeListener(_onExtendedNetworkChange);
     _extendedNetworkController?.dispose();
     super.dispose();
   }
