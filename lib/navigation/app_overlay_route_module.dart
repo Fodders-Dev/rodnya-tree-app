@@ -208,20 +208,26 @@ class AppOverlayRouteModule {
           transitionsBuilder: AppRouteTransitions.fade,
         ),
       ),
-      // Phase 6 chunk 3: «мы родственники?» discover entry. Optional
-      // `?incoming=<checkId>` deep-link auto-opens action sheet on
-      // received pending check (notification tap target).
+      // Phase 6 chunk 3: «мы родственники?» discover entry. Deep-link
+      // params per chunk 4b notification routing:
+      //   • ?incoming=<checkId> — auto-opens bilateral-consent action
+      //     sheet (target tapped «received» notification).
+      //   • ?result=<checkId> — opens result step с chain (initiator
+      //     tapped «confirmed» notification).
       GoRoute(
         path: '/discover/relatives',
         parentNavigatorKey: rootNavigatorKey,
         pageBuilder: (context, state) {
           final incoming = state.uri.queryParameters['incoming']?.trim();
+          final result = state.uri.queryParameters['result']?.trim();
           return RodnyaCustomTransitionPage(
             key: state.pageKey,
             constrainWidth: true,
             child: DiscoverRelativesScreen(
               incomingCheckId:
                   incoming != null && incoming.isNotEmpty ? incoming : null,
+              resultCheckId:
+                  result != null && result.isNotEmpty ? result : null,
             ),
             transitionsBuilder: AppRouteTransitions.slide,
           );

@@ -305,4 +305,52 @@ void main() {
       expect(c.findIssuedById('i-zzz'), isNull);
     });
   });
+
+  group('presentResult (chunk 4b deep-link)', () {
+    test('sets submittedCheck + step=result', () {
+      final accepted = KinshipCheck(
+        id: 'k-x',
+        initiatorUserId: 'u-a',
+        targetUserId: 'u-b',
+        status: KinshipCheckStatus.accepted,
+        createdAt: '2026-05-14T10:00:00Z',
+        expiresAt: '2026-05-28T10:00:00Z',
+        respondedAt: '2026-05-14T11:00:00Z',
+        result: const BloodRelation(
+          found: true,
+          chain: [],
+          edges: [],
+          label: 'мама',
+          degree: 1,
+        ),
+      );
+      final c = KinshipCheckController(service: _FakeService());
+      c.presentResult(accepted);
+      expect(c.step, DiscoverStep.result);
+      expect(c.submittedCheck?.id, 'k-x');
+      expect(c.selectedTargetUserId, 'u-b');
+    });
+
+    test('clears prior error', () async {
+      final c = KinshipCheckController(service: _FakeService(
+        throwOnCreate: const KinshipCheckError(
+          code: 'UNKNOWN',
+          message: 'fail',
+        ),
+      ));
+      c.selectTarget(userId: 'u-b', displayName: 'Иван');
+      await c.submitCheck(); // produces error
+      expect(c.error, isNotNull);
+      final accepted = KinshipCheck(
+        id: 'k-x',
+        initiatorUserId: 'u-a',
+        targetUserId: 'u-b',
+        status: KinshipCheckStatus.accepted,
+        createdAt: '2026-05-14T10:00:00Z',
+        expiresAt: '2026-05-28T10:00:00Z',
+      );
+      c.presentResult(accepted);
+      expect(c.error, isNull);
+    });
+  });
 }

@@ -224,6 +224,17 @@ class KinshipCheckController extends ChangeNotifier {
     return null;
   }
 
+  /// Phase 6 chunk 4b: deep-link entry для `kinship_check_confirmed`
+  /// notification tap. Forces step = result + sets given check as
+  /// submitted so screen renders chain.
+  void presentResult(KinshipCheck check) {
+    _submittedCheck = check;
+    _step = DiscoverStep.result;
+    _selectedTargetUserId = check.targetUserId;
+    _error = null;
+    notifyListeners();
+  }
+
   /// Find a received check by id.
   KinshipCheck? findReceivedById(String checkId) {
     for (final c in _received) {

@@ -27,11 +27,18 @@ class DiscoverRelativesScreen extends StatefulWidget {
   const DiscoverRelativesScreen({
     super.key,
     this.incomingCheckId,
+    this.resultCheckId,
   });
 
   /// Если задан — screen открывается с action sheet для этого
   /// received pending check (deep-link из notification tap).
   final String? incomingCheckId;
+
+  /// Phase 6 chunk 4b: если задан — screen открывается на result step
+  /// для этого issued check (deep-link из `kinship_check_confirmed`
+  /// notification). Caller waits для issued list refresh, then sets
+  /// matching check as submittedCheck + transitions step=result.
+  final String? resultCheckId;
 
   @override
   State<DiscoverRelativesScreen> createState() =>
@@ -48,6 +55,7 @@ class _DiscoverRelativesScreenState extends State<DiscoverRelativesScreen> {
   List<UserProfile> _searchResults = const <UserProfile>[];
   String? _searchError;
   bool _autoSheetPresented = false;
+  bool _resultDeepLinkPresented = false;
 
   @override
   void initState() {
@@ -62,6 +70,7 @@ class _DiscoverRelativesScreenState extends State<DiscoverRelativesScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _controller.refresh();
       _maybeAutoPresentIncomingSheet();
+      _maybeAutoPresentResult();
     });
   }
 
@@ -90,6 +99,26 @@ class _DiscoverRelativesScreenState extends State<DiscoverRelativesScreen> {
       }
       if (check != null && check.status == KinshipCheckStatus.pending) {
         await _showRespondSheet(check);
+      }
+    });
+  }
+
+  void _maybeAutoPresentResult() {
+    final resultId = widget.resultCheckId;
+    if (resultId == null || resultId.isEmpty) return;
+    if (_resultDeepLinkPresented) return;
+    _resultDeepLinkPresented = true;
+    // Wait для issued list refresh, then find check by id.
+    Future<void>.delayed(const Duration(milliseconds: 150), () async {
+      if (!mounted) return;
+      KinshipCheck? check = _controller.findIssuedById(resultId);
+      if (check == null) {
+        await Future<void>.delayed(const Duration(milliseconds: 350));
+        if (!mounted) return;
+        check = _controller.findIssuedById(resultId);
+      }
+      if (check != null && check.result != null) {
+        _controller.presentResult(check);
       }
     });
   }
