@@ -1307,3 +1307,37 @@ scenario.
 verify approve).
 
 ---
+
+## 2026-05-14: Phase 6 kinship-check rejection cooldown 30d
+
+При создании kinship_check'а инициатором, если target ранее
+rejected запрос within last 30 days — backend возвращает 429
++ `retryAfterMs`.
+
+**Цель**: anti-spam защита, чтобы persistent initiator не
+доставал rejected target повторно. Без cooldown rejected
+target будет получать notifications repeatedly — превращается
+в harassment vector.
+
+**30d window** — balance между:
+* User changed mind может legitimately want to retry.
+* Persistent harassment без reasonable break.
+
+**Cooldown reset condition**:
+* Confirmed match с этим target (existing relationship через
+  identity-claim либо tree membership).
+* Target's status update (block / unblock — Phase 7+ moderation
+  features).
+
+**UI surface**: «Этот юзер недавно отклонил запрос. Попробуйте
+через 30 дней.» Show retry-after countdown в settings либо
+notification.
+
+**Addition history**: не в original Phase 6 proposal v2 —
+proactively добавлено agent'ом во время chunk 1 implementation
+как anti-spam invariant. Surface'нуто в Артёмов batched approve
+2026-05-14 → confirmed как useful.
+
+**Принято**: Артём (user) 2026-05-14 (chunk 1 approve follow-up).
+
+---
