@@ -224,12 +224,19 @@ function registerTelegramAuthRoutes(
           refreshedUser.id,
           readDeviceContext(req),
         );
+        // Phase 6 chunk 4a: Telegram re-auth = existing-user; mid-wizard
+        // resume only.
+        const requiresOnboarding = await store.hasIncompleteOnboarding({
+          userId: refreshedUser.id,
+        });
         const authHandoff = await store.createAuthHandoff({
           type: "telegram_auth_result",
           userId: refreshedUser.id,
           payload: {
             status: "authenticated",
-            auth: authResponse(refreshedUser, sessionTokens),
+            auth: authResponse(refreshedUser, sessionTokens, {
+              requiresOnboarding,
+            }),
           },
         });
         res.redirect(302, telegramAuthRedirectUrl(authHandoff.code, {

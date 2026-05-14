@@ -2129,7 +2129,15 @@ function createApp({
     };
   }
 
-  function authResponse(user, sessionTokens) {
+  // Phase 6 chunk 4a (PHASE-6-PROPOSAL.md §2.8 + DECISIONS 2026-05-14
+  // «post-signup redirect Option A simplified»): auth response carries
+  // optional `requiresOnboarding` flag — client redirects к `/setup`
+  // wizard when true. Каждый auth endpoint решает свой flag value:
+  //   • register / fresh Google/VK/Telegram/MAX signup → true
+  //   • login / linking existing user → computed via
+  //     store.hasIncompleteOnboarding (true только если user mid-wizard)
+  //   • refresh → omit flag (no redirect on token refresh)
+  function authResponse(user, sessionTokens, extra = {}) {
     const profile = sanitizeProfile(user.profile);
     const profileStatus = computeProfileStatus(user.profile);
     return {
@@ -2144,6 +2152,7 @@ function createApp({
         providerIds: user.providerIds || ["password"],
       },
       profileStatus,
+      ...extra,
     };
   }
 

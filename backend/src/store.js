@@ -16876,6 +16876,25 @@ class FileStore {
     return structuredClone(state);
   }
 
+  /// Phase 6 chunk 4a: distinguishes «mid-wizard user» from «legacy
+  /// user без onboarding record». Returns true ТОЛЬКО для existing
+  /// `onboardingStates` row с `completed=false`. Legacy users
+  /// (no record) → false (existing tree → no redirect).
+  ///
+  /// `getOnboardingState` нельзя re-use потому что он fills default
+  /// `{completed: false}` для missing records — would incorrectly
+  /// flag every legacy user as needing wizard.
+  async hasIncompleteOnboarding({userId}) {
+    const normalizedUser = normalizeNullableString(userId);
+    if (!normalizedUser) return false;
+    const db = await this._read();
+    const state = (db.onboardingStates || []).find(
+      (s) => s.userId === normalizedUser,
+    );
+    if (!state) return false;
+    return state.completed !== true;
+  }
+
   async updateOnboardingState({userId, currentStep}) {
     const normalizedUser = normalizeNullableString(userId);
     const normalizedStep = String(currentStep || "").trim();

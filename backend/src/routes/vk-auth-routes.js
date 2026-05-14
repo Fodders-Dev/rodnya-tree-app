@@ -212,12 +212,18 @@ function registerVkAuthRoutes(
           vkIdentity,
         );
         const sessionTokens = await store.createSession(refreshedUser.id, effectiveDeviceContext);
+        // Phase 6 chunk 4a: existing-user re-auth — mid-wizard resume only.
+        const requiresOnboarding = await store.hasIncompleteOnboarding({
+          userId: refreshedUser.id,
+        });
         const authHandoff = await store.createAuthHandoff({
           type: "vk_auth_result",
           userId: refreshedUser.id,
           payload: {
             status: "authenticated",
-            auth: authResponse(refreshedUser, sessionTokens),
+            auth: authResponse(refreshedUser, sessionTokens, {
+              requiresOnboarding,
+            }),
           },
         });
         res.redirect(302, vkAuthRedirectUrl(authHandoff.code, {
@@ -272,12 +278,16 @@ function registerVkAuthRoutes(
       if (resolution?.user?.id) {
         const user = await store.linkAuthIdentity(resolution.user.id, vkIdentity);
         const sessionTokens = await store.createSession(user.id, effectiveDeviceContext);
+        // Phase 6 chunk 4a: resolved existing user via email/phone match.
+        const requiresOnboarding = await store.hasIncompleteOnboarding({
+          userId: user.id,
+        });
         const authHandoff = await store.createAuthHandoff({
           type: "vk_auth_result",
           userId: user.id,
           payload: {
             status: "authenticated",
-            auth: authResponse(user, sessionTokens),
+            auth: authResponse(user, sessionTokens, {requiresOnboarding}),
           },
         });
         res.redirect(302, vkAuthRedirectUrl(authHandoff.code, {
@@ -327,7 +337,8 @@ function registerVkAuthRoutes(
         userId: user.id,
         payload: {
           status: "authenticated",
-          auth: authResponse(user, sessionTokens),
+          // Phase 6 chunk 4a: fresh VK signup → wizard required.
+          auth: authResponse(user, sessionTokens, {requiresOnboarding: true}),
         },
       });
       res.redirect(302, vkAuthRedirectUrl(authHandoff.code, {

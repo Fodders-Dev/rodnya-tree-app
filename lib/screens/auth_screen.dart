@@ -228,10 +228,15 @@ class _AuthScreenState extends State<AuthScreen> {
           return;
         }
 
-        if (shouldShowOnboarding) {
+        // Phase 6 chunk 4a: wizard takes precedence over Phase 1 carousel.
+        // requiresOnboarding=true → /setup (functional account setup).
+        // Carousel stays as fallback для legacy/login paths без flag.
+        if (_authService.currentRequiresOnboarding) {
+          context.go('/setup');
+        } else if (shouldShowOnboarding) {
           context.go('/onboarding');
         } else {
-          context.go(_resolvePostAuthTarget());
+          context.go(_resolvePostAuthRedirect());
         }
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -288,7 +293,7 @@ class _AuthScreenState extends State<AuthScreen> {
       await _authService.signInWithGoogle();
 
       if (mounted && _authService.currentUserId != null) {
-        context.go(_resolvePostAuthTarget());
+        context.go(_resolvePostAuthRedirect());
       }
     } catch (e) {
       if (!mounted) {
@@ -433,7 +438,7 @@ class _AuthScreenState extends State<AuthScreen> {
         if (!mounted) {
           return;
         }
-        context.go(_resolvePostAuthTarget());
+        context.go(_resolvePostAuthRedirect());
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Вход через Telegram выполнен успешно.'),
@@ -574,7 +579,7 @@ class _AuthScreenState extends State<AuthScreen> {
         if (!mounted) {
           return;
         }
-        context.go(_resolvePostAuthTarget());
+        context.go(_resolvePostAuthRedirect());
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Вход через VK ID выполнен успешно.'),
@@ -746,7 +751,7 @@ class _AuthScreenState extends State<AuthScreen> {
         if (!mounted) {
           return;
         }
-        context.go(_resolvePostAuthTarget());
+        context.go(_resolvePostAuthRedirect());
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Вход через MAX выполнен успешно.'),
@@ -993,6 +998,19 @@ class _AuthScreenState extends State<AuthScreen> {
       return '/';
     }
     return from;
+  }
+
+  /// Phase 6 chunk 4a (DECISIONS 2026-05-14 «post-signup redirect
+  /// Option A»): `requiresOnboarding` от backend → redirect к
+  /// `/setup` wizard. Иначе следуем pre-Phase-6 logic (redirectAfter
+  /// либо `/`). Carousel branch `/onboarding` обрабатывается
+  /// отдельно в email-submit path (только для пользователей
+  /// без requiresOnboarding flag).
+  String _resolvePostAuthRedirect() {
+    if (_authService.currentRequiresOnboarding) {
+      return '/setup';
+    }
+    return _resolvePostAuthTarget();
   }
 
   @override

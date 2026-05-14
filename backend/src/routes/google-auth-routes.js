@@ -29,6 +29,9 @@ function registerGoogleAuthRoutes(
       });
 
       let user = null;
+      // Phase 6 chunk 4a: track create-vs-link to compute
+      // `requiresOnboarding` flag.
+      let isFreshSignup = false;
       if (resolution?.user?.id) {
         user = await store.linkAuthIdentity(resolution.user.id, googleIdentity);
       } else {
@@ -47,13 +50,17 @@ function registerGoogleAuthRoutes(
           authIdentity: googleIdentity,
           photoUrl: googleIdentity.metadata?.picture || null,
         });
+        isFreshSignup = true;
       }
 
       const sessionTokens = await store.createSession(
         user.id,
         readDeviceContext(req),
       );
-      res.json(authResponse(user, sessionTokens));
+      const requiresOnboarding = isFreshSignup
+        ? true
+        : await store.hasIncompleteOnboarding({userId: user.id});
+      res.json(authResponse(user, sessionTokens, {requiresOnboarding}));
     } catch (error) {
       if (error?.message === "GOOGLE_AUTH_NOT_CONFIGURED") {
         res.status(503).json({

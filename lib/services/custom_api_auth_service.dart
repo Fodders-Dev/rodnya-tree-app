@@ -302,6 +302,10 @@ class CustomApiAuthService implements AuthServiceInterface {
   @override
   List<String> get currentProviderIds => _session?.providerIds ?? const [];
 
+  @override
+  bool get currentRequiresOnboarding =>
+      _session?.requiresOnboarding ?? false;
+
   bool get isGoogleSignInConfigured =>
       _runtimeConfig.googleWebClientId.trim().isNotEmpty;
 
@@ -1474,6 +1478,10 @@ class CustomApiAuthService implements AuthServiceInterface {
           (profileStatus['missingFields'] as List<dynamic>? ?? const [])
               .map((value) => value.toString())
               .toList(),
+      // Phase 6 chunk 4a: backend signals post-signup redirect requirement.
+      // Flag читается top-level либо вложен в session JSON (refresh path).
+      requiresOnboarding: response['requiresOnboarding'] == true ||
+          sessionJson['requiresOnboarding'] == true,
     );
 
     if (session.accessToken.isEmpty || session.userId.isEmpty) {

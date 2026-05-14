@@ -187,14 +187,26 @@ test(
         name: "Ghost",
         createdAt: new Date().toISOString(),
       });
-      db.onboardingStates.push({
+      // Phase 6 chunk 4a — register endpoint теперь создаёт initial
+      // onboardingState record. Заменяем его в-place, не push'аем
+      // duplicate (иначе seedOnboarding's find возвращает первый и
+      // не replace'ит ghost tree).
+      const existingStateIdx = db.onboardingStates.findIndex(
+        (s) => s.userId === user.user.id,
+      );
+      const ghostState = {
         userId: user.user.id,
         completed: false,
         currentStep: "relatives",
         treeId: fakeTreeId,
         personIds: ["ghost-person"],
         updatedAt: new Date().toISOString(),
-      });
+      };
+      if (existingStateIdx >= 0) {
+        db.onboardingStates[existingStateIdx] = ghostState;
+      } else {
+        db.onboardingStates.push(ghostState);
+      }
       await ctx.store._write(db);
 
       // Seed с new payload — должен replace.

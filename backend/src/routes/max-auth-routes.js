@@ -158,12 +158,19 @@ function registerMaxAuthRoutes(
           refreshedUser.id,
           effectiveDeviceContext,
         );
+        // Phase 6 chunk 4a: MAX re-auth = existing-user; mid-wizard
+        // resume only.
+        const requiresOnboarding = await store.hasIncompleteOnboarding({
+          userId: refreshedUser.id,
+        });
         const authHandoff = await store.createAuthHandoff({
           type: "max_auth_result",
           userId: refreshedUser.id,
           payload: {
             status: "authenticated",
-            auth: authResponse(refreshedUser, sessionTokens),
+            auth: authResponse(refreshedUser, sessionTokens, {
+              requiresOnboarding,
+            }),
           },
         });
         res.json({
