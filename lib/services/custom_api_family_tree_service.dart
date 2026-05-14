@@ -14,6 +14,7 @@ import '../backend/interfaces/graph_person_access_capable_family_tree_service.da
 import '../backend/interfaces/identity_conflicts_capable_family_tree_service.dart';
 import '../backend/interfaces/identity_duplicate_capable_family_tree_service.dart';
 import '../backend/interfaces/identity_suggestions_capable_family_tree_service.dart';
+import '../backend/interfaces/onboarding_capable_family_tree_service.dart';
 import '../backend/interfaces/profile_service_interface.dart';
 import '../backend/interfaces/tree_graph_capable_family_tree_service.dart';
 import '../backend/models/blood_relation.dart';
@@ -24,6 +25,7 @@ import '../backend/models/identity_field_conflict.dart';
 import '../backend/models/identity_suggestion.dart';
 import '../backend/models/cross_tree_person_suggestion.dart';
 import '../backend/models/include_rules.dart';
+import '../backend/models/onboarding_state.dart';
 import '../backend/models/visibility_choice.dart';
 import '../backend/models/selectable_tree.dart';
 import '../backend/models/tree_invitation.dart';
@@ -52,7 +54,8 @@ class CustomApiFamilyTreeService
         BranchDigestCapableFamilyTreeService,
         BulkImportCapableFamilyTreeService,
         GraphPersonAccessCapableFamilyTreeService,
-        ExtendedNetworkCapableFamilyTreeService {
+        ExtendedNetworkCapableFamilyTreeService,
+        OnboardingCapableFamilyTreeService {
   CustomApiFamilyTreeService({
     required CustomApiAuthService authService,
     required BackendRuntimeConfig runtimeConfig,
@@ -2372,6 +2375,57 @@ class CustomApiFamilyTreeService
     } catch (_) {
       // Capability detection: старый сервер без endpoint'а — 404.
       // Любая network/auth ошибка → null чтобы UI graceful disable.
+      return null;
+    }
+  }
+
+  // ── Phase 6 chunk 2: onboarding ──────────────────────────────────
+
+  @override
+  Future<OnboardingSeedResult?> seedOnboarding({
+    required OnboardingSeedPayload payload,
+  }) async {
+    try {
+      final response = await _requestJson(
+        method: 'POST',
+        path: '/v1/onboarding/seed',
+        body: payload.toJson(),
+      );
+      return OnboardingSeedResult.fromJson(response);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  Future<OnboardingState?> getOnboardingState() async {
+    try {
+      final response = await _requestJson(
+        method: 'GET',
+        path: '/v1/me/onboarding-state',
+      );
+      final stateRaw = response['state'];
+      if (stateRaw is! Map<String, dynamic>) return null;
+      return OnboardingState.fromJson(stateRaw);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  Future<OnboardingState?> updateOnboardingState({
+    required OnboardingStep currentStep,
+  }) async {
+    try {
+      final response = await _requestJson(
+        method: 'PATCH',
+        path: '/v1/me/onboarding-state',
+        body: {'currentStep': currentStep.serverValue},
+      );
+      final stateRaw = response['state'];
+      if (stateRaw is! Map<String, dynamic>) return null;
+      return OnboardingState.fromJson(stateRaw);
+    } catch (_) {
       return null;
     }
   }
