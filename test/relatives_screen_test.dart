@@ -372,7 +372,11 @@ void main() {
   final getIt = GetIt.instance;
 
   setUp(() async {
-    SharedPreferences.setMockInitialValues({});
+    // Phase 6 chunk 3 first-visit tooltip — pre-flag as «seen» so
+    // dialog не блокирует RelativesScreen tests scroll behavior.
+    SharedPreferences.setMockInitialValues({
+      'discover_fab_tooltip_shown_v1': true,
+    });
     await getIt.reset();
     getIt.registerSingleton<AuthServiceInterface>(_FakeAuthService());
     getIt.registerSingleton<ChatServiceInterface>(_FakeChatService());
