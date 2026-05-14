@@ -11,7 +11,9 @@ import '../screens/chat_screen.dart';
 import '../screens/family_tree/create_tree_screen.dart';
 import '../screens/identity_review_screen.dart';
 import '../screens/notifications_screen.dart';
+import '../screens/discover_relatives/discover_relatives_screen.dart';
 import '../screens/onboarding_screen.dart';
+import '../screens/onboarding/onboarding_wizard_screen.dart';
 import '../screens/password_reset_screen.dart';
 import '../screens/reset_password_confirm_screen.dart';
 import '../screens/privacy_policy_screen.dart';
@@ -193,6 +195,43 @@ class AppOverlayRouteModule {
           child: const OnboardingScreen(),
           transitionsBuilder: AppRouteTransitions.fade,
         ),
+      ),
+      // Phase 6 chunk 2: wizard (profile + first-relatives seed).
+      // Route name `/setup` чтобы не collide с existing
+      // `/onboarding` (Phase 1 welcome tour, different scope).
+      GoRoute(
+        path: '/setup',
+        parentNavigatorKey: rootNavigatorKey,
+        pageBuilder: (context, state) => RodnyaCustomTransitionPage(
+          key: state.pageKey,
+          child: const OnboardingWizardScreen(),
+          transitionsBuilder: AppRouteTransitions.fade,
+        ),
+      ),
+      // Phase 6 chunk 3: «мы родственники?» discover entry. Deep-link
+      // params per chunk 4b notification routing:
+      //   • ?incoming=<checkId> — auto-opens bilateral-consent action
+      //     sheet (target tapped «received» notification).
+      //   • ?result=<checkId> — opens result step с chain (initiator
+      //     tapped «confirmed» notification).
+      GoRoute(
+        path: '/discover/relatives',
+        parentNavigatorKey: rootNavigatorKey,
+        pageBuilder: (context, state) {
+          final incoming = state.uri.queryParameters['incoming']?.trim();
+          final result = state.uri.queryParameters['result']?.trim();
+          return RodnyaCustomTransitionPage(
+            key: state.pageKey,
+            constrainWidth: true,
+            child: DiscoverRelativesScreen(
+              incomingCheckId:
+                  incoming != null && incoming.isNotEmpty ? incoming : null,
+              resultCheckId:
+                  result != null && result.isNotEmpty ? result : null,
+            ),
+            transitionsBuilder: AppRouteTransitions.slide,
+          );
+        },
       ),
       GoRoute(
         path: '/complete_profile',

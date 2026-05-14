@@ -9,6 +9,7 @@ class CustomApiSession {
     this.providerIds = const [],
     this.isProfileComplete = false,
     this.missingFields = const [],
+    this.requiresOnboarding = false,
   });
 
   final String accessToken;
@@ -21,6 +22,15 @@ class CustomApiSession {
   final bool isProfileComplete;
   final List<String> missingFields;
 
+  /// Phase 6 chunk 4a (DECISIONS 2026-05-14 «post-signup redirect
+  /// Option A simplified»): true когда backend reports user needs
+  /// `/setup` wizard. Caller (auth_screen) redirects accordingly.
+  ///
+  /// Persisted в SharedPreferences через [toJson] так что restoreSession
+  /// сохраняет flag across app launches — defensive против mid-wizard
+  /// crash → app relaunch без re-login.
+  final bool requiresOnboarding;
+
   CustomApiSession copyWith({
     String? accessToken,
     String? refreshToken,
@@ -31,6 +41,7 @@ class CustomApiSession {
     List<String>? providerIds,
     bool? isProfileComplete,
     List<String>? missingFields,
+    bool? requiresOnboarding,
   }) {
     return CustomApiSession(
       accessToken: accessToken ?? this.accessToken,
@@ -42,6 +53,7 @@ class CustomApiSession {
       providerIds: providerIds ?? this.providerIds,
       isProfileComplete: isProfileComplete ?? this.isProfileComplete,
       missingFields: missingFields ?? this.missingFields,
+      requiresOnboarding: requiresOnboarding ?? this.requiresOnboarding,
     );
   }
 
@@ -56,6 +68,7 @@ class CustomApiSession {
       'providerIds': providerIds,
       'isProfileComplete': isProfileComplete,
       'missingFields': missingFields,
+      'requiresOnboarding': requiresOnboarding,
     };
   }
 
@@ -74,6 +87,7 @@ class CustomApiSession {
       missingFields: (json['missingFields'] as List<dynamic>? ?? const [])
           .map((value) => value.toString())
           .toList(),
+      requiresOnboarding: json['requiresOnboarding'] == true,
     );
   }
 }

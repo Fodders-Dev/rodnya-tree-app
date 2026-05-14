@@ -73,6 +73,9 @@ class PendingBackendAuthService implements AuthServiceInterface {
   List<String> get currentProviderIds => const [];
 
   @override
+  bool get currentRequiresOnboarding => false;
+
+  @override
   Stream<String?> get authStateChanges => Stream<String?>.value(null);
 
   @override

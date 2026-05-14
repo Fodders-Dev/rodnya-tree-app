@@ -1263,3 +1263,182 @@ helper) — surface это deterministic field вместо client-side scan
 **Принято**: Артём (user) 2026-05-12 (chunk 4a approve follow-up).
 
 ---
+
+## 2026-05-13: Phase 6 chunk 1 — naming + idempotency
+
+### Collection naming: kinshipChecks vs relationRequests
+
+**Existing `relationRequests`** (Phase 1) — flow **invite-to-tree**
+(recipient joins sender's tree as user-linked person). Endpoint
+family `/v1/trees/:treeId/relation-requests` + `/v1/relation-requests/*`.
+
+**Phase 6 BFS «мы родственники?»** — semantic mismatch (discovery
+shortest-path consent), не invite. Different state machine, different
+side effects.
+
+**Решение**: new collection **`kinshipChecks`** + endpoint family
+**`/v1/kinship-checks/*`**. Existing `relationRequests` unchanged.
+
+**User-facing strings** — «проверка родства», «Проверить, родственники
+ли мы», «Запрос на подтверждение родственной связи». **No backend
+jargon в UI** («kinship», «probe», «BFS», «check» — все backend-only
+terms).
+
+### Idempotency: state-based для /onboarding/seed
+
+**Pattern**: state-based вместо header `Idempotency-Key`. Wizard
+natural state (completed/incomplete) maps к idempotency boundary
+cleanly.
+
+* `POST /v1/onboarding/seed`:
+  - If `onboardingStates[userId].completed === true` → return
+    existing `{treeId, personIds}` (idempotent re-call).
+  - If incomplete attempt exists (previous tree partial) →
+    **replace**: delete previous tree + persons, then create new
+    с current request payload. User не должен иметь ghost дерево
+    с half-сохранённой попыткой.
+  - If absent → fresh atomic seed.
+
+**Rejected alternative**: header `Idempotency-Key`. UUID generation
+client-side + TTL cleanup window — over-engineering для wizard
+scenario.
+
+**Принято**: Артём (user) 2026-05-13 (Phase 6 chunk 1 pre-coding
+verify approve).
+
+---
+
+## 2026-05-14: Phase 6 kinship-check rejection cooldown 30d
+
+При создании kinship_check'а инициатором, если target ранее
+rejected запрос within last 30 days — backend возвращает 429
++ `retryAfterMs`.
+
+**Цель**: anti-spam защита, чтобы persistent initiator не
+доставал rejected target повторно. Без cooldown rejected
+target будет получать notifications repeatedly — превращается
+в harassment vector.
+
+**30d window** — balance между:
+* User changed mind может legitimately want to retry.
+* Persistent harassment без reasonable break.
+
+**Cooldown reset condition**:
+* Confirmed match с этим target (existing relationship через
+  identity-claim либо tree membership).
+* Target's status update (block / unblock — Phase 7+ moderation
+  features).
+
+**UI surface**: «Этот юзер недавно отклонил запрос. Попробуйте
+через 30 дней.» Show retry-after countdown в settings либо
+notification.
+
+**Addition history**: не в original Phase 6 proposal v2 —
+proactively добавлено agent'ом во время chunk 1 implementation
+как anti-spam invariant. Surface'нуто в Артёмов batched approve
+2026-05-14 → confirmed как useful.
+
+**Принято**: Артём (user) 2026-05-14 (chunk 1 approve follow-up).
+
+---
+
+## 2026-05-14: Phase 6 wizard route — /setup vs /onboarding
+
+Existing `/onboarding` — Phase 1 welcome carousel (5-slide
+PageView, marketing intro shown once after signup в legacy
+flow). Phase 6 wizard — first-time user **setup** (4-step form,
+account profile → first relatives seed).
+
+**Semantically distinct experiences**:
+* `/onboarding` = «welcome tour» (skippable, marketing).
+* `/setup` = «account setup» (functional, creates tree).
+
+**Решение**: separate routes — `/onboarding` (existing tour
+unchanged), `/setup` (Phase 6 wizard). Не rename existing для
+backward compat (old links / deep-link references survive) +
+clear separation.
+
+**Notification copy** — UI strings reference «настройка» / «начать
+заполнять дерево», never «onboarding» либо «setup» backend term.
+
+**Принято**: Артём (user) 2026-05-14 (chunk 2 approve follow-up).
+
+---
+
+## 2026-05-14: Phase 6 post-signup redirect — Option A simplified
+
+**Surfaced при chunk 2 review**: wizard accessible через direct
+nav `/setup` — no automatic redirect post-signup. Phase 6 core
+purpose — onboard new users automatically; manual entry point
+preserves funnel leak.
+
+**Решение**: **Option A simplified** — post-signup-specific
+redirect, не universal router guard.
+
+**Architecture**:
+* Backend `/v1/auth/register` response carries `requiresOnboarding:
+  bool` flag (либо derive из onboardingStates absence).
+* Client signup flow: after successful auth response, if
+  `requiresOnboarding === true` → redirect to `/setup` instead
+  of `/`.
+* Existing user login flow: response без flag (либо `false`) →
+  standard `/` redirect.
+* User mid-wizard на crash/relaunch — resume через existing
+  GET `/v1/me/onboarding-state` (chunk 1 backend supports).
+
+**Why Option A** (vs B async router init, vs C manual entry):
+* B (async router init) — heavier, requires AppLaunch loader,
+  changes initial route resolution.
+* C (manual entry) — preserves funnel leak; manual «Start setup»
+  link assumes user understands need. Rejected.
+* A (post-signup-only redirect) — minimal touching: backend +1
+  field, client +1 conditional redirect.
+
+**Scope**: implementation deferred к chunk 4 polish (chunk 3
+focuses on discover «мы родственники?» UI per proposal §11).
+
+**Принято**: Артём (user) 2026-05-14 (chunk 2 approve follow-up).
+
+---
+
+## 2026-05-14: Phase 6 chunk 4c — identity-suggestions push notification deferred
+
+**Surfaced при chunk 4c implementation**: PHASE-6-PROPOSAL.md
+§5.X envisions a post-onboarding push notification surfacing
+identity-suggestions:
+
+> «Возможно, ваш Виктор Моздуков — тот же человек, что у Степы.
+> Связать карточки?»
+
+**Existing infrastructure** (Phase 1.2):
+* `findCrossTreeIdentitySuggestions` matcher
+  (backend/src/identity-matcher.js).
+* `GET /v1/trees/:treeId/persons/:personId/identity-suggestions`
+  endpoint — per-person lazy fetch.
+* 💡 indicator на каждой card в tree view — auto-surfaces matches
+  когда client renders.
+
+**What's missing** (proposal scope):
+* Backend async trigger post-seed runs matcher для seeded persons.
+* Persistent suggestion storage (currently lazy on-demand).
+* Push notification dispatch с tap-target wiring.
+
+**Решение**: defer push notification к Phase 6.5 (out-of-scope
+follow-up).
+
+**Why defer**:
+* Existing 💡 indicator covers discovery on-demand (user opens
+  tree → cards render → matcher runs → indicator surfaces).
+* Push dispatch ≠ trivial — needs background job, per-match либо
+  batched delivery decision, notification copy variants, tap-target
+  wiring. Меняет surface area beyond chunk 4 scope.
+* No data-driven signal что lazy discovery insufficient. Если
+  observation week shows users miss matches, prioritize Phase 6.5.
+
+**Scope-out не функциональный**: Phase 6 v1 ships без push, users
+still see matches via 💡 indicator. Discovery path preserved.
+
+**Принято**: Claude (agent) 2026-05-14 (chunk 4c self-judge);
+surface для Артёма audit на chunk 4c review.
+
+---

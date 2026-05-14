@@ -6,6 +6,17 @@ abstract class AuthServiceInterface {
   List<String> get currentProviderIds;
   Stream<String?> get authStateChanges;
 
+  /// Phase 6 chunk 4a: true когда backend reports current user
+  /// needs `/setup` wizard. Set после `_authenticate` либо
+  /// `restoreSession`; persisted в session storage. Caller
+  /// (auth_screen post-success либо router guard) redirects к
+  /// `/setup`. Defaults к false для legacy users / failed loads.
+  ///
+  /// Concrete default (false) keeps существующие fake implementations
+  /// (test/*Fake*AuthService) backwards-compat. Implementers override
+  /// чтобы surface real value.
+  bool get currentRequiresOnboarding => false;
+
   Future<Object?> registerWithEmail({
     required String email,
     required String password,

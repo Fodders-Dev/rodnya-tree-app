@@ -25,6 +25,9 @@ class _FakeAuthService implements AuthServiceInterface {
   List<String> get currentProviderIds => const ['password'];
 
   @override
+  bool get currentRequiresOnboarding => false;
+
+  @override
   Stream<String?> get authStateChanges => const Stream.empty();
 
   @override

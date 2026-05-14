@@ -93,7 +93,18 @@ function registerAuthSessionRoutes(
       });
       const deviceContext = readDeviceContext(req);
       const sessionTokens = await store.createSession(user.id, deviceContext);
-      res.status(201).json(authResponse(user, sessionTokens));
+      // Phase 6 chunk 4a: persist initial onboarding state row для
+      // wizard resume invariant. Без этого, если client crash'ит
+      // ДО `/v1/me/onboarding-state` PATCH, user впадает в legacy
+      // bucket на next login и wizard скипнется silently — funnel
+      // leak (DECISIONS 2026-05-14 «Option A simplified»).
+      await store.updateOnboardingState({
+        userId: user.id,
+        currentStep: "welcome",
+      });
+      res.status(201).json(
+        authResponse(user, sessionTokens, {requiresOnboarding: true}),
+      );
     } catch (error) {
       if (error.message === "EMAIL_ALREADY_EXISTS") {
         res.status(409).json({message: "Этот email уже зарегистрирован"});
@@ -118,7 +129,11 @@ function registerAuthSessionRoutes(
 
     const deviceContext = readDeviceContext(req);
     const sessionTokens = await store.createSession(user.id, deviceContext);
-    res.json(authResponse(user, sessionTokens));
+    // Phase 6 chunk 4a: existing user — true только если mid-wizard.
+    const requiresOnboarding = await store.hasIncompleteOnboarding({
+      userId: user.id,
+    });
+    res.json(authResponse(user, sessionTokens, {requiresOnboarding}));
   });
 
   app.post("/v1/auth/refresh", async (req, res) => {
@@ -397,7 +412,12 @@ function registerAuthSessionRoutes(
       appVersion: storedDeviceInfo.appVersion || null,
     });
     const user = await store.findUserById(req.auth.user.id);
-    const auth = authResponse(user, sessionTokens);
+    // Phase 6 chunk 4a: QR-login = existing-user handoff, mid-wizard
+    // resume only.
+    const requiresOnboarding = await store.hasIncompleteOnboarding({
+      userId: user.id,
+    });
+    const auth = authResponse(user, sessionTokens, {requiresOnboarding});
 
     await store.updateAuthHandoffPayload(
       token,

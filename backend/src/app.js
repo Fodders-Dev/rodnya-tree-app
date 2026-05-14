@@ -38,6 +38,8 @@ const {registerCircleRoutes} = require("./routes/circle-routes");
 const {registerGoogleAuthRoutes} = require("./routes/google-auth-routes");
 const {registerGraphRoutes} = require("./routes/graph-routes");
 const {registerGraphPersonRoutes} = require("./routes/graph-person-routes");
+const {registerOnboardingRoutes} = require("./routes/onboarding-routes");
+const {registerKinshipChecksRoutes} = require("./routes/kinship-checks-routes");
 const {registerIdentityRoutes} = require("./routes/identity-routes");
 const {registerMaxAuthRoutes} = require("./routes/max-auth-routes");
 const {registerMergeRoutes} = require("./routes/merge-routes");
@@ -2127,7 +2129,15 @@ function createApp({
     };
   }
 
-  function authResponse(user, sessionTokens) {
+  // Phase 6 chunk 4a (PHASE-6-PROPOSAL.md §2.8 + DECISIONS 2026-05-14
+  // «post-signup redirect Option A simplified»): auth response carries
+  // optional `requiresOnboarding` flag — client redirects к `/setup`
+  // wizard when true. Каждый auth endpoint решает свой flag value:
+  //   • register / fresh Google/VK/Telegram/MAX signup → true
+  //   • login / linking existing user → computed via
+  //     store.hasIncompleteOnboarding (true только если user mid-wizard)
+  //   • refresh → omit flag (no redirect on token refresh)
+  function authResponse(user, sessionTokens, extra = {}) {
     const profile = sanitizeProfile(user.profile);
     const profileStatus = computeProfileStatus(user.profile);
     return {
@@ -2142,6 +2152,7 @@ function createApp({
         providerIds: user.providerIds || ["password"],
       },
       profileStatus,
+      ...extra,
     };
   }
 
@@ -2472,6 +2483,18 @@ function createApp({
     store,
     requireAuth,
     requireGraphPersonRead,
+  });
+
+  // Phase 6 chunk 1 (PHASE-6-PROPOSAL.md §3.2).
+  registerOnboardingRoutes(app, {
+    store,
+    requireAuth,
+  });
+
+  registerKinshipChecksRoutes(app, {
+    store,
+    requireAuth,
+    createAndDispatchNotification,
   });
 
   registerTreeRoutes(app, {

@@ -1020,6 +1020,12 @@ class CustomApiNotificationService implements NotificationServiceInterface {
       case 'relative_added':
       case 'tree_invitation':
       case 'birthday':
+      // Phase 6 chunk 4b: kinship-check «мы родственники?» notifications
+      // — social context, не «right now answer me».
+      case 'kinship_check_received':
+      case 'kinship_check_confirmed':
+      case 'kinship_check_declined':
+      case 'kinship_check_expired':
         return _channelIdSocial;
       default:
         return _channelIdSystem;
@@ -1586,6 +1592,39 @@ class CustomApiNotificationService implements NotificationServiceInterface {
       if (treeId != null && treeId.isNotEmpty) {
         _navigateOverHome(router, '/tree/view/$treeId');
       }
+      return;
+    }
+
+    // Phase 6 chunk 4b (PHASE-6-PROPOSAL.md §2.6): kinship-check
+    // «мы родственники?» bilateral consent flow. Three types map к
+    // different views на discover screen:
+    //   • received → action sheet (target подтверждает либо
+    //     отклоняет; ?incoming=<id> auto-opens sheet).
+    //   • confirmed → result step (initiator видит chain;
+    //     ?result=<id> deep-links к result view).
+    //   • declined / expired → discover entry default (status
+    //     visible в «Ваши запросы» history).
+    if (type == 'kinship_check_received') {
+      final checkId = rootPayload['kinshipCheckId']?.toString() ??
+          data['kinshipCheckId']?.toString();
+      final query = checkId != null && checkId.isNotEmpty
+          ? '?incoming=${Uri.encodeQueryComponent(checkId)}'
+          : '';
+      _navigateOverHome(router, '/discover/relatives$query');
+      return;
+    }
+    if (type == 'kinship_check_confirmed') {
+      final checkId = rootPayload['kinshipCheckId']?.toString() ??
+          data['kinshipCheckId']?.toString();
+      final query = checkId != null && checkId.isNotEmpty
+          ? '?result=${Uri.encodeQueryComponent(checkId)}'
+          : '';
+      _navigateOverHome(router, '/discover/relatives$query');
+      return;
+    }
+    if (type == 'kinship_check_declined' ||
+        type == 'kinship_check_expired') {
+      _navigateOverHome(router, '/discover/relatives');
       return;
     }
 
