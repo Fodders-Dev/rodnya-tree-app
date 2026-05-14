@@ -23,6 +23,7 @@ import '../widgets/identity_conflicts_sheet.dart';
 import '../backend/interfaces/extended_network_capable_family_tree_service.dart';
 import '../backend/models/extended_network_slice.dart';
 import '../providers/extended_network_controller.dart';
+import '../widgets/extended_network_empty_state.dart';
 import '../widgets/extended_network_filter_sheet.dart';
 import '../widgets/extended_network_filter_sidebar.dart';
 import '../widgets/extended_network_search_sheet.dart';
@@ -863,10 +864,11 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
           final showSidebar = isWide &&
               ctrl.isCapable &&
               ctrl.mode == ExtendedNetworkMode.extended;
-          if (!showSidebar) return body;
+          final overlayedBody = _maybeOverlayExtendedEmptyState(ctrl, body);
+          if (!showSidebar) return overlayedBody;
           return Row(
             children: [
-              Expanded(child: body),
+              Expanded(child: overlayedBody),
               const ExtendedNetworkFilterSidebar(
                 branchOptions:
                     <BranchFilterOption>[],
@@ -876,6 +878,50 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
         },
       ),
     );
+  }
+
+  /// Phase 6 chunk 4c (PHASE-6-PROPOSAL.md §2.7): when extended mode
+  /// is on + slice loaded + no foreign nodes (`ownerMap.isEmpty`) —
+  /// overlay future-positive empty-state banner above tree canvas.
+  /// Banner stacked, не replaces canvas — user still sees own tree
+  /// behind banner; CTAs route к share-invite либо discover screen.
+  Widget _maybeOverlayExtendedEmptyState(
+    ExtendedNetworkController ctrl,
+    Widget body,
+  ) {
+    final slice = ctrl.slice;
+    final showBanner = ctrl.isCapable &&
+        ctrl.mode == ExtendedNetworkMode.extended &&
+        slice != null &&
+        slice.ownerMap.isEmpty;
+    if (!showBanner) return body;
+    return Stack(
+      children: [
+        body,
+        Positioned(
+          top: 4,
+          left: 0,
+          right: 0,
+          child: SafeArea(
+            top: false,
+            bottom: false,
+            child: ExtendedNetworkEmptyState(
+              onShareInvitation: _handleShareInvitation,
+              onFindRelatives: () => context.push('/discover/relatives'),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Phase 6 chunk 4c: empty-state «invite family» CTA. Routes к
+  /// relatives screen (existing invite flow lives там per-person).
+  /// Не используем buildInvitationLink здесь — invitation API binds
+  /// link к конкретному personId; pick'ить relative requires UI.
+  /// Cheaper UX: send user туда where invite flow already polished.
+  void _handleShareInvitation() {
+    context.push('/relatives');
   }
 
   Widget _buildTreeTopbar({

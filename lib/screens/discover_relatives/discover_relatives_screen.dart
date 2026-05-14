@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../backend/interfaces/family_tree_service_interface.dart';
 import '../../backend/interfaces/kinship_check_capable_family_tree_service.dart';
@@ -172,6 +173,11 @@ class _DiscoverRelativesScreenState extends State<DiscoverRelativesScreen> {
   }
 
   Future<void> _submitCheck() async {
+    // Phase 6 chunk 4c (PHASE-6-PROPOSAL.md §4 «Privacy explainer copy»):
+    // one-time explainer before first BFS request. Per-user `_v1` key
+    // позволяет future re-show если copy changes.
+    final proceeded = await _maybeShowPrivacyExplainer();
+    if (!proceeded || !mounted) return;
     final ok = await _controller.submitCheck();
     if (!mounted) return;
     if (!ok && _controller.error != null) {
@@ -179,6 +185,44 @@ class _DiscoverRelativesScreenState extends State<DiscoverRelativesScreen> {
         SnackBar(content: Text(_controller.error!)),
       );
     }
+  }
+
+  /// Returns true if user accepted либо already seen — proceed with
+  /// submit. False if user dismissed dialog (cancel) либо tooltip
+  /// rendered и user backed out.
+  Future<bool> _maybeShowPrivacyExplainer() async {
+    const key = 'discover_privacy_explainer_shown_v1';
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool(key) == true) return true;
+    if (!mounted) return false;
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Как это работает'),
+          content: const Text(
+            'Чтобы посмотреть, родственники ли вы с другим человеком, '
+            'мы спрашиваем у него разрешения. Так каждый сам решает, '
+            'кому показывать свои семейные связи.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Отмена'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Понятно, отправить'),
+            ),
+          ],
+        );
+      },
+    );
+    if (result == true) {
+      await prefs.setBool(key, true);
+      return true;
+    }
+    return false;
   }
 
   void _resetFlow() {

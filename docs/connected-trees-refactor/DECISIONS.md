@@ -1400,3 +1400,45 @@ focuses on discover «мы родственники?» UI per proposal §11).
 **Принято**: Артём (user) 2026-05-14 (chunk 2 approve follow-up).
 
 ---
+
+## 2026-05-14: Phase 6 chunk 4c — identity-suggestions push notification deferred
+
+**Surfaced при chunk 4c implementation**: PHASE-6-PROPOSAL.md
+§5.X envisions a post-onboarding push notification surfacing
+identity-suggestions:
+
+> «Возможно, ваш Виктор Моздуков — тот же человек, что у Степы.
+> Связать карточки?»
+
+**Existing infrastructure** (Phase 1.2):
+* `findCrossTreeIdentitySuggestions` matcher
+  (backend/src/identity-matcher.js).
+* `GET /v1/trees/:treeId/persons/:personId/identity-suggestions`
+  endpoint — per-person lazy fetch.
+* 💡 indicator на каждой card в tree view — auto-surfaces matches
+  когда client renders.
+
+**What's missing** (proposal scope):
+* Backend async trigger post-seed runs matcher для seeded persons.
+* Persistent suggestion storage (currently lazy on-demand).
+* Push notification dispatch с tap-target wiring.
+
+**Решение**: defer push notification к Phase 6.5 (out-of-scope
+follow-up).
+
+**Why defer**:
+* Existing 💡 indicator covers discovery on-demand (user opens
+  tree → cards render → matcher runs → indicator surfaces).
+* Push dispatch ≠ trivial — needs background job, per-match либо
+  batched delivery decision, notification copy variants, tap-target
+  wiring. Меняет surface area beyond chunk 4 scope.
+* No data-driven signal что lazy discovery insufficient. Если
+  observation week shows users miss matches, prioritize Phase 6.5.
+
+**Scope-out не функциональный**: Phase 6 v1 ships без push, users
+still see matches via 💡 indicator. Discovery path preserved.
+
+**Принято**: Claude (agent) 2026-05-14 (chunk 4c self-judge);
+surface для Артёма audit на chunk 4c review.
+
+---
