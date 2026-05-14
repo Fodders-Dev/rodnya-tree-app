@@ -1341,3 +1341,62 @@ proactively добавлено agent'ом во время chunk 1 implementation
 **Принято**: Артём (user) 2026-05-14 (chunk 1 approve follow-up).
 
 ---
+
+## 2026-05-14: Phase 6 wizard route — /setup vs /onboarding
+
+Existing `/onboarding` — Phase 1 welcome carousel (5-slide
+PageView, marketing intro shown once after signup в legacy
+flow). Phase 6 wizard — first-time user **setup** (4-step form,
+account profile → first relatives seed).
+
+**Semantically distinct experiences**:
+* `/onboarding` = «welcome tour» (skippable, marketing).
+* `/setup` = «account setup» (functional, creates tree).
+
+**Решение**: separate routes — `/onboarding` (existing tour
+unchanged), `/setup` (Phase 6 wizard). Не rename existing для
+backward compat (old links / deep-link references survive) +
+clear separation.
+
+**Notification copy** — UI strings reference «настройка» / «начать
+заполнять дерево», never «onboarding» либо «setup» backend term.
+
+**Принято**: Артём (user) 2026-05-14 (chunk 2 approve follow-up).
+
+---
+
+## 2026-05-14: Phase 6 post-signup redirect — Option A simplified
+
+**Surfaced при chunk 2 review**: wizard accessible через direct
+nav `/setup` — no automatic redirect post-signup. Phase 6 core
+purpose — onboard new users automatically; manual entry point
+preserves funnel leak.
+
+**Решение**: **Option A simplified** — post-signup-specific
+redirect, не universal router guard.
+
+**Architecture**:
+* Backend `/v1/auth/register` response carries `requiresOnboarding:
+  bool` flag (либо derive из onboardingStates absence).
+* Client signup flow: after successful auth response, if
+  `requiresOnboarding === true` → redirect to `/setup` instead
+  of `/`.
+* Existing user login flow: response без flag (либо `false`) →
+  standard `/` redirect.
+* User mid-wizard на crash/relaunch — resume через existing
+  GET `/v1/me/onboarding-state` (chunk 1 backend supports).
+
+**Why Option A** (vs B async router init, vs C manual entry):
+* B (async router init) — heavier, requires AppLaunch loader,
+  changes initial route resolution.
+* C (manual entry) — preserves funnel leak; manual «Start setup»
+  link assumes user understands need. Rejected.
+* A (post-signup-only redirect) — minimal touching: backend +1
+  field, client +1 conditional redirect.
+
+**Scope**: implementation deferred к chunk 4 polish (chunk 3
+focuses on discover «мы родственники?» UI per proposal §11).
+
+**Принято**: Артём (user) 2026-05-14 (chunk 2 approve follow-up).
+
+---
