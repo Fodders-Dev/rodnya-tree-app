@@ -11,6 +11,7 @@ import '../screens/chat_screen.dart';
 import '../screens/family_tree/create_tree_screen.dart';
 import '../screens/identity_review_screen.dart';
 import '../screens/notifications_screen.dart';
+import '../screens/discover_relatives/discover_relatives_screen.dart';
 import '../screens/onboarding_screen.dart';
 import '../screens/onboarding/onboarding_wizard_screen.dart';
 import '../screens/password_reset_screen.dart';
@@ -206,6 +207,25 @@ class AppOverlayRouteModule {
           child: const OnboardingWizardScreen(),
           transitionsBuilder: AppRouteTransitions.fade,
         ),
+      ),
+      // Phase 6 chunk 3: «мы родственники?» discover entry. Optional
+      // `?incoming=<checkId>` deep-link auto-opens action sheet on
+      // received pending check (notification tap target).
+      GoRoute(
+        path: '/discover/relatives',
+        parentNavigatorKey: rootNavigatorKey,
+        pageBuilder: (context, state) {
+          final incoming = state.uri.queryParameters['incoming']?.trim();
+          return RodnyaCustomTransitionPage(
+            key: state.pageKey,
+            constrainWidth: true,
+            child: DiscoverRelativesScreen(
+              incomingCheckId:
+                  incoming != null && incoming.isNotEmpty ? incoming : null,
+            ),
+            transitionsBuilder: AppRouteTransitions.slide,
+          );
+        },
       ),
       GoRoute(
         path: '/complete_profile',

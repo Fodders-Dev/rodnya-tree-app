@@ -14,6 +14,7 @@ import '../backend/interfaces/graph_person_access_capable_family_tree_service.da
 import '../backend/interfaces/identity_conflicts_capable_family_tree_service.dart';
 import '../backend/interfaces/identity_duplicate_capable_family_tree_service.dart';
 import '../backend/interfaces/identity_suggestions_capable_family_tree_service.dart';
+import '../backend/interfaces/kinship_check_capable_family_tree_service.dart';
 import '../backend/interfaces/onboarding_capable_family_tree_service.dart';
 import '../backend/interfaces/profile_service_interface.dart';
 import '../backend/interfaces/tree_graph_capable_family_tree_service.dart';
@@ -25,6 +26,7 @@ import '../backend/models/identity_field_conflict.dart';
 import '../backend/models/identity_suggestion.dart';
 import '../backend/models/cross_tree_person_suggestion.dart';
 import '../backend/models/include_rules.dart';
+import '../backend/models/kinship_check.dart';
 import '../backend/models/onboarding_state.dart';
 import '../backend/models/visibility_choice.dart';
 import '../backend/models/selectable_tree.dart';
@@ -55,7 +57,8 @@ class CustomApiFamilyTreeService
         BulkImportCapableFamilyTreeService,
         GraphPersonAccessCapableFamilyTreeService,
         ExtendedNetworkCapableFamilyTreeService,
-        OnboardingCapableFamilyTreeService {
+        OnboardingCapableFamilyTreeService,
+        KinshipCheckCapableFamilyTreeService {
   CustomApiFamilyTreeService({
     required CustomApiAuthService authService,
     required BackendRuntimeConfig runtimeConfig,
@@ -2428,5 +2431,112 @@ class CustomApiFamilyTreeService
     } catch (_) {
       return null;
     }
+  }
+
+  // ── Phase 6 chunk 3: kinship-checks (bilateral «мы родственники?») ──
+
+  @override
+  Future<KinshipCheckCreateResult?> createKinshipCheck({
+    required String targetUserId,
+  }) async {
+    try {
+      final response = await _requestJson(
+        method: 'POST',
+        path: '/v1/kinship-checks',
+        body: {'targetUserId': targetUserId},
+      );
+      return KinshipCheckCreateResult.fromJson(response);
+    } on CustomApiException catch (e) {
+      throw _mapKinshipCheckException(e, endpoint: 'create');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  Future<List<KinshipCheck>> listReceivedKinshipChecks({
+    KinshipCheckStatus? status,
+  }) async {
+    return _listKinshipChecks(role: 'received', status: status);
+  }
+
+  @override
+  Future<List<KinshipCheck>> listIssuedKinshipChecks({
+    KinshipCheckStatus? status,
+  }) async {
+    return _listKinshipChecks(role: 'issued', status: status);
+  }
+
+  Future<List<KinshipCheck>> _listKinshipChecks({
+    required String role,
+    KinshipCheckStatus? status,
+  }) async {
+    try {
+      final basePath = '/v1/me/kinship-checks/$role';
+      final path = status == null
+          ? basePath
+          : _buildPathWithQuery(basePath, {'status': status.serverValue});
+      final response = await _requestJson(method: 'GET', path: path);
+      final rawList = response['checks'];
+      if (rawList is! List) return const <KinshipCheck>[];
+      return rawList
+          .whereType<Map>()
+          .map((e) => KinshipCheck.fromJson(Map<String, dynamic>.from(e)))
+          .toList(growable: false);
+    } catch (_) {
+      return const <KinshipCheck>[];
+    }
+  }
+
+  @override
+  Future<KinshipCheck?> respondToKinshipCheck({
+    required String checkId,
+    required KinshipCheckDecision decision,
+  }) async {
+    try {
+      final response = await _requestJson(
+        method: 'POST',
+        path: '/v1/kinship-checks/$checkId/respond',
+        body: {'decision': decision.serverValue},
+      );
+      final checkRaw = response['check'];
+      if (checkRaw is! Map) return null;
+      return KinshipCheck.fromJson(Map<String, dynamic>.from(checkRaw));
+    } on CustomApiException catch (e) {
+      throw _mapKinshipCheckException(e, endpoint: 'respond');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Map [CustomApiException.statusCode] к domain-specific
+  /// [KinshipCheckError] code. Backend response payloads documented
+  /// в backend/src/routes/kinship-checks-routes.js.
+  KinshipCheckError _mapKinshipCheckException(
+    CustomApiException e, {
+    required String endpoint,
+  }) {
+    final status = e.statusCode;
+    String code;
+    switch (status) {
+      case 400:
+        code = 'INVALID_INPUT';
+        break;
+      case 403:
+        code = 'NOT_FOUND'; // foreign check — surface as not-found
+        break;
+      case 404:
+        code = endpoint == 'create' ? 'TARGET_NOT_FOUND' : 'NOT_FOUND';
+        break;
+      case 409:
+        code = endpoint == 'create' ? 'SELF_CHECK_FORBIDDEN' : 'NOT_PENDING';
+        break;
+      case 429:
+        code = 'REJECTION_COOLDOWN';
+        break;
+      default:
+        code = 'UNKNOWN';
+    }
+    return KinshipCheckError(code: code, message: e.message);
   }
 }
