@@ -96,6 +96,11 @@ class AppRouterGuards {
     final isLoggedIn = _authService.currentUserId != null;
     final isAuthEntryRoute = isAuthEntryPage(state.matchedLocation);
     final completingProfile = state.matchedLocation == '/complete_profile';
+    // Phase 6 chunk 4a bypass: /setup wizard собирает profile fields сам
+    // (displayName / gender / birthDate через wizard's profile step).
+    // Без этого exception router guard fires _ensureCompletedProfile →
+    // redirects fresh user к /complete_profile, обнуляя wizard entirely.
+    final setupWizard = state.matchedLocation == '/setup';
     final invitePage = state.matchedLocation == '/invite';
     final publicTreePage = state.matchedLocation.startsWith('/public/tree/');
     final e2eIdlePage = state.matchedLocation == '/__e2e__/idle';
@@ -126,7 +131,7 @@ class AppRouterGuards {
       return deferredTarget ?? '/';
     }
 
-    if (isLoggedIn && !completingProfile) {
+    if (isLoggedIn && !completingProfile && !setupWizard) {
       final profileRedirect = await _ensureCompletedProfile(state);
       if (profileRedirect != null) {
         return profileRedirect;
