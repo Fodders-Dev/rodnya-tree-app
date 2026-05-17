@@ -221,3 +221,70 @@ approve proposal.
 * Q1: re-run миграции v1→v2 целиком при cutover, или incremental
   patch?
 * Q3: ОК что visibility override недоступен между Phase 3.1 и 3.4?
+
+---
+
+## 2026-05-14 — Catchup: Phases 3 squash + 4 + 6 shipped
+
+**Контекст**: PROGRESS.md не обновлялся между 2026-05-10 и 2026-05-14.
+За это окно к main приземлились три major phases. Catchup-entry чтобы
+доку не оставлять стале (детали — в per-phase merge checklists).
+
+**Что landed**:
+
+* **2026-05-11 — Phase 3 squash** (commit `cb67b0b`) — finalisation
+  of connected per-user trees через identity граф. Source-of-truth:
+  [DECISIONS.md](DECISIONS.md) 2026-05-10 ответы A-D + RFC
+  `tree_model_overhaul_rfc.md`.
+
+* **2026-05-12 — Phase 4** (commit `028d1d2`) — extended-family
+  network. Backend `/v1/trees/:treeId/extended-network` + BFS slice
+  + foreign node sheet + search + 100 new tests. Behind feature
+  flag `useExtendedRenderPath` initially.
+  * Details: [MERGE-CHECKLIST-PHASE-4.md](MERGE-CHECKLIST-PHASE-4.md).
+
+* **2026-05-13 — Phase 4 flag-on flip** (commit `5fb1d3c`) — default
+  enabled. 7-day observation week starts. Cleanup commit (flag +
+  legacy code path removal) pending ~2026-05-17 минимум.
+
+* **2026-05-14 — Phase 6** (commit `414b218`) — onboarding wizard
+  (`/setup`) + kinship-check «мы родственники?» discovery
+  (`/discover/relatives`) + post-signup redirect + notification
+  routing + empty-state polish. 110 new tests (42 backend +
+  68 client).
+  * Details: [MERGE-CHECKLIST-PHASE-6.md](MERGE-CHECKLIST-PHASE-6.md) +
+    [PHASE-6-PROPOSAL.md](PHASE-6-PROPOSAL.md).
+  * Decisions: 30d rejection cooldown, /setup route split,
+    Option A post-signup redirect, identity-suggestions push
+    deferred к Phase 6.5.
+  * Observation window: 2 weeks, ends ~2026-05-28.
+
+**Phase 3.4 status** (NOT shipped, parked):
+* Branch `claude/infallible-pike-41360c` at `66a31ac` — docs
+  «Phase 3.4 done, merge-to-main checklist». Visibility toggle +
+  grants + branch wizard + sensitive contacts + conflict badges
+  + migration strings («Дерево» → «Ветка»).
+* Branch ready-to-merge per its own checklist; awaiting Артёмов
+  squash decision. Phase 4 + 6 не required this UI work
+  (orthogonal scope), так что timeline diverged from original
+  cutover plan in CURRENT-PHASE.md.
+
+**Тесты на 2026-05-14** (full suites):
+* Backend: 345 tests / 342 pass / 3 fail. Все 3 — pre-existing
+  Windows ENOTEMPTY flakes в `api.test.js` (rmdir tmp race on
+  Windows; не воспроизводится на Linux CI). Same baseline as
+  Phase 4 merge.
+* Flutter: 614 pass / 2 skip (perf-tagged) / 3 fail. Все 3 —
+  pre-existing baseline в `custom_api_notification_service_test.dart`
+  (MissingPluginException для flutter_secure_storage в test
+  context).
+* `flutter analyze`: 2 warnings (intentionally parked `_branchDigest`/
+  `branch_digest_strip` per commit `c4f3a80`). Post commit
+  `8a27462` (2026-05-14 tech-debt closure) — 2 leftover test
+  scaffold warnings closed.
+
+**Что осталось** (per CURRENT-PHASE.md):
+* Phase 4 +1w cleanup commit (~2026-05-17 минимум).
+* Phase 6 observation метрики до ~2026-05-28.
+* Phase 3.4 merge decision (Артёмов call).
+* Phase 3.6 hard-delete background job (warm-up filler, design pending).

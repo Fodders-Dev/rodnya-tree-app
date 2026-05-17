@@ -4,69 +4,83 @@
 > [`docs/tree_model_overhaul_rfc.md`](../tree_model_overhaul_rfc.md).
 > См. [DECISIONS.md](DECISIONS.md) от 2026-05-09.
 
-**Phase**: 3.4 — Flutter UI для visibility / grants / branch wizard
-**Статус**: design proposal готов, **ожидает review Артёма**
-**Phase 1.3**: closed (2026-05-09)
-**Phase 3.1**: closed (2026-05-10, commit `0d5acec`)
-**Phase 3.2**: closed (2026-05-10, commit `a40a429`) — owner-model
-enforcement gates на routes + grants/visibility endpoints +
-18 new tests включая pre/post-claim regression + 100-person smoke
-**Phase 3 разблокирован**: 2026-05-10 ответы A–D в [DECISIONS.md](DECISIONS.md)
+**Status update**: 2026-05-14 (post Phase 6 merge).
 
-## Что уже сделано
+## Shipped к production
 
-* Phase 0 audit (artefacts: AUDIT.md, IDENTITY-MATCHER.md, SCHEMA.md).
-* Запись decisions от 2026-05-09 в DECISIONS.md.
-* PLAN.md помечен SUPERSEDED.
-* **Phase 1.3 закрыт** — audit показал что полностью реализован в
-  коде (включая UI bottom-sheet для resolve, который RFC помечал
-  как «отложить»). См. [PROGRESS.md](PROGRESS.md) от 2026-05-09.
-  * Backend: 100/101 тест зелёных (один Windows-flake unrelated).
-  * Flutter: analyze на main 8 pre-existing issues, ничего из 1.3.
+| Phase | Status | Main commit | Notes |
+|---|---|---|---|
+| Phase 0 | ✅ closed 2026-05-09 | (audit, no code) | AUDIT.md + IDENTITY-MATCHER.md + SCHEMA.md |
+| Phase 1.3 | ✅ closed 2026-05-09 | (already реализован in code) | edit-time conflict surfacing — DoD достигнут |
+| Phase 3.1 | ✅ closed 2026-05-10 | `0d5acec` | schema graph + migration v1→v2 |
+| Phase 3.2 | ✅ closed 2026-05-10 | `a40a429` | owner-model enforcement gates + grants/visibility endpoints |
+| Phase 3 squash | ✅ shipped 2026-05-11 | `cb67b0b` | Phase 3 connected per-user trees squash |
+| Phase 4 | ✅ shipped 2026-05-12 | `028d1d2` | extended-family network (BFS view) |
+| Phase 4 flag flip | ✅ flag-on 2026-05-13 | `5fb1d3c` | `useExtendedRenderPath` default true — observation week активна |
+| Phase 6 | ✅ shipped 2026-05-14 | `414b218` | onboarding wizard + kinship-check «мы родственники?» |
 
-## Что делаем сейчас
+## Parked (готово к merge, ждёт Артёмова call)
 
-* ✅ Phase 1.3 / 3.1 / 3.2 закрыты.
-* ✅ [PHASE-3.4-UI-PROPOSAL.md](PHASE-3.4-UI-PROPOSAL.md) — design
-  proposal по Flutter UI для visibility / grants / branch wizard +
-  conflict badge surface + sensitive contacts section + migration
-  strings story «Дерево» → «Ветка». Ожидает review.
+| Phase | Branch | Last commit | Status |
+|---|---|---|---|
+| Phase 3.4 | `claude/infallible-pike-41360c` | `66a31ac` | docs «Phase 3.4 done, merge-to-main checklist» — visibility toggle + grants + branch wizard + sensitive contacts + conflict badges + migration strings. Branch ready, ожидает Артёмов merge decision (либо squash, либо abandon в favor of позднейших phases). |
 
-## Cutover plan (Артём 2026-05-10)
+## Observation windows (active)
+
+* **Phase 4 flag observation**: 2026-05-13 → 2026-05-17+ (минимум 7
+  дней после flag-on flip). После — cleanup commit
+  `refactor(phase-4): remove useExtendedRenderPath feature flag`
+  с removal of legacy code path.
+* **Phase 6 observation**: 2026-05-14 → 2026-05-28 (2 weeks).
+  Метрики per MERGE-CHECKLIST-PHASE-6 §5:
+  * register → wizard finish >70%
+  * wizard finish → tree view >90%
+  * discover funnel (FAB → submit) >40%
+  * kinship acceptance rate (informational)
+  * 5xx rate <0.1%
+  Flagless (additive feature) — observation = passive metric monitoring,
+  no code flip needed.
+
+## Pending — нужен Артёмов design call
+
+* **Phase 3.6** — hard-delete background job (per cutover plan
+  ниже). Server-side scheduled job через 30 дней soft-delete →
+  physical delete. Closes GDPR-like privacy story. Low risk,
+  no UI surface. Warm-up filler перед bug-bash session per
+  Артёмов 2026-05-14 plan.
+* **Phase 3.4 merge decision** — branch ready, нужен Артёмов call
+  whether to squash-merge либо abandon (Phase 4 + 6 могли cover
+  some scope).
+* **Phase 6.5** (post-observation, conditional):
+  * Identity-suggestions push notification (DECISIONS
+    2026-05-14 «identity-suggestions push deferred»).
+  * Revocation UX для kinship-checks (PHASE-6-PROPOSAL §2.6).
+  * Native notification action buttons (Подтвердить/Отклонить
+    inside notification body).
+
+## Cutover plan (Артёмов 2026-05-10, original)
 
 ```
-3.1 (done)  → pre-prod (миграция + schema)
-3.2 (done)  → pre-prod (enforcement gates + grants endpoints)
-3.4 (this)  → pre-prod + prod (Flutter UI — visibility, grants, wizard,
-              conflict surface, migration strings)
-3.6         → pre-prod + prod (hard-delete background job; can ship
+3.1 (done)  → pre-prod (миграция + schema) — 0d5acec
+3.2 (done)  → pre-prod (enforcement gates + grants endpoints) — a40a429
+3.4 (parked) → pre-prod + prod (Flutter UI — visibility, grants, wizard,
+              conflict surface, migration strings) — branch ready
+3.6 (pending) → pre-prod + prod (hard-delete background job; can ship
               independently после 3.4)
+4 (done)    → prod (extended-family network) — 028d1d2 + 5fb1d3c flag-flip
+6 (done)    → prod (onboarding wizard + kinship-check) — 414b218
 ```
 
-Между 3.2 и 3.4 — NO user-visible regression на anonymous persons.
-В 3.4 юзер получает UI handle к Phase 3.1+3.2 механикам.
-
-## Что делаем дальше (после approve proposal'а 3.4)
-
-В указанном порядке:
-1. Backend addendum (если approved) — `includeRules` в `POST /trees`,
-   `GET /v1/me/issued-grants`.
-2. Flutter services / models (capability mixin, DTO).
-3. Migration strings story (single commit «UI: Дерево → Ветка»).
-4. Visibility toggle section на relative card.
-5. Sensitive contacts section (`Видно тебе` badges).
-6. Branch creation wizard (расширение CreateTreeScreen).
-7. Edit-grants screen + routing `/profile/access`.
-8. Conflict badge surface на не-canvas screens (relative_details,
-   relatives_screen).
-9. flutter analyze + flutter test (расширенные).
-10. Diff на показ перед commit.
-
-Никакого кода до approve [PHASE-3.4-UI-PROPOSAL.md](PHASE-3.4-UI-PROPOSAL.md).
+Реальная последовательность отличалась от plan'а: Phase 4 + Phase 6
+shipped до Phase 3.4 merge. Phase 4/6 не требовали Phase 3.4 UI
+work (extended-network view и onboarding flow ortogonal к
+grants/visibility UI). Phase 3.4 остаётся ready-to-merge независимо.
 
 ## Чего НЕ делать
 
-* НЕ лезть в Phase 3 (TREE → BRANCH миграция) — заблокировано 4
-  нерешёнными вопросами в DECISIONS.md.
 * НЕ депрекейтить graph-слой (он остаётся).
 * НЕ принимать архитектурные решения без записи в DECISIONS.md.
+* НЕ делать squash-merge Phase 3.4 без Артёмова explicit approve —
+  branch parked, не abandoned.
+* НЕ делать Phase 4 flag cleanup ДО конца observation (2026-05-17
+  минимум). После — single commit на main.
