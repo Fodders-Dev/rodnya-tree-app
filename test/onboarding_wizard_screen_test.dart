@@ -12,8 +12,11 @@ import 'package:rodnya/backend/models/onboarding_state.dart';
 import 'package:rodnya/providers/onboarding_controller.dart';
 
 class _FakeService implements OnboardingCapableFamilyTreeService {
-  _FakeService({this.state});
+  _FakeService();
 
+  // Field kept assignable so future tests могут set hydration state
+  // post-construction; constructor param was always unused (no test
+  // exercised state injection at construct-time).
   OnboardingState? state;
 
   @override

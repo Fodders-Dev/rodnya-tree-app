@@ -274,7 +274,6 @@ void main() {
     });
 
     test('setting same filter no-op', () async {
-      final prefs = await SharedPreferences.getInstance();
       final service = _FakeService(slice: ExtendedNetworkSlice.empty);
       SharedPreferences.setMockInitialValues(<String, Object>{
         'extended_mode_tree-1': 'extended',
