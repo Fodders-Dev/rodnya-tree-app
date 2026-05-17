@@ -1,6 +1,22 @@
 # Active Execution Plan
 
-## Rodnya Claude Design UI/UX Migration
+> ⚠️ **ABANDONED 2026-05-07** — design-pass был rolled back per
+> [`session_handoff_2026-05-07.md`](session_handoff_2026-05-07.md):
+> «Я ошибочно прочитал старый skill-аргумент "В приоритете сделать
+> все так, как есть в claude design!" как текущее указание... Юзер
+> откатил коммит 03ce6ca (`git reset --hard 191b6f0`).»
+>
+> Waves 1-5 были implemented и rolled back. Waves 6-7 never started.
+> Архивируется для исторического контекста; **не следовать** ничему
+> в этом файле.
+>
+> **Текущее направление** — connected-trees-refactor:
+> [`connected-trees-refactor/CURRENT-PHASE.md`](connected-trees-refactor/CURRENT-PHASE.md).
+>
+> **Связанный chat/calls plan** ([`active_execution_plan_chat_calls.md`](active_execution_plan_chat_calls.md))
+> завершён through V10 + Android smoke — не abandoned, а completed.
+
+## Rodnya Claude Design UI/UX Migration (archived)
 
 Goal: move the real Flutter app toward the Claude Design reference in
 `https_rodnya-tree.ru.zip` without breaking existing backend/API behavior.
