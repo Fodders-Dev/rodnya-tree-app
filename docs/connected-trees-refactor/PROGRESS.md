@@ -245,7 +245,7 @@ approve proposal.
 
 * **2026-05-13 — Phase 4 flag-on flip** (commit `5fb1d3c`) — default
   enabled. 7-day observation week starts. Cleanup commit (flag +
-  legacy code path removal) pending ~2026-05-17 минимум.
+  legacy code path removal) pending ~2026-05-20 минимум (7 дней от flip 2026-05-13).
 
 * **2026-05-14 — Phase 6** (commit `414b218`) — onboarding wizard
   (`/setup`) + kinship-check «мы родственники?» discovery
@@ -284,7 +284,7 @@ approve proposal.
   scaffold warnings closed.
 
 **Что осталось** (per CURRENT-PHASE.md):
-* Phase 4 +1w cleanup commit (~2026-05-17 минимум).
+* Phase 4 +1w cleanup commit (~2026-05-20 минимум, +7d от flip 2026-05-13).
 * Phase 6 observation метрики до ~2026-05-28.
 * Phase 3.4 merge decision (Артёмов call).
 * Phase 3.6 hard-delete background job (warm-up filler, design pending).

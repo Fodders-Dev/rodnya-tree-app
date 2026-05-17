@@ -27,7 +27,7 @@
 
 ## Observation windows (active)
 
-* **Phase 4 flag observation**: 2026-05-13 → 2026-05-17+ (минимум 7
+* **Phase 4 flag observation**: 2026-05-13 → 2026-05-20+ (минимум 7
   дней после flag-on flip). После — cleanup commit
   `refactor(phase-4): remove useExtendedRenderPath feature flag`
   с removal of legacy code path.
@@ -82,5 +82,5 @@ grants/visibility UI). Phase 3.4 остаётся ready-to-merge независ�
 * НЕ принимать архитектурные решения без записи в DECISIONS.md.
 * НЕ делать squash-merge Phase 3.4 без Артёмова explicit approve —
   branch parked, не abandoned.
-* НЕ делать Phase 4 flag cleanup ДО конца observation (2026-05-17
+* НЕ делать Phase 4 flag cleanup ДО конца observation (2026-05-20
   минимум). После — single commit на main.
