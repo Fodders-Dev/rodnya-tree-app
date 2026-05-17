@@ -24,8 +24,8 @@ Follow these rules:
 While working:
 - Watch for web-specific failures first: route `404`, CORS, broken router redirects, missing semantics, oversized whitespace on desktop, and screens that degrade into empty states.
 - When you find a user-visible issue, decide whether it is a backend contract gap, web-only bug, or UI polish problem.
-- Record important findings in `docs/mvp_web_audit_YYYY-MM-DD.md`.
-- Use `docs/active_execution_plan.md` as the single current execution plan. Update that file when priorities or wave status change.
+- Record important phase status changes in [docs/connected-trees-refactor/CURRENT-PHASE.md](docs/connected-trees-refactor/CURRENT-PHASE.md). The 2026-04 web audit (`docs/mvp_web_audit_2026-04-09.md`) is FROZEN — see banner; do not extend it. New dated audit files можно создавать under `docs/` if a fresh standalone snapshot is needed.
+- Use [docs/connected-trees-refactor/CURRENT-PHASE.md](docs/connected-trees-refactor/CURRENT-PHASE.md) as the current execution plan. `docs/active_execution_plan.md` is ABANDONED (see banner in that file).
 
 Definition of done:
 - The code change is implemented.

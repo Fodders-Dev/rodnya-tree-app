@@ -38,11 +38,14 @@ Use it together with `AGENTS.md` and `Codex_rules.md`, not instead of them.
 5. Capture concrete route failures, console errors, and UI regressions in a dated audit file under `docs/`.
 6. Treat `flutter build web --no-wasm-dry-run` as a compile-only check; in this repo it can produce a locally served output missing `AssetManifest`, `FontManifest`, and web icons.
 
-## Known web reality as of 2026-04-09
-- `flutter build web` was blocked by a missing `ChatPreview` import in `lib/screens/chat_screen.dart`; fixed.
-- Home feed/profile `posts` flow is implemented in the repo custom backend, but production API still needs deployment.
-- Some chat detail requests return `404`.
-- Chat media on web breaks when uploads return `http://api.rodnya-tree.ru/media/...`; normalize to HTTPS on the client and keep backend deployment aligned so upload responses emit HTTPS directly.
+## Project status
+Post-MVP. Connected-trees-refactor shipped через Phase 6 (commit
+`414b218`, 2026-05-14). 2026-04-09 «known web reality» list (chat
+media HTTPS, posts API deploy, ChatPreview import) — все closed
+pre-Phase-3 либо superseded.
+
+Current source-of-truth — [docs/connected-trees-refactor/CURRENT-PHASE.md](docs/connected-trees-refactor/CURRENT-PHASE.md).
+Historical audit context — [docs/mvp_web_audit_2026-04-09.md](docs/mvp_web_audit_2026-04-09.md) (FROZEN).
 
 ## Expected completion checklist
 - `dart format` on changed files.
@@ -50,4 +53,4 @@ Use it together with `AGENTS.md` and `Codex_rules.md`, not instead of them.
 - relevant `flutter test`.
 - if web-facing behavior changed, a short Playwright smoke pass.
 - summarize changed files, what passed, what still blocks MVP.
-- keep `docs/active_execution_plan.md` aligned when product priorities or wave status shift materially.
+- keep [docs/connected-trees-refactor/CURRENT-PHASE.md](docs/connected-trees-refactor/CURRENT-PHASE.md) aligned when phase status shifts materially. `docs/active_execution_plan.md` is ABANDONED (see banner in that file).
