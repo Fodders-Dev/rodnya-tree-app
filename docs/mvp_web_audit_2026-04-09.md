@@ -1,5 +1,19 @@
 # MVP web audit - 2026-04-09
 
+> ⚠️ **FROZEN at 2026-04-20** — последний update entries в этом
+> файле от 2026-04-20. После этой даты shipped: Phase 3 squash
+> (`cb67b0b`), Phase 4 (`028d1d2` + flag-flip `5fb1d3c`), Phase 6
+> (`414b218`). Multiple «critical blockers» tracked здесь были
+> либо closed (отмечены inline), либо superseded by connected-trees-
+> refactor работой.
+>
+> Current source of truth для MVP/production state —
+> [`connected-trees-refactor/CURRENT-PHASE.md`](connected-trees-refactor/CURRENT-PHASE.md).
+>
+> Этот файл сохраняется как 2026-04-09 → 2026-04-20 audit log
+> snapshot — историческая ценность для understanding pre-Phase-3
+> stabilization работы. Не обновляется.
+
 Scope:
 - local web build served from `build/web`
 - login performed with a real account during the interactive session
