@@ -22,11 +22,17 @@ Recently closed:
   2026-05-18 entry.
 
 Pending design / Артёмов call:
-* Phase 3.6 hard-delete background job (warm-up filler before bug-bash).
 * Phase 3.4 branch merge decision (parked на `claude/infallible-pike-41360c`).
 * Phase 6.5 polish items (identity-suggestions push, revocation UX,
   native notification action buttons — все conditional на observation
   signal).
+
+Pending production action (code shipped, awaiting env flip):
+* **Phase 3.6** hard-delete job — `253efaf` deployed 2026-05-18, master
+  toggle `RODNYA_HARD_DELETE_ENABLED=false` default. Артём flip → restart
+  → 60s dry run → review log → flip `FIRST_RUN_DRY=false` для live.
+  См. [DECISIONS.md](docs/connected-trees-refactor/DECISIONS.md)
+  2026-05-18 entry rollout sequence.
 
 ## Архив — original April plan (~2026-04-29)
 

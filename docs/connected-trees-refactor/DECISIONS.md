@@ -1611,3 +1611,149 @@ deleted).
 **Принято**: Артём + Claude.
 
 ---
+
+## 2026-05-18: Phase 3.6 hard-delete background job
+
+**Контекст**: soft-delete с 2026-05-12 ставит `deletedAt` (+
+`hardDeleteScheduledAt` Path A only) на graphPersons / graphRelations /
+branches / personIdentities, но physical cleanup отсутствует.
+Записи копятся вечно → раздувают backups, нарушают GDPR-ожидание
+«удалил → удалено». Phase 3.6 — заполнитель этого gap'а.
+
+**Решение**: background job `hardDeleteExpired` на store слое +
+thin scheduler wrapper в `backend/src/jobs/hard-delete-job.js`.
+Document-based architecture (single JSON blob через FileStore либо
+PostgresStore single-row JSONB) → не SQL-style migration с table
+indexes / FK / batched DELETE'ами, а single full-state pass:
+`_read` → mutate в памяти → `_write` (atomic per document storage).
+
+**Hybrid eligibility формула**:
+```
+hardDeleteAt = entity.hardDeleteScheduledAt
+  ?? (Date.parse(entity.deletedAt) + retentionDaysMs);
+eligible = entity.deletedAt && hardDeleteAt < now;
+```
+
+Backwards-compat с Path A (`_markPersonDeletedInGraph` явно ставит
+`hardDeleteScheduledAt = deletedAt + 30d`) + forward-compat с
+потенциальными custom retention'ами (например user requested extend
+window — кодом меняет explicit поле). Age-based fallback covers
+Path B (`_reconcilePersonIdentities`) + graphRelations + branches +
+personIdentities — все они оставляют `hardDeleteScheduledAt`
+undefined.
+
+**Order (application-level, не FK — FK не существуют в document
+storage)**:
+```
+graphRelations → branches → personIdentities → graphPersons →
+  branchPersonViews (orphans от вышепроцессенных)
+```
+Leaf-first, root-last. Cap mid-collection может halt — partial
+state OK, reconciliation cleans dangling refs на next state load.
+
+**branchPersonViews**: orphan cleanup, не own `deletedAt` (annotation
+entity). После сбора hard-deleted branch + graphPerson IDs в same
+run, фильтрует views ссылающиеся на удаляемые IDs. Один pass, тот
+же транзакционный scope.
+
+**Альтернативы**:
+* **Чистый age-based** (без explicit override): отвергнут — теряет
+  semantics Path A, не позволяет future custom retentions.
+* **Backfill `hardDeleteScheduledAt` всем существующим**:
+  отвергнут — touch existing data, риск migration corruption ради
+  unify'а который age-based fallback уже handles.
+* **node-cron dependency**: отвергнут — `setInterval` 24h
+  достаточно для daily job, нет нужды в cron syntax. Минимизируем
+  deps.
+* **On-demand cleanup при user request**: отвергнут — не
+  масштабируется, не помогает с reconciliation orphans которые
+  user не trigger'ит вручную.
+* **DB trigger на UPDATE**: N/A — document storage, нет per-column
+  triggers.
+* **SQL migration с indexes + audit table**: N/A — document
+  storage не даёт SQL DDL. Migration = добавление
+  `hardDeleteAudit: []` + `hardDeleteLastRunAt: null` в EMPTY_DB +
+  normalizeDbState (zero-DDL).
+
+**Cache + restart safety**:
+* `state.hardDeleteLastRunAt` persisted после каждого live (non-dry,
+  non-paused) run.
+* Scheduler на startup вычисляет catch-up delay через
+  `computeFirstDelayMs`:
+  - `firstRunDry=true` → 60s overrides всё (review log timing,
+    not 24h wait).
+  - Нет `lastRunAt` → catch-up через 60s.
+  - `lastRunAt` старше `intervalMs` → catch-up через 60s.
+  - `lastRunAt` recent → wait `intervalMs - elapsed`.
+* Catch-up cap = single bonus run + next regular cycle (не rapid-
+  fire multi-runs).
+
+**Rollout sequence (must follow)**:
+```
+1. Deploy: hardDeleteEnabled=false (default) → scheduler не
+   register'ится, log «hard_delete_job_disabled».
+2. Set RODNYA_HARD_DELETE_ENABLED=true → backend restart →
+   через 60s первый dry-run (hardDeleteFirstRunDry=true default) →
+   log JSON с {dryRun: true, deleted: {graphPersons: N, ...},
+   sampleIds: {...}, capHit: false, errors: []}.
+3. Артёмов review:
+   - Counts reasonable? (10K+ → flag suspicious либо expected
+     backlog).
+   - Sample IDs — это действительно те записи которые expected
+     hard-deleted?
+   - errors[] пустой?
+4. Set RODNYA_HARD_DELETE_FIRST_RUN_DRY=false → следующий
+   scheduled run работает live.
+5. Steady state: 24h cycle.
+```
+
+**Multi-instance considerations**: out of scope для Phase 3.6.
+Single-instance prod (per Phase 6 hot-path fix DECISIONS). Если
+завтра multi-instance scales → нужен `pg_advisory_lock` либо
+optimistic-concurrency через version field на state document.
+Logged как Phase 6.5+ follow-up.
+
+**Влияет на**:
+* `backend/src/jobs/hard-delete-job.js` — new (~200 LOC).
+* `backend/src/store.js` — конструктор + `_forgetUser` уже не
+  trogается, новый `hardDeleteExpired` method (+234 LOC) + EMPTY_DB
+  defaults + normalizeDbState defaults.
+* `backend/src/config.js` — 9 env vars + `readEnvBool` helper (+71
+  LOC).
+* `backend/src/server.js` — wire `scheduleHardDeleteJob` после
+  store init (+8 LOC).
+* `backend/src/migration-utils.js` — добавил `hardDeleteAudit` к
+  `SNAPSHOT_COLLECTION_KEYS` (+4 LOC).
+* `backend/test/hard-delete-job.test.js` — new test file
+  (~330 LOC, 14 tests).
+
+**Commit**: `253efaf feat(phase-3.6): hard-delete background job`.
+Net: +957 LOC across 6 files (4 modified + 2 new).
+
+**Verify (local)**:
+* Full backend test suite: 199/201 pass (2 Windows-only ENOTEMPTY
+  baseline flakes, not regression).
+* Phase 3.6 tests: 14/14 pass.
+* `flutter analyze` не запускался (backend-only commit).
+* Backend deploy run `26028844174` success (41s).
+* `curl https://api.rodnya-tree.ru/ready` → 200 OK.
+* `curl POST /v1/auth/login` smoke → valid sessionToken (regression
+  check для observation window Phase 6).
+* Boot disabled log: `hard_delete_job_disabled` (default).
+* Boot enabled log с corrected config: firstRunInMs=60000,
+  intervalMs=43200000 (12h test), retentionDays=30, firstRunDry=true.
+* Ad-hoc e2e через FileStore on temp disk: seed → dry-run (state
+  untouched) → live-run (eligible entities physically gone, audit
+  populated, lastRunAt persisted, recent entries preserved).
+
+**Out of scope**:
+* Multi-instance distributed lock — Phase 6.5+.
+* User account hard-delete — отдельный flow с consent confirmation,
+  GDPR territory.
+* Backup-before-delete — audit log (90d retention) достаточен.
+* prom-client metrics export — Phase 6.5+ если потребуется
+  dashboard.
+
+**Принято**: Артём + Claude.
+
+---

@@ -367,6 +367,84 @@ register→wizard >70%, wizard→tree >90%, discover funnel >40%, 5xx
 
 ---
 
+## 2026-05-18 — Phase 3.6 hard-delete background job
+
+**Сессия**: Claude Code (третья цепочка дня, после Phase 6 hotfix
++ Phase 4 cleanup).
+
+**Контекст**: soft-delete с 2026-05-12 ставит `deletedAt` +
+(Path A only) `hardDeleteScheduledAt` на 4 entity types
+(graphPersons, graphRelations, branches, personIdentities), но
+physical cleanup отсутствовал. Phase 3.6 — заполнитель.
+
+**Что сделано**: `253efaf feat(phase-3.6): hard-delete background
+job` (+957 LOC, 6 files: 4 modified + 2 new).
+
+* `backend/src/jobs/hard-delete-job.js` — `runHardDeleteJob` +
+  `scheduleHardDeleteJob` с lastRunAt-aware catch-up.
+* `store.hardDeleteExpired(...)` — hybrid eligibility (explicit
+  `hardDeleteScheduledAt` wins → fallback `deletedAt +
+  retentionDays`); order leaf→root; orphan branchPersonViews
+  cleanup; audit log в `state.hardDeleteAudit` с self-prune
+  > 90d.
+* `state.hardDeleteLastRunAt` persisted после каждого live run —
+  scheduler restart-safe (60s catch-up если elapsed >= interval).
+* 9 `RODNYA_HARD_DELETE_*` env vars + `readEnvBool` helper.
+* Wire в `server.js` startup (после `store.initialize()`).
+
+См. [DECISIONS.md](DECISIONS.md) 2026-05-18 entry «Phase 3.6
+hard-delete background job» для rationale + alternatives +
+rollout sequence.
+
+**Тесты**:
+* Phase 3.6: 14 new tests в `hard-delete-job.test.js` — eligibility
+  hybrid + age-based fallback, delete order (relations before
+  persons), orphan branchPersonViews, dry-run no-mutation,
+  pause flag, max-per-run cap + capHit, audit self-prune,
+  firstRunDry override, `computeFirstDelayMs` catch-up (firstRunDry
+  / no lastRunAt / stale / recent). All pass.
+* Full backend test suite: 199/201 pass (2 Windows-only ENOTEMPTY
+  baseline, не regression).
+* Local e2e через FileStore on temp disk + ad-hoc Node script:
+  seed → dry-run (state untouched, deleted counts populated) →
+  live-run (gp-A + gr-X физически gone, gp-B recent preserved,
+  audit 2 entries, lastRunAt set). ✓
+
+**Verify deploy**:
+* Backend deploy run `26028844174` success (41s).
+* `curl https://api.rodnya-tree.ru/ready` → 200 OK.
+* `POST /v1/auth/login` smoke regression — Phase 6 observation
+  endpoint healthy.
+* Boot logs verified: default `hard_delete_job_disabled` (master
+  toggle false). Enabled mode log shows `hard_delete_job_scheduled`
+  с правильным config.
+
+**Rollout state на 2026-05-18 12:50 МСК**: code live, master toggle
+**FALSE** — job НЕ запускается. Артём должен flip
+`RODNYA_HARD_DELETE_ENABLED=true` на проде → backend restart → 60s
+первый dry run → review log → flip `FIRST_RUN_DRY=false` для live.
+
+**Что НЕ запланировано но всплыло**:
+* `_syncGraphFromLegacy` auto-soft-deletes orphan graphPersons на
+  каждом `_read` (line 11790-11807). Это значит «orphan persisting
+  без deletedAt» — impossible state в live system. Test fixture
+  «entity without deletedAt» был unrealistic, переписан на «recent
+  deletedAt preserved».
+* Pluralization bug: `${entityType}s` для `branch`/`personIdentity`
+  даёт неправильные plurals (`branchs`/`personIdentitys` vs
+  `branches`/`personIdentities`). Заменено на explicit map
+  `collectionKeyByType`.
+
+**Что осталось из Phase 3.6**: ничего (после Артёмового flip).
+
+**Что осталось более широко**:
+* Multi-instance lock — Phase 6.5+ (когда massive horizontal scale
+  понадобится).
+* User account hard-delete — отдельный consent flow, не в Phase 3.6
+  scope.
+
+---
+
 ## 2026-05-18 — Phase 4 `useExtendedRenderPath` cleanup
 
 **Сессия**: Claude Code (main branch, observation window completed).

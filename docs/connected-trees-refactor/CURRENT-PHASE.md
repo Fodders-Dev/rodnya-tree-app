@@ -20,6 +20,7 @@
 | Phase 4 cleanup | ✅ closed 2026-05-18 | `baa75d5` | flag + legacy renderer + override removed; extended-network permanent. См. DECISIONS.md 2026-05-18 |
 | Phase 6 | ✅ shipped 2026-05-14 | `414b218` | onboarding wizard + kinship-check «мы родственники?» |
 | Phase 6 hotfix | ✅ closed 2026-05-18 | `b4dcb47` + `40202a1` | `/v1/auth/session` requiresOnboarding gap (chunk 4a follow-up) — DECISIONS.md 2026-05-18 hot-path fix |
+| Phase 3.6 | ✅ shipped 2026-05-18 | `253efaf` | Hard-delete background job (master toggle default false). DECISIONS.md 2026-05-18 «Phase 3.6 hard-delete background job» |
 
 ## Parked (готово к merge, ждёт Артёмова call)
 
@@ -41,11 +42,6 @@
 
 ## Pending — нужен Артёмов design call
 
-* **Phase 3.6** — hard-delete background job (per cutover plan
-  ниже). Server-side scheduled job через 30 дней soft-delete →
-  physical delete. Closes GDPR-like privacy story. Low risk,
-  no UI surface. Warm-up filler перед bug-bash session per
-  Артёмов 2026-05-14 plan.
 * **Phase 3.4 merge decision** — branch ready, нужен Артёмов call
   whether to squash-merge либо abandon (Phase 4 + 6 могли cover
   some scope).
