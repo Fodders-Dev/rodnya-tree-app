@@ -1517,3 +1517,97 @@ postgres NOTIFY) — logged как Phase 6.5 follow-up, не блокер
 **Принято**: Артём + Claude.
 
 ---
+
+## 2026-05-18: Phase 4 `useExtendedRenderPath` cleanup
+
+**Контекст**: Phase 4 (extended-family network) shipped 2026-05-12
+`028d1d2` с feature-flag `useExtendedRenderPath` в
+`lib/config/feature_flags.dart`. 2026-05-13 `5fb1d3c` — flag flip
+default `true` (observation window start). Original plan: cleanup
++1w после flip = ~2026-05-20, but cutover plan смещался к
+~2026-05-17 (NEXT_STEPS.md, MERGE-CHECKLIST-PHASE-6.md §7). Сегодня
+2026-05-18 — на день позже, закрываем.
+
+`git log origin/main --since=2026-04-15 | grep -iE
+"rollback|revert|hotfix"` — clean. Observation window прошла без
+regression signals.
+
+**Решение**: удалить flag + связанные artifacts в один cleanup
+commit:
+
+* `lib/config/feature_flags.dart` — file deleted (single-member
+  class, `useExtendedRenderPath` был единственным flag'ом; пустой
+  scaffold «на будущее» не оставлять).
+* `extendedRenderPathOverride` `@visibleForTesting` parameter из
+  `InteractiveFamilyTree` constructor + связанный field — clean
+  break без deprecation stub. Prod callers не используют, только
+  3 тест-файла, обновлены одновременно.
+* `_isExtendedRenderActive` getter упрощён до
+  `viewMode == extended && networkSlice != null` (был
+  `(override ?? FeatureFlags.useExtendedRenderPath) &&
+  viewMode==extended && slice!=null`).
+* Stale comments в widget («const = false») удалены, не
+  переписаны — фактический default `true` с 2026-05-13.
+* Comment-mention в `tree_view_screen_sections.dart` — orphan
+  reference на удалённый класс, snipе целиком.
+
+**Perf baseline test simplification (Q1 variant A)**:
+
+`test/perf/interactive_family_tree_baseline_test.dart` имел Test 2
+с `expect(flag-on, lessThanOrEqualTo(flag-off_baseline * 1.10))` —
+parity assertion, которая умирает вместе с flag-off baseline. Заменили
+на measure-and-log без `expect`:
+
+* Single test case (Test 1 + Test 2 → один).
+* `_singleMeasurement` / `_measureFirstPaintMs` без branching,
+  всегда builds extended-render widget.
+* `baseline.json` mechanism удалён (`_readBaseline`, `_writeBaseline`,
+  `UPDATE_PERF_BASELINE` env switch) + сам `test/perf/baseline.json`
+  file — содержал mine-view numbers, incomparable с extended-view
+  measurements после cleanup.
+* Regression detection — debugPrint observability на CI logs, не
+  CI gate. Mean-of-3 на 100/500/1000 chain fixtures preserved как
+  measurement methodology.
+
+**Альтернативы (perf test)**:
+* Variant B (absolute threshold based on documented variance) —
+  rejected: новый baseline нужно зафиксировать как const, scope
+  cleanup commit'а расширяется. Variant A проще + наблюдательность
+  через CI logs остаётся.
+* Keep both tests post-cleanup — rejected: Test 1 base'ом был
+  mine-view (legacy=true в момент написания), оба after cleanup
+  measures the same extended path → дубликат.
+
+**Влияет на**:
+* `lib/config/feature_flags.dart` — deleted.
+* `lib/widgets/interactive_family_tree.dart` — flag check + override
+  + stale comments removed.
+* `lib/screens/tree_view_screen_sections.dart` — comment-mention
+  removed.
+* `test/extended_network_flow_test.dart` — FeatureFlags references
+  + import removed.
+* `test/foreign_person_id_translation_test.dart` — override params
+  removed + legacy testWidgets case deleted.
+* `test/perf/interactive_family_tree_baseline_test.dart` — major
+  simplification (-174 LOC).
+* `test/perf/baseline.json` — deleted.
+
+**Commit**: `baa75d5` (-263 LOC across 7 files: 5 modified + 2
+deleted).
+
+**Verify**:
+* `flutter analyze`: 2 warnings (pre-existing baseline, 0 new).
+* `flutter test` целевые: extended_network_*.dart (29 tests),
+  foreign_person_id_translation_test.dart (2 tests after legacy
+  removal), extended_network_flow_test.dart (8 tests),
+  interactive_family_tree_test.dart (29 tests) — all green.
+* `flutter test test/perf/ --tags perf --run-skipped` — passes
+  measure-and-log: 100→214ms, 500→630ms, 1000→1179ms (mean of 3).
+* Frontend deploy run `26025409726` success (включая internal route
+  smoke after deploy).
+* `curl -I https://rodnya-tree.ru/` → 200 OK, Last-Modified
+  `Mon, 18 May 2026 09:36:58 GMT`.
+
+**Принято**: Артём + Claude.
+
+---

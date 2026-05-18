@@ -364,3 +364,64 @@ week patch path):
 **Observation week**: продолжается до 2026-05-28 (метрики
 register→wizard >70%, wizard→tree >90%, discover funnel >40%, 5xx
 <0.1%) — Phase 6 hotfix не сдвигает window.
+
+---
+
+## 2026-05-18 — Phase 4 `useExtendedRenderPath` cleanup
+
+**Сессия**: Claude Code (main branch, observation window completed).
+
+**Контекст**: Phase 4 (extended-family network, shipped 2026-05-12
+`028d1d2`) использовал feature-flag `useExtendedRenderPath` для
+безопасного rollback в observation. 2026-05-13 `5fb1d3c` flag flip
+default true. Original cleanup target ~2026-05-17; закрыто 2026-05-18
+(на день позже).
+
+**Что сделано**: `baa75d5 chore(phase-4): remove
+useExtendedRenderPath flag + perf baseline parity` (-263 LOC across
+7 files):
+
+* `lib/config/feature_flags.dart` — deleted (single-member class).
+* `lib/widgets/interactive_family_tree.dart` — `FeatureFlags`
+  import + `extendedRenderPathOverride` field + Phase 4 chunk 3a
+  stale comments removed. `_isExtendedRenderActive` getter
+  simplified до `viewMode==extended && networkSlice!=null`.
+* `lib/screens/tree_view_screen_sections.dart` — stale
+  comment-mention removed.
+* `test/foreign_person_id_translation_test.dart` — `extendedRenderPathOverride`
+  param removed (3x) + legacy testWidgets `flag off → no card tint`
+  deleted (testirовал мёртвый branch, дубликат «empty foreign set»
+  case'а).
+* `test/extended_network_flow_test.dart` — `FeatureFlags.testOverride*`
+  setUp/tearDown/bootstrap lines + import removed. Tests
+  активируют extended mode через product path
+  (`_extendedNetworkController.mode = extended`).
+* `test/perf/interactive_family_tree_baseline_test.dart` — major
+  rewrite (DECISIONS.md 2026-05-18 Q1 variant A): single test,
+  measure-and-log без expect, baseline.json mechanism removed.
+* `test/perf/baseline.json` — deleted (содержал mine-view numbers,
+  incomparable с post-cleanup extended-view measurements).
+
+**Тесты**: 
+* `flutter analyze` 2 warnings (pre-existing baseline, 0 new из
+  cleanup).
+* Все Phase 4 related tests pass: extended_network_*.dart (29),
+  foreign_person_id_translation_test.dart (2 after legacy removal),
+  extended_network_flow_test.dart (8), interactive_family_tree_test.dart
+  (29).
+* Perf baseline pass (measure-and-log): 100→214ms, 500→630ms,
+  1000→1179ms (mean of 3).
+
+**Verify deploy**:
+* Frontend deploy run `26025409726` success (включая Playwright
+  «Route smoke after deploy» step).
+* `curl -I https://rodnya-tree.ru/` → 200 OK, Last-Modified
+  `2026-05-18 09:36:58 UTC`.
+
+**Что осталось из Phase 4**: ничего. Observation closed, flag
+removed, capability gating + DTOs + endpoints permanent.
+
+**Что НЕ запланировано но всплыло**: ничего нового. Phase 4
+shape-sensitivity follow-up (wide-balanced vs linear-chain) был
+deferred к chunk 3.5 в DECISIONS.md 2026-05-12 — остаётся deferred
+(no data-driven signal that needed).

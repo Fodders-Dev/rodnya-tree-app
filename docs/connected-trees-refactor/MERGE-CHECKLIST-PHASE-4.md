@@ -248,14 +248,20 @@ Per DECISIONS.md 2026-05-12 + flag removal sequence:
      merge.
 ```
 
-* [ ] **Step 1 ready**: merge `claude/quiet-meridian-7a91b3` → main.
-* [ ] **Step 2 ready post-merge**: prod-account flag override
-  mechanism (либо локально в Артёмовом dev clone — `FeatureFlags.testOverrideExtendedRenderPath = true` в DevTools / hotswap).
-* [ ] **Step 3 ready +1 week post-merge**: cleanup PR.
+* [x] **Step 1 done**: Phase 4 squash-merged 2026-05-12 commit
+  `028d1d2`, deployed default `useExtendedRenderPath = false`.
+* [x] **Step 2 done**: 2026-05-13 flag flip via `5fb1d3c`
+  `feat(phase-4 observation): enable useExtendedRenderPath default`.
+  Observation window 2026-05-13 → 2026-05-17, без regression signals.
+* [x] **Step 3 done**: 2026-05-18 cleanup commit `baa75d5`
+  `chore(phase-4): remove useExtendedRenderPath flag + perf baseline
+  parity`. Flag + override mechanism + legacy testWidgets +
+  baseline.json — все удалены. См. DECISIONS.md 2026-05-18 для
+  rationale.
 
-**Rollback path до step 3**: flag=false deploy в один CI cycle
-(default уже false → revert не нужен). После step 3: revert
-cleanup commit либо git revert.
+**Rollback path после step 3**: revert cleanup commit
+(`git revert baa75d5`). Extended-network rendering — теперь
+permanent product behavior, не conditional.
 
 ---
 

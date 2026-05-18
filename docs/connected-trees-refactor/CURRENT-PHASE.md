@@ -17,7 +17,9 @@
 | Phase 3 squash | ✅ shipped 2026-05-11 | `cb67b0b` | Phase 3 connected per-user trees squash |
 | Phase 4 | ✅ shipped 2026-05-12 | `028d1d2` | extended-family network (BFS view) |
 | Phase 4 flag flip | ✅ flag-on 2026-05-13 | `5fb1d3c` | `useExtendedRenderPath` default true — observation week активна |
+| Phase 4 cleanup | ✅ closed 2026-05-18 | `baa75d5` | flag + legacy renderer + override removed; extended-network permanent. См. DECISIONS.md 2026-05-18 |
 | Phase 6 | ✅ shipped 2026-05-14 | `414b218` | onboarding wizard + kinship-check «мы родственники?» |
+| Phase 6 hotfix | ✅ closed 2026-05-18 | `b4dcb47` + `40202a1` | `/v1/auth/session` requiresOnboarding gap (chunk 4a follow-up) — DECISIONS.md 2026-05-18 hot-path fix |
 
 ## Parked (готово к merge, ждёт Артёмова call)
 
@@ -27,10 +29,6 @@
 
 ## Observation windows (active)
 
-* **Phase 4 flag observation**: 2026-05-13 → 2026-05-20+ (минимум 7
-  дней после flag-on flip). После — cleanup commit
-  `refactor(phase-4): remove useExtendedRenderPath feature flag`
-  с removal of legacy code path.
 * **Phase 6 observation**: 2026-05-14 → 2026-05-28 (2 weeks).
   Метрики per MERGE-CHECKLIST-PHASE-6 §5:
   * register → wizard finish >70%
@@ -82,5 +80,3 @@ grants/visibility UI). Phase 3.4 остаётся ready-to-merge независ�
 * НЕ принимать архитектурные решения без записи в DECISIONS.md.
 * НЕ делать squash-merge Phase 3.4 без Артёмова explicit approve —
   branch parked, не abandoned.
-* НЕ делать Phase 4 flag cleanup ДО конца observation (2026-05-20
-  минимум). После — single commit на main.

@@ -353,8 +353,10 @@ login).
 
 ## 7. Follow-ups (out-of-scope для merge)
 
-1. **Phase 4 +1 week cleanup commit** — remove `useExtendedRenderPath`
-   flag (pending Phase 4 observation week completion).
+1. ~~**Phase 4 +1 week cleanup commit** — remove `useExtendedRenderPath`
+   flag (pending Phase 4 observation week completion).~~ **Done
+   2026-05-18 `baa75d5`** (см. DECISIONS.md 2026-05-18 entry «Phase 4
+   useExtendedRenderPath cleanup»).
 2. **Phase 6.5 polish** (post-observation, conditional on signal):
    * Identity-suggestions push notification (DECISIONS 2026-05-14).
    * Revocation UX for kinship-check (PHASE-6-PROPOSAL §2.6 «defer»).

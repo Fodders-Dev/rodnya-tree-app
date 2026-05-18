@@ -12,10 +12,14 @@ Connected-trees-refactor шипанул через Phase 0 → 3.1 → 3.2 → 3
 и [`PROGRESS.md`](docs/connected-trees-refactor/PROGRESS.md).
 
 Active observation windows:
-* **Phase 4** flag observation до ~2026-05-20 (+7d от flip 2026-05-13; затем `useExtendedRenderPath`
-  flag removal commit).
 * **Phase 6** observation до ~2026-05-28 (метрики per
   [`MERGE-CHECKLIST-PHASE-6.md`](docs/connected-trees-refactor/MERGE-CHECKLIST-PHASE-6.md) §5).
+
+Recently closed:
+* **Phase 4** observation closed 2026-05-18 cleanup `baa75d5` —
+  flag removed, extended-network permanent. См.
+  [`DECISIONS.md`](docs/connected-trees-refactor/DECISIONS.md)
+  2026-05-18 entry.
 
 Pending design / Артёмов call:
 * Phase 3.6 hard-delete background job (warm-up filler before bug-bash).
