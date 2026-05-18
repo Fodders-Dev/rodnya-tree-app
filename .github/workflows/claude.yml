@@ -1,0 +1,138 @@
+name: Claude Code
+
+# Trigger Claude on:
+#   - @claude в комментарии issue или PR
+#   - @claude в теле или заголовке нового issue
+#   - @claude в review-комментарии или review-описании
+#
+# Аутентификация: ТОЛЬКО OAuth (CLAUDE_CODE_OAUTH_TOKEN) — НЕ API key.
+# Это даёт работу из квоты Max-подписки, без отдельного биллинга через
+# Anthropic API. Если случайно появится ANTHROPIC_API_KEY — счётчик
+# включится и каждый запуск будет тарифицироваться отдельно.
+#
+# Как получить токен (один раз, локально):
+#   1. claude setup-token            # авторизация через браузер
+#   2. скопировать выданный токен (начинается с sk-ant-oat...)
+#   3. GitHub → repo settings → Secrets and variables → Actions →
+#      New repository secret:
+#        Name:  CLAUDE_CODE_OAUTH_TOKEN
+#        Value: <вставить токен>
+#   4. убедиться, что секрет ANTHROPIC_API_KEY НЕ установлен.
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+  issues:
+    types: [opened, assigned]
+
+concurrency:
+  group: claude-${{ github.event.issue.number || github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  claude:
+    # 1) Триггер: упоминание @claude в одном из поддерживаемых событий.
+    # 2) Безопасность: запускаемся только если автор события — владелец,
+    #    член организации или коллаборатор репозитория. Это закрывает
+    #    дыру "случайный человек оставил @claude в PR-комменте → сжёг
+    #    нашу квоту". Webhook payload содержит author_association.
+    if: |
+      (
+        (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+        (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
+        (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
+        (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+      ) &&
+      (
+        github.event.sender.login == github.repository_owner ||
+        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
+          github.event.comment.author_association ||
+          github.event.review.author_association ||
+          github.event.issue.author_association)
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+
+      - name: Install Flutter dependencies
+        run: flutter pub get
+
+      - name: Install Node tooling
+        run: npm ci
+
+      - name: Run Claude Code
+        uses: anthropics/claude-code-action@v1
+        with:
+          # OAuth-only. НЕ добавлять anthropic_api_key — иначе биллинг
+          # уйдёт через API-аккаунт, а не Max-подписку.
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+
+          # Команды, которые Claude может запускать без подтверждения.
+          # Сужено до набора, нужного для Flutter-флоу: format, analyze,
+          # test, build web, pub get, git status/log/diff. Всё остальное
+          # потребует разрешения пользователя.
+          allowed_tools: |
+            Bash(flutter format:*)
+            Bash(flutter analyze)
+            Bash(flutter test:*)
+            Bash(flutter pub get)
+            Bash(flutter pub run:*)
+            Bash(flutter build web:*)
+            Bash(dart format:*)
+            Bash(dart analyze)
+            Bash(npm ci)
+            Bash(npm run:*)
+            Bash(git status)
+            Bash(git diff:*)
+            Bash(git log:*)
+            Bash(git show:*)
+            Bash(node tool/*)
+
+          # Инструкции для агента, специфичные для этого репо.
+          # Дублируют ключевые правила из CLAUDE.md / README, чтобы
+          # не зависеть от того, что Claude их прочитал.
+          prompt: |
+            Ты работаешь в репозитории Flutter-приложения «Родня»
+            (семейное дерево + соцсеть для близких).
+
+            Правила:
+            - Веди разработку на отдельной ветке вида
+              `claude/issue-<N>-<short-slug>` и открывай **draft** PR.
+            - Никогда не пушь напрямую в `main`.
+            - Перед открытием PR прогоняй `dart format .`,
+              `flutter analyze`, и относящиеся к изменениям
+              `flutter test`. Не открывай PR с failing analyze.
+            - Не трогай calls/voice/video код, если задача явно
+              не про звонки.
+            - Не подмешивай unrelated изменения из dirty worktree.
+            - Русскоязычный UI: сохраняй или улучшай качество копии.
+            - Подробный план — в `docs/active_execution_plan.md`,
+              brand-контекст — в `README.md`.
+
+            Если задача неоднозначна — задай уточняющий вопрос
+            комментарием в issue, не угадывай.
