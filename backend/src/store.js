@@ -144,6 +144,18 @@ const EMPTY_DB = {
   profileContributions: [],
   pushDevices: [],
   pushDeliveries: [],
+  // Phase 3.6: audit log для hard-delete background job. Каждая запись
+  // фиксирует physically deleted entity (entityType, entityId,
+  // deletedAt, scheduledAt, hardDeletedAt, runId). Self-prune: записи
+  // старше 90 дней удаляются тем же job на следующем runs (DECISIONS.md
+  // 2026-05-18 «Phase 3.6 hard-delete background job»).
+  hardDeleteAudit: [],
+  // Last successful (non-dry, non-paused) run timestamp. Persisted
+  // чтобы `setInterval` пережил backend restarts: startup checks
+  // elapsed since `hardDeleteLastRunAt`, schedules catch-up через
+  // 60s если interval уже истёк. `null` = job ни разу не успешно
+  // не отработал на этом state.
+  hardDeleteLastRunAt: null,
 };
 
 function normalizeDbState(parsed) {
@@ -245,6 +257,16 @@ function normalizeDbState(parsed) {
     pushDeliveries: Array.isArray(parsed?.pushDeliveries)
       ? parsed.pushDeliveries
       : [],
+    // Phase 3.6 hard-delete job artifacts. Default empty / null
+    // preserves backward compat — old snapshots без этих полей
+    // подхватятся прозрачно (см. EMPTY_DB).
+    hardDeleteAudit: Array.isArray(parsed?.hardDeleteAudit)
+      ? parsed.hardDeleteAudit
+      : [],
+    hardDeleteLastRunAt:
+      typeof parsed?.hardDeleteLastRunAt === "string"
+        ? parsed.hardDeleteLastRunAt
+        : null,
   };
 }
 
@@ -17154,6 +17176,218 @@ class FileStore {
 
     await this._write(db);
     return {check: structuredClone(check)};
+  }
+
+  // ── Phase 3.6: hard-delete background job ─────────────────────────
+  // Sweeps physically deleted entries past their retention window:
+  //   * `graphPersons`    — Path A explicit `hardDeleteScheduledAt`
+  //                         set к deletedAt+30d; Path B
+  //                         (`_reconcilePersonIdentities`) leaves null,
+  //                         fallback на deletedAt + retentionDays.
+  //   * `graphRelations`  — reconciliation tombstones, age-based.
+  //   * `branches`        — reconciliation tombstones, age-based.
+  //   * `personIdentities` — `_propagateIdentityFields` orphan
+  //                          cleanup, age-based.
+  //   * `branchPersonViews` — no own `deletedAt`; orphan-cleaned за
+  //                            branches/graphPersons удалёнными в same
+  //                            run.
+  //
+  // Hybrid eligibility: explicit `hardDeleteScheduledAt` wins, fallback
+  // на `deletedAt + retention`. Backwards-compat с Path A + forward-
+  // compat с custom per-entity extensions (e.g. user-requested
+  // window).
+  //
+  // Order (application-level, не FK): leaf first → root last.
+  //   `graphRelations` → `branches` → `personIdentities` →
+  //   `graphPersons` → `branchPersonViews` (orphans от вышепроцессенных).
+  //   Budget cap может halt mid-collection; partial state OK,
+  //   reconciliation cleans dangling refs on next state load.
+  //
+  // Single full-state pass: `_read` → mutate в памяти → `_write`.
+  // Atomic per document-storage (FileStore JSON write, PostgresStore
+  // single-row UPDATE — all-or-nothing).
+  //
+  // See DECISIONS.md 2026-05-18 «Phase 3.6 hard-delete background job»
+  // для альтернатив (A1 middleware inject отвергнут), rollout
+  // sequence (master toggle → first-run-dry → live), risks.
+  async hardDeleteExpired({
+    now = new Date(),
+    retentionDays = 30,
+    auditRetentionDays = 90,
+    maxPerRun = 10_000,
+    dryRun = false,
+    runId = null,
+  } = {}) {
+    const startedAt = now instanceof Date ? now : new Date(now);
+    const startedTs = startedAt.getTime();
+    const retentionMs = retentionDays * 86_400_000;
+    const auditRetentionMs = auditRetentionDays * 86_400_000;
+    const effectiveRunId = runId || crypto.randomUUID();
+
+    const db = await this._read();
+
+    // Hybrid eligibility: explicit `hardDeleteScheduledAt` wins; иначе
+    // age-based fallback (`deletedAt + retention`). Без `deletedAt` —
+    // entity не soft-deleted, не eligible.
+    const isEligible = (entity) => {
+      if (!entity || !entity.deletedAt) return false;
+      const explicit = entity.hardDeleteScheduledAt
+        ? Date.parse(entity.hardDeleteScheduledAt)
+        : NaN;
+      const fallback = Date.parse(entity.deletedAt) + retentionMs;
+      const scheduledTs = Number.isFinite(explicit) ? explicit : fallback;
+      return Number.isFinite(scheduledTs) && scheduledTs < startedTs;
+    };
+
+    const buildAuditEntry = (entityType, entity) => ({
+      runId: effectiveRunId,
+      entityType,
+      entityId: entity.id,
+      deletedAt: entity.deletedAt,
+      scheduledAt:
+        entity.hardDeleteScheduledAt ||
+        new Date(Date.parse(entity.deletedAt) + retentionMs).toISOString(),
+      hardDeletedAt: startedAt.toISOString(),
+    });
+
+    let budget = Math.max(0, Math.floor(maxPerRun));
+    const newAuditEntries = [];
+    const deletedCounts = {
+      graphPersons: 0,
+      graphRelations: 0,
+      branches: 0,
+      personIdentities: 0,
+      branchPersonViews: 0,
+      auditPruned: 0,
+    };
+    const sampleIds = {};
+    const removeIdsByType = {
+      graphRelation: new Set(),
+      branch: new Set(),
+      personIdentity: new Set(),
+      graphPerson: new Set(),
+      branchPersonView: new Set(),
+    };
+
+    // Explicit map — irregular plurals: branch→branches,
+    // personIdentity→personIdentities (naive `${type}s` ломается).
+    const collectionKeyByType = {
+      graphRelation: "graphRelations",
+      branch: "branches",
+      personIdentity: "personIdentities",
+      graphPerson: "graphPersons",
+      branchPersonView: "branchPersonViews",
+    };
+
+    const takeEligible = (collection, entityType) => {
+      const collectionKey = collectionKeyByType[entityType];
+      for (const entity of collection || []) {
+        if (budget <= 0) break;
+        if (!isEligible(entity)) continue;
+        newAuditEntries.push(buildAuditEntry(entityType, entity));
+        removeIdsByType[entityType].add(entity.id);
+        deletedCounts[collectionKey] += 1;
+        if (!sampleIds[entityType]) sampleIds[entityType] = [];
+        if (sampleIds[entityType].length < 5) {
+          sampleIds[entityType].push(entity.id);
+        }
+        budget -= 1;
+      }
+    };
+
+    takeEligible(db.graphRelations, "graphRelation");
+    takeEligible(db.branches, "branch");
+    takeEligible(db.personIdentities, "personIdentity");
+    takeEligible(db.graphPersons, "graphPerson");
+
+    // Orphan cleanup для branchPersonViews — views ссылающиеся на
+    // branches/graphPersons удалёнными в этом run. Views не имеют
+    // собственного `deletedAt`, потому отдельный path.
+    for (const view of db.branchPersonViews || []) {
+      if (budget <= 0) break;
+      const isOrphaned =
+        removeIdsByType.branch.has(view.branchId) ||
+        removeIdsByType.graphPerson.has(view.graphPersonId);
+      if (!isOrphaned) continue;
+      const viewKey =
+        view.id ?? `${view.branchId || ""}:${view.graphPersonId || ""}`;
+      newAuditEntries.push({
+        runId: effectiveRunId,
+        entityType: "branchPersonView",
+        entityId: viewKey,
+        deletedAt: null,
+        scheduledAt: null,
+        hardDeletedAt: startedAt.toISOString(),
+      });
+      removeIdsByType.branchPersonView.add(viewKey);
+      deletedCounts.branchPersonViews += 1;
+      if (!sampleIds.branchPersonView) sampleIds.branchPersonView = [];
+      if (sampleIds.branchPersonView.length < 5) {
+        sampleIds.branchPersonView.push(viewKey);
+      }
+      budget -= 1;
+    }
+
+    // Audit prune — entries старше `auditRetentionDays` от now.
+    const existingAudit = Array.isArray(db.hardDeleteAudit)
+      ? db.hardDeleteAudit
+      : [];
+    const auditCutoffTs = startedTs - auditRetentionMs;
+    const survivingAudit = [];
+    for (const entry of existingAudit) {
+      const hardDeletedTs = entry?.hardDeletedAt
+        ? Date.parse(entry.hardDeletedAt)
+        : NaN;
+      if (Number.isFinite(hardDeletedTs) && hardDeletedTs < auditCutoffTs) {
+        deletedCounts.auditPruned += 1;
+      } else {
+        survivingAudit.push(entry);
+      }
+    }
+
+    const totalDeleted =
+      deletedCounts.graphPersons +
+      deletedCounts.graphRelations +
+      deletedCounts.branches +
+      deletedCounts.personIdentities +
+      deletedCounts.branchPersonViews;
+
+    if (!dryRun) {
+      db.graphRelations = (db.graphRelations || []).filter(
+        (r) => !removeIdsByType.graphRelation.has(r.id),
+      );
+      db.branches = (db.branches || []).filter(
+        (b) => !removeIdsByType.branch.has(b.id),
+      );
+      db.personIdentities = (db.personIdentities || []).filter(
+        (pi) => !removeIdsByType.personIdentity.has(pi.id),
+      );
+      db.graphPersons = (db.graphPersons || []).filter(
+        (gp) => !removeIdsByType.graphPerson.has(gp.id),
+      );
+      db.branchPersonViews = (db.branchPersonViews || []).filter((v) => {
+        const key = v.id ?? `${v.branchId || ""}:${v.graphPersonId || ""}`;
+        return !removeIdsByType.branchPersonView.has(key);
+      });
+      db.hardDeleteAudit = [...survivingAudit, ...newAuditEntries];
+      db.hardDeleteLastRunAt = startedAt.toISOString();
+      await this._write(db);
+    }
+
+    const finishedAt = new Date();
+    return {
+      runId: effectiveRunId,
+      startedAt: startedAt.toISOString(),
+      finishedAt: finishedAt.toISOString(),
+      durationMs: finishedAt.getTime() - startedTs,
+      dryRun,
+      deleted: deletedCounts,
+      sampleIds,
+      capHit: budget <= 0 && totalDeleted >= Math.max(0, Math.floor(maxPerRun)),
+      lastRunAt: dryRun
+        ? db.hardDeleteLastRunAt || null
+        : startedAt.toISOString(),
+    };
   }
 }
 

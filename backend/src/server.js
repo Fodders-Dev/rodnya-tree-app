@@ -7,6 +7,7 @@ const {createMediaStorage} = require("./media-storage");
 const {createApp} = require("./app");
 const {RealtimeHub} = require("./realtime-hub");
 const {PushGateway} = require("./push-gateway");
+const {scheduleHardDeleteJob} = require("./jobs/hard-delete-job");
 
 async function readReleaseLabel() {
   try {
@@ -87,6 +88,12 @@ async function startServer() {
   });
   realtimeHub.attach(server);
 
+  // Phase 3.6 hard-delete background job. Master toggle (env var
+  // RODNYA_HARD_DELETE_ENABLED) defaults `false` — scheduler skips
+  // registration + logs «disabled» chunk. Flip flag → restart → 60s
+  // первый dry run (per DECISIONS.md 2026-05-18 rollout sequence).
+  const hardDeleteJob = scheduleHardDeleteJob({store, config, runtimeInfo});
+
   return {
     app,
     server,
@@ -96,6 +103,7 @@ async function startServer() {
     pushGateway,
     mediaStorage,
     runtimeInfo,
+    hardDeleteJob,
   };
 }
 

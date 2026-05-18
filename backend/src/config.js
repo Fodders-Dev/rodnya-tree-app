@@ -39,6 +39,21 @@ function readEnvNumber(fallback, ...keys) {
   return Number(fallback);
 }
 
+function readEnvBool(fallback, ...keys) {
+  const rawValue = readEnvValue(...keys);
+  if (!rawValue) {
+    return Boolean(fallback);
+  }
+  const normalized = rawValue.trim().toLowerCase();
+  if (normalized === "true" || normalized === "1" || normalized === "yes") {
+    return true;
+  }
+  if (normalized === "false" || normalized === "0" || normalized === "no") {
+    return false;
+  }
+  return Boolean(fallback);
+}
+
 function createConfig() {
   const dataPath =
     readEnvAlias("RODNYA_BACKEND_DATA_PATH") ||
@@ -97,6 +112,53 @@ function createConfig() {
   )
     .trim()
     .toLowerCase();
+
+  // ── Phase 3.6 hard-delete background job ──────────────────────────
+  // Master toggle defaults `false` — code присутствует, но scheduler
+  // не register'ится пока explicitly не enabled. Rollout per
+  // DECISIONS.md 2026-05-18 «Phase 3.6 hard-delete background job»:
+  //   1. Deploy с hardDeleteEnabled=false → verify «disabled» log
+  //   2. Set RODNYA_HARD_DELETE_ENABLED=true → restart → 60s first
+  //      dry-run (hardDeleteFirstRunDry=true)
+  //   3. Review log: counts reasonable + sample IDs + errors empty
+  //   4. Set RODNYA_HARD_DELETE_FIRST_RUN_DRY=false → next 24h
+  //      cycle live
+  const hardDeleteEnabled = readEnvBool(
+    false,
+    "RODNYA_HARD_DELETE_ENABLED",
+  );
+  const hardDeleteRetentionDays = readEnvNumber(
+    30,
+    "RODNYA_HARD_DELETE_RETENTION_DAYS",
+  );
+  const hardDeleteIntervalHours = readEnvNumber(
+    24,
+    "RODNYA_HARD_DELETE_INTERVAL_HOURS",
+  );
+  const hardDeleteDryRun = readEnvBool(
+    false,
+    "RODNYA_HARD_DELETE_DRY_RUN",
+  );
+  const hardDeleteFirstRunDry = readEnvBool(
+    true,
+    "RODNYA_HARD_DELETE_FIRST_RUN_DRY",
+  );
+  const hardDeletePaused = readEnvBool(
+    false,
+    "RODNYA_HARD_DELETE_PAUSED",
+  );
+  const hardDeleteMaxPerRun = readEnvNumber(
+    10_000,
+    "RODNYA_HARD_DELETE_MAX_PER_RUN",
+  );
+  const hardDeleteAuditRetentionDays = readEnvNumber(
+    90,
+    "RODNYA_HARD_DELETE_AUDIT_RETENTION_DAYS",
+  );
+  const hardDeleteTimeoutMs = readEnvNumber(
+    120_000,
+    "RODNYA_HARD_DELETE_TIMEOUT_MS",
+  );
   const mediaBackend = String(
     readEnvAlias("RODNYA_MEDIA_BACKEND") || "local",
   )
@@ -267,6 +329,15 @@ function createConfig() {
     uploadRateLimitMax,
     safetyRateLimitMax,
     storageBackend,
+    hardDeleteEnabled,
+    hardDeleteRetentionDays,
+    hardDeleteIntervalHours,
+    hardDeleteDryRun,
+    hardDeleteFirstRunDry,
+    hardDeletePaused,
+    hardDeleteMaxPerRun,
+    hardDeleteAuditRetentionDays,
+    hardDeleteTimeoutMs,
   };
 }
 

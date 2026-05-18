@@ -35,6 +35,10 @@ const SNAPSHOT_COLLECTION_KEYS = [
   "branchPersonViews",
   "graphPersonEditGrants",
   "identityFieldConflicts",
+  // Phase 3.6 hard-delete audit log. Counted в snapshot summaries
+  // чтобы операционная log показывала backlog audit-записей
+  // (sanity check для 90-day prune cycle).
+  "hardDeleteAudit",
 ];
 
 const MIME_TYPES_BY_EXTENSION = new Map([
