@@ -278,8 +278,8 @@ week → cleanup commit.
    * Error rate: /v1/onboarding/* + /v1/kinship-checks/* HTTP
      5xx (target <0.1%).
 5. **Cleanup commit** after observation:
-   * Remove `useExtendedRenderPath` flag (Phase 4 +1 week TODO —
-     pending separately).
+   * ~~Remove `useExtendedRenderPath` flag~~ — done 2026-05-18
+     `baa75d5` independently (Phase 4 cleanup), не Phase 6.
    * Если identity-suggestions push не shipped, document Phase 6.5
      follow-up в next phase proposal.
 
