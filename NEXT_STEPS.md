@@ -4,10 +4,10 @@
 > Этот файл сохраняется как entry-point pointer; история priorities ниже
 > сохранена для контекста, но не отражает текущий план.
 
-## Текущее состояние (2026-05-14)
+## Текущее состояние (2026-05-18)
 
 Connected-trees-refactor шипанул через Phase 0 → 3.1 → 3.2 → 3 squash →
-4 → 6. Подробности с commit-ссылками — в
+4 → 6 → 3.6. Подробности с commit-ссылками — в
 [`docs/connected-trees-refactor/CURRENT-PHASE.md`](docs/connected-trees-refactor/CURRENT-PHASE.md)
 и [`PROGRESS.md`](docs/connected-trees-refactor/PROGRESS.md).
 
