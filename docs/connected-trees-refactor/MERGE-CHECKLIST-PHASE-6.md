@@ -295,6 +295,41 @@ Phase 6 НЕ использует feature flag (unlike Phase 4
 flow → add flag at that time. Phase 6 v1 is opt-in by capability,
 sufficient gating.
 
+### ℹ Post-merge hotfix (2026-05-18) — chunk 4a follow-up
+
+После squash auto-deploy smoke-test показал landing на
+`/complete_profile` вместо `/setup`. Root cause: chunk 4a wired
+`requiresOnboarding` в register/login/OAuth/QR-login, но missed
+`GET /v1/auth/session` refresh endpoint. Client
+`_sessionFromResponse` парсил `null` → перезатирал
+`session.requiresOnboarding` к `false` → router guard редирект'ил
+на `/complete_profile`. Acceptance criteria §2 «Post-signup
+redirect» оставалось ✅ для register/login direct paths, но
+session-refresh path был broken.
+
+Fix landed via два commits в `main` (within observation window, no
+revert needed):
+
+* `b4dcb47 fix(phase-6): preserve requiresOnboarding through
+  session refresh` — backend endpoint поле + client defensive
+  `_sessionFromResponse` (preserve existing flag при null).
+* `40202a1 fix(phase-6): cache hasIncompleteOnboarding hot path` —
+  write-through `_onboardingIncompleteCache` в FileStore.
+  Закрывает api.test.js:13345 invariant который b4dcb47 нарушил
+  через extra `_read`. См. [DECISIONS.md](DECISIONS.md) 2026-05-18
+  для rationale + альтернатив.
+
+**Verify после hotfix**:
+* Backend deploy run `26020837859` success (47s, all steps green).
+* Live `GET /v1/auth/session` возвращает `requiresOnboarding: true`
+  для incomplete user.
+* ADB smoke-test (Galaxy S20 FE) — login → `/setup` wizard welcome
+  («Старт» step indicator, «Добро пожаловать в Родню»). ✓
+
+Acceptance criteria §2 «Post-signup redirect» ✅ **after b4dcb47 +
+40202a1** (через session-refresh path тоже, не только direct
+login).
+
 ---
 
 ## 6. Single approve checklist

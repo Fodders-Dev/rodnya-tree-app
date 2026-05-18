@@ -288,3 +288,79 @@ approve proposal.
 * Phase 6 observation метрики до ~2026-05-28.
 * Phase 3.4 merge decision (Артёмов call).
 * Phase 3.6 hard-delete background job (warm-up filler, design pending).
+
+---
+
+## 2026-05-18 — Phase 6 post-merge hotfix (chunk 4a follow-up)
+
+**Сессия**: Claude Code (main branch, observation week).
+
+**Контекст**: smoke-test после Phase 6 squash (`414b218`) показал
+landing на `/complete_profile` вместо `/setup` wizard. Root cause:
+chunk 4a включил `requiresOnboarding` поле в auth responses
+register/login/Google/VK/Telegram/MAX/QR-login, но **пропустил
+`GET /v1/auth/session`** refresh endpoint. Router guard вызывает
+`checkProfileCompleteness` который делает session refresh — response
+без поля → клиент в `_sessionFromResponse` парсит `null` и
+перезатирает `session.requiresOnboarding` к `false` → редирект
+видит flag=false → шлёт на `/complete_profile`.
+
+**Что сделано** — три commit'а в `main` (без revert; observation
+week patch path):
+
+* `4602db9` `fix(phase-6): bypass profile-complete guard для /setup wizard`
+  — первая гипотеза (router guard); НЕ закрыло root cause, потому
+  что `/setup` redirect никогда не fires (flag=false).
+* `b4dcb47` `fix(phase-6): preserve requiresOnboarding through session refresh`
+  — два-part:
+  * Backend `/v1/auth/session` возвращает `requiresOnboarding` via
+    `store.hasIncompleteOnboarding`.
+  * Client `_sessionFromResponse` defensively preserves existing
+    flag при response `null` (защита от других endpoints с тем же
+    gap'ом).
+  * **Backend deploy упал** (run `26013704426`) на
+    `api.test.js:13345` — наивный `_read` нарушил hot-path invariant
+    «auth session endpoint can serve from cached auth context».
+* `40202a1` `fix(phase-6): cache hasIncompleteOnboarding hot path`
+  — write-through cache `_onboardingIncompleteCache: Map<userId, bool>`
+  в FileStore. Cache populated через `updateOnboardingState` +
+  `seedOnboarding` writes; invalidated в `_forgetUser`. Test
+  invariant preserved. Backend deploy run `26020837859` success
+  (47s), smoke-test PASS.
+
+См. [DECISIONS.md](DECISIONS.md) 2026-05-18 — design rationale +
+альтернативы.
+
+**Тесты**:
+* Backend: `api.test.js:13345` green, `auth-onboarding-redirect.test.js`
+  10/10, `postgres-store` hot-path тесты green. Полный workflow
+  120/123 (3 fail — pre-existing Windows ENOTEMPTY baseline, не
+  воспроизводятся на Linux CI).
+* Live curl: `GET https://api.rodnya-tree.ru/v1/auth/session`
+  возвращает `requiresOnboarding: true` для test account
+  `smoke-2026-05-18-curl@example.com` (incomplete profile).
+* ADB smoke на Galaxy S20 FE (`RF8N920E18F`, APK
+  `lastUpdateTime=2026-05-18 11:01:47`): login → `/setup` wizard
+  welcome screen («Старт» step indicator, «Добро пожаловать в
+  Родню», 4-dot progress).
+
+**Что НЕ запланировано но всплыло**:
+* **Test coverage gap**: chunk 4a wired `requiresOnboarding` в 7
+  auth endpoints (register/login/google/vk/telegram/max/QR), missed
+  `/v1/auth/session` refresh path. Single missing endpoint slipped
+  через 110 chunk-tests, потому что unit-тесты chunk 4a
+  (`auth-onboarding-redirect.test.js`) проверяли login → флаг, но
+  не subsequent session refresh, который router guard fires.
+  Follow-up: добавить session-refresh assertion в
+  `auth-onboarding-redirect.test.js` (мы избежали на этот раз
+  потому что b4dcb47 client defensive parse — но не universal
+  guarantee).
+* **Cache scope limit**: `_onboardingIncompleteCache` per-process.
+  OK на 2026-05-18 (single-instance PostgresStore). Multi-instance
+  backend в будущем потребует Redis pubsub либо postgres NOTIFY
+  для cross-process invalidation. Logged в DECISIONS.md, не
+  блокер.
+
+**Observation week**: продолжается до 2026-05-28 (метрики
+register→wizard >70%, wizard→tree >90%, discover funnel >40%, 5xx
+<0.1%) — Phase 6 hotfix не сдвигает window.

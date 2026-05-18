@@ -1442,3 +1442,78 @@ still see matches via 💡 indicator. Discovery path preserved.
 surface для Артёма audit на chunk 4c review.
 
 ---
+
+## 2026-05-18: Phase 6 `/v1/auth/session` hot-path fix
+
+**Контекст**: `b4dcb47` (Phase 6 chunk 4a follow-up) добавил
+`await store.hasIncompleteOnboarding({userId})` read в
+`GET /v1/auth/session`, нарушив инвариант api.test.js:13345
+«auth session endpoint can serve from cached auth context» —
+endpoint вызывается клиентом на каждый router-tick и обслуживается
+из `_userCache` без `_read`. Backend deploy run `26013704426`
+failed на этом тесте → прод остался на старом binary без endpoint
+fix → smoke-test landing на `/complete_profile` вместо `/setup`
+wizard (тот же симптом, который b4dcb47 должен был fix'нуть).
+
+**Решение**: A3 — write-through cache `_onboardingIncompleteCache:
+Map<userId, boolean>` в `FileStore`, mirrors паттерн `_userCache`.
+
+* `hasIncompleteOnboarding({userId})` — cache-first; cache miss
+  fallback на `_read` (legacy users либо cold cache после restart
+  процесса).
+* `updateOnboardingState` + `seedOnboarding` — write-through после
+  `_write`, derive result из persisted state. Покрывает оба write
+  paths, где `completed = true` может быть установлено.
+* `_forgetUser` — sweep кэш при удалении user (transitive из
+  `deleteUser`).
+* `PostgresStore extends FileStore` без override
+  `hasIncompleteOnboarding` → fix транзитивно покрывает prod path.
+  Тест `PostgresStore auth hot paths avoid full state reads`
+  проверяет этот invariant в Postgres-режиме и зелёный.
+
+**Альтернативы**:
+* **A1**: inject `requiresOnboarding` в `req.auth` через
+  `requireAuth` middleware — смешивает onboarding-concern с
+  auth-concern, расширяет hot path для всех endpoints даже когда
+  им флаг не нужен.
+* **A2**: JWT/access-token claim — stale state после wizard
+  completion до refresh token; усложняет invalidation.
+* **B**: relax api.test.js:13345 invariant — endpoint hits
+  ~per-route-tick; лишний `_read` это потеря hot-path contract'а
+  навсегда.
+* **C**: только client-side defense (`_sessionFromResponse`
+  preserves existing flag при null, b4dcb47 client часть) без
+  backend поля — gap для других callers `/v1/auth/session` без
+  guarantee, что флаг приедет.
+
+**Cache invalidation**: per-user write-through. Все write paths к
+`onboardingStates.<row>.completed` identified через grep — два
+места (`updateOnboardingState`, `seedOnboarding`), оба `cache.set`
+после `_write`. User deletion очищает кэш через `_forgetUser`.
+Per-process scope OK для FileStore (test fixture) + single-instance
+PostgresStore (prod на 2026-05-18). Multi-instance backend в
+будущем потребует cross-process invalidation (Redis pubsub либо
+postgres NOTIFY) — logged как Phase 6.5 follow-up, не блокер
+сейчас.
+
+**Влияет на**:
+* `backend/src/store.js` — `FileStore` конструктор, `_forgetUser`,
+  `hasIncompleteOnboarding`, `updateOnboardingState`,
+  `seedOnboarding` (+35/-4).
+* `PostgresStore` (наследует FileStore, имплицитно).
+
+**Commits**: `b4dcb47` (backend endpoint поле + client defense) +
+`40202a1` (cache hot path follow-up). Both в `main`, без revert.
+
+**Verify**:
+* Locally: api.test.js:13345 green, auth-onboarding-redirect.test.js
+  10/10, postgres-store hot-path тесты green.
+* Backend deploy run `26020837859` success (47s, all steps green).
+* Live `GET /v1/auth/session` возвращает `requiresOnboarding: true`
+  для не-завершённого user (api.rodnya-tree.ru).
+* ADB smoke-test pass: login → `/setup` wizard welcome
+  («Старт» step indicator, «Добро пожаловать в Родню»).
+
+**Принято**: Артём + Claude.
+
+---
