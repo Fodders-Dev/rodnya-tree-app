@@ -5550,6 +5550,7 @@ class FileStore {
     this._sessionTouchCache = new Map();
     this._sessionCache = new Map();
     this._userCache = new Map();
+    this._onboardingIncompleteCache = new Map();
     this._initializePromise = null;
   }
 
@@ -5679,6 +5680,7 @@ class FileStore {
       return;
     }
     this._userCache.delete(normalizedUserId);
+    this._onboardingIncompleteCache.delete(normalizedUserId);
   }
 
   _appendTreeChangeRecord(db, {
@@ -16835,6 +16837,15 @@ class FileStore {
     }
 
     await this._write(db);
+    // Write-through: seedOnboarding записывает финальное состояние
+    // wizard'а (`completed: true`) через собственный code path, не
+    // через `updateOnboardingState`. Без явной синхронизации
+    // hasIncompleteOnboarding после login возвращает stale `true`
+    // (regression caught by auth-onboarding-redirect.test.js
+    // "login after seed completes → requiresOnboarding=false").
+    // Идемпотентный early-return выше cache не трогает — он опирается
+    // на уже кэшированное `false` от предыдущего seed.
+    this._onboardingIncompleteCache.set(normalizedUser, false);
     return {treeId, personIds: createdPersonIds, idempotent: false};
   }
 
@@ -16887,12 +16898,25 @@ class FileStore {
   async hasIncompleteOnboarding({userId}) {
     const normalizedUser = normalizeNullableString(userId);
     if (!normalizedUser) return false;
+    // Cached lookup keeps `/v1/auth/session` на cache-only hot path.
+    // Endpoint вызывается клиентом на каждом router-tick'е; лишний
+    // `_read` нарушает invariant api.test.js:13345 «auth session
+    // endpoint can serve from cached auth context». Cache is
+    // write-through через `updateOnboardingState` и invalidated в
+    // `_forgetUser`; cache miss → fall back to `_read` (legacy users
+    // ИЛИ users существовавшие ДО первого reader'а, например после
+    // restart процесса).
+    const cached = this._onboardingIncompleteCache.get(normalizedUser);
+    if (cached !== undefined) {
+      return cached;
+    }
     const db = await this._read();
     const state = (db.onboardingStates || []).find(
       (s) => s.userId === normalizedUser,
     );
-    if (!state) return false;
-    return state.completed !== true;
+    const result = state ? state.completed !== true : false;
+    this._onboardingIncompleteCache.set(normalizedUser, result);
+    return result;
   }
 
   async updateOnboardingState({userId, currentStep}) {
@@ -16925,9 +16949,16 @@ class FileStore {
       });
     }
     await this._write(db);
-    return structuredClone(
-      db.onboardingStates.find((s) => s.userId === normalizedUser),
+    const persisted = db.onboardingStates.find(
+      (s) => s.userId === normalizedUser,
     );
+    // Write-through: keep `_onboardingIncompleteCache` consistent с
+    // нового состояния (см. комментарий в `hasIncompleteOnboarding`).
+    this._onboardingIncompleteCache.set(
+      normalizedUser,
+      persisted.completed !== true,
+    );
+    return structuredClone(persisted);
   }
 
   // ── Kinship checks (BFS «мы родственники?») ─────────────────────
