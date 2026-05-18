@@ -9,10 +9,6 @@
 // ExtendedNetworkCapable + BloodRelationCapable mixins. Slice
 // includes 2 own + 1 foreign person + relations. Chat service
 // returns 'chat-$userId' для verify navigation.
-//
-// FeatureFlags.testOverrideExtendedRenderPath = true в setUp →
-// все InteractiveFamilyTree instances в widget tree honor extended
-// render path (Element 1 tint + Element 2 edge color активны).
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -26,7 +22,6 @@ import 'package:rodnya/backend/interfaces/extended_network_capable_family_tree_s
 import 'package:rodnya/backend/interfaces/family_tree_service_interface.dart';
 import 'package:rodnya/backend/models/blood_relation.dart';
 import 'package:rodnya/backend/models/extended_network_slice.dart';
-import 'package:rodnya/config/feature_flags.dart';
 import 'package:rodnya/models/chat_attachment.dart';
 import 'package:rodnya/models/chat_message.dart';
 import 'package:rodnya/models/chat_message_search_result.dart';
@@ -298,7 +293,6 @@ Future<void> _bootstrapExtendedMode(WidgetTester tester) async {
   SharedPreferences.setMockInitialValues({
     'extended_mode_$_treeId': 'extended',
   });
-  FeatureFlags.testOverrideExtendedRenderPath = true;
   await tester.binding.setSurfaceSize(const Size(1440, 1024));
 }
 
@@ -337,12 +331,10 @@ void main() {
     getIt.registerSingleton<ChatServiceInterface>(_FakeChat());
     getIt.registerSingleton<LocalStorageService>(_FakeLocalStorage());
     getIt.registerSingleton<AppStatusService>(AppStatusService());
-    FeatureFlags.testOverrideExtendedRenderPath = null;
   });
 
   tearDown(() async {
     await getIt.reset();
-    FeatureFlags.testOverrideExtendedRenderPath = null;
   });
 
   testWidgets(

@@ -20,6 +20,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:rodnya/backend/models/extended_network_slice.dart';
 import 'package:rodnya/models/family_person.dart';
 import 'package:rodnya/models/family_relation.dart';
+import 'package:rodnya/providers/extended_network_controller.dart';
 import 'package:rodnya/theme/app_theme.dart';
 import 'package:rodnya/widgets/family_tree_node_card.dart';
 import 'package:rodnya/widgets/interactive_family_tree.dart';
@@ -147,8 +148,8 @@ void main() {
             currentUserIsInTree: true,
             onAddSelfTapWithType: (_, __) async {},
             currentUserId: 'me',
+            viewMode: ExtendedNetworkMode.extended,
             networkSlice: slice,
-            extendedRenderPathOverride: true,
           ),
         ),
       ),
@@ -191,8 +192,8 @@ void main() {
             currentUserIsInTree: true,
             onAddSelfTapWithType: (_, __) async {},
             currentUserId: 'me',
+            viewMode: ExtendedNetworkMode.extended,
             networkSlice: slice,
-            extendedRenderPathOverride: true,
           ),
         ),
       ),
@@ -200,43 +201,5 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(_readIsForeignNode(tester, 'p-1'), isFalse);
-  });
-
-  testWidgets(
-      'flag off → no card tint (legacy bit-identical preserved)',
-      (tester) async {
-    final slice = _sliceWithForeignIdentityIds({'identity-x'});
-    final ownPerson = _person(
-      id: 'p-1',
-      identityId: 'identity-x',
-      name: 'Person',
-    );
-
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: InteractiveFamilyTree(
-            peopleData: [
-              {'person': ownPerson, 'userProfile': null},
-            ],
-            relations: const <FamilyRelation>[],
-            onPersonTap: (_) {},
-            onAddRelativeTapWithType: (_, __) {},
-            currentUserIsInTree: true,
-            onAddSelfTapWithType: (_, __) async {},
-            currentUserId: 'me',
-            networkSlice: slice,
-            extendedRenderPathOverride: false, // flag OFF
-          ),
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    expect(
-      _readIsForeignNode(tester, 'p-1'),
-      isFalse,
-      reason: 'flag off → never tint regardless of slice contents',
-    );
   });
 }

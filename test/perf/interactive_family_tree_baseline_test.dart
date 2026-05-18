@@ -1,14 +1,13 @@
-// Phase 4 chunk 3 prep — perf baseline для legacy InteractiveFamilyTree
-// (mine view). Measure'ит first-paint duration на synthetic chain
-// fixtures 100/500/1000 persons.
+// Perf baseline для InteractiveFamilyTree extended-network render
+// path. Measure'ит first-paint duration на synthetic chain fixtures
+// 100/500/1000 persons.
 //
-// Output: test/perf/baseline.json — пишется после run'а с
-// updateBaseline=true. На последующих runs (updateBaseline=false)
-// проверяет regression threshold (10% slowdown).
+// Measure-and-log only (DECISIONS.md 2026-05-18 cleanup): regression
+// catching через observability — debugPrint output читается manually
+// в CI logs либо при local run.
 //
 // **Не precision benchmark** — widget test environment не real
-// device. Цель: early-warning regression detection на CI и
-// pre-chunk-3 «sanity what is current cost».
+// device. Цель: early-warning regression detection через log diff.
 //
 // Pin'нутые variables (DECISIONS.md 2026-05-12 Gate 2 caveat):
 //   ThemeMode.light, fixed window size, textScaler = noScaling.
@@ -112,20 +111,6 @@ class _TestHttpHeaders implements HttpHeaders {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
-/// Read existing baseline.json либо null если нет.
-Map<String, dynamic>? _readBaseline() {
-  final file = File('test/perf/baseline.json');
-  if (!file.existsSync()) return null;
-  return jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
-}
-
-/// Write baseline.json. Только manually triggered через
-/// `UPDATE_PERF_BASELINE=1 flutter test test/perf/...`.
-void _writeBaseline(Map<String, dynamic> data) {
-  final file = File('test/perf/baseline.json');
-  file.writeAsStringSync(JsonEncoder.withIndent('  ').convert(data));
-}
-
 /// Number of measurement runs per fixture size. Mean из 3 runs даёт
 /// σ/√3 ≈ 8.7% (если single-run σ ≈ 15%) — это устойчиво держит
 /// 10% threshold ниже variance ceiling'а (DECISIONS.md 2026-05-12
@@ -170,9 +155,8 @@ ExtendedNetworkSlice _allOwnSlice(PerfFixture fixture) {
 
 Future<int> _singleMeasurement(
   WidgetTester tester,
-  PerfFixture fixture, {
-  bool extendedFlagOn = false,
-}) async {
+  PerfFixture fixture,
+) async {
   // Pinned variables (DECISIONS.md 2026-05-12 Gate 2 caveat).
   tester.view.physicalSize = const Size(1920, 1080);
   tester.view.devicePixelRatio = 1.0;
@@ -203,7 +187,7 @@ Future<int> _singleMeasurement(
   );
   await tester.pumpWidget(const SizedBox.shrink());
 
-  final slice = extendedFlagOn ? _allOwnSlice(fixture) : null;
+  final slice = _allOwnSlice(fixture);
   final stopwatch = Stopwatch()..start();
   await tester.pumpWidget(
     MaterialApp(
@@ -224,11 +208,8 @@ Future<int> _singleMeasurement(
             currentUserIsInTree: true,
             onAddSelfTapWithType: (_, __) async {},
             currentUserId: 'perf-user',
-            viewMode: extendedFlagOn
-                ? ExtendedNetworkMode.extended
-                : ExtendedNetworkMode.mine,
+            viewMode: ExtendedNetworkMode.extended,
             networkSlice: slice,
-            extendedRenderPathOverride: extendedFlagOn,
           ),
         ),
       ),
@@ -239,30 +220,24 @@ Future<int> _singleMeasurement(
 }
 
 /// Returns mean of `_measurementRuns` independent measurements.
-/// Single-run variance σ ≈ 15% noisy, mean of 3 даёт σ/√3 ≈ 8.7%,
-/// allowing 10% threshold to be stable.
+/// Single-run variance σ ≈ 15% noisy, mean of 3 даёт σ/√3 ≈ 8.7%
+/// — устойчиво держит читаемые ms numbers ниже noise ceiling'а.
 Future<int> _measureFirstPaintMs(
   WidgetTester tester,
-  PerfFixture fixture, {
-  bool extendedFlagOn = false,
-}) async {
+  PerfFixture fixture,
+) async {
   addTearDown(() {
     tester.view.reset();
   });
   final samples = <int>[];
   for (var i = 0; i < _measurementRuns; i++) {
-    final ms = await _singleMeasurement(
-      tester,
-      fixture,
-      extendedFlagOn: extendedFlagOn,
-    );
+    final ms = await _singleMeasurement(tester, fixture);
     samples.add(ms);
   }
   final sum = samples.fold<int>(0, (a, b) => a + b);
   final mean = (sum / samples.length).round();
-  final flagLabel = extendedFlagOn ? '[flag-on]' : '[flag-off]';
   debugPrint(
-    '[perf-baseline] $flagLabel ${fixture.nodeCount} nodes → samples '
+    '[perf-baseline] ${fixture.nodeCount} nodes → samples '
     '${samples.join(", ")} ms; mean $mean ms',
   );
   return mean;
@@ -280,120 +255,15 @@ void main() {
   const sizes = <int>[100, 500, 1000];
 
   testWidgets(
-      'Phase 4 chunk 3 prep — InteractiveFamilyTree perf baseline '
-      '(legacy mine view, 100/500/1000 chain)',
+      'InteractiveFamilyTree perf baseline (extended-network render, '
+      '100/500/1000 linear chain)',
       tags: 'perf', (tester) async {
-    final updateBaseline =
-        Platform.environment['UPDATE_PERF_BASELINE'] == '1';
-    final results = <String, int>{};
-
     for (final size in sizes) {
       final fixture = generateLinearChain(count: size);
-      final meanMs = await _measureFirstPaintMs(tester, fixture);
-      results[size.toString()] = meanMs;
+      await _measureFirstPaintMs(tester, fixture);
       // Mean logged from inside _measureFirstPaintMs along с raw
-      // samples — repeated debugPrint избыточен.
-    }
-
-    if (updateBaseline) {
-      _writeBaseline({
-        'description':
-            'Phase 4 chunk 3 prep baseline на legacy InteractiveFamilyTree '
-            '(mine view). Synthetic linear chain fixtures.',
-        'methodology':
-            'Mean of $_measurementRuns measurement runs per fixture size. '
-            'Single-run variance σ ≈ 15% (widget-test environment noise); '
-            'mean of $_measurementRuns даёт σ/√$_measurementRuns ≈ 8.7%, '
-            'устойчиво держа 10% regression threshold ниже noise ceiling. '
-            'Per Артёмов methodology refinement 2026-05-12.',
-        'pinnedVariables': {
-          'themeMode': 'light',
-          'physicalSize': '1920x1080',
-          'devicePixelRatio': 1.0,
-          'textScaler': 'noScaling',
-        },
-        'firstPaintMsPerNodeCount': results,
-        'capturedAtBranch': 'claude/quiet-meridian-7a91b3',
-        'notes':
-            'Numbers — widget-test environment first-pumpWidget durations, не '
-            'real-device frame timings. Используются как regression early-'
-            'warning baseline. Chunk 3 implementation должен оставаться '
-            'within 10% от baseline на mine view при feature-flag OFF. '
-            'Shape sensitivity (wide-balanced vs linear-chain) — defer'
-            "'нут на chunk 3.5 follow-up.",
-      });
-      return;
-    }
-
-    final baseline = _readBaseline();
-    if (baseline == null) {
-      // Первый run без UPDATE_PERF_BASELINE — просто print результаты,
-      // не fail (baseline ещё не зафиксирован).
-      debugPrint(
-        '[perf-baseline] no baseline.json found — run с '
-        'UPDATE_PERF_BASELINE=1 чтобы зафиксировать.',
-      );
-      return;
-    }
-    final baselineMs =
-        Map<String, dynamic>.from(baseline['firstPaintMsPerNodeCount'] as Map);
-    for (final size in sizes) {
-      final key = size.toString();
-      final baselineValue = (baselineMs[key] as num).toInt();
-      final observed = results[key]!;
-      final threshold = (baselineValue * 1.10).round();
-      expect(
-        observed,
-        lessThanOrEqualTo(threshold),
-        reason: 'Perf regression на $size nodes: baseline=$baselineValue ms, '
-            'observed=$observed ms, threshold=${threshold}ms (+10%). '
-            'Если это ожидаемая cost (e.g. chunk 3 implementation), '
-            'обнови baseline через UPDATE_PERF_BASELINE=1.',
-      );
-    }
-  });
-
-  // Phase 4 chunk 3b: secondary perf check — flag ON path. All nodes
-  // resolve as own (empty ownerMap → defensive default-to-own) →
-  // visual result identical к flag-off. Measures cost overhead от
-  // `_isPersonForeign` invoke + slice.graphPersons.any() scan
-  // O(N²) total на 1000 nodes.
-  //
-  // Threshold к existing baseline (mine view), не отдельный baseline.
-  // Если flag-on regression > 10% — нужен optimization (e.g. Set<id>
-  // cache в slice вместо linear scan). Surface перед chunk 3c.
-  testWidgets(
-      'Phase 4 chunk 3b — InteractiveFamilyTree perf (flag ON, all nodes '
-      'own → render bit-identical к flag OFF, branch overhead measured)',
-      tags: 'perf', (tester) async {
-    final baseline = _readBaseline();
-    if (baseline == null) {
-      debugPrint(
-        '[perf-baseline] no baseline.json — skipping flag-on regression check',
-      );
-      return;
-    }
-    final baselineMs =
-        Map<String, dynamic>.from(baseline['firstPaintMsPerNodeCount'] as Map);
-
-    for (final size in sizes) {
-      final fixture = generateLinearChain(count: size);
-      final meanMs = await _measureFirstPaintMs(
-        tester,
-        fixture,
-        extendedFlagOn: true,
-      );
-      final key = size.toString();
-      final baselineValue = (baselineMs[key] as num).toInt();
-      final threshold = (baselineValue * 1.10).round();
-      expect(
-        meanMs,
-        lessThanOrEqualTo(threshold),
-        reason: 'Flag-ON path regression на $size nodes: baseline=$baselineValue '
-            'ms (mine view), observed=$meanMs ms, threshold=${threshold}ms (+10%). '
-            'Это указывает что branch overhead `_isPersonForeign` либо `any(...)` '
-            'scan дорогой. Рассмотри optimization (Set<id> вместо list scan).',
-      );
+      // samples. No expect — regression detection через debugPrint
+      // observability (DECISIONS.md 2026-05-18).
     }
   });
 }

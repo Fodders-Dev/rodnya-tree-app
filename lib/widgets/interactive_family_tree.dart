@@ -6,7 +6,6 @@ import 'package:flutter/services.dart';
 import 'dart:math'; // <--- Добавляем импорт для функции min
 import 'package:vector_math/vector_math_64.dart' as vector_math;
 import '../backend/models/extended_network_slice.dart';
-import '../config/feature_flags.dart';
 import '../models/family_person.dart';
 import '../models/family_relation.dart';
 import '../models/tree_graph_snapshot.dart';
@@ -225,18 +224,13 @@ class InteractiveFamilyTree extends StatefulWidget {
     this.selectionMode = false,
     this.selectedPersonIds = const <String>{},
     this.onPersonSelectionToggle,
-    // Phase 4 chunk 3a infrastructure (DECISIONS.md 2026-05-12).
-    // Render path branches на _isExtendedRenderActive, который сейчас
-    // (chunk 3a) всегда возвращает false (FeatureFlags.useExtendedRenderPath
-    // const = false). Chunk 3b/3c добавят real branching.
     this.viewMode = ExtendedNetworkMode.mine,
     this.networkSlice,
-    this.extendedRenderPathOverride,
     // Phase 4 chunk 4a: foreign node tap callback. Когда extended
     // render active && tapped person is foreign → invoke ПЕРЕД
     // legacy onPersonTap. Host (`tree_view_screen`) attaches
     // showModalBottomSheet с ForeignNodeSheet. Null → fallback на
-    // legacy onPersonTap (e.g. при flag off либо own person).
+    // legacy onPersonTap (own person либо mine view).
     this.onForeignNodeTap,
   });
 
@@ -265,29 +259,19 @@ class InteractiveFamilyTree extends StatefulWidget {
   /// — selection mode falls back to no-op tapping.
   final void Function(FamilyPerson)? onPersonSelectionToggle;
 
-  // ── Phase 4 chunk 3a infrastructure ─────────────────────────────
+  // ── Phase 4 extended-network rendering ──────────────────────────
 
-  /// View mode для extended-network rendering. `mine` = legacy
-  /// (current behavior); `extended` (+ flag ON + non-null
-  /// [networkSlice]) активирует chunk 3b/3c visual elements.
-  ///
-  /// Chunk 3a добавляет parameter но **не** branches rendering на
-  /// нём (FeatureFlags.useExtendedRenderPath = false const).
+  /// View mode для extended-network rendering. `mine` отрисовывает
+  /// только tree собственника; `extended` (+ non-null [networkSlice])
+  /// активирует foreign-aware визуальные элементы (tint, edge color,
+  /// foreign-node sheet).
   final ExtendedNetworkMode viewMode;
 
   /// Extended network slice (Phase 4 chunk 1 endpoint payload).
   /// Pass'ится из tree_view_screen когда viewMode == extended; null
-  /// в mine mode. Несёт `ownerMap` для chunk 3b foreign-detection
-  /// и `graphPersons.hopDistance` для chunk 4 generation filters.
+  /// в mine mode. Несёт `ownerMap` для foreign-detection и
+  /// `graphPersons.hopDistance` для generation filters.
   final ExtendedNetworkSlice? networkSlice;
-
-  /// Test-only override для FeatureFlags.useExtendedRenderPath.
-  /// Когда `null`, [_isExtendedRenderActive] reads const flag.
-  /// Когда explicit `true`/`false`, тот value wins — позволяет
-  /// golden tests / perf benchmarks с flag ON без касания global
-  /// const'ы.
-  @visibleForTesting
-  final bool? extendedRenderPathOverride;
 
   /// Phase 4 chunk 4a: foreign node tap callback. Host owns sheet
   /// lifecycle (`showModalBottomSheet`, navigation на chat / details,
@@ -306,17 +290,11 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
   double get _viewportReservedTop => widget.viewportReservedTop;
   double get _viewportReservedBottom => widget.viewportReservedBottom;
 
-  /// Phase 4 chunk 3a/3b: единственная точка где render path
-  /// branches на feature flag.
-  ///   • test'ам override'ит через `extendedRenderPathOverride`.
-  ///   • chunk 3b использует это в card constructor для tint.
-  ///   • const false (production default) → tree-shaking eliminates
-  ///     extended path в release build pre-flag-removal.
+  /// Единственная точка где render path branches на extended-network
+  /// mode. Используется card constructor для tint + edge-color +
+  /// foreign-node sheet activation.
   bool get _isExtendedRenderActive {
-    final override = widget.extendedRenderPathOverride;
-    if (override != null) return override;
-    return FeatureFlags.useExtendedRenderPath &&
-        widget.viewMode == ExtendedNetworkMode.extended &&
+    return widget.viewMode == ExtendedNetworkMode.extended &&
         widget.networkSlice != null;
   }
 
