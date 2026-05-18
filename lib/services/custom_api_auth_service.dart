@@ -1479,9 +1479,17 @@ class CustomApiAuthService implements AuthServiceInterface {
               .map((value) => value.toString())
               .toList(),
       // Phase 6 chunk 4a: backend signals post-signup redirect requirement.
-      // Flag читается top-level либо вложен в session JSON (refresh path).
-      requiresOnboarding: response['requiresOnboarding'] == true ||
-          sessionJson['requiresOnboarding'] == true,
+      // Flag читается top-level либо вложен в session JSON. Если response
+      // не carries the field at all (e.g. legacy endpoints, либо backend
+      // doesn't include it on refresh path) — preserve **existing**
+      // _session.requiresOnboarding значение. Без preservation, refresh
+      // через `/v1/auth/session` overwrites flag к false и breaks
+      // post-signup /setup redirect logic (bug discovered 2026-05-18).
+      requiresOnboarding: response.containsKey('requiresOnboarding')
+          ? response['requiresOnboarding'] == true
+          : sessionJson.containsKey('requiresOnboarding')
+              ? sessionJson['requiresOnboarding'] == true
+              : (_session?.requiresOnboarding ?? false),
     );
 
     if (session.accessToken.isEmpty || session.userId.isEmpty) {

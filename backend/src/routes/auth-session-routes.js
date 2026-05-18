@@ -288,6 +288,13 @@ function registerAuthSessionRoutes(
   app.get("/v1/auth/session", requireAuth, async (req, res) => {
     const user = await store.findUserById(req.auth.user.id);
     const profile = sanitizeProfile(user.profile);
+    // Phase 6 chunk 4a follow-up: include requiresOnboarding в session
+    // refresh responses. Без этого client's checkProfileCompleteness path
+    // overwrites session.requiresOnboarding к false (response не carries
+    // the field), breaking post-signup /setup redirect logic.
+    const requiresOnboarding = await store.hasIncompleteOnboarding({
+      userId: user.id,
+    });
     res.json({
       session: {
         accessToken: req.auth.token,
@@ -303,6 +310,7 @@ function registerAuthSessionRoutes(
         providerIds: user.providerIds || ["password"],
       },
       profileStatus: computeProfileStatus(user.profile),
+      requiresOnboarding,
     });
   });
 
