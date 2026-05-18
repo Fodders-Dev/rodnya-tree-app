@@ -30,7 +30,6 @@ import '../services/posts_cache.dart';
 import '../theme/app_theme.dart';
 import '../backend/interfaces/branch_digest_capable_family_tree_service.dart';
 import '../backend/models/branch_digest.dart';
-import '../widgets/branch_digest_strip.dart';
 import '../widgets/branch_switcher_chip.dart';
 import '../widgets/post_card.dart';
 import '../widgets/post_card_shimmer.dart';
