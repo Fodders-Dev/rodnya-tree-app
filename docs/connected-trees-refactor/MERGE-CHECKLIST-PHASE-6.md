@@ -266,7 +266,7 @@ week → cleanup commit.
 1. **Squash**: `claude/serene-fjord-8b4d62` → `main` (one commit).
 2. **Auto-deploy**: existing CI/CD pipeline (no config changes
    needed).
-3. **Observation week starts**: 2026-05-14 → 2026-05-21.
+3. **Observation window starts**: 2026-05-14 → 2026-05-28 (14 days — Phase 6 extended baseline Phase 4 7-day pattern; rationale в DECISIONS.md chunk 4d).
 4. **Monitor metrics**:
    * Conversion: register → wizard finish (target >70%).
    * Conversion: wizard finish → first relative card view
