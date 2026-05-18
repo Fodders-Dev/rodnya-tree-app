@@ -4,7 +4,7 @@
 > [`docs/tree_model_overhaul_rfc.md`](../tree_model_overhaul_rfc.md).
 > См. [DECISIONS.md](DECISIONS.md) от 2026-05-09.
 
-**Status update**: 2026-05-14 (post Phase 6 merge).
+**Status update**: 2026-05-18 (post Phase 6 chunk 4a hotfix + Phase 4 cleanup + Phase 3.6 ship).
 
 ## Shipped к production
 
