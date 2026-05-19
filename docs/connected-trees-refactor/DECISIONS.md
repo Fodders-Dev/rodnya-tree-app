@@ -1820,3 +1820,65 @@ changes — только env vars + restart.
 **Принято**: Артём + Claude.
 
 ---
+
+## 2026-05-19: rodnya-backup.service CRLF fix (15-day failure streak)
+
+**Контекст**: rodnya-backup.service failing identical pattern every day
+с 2026-05-05 по 2026-05-19 (15 дней подряд). Discovered случайно во
+время Phase 3.6 activation discovery phase (`systemctl list-units` showed
+backup-service в failed state). Артём не получал alerts — нет monitoring
+infrastructure для systemd failed services.
+
+**Root cause**: `/usr/local/bin/rodnya-backup.sh` имел Windows CRLF line
+endings на последних 2 строках (hex: `-rf 0d 0a 0d 0a`). Cleanup line:
+```
+... | xargs -r rm -rf<CR>
+```
+Бash parsed `-rf\r` как single token. `rm` saw `-r`, `-f`, then `-\r`
+(invalid option) → "rm: invalid option -- '<binary>'" → exit 123.
+`set -euo pipefail` killed script на pipe failure. Backup script всё
+кроме cleanup step делал корректно (env copy, dev-db copy, uploads tar,
+postgres dump, minio tar — всё OK).
+
+**Решение**:
+```
+cp -p /usr/local/bin/rodnya-backup.sh /usr/local/bin/rodnya-backup.sh.bak-20260519-fix
+sed -i 's/\r$//' /usr/local/bin/rodnya-backup.sh
+```
+Strip trailing CR. Verified hex (`-rf 0a 0a`, LF only). `systemctl start
+rodnya-backup` → exit 0/SUCCESS. Cleanup ran: 36 backup subdirs → 7
+(retention = newest 7).
+
+**Альтернативы**:
+* `dos2unix` — package не установлен на сервере, лишний dep ради
+  single fix.
+* Manual rewrite через `cat <<'EOF' > file` — overkill для 2-char fix.
+* Add `.gitattributes eol=lf` + commit script в repo — рассматривали,
+  откладываем (script сейчас не в git, отдельный change).
+
+**Cost от 15-day failure**:
+* Backups делались — env, dev-db, uploads.tar.gz, postgres dump,
+  minio data все intact в /var/backups/rodnya/YYYYMMDD-* directories.
+* Cleanup НЕ делался → 36 directories накопились (~7 days × backup
+  size data). Storage waste, не data loss.
+* Recovery option: every day backup intact, можно restore from любой.
+
+**Что НЕ в scope этой фазы** (future ops follow-ups):
+* Добавить script в git repo с `.gitattributes eol=lf` для drift
+  prevention. Сейчас server-side managed manually.
+* `manual` directory в /var/backups/rodnya survives cleanup forever
+  (alphabetic sort puts "manual" после YYYYMMDD-* prefix). Pre-existing
+  quirk, не введено fix'ом. Hide-fix: rename to `2026-manual-*` либо
+  exclude в find pattern.
+* Monitoring для systemd failed services — `OnFailure=` systemd
+  directive с email/webhook hook. Phase 6.5+ candidate.
+
+**Backup file**: `/usr/local/bin/rodnya-backup.sh.bak-20260519-fix`
+(pre-fix snapshot, 1393 bytes с CRLF).
+
+**Влияет на**: server file `/usr/local/bin/rodnya-backup.sh` на
+212.69.84.167 (НЕ в git repo). Daily timer next fire 2026-05-20 03:17 UTC.
+
+**Принято**: Артём + Claude.
+
+---
