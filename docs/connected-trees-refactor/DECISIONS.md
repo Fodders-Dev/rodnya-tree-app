@@ -1757,3 +1757,66 @@ Net: +957 LOC across 6 files (4 modified + 2 new).
 **Принято**: Артём + Claude.
 
 ---
+
+## 2026-05-19: Phase 3.6 hard-delete activated в проде
+
+**Контекст**: Phase 3.6 ship'нут `253efaf` 2026-05-18 в режиме master
+toggle off (`RODNYA_HARD_DELETE_ENABLED=false` default). Backend deploy
+success, code loaded, job sleeping. Сегодня manual env flip на
+rodnya-backend сервере (212.69.84.167) для активации.
+
+**Решение**: production activation hard-delete background job в режиме
+live (не dry). Two-stage rollout: first dry run для verify execution,
+потом `RODNYA_HARD_DELETE_FIRST_RUN_DRY=false` для live mode.
+
+**Rollout execution (2026-05-19 UTC)**:
+* 02:58 — backup `/etc/rodnya-backend.env` → `bak-20260519-025824`
+* 02:59:33 — `RODNYA_HARD_DELETE_ENABLED=true` appended, `systemctl
+  restart rodnya-backend`. Boot log: `hard_delete_job_scheduled
+  {firstRunInMs:60000, intervalMs:86400000, retentionDays:30,
+  firstRunDry:true, ...}`.
+* 03:00:33 — first dry run (60s после restart): 0 deletions, 241ms,
+  `errors:[]`, `sampleIds:{}` empty (ничего не matched 30-day
+  retention). `runId:e9b4bb41-ee13-4672-adb0-bda98bf5e60e`.
+* 03:02:44 — `RODNYA_HARD_DELETE_FIRST_RUN_DRY=false` appended, restart.
+* 03:03:45 — first live run: 0 deletions, 505ms (+260ms за state
+  document write), `lastRunAt=2026-05-19T03:03:45.674Z` persisted,
+  `errors:[]`. `runId:5086f109-1166-4d69-905e-70281f64fef4`.
+
+**Counts = 0 — interpretation**: project молодой, Phase 6 ship 2026-05-14
+recent reconciliation activity не достигла 30-day retention. Вчерашние
+DELETE /persons (~7 часов age на момент flip) корректно не подхвачены —
+правильное behavior. R1 (большой first-run backlog) не материализовался.
+
+**Что подтверждено в проде**:
+* dryRun mode не персистит `lastRunAt` (correct — state untouched).
+* Live mode персистит `lastRunAt` через state document write.
+* FK delete order traversed без errors.
+* All 5 entity types correctly enumerated (`graphPersons`,
+  `graphRelations`, `branches`, `personIdentities`, `branchPersonViews`).
+* Audit prune integrated в same pass (`auditPruned` counter).
+* Service stable post-activation: memory 56.8M, `/ready` 200,
+  Phase 6 hot-path session endpoint без regression.
+
+**Next scheduled run**: ~2026-05-20 03:03 UTC (через `intervalMs -
+elapsed_since_lastRunAt` ≈ 23h 57min).
+
+**Rollback procedure** (если потребуется):
+```
+ssh rodnya 'echo "RODNYA_HARD_DELETE_PAUSED=true" >> /etc/rodnya-backend.env && systemctl restart rodnya-backend'
+```
+Это оставит code enabled но pause flag short-circuit'нёт actual run.
+Альтернатива (полный disable):
+```
+ssh rodnya 'sed -i "/^RODNYA_HARD_DELETE_/d" /etc/rodnya-backend.env && systemctl restart rodnya-backend'
+```
+
+**Backup env file**: `/etc/rodnya-backend.env.bak-20260519-025824`
+(pre-flip snapshot, 2220 bytes).
+
+**Влияет на**: `rodnya-backend.service` на 212.69.84.167. Без code
+changes — только env vars + restart.
+
+**Принято**: Артём + Claude.
+
+---

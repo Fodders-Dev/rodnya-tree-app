@@ -437,6 +437,39 @@ rollout sequence.
 
 **Что осталось из Phase 3.6**: ничего (после Артёмового flip).
 
+### Activated в проде 2026-05-19 03:03 UTC
+
+**Сессия**: Claude Code + Артём (manual env flip через SSH на
+rodnya-backend сервере 212.69.84.167).
+
+**Rollout (2-stage)**:
+* 02:59:33 — `RODNYA_HARD_DELETE_ENABLED=true` + restart. Boot log
+  confirmed `hard_delete_job_scheduled` с `firstRunDry=true`.
+* 03:00:33 — first dry run: 0 deletions, 241ms, `errors:[]`. `runId
+  e9b4bb41`. Confirmed code execution paths.
+* 03:02:44 — `RODNYA_HARD_DELETE_FIRST_RUN_DRY=false` + restart.
+* 03:03:45 — first live run: 0 deletions, 505ms (включая state
+  write), `lastRunAt` persisted в state document. `runId 5086f109`.
+
+**Counts = 0 interpretation**: project молодой, recent DELETE activity
+не достигла 30-day retention. R1 (большой backlog) не материализовался.
+
+**Verified в проде**:
+* dryRun не персистит state (state untouched).
+* Live mode персистит lastRunAt через postgres write.
+* FK delete order without errors.
+* All 5 entity types enumerated.
+* Audit prune в same pass.
+* Service stable: memory 56.8M, /ready 200, Phase 6 session endpoint
+  без regression.
+
+**Next scheduled run**: ~2026-05-20 03:03 UTC.
+
+**Backup env file**: `/etc/rodnya-backend.env.bak-20260519-025824`.
+
+См. [DECISIONS.md](DECISIONS.md) 2026-05-19 «Phase 3.6 hard-delete
+activated в проде».
+
 **Что осталось более широко**:
 * Multi-instance lock — Phase 6.5+ (когда massive horizontal scale
   понадобится).
