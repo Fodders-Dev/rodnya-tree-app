@@ -21,8 +21,42 @@ function registerTreeRoutes(
     mapTreeChangeRecord,
     mapTreeGraphSnapshot,
     buildPersonDossierPayload,
+    createAndDispatchNotification,
   },
 ) {
+  // Phase 6.5+ auto-refresh: dispatch silent `tree_mutated` ping
+  // в audience (owner + grants + identity-linked + members).
+  // Payload carries только `{treeId, kind, actorUserId}` — recipient
+  // refetches tree state, backend filter handles visibility.
+  // Best-effort — failure to dispatch не abortит mutation response.
+  async function dispatchTreeMutation({treeId, kind, actorUserId}) {
+    if (typeof createAndDispatchNotification !== "function") return;
+    try {
+      const audience = await store.resolveTreeAudienceUserIds(treeId, {
+        excludeUserId: actorUserId,
+      });
+      for (const recipientId of audience) {
+        await createAndDispatchNotification({
+          userId: recipientId,
+          type: "tree_mutated",
+          title: "Дерево обновлено",
+          body: "",
+          data: {treeId, kind, actorUserId},
+          silent: true,
+        });
+      }
+    } catch (error) {
+      console.error(
+        "[backend] tree_mutated dispatch failed",
+        JSON.stringify({
+          treeId,
+          kind,
+          actorUserId,
+          message: error?.message || String(error),
+        }),
+      );
+    }
+  }
   app.post("/v1/trees", requireAuth, async (req, res) => {
     const {name, description, isPrivate, kind, includeRules} = req.body || {};
     if (!String(name || "").trim()) {
@@ -773,6 +807,12 @@ function registerTreeRoutes(
       return;
     }
 
+    await dispatchTreeMutation({
+      treeId: tree.id,
+      kind: "person_added",
+      actorUserId: req.auth.user.id,
+    });
+
     res.status(201).json({person: mapPerson(person)});
   });
 
@@ -864,6 +904,13 @@ function registerTreeRoutes(
       if (propagatedTo.length > 0) {
         responsePayload.identityPropagation = {affected: propagatedTo};
       }
+
+      await dispatchTreeMutation({
+        treeId: req.params.treeId,
+        kind: "person_updated",
+        actorUserId: req.auth.user.id,
+      });
+
       res.json(responsePayload);
     },
   );
@@ -936,6 +983,12 @@ function registerTreeRoutes(
         res.status(404).json({message: "Человек не найден"});
         return;
       }
+
+      await dispatchTreeMutation({
+        treeId: tree.id,
+        kind: "person_deleted",
+        actorUserId: req.auth.user.id,
+      });
 
       res.status(204).send();
     },
@@ -1282,6 +1335,12 @@ function registerTreeRoutes(
       return;
     }
 
+    await dispatchTreeMutation({
+      treeId: tree.id,
+      kind: "relation_added",
+      actorUserId: req.auth.user.id,
+    });
+
     res.status(201).json({relation: mapRelation(relation)});
   });
 
@@ -1307,6 +1366,12 @@ function registerTreeRoutes(
         res.status(404).json({message: "Связь не найдена"});
         return;
       }
+
+      await dispatchTreeMutation({
+        treeId: tree.id,
+        kind: "relation_deleted",
+        actorUserId: req.auth.user.id,
+      });
 
       res.status(204).send();
     },

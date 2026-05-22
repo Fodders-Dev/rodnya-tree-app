@@ -166,6 +166,17 @@ class PushGateway {
       payload.requireInteraction = true;
     }
 
+    // Phase 6.5+: silent flag for data-only refresh signals
+    // (e.g. tree_mutated). Service worker reads this и skips
+    // `self.registration.showNotification` call — payload still
+    // routes к client event handlers for refresh coordinator.
+    // web/sw.js update — Phase 6.6 follow-up (без него на
+    // background web banner может show; foreground filtering
+    // в client handles foreground case).
+    if (notification.silent === true) {
+      payload.silent = true;
+    }
+
     return payload;
   }
 

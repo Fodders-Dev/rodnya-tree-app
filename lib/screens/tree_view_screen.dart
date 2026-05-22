@@ -43,6 +43,7 @@ import '../services/app_status_service.dart';
 import '../services/public_tree_link_service.dart';
 import '../services/local_storage_service.dart';
 import '../services/tree_mutation_history.dart';
+import '../services/tree_refresh_coordinator.dart';
 import '../models/tree_graph_snapshot.dart';
 import '../theme/app_theme.dart';
 import '../utils/user_facing_error.dart';
@@ -112,7 +113,8 @@ class TreeViewScreen extends StatefulWidget {
   State<TreeViewScreen> createState() => _TreeViewScreenState();
 }
 
-class _TreeViewScreenState extends State<TreeViewScreen> {
+class _TreeViewScreenState extends State<TreeViewScreen>
+    with WidgetsBindingObserver {
   final FamilyTreeServiceInterface _familyService =
       GetIt.I<FamilyTreeServiceInterface>();
   final AuthServiceInterface _authService = GetIt.I<AuthServiceInterface>();
@@ -134,6 +136,14 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
   final Set<String> _selectedPersonIds = <String>{};
   TreeProvider? _treeProviderInstance; // Храним экземпляр
   String? _currentTreeId;
+  // Auto-refresh wiring (Phase B): coordinator hands us a callback
+  // identity so unregister can identity-check ours vs. another
+  // screen's. We hold the function reference for the same reason —
+  // bound method tear-off would create a fresh closure each access,
+  // breaking identical().
+  String? _refreshCoordinatorTreeId;
+  late final Future<void> Function() _treeRefreshCallback =
+      _handleCoordinatorRefresh;
   String? _branchRootPersonId;
   String? _selectedPersonSheetId;
   String? _selectedEditPersonId;
@@ -475,6 +485,11 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
     // Focus.onKeyEvent is unreliable on Flutter web's CanvasKit, so we
     // attach to the global handler instead.
     HardwareKeyboard.instance.addHandler(_handleTreeKeyEvent);
+    // App-lifecycle hook — on resume we re-request a refresh для
+    // currently viewed tree чтобы catch mutations, missed пока app
+    // был backgrounded (push delivered, но silent notification
+    // handler не ran потому что process suspended).
+    WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _treeProviderInstance = Provider.of<TreeProvider>(context, listen: false);
       _treeProviderInstance!.addListener(_handleTreeChange); // Подписываемся
@@ -485,10 +500,58 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
   @override
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_handleTreeKeyEvent);
+    WidgetsBinding.instance.removeObserver(this);
+    _syncTreeRefreshSubscription(null);
     _treeProviderInstance?.removeListener(_handleTreeChange); // Отписываемся
     _extendedNetworkController?.removeListener(_onExtendedNetworkChange);
     _extendedNetworkController?.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    // Phase B auto-refresh: on resume re-trigger refresh для активного
+    // tree. Coordinator's debounce coalesces with any concurrent push
+    // arrival, so duplicate work не происходит. No-op если tree не
+    // выбран либо subscriber unregistered (например screen в фоне
+    // другого route).
+    if (state != AppLifecycleState.resumed) return;
+    final treeId = _refreshCoordinatorTreeId;
+    if (treeId == null || treeId.isEmpty) return;
+    TreeRefreshCoordinator.instance.requestRefresh(treeId);
+  }
+
+  /// Re-load the currently viewed tree. Called by
+  /// [TreeRefreshCoordinator] when a `tree_mutated` push/realtime
+  /// event arrives для зарегистрированного treeId. Identity-stable
+  /// (single field assignment в State init) so coordinator's
+  /// identical()-check unregister works.
+  Future<void> _handleCoordinatorRefresh() async {
+    if (!mounted) return;
+    final treeId = _currentTreeId;
+    if (treeId == null || treeId.isEmpty) return;
+    await _loadData(treeId);
+  }
+
+  /// Re-point the [TreeRefreshCoordinator] subscription to [treeId].
+  /// Idempotent — calling с тем же treeId no-op'ит. Passing `null`
+  /// just unregisters (used on dispose, or когда tree selection
+  /// cleared).
+  void _syncTreeRefreshSubscription(String? treeId) {
+    final previous = _refreshCoordinatorTreeId;
+    if (previous == treeId) return;
+    if (previous != null) {
+      TreeRefreshCoordinator.instance.unregister(
+        previous,
+        _treeRefreshCallback,
+      );
+    }
+    _refreshCoordinatorTreeId = null;
+    if (treeId != null && treeId.isNotEmpty) {
+      TreeRefreshCoordinator.instance.register(treeId, _treeRefreshCallback);
+      _refreshCoordinatorTreeId = treeId;
+    }
   }
 
   /// Returns true to consume the event so it doesn't bubble. Handles
@@ -598,12 +661,14 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
 
       _currentTreeId = routeTreeId;
       _syncExtendedNetworkController(routeTreeId);
+      _syncTreeRefreshSubscription(routeTreeId);
       await _loadData(routeTreeId);
       return;
     }
 
     _currentTreeId = provider.selectedTreeId;
     _syncExtendedNetworkController(_currentTreeId);
+    _syncTreeRefreshSubscription(_currentTreeId);
     if (_currentTreeId != null) {
       await _loadData(_currentTreeId!);
     } else {
@@ -623,6 +688,7 @@ class _TreeViewScreenState extends State<TreeViewScreen> {
       );
       _currentTreeId = newTreeId;
       _syncExtendedNetworkController(newTreeId);
+      _syncTreeRefreshSubscription(newTreeId);
       if (_currentTreeId != null) {
         _loadData(_currentTreeId!);
       } else {

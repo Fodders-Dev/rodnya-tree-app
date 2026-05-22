@@ -2193,3 +2193,153 @@ revoked` (terminal).
 **Принято**: Артём + Claude.
 
 ---
+
+## 2026-05-22: Phase A+B — push-triggered auto-refresh (posts + tree)
+
+**Контекст**: после ship'а постов (DECISIONS 2026-04-XX feed) и
+multi-user tree edits (Phase 3.4) пользователи видели stale UI
+до manual pull-to-refresh: post creator опубликовал → второй юзер
+не видел пока не дёрнул feed; tree co-editor добавил persona →
+владелец дерева видел только после повторного visit'а в TreeView.
+WebSocket realtime path уже существовал
+(`custom_api_realtime_service.dart` → `notification.created`
+event), и push delivery работала через `push-gateway.js`. Не
+хватало клиентского signal-handling: notification arrived, но
+никто не listening'ил «refetch the feed / tree».
+
+**Решение**: централизованный coordinator pattern + silent
+notification mode.
+
+* **Backend**: `createAndDispatchNotification` теперь принимает
+  optional `silent: boolean`. Notification record store'ит
+  `silent` flag, оба channel'а (`mapNotification` → WebSocket
+  payload + `_buildWebPushPayload` → web-push payload) пробрасывают.
+  Для **Phase B (tree mutations)** новый `dispatchTreeMutation`
+  helper в `tree-routes.js` шлёт `tree_mutated` silent push на
+  5 endpoint'ах: POST/PATCH/DELETE persons + POST/DELETE relations.
+  Audience — `resolveTreeAudienceUserIds` (owner + members +
+  graph-person userIds + active edit-grant holders), actor
+  исключён. Payload — `{treeId, kind, actorUserId}`, **без**
+  personId/relationId (privacy fence — recipient знает only что
+  «дерево изменилось», не «кто-то редактировал именно Бабушку
+  Аню»).
+* **Для Phase A (posts)** уже существующий `post_created`
+  notification теперь дополнительно route'ится через client-side
+  coordinator — visible banner сохранён (user хочет видеть «new
+  post»), silent flag не используется.
+* **Client**: два singleton-coordinator'а — `PostsRefreshCoordinator`
+  (single-subscriber, HomeScreen feed) и `TreeRefreshCoordinator`
+  (Map keyed by treeId, multiple tree surfaces). Оба debounce
+  500ms. `_showBackendNotification` в
+  `custom_api_notification_service.dart` route'ит arriving
+  notifications в соответствующий coordinator ДО visual display.
+  Silent flag — early-return после coordinator dispatch (tree
+  mutations не должны спамить banner'ами).
+* **On-resume stale-cache check**: `WidgetsBindingObserver` в
+  HomeScreen + TreeViewScreen re-fires coordinator на app resume.
+  Покрывает race'ы где background push handler не успел
+  route'ить до process suspension. Debounce coalesces с concurrent
+  push arrival → no duplicate roundtrip.
+* **WebSocket realtime path triggers coordinator так же как
+  push** — foreground users (`notification.created` WebSocket
+  event) и background (push) сходятся через тот же
+  `_showBackendNotification` entry point, никакого second path
+  не добавлено. **Это критическое design constraint от Артёма**
+  — single coordinator entry → testable single code path.
+
+**Альтернативы**:
+* **Polling**: HomeScreen / TreeViewScreen фоновый Timer.periodic
+  каждые 30s → GET feed/tree. Отвергнут: WebSocket infrastructure
+  уже существует, и для tree mutations интервал должен был
+  быть малым (15s+ otherwise edit feels laggy), что =
+  ~5760 unnecessary GET'ов / user / day. Battery / bandwidth
+  тax огромный для функционала, который должен быть event-driven.
+* **WebSocket-only (skip push на refetch)**: backgrounded
+  users пропускают refetch. Resume + manual pull-to-refresh
+  снова возвращает stale window. Не закрывает background-edit
+  case (юзер открыл app → видит actual tree без extra жеста).
+* **Включить personId/relationId в payload**: rejected per
+  privacy fence — silent notification arriving означает что
+  user knows about specific edit even если у них не было
+  permission видеть affected entity. `{treeId, kind, actorUserId}`
+  достаточно для refetch trigger, и refetch использует
+  server-side authorization для filtering.
+* **Skip debounce**: burst tree edits (e.g. import 20 persons)
+  = 20 refetches за секунду. 500ms window coalesces в один
+  refetch. Cost: 500ms staleness window — acceptable для не-
+  critical content (tree view, не chat).
+* **Visible banner для tree_mutated**: rejected — каждый person
+  edit = banner spam. User хочет видеть результат на screen,
+  не «X добавил человека в дерево» каждый раз. Silent push
+  только.
+* **Service worker для web**: deferred — текущая web build
+  не имеет registered SW, и добавление = separate ship.
+  WidgetsBindingObserver на mobile + foreground WebSocket
+  для web покрывает большинство cases.
+
+**Влияет на**:
+* `backend/src/store.js` — `createNotificationRecord` +
+  `store.createNotification` принимают `silent`; новый
+  `resolveTreeAudienceUserIds({treeId, excludeUserId})` метод
+  (audience = owner + members + graphPerson userIds via
+  `legacyPersonIds` lookup + active edit-grants).
+* `backend/src/app.js` — `mapNotification` exposes `silent`;
+  `createAndDispatchNotification` принимает silent, passes
+  through; `registerTreeRoutes` теперь получает
+  `createAndDispatchNotification`.
+* `backend/src/push-gateway.js` — `_buildWebPushPayload`
+  add'ит `payload.silent = true` когда notification.silent.
+* `backend/src/routes/tree-routes.js` — `dispatchTreeMutation`
+  helper + 5 hooks (best-effort try/catch, не блокирует
+  mutation response).
+* `backend/test/tree-mutation-dispatch.test.js` — 7 new tests:
+  audience resolution (owner/members/edit-grant + actor
+  exclusion), non-existent tree → empty, 5 endpoints dispatch
+  verification, silent flag survives mapNotification round-trip.
+* `lib/services/posts_refresh_coordinator.dart` (NEW) —
+  single-subscriber debounced coordinator.
+* `lib/services/tree_refresh_coordinator.dart` (NEW) — per-tree
+  Map-keyed coordinator.
+* `lib/services/custom_api_notification_service.dart` —
+  type-dispatch в `_showBackendNotification` + `_readTreeId`
+  helper + `silent` early-return.
+* `lib/screens/home_screen.dart` — `_feedRefreshCallback`
+  registered с PostsRefreshCoordinator; WidgetsBindingObserver
+  для on-resume.
+* `lib/screens/tree_view_screen.dart` — `_treeRefreshCallback`
+  + `_syncTreeRefreshSubscription` hooks в lifecycle
+  (initState / _handleTreeChange / dispose);
+  WidgetsBindingObserver для on-resume.
+* `test/posts_refresh_coordinator_test.dart` (NEW) — 6 tests
+  (register/unregister, debounce, no-op без subscriber, identity-
+  check, replace, exception isolation).
+* `test/tree_refresh_coordinator_test.dart` (NEW) — 9 tests
+  (per-tree register/unregister, debounce, isolation, empty
+  treeId, replace, exception isolation).
+
+**Тесты (verified locally)**:
+* Backend `node --test backend/test/tree-mutation-dispatch.test.js` —
+  7/7.
+* Backend full workflow suite — 122/123 (1 Windows ENOTEMPTY flake
+  baseline, не regression).
+* Frontend `flutter test test/posts_refresh_coordinator_test.dart
+  test/tree_refresh_coordinator_test.dart` — 15/15.
+* Frontend `flutter test test/home_screen_test.dart
+  test/tree_view_screen_test.dart` — 16/16 (regression check —
+  оба screens строятся cleanly с новыми lifecycle hooks).
+* `flutter analyze` (touched files) — 1 warning (`_branchDigest`
+  baseline), 0 new. `prefer_function_declarations_over_variables`
+  info на `_feedRefreshCallback` suppressed inline с обоснованием
+  (stored closure для intent-clarity + survives method-name
+  refactor).
+
+**Что осталось open**:
+* Service worker для web push silent handling — deferred per
+  выше; revisit когда web traffic значимый или когда
+  RuStore push для PWA понадобится.
+* Identity-suggestions push notification — отдельный track
+  (DECISIONS 2026-05-14, ждёт Phase 6 observation closure).
+
+**Принято**: Артём + Claude.
+
+---

@@ -1244,6 +1244,8 @@ function createApp({
       title: truncateText(notification.title, 160),
       body: truncateText(notification.body, 280),
       data: sanitizeNotificationData(notification.data),
+      // Phase 6.5+ silent flag — clients filter on display path.
+      silent: notification.silent === true,
       createdAt: notification.createdAt,
       readAt: notification.readAt || null,
       isRead: Boolean(notification.readAt),
@@ -2334,6 +2336,7 @@ function createApp({
     title,
     body,
     data,
+    silent = false,
     targetSessionPublicId = null,
   }) {
     const notification = await store.createNotification({
@@ -2342,6 +2345,7 @@ function createApp({
       title,
       body,
       data,
+      silent,
     });
 
     if (!notification) {
@@ -2510,6 +2514,7 @@ function createApp({
     mapTreeChangeRecord,
     mapTreeGraphSnapshot,
     buildPersonDossierPayload,
+    createAndDispatchNotification,
   });
 
   registerTreeInvitationRoutes(app, {

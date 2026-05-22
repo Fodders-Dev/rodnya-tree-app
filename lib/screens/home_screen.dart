@@ -27,6 +27,7 @@ import '../models/post.dart';
 import '../models/story.dart';
 import '../services/app_status_service.dart';
 import '../services/posts_cache.dart';
+import '../services/posts_refresh_coordinator.dart';
 import '../theme/app_theme.dart';
 import '../backend/interfaces/branch_digest_capable_family_tree_service.dart';
 import '../backend/models/branch_digest.dart';
@@ -47,7 +48,8 @@ class HomeScreen extends StatefulWidget {
   _HomeScreenState createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen>
+    with WidgetsBindingObserver {
   final AuthServiceInterface _authService = GetIt.I<AuthServiceInterface>();
   final FamilyTreeServiceInterface _familyTreeService =
       GetIt.I<FamilyTreeServiceInterface>();
@@ -99,6 +101,22 @@ class _HomeScreenState extends State<HomeScreen> {
           ? GetIt.I<IdentityServiceInterface>()
           : null;
 
+  /// Phase 6.5+ auto-refresh: callback registered с
+  /// PostsRefreshCoordinator. Notification arrives (WebSocket либо
+  /// push) → coordinator debounces 500ms → calls this method →
+  /// _loadPosts re-fetches с current branch filter. Identity-stable
+  /// reference (а не closure-on-method) — required для unregister
+  /// pattern в dispose.
+  ///
+  /// `prefer_function_declarations_over_variables` намеренно suppressed:
+  /// stored closure captures `this` once, и идентичность объекта стабильна
+  /// между `register` и `unregister`. Method tear-off равен по
+  /// идентичности на SDK ≥ 2.15, но эксплицитная held reference
+  /// делает intent явным и survives possible refactors of `_loadPosts`.
+  // ignore: prefer_function_declarations_over_variables
+  late final Future<void> Function() _feedRefreshCallback =
+      () => _loadPosts(branchId: _selectedFeedBranchId);
+
   @override
   void initState() {
     super.initState();
@@ -111,6 +129,16 @@ class _HomeScreenState extends State<HomeScreen> {
     // Twitter / GitHub-style "/" shortcut to focus search. Only on
     // desktop where physical keyboard is the primary input.
     HardwareKeyboard.instance.addHandler(_handleHomeKeyEvent);
+
+    // Phase 6.5+ auto-refresh: register feed callback с coordinator.
+    // Backend dispatches `post_created` notification → WebSocket
+    // либо push → notification service routes к coordinator →
+    // debounced 500ms → calls _feedRefreshCallback.
+    PostsRefreshCoordinator.instance.register(_feedRefreshCallback);
+    // Pair с on-resume stale-cache check: после background process
+    // suspension push handler могло пропустить notification, поэтому
+    // re-trigger coordinator при возврате юзера в app.
+    WidgetsBinding.instance.addObserver(this);
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _treeProviderInstance = Provider.of<TreeProvider>(context, listen: false);
@@ -138,12 +166,27 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    PostsRefreshCoordinator.instance.unregister(_feedRefreshCallback);
+    WidgetsBinding.instance.removeObserver(this);
     HardwareKeyboard.instance.removeHandler(_handleHomeKeyEvent);
     _treeProviderInstance?.removeListener(_handleTreeChange);
     _eventRailController.removeListener(_handleEventRailScrollChanged);
     _cancelWebWheelSubscription?.call();
     _eventRailController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    // Phase 6.5+ auto-refresh: re-request feed refresh когда app
+    // возвращается из background — это catch'ит push notifications,
+    // которые были delivered пока process suspended, и upstream
+    // handler не успел route'ить к coordinator. Debounce внутри
+    // coordinator coalesces с concurrent push arrival → no duplicate
+    // network roundtrip.
+    if (state != AppLifecycleState.resumed) return;
+    PostsRefreshCoordinator.instance.requestRefresh();
   }
 
   /// Global hotkey handler — registered on HardwareKeyboard directly

@@ -4,7 +4,7 @@
 > [`docs/tree_model_overhaul_rfc.md`](../tree_model_overhaul_rfc.md).
 > См. [DECISIONS.md](DECISIONS.md) от 2026-05-09.
 
-**Status update**: 2026-05-22 (post Phase 3.4 branch abandon + worktree cleanup follow-up + Phase 6 observation early peek + **Phase 6.5 revocation shipped**, см. DECISIONS 2026-05-22).
+**Status update**: 2026-05-22 (post Phase 3.4 branch abandon + worktree cleanup follow-up + Phase 6 observation early peek + Phase 6.5 revocation shipped + **Phase A+B auto-refresh shipped** — push-triggered feed/tree refetch, см. DECISIONS 2026-05-22).
 
 ## Shipped к production
 
@@ -22,6 +22,7 @@
 | Phase 6 hotfix | ✅ closed 2026-05-18 | `b4dcb47` + `40202a1` | `/v1/auth/session` requiresOnboarding gap (chunk 4a follow-up) — DECISIONS.md 2026-05-18 hot-path fix |
 | Phase 3.6 | ✅ shipped 2026-05-18 + activated 2026-05-19 | `253efaf` | Hard-delete background job. Live в проде с 2026-05-19 03:03 UTC (env flip `RODNYA_HARD_DELETE_ENABLED=true` + `_FIRST_RUN_DRY=false`). First live run 0/0/0 deletions. DECISIONS.md 2026-05-18 ship + 2026-05-19 activation. |
 | Phase 3.4 | ✅ shipped 2026-05-11 | `cb67b0b` | UI: visibility toggle + grants + branch wizard + sensitive contacts + conflict badges. Squash of branch `claude/infallible-pike-41360c` (16 commits, ~15400 insertions). Branch cleaned up 2026-05-22 (см. DECISIONS 2026-05-22). |
+| Phase A+B auto-refresh | ✅ shipped 2026-05-22 | (этого ship'а) | Push/WebSocket-triggered refetch для feed (Phase A) и tree mutations (Phase B-narrow: 5 endpoints). Silent push для tree, banner-OK для posts. Single coordinator entry point — WebSocket realtime + push сходятся через `_showBackendNotification`. 7 backend + 15 frontend tests. См. DECISIONS 2026-05-22. |
 
 ## Parked (готово к merge, ждёт Артёмова call)
 

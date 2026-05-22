@@ -23,7 +23,9 @@ import 'chat_notification_settings_store.dart';
 import 'browser_notification_bridge.dart';
 import 'custom_api_auth_service.dart';
 import 'custom_api_realtime_service.dart';
+import 'posts_refresh_coordinator.dart';
 import 'rustore_service.dart';
+import 'tree_refresh_coordinator.dart';
 
 @pragma('vm:entry-point')
 void onDidReceiveBackgroundCustomApiNotificationResponse(
@@ -944,11 +946,32 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     final title = notification['title']?.toString() ?? 'Родня';
     final body = notification['body']?.toString() ?? '';
     final data = notification['data'];
+    final silent = notification['silent'] == true;
     final payload = jsonEncode({
       'id': id,
       'type': type,
       'data': data is Map<String, dynamic> ? data : const <String, dynamic>{},
     });
+
+    // Phase 6.5+ auto-refresh: type-dispatch ДО visual display.
+    // WebSocket realtime + push converge через этот path —
+    // foreground users получают instant refetch, background — на
+    // первом app resume через _handleAppResumed либо via push tap.
+    // Debounce 500ms в coordinator coalesces burst pushes.
+    if (type == 'post_created') {
+      PostsRefreshCoordinator.instance.requestRefresh();
+      // Continue к display — banner OK для posts (user wants to see
+      // «new post from X» в notification tray).
+    } else if (type == 'tree_mutated') {
+      final treeId = _readTreeId(data);
+      if (treeId != null && treeId.isNotEmpty) {
+        TreeRefreshCoordinator.instance.requestRefresh(treeId);
+      }
+      // Silent push: refetch only, no visual surface. Tree mutations
+      // would spam user notifications otherwise (each person edit
+      // = banner). Return early.
+      if (silent) return;
+    }
 
     if (type == 'chat_message') {
       final chatData =
@@ -1758,6 +1781,15 @@ class CustomApiNotificationService implements NotificationServiceInterface {
       );
     }
     return const <String, dynamic>{};
+  }
+
+  /// Extract `treeId` from notification `data` map (used by
+  /// `tree_mutated` refresh coordinator routing).
+  String? _readTreeId(dynamic data) {
+    final map = _asStringDynamicMap(data);
+    final raw = map['treeId']?.toString();
+    if (raw == null || raw.isEmpty) return null;
+    return raw;
   }
 
   Uri _buildUri(BackendRuntimeConfig runtimeConfig, String path) {

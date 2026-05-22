@@ -532,7 +532,14 @@ function createProfileNote({title, content}) {
   };
 }
 
-function createNotificationRecord({userId, type, title, body, data = {}}) {
+function createNotificationRecord({
+  userId,
+  type,
+  title,
+  body,
+  data = {},
+  silent = false,
+}) {
   const timestamp = nowIso();
   return {
     id: crypto.randomUUID(),
@@ -541,6 +548,13 @@ function createNotificationRecord({userId, type, title, body, data = {}}) {
     title: String(title || "").trim(),
     body: String(body || "").trim(),
     data: data && typeof data === "object" ? structuredClone(data) : {},
+    // Phase 6.5+: silent notifications carry data-only signals
+    // (e.g. `tree_mutated` для auto-refresh). Client filters эти
+    // на foreground display path; push gateway propagates flag в
+    // payload так что service worker / device handlers могут skip
+    // banner. Default false — backwards-compat для all existing
+    // dispatch callers.
+    silent: silent === true,
     createdAt: timestamp,
     readAt: null,
   };
@@ -13001,7 +13015,7 @@ class FileStore {
     };
   }
 
-  async createNotification({userId, type, title, body, data}) {
+  async createNotification({userId, type, title, body, data, silent = false}) {
     const db = await this._read();
     const user = db.users.find((entry) => entry.id === userId);
     if (!user) {
@@ -13014,6 +13028,7 @@ class FileStore {
       title,
       body,
       data,
+      silent,
     });
     db.notifications.push(notification);
     await this._write(db);
@@ -14164,6 +14179,87 @@ class FileStore {
     db.posts.push(post);
     await this._write(db);
     return attachPostReactions(db, post);
+  }
+
+  /// Phase 6.5+ auto-refresh: tree-mutation audience. Used by route
+  /// layer для dispatch `tree_mutated` silent notification после
+  /// person/relation mutations. Returns userIds (minus actor) что
+  /// must refetch tree state.
+  ///
+  /// Composition (union, deduplicated, actor excluded):
+  ///   1. Tree owner (`tree.creatorId`).
+  ///   2. Tree members (`tree.memberIds`) — co-editors / branch
+  ///      collaborators.
+  ///   3. Edit-grant holders на graphPersons в этой tree
+  ///      (`graphPersonEditGrants` rows where `revokedAt=null`).
+  ///   4. Identity-linked users — `graphPerson.userId !== null`
+  ///      means пользователь claimed identity; они owners своих
+  ///      cards across trees.
+  ///
+  /// Privacy fence rationale: `tree_mutated` payload carries только
+  /// `{treeId, kind, actorUserId}` — НЕ personId либо diff. Recipient
+  /// does GET tree, backend filters visible content per Phase 3.1/
+  /// 3.4 visibility rules. Audience being broader does NOT leak
+  /// content; broader audience = more refresh pings но zero
+  /// information disclosure beyond «something changed».
+  async resolveTreeAudienceUserIds(treeId, {excludeUserId = null} = {}) {
+    const normalizedTreeId = String(treeId || "").trim();
+    if (!normalizedTreeId) return [];
+    const normalizedExcluded = excludeUserId
+      ? String(excludeUserId).trim()
+      : "";
+    const db = await this._read();
+    const tree = (db.trees || []).find((t) => t.id === normalizedTreeId);
+    if (!tree) return [];
+
+    const audience = new Set();
+    if (tree.creatorId && tree.creatorId !== normalizedExcluded) {
+      audience.add(tree.creatorId);
+    }
+    const memberIds = Array.isArray(tree.memberIds)
+      ? tree.memberIds
+      : Array.isArray(tree.members)
+          ? tree.members
+          : [];
+    for (const memberId of memberIds) {
+      if (!memberId || memberId === normalizedExcluded) continue;
+      audience.add(memberId);
+    }
+
+    // GraphPersons на этой tree — derive presence через legacyPersonIds
+    // lookup: graphPerson belongs to tree iff any of its legacy person
+    // ids lives в db.persons с этим treeId. (graphPerson не carries
+    // `legacyTreeIds` directly — это поле живёт только на graphRelation
+    // и personIdentity.) Filter is identity-linked owners + edit-grant
+    // anchors.
+    const personsByTree = new Map();
+    for (const p of db.persons || []) {
+      if (p.treeId !== normalizedTreeId) continue;
+      personsByTree.set(p.id, p);
+    }
+    const treeGraphPersonIds = new Set();
+    for (const gp of db.graphPersons || []) {
+      if (gp.deletedAt) continue;
+      const legacyPersonIds = Array.isArray(gp.legacyPersonIds)
+        ? gp.legacyPersonIds
+        : [];
+      const inTree = legacyPersonIds.some((id) => personsByTree.has(id));
+      if (!inTree) continue;
+      treeGraphPersonIds.add(gp.id);
+      if (gp.userId && gp.userId !== normalizedExcluded) {
+        audience.add(gp.userId);
+      }
+    }
+
+    for (const grant of db.graphPersonEditGrants || []) {
+      if (grant.revokedAt) continue;
+      if (!treeGraphPersonIds.has(grant.graphPersonId)) continue;
+      if (!grant.granteeUserId) continue;
+      if (grant.granteeUserId === normalizedExcluded) continue;
+      audience.add(grant.granteeUserId);
+    }
+
+    return Array.from(audience);
   }
 
   /// Audience = union of `tree.memberIds` across every branch the
