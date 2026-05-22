@@ -2022,3 +2022,74 @@ Two remote-only branches investigated:
 grep claude/` shows only `create-github-issues-b6eKP` (deferred).
 
 ---
+
+## 2026-05-22: Phase 6 observation early peek — null sample
+
+**Контекст**: review window 2026-05-14 → 2026-05-28 (2 weeks).
+Day 8 peek для surface red flags до official review.
+
+**Findings (production data peek через `sudo -u postgres psql`)**:
+
+| Metric | Result |
+|---|---|
+| Users (total) | 70 |
+| Users registered after Phase 6 ship | 5 |
+| Real organic (1) vs test (4) | `taka336@mail.ru` / 4× smoke + `ya@fodderxd.ru` |
+| Onboarding states completed | 0/5 |
+| Trees created post-ship | 0 |
+| Kinship checks invoked | 0 |
+| 5xx rate | 0% |
+| Backend stability | excellent |
+| Phase 3.6 hard-delete cycles | 3 (Wed/Thu/Fri 03:03 UTC, 0/0/0/0/0 каждый) |
+
+**Root cause null wizard finishes**: все 5 registrations прошли
+ДО chunk 4a fix deploy (2026-05-18 04:33 UTC). Все hit redirect
+bug (landing на `/complete_profile` вместо `/setup`). После fix —
+0 новых organic registrations, fix verified только через ADB smoke
+(2026-05-18).
+
+**Implication для 2026-05-28 review**: sample size = 1 organic
+abandoned user. Targets (`>70%` / `>90%` / `>40%`) не computable.
+Review window inconclusive из-за adoption volume, не stability.
+
+**Решение**:
+
+* Backend register handler automatically sets
+  `currentStep: "welcome"` при registration (verified в
+  `backend/src/store.js`). Все 5 stuck onboardingStates имеют
+  `currentStep: "welcome", completed: false` — semantically
+  correct fresh-wizard-slot state. Никаких mutations не потребовалось.
+* После chunk 4a fix (`b4dcb47` deployed 2026-05-18 04:33 UTC),
+  `/v1/auth/session` correctly returns `requiresOnboarding: true`
+  для всех 5. На next login клиент route'нёт к `/setup` wizard
+  автоматически.
+* Observation review 2026-05-28 mark как "inconclusive — null
+  sample".
+* Production health `5xx=0` — Phase 6 deployment stable.
+* Focus shift к adoption / marketing / features (Артёмов next
+  decision).
+
+**Не сделано (Артёмов call)**:
+
+* Outreach `taka336@mail.ru` (email через UniSender?) — не делали
+  без его phrase'ования.
+* Smoke account cleanup — 4 test accounts остаются (минимальный
+  шум).
+* Phase 6.5 candidates (identity-suggestions push, revocation UX,
+  notification action buttons) — pending design call.
+
+**Lesson (для future schema-touch ops)**:
+
+* Always verify actual field names через `SELECT` перед `UPDATE`
+  на JSONB state document. Initial briefing на этой task говорил
+  «step: empty» но реальное field — `currentStep: "welcome"` (set
+  by register handler). Worker discipline на STOP-before-mutation
+  сэкономила unnecessary no-op DB write на production state
+  document. Pattern: read-verify → если diverges от briefing →
+  STOP + report, не «guess and proceed».
+
+**Влияет на**: docs only, 0 state mutations.
+
+**Принято**: Артём + Claude.
+
+---

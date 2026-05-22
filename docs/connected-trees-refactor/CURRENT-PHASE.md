@@ -4,7 +4,7 @@
 > [`docs/tree_model_overhaul_rfc.md`](../tree_model_overhaul_rfc.md).
 > См. [DECISIONS.md](DECISIONS.md) от 2026-05-09.
 
-**Status update**: 2026-05-22 (post Phase 3.4 branch abandon — squash artifact cleanup, см. DECISIONS 2026-05-22).
+**Status update**: 2026-05-22 (post Phase 3.4 branch abandon + worktree cleanup follow-up + Phase 6 observation early peek, см. DECISIONS 2026-05-22).
 
 ## Shipped к production
 
@@ -38,6 +38,13 @@
   * 5xx rate <0.1%
   Flagless (additive feature) — observation = passive metric monitoring,
   no code flip needed.
+
+  > ⚠️ Day 8 peek (2026-05-22): organic adoption минимальный
+  > (1 real user из 5 registrations, hit chunk 4a bug before fix
+  > deploy). Server-side state correct (`currentStep: "welcome"` для
+  > всех 5), automatic retry slot ready на next login. Review window
+  > likely inconclusive — sample too small. См. DECISIONS 2026-05-22
+  > "Phase 6 observation early peek".
 
 ## Pending — нужен Артёмов design call
 
