@@ -420,6 +420,7 @@ class _DiscoverRelativesScreenState extends State<DiscoverRelativesScreen> {
           const SizedBox(height: 32),
           _IssuedHistorySection(
             checks: c.issued,
+            controller: c,
           ),
         ],
       ],
@@ -790,9 +791,13 @@ class _IncomingPendingBanner extends StatelessWidget {
 }
 
 class _IssuedHistorySection extends StatelessWidget {
-  const _IssuedHistorySection({required this.checks});
+  const _IssuedHistorySection({
+    required this.checks,
+    required this.controller,
+  });
 
   final List<KinshipCheck> checks;
+  final KinshipCheckController controller;
 
   @override
   Widget build(BuildContext context) {
@@ -829,6 +834,14 @@ class _IssuedHistorySection extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
+                // Phase 6.5: cancel button для pending issued items.
+                // Tap → confirmation dialog → controller.revokeCheck
+                // → snackbar feedback. Hidden для terminal statuses.
+                if (check.status == KinshipCheckStatus.pending)
+                  _RevokeButton(
+                    controller: controller,
+                    check: check,
+                  ),
               ],
             ),
           ),
@@ -846,6 +859,8 @@ class _IssuedHistorySection extends StatelessWidget {
         return Icons.cancel_rounded;
       case KinshipCheckStatus.expired:
         return Icons.access_time_filled_rounded;
+      case KinshipCheckStatus.revoked:
+        return Icons.cancel_schedule_send_rounded;
       case KinshipCheckStatus.unknown:
         return Icons.help_outline_rounded;
     }
@@ -860,6 +875,8 @@ class _IssuedHistorySection extends StatelessWidget {
       case KinshipCheckStatus.rejected:
         return theme.colorScheme.error;
       case KinshipCheckStatus.expired:
+        return theme.colorScheme.onSurfaceVariant;
+      case KinshipCheckStatus.revoked:
         return theme.colorScheme.onSurfaceVariant;
       case KinshipCheckStatus.unknown:
         return theme.colorScheme.onSurfaceVariant;
@@ -876,9 +893,98 @@ class _IssuedHistorySection extends StatelessWidget {
         return 'Запрос отклонён';
       case KinshipCheckStatus.expired:
         return 'Запрос истёк';
+      case KinshipCheckStatus.revoked:
+        return 'Запрос отозван';
       case KinshipCheckStatus.unknown:
         return 'Неизвестный статус';
     }
+  }
+}
+
+/// Phase 6.5: trailing IconButton на pending issued row. Single-tap →
+/// confirmation dialog → controller.revokeCheck → snackbar. Action
+/// recoverable (initiator может re-create immediately), no double-
+/// confirm.
+class _RevokeButton extends StatefulWidget {
+  const _RevokeButton({
+    required this.controller,
+    required this.check,
+  });
+
+  final KinshipCheckController controller;
+  final KinshipCheck check;
+
+  @override
+  State<_RevokeButton> createState() => _RevokeButtonState();
+}
+
+class _RevokeButtonState extends State<_RevokeButton> {
+  bool _isRevoking = false;
+
+  Future<void> _handleTap() async {
+    final messenger = ScaffoldMessenger.of(context);
+    final theme = Theme.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Отозвать запрос?'),
+        content: const Text(
+          'Получатель увидит уведомление об отзыве.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Отмена'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            style: TextButton.styleFrom(
+              foregroundColor: theme.colorScheme.error,
+            ),
+            child: const Text('Отозвать'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _isRevoking = true);
+    final updated = await widget.controller.revokeCheck(
+      checkId: widget.check.id,
+    );
+    if (!mounted) return;
+    setState(() => _isRevoking = false);
+    if (updated != null) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Запрос отозван')),
+      );
+    } else {
+      final error =
+          widget.controller.error ?? 'Не удалось отозвать запрос';
+      messenger.showSnackBar(SnackBar(content: Text(error)));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isRevoking) {
+      return const SizedBox(
+        width: 36,
+        height: 36,
+        child: Center(
+          child: SizedBox(
+            width: 16,
+            height: 16,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      );
+    }
+    return IconButton(
+      icon: const Icon(Icons.close_rounded, size: 18),
+      tooltip: 'Отозвать запрос',
+      visualDensity: VisualDensity.compact,
+      onPressed: _handleTap,
+    );
   }
 }
 

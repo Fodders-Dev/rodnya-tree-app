@@ -1,17 +1,19 @@
 // Phase 6 chunk 1: kinship-checks (BFS «мы родственники?» bilateral
 // consent). DECISIONS.md 2026-05-13 + PHASE-6-PROPOSAL.md §2.5/§2.6.
 //
-// State machine: pending → accepted | rejected | expired (14d timeout).
+// State machine: pending → accepted | rejected | expired (14d timeout)
+// | revoked (Phase 6.5, initiator action).
 // On accept — store computes findBloodRelation(maxDepth=4) + stores
-// result. Permission gates: initiator (create + list-issued),
+// result. Permission gates: initiator (create + list-issued + revoke),
 // target (respond + list-received).
 //
-// Notification types (4):
+// Notification types (5):
 //   kinship_check_received — target gets on create.
 //   kinship_check_confirmed — initiator gets on accept.
 //   kinship_check_declined — initiator gets on reject.
 //   kinship_check_expired — initiator gets on auto-expire (lazy
 //     dispatched at endpoint when sweep triggers).
+//   kinship_check_revoked — target gets on initiator revoke (Phase 6.5).
 
 function registerKinshipChecksRoutes(
   app,
@@ -27,6 +29,8 @@ function registerKinshipChecksRoutes(
       createdAt: check.createdAt,
       expiresAt: check.expiresAt,
       respondedAt: check.respondedAt,
+      // Phase 6.5: initiator revocation timestamp. null до revoke.
+      revokedAt: check.revokedAt ?? null,
       result: check.result,
     };
   }
@@ -188,6 +192,80 @@ function registerKinshipChecksRoutes(
           kinshipCheckId: outcome.check.id,
           targetUserId: existing.targetUserId,
           status: decision,
+        },
+      });
+
+      res.json({check: mapCheck(outcome.check)});
+    },
+  );
+
+  // POST /v1/kinship-checks/:checkId/revoke — initiator cancels own
+  // pending request. Phase 6.5 PHASE-6-PROPOSAL.md §2.6 + DECISIONS
+  // 2026-05-22.
+  app.post(
+    "/v1/kinship-checks/:checkId/revoke",
+    requireAuth,
+    async (req, res) => {
+      // Pre-validate в routes layer (mirror respond pattern). Store
+      // re-validates как defense-in-depth.
+      const existing = await store.findKinshipCheck({
+        checkId: req.params.checkId,
+      });
+      if (!existing) {
+        res.status(404).json({message: "Запрос не найден"});
+        return;
+      }
+      if (existing.initiatorUserId !== req.auth.user.id) {
+        res.status(403).json({
+          message: "Нельзя отозвать чужой запрос",
+        });
+        return;
+      }
+      if (existing.status !== "pending") {
+        res.status(409).json({
+          message: "Этот запрос уже обработан либо отозван",
+          currentStatus: existing.status,
+        });
+        return;
+      }
+
+      const outcome = await store.revokeKinshipCheck({
+        checkId: req.params.checkId,
+        initiatorUserId: req.auth.user.id,
+      });
+      if (outcome.error === "NOT_FOUND") {
+        res.status(404).json({message: "Запрос не найден"});
+        return;
+      }
+      if (outcome.error === "NOT_INITIATOR") {
+        res.status(403).json({message: "Нельзя отозвать чужой запрос"});
+        return;
+      }
+      if (outcome.error === "NOT_PENDING") {
+        res.status(409).json({
+          message: "Этот запрос уже обработан либо отозван",
+          currentStatus: outcome.currentStatus,
+        });
+        return;
+      }
+      if (outcome.error) {
+        res.status(500).json({message: "Не удалось отозвать запрос"});
+        return;
+      }
+
+      // Notify target: «Запрос отозван». Mirror respond dispatch
+      // shape для consistency с других kinship_check_* types.
+      await createAndDispatchNotification({
+        userId: existing.targetUserId,
+        type: "kinship_check_revoked",
+        title: "Запрос отозван",
+        body:
+          "Отправитель отозвал запрос на подтверждение родственной " +
+          "связи.",
+        data: {
+          kinshipCheckId: outcome.check.id,
+          initiatorUserId: existing.initiatorUserId,
+          status: "revoked",
         },
       });
 

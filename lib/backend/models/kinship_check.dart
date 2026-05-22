@@ -18,6 +18,7 @@ class KinshipCheck {
     required this.createdAt,
     required this.expiresAt,
     this.respondedAt,
+    this.revokedAt,
     this.result,
   });
 
@@ -28,6 +29,11 @@ class KinshipCheck {
   final String createdAt;
   final String expiresAt;
   final String? respondedAt;
+
+  /// Phase 6.5: initiator revocation timestamp. `null` для pending /
+  /// accepted / rejected / expired. Populated при successful POST
+  /// `/v1/kinship-checks/:id/revoke` (only initiator allowed).
+  final String? revokedAt;
 
   /// `null` для pending/rejected/expired. Populated server-side
   /// at accept time с findBloodRelation(maxDepth=4) result.
@@ -45,6 +51,7 @@ class KinshipCheck {
       createdAt: (json['createdAt'] ?? '').toString(),
       expiresAt: (json['expiresAt'] ?? '').toString(),
       respondedAt: _nullableString(json['respondedAt']),
+      revokedAt: _nullableString(json['revokedAt']),
       result: resultRaw is Map<String, dynamic>
           ? BloodRelation.fromJson(resultRaw)
           : (resultRaw is Map
@@ -59,6 +66,10 @@ enum KinshipCheckStatus {
   accepted,
   rejected,
   expired,
+
+  /// Phase 6.5: initiator revoked own pending request before target
+  /// responded. Terminal state; cannot transition к accepted/rejected.
+  revoked,
   unknown;
 
   String get serverValue {
@@ -71,6 +82,8 @@ enum KinshipCheckStatus {
         return 'rejected';
       case KinshipCheckStatus.expired:
         return 'expired';
+      case KinshipCheckStatus.revoked:
+        return 'revoked';
       case KinshipCheckStatus.unknown:
         return 'unknown';
     }
@@ -86,6 +99,8 @@ enum KinshipCheckStatus {
         return KinshipCheckStatus.rejected;
       case 'expired':
         return KinshipCheckStatus.expired;
+      case 'revoked':
+        return KinshipCheckStatus.revoked;
       default:
         return KinshipCheckStatus.unknown;
     }
@@ -145,7 +160,8 @@ class KinshipCheckError implements Exception {
 
   /// Code values: 'INVALID_INPUT' | 'SELF_CHECK_FORBIDDEN' |
   /// 'TARGET_NOT_FOUND' | 'REJECTION_COOLDOWN' | 'NOT_FOUND' |
-  /// 'NOT_PENDING' | 'NETWORK' | 'UNKNOWN'.
+  /// 'NOT_PENDING' | 'NOT_INITIATOR' (Phase 6.5 revoke) | 'NETWORK'
+  /// | 'UNKNOWN'.
   final String code;
   final String message;
   final int? retryAfterMs;

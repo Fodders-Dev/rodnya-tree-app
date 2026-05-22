@@ -4,7 +4,7 @@
 > [`docs/tree_model_overhaul_rfc.md`](../tree_model_overhaul_rfc.md).
 > См. [DECISIONS.md](DECISIONS.md) от 2026-05-09.
 
-**Status update**: 2026-05-22 (post Phase 3.4 branch abandon + worktree cleanup follow-up + Phase 6 observation early peek, см. DECISIONS 2026-05-22).
+**Status update**: 2026-05-22 (post Phase 3.4 branch abandon + worktree cleanup follow-up + Phase 6 observation early peek + **Phase 6.5 revocation shipped**, см. DECISIONS 2026-05-22).
 
 ## Shipped к production
 
@@ -51,7 +51,10 @@
 * **Phase 6.5** (post-observation, conditional):
   * Identity-suggestions push notification (DECISIONS
     2026-05-14 «identity-suggestions push deferred»).
-  * Revocation UX для kinship-checks (PHASE-6-PROPOSAL §2.6).
+  * ~~Revocation UX для kinship-checks (PHASE-6-PROPOSAL §2.6).~~
+    ✅ Shipped 2026-05-22 — initiator может отозвать pending
+    request, target gets `kinship_check_revoked` notification.
+    См. DECISIONS 2026-05-22.
   * Native notification action buttons (Подтвердить/Отклонить
     inside notification body).
 

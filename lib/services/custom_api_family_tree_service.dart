@@ -2509,6 +2509,25 @@ class CustomApiFamilyTreeService
     }
   }
 
+  @override
+  Future<KinshipCheck?> revokeKinshipCheck({
+    required String checkId,
+  }) async {
+    try {
+      final response = await _requestJson(
+        method: 'POST',
+        path: '/v1/kinship-checks/$checkId/revoke',
+      );
+      final checkRaw = response['check'];
+      if (checkRaw is! Map) return null;
+      return KinshipCheck.fromJson(Map<String, dynamic>.from(checkRaw));
+    } on CustomApiException catch (e) {
+      throw _mapKinshipCheckException(e, endpoint: 'revoke');
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Map [CustomApiException.statusCode] к domain-specific
   /// [KinshipCheckError] code. Backend response payloads documented
   /// в backend/src/routes/kinship-checks-routes.js.
@@ -2523,7 +2542,10 @@ class CustomApiFamilyTreeService
         code = 'INVALID_INPUT';
         break;
       case 403:
-        code = 'NOT_FOUND'; // foreign check — surface as not-found
+        // Phase 6.5: revoke endpoint surfaces NOT_INITIATOR (caller —
+        // не initiator). Respond endpoint surfaces NOT_FOUND
+        // («foreign check» heuristic) для consistency с UI tone.
+        code = endpoint == 'revoke' ? 'NOT_INITIATOR' : 'NOT_FOUND';
         break;
       case 404:
         code = endpoint == 'create' ? 'TARGET_NOT_FOUND' : 'NOT_FOUND';

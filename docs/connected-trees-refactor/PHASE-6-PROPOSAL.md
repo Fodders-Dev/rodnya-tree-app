@@ -789,7 +789,7 @@ Review-revise цикл с Артёмом закрыл все 10 questions. **0 o
 | Q1 | Wizard length | **4 screens** (welcome / profile / relatives / finish) | Approved |
 | Q2 | First-relatives required/suggested | **Suggested + skip + prominent empty-state CTA** | §2.3 mandates illustration + «Добавьте первого родственника» button |
 | Q3 | BFS entry point | **FAB в `relatives_screen`** | §2.4 — first-visit tooltip обязателен для discoverability |
-| Q4 | Consent model | **Bilateral pending** (STRONG APPROVE) | §2.6 — privacy safeguard против social engineering. Timeout 14d. Notification copy: «...запрос на подтверждение родственной связи». Revocation deferred to Phase 6.5 |
+| Q4 | Consent model | **Bilateral pending** (STRONG APPROVE) | §2.6 — privacy safeguard против social engineering. Timeout 14d. Notification copy: «...запрос на подтверждение родственной связи». ✅ Revocation implemented в Phase 6.5 (2026-05-22, см. DECISIONS) — initiator может отозвать pending request, target gets `kinship_check_revoked` notification. |
 | Q5 | Invisible chain nodes | **Anonymized placeholder** («?») | §2.5/§5 — generic, не leak'ает имя/avatar |
 | Q6 | Existing users | **Silent skip** | Phase 4 features уже accessible; tour deferred |
 | Q7 | Step-back | **Linear с back button** | Approved |

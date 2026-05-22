@@ -52,4 +52,17 @@ abstract class KinshipCheckCapableFamilyTreeService {
     required String checkId,
     required KinshipCheckDecision decision,
   });
+
+  /// `POST /v1/kinship-checks/:checkId/revoke` (Phase 6.5). Initiator
+  /// cancels own pending request. State transition pending → revoked.
+  /// Target receives `kinship_check_revoked` notification.
+  ///
+  /// Throws [KinshipCheckError] для:
+  ///   - NOT_FOUND (id mismatch)
+  ///   - NOT_INITIATOR (caller — не initiator на check'е)
+  ///   - NOT_PENDING (already responded / expired / re-revoked —
+  ///     idempotency guard против double notification dispatch).
+  Future<KinshipCheck?> revokeKinshipCheck({
+    required String checkId,
+  });
 }

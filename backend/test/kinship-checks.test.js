@@ -88,6 +88,13 @@ async function respond(ctx, token, checkId, decision) {
   });
 }
 
+async function revoke(ctx, token, checkId) {
+  return fetch(`${ctx.baseUrl}/v1/kinship-checks/${checkId}/revoke`, {
+    method: "POST",
+    headers: {authorization: `Bearer ${token}`},
+  });
+}
+
 test("POST /kinship-checks: no auth → 401", async () => {
   const ctx = await startTestServer();
   try {
@@ -399,6 +406,204 @@ test(
       );
       const listBody = await list.json();
       assert.equal(listBody.checks[0].status, "expired");
+    } finally {
+      await stopTestServer(ctx);
+    }
+  },
+);
+
+// ── Phase 6.5: revoke ─────────────────────────────────────────────
+
+test(
+  "POST /kinship-checks/:id/revoke: initiator revokes own pending → 200 + revoked + target notification",
+  async () => {
+    const ctx = await startTestServer();
+    try {
+      const initiator = await registerUser(ctx, "init-revoke@test.app");
+      const target = await registerUser(ctx, "target-revoke@test.app");
+      const r1 = await createCheck(ctx, initiator.accessToken, target.user.id);
+      const b1 = await r1.json();
+
+      const response = await revoke(ctx, initiator.accessToken, b1.check.id);
+      assert.equal(response.status, 200);
+      const body = await response.json();
+      assert.equal(body.check.status, "revoked");
+      assert.ok(body.check.revokedAt, "revokedAt должен быть populated");
+
+      // Target receives kinship_check_revoked notification.
+      const db = await ctx.store._read();
+      const notification = db.notifications.find(
+        (n) =>
+          n.userId === target.user.id && n.type === "kinship_check_revoked",
+      );
+      assert.ok(
+        notification,
+        "target должен получить kinship_check_revoked",
+      );
+      assert.equal(
+        notification.data.kinshipCheckId,
+        b1.check.id,
+        "notification.data carries kinshipCheckId",
+      );
+      assert.equal(notification.data.status, "revoked");
+    } finally {
+      await stopTestServer(ctx);
+    }
+  },
+);
+
+test(
+  "POST /kinship-checks/:id/revoke: non-initiator (random user) → 403",
+  async () => {
+    const ctx = await startTestServer();
+    try {
+      const initiator = await registerUser(ctx, "init-rev-403@test.app");
+      const target = await registerUser(ctx, "target-rev-403@test.app");
+      const stranger = await registerUser(ctx, "stranger-rev@test.app");
+      const r1 = await createCheck(ctx, initiator.accessToken, target.user.id);
+      const b1 = await r1.json();
+
+      const response = await revoke(ctx, stranger.accessToken, b1.check.id);
+      assert.equal(response.status, 403);
+
+      // Original pending unchanged.
+      const list = await fetch(
+        `${ctx.baseUrl}/v1/me/kinship-checks/issued`,
+        {headers: {authorization: `Bearer ${initiator.accessToken}`}},
+      );
+      const listBody = await list.json();
+      assert.equal(listBody.checks[0].status, "pending");
+    } finally {
+      await stopTestServer(ctx);
+    }
+  },
+);
+
+test(
+  "POST /kinship-checks/:id/revoke: target tries to revoke → 403 (only initiator)",
+  async () => {
+    const ctx = await startTestServer();
+    try {
+      const initiator = await registerUser(ctx, "init-revt-403@test.app");
+      const target = await registerUser(ctx, "target-revt-403@test.app");
+      const r1 = await createCheck(ctx, initiator.accessToken, target.user.id);
+      const b1 = await r1.json();
+
+      const response = await revoke(ctx, target.accessToken, b1.check.id);
+      assert.equal(response.status, 403);
+    } finally {
+      await stopTestServer(ctx);
+    }
+  },
+);
+
+test(
+  "POST /kinship-checks/:id/revoke: already accepted → 409 (cannot revoke after respond)",
+  async () => {
+    const ctx = await startTestServer();
+    try {
+      const initiator = await registerUser(ctx, "init-rev-acc@test.app");
+      const target = await registerUser(ctx, "target-rev-acc@test.app");
+      const r1 = await createCheck(ctx, initiator.accessToken, target.user.id);
+      const b1 = await r1.json();
+      await respond(ctx, target.accessToken, b1.check.id, "accepted");
+
+      const response = await revoke(ctx, initiator.accessToken, b1.check.id);
+      assert.equal(response.status, 409);
+      const body = await response.json();
+      assert.equal(body.currentStatus, "accepted");
+    } finally {
+      await stopTestServer(ctx);
+    }
+  },
+);
+
+test(
+  "POST /kinship-checks/:id/revoke: already rejected → 409",
+  async () => {
+    const ctx = await startTestServer();
+    try {
+      const initiator = await registerUser(ctx, "init-rev-rej@test.app");
+      const target = await registerUser(ctx, "target-rev-rej@test.app");
+      const r1 = await createCheck(ctx, initiator.accessToken, target.user.id);
+      const b1 = await r1.json();
+      await respond(ctx, target.accessToken, b1.check.id, "rejected");
+
+      const response = await revoke(ctx, initiator.accessToken, b1.check.id);
+      assert.equal(response.status, 409);
+      const body = await response.json();
+      assert.equal(body.currentStatus, "rejected");
+    } finally {
+      await stopTestServer(ctx);
+    }
+  },
+);
+
+test(
+  "POST /kinship-checks/:id/revoke: idempotent re-call → 409 NOT_PENDING (no double notification)",
+  async () => {
+    const ctx = await startTestServer();
+    try {
+      const initiator = await registerUser(ctx, "init-rev-idem@test.app");
+      const target = await registerUser(ctx, "target-rev-idem@test.app");
+      const r1 = await createCheck(ctx, initiator.accessToken, target.user.id);
+      const b1 = await r1.json();
+
+      // First revoke — success.
+      const first = await revoke(ctx, initiator.accessToken, b1.check.id);
+      assert.equal(first.status, 200);
+
+      // Second revoke на already-revoked → 409.
+      const second = await revoke(ctx, initiator.accessToken, b1.check.id);
+      assert.equal(second.status, 409);
+      const secondBody = await second.json();
+      assert.equal(secondBody.currentStatus, "revoked");
+
+      // Only one revoked notification dispatched (no double).
+      const db = await ctx.store._read();
+      const revokedNotifications = db.notifications.filter(
+        (n) =>
+          n.userId === target.user.id && n.type === "kinship_check_revoked",
+      );
+      assert.equal(
+        revokedNotifications.length,
+        1,
+        "exactly one kinship_check_revoked notification",
+      );
+    } finally {
+      await stopTestServer(ctx);
+    }
+  },
+);
+
+test(
+  "POST /kinship-checks/:id/revoke: non-existent check → 404",
+  async () => {
+    const ctx = await startTestServer();
+    try {
+      const initiator = await registerUser(ctx, "init-rev-404@test.app");
+      const response = await revoke(
+        ctx,
+        initiator.accessToken,
+        "ghost-check-id-deadbeef",
+      );
+      assert.equal(response.status, 404);
+    } finally {
+      await stopTestServer(ctx);
+    }
+  },
+);
+
+test(
+  "POST /kinship-checks/:id/revoke: no auth → 401",
+  async () => {
+    const ctx = await startTestServer();
+    try {
+      const response = await fetch(
+        `${ctx.baseUrl}/v1/kinship-checks/some-id/revoke`,
+        {method: "POST"},
+      );
+      assert.equal(response.status, 401);
     } finally {
       await stopTestServer(ctx);
     }

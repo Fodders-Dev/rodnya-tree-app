@@ -41,6 +41,9 @@ class KinshipCheckController extends ChangeNotifier {
   bool _isSubmitting = false;
   bool _isResponding = false;
   String? _respondingCheckId;
+  // Phase 6.5: revocation state mirror responding pattern.
+  bool _isRevoking = false;
+  String? _revokingCheckId;
   String? _error;
 
   // ── Getters ────────────────────────────────────────────────────
@@ -56,6 +59,8 @@ class KinshipCheckController extends ChangeNotifier {
   bool get isSubmitting => _isSubmitting;
   bool get isResponding => _isResponding;
   String? get respondingCheckId => _respondingCheckId;
+  bool get isRevoking => _isRevoking;
+  String? get revokingCheckId => _revokingCheckId;
   String? get error => _error;
 
   /// Pending received only (used для top banner либо tab badge).
@@ -210,6 +215,58 @@ class KinshipCheckController extends ChangeNotifier {
       _error = '$e';
       _isResponding = false;
       _respondingCheckId = null;
+      notifyListeners();
+      return null;
+    }
+  }
+
+  // ── Phase 6.5: initiator revoke ────────────────────────────────
+
+  /// Initiator cancels own pending request. State transition pending
+  /// → revoked (terminal). Target receives `kinship_check_revoked`
+  /// notification. Returns the updated check либо `null` on
+  /// network/unknown failure (error set via _error).
+  ///
+  /// Throws nothing — errors converted в `_error` string. UI surfaces
+  /// через snackbar / inline message.
+  Future<KinshipCheck?> revokeCheck({required String checkId}) async {
+    final service = _service;
+    if (service == null || checkId.isEmpty) return null;
+    _isRevoking = true;
+    _revokingCheckId = checkId;
+    _error = null;
+    notifyListeners();
+    try {
+      final updated = await service.revokeKinshipCheck(checkId: checkId);
+      if (updated == null) {
+        _error = 'Не удалось отозвать запрос. Попробуйте ещё раз.';
+        _isRevoking = false;
+        _revokingCheckId = null;
+        notifyListeners();
+        return null;
+      }
+      // Optimistic local update — replace в issued list (revoke
+      // operates на initiator's issued items).
+      _issued = _issued
+          .map((c) => c.id == checkId ? updated : c)
+          .toList(growable: false);
+      _isRevoking = false;
+      _revokingCheckId = null;
+      notifyListeners();
+      // Background refresh — keeps both lists в sync (notification
+      // also lands в target's received list).
+      unawaited(refresh());
+      return updated;
+    } on KinshipCheckError catch (e) {
+      _error = e.message;
+      _isRevoking = false;
+      _revokingCheckId = null;
+      notifyListeners();
+      return null;
+    } catch (e) {
+      _error = '$e';
+      _isRevoking = false;
+      _revokingCheckId = null;
       notifyListeners();
       return null;
     }

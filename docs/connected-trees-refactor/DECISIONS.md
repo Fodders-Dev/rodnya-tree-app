@@ -2093,3 +2093,103 @@ Review window inconclusive из-за adoption volume, не stability.
 **Принято**: Артём + Claude.
 
 ---
+
+## 2026-05-22: Phase 6.5 — kinship-check revocation
+
+**Контекст**: Phase 6 shipped 2026-05-14 без revocation для sent
+kinship checks. PHASE-6-PROPOSAL.md §2.6 listed как Phase 6.5
+candidate. Initiator could send accidentally либо передумать —
+no way отозвать pending request. После Phase 6 observation peek
+(2026-05-22) showed null sample, focus shift к features:
+revocation выбран как first 6.5 ship.
+
+**Решение**: добавить `POST /v1/kinship-checks/:checkId/revoke`
+endpoint. Mirror respond pattern. Target receives `kinship_check_revoked`
+notification «Запрос отозван» (избегает stale accept после revoke).
+State machine extended: `pending → accepted | rejected | expired |
+revoked` (terminal).
+
+**Permission gates**:
+* Routes layer: pre-validate `initiatorUserId === req.auth.user.id`
+  → 403 «Нельзя отозвать чужой запрос». Status `!== "pending"` →
+  409 «Этот запрос уже обработан либо отозван».
+* Store layer (defense-in-depth): `revokeKinshipCheck` returns
+  `NOT_INITIATOR` / `NOT_PENDING` / `NOT_FOUND` / `INVALID_INPUT`
+  error codes.
+* Idempotent re-revoke (status уже `"revoked"`): NOT_PENDING с
+  `currentStatus: "revoked"` — guards против double notification
+  dispatch при network retry.
+
+**Frontend UX**:
+* Trailing IconButton (`Icons.close_rounded`) на pending issued
+  rows в `_IssuedHistorySection`. Hidden для terminal statuses.
+* Single-tap → AlertDialog «Отозвать запрос? Получатель увидит
+  уведомление об отзыве.» с `«Отмена»` + `«Отозвать»` (red
+  foreground через `theme.colorScheme.error`).
+* No double-confirm — action recoverable (initiator может
+  re-create immediately).
+* Snackbar feedback: «Запрос отозван» либо error message из
+  controller.
+* Status enum extended `KinshipCheckStatus.revoked` с label
+  «Запрос отозван», icon `cancel_schedule_send_rounded`, color
+  `onSurfaceVariant`.
+
+**Альтернативы**:
+* `DELETE /v1/kinship-checks/:id` — REST покажется чище, но
+  `POST .../revoke` matches respond convention (status transition,
+  не destruction; row остаётся для audit + target's received list).
+* No notification к target — отвергнуто, stale accept после revoke
+  = bad UX (target sees pending in list, taps accept, gets 409
+  без понятного objaснения).
+* Cooldown after revoke перед re-create — отвергнуто, no harassment
+  vector (initiator-side action; cooldown уже applies для
+  rejection per DECISIONS 2026-05-14 30d).
+* Swipe-to-delete UI — отвергнуто, heavier interaction чем
+  trailing-icon, plus confirmation dialog already needed (icon →
+  dialog flow more discoverable).
+* Double-confirm dialog — отвергнуто, action recoverable, friction
+  unnecessary.
+
+**Влияет на**:
+* `backend/src/store.js` — `revokeKinshipCheck` method (~40 LOC) +
+  `createKinshipCheck` initial check shape (`revokedAt: null`).
+* `backend/src/routes/kinship-checks-routes.js` — `mapCheck`
+  exposes `revokedAt`, new POST `.../revoke` route handler с
+  permission gates + notification dispatch (~70 LOC).
+* `backend/test/kinship-checks.test.js` — 8 new tests: success,
+  non-initiator 403, target tries 403, accepted 409, rejected 409,
+  idempotent re-call 409 (verifies single notification), 404
+  non-existent, 401 no-auth.
+* `lib/backend/models/kinship_check.dart` — `KinshipCheckStatus.revoked`
+  enum case + `revokedAt` field на `KinshipCheck`.
+* `lib/backend/interfaces/kinship_check_capable_family_tree_service.dart`
+  — abstract `revokeKinshipCheck` method.
+* `lib/services/custom_api_family_tree_service.dart` —
+  implementation + `_mapKinshipCheckException` extended (403 →
+  `NOT_INITIATOR` для endpoint='revoke').
+* `lib/providers/kinship_check_controller.dart` — `revokeCheck`
+  method + `isRevoking/revokingCheckId` state, mirror responding
+  pattern.
+* `lib/screens/discover_relatives/discover_relatives_screen.dart`
+  — `_IssuedHistorySection` accepts controller, new `_RevokeButton`
+  widget (confirmation dialog + snackbar), `revoked` status case
+  в icon/color/label switches.
+* `test/kinship_check_test.dart` — round-trip + revoked parsing +
+  null `revokedAt` для pending.
+* `test/kinship_check_controller_test.dart` — `_FakeService`
+  extended + 6 new tests в `revokeCheck` group.
+
+**Тесты (verified locally)**:
+* Backend `node --test backend/test/kinship-checks.test.js` —
+  20/20 (12 existing + 8 new).
+* Backend full workflow suite — 123/123 на second run (Windows
+  ENOTEMPTY flakes гонять).
+* Frontend `flutter test test/kinship_check_test.dart
+  test/kinship_check_controller_test.dart` — 38/38 (29 existing +
+  9 new — 3 model tests + 6 controller tests).
+* `flutter analyze` — 1 warning (`_branchDigest` baseline), 0 new
+  from this work.
+
+**Принято**: Артём + Claude.
+
+---

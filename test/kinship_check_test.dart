@@ -22,6 +22,20 @@ void main() {
         KinshipCheckStatus.fromServerValue('expired'),
         KinshipCheckStatus.expired,
       );
+      expect(
+        KinshipCheckStatus.fromServerValue('revoked'),
+        KinshipCheckStatus.revoked,
+      );
+    });
+
+    test('serverValue round-trip', () {
+      for (final s in KinshipCheckStatus.values) {
+        expect(
+          KinshipCheckStatus.fromServerValue(s.serverValue),
+          s,
+          reason: 'round-trip ${s.name}',
+        );
+      }
     });
 
     test('defaults к unknown для неизвестных значений', () {
@@ -99,6 +113,34 @@ void main() {
       });
       expect(c.status, KinshipCheckStatus.rejected);
       expect(c.result, isNull);
+    });
+
+    test('parses revoked check + revokedAt timestamp (Phase 6.5)', () {
+      final c = KinshipCheck.fromJson({
+        'id': 'k-rev',
+        'initiatorUserId': 'u-a',
+        'targetUserId': 'u-b',
+        'status': 'revoked',
+        'createdAt': '2026-05-14T10:00:00Z',
+        'expiresAt': '2026-05-28T10:00:00Z',
+        'revokedAt': '2026-05-22T13:00:00Z',
+      });
+      expect(c.status, KinshipCheckStatus.revoked);
+      expect(c.revokedAt, '2026-05-22T13:00:00Z');
+      expect(c.respondedAt, isNull);
+      expect(c.result, isNull);
+    });
+
+    test('revokedAt null для pending check', () {
+      final c = KinshipCheck.fromJson({
+        'id': 'k-p',
+        'initiatorUserId': 'u-a',
+        'targetUserId': 'u-b',
+        'status': 'pending',
+        'createdAt': '2026-05-14T10:00:00Z',
+        'expiresAt': '2026-05-28T10:00:00Z',
+      });
+      expect(c.revokedAt, isNull);
     });
   });
 

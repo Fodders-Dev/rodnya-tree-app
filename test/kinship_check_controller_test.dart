@@ -13,20 +13,25 @@ class _FakeService implements KinshipCheckCapableFamilyTreeService {
     this.issued = const [],
     this.createResult,
     this.respondResult,
+    this.revokeResult,
     this.throwOnCreate,
     this.throwOnRespond,
+    this.throwOnRevoke,
   });
 
   List<KinshipCheck> received;
   List<KinshipCheck> issued;
   KinshipCheckCreateResult? createResult;
   KinshipCheck? respondResult;
+  KinshipCheck? revokeResult;
   KinshipCheckError? throwOnCreate;
   KinshipCheckError? throwOnRespond;
+  KinshipCheckError? throwOnRevoke;
 
   String? lastTargetUserId;
   KinshipCheckDecision? lastRespondDecision;
   String? lastRespondCheckId;
+  String? lastRevokeCheckId;
 
   @override
   Future<KinshipCheckCreateResult?> createKinshipCheck({
@@ -58,6 +63,15 @@ class _FakeService implements KinshipCheckCapableFamilyTreeService {
     lastRespondCheckId = checkId;
     if (throwOnRespond != null) throw throwOnRespond!;
     return respondResult;
+  }
+
+  @override
+  Future<KinshipCheck?> revokeKinshipCheck({
+    required String checkId,
+  }) async {
+    lastRevokeCheckId = checkId;
+    if (throwOnRevoke != null) throw throwOnRevoke!;
+    return revokeResult;
   }
 }
 
@@ -285,6 +299,89 @@ void main() {
         decision: KinshipCheckDecision.accepted,
       );
       expect(result, isNull);
+    });
+  });
+
+  group('revokeCheck (Phase 6.5 initiator revocation)', () {
+    test(
+      'success — updates local issued + returns check with revokedAt',
+      () async {
+        final pending = _pending('i-1');
+        final revoked = KinshipCheck(
+          id: 'i-1',
+          initiatorUserId: 'u-a',
+          targetUserId: 'u-b',
+          status: KinshipCheckStatus.revoked,
+          createdAt: '2026-05-14T10:00:00Z',
+          expiresAt: '2026-05-28T10:00:00Z',
+          revokedAt: '2026-05-22T13:00:00Z',
+        );
+        final fake = _FakeService(
+          issued: [pending],
+          revokeResult: revoked,
+        );
+        final c = KinshipCheckController(service: fake);
+        await c.refresh();
+        final result = await c.revokeCheck(checkId: 'i-1');
+        expect(result?.status, KinshipCheckStatus.revoked);
+        expect(result?.revokedAt, '2026-05-22T13:00:00Z');
+        expect(fake.lastRevokeCheckId, 'i-1');
+        expect(
+          c.issued.firstWhere((c) => c.id == 'i-1').status,
+          KinshipCheckStatus.revoked,
+        );
+      },
+    );
+
+    test('handles NOT_INITIATOR error gracefully', () async {
+      final fake = _FakeService(
+        throwOnRevoke: const KinshipCheckError(
+          code: 'NOT_INITIATOR',
+          message: 'Нельзя отозвать чужой запрос',
+        ),
+      );
+      final c = KinshipCheckController(service: fake);
+      final result = await c.revokeCheck(checkId: 'i-x');
+      expect(result, isNull);
+      expect(c.error, 'Нельзя отозвать чужой запрос');
+      expect(c.isRevoking, isFalse);
+      expect(c.revokingCheckId, isNull);
+    });
+
+    test('handles NOT_PENDING (re-revoke / already responded)', () async {
+      final fake = _FakeService(
+        throwOnRevoke: const KinshipCheckError(
+          code: 'NOT_PENDING',
+          message: 'Этот запрос уже обработан либо отозван',
+        ),
+      );
+      final c = KinshipCheckController(service: fake);
+      final result = await c.revokeCheck(checkId: 'i-x');
+      expect(result, isNull);
+      expect(c.error, 'Этот запрос уже обработан либо отозван');
+    });
+
+    test('null result (network failure) sets error', () async {
+      final fake = _FakeService(revokeResult: null);
+      final c = KinshipCheckController(service: fake);
+      final result = await c.revokeCheck(checkId: 'i-x');
+      expect(result, isNull);
+      expect(c.error, isNotNull);
+      expect(c.isRevoking, isFalse);
+    });
+
+    test('no-op когда service null', () async {
+      final c = KinshipCheckController(service: null);
+      final result = await c.revokeCheck(checkId: 'i-x');
+      expect(result, isNull);
+    });
+
+    test('no-op когда checkId empty', () async {
+      final fake = _FakeService();
+      final c = KinshipCheckController(service: fake);
+      final result = await c.revokeCheck(checkId: '');
+      expect(result, isNull);
+      expect(fake.lastRevokeCheckId, isNull);
     });
   });
 

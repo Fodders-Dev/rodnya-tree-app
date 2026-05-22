@@ -17075,6 +17075,9 @@ class FileStore {
       ).toISOString(),
       respondedAt: null,
       expiredAt: null,
+      // Phase 6.5: initiator revocation timestamp. Stays null до
+      // initiator вызывает /v1/kinship-checks/:id/revoke.
+      revokedAt: null,
       result: null,
     };
     db.kinshipChecks = db.kinshipChecks || [];
@@ -17173,6 +17176,41 @@ class FileStore {
         }
       }
     }
+
+    await this._write(db);
+    return {check: structuredClone(check)};
+  }
+
+  /// Phase 6.5: initiator revokes own pending request. Permission:
+  /// only initiator. Pre-condition: status === "pending". State
+  /// transition: pending → revoked (final). On success — caller
+  /// (route handler) dispatches `kinship_check_revoked` notification
+  /// к target.
+  ///
+  /// Errors: INVALID_INPUT, NOT_FOUND, NOT_INITIATOR, NOT_PENDING.
+  /// Re-revoke (status='revoked') returns NOT_PENDING с
+  /// currentStatus='revoked' — guards против double notification
+  /// dispatch при network retry.
+  async revokeKinshipCheck({checkId, initiatorUserId}) {
+    const normalizedId = normalizeNullableString(checkId);
+    const normalizedInitiator = normalizeNullableString(initiatorUserId);
+    if (!normalizedId || !normalizedInitiator) {
+      return {error: "INVALID_INPUT"};
+    }
+    const db = await this._read();
+    this._sweepExpiredKinshipChecks(db);
+    const check = (db.kinshipChecks || []).find((c) => c.id === normalizedId);
+    if (!check) return {error: "NOT_FOUND"};
+    if (check.initiatorUserId !== normalizedInitiator) {
+      return {error: "NOT_INITIATOR"};
+    }
+    if (check.status !== "pending") {
+      return {error: "NOT_PENDING", currentStatus: check.status};
+    }
+
+    const now = nowIso();
+    check.status = "revoked";
+    check.revokedAt = now;
 
     await this._write(db);
     return {check: structuredClone(check)};
