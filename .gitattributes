@@ -1,0 +1,5 @@
+# Force LF for shell scripts (prevent CRLF drift on Windows checkouts)
+# Backup script CRLF caused 15-day failure 2026-05-05 → 2026-05-19,
+# см. DECISIONS.md 2026-05-19 entry.
+*.sh         text eol=lf
+ops/scripts/ text eol=lf
