@@ -1882,3 +1882,99 @@ rodnya-backup` → exit 0/SUCCESS. Cleanup ran: 36 backup subdirs → 7
 **Принято**: Артём + Claude.
 
 ---
+
+## 2026-05-22: Phase 3.4 branch cleanup (squash-merge artifact abandon)
+
+**Контекст**: ветка `claude/infallible-pike-41360c` показывалась в
+CURRENT-PHASE.md как "Parked, awaiting merge decision" с 2026-05-13.
+Анализ при попытке решить merge'ить или нет показал `+126 / -18765`
+diff stat — branch удалит 18K строк main work (Phase 4 tests,
+Phase 6 onboarding/kinship tests, Phase 3.6 hard-delete job,
+ops/scripts) если squash-merge.
+
+**Root cause analysis**: commit `cb67b0b feat: Phase 3 — connected
+per-user trees через identity граф (squash)` от 2026-05-11 23:33:51
+уже включал Phase 3.4 UI chunks 1-5 (verified — все 10 critical
+UI files exist в main, identical content к branch tip):
+
+* `lib/widgets/visibility_toggle_section.dart`
+* `lib/widgets/sensitive_contacts_section.dart`
+* `lib/screens/access_grants_screen.dart`
+* `lib/widgets/identity_conflicts_badge.dart`
+* `lib/widgets/identity_conflicts_sheet.dart`
+* `lib/widgets/access_grants_incoming_tab.dart`
+* `lib/widgets/access_grants_outgoing_tab.dart`
+* `lib/backend/models/edit_grant.dart`
+* `lib/backend/models/include_rules.dart`
+* `lib/backend/models/visibility_choice.dart`
+
+Plus 9 corresponding test files. `git diff origin/main:$f
+origin/claude/infallible-pike-41360c:$f` returned пустой результат
+для всех 10 files — bit-identical content.
+
+**Решение**: abandon branch. Это classic squash-merge artifact —
+source branch остался pointing на old tip `66a31ac`, не linked
+с squash commit `cb67b0b` на main. Git не знает что они equivalent
+(different hashes).
+
+**Действия**:
+* `git worktree remove C:/rodnya-tree-app/.claude/worktrees/infallible-pike-41360c`
+* `git push origin --delete claude/infallible-pike-41360c`
+* CURRENT-PHASE.md: Phase 3.4 row перенесён из Parked в Shipped
+  (`cb67b0b`), cutover plan corrected, "Pending — merge decision"
+  cleaned up.
+
+**Альтернативы**:
+* Squash-merge branch как было предложено в CURRENT-PHASE —
+  отвергнуто, catastrophic (lose 18K строк current main work).
+* Cherry-pick конкретные Phase 3.4 commits в main — не нужно,
+  work уже в main через `cb67b0b`.
+* Leave branch as-is — отвергнуто, creates confusion для future
+  sessions (как сегодня).
+
+**Lesson**: squash-merge не updates source branch pointer. После
+squash полезно либо (a) delete source branch immediately, либо
+(b) tag squash commit с reference к source branch name (e.g.
+`squash-of-infallible-pike-41360c`) для future correlation.
+
+**Bonus — другие parked worktrees (audited 2026-05-22)**:
+
+* `claude/quiet-meridian-7a91b3` (tip `68fa6ae docs(refactor):
+  Phase 4 → main merge checklist`) — 10 unique commits (Phase 4
+  chunks 3a/3b/3c/4a/4b/4c + perf baseline + docs); diff vs main
+  `+421 / -10590` (75 files). **Pattern matches infallible-pike**:
+  branch имеет Phase 4 development commits, main has Phase 4
+  squash `028d1d2`. Recommendation: **abandon** (squash artifact).
+  Не deleted в этой session — defer to отдельному Артёмова OK.
+* `claude/serene-fjord-8b4d62` (tip `d704f5c feat(phase-6):
+  chunk 4d — e2e integration test + MERGE-CHECKLIST`) — 10 unique
+  commits (Phase 6 chunks 1/2/3/4a/4b/4c/4d + proposal v2 +
+  cooldown decision); diff vs main `+411 / -2460` (35 files).
+  **Pattern matches**: branch имеет Phase 6 development, main has
+  Phase 6 squash `414b218`. Recommendation: **abandon**. Не
+  deleted (тот же defer).
+* `claude/strange-pascal-3c3c1b` (tip `fb8ec21 feat(auth): hero
+  as floating card on cream`) — 0 unique commits vs main; diff
+  `+881 / -37898` (189 files). Branch tip is **ancestor** of main
+  (0 unique commits forward), но diff to main is massive deletions
+  if merged. Likely abandoned UI iteration, work обогнала branch.
+  Recommendation: **abandon** (зеро forward progress, only
+  regressive merge target). Не deleted — defer.
+
+Все 3 — same squash-artifact pattern. После Артёмова явного OK
+single command cleanup:
+```
+git worktree remove C:/rodnya-tree-app/.claude/worktrees/quiet-meridian-7a91b3
+git worktree remove C:/rodnya-tree-app/.claude/worktrees/serene-fjord-8b4d62
+git worktree remove C:/rodnya-tree-app/.claude/worktrees/strange-pascal-3c3c1b
+git push origin --delete claude/quiet-meridian-7a91b3
+git push origin --delete claude/serene-fjord-8b4d62
+git push origin --delete claude/strange-pascal-3c3c1b
+```
+
+**Влияет на**: только doc cleanup + git refs. Code в main
+unchanged.
+
+**Принято**: Артём + Claude.
+
+---
