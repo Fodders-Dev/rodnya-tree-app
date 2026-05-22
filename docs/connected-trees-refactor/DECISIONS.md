@@ -1977,4 +1977,48 @@ unchanged.
 
 **Принято**: Артём + Claude.
 
+### Cleanup follow-up (same session)
+
+Three additional parked worktrees abandoned same pattern:
+
+* `claude/quiet-meridian-7a91b3` — Phase 4 development chunks
+  (squashed via `028d1d2` 2026-05-12). Worktree + remote branch
+  gone clean.
+* `claude/serene-fjord-8b4d62` — Phase 6 development chunks
+  (squashed via `414b218` 2026-05-14). Worktree + remote branch
+  gone clean.
+* `claude/strange-pascal-3c3c1b` — abandoned UI iteration, 0
+  unique commits ancestor of main. Remote branch deleted. Worktree
+  removed from git tracking via `--force` (had untracked files —
+  consistent с 0-unique-commits verification). **Filesystem
+  directory `.claude/worktrees/strange-pascal-3c3c1b/` остался
+  на disk** — Windows path-length limit (260 chars) при removal,
+  не git-tracking issue. Manual cleanup later либо leave (orphan
+  files невидимы для git, harmless).
+
+Two remote-only branches investigated:
+
+* `claude/fix-phase-6-setup-guard` (single commit
+  `57b0953 fix(phase-6): bypass profile-complete guard для /setup
+  wizard`) — **superseded**. Touches `lib/navigation/app_router_guards.dart`
+  +6/-1 lines, content identical к `4602db9` уже в main (`git diff
+  4602db9:... 57b0953:...` empty). Phase 6 actual fix landed через
+  `4602db9` + `b4dcb47` + `40202a1` (A3 cache hot-path). Branch
+  remote-deleted.
+* `claude/create-github-issues-b6eKP` (single commit `062fe2f ci:
+  add Claude Code GitHub Action workflow with OAuth auth`) —
+  **DEFERRED, has unique production-relevant work**. Adds
+  `.github/workflows/claude.yml` (NOT в main) — workflow на mention
+  `@claude` в issue/PR comments. Triggers via OAuth token
+  (`CLAUDE_CODE_OAUTH_TOKEN`, Max subscription quota), не API key.
+  Includes author_association safety gate (OWNER / MEMBER /
+  COLLABORATOR only) против random external @claude burning quota.
+  **Recommendation**: cherry-pick `062fe2f` в main (preserve the
+  workflow), then delete branch. Альтернативно: leave branch для
+  future activation. Decision Артёма.
+
+После cleanup `git worktree list` показывает только main checkout
+(плюс orphan filesystem `strange-pascal-3c3c1b/`). `git branch -r |
+grep claude/` shows only `create-github-issues-b6eKP` (deferred).
+
 ---
