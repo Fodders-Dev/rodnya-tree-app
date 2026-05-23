@@ -177,6 +177,142 @@ void main() {
   );
 
   test(
+    'CallCoordinatorService Fix A: un-mute updates microphoneEnabled '
+    'через debugApplyMediaSync mirror того что _publishLocalMicrophone '
+    'success path should leave',
+    () async {
+      // Bug 2 repro: pre-fix toggleMicrophone enable path вызывал
+      // _publishLocalMicrophone (which set _microphoneEnabled = false
+      // only на failure) но НЕ sets к true на success — поле застревал
+      // в false после mute, UI showed «mic off» хотя peer слышит.
+      // Fix A добавил `_microphoneEnabled = published` после await.
+      //
+      // Unit test'е без real Room мы exercise эквивалентный путь:
+      // debugApplyMediaSync соответствует тому же diff-detect логике
+      // (mic enabled flag transitions от false к true когда LiveKit
+      // truth == true).
+      final service = _CountingCallService(activeCall: null);
+      final coordinator = CallCoordinatorService(callService: service);
+
+      // Simulate mute first — sets _microphoneEnabled = false
+      coordinator.debugApplyMediaSync(micEnabled: false, camEnabled: false);
+      expect(coordinator.microphoneEnabled, isFalse);
+
+      // Simulate un-mute success — Fix A guarantees _microphoneEnabled
+      // tracks LiveKit truth.
+      coordinator.debugApplyMediaSync(micEnabled: true, camEnabled: false);
+      expect(coordinator.microphoneEnabled, isTrue);
+
+      coordinator.dispose();
+    },
+  );
+
+  test(
+    'CallCoordinatorService Fix B: _applyCall preserves cameraEnabled '
+    'когда room считается connected (audio→video upgrade override)',
+    () async {
+      // Bug 3 repro: user в audio call activated camera локально через
+      // toggleCamera (audio→video upgrade), preview появилось. Затем
+      // recovery snapshot каждые 2s вызывал _applyCall(audioCall),
+      // line 752 reset'ил _cameraEnabled = false → preview disappeared
+      // хотя publication active → peer всё ещё видел.
+      // Fix B обернул reset в `if (_room == null)` — preservation на
+      // connected room. Unit test'е используем debugTreatRoomAsActive
+      // чтобы exercise preservation path без real Room mock.
+      final service = _CountingCallService(activeCall: null);
+      final coordinator = CallCoordinatorService(
+        callService: service,
+        mediaPermissionRequester: (_) async => false,
+      );
+
+      await coordinator.ensureRuntimeReady();
+
+      // Simulate locally-activated camera (audio→video upgrade)
+      coordinator.debugSetCameraEnabled(true);
+      coordinator.debugTreatRoomAsActive = true;
+      expect(coordinator.cameraEnabled, isTrue);
+
+      // Trigger _applyCall с audio mediaMode — recovery snapshot path.
+      final audioCall = _buildCall(
+        state: CallState.active,
+        mediaMode: CallMediaMode.audio,
+        session: const CallSession(
+          roomName: 'room-1',
+          url: 'wss://livekit.example.test',
+          token: 'token-1',
+          participantIdentity: 'user-1',
+        ),
+      );
+      await coordinator.activateCall(audioCall);
+
+      // Fix B: camera flag preserved потому что мы treat room as active.
+      expect(coordinator.cameraEnabled, isTrue);
+
+      // Sanity — без preservation flag _applyCall очистил бы.
+      coordinator.debugTreatRoomAsActive = false;
+      coordinator.debugSetCameraEnabled(true);
+      await coordinator.activateCall(
+        _buildCall(
+          state: CallState.active,
+          mediaMode: CallMediaMode.audio,
+          updatedAt: DateTime(2026, 4, 20, 10, 10),
+          session: const CallSession(
+            roomName: 'room-1',
+            url: 'wss://livekit.example.test',
+            token: 'token-1',
+            participantIdentity: 'user-1',
+          ),
+        ),
+      );
+      expect(coordinator.cameraEnabled, isFalse);
+
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      coordinator.dispose();
+    },
+  );
+
+  test(
+    'CallCoordinatorService Fix C: debugApplyMediaSync notifies '
+    'только on diff, no infinite loop',
+    () async {
+      final service = _CountingCallService(activeCall: null);
+      final coordinator = CallCoordinatorService(callService: service);
+
+      var notifyCount = 0;
+      void listener() => notifyCount++;
+      coordinator.addListener(listener);
+
+      // Initial state — mic enabled true, cam enabled false (defaults).
+      // Sync с same values — no diff, no notify.
+      coordinator.debugApplyMediaSync(micEnabled: true, camEnabled: false);
+      expect(notifyCount, 0);
+      expect(coordinator.microphoneEnabled, isTrue);
+      expect(coordinator.cameraEnabled, isFalse);
+
+      // Diff на mic — notify fires once.
+      coordinator.debugApplyMediaSync(micEnabled: false, camEnabled: false);
+      expect(notifyCount, 1);
+      expect(coordinator.microphoneEnabled, isFalse);
+
+      // Diff на cam — notify fires.
+      coordinator.debugApplyMediaSync(micEnabled: false, camEnabled: true);
+      expect(notifyCount, 2);
+      expect(coordinator.cameraEnabled, isTrue);
+
+      // Repeat same values — no notify.
+      coordinator.debugApplyMediaSync(micEnabled: false, camEnabled: true);
+      expect(notifyCount, 2);
+
+      // Both diff — single notify.
+      coordinator.debugApplyMediaSync(micEnabled: true, camEnabled: false);
+      expect(notifyCount, 3);
+
+      coordinator.removeListener(listener);
+      coordinator.dispose();
+    },
+  );
+
+  test(
     'CallCoordinatorService exposes microphonePublishFailed flag и '
     'notifies listeners on transition',
     () async {

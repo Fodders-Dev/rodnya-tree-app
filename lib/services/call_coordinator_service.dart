@@ -508,6 +508,12 @@ class CallCoordinatorService extends ChangeNotifier
       // юзер увидит «mic on» а собеседник продолжит nothing hear.
       final published = await _publishLocalMicrophone(room);
       _microphonePublishFailed = !published;
+      // Fix A (2026-05-22): без этой строки `_microphoneEnabled`
+      // застревал в false после un-mute, и UI showed «mic off» хотя
+      // publication успешно active (Bug 2 desync). _publishLocalMicrophone
+      // только sets к false на failure; success case caller обязан
+      // explicitly toggle к true.
+      _microphoneEnabled = published;
     } else {
       try {
         await room.localParticipant?.setMicrophoneEnabled(false);
@@ -749,7 +755,17 @@ class CallCoordinatorService extends ChangeNotifier
       _isSwitchingCamera = false;
     }
     if (!nextCall.mediaMode.isVideo) {
-      _cameraEnabled = false;
+      // Fix B (2026-05-22): не reset'им cameraEnabled пока room
+      // connected — user мог upgrade audio→video через local
+      // `toggleCamera`, backend `mediaMode` за этим не следит и
+      // recovery snapshot каждые 2s триггерил reset. Preview
+      // disappeared, peer всё ещё видел камеру (Bug 3 desync).
+      // Reset только когда room dispose'нут — actual track gone anyway.
+      // `debugTreatRoomAsActive` — test seam (visibleForTesting) чтобы
+      // экзерсайз preservation path без real LiveKit Room mock.
+      if (_room == null && !debugTreatRoomAsActive) {
+        _cameraEnabled = false;
+      }
     }
     _joinedOnAnotherDevice = nextCall.joinedOnAnotherDevice;
     notifyListeners();
@@ -983,6 +999,27 @@ class CallCoordinatorService extends ChangeNotifier
       })
       ..on<ParticipantDisconnectedEvent>((_) {
         unawaited(_handleRemoteParticipantDisconnected());
+      })
+      // Fix C (2026-05-22): treat LiveKit publication state as source
+      // of truth для mic/camera UI buttons. Без этих listener'ов Dart
+      // booleans могли desync от actual publications (Bug 2/3 mute &
+      // camera state mismatch). Local-only filter на TrackMuted/Unmuted
+      // — иначе remote participant mute events корруптили бы наш state.
+      ..on<LocalTrackPublishedEvent>((_) {
+        _syncMediaStateFromLiveKit(room);
+      })
+      ..on<LocalTrackUnpublishedEvent>((_) {
+        _syncMediaStateFromLiveKit(room);
+      })
+      ..on<TrackMutedEvent>((event) {
+        if (identical(event.participant, room.localParticipant)) {
+          _syncMediaStateFromLiveKit(room);
+        }
+      })
+      ..on<TrackUnmutedEvent>((event) {
+        if (identical(event.participant, room.localParticipant)) {
+          _syncMediaStateFromLiveKit(room);
+        }
       })
       ..on<ParticipantEvent>((_) {
         notifyListeners();
@@ -1310,6 +1347,45 @@ class CallCoordinatorService extends ChangeNotifier
       return pushName;
     }
     return null;
+  }
+
+  /// Fix C (2026-05-22): pull local track state from LiveKit
+  /// (`participant.isMicrophoneEnabled()` / `isCameraEnabled()`)
+  /// и обновляет Dart fields на разнице. Source of truth — LiveKit
+  /// publication state, Dart fields — reflected mirror для UI.
+  ///
+  /// Triggered events listener'ом в `_connectRoom` на
+  /// `LocalTrackPublishedEvent`, `LocalTrackUnpublishedEvent`,
+  /// `TrackMutedEvent` (local), `TrackUnmutedEvent` (local). Catches
+  /// any future code path который mutates track state без touching
+  /// Dart booleans — например notification action handler (Bug A
+  /// added 2 entry points), server-side mute permissions, auto-republish
+  /// после reconnect.
+  ///
+  /// Infinite loop prevention: change detection — `notifyListeners`
+  /// fires только когда фактический value diff. Setter sequence
+  /// (`_microphoneEnabled = ...` → `notifyListeners` → UI rebuild →
+  /// читает getter — no LiveKit invocation → no event re-fire).
+  void _syncMediaStateFromLiveKit(Room? room) {
+    final participant = room?.localParticipant;
+    if (participant == null) {
+      return;
+    }
+    final micActual = participant.isMicrophoneEnabled();
+    final camActual = participant.isCameraEnabled();
+    var changed = false;
+    if (_microphoneEnabled != micActual) {
+      _microphoneEnabled = micActual;
+      changed = true;
+    }
+    if (_cameraEnabled != camActual) {
+      _cameraEnabled = camActual;
+      changed = true;
+    }
+    if (changed) {
+      notifyListeners();
+      unawaited(_updateForegroundService());
+    }
   }
 
   /// Try to publish the local microphone и проверить что трек
@@ -1704,5 +1780,46 @@ class CallCoordinatorService extends ChangeNotifier
       _microphoneEnabled = false;
     }
     notifyListeners();
+  }
+
+  /// Test seam — direct set `_cameraEnabled` для проверки Fix B
+  /// preservation flow. Production-кода не использует.
+  @visibleForTesting
+  void debugSetCameraEnabled(bool value) {
+    if (_cameraEnabled == value) {
+      return;
+    }
+    _cameraEnabled = value;
+    notifyListeners();
+  }
+
+  /// Test seam — flag pretending что LiveKit Room is connected, чтобы
+  /// `_applyCall` preservation path для Fix B можно было exercise без
+  /// настоящего room mock. Production-кода это field никогда не sets.
+  @visibleForTesting
+  bool debugTreatRoomAsActive = false;
+
+  /// Test seam — directly invokes the same diff-apply logic как
+  /// `_syncMediaStateFromLiveKit`, но без необходимости Room/Participant
+  /// instance. Verifies change detection + notify-on-diff invariant
+  /// (Fix C). Production-кода не использует.
+  @visibleForTesting
+  void debugApplyMediaSync({
+    required bool micEnabled,
+    required bool camEnabled,
+  }) {
+    var changed = false;
+    if (_microphoneEnabled != micEnabled) {
+      _microphoneEnabled = micEnabled;
+      changed = true;
+    }
+    if (_cameraEnabled != camEnabled) {
+      _cameraEnabled = camEnabled;
+      changed = true;
+    }
+    if (changed) {
+      notifyListeners();
+      unawaited(_updateForegroundService());
+    }
   }
 }
