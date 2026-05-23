@@ -272,6 +272,39 @@ void main() {
   );
 
   test(
+    'CallCoordinatorService Q1 false-positive fix: media sync clears '
+    'stale microphonePublishFailed когда mic actually published',
+    () async {
+      // Q1 false positive race (post-Bug A device-verify): Q1
+      // immediate check фired snackbar когда LiveKit publication
+      // table briefly empty между setMicrophoneEnabled return и
+      // LocalTrackPublishedEvent fire. Fix C event listener corrected
+      // _microphoneEnabled но не clear'ил _microphonePublishFailed
+      // → banner persisted пока user не reset call.
+      //
+      // Defensive reconciliation в _syncMediaStateFromLiveKit clears
+      // flag когда LiveKit truth confirms mic is published.
+      final service = _CountingCallService(activeCall: null);
+      final coordinator = CallCoordinatorService(callService: service);
+
+      // Simulate Q1 false positive: flag set, mic считается off.
+      coordinator.debugMarkMicrophonePublishFailed(true);
+      expect(coordinator.microphonePublishFailed, isTrue);
+      expect(coordinator.microphoneEnabled, isFalse);
+
+      // Simulate Fix C event-driven sync: LiveKit truth says mic IS
+      // published. Helper должен update _microphoneEnabled И clear
+      // stale _microphonePublishFailed flag.
+      coordinator.debugApplyMediaSync(micEnabled: true, camEnabled: false);
+
+      expect(coordinator.microphoneEnabled, isTrue);
+      expect(coordinator.microphonePublishFailed, isFalse);
+
+      coordinator.dispose();
+    },
+  );
+
+  test(
     'CallCoordinatorService Fix C: debugApplyMediaSync notifies '
     'только on diff, no infinite loop',
     () async {

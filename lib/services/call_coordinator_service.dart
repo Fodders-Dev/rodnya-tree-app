@@ -1382,25 +1382,46 @@ class CallCoordinatorService extends ChangeNotifier
       _cameraEnabled = camActual;
       changed = true;
     }
+    // Defensive reconciliation (2026-05-22 Q1 false-positive fix
+    // follow-up): если mic actually published per LiveKit, clear
+    // any stale `microphonePublishFailed` flag. Без этого ранее
+    // false-positive Q1 banner оставался стуком висеть после event-
+    // driven sync corrected `_microphoneEnabled` к true.
+    if (micActual && _microphonePublishFailed) {
+      _microphonePublishFailed = false;
+      changed = true;
+    }
     if (changed) {
       notifyListeners();
       unawaited(_updateForegroundService());
     }
   }
 
-  /// Try to publish the local microphone и проверить что трек
-  /// фактически опубликован. Возвращает true при успехе, false при
-  /// silent failure (publication == null либо post-await
-  /// `isMicrophoneEnabled()` вернул false). На failure обновляет
-  /// `_microphoneEnabled = false` для truthful UI state — без этого
-  /// иконка показывает «mic on» хотя собеседник ничего не слышит.
+  /// Try to publish the local microphone. Возвращает true при
+  /// успехе, false при failure. На failure обновляет
+  /// `_microphoneEnabled = false` для truthful UI state.
+  ///
+  /// **Success signal**: non-null publication object от
+  /// `setMicrophoneEnabled(true)` — это LiveKit API contract на
+  /// successful publish. Throwing exception либо null return
+  /// considered failure.
+  ///
+  /// **Removed (2026-05-22)**: post-await `participant.isMicrophoneEnabled()`
+  /// race-prone secondary check. Та lookup traversal происходит до
+  /// того как track publications list propagate'нулся, fire'ила
+  /// false positive «микрофон не подключился» banner хотя peer
+  /// actually слышит. После Fix C (commit `207245a`) async truth
+  /// sync handles это event-driven через `LocalTrackPublishedEvent`
+  /// listener — `_syncMediaStateFromLiveKit` updates Dart booleans
+  /// AND clears `_microphonePublishFailed` когда mic actually
+  /// published. Race window больше не surfaces.
   ///
   /// На Android 14+ это первая линия защиты от Bug 1 (audio one-way):
-  /// LiveKit shortcut `setMicrophoneEnabled(true)` может вернуть null
-  /// publication когда microphone capture revoked'нут OS-ью
-  /// (foreground service не запущен → mic stream killed). До этого
-  /// fix'а такой failure был invisible — error swallow'ался outer
-  /// catch'ем без specific signal к юзеру.
+  /// LiveKit shortcut может вернуть null publication когда microphone
+  /// capture revoked'нут OS-ью (foreground service не запущен → mic
+  /// stream killed). Bug A foreground service shipped 2026-05-22
+  /// closed основной trigger, но Q1 backup remains для других
+  /// failure modes (codec init, HAL error, etc.).
   Future<bool> _publishLocalMicrophone(Room room) async {
     final participant = room.localParticipant;
     if (participant == null) {
@@ -1409,13 +1430,12 @@ class CallCoordinatorService extends ChangeNotifier
     }
     try {
       final publication = await participant.setMicrophoneEnabled(true);
-      final published = publication != null && participant.isMicrophoneEnabled();
+      final published = publication != null;
       if (!published) {
         _microphoneEnabled = false;
         debugPrint(
-          '[call] microphone publish silent failure '
-          'publication=${publication?.sid ?? 'null'} '
-          'isMicEnabled=${participant.isMicrophoneEnabled()}',
+          '[call] microphone publish failed — LiveKit returned null '
+          'publication (likely OS revoked mic capture)',
         );
       }
       return published;
@@ -1815,6 +1835,13 @@ class CallCoordinatorService extends ChangeNotifier
     }
     if (_cameraEnabled != camEnabled) {
       _cameraEnabled = camEnabled;
+      changed = true;
+    }
+    // Mirror production `_syncMediaStateFromLiveKit` defensive
+    // reconciliation: clear stale microphonePublishFailed когда
+    // mic actually published per LiveKit truth.
+    if (micEnabled && _microphonePublishFailed) {
+      _microphonePublishFailed = false;
       changed = true;
     }
     if (changed) {
