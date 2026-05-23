@@ -34,6 +34,19 @@
          change. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <!-- Bluetooth (Bug B audit 2026-05-22): user'у нужно использовать
+         BT-гарнитуру во время звонка. Без BLUETOOTH_CONNECT runtime
+         permission на Android 12+ (API 31+), system silently rejects
+         enumeration paired devices и audio routing fallback'ается на
+         speaker/earpiece. Legacy BLUETOOTH + BLUETOOTH_ADMIN — для
+         backward compat на API ≤ 30 (no runtime grant).
+         BLUETOOTH_SCAN — для discovery новых devices; мы только
+         enumerate уже-paired, поэтому neverForLocation hint избегает
+         coarse location grant. -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" tools:targetApi="s" />
 
     <application
         android:label="Родня"

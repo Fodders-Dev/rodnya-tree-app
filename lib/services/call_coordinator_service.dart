@@ -1628,12 +1628,57 @@ class CallCoordinatorService extends ChangeNotifier
     if (!(microphoneStatus.isGranted || microphoneStatus.isLimited)) {
       return false;
     }
+    // Bug B (audit 2026-05-22): запрашиваем BLUETOOTH_CONNECT
+    // best-effort параллельно. Android 12+ silently rejects
+    // enumeration paired BT гарнитур без этого grant'а — user
+    // подключил наушники, но в audio picker они не видны → fallback
+    // на speaker/earpiece. Не gate'им room.connect — BT-permission
+    // отказ не ломает звонок (просто без BT routing options).
+    unawaited(_requestBluetoothConnectPermissionIfNeeded());
+
     if (!mediaMode.isVideo) {
       return true;
     }
 
     final cameraStatus = await Permission.camera.request();
     return cameraStatus.isGranted || cameraStatus.isLimited;
+  }
+
+  /// Best-effort BLUETOOTH_CONNECT runtime permission request на
+  /// Android 12+ (API 31+). No-op на других платформах либо когда
+  /// already-granted/permanently-denied (не спамим dialog).
+  ///
+  /// Не gate'ит call connect — denied BT permission означает только
+  /// что BT гарнитуры не показываются в audio device picker. User
+  /// останется на speaker/earpiece, не surfaceит fatal error.
+  static Future<void>
+      _requestBluetoothConnectPermissionIfNeeded() async {
+    if (kIsWeb) {
+      return;
+    }
+    if (defaultTargetPlatform != TargetPlatform.android) {
+      return;
+    }
+    try {
+      final status = await Permission.bluetoothConnect.status;
+      if (status.isGranted ||
+          status.isLimited ||
+          status.isPermanentlyDenied ||
+          status.isRestricted) {
+        // Already settled — no point re-asking.
+        return;
+      }
+      final result = await Permission.bluetoothConnect.request();
+      if (kDebugMode) {
+        debugPrint(
+          '[call] BLUETOOTH_CONNECT permission result=$result',
+        );
+      }
+    } catch (error) {
+      debugPrint(
+        '[call] BLUETOOTH_CONNECT permission request threw: $error',
+      );
+    }
   }
 
   void _handleCallEvent(CallEvent event) {
