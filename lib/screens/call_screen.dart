@@ -80,6 +80,16 @@ class _CallScreenState extends State<CallScreen> {
   bool _pipShowsLocal = true;
   static const double _pipWidth = 120;
   static const double _pipHeight = 180;
+  // Drag-vs-tap disambiguation threshold для PIP gesture. Был 6.0 —
+  // на slow swipe чувствовался «stuck» (Bug 4 audit 2026-05-22:
+  // Артёма «окошки не двигаются»). 3.0 dp ≈ 4 physical px на 400ppi
+  // displays: comfortably выше touchscreen jitter (1-2 px) и
+  // intentional drag intent covers это в <50ms. Apple HIG suggests
+  // 3.5pt minimum для drag detection — мы matched. Material
+  // kTouchSlop default = 18.0 (намного больше) — мы intentionally
+  // sub-system slop потому что `dragStartBehavior: DragStartBehavior.down`
+  // уже bypassed system slop ↓ в GestureDetector.
+  static const double _pipDragCommitThresholdDp = 3.0;
 
   String? get _currentUserId => widget.coordinator.currentUserId;
   CallInvite get _resolvedCall => _call ?? widget.initialCall;
@@ -959,7 +969,8 @@ class _CallScreenState extends State<CallScreen> {
     // to count as a drag. Without this, a quick tap that travels even
     // a few pixels was being claimed by the pan recogniser and the
     // swap never fired. We snapshot the start offset on pan-down and
-    // only commit a drag when distance > kTouchSlop.
+    // only commit a drag when distance > _pipDragCommitThresholdDp
+    // (3.0 — was 6.0, see field doc для Bug 4 tuning rationale).
     return Positioned(
       left: offset.dx,
       top: offset.dy,
@@ -987,9 +998,13 @@ class _CallScreenState extends State<CallScreen> {
         onPanUpdate: (details) {
           _pipDragAccumulated += details.delta;
           // Quick taps hit a few px of jitter before lifting. Treat
-          // anything under 6dp as "still a tap" — onPanEnd then
-          // routes back through onTap. Past 6dp we commit the drag.
-          if (_pipDragAccumulated.distance < 6.0) return;
+          // anything under threshold as "still a tap" — onPanEnd then
+          // routes back through onTap. Past threshold we commit the
+          // drag. Threshold lowered к 3dp (was 6) для snappier feel —
+          // Bug 4 audit 2026-05-22.
+          if (_pipDragAccumulated.distance < _pipDragCommitThresholdDp) {
+            return;
+          }
           final next = (_pipDragStartOffset ?? offset) + _pipDragAccumulated;
           // Clamp to viewport (minus PIP size + 8dp gutter so the
           // tile never disappears off the edge).
@@ -1003,8 +1018,10 @@ class _CallScreenState extends State<CallScreen> {
           setState(() => _pipOffset = clamped);
         },
         onPanEnd: (details) {
-          // If the user barely moved, treat as a tap-swap.
-          if (_pipDragAccumulated.distance < 6.0) {
+          // If the user barely moved, treat as a tap-swap. Same
+          // threshold as onPanUpdate commit — symmetry between
+          // «moved enough to drag» and «moved too much for tap».
+          if (_pipDragAccumulated.distance < _pipDragCommitThresholdDp) {
             if (remoteTrack != null) {
               HapticFeedback.lightImpact();
               setState(() => _pipShowsLocal = !_pipShowsLocal);
