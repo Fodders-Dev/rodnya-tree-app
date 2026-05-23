@@ -13,6 +13,7 @@ import '../models/call_media_mode.dart';
 import '../models/call_state.dart';
 import 'android_incoming_call_service.dart';
 import 'audio_route_service.dart';
+import 'call_foreground_service.dart';
 import 'call_preferences.dart';
 import 'custom_api_realtime_service.dart';
 import 'rustore_service.dart';
@@ -46,6 +47,7 @@ class CallCoordinatorService extends ChangeNotifier
     CallMediaDeviceSelector? cameraDeviceSelector,
     CallPreferences? callPreferences,
     AndroidIncomingCallService? androidIncomingCallService,
+    CallForegroundService? callForegroundService,
     CallVibrationTrigger? vibrationTrigger,
     Duration ringingRecoveryInterval = const Duration(seconds: 5),
     Duration activeCallRecoveryInterval = const Duration(seconds: 2),
@@ -65,6 +67,7 @@ class CallCoordinatorService extends ChangeNotifier
             cameraDeviceSelector ?? _selectLiveKitCameraDevice,
         _callPreferences = callPreferences ?? const DisabledCallPreferences(),
         _androidIncomingCallService = androidIncomingCallService,
+        _callForegroundService = callForegroundService,
         _vibrationTrigger = vibrationTrigger ?? _defaultVibrationTrigger,
         _ringingRecoveryInterval = ringingRecoveryInterval,
         _activeCallRecoveryInterval = activeCallRecoveryInterval,
@@ -102,6 +105,15 @@ class CallCoordinatorService extends ChangeNotifier
   final CallMediaDeviceSelector _cameraDeviceSelector;
   final CallPreferences _callPreferences;
   final AndroidIncomingCallService? _androidIncomingCallService;
+  // Foreground service для активного звонка (Bug A 2026-05-22).
+  // Запускается на active transition, обновляется на mic toggle /
+  // peer name resolved, останавливается на terminal. Null на
+  // non-Android либо когда test'ы инжектят null explicitly.
+  final CallForegroundService? _callForegroundService;
+  // Tracks current foreground-service active callId — null когда
+  // service не запущен. Reused чтобы избежать redundant start
+  // calls (idempotency на rapid `_applyCall(active)` re-fires).
+  String? _foregroundServiceCallId;
   final CallVibrationTrigger _vibrationTrigger;
   final Duration _ringingRecoveryInterval;
   final Duration _activeCallRecoveryInterval;
@@ -359,6 +371,34 @@ class CallCoordinatorService extends ChangeNotifier
     }
   }
 
+  /// Consume pending action from foreground service notification
+  /// button tap. Called on app resume — если юзер ткнул «Микрофон»
+  /// либо «Завершить» в notification action, бэкенд (Kotlin bridge)
+  /// сохранил action в SharedPreferences, мы вычитываем + applyим.
+  /// No-op если service не инжектирован либо нет pending action.
+  Future<void> _consumePendingForegroundNotificationAction() async {
+    final service = _callForegroundService;
+    if (service == null || !service.isSupported) {
+      return;
+    }
+    final action = await service.consumePendingNotificationAction();
+    if (action == null) {
+      return;
+    }
+    final activeCall = _currentCall;
+    if (activeCall == null || activeCall.id != action.callId) {
+      // Action для другого звонка — ignore (звонок мог уже завершиться).
+      return;
+    }
+    if (action.isToggleMic) {
+      await toggleMicrophone();
+      return;
+    }
+    if (action.isEndCall) {
+      await finishCall(action.callId);
+    }
+  }
+
   Future<CallInvite?> getCall(String callId) {
     return _callService.getCall(callId);
   }
@@ -482,6 +522,9 @@ class CallCoordinatorService extends ChangeNotifier
       _microphonePublishFailed = false;
     }
     notifyListeners();
+    // Update Android foreground notification чтобы action button
+    // label «Заглушить/Включить микрофон» reflected actual state.
+    unawaited(_updateForegroundService());
   }
 
   Future<void> toggleCamera() async {
@@ -625,6 +668,7 @@ class CallCoordinatorService extends ChangeNotifier
       _lastIncomingVibrationCallId = null;
       _clearConnectionQualityState();
       notifyListeners();
+      await _stopForegroundService();
       await _disposeRoom();
       return;
     }
@@ -658,6 +702,7 @@ class CallCoordinatorService extends ChangeNotifier
       _lastIncomingVibrationCallId = null;
       _clearConnectionQualityState();
       notifyListeners();
+      await _stopForegroundService();
       await _disposeRoom();
       return;
     }
@@ -716,6 +761,7 @@ class CallCoordinatorService extends ChangeNotifier
         _connectionError = null;
         _clearReconnectRestoredBanner();
         notifyListeners();
+        await _stopForegroundService();
         await _disposeRoom();
         return;
       }
@@ -725,6 +771,12 @@ class CallCoordinatorService extends ChangeNotifier
         notifyListeners();
         return;
       }
+      // Start foreground service ДО room.connect — Android 14+
+      // нуждается в running foreground service с
+      // foregroundServiceType="microphone" чтобы mic capture не
+      // revoked'нулся. Без этого собеседник перестаёт слышать как
+      // только screen blank / app backgrounded (Bug A).
+      await _ensureForegroundServiceStarted(nextCall);
       final shouldReconnect = previousCallId == nextCall.id &&
           previousRoomName != null &&
           _room == null;
@@ -733,6 +785,7 @@ class CallCoordinatorService extends ChangeNotifier
     }
 
     if (previousCallId != null && previousCallId != nextCall.id) {
+      await _stopForegroundService();
       await _disposeRoom();
     }
   }
@@ -1178,6 +1231,87 @@ class CallCoordinatorService extends ChangeNotifier
     }
   }
 
+  /// Запускает Kotlin foreground service для активного звонка
+  /// (либо update если уже running для того же callId). Idempotent
+  /// на re-fires `_applyCall(active)` для того же звонка.
+  /// No-op на non-Android либо когда service не инжектирован
+  /// (некоторые tests).
+  Future<void> _ensureForegroundServiceStarted(CallInvite call) async {
+    final service = _callForegroundService;
+    if (service == null || !service.isSupported) {
+      return;
+    }
+    final callId = call.id.trim();
+    if (callId.isEmpty) {
+      return;
+    }
+    final peerName = _resolvePeerName(call);
+    final isVideo = call.mediaMode.isVideo;
+    if (_foregroundServiceCallId == callId) {
+      // Already running для этого звонка — update notification на
+      // случай если peer name / mic state поменялись.
+      await service.update(
+        callId: callId,
+        peerName: peerName,
+        isVideo: isVideo,
+        micEnabled: _microphoneEnabled,
+      );
+      return;
+    }
+    final started = await service.start(
+      callId: callId,
+      peerName: peerName,
+      isVideo: isVideo,
+      micEnabled: _microphoneEnabled,
+    );
+    if (started) {
+      _foregroundServiceCallId = callId;
+    }
+  }
+
+  /// Останавливает foreground service. No-op если он не был
+  /// запущен этим coordinator instance (защищает tests/idle path
+  /// от phantom stop invocations).
+  Future<void> _stopForegroundService() async {
+    final service = _callForegroundService;
+    final callId = _foregroundServiceCallId;
+    _foregroundServiceCallId = null;
+    if (service == null || !service.isSupported || callId == null) {
+      return;
+    }
+    await service.stop();
+  }
+
+  /// Update notification text без restart service. Вызывается на
+  /// mic toggle reflection (icon в notification отражает on/off).
+  /// No-op если service не running.
+  Future<void> _updateForegroundService() async {
+    final service = _callForegroundService;
+    final callId = _foregroundServiceCallId;
+    if (service == null || !service.isSupported || callId == null) {
+      return;
+    }
+    final activeCall = _currentCall;
+    await service.update(
+      callId: callId,
+      peerName: activeCall != null ? _resolvePeerName(activeCall) : null,
+      isVideo: activeCall?.mediaMode.isVideo ?? false,
+      micEnabled: _microphoneEnabled,
+    );
+  }
+
+  /// Resolve peer display name из CallInvite — push payload-side
+  /// name preferred, fallback на participant identity. Empty string
+  /// если ничего нет (notification покажет «Идёт голосовой/видео-
+  /// звонок» вместо «Идёт звонок с»).
+  String? _resolvePeerName(CallInvite call) {
+    final pushName = _pushCallerNames[call.id]?.trim();
+    if (pushName != null && pushName.isNotEmpty) {
+      return pushName;
+    }
+    return null;
+  }
+
   /// Try to publish the local microphone и проверить что трек
   /// фактически опубликован. Возвращает true при успехе, false при
   /// silent failure (publication == null либо post-await
@@ -1522,6 +1656,7 @@ class CallCoordinatorService extends ChangeNotifier
     _hasSeenRemoteParticipant = false;
     _joinedOnAnotherDevice = false;
     _lastIncomingVibrationCallId = null;
+    await _stopForegroundService();
     await _disposeRoom();
     notifyListeners();
   }
@@ -1535,6 +1670,9 @@ class CallCoordinatorService extends ChangeNotifier
       }
       unawaited(ensureRuntimeReady().then((_) => resync()));
       unawaited(_handlePendingAndroidCallAction());
+      // Pending notification button tap (Микрофон/Завершить) ждёт
+      // в SharedPreferences пока app resumes — consume & apply.
+      unawaited(_consumePendingForegroundNotificationAction());
     }
   }
 
@@ -1547,6 +1685,7 @@ class CallCoordinatorService extends ChangeNotifier
     unawaited(_callEventsSubscription?.cancel());
     unawaited(_realtimeSubscription?.cancel());
     unawaited(_pushSubscription?.cancel());
+    unawaited(_stopForegroundService());
     unawaited(_disposeRoom());
     super.dispose();
   }

@@ -6,8 +6,17 @@
 
 ---
 
+## ✅ Bug A — RESOLVED 2026-05-22 (loop iteration 3 / Q3)
+
+`FOREGROUND_SERVICE_MICROPHONE` permission + Kotlin foreground service
+landed. Артём pre-approved scope + UX defaults перед ship. См.
+loop-log-2026-05-22.md iteration 3 для details. **Device verification
+(Samsung A50 + Huawei MatePad) ещё нужна.**
+
+---
+
 ## 🔴 Bug A — Missing `FOREGROUND_SERVICE_MICROPHONE` permission +
-##         no foreground service (Android 14+)
+##         no foreground service (Android 14+) [HISTORICAL — fixed]
 
 **Severity**: production-breaking на modern Android (Android 14+
 ~50% install base в 2026).

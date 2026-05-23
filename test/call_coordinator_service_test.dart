@@ -11,6 +11,7 @@ import 'package:rodnya/models/call_session.dart';
 import 'package:rodnya/models/call_state.dart';
 import 'package:rodnya/services/android_incoming_call_service.dart';
 import 'package:rodnya/services/call_coordinator_service.dart';
+import 'package:rodnya/services/call_foreground_service.dart';
 import 'package:rodnya/services/call_preferences.dart';
 import 'package:rodnya/services/rustore_service.dart';
 
@@ -69,6 +70,106 @@ void main() {
       );
       expect(coordinator.isConnectingRoom, isFalse);
       expect(coordinator.room, isNull);
+
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      coordinator.dispose();
+    },
+  );
+
+  test(
+    'CallCoordinatorService starts foreground service on active call '
+    'and stops on terminal',
+    () async {
+      final service = _CountingCallService(activeCall: null);
+      final foreground = _FakeCallForegroundService();
+      final coordinator = CallCoordinatorService(
+        callService: service,
+        // mediaPermissionRequester denied — coordinator bail'нет ДО
+        // room.connect, но foreground service start вызывается ПЕРЕД
+        // _ensureConnected (Bug A fix design — mic capture survival
+        // на Android 14+ требует service alive ДО mic publish).
+        mediaPermissionRequester: (_) async => false,
+        callForegroundService: foreground,
+      );
+
+      // Settle initial ensureRuntimeReady resync (constructor schedules
+      // its own resync → _applyCall(null) → _stopForegroundService).
+      // Без этого resync race'нётся с activateCall и стоп flush'ит
+      // foreground service flag сразу после start, ломая assertion.
+      await coordinator.ensureRuntimeReady();
+
+      final activeCall = _buildCall(
+        state: CallState.active,
+        session: const CallSession(
+          roomName: 'room-1',
+          url: 'wss://livekit.example.test',
+          token: 'token-1',
+          participantIdentity: 'user-1',
+        ),
+      );
+
+      // Reset counters перед activate, чтобы initial resync stop'ы
+      // не learked в подсчёт.
+      foreground.startCalls = 0;
+      foreground.updateCalls = 0;
+      foreground.stopCalls = 0;
+
+      await coordinator.activateCall(activeCall);
+
+      expect(foreground.startCalls, greaterThanOrEqualTo(1));
+      expect(foreground.lastStartCallId, 'call-1');
+      expect(foreground.lastStartIsVideo, isFalse);
+      expect(foreground.lastStartMicEnabled, isTrue);
+
+      // Reset stopCalls перед terminal transition, чтобы verify
+      // что именно terminal triggered stop.
+      foreground.stopCalls = 0;
+
+      // Terminal transition → stop foreground service.
+      final terminalCall = _buildCall(
+        state: CallState.ended,
+        updatedAt: DateTime(2026, 4, 20, 10, 5),
+      );
+      await coordinator.activateCall(terminalCall);
+
+      expect(foreground.stopCalls, greaterThanOrEqualTo(1));
+
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      coordinator.dispose();
+    },
+  );
+
+  test(
+    'CallCoordinatorService stops foreground service на explicit reset',
+    () async {
+      final service = _CountingCallService(activeCall: null);
+      final foreground = _FakeCallForegroundService();
+      final coordinator = CallCoordinatorService(
+        callService: service,
+        mediaPermissionRequester: (_) async => false,
+        callForegroundService: foreground,
+      );
+
+      await coordinator.ensureRuntimeReady();
+      foreground.startCalls = 0;
+      foreground.stopCalls = 0;
+
+      await coordinator.activateCall(
+        _buildCall(
+          state: CallState.active,
+          session: const CallSession(
+            roomName: 'room-1',
+            url: 'wss://livekit.example.test',
+            token: 'token-1',
+            participantIdentity: 'user-1',
+          ),
+        ),
+      );
+      expect(foreground.startCalls, greaterThanOrEqualTo(1));
+
+      foreground.stopCalls = 0;
+      await coordinator.reset();
+      expect(foreground.stopCalls, greaterThanOrEqualTo(1));
 
       await Future<void>.delayed(const Duration(milliseconds: 20));
       coordinator.dispose();
@@ -591,6 +692,62 @@ class _CountingCallService implements CallServiceInterface {
 
   @override
   Future<void> stopRealtimeBridge() async {}
+}
+
+class _FakeCallForegroundService extends CallForegroundService {
+  _FakeCallForegroundService() : super();
+
+  int startCalls = 0;
+  int updateCalls = 0;
+  int stopCalls = 0;
+  int consumeActionCalls = 0;
+  CallForegroundNotificationAction? pendingAction;
+  String? lastStartCallId;
+  String? lastStartPeerName;
+  bool? lastStartIsVideo;
+  bool? lastStartMicEnabled;
+
+  @override
+  bool get isSupported => true;
+
+  @override
+  Future<bool> start({
+    required String callId,
+    String? peerName,
+    required bool isVideo,
+    required bool micEnabled,
+  }) async {
+    startCalls += 1;
+    lastStartCallId = callId;
+    lastStartPeerName = peerName;
+    lastStartIsVideo = isVideo;
+    lastStartMicEnabled = micEnabled;
+    return true;
+  }
+
+  @override
+  Future<bool> update({
+    required String callId,
+    String? peerName,
+    required bool isVideo,
+    required bool micEnabled,
+  }) async {
+    updateCalls += 1;
+    return true;
+  }
+
+  @override
+  Future<bool> stop() async {
+    stopCalls += 1;
+    return true;
+  }
+
+  @override
+  Future<CallForegroundNotificationAction?>
+      consumePendingNotificationAction() async {
+    consumeActionCalls += 1;
+    return pendingAction;
+  }
 }
 
 class _FakeAndroidIncomingCallService extends AndroidIncomingCallService {

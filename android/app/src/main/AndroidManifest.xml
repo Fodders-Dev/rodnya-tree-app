@@ -26,6 +26,14 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
     <!-- Разрешение WAKE_LOCK может помочь для надежности фоновых задач -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Foreground service для активного звонка (Bug A audit 2026-05-22):
+         Android 14+ требует FOREGROUND_SERVICE + foregroundServiceType
+         декларацию, иначе mic capture revokes когда screen blank / app
+         backgrounded — producer audio drops silently, собеседник не
+         слышит. Это не device quirk, это documented Android behavior
+         change. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
 
     <application
         android:label="Родня"
@@ -46,6 +54,18 @@
                 <action android:name="android.telecom.ConnectionService" />
             </intent-filter>
         </service>
+
+        <!-- Foreground service для активного звонка. Запускается из
+             Dart side (CallCoordinatorService) когда call transitions
+             в state=active, останавливается на terminal/disconnected.
+             foregroundServiceType="microphone" — обязательно для
+             Android 14+ чтобы mic capture не revoked OS-ью. См.
+             escalation-2026-05-22.md / Bug A. -->
+        <service
+            android:name=".RodnyaCallForegroundService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
 
         <!-- Replace the plugin's default messaging service with our own
              subclass. The plugin's class is `final` (not extendable

@@ -45,6 +45,15 @@ object RodnyaNotificationChannels {
     const val SOCIAL_ID = "social"
     const val SYSTEM_ID = "system"
     const val GENERAL_ID = "general" // legacy
+    /**
+     * Persistent "идёт звонок" notification от foreground service.
+     * Importance HIGH (требуется чтобы service могла быть foreground +
+     * чтобы юзер быстро увидел статус), но БЕЗ sound (это persistent
+     * status, не alert — рингтон уже отыграл при ringing). Ongoing
+     * controlled через NotificationCompat.Builder.setOngoing(true) на
+     * notification side, не на channel.
+     */
+    const val ACTIVE_CALL_ID = "rodnya_active_call"
 
     fun ensureRegistered(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
@@ -130,6 +139,25 @@ object RodnyaNotificationChannels {
                 setSound(null, null)
             }
             manager.createNotificationChannel(systemChannel)
+        }
+
+        if (manager.getNotificationChannel(ACTIVE_CALL_ID) == null) {
+            val activeCallChannel = NotificationChannel(
+                ACTIVE_CALL_ID,
+                "Активный звонок",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description =
+                    "Статус идущего звонка (для foreground service)"
+                enableLights(false)
+                enableVibration(false)
+                setShowBadge(false)
+                lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
+                // No sound — это persistent status notification, не
+                // alert. Звонок уже отыграл при ringing.
+                setSound(null, null)
+            }
+            manager.createNotificationChannel(activeCallChannel)
         }
 
         // Legacy «general» channel — keep around so installs that

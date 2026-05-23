@@ -30,12 +30,14 @@ class MainActivity: FlutterActivity() {
             }
         }
         RodnyaTelecomBridge.configure(this, flutterEngine)
+        RodnyaCallForegroundBridge.configure(this, flutterEngine)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         RodnyaTelecomBridge.handleIntent(this, intent)
+        RodnyaCallForegroundBridge.handleIntent(this, intent)
     }
 
     private fun enterRodnyaPictureInPicture(width: Int, height: Int): Boolean {
