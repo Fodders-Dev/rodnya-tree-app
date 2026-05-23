@@ -76,6 +76,51 @@ void main() {
   );
 
   test(
+    'CallCoordinatorService exposes microphonePublishFailed flag и '
+    'notifies listeners on transition',
+    () async {
+      final service = _CountingCallService(activeCall: null);
+      final coordinator = CallCoordinatorService(callService: service);
+
+      // Initial state — flag must be false и mic считается enabled
+      // (default state до connect).
+      expect(coordinator.microphonePublishFailed, isFalse);
+      expect(coordinator.microphoneEnabled, isTrue);
+
+      var notifyCount = 0;
+      void listener() => notifyCount++;
+      coordinator.addListener(listener);
+
+      // Simulate Bug 1 publish failure scenario через test seam —
+      // production-flow это происходит когда LiveKit
+      // setMicrophoneEnabled возвращает null publication либо
+      // isMicrophoneEnabled() == false после await (Android 14+
+      // foreground service absent → mic capture revoked).
+      coordinator.debugMarkMicrophonePublishFailed(true);
+
+      expect(coordinator.microphonePublishFailed, isTrue);
+      // Truthful UI — mic считается off потому что publication
+      // отсутствует. Без этого иконка в CallScreen lies (показывает
+      // «mic on» хотя собеседник не слышит).
+      expect(coordinator.microphoneEnabled, isFalse);
+      expect(notifyCount, 1);
+
+      // Idempotent — flip к тому же значению should be no-op (никакого
+      // повторного notify, иначе snackbar fire'нется каждый раз).
+      coordinator.debugMarkMicrophonePublishFailed(true);
+      expect(notifyCount, 1);
+
+      // Reset path — used когда retry succeeded либо call'reset.
+      coordinator.debugMarkMicrophonePublishFailed(false);
+      expect(coordinator.microphonePublishFailed, isFalse);
+      expect(notifyCount, 2);
+
+      coordinator.removeListener(listener);
+      coordinator.dispose();
+    },
+  );
+
+  test(
     'CallCoordinatorService skips background resync when session is missing',
     () async {
       final service = _CountingCallService(

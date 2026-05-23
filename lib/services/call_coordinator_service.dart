@@ -125,6 +125,14 @@ class CallCoordinatorService extends ChangeNotifier
   bool _isConnectingRoom = false;
   bool _isReconnectingRoom = false;
   bool _microphoneEnabled = true;
+  // True когда LiveKit вернул успех на `setMicrophoneEnabled(true)` но
+  // фактическая publication отсутствует (publication == null либо
+  // `isMicrophoneEnabled()` после await вернул false). Симптом
+  // соответствует Артёмов reported Bug 1 «собеседник не слышит» —
+  // UI showed «mic on» хотя трек не публиковался. Surface'им через
+  // separate flag чтобы CallScreen мог поднять banner / snackbar и
+  // юзер увидел real state вместо silent fail.
+  bool _microphonePublishFailed = false;
   bool _cameraEnabled = false;
   bool _isSwitchingCamera = false;
   CameraPosition _cameraPosition = CameraPosition.front;
@@ -162,6 +170,13 @@ class CallCoordinatorService extends ChangeNotifier
   bool get isReconnectingRoom => _isReconnectingRoom;
   bool get joinedOnAnotherDevice => _joinedOnAnotherDevice;
   bool get microphoneEnabled => _microphoneEnabled;
+  /// True если попытка enable microphone в активном звонке отказала
+  /// silently — `setMicrophoneEnabled(true)` либо вернул null
+  /// publication, либо `isMicrophoneEnabled()` после await вернул
+  /// false. CallScreen listens и поднимает banner/snackbar чтобы
+  /// surface'ить факт пользователю (без этого UI lies about mic
+  /// state и собеседник просто не слышит).
+  bool get microphonePublishFailed => _microphonePublishFailed;
   bool get cameraEnabled => _cameraEnabled;
   bool get isSwitchingCamera => _isSwitchingCamera;
   CameraPosition get cameraPosition => _cameraPosition;
@@ -448,8 +463,24 @@ class CallCoordinatorService extends ChangeNotifier
     }
 
     final nextValue = !_microphoneEnabled;
-    await room.localParticipant?.setMicrophoneEnabled(nextValue);
-    _microphoneEnabled = nextValue;
+    if (nextValue) {
+      // Re-enable path — verify publication actually attached иначе
+      // юзер увидит «mic on» а собеседник продолжит nothing hear.
+      final published = await _publishLocalMicrophone(room);
+      _microphonePublishFailed = !published;
+    } else {
+      try {
+        await room.localParticipant?.setMicrophoneEnabled(false);
+      } catch (error) {
+        debugPrint('[call] toggle mic off threw: $error');
+      }
+      _microphoneEnabled = false;
+      // Mute не может «silent fail» в смысле Bug 1 — даже если
+      // localParticipant.setMicrophoneEnabled(false) кидает, эффект
+      // юзеру (микрофон тише) хуже-не-станет. Clear publish failure
+      // flag — следующий enable retry'нется свежим.
+      _microphonePublishFailed = false;
+    }
     notifyListeners();
   }
 
@@ -588,6 +619,7 @@ class CallCoordinatorService extends ChangeNotifier
       _clearInputDeviceState();
       _connectionError = null;
       _hasMediaPermissionIssue = false;
+      _microphonePublishFailed = false;
       _hasSeenRemoteParticipant = false;
       _joinedOnAnotherDevice = false;
       _lastIncomingVibrationCallId = null;
@@ -620,6 +652,7 @@ class CallCoordinatorService extends ChangeNotifier
       _clearInputDeviceState();
       _connectionError = null;
       _hasMediaPermissionIssue = false;
+      _microphonePublishFailed = false;
       _hasSeenRemoteParticipant = false;
       _joinedOnAnotherDevice = false;
       _lastIncomingVibrationCallId = null;
@@ -833,6 +866,7 @@ class CallCoordinatorService extends ChangeNotifier
     }
     _connectionError = null;
     _hasMediaPermissionIssue = false;
+    _microphonePublishFailed = false;
     notifyListeners();
 
     final hasMediaPermissions =
@@ -916,7 +950,12 @@ class CallCoordinatorService extends ChangeNotifier
       );
       _microphoneEnabled = true;
       _cameraEnabled = call.mediaMode.isVideo;
-      await room.localParticipant?.setMicrophoneEnabled(_microphoneEnabled);
+      // Publish mic separately от room.connect — на Android 14+ без
+      // FOREGROUND_SERVICE_MICROPHONE permission setMicrophoneEnabled
+      // может silently fail (publication == null) даже когда room
+      // успешно connected. Этот fix surface'ит failure через
+      // `microphonePublishFailed` flag вместо silently lying в UI.
+      _microphonePublishFailed = !(await _publishLocalMicrophone(room));
       if (call.mediaMode.isVideo) {
         await room.localParticipant?.setCameraEnabled(
           _cameraEnabled,
@@ -945,6 +984,10 @@ class CallCoordinatorService extends ChangeNotifier
       _connectionError = _hasMediaPermissionIssue
           ? 'Нет доступа к микрофону или камере. Разрешите доступ в настройках приложения.'
           : 'Не удалось подключиться к звонку.';
+      // Connection-level failure уже surface'ится через connectionError —
+      // mic-specific signal на этом этапе redundant. Clear чтобы не
+      // surface'ить stale mic banner поверх banner'а connection failure.
+      _microphonePublishFailed = false;
     } finally {
       _isConnectingRoom = false;
       _isReconnectingRoom = false;
@@ -1119,7 +1162,9 @@ class CallCoordinatorService extends ChangeNotifier
       return;
     }
     try {
-      await room.localParticipant?.setMicrophoneEnabled(_microphoneEnabled);
+      if (_microphoneEnabled) {
+        _microphonePublishFailed = !(await _publishLocalMicrophone(room));
+      }
       if (activeCall.mediaMode.isVideo) {
         await room.localParticipant?.setCameraEnabled(
           _cameraEnabled,
@@ -1130,6 +1175,44 @@ class CallCoordinatorService extends ChangeNotifier
       }
     } catch (_) {
       // LiveKit will continue reconnecting if media resume is not ready yet.
+    }
+  }
+
+  /// Try to publish the local microphone и проверить что трек
+  /// фактически опубликован. Возвращает true при успехе, false при
+  /// silent failure (publication == null либо post-await
+  /// `isMicrophoneEnabled()` вернул false). На failure обновляет
+  /// `_microphoneEnabled = false` для truthful UI state — без этого
+  /// иконка показывает «mic on» хотя собеседник ничего не слышит.
+  ///
+  /// На Android 14+ это первая линия защиты от Bug 1 (audio one-way):
+  /// LiveKit shortcut `setMicrophoneEnabled(true)` может вернуть null
+  /// publication когда microphone capture revoked'нут OS-ью
+  /// (foreground service не запущен → mic stream killed). До этого
+  /// fix'а такой failure был invisible — error swallow'ался outer
+  /// catch'ем без specific signal к юзеру.
+  Future<bool> _publishLocalMicrophone(Room room) async {
+    final participant = room.localParticipant;
+    if (participant == null) {
+      _microphoneEnabled = false;
+      return false;
+    }
+    try {
+      final publication = await participant.setMicrophoneEnabled(true);
+      final published = publication != null && participant.isMicrophoneEnabled();
+      if (!published) {
+        _microphoneEnabled = false;
+        debugPrint(
+          '[call] microphone publish silent failure '
+          'publication=${publication?.sid ?? 'null'} '
+          'isMicEnabled=${participant.isMicrophoneEnabled()}',
+        );
+      }
+      return published;
+    } catch (error, stack) {
+      _microphoneEnabled = false;
+      debugPrint('[call] microphone publish threw: $error\n$stack');
+      return false;
     }
   }
 
@@ -1429,6 +1512,7 @@ class CallCoordinatorService extends ChangeNotifier
     _isConnectingRoom = false;
     _isReconnectingRoom = false;
     _microphoneEnabled = true;
+    _microphonePublishFailed = false;
     _cameraEnabled = false;
     _isSwitchingCamera = false;
     _cameraPosition = CameraPosition.front;
@@ -1465,5 +1549,21 @@ class CallCoordinatorService extends ChangeNotifier
     unawaited(_pushSubscription?.cancel());
     unawaited(_disposeRoom());
     super.dispose();
+  }
+
+  /// Test seam — позволяет flip'ать `microphonePublishFailed` без
+  /// настоящей LiveKit Room. Используется unit-test'ом для проверки
+  /// что getter + notifier работают на boundary. Production-кода это
+  /// никогда не вызывает.
+  @visibleForTesting
+  void debugMarkMicrophonePublishFailed(bool failed) {
+    if (_microphonePublishFailed == failed) {
+      return;
+    }
+    _microphonePublishFailed = failed;
+    if (failed) {
+      _microphoneEnabled = false;
+    }
+    notifyListeners();
   }
 }

@@ -46,6 +46,10 @@ class CallScreen extends StatefulWidget {
 
 class _CallScreenState extends State<CallScreen> {
   CallInvite? _call;
+  // Тracks last-observed value of `coordinator.microphonePublishFailed`
+  // чтобы snackbar показывался ровно на false → true transition (а не
+  // каждый notifyListeners во время failure). Reset на dispose.
+  bool _lastMicrophonePublishFailed = false;
   // Incoming-call ringer: periodic system click + heavy haptic while
   // the call is ringing and we're the callee. Was missing entirely —
   // user reported "звонки в тишину идут".
@@ -285,6 +289,44 @@ class _CallScreenState extends State<CallScreen> {
     if (coordinatorCall.id != _resolvedCall.id) {
       return;
     }
+    // Microphone publish failure surfaced — поднимаем snackbar один
+    // раз на transition false → true. Без этого юзер видит «mic on»
+    // иконку хотя собеседник его не слышит (Bug 1 root cause #2 per
+    // AUDIT-2026-05-22). Action button предлагает retry — повторный
+    // toggleMicrophone re-arm'нёт publish path.
+    final micPublishFailed = widget.coordinator.microphonePublishFailed;
+    if (micPublishFailed && !_lastMicrophonePublishFailed) {
+      Future<void>.microtask(() {
+        if (!mounted) {
+          return;
+        }
+        final messenger = ScaffoldMessenger.of(context);
+        messenger.hideCurrentSnackBar();
+        messenger.showSnackBar(
+          SnackBar(
+            duration: const Duration(seconds: 6),
+            content: const Text(
+              'Микрофон не подключился. Собеседник вас не слышит.',
+            ),
+            action: SnackBarAction(
+              label: 'Повторить',
+              onPressed: () {
+                if (!mounted) {
+                  return;
+                }
+                // Reset tracker — если retry снова fails, мы хотим
+                // увидеть snackbar заново (а не silently swallow'нуть).
+                _lastMicrophonePublishFailed = false;
+                // Single toggle off→on (_microphoneEnabled уже false
+                // потому что failure обнулило truthful UI state).
+                unawaited(widget.coordinator.toggleMicrophone());
+              },
+            ),
+          ),
+        );
+      });
+    }
+    _lastMicrophonePublishFailed = micPublishFailed;
     final previousState = _resolvedCall.state;
     setState(() {
       _call = coordinatorCall;
