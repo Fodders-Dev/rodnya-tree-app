@@ -107,6 +107,21 @@ const EMPTY_DB = {
   // automatically on next startup so they pick up the new logic.
   migrationStatus: {},
   trees: [],
+  // Phase B (federated семьи): 5 collections per ENTITY-DESIGN.md.
+  // `семьи` (singular: семья) — explicit group entity wrapping a tree
+  // с multi-member roles (owner/editor/viewer). One-tree-per-семья
+  // invariant per ENTITY-DESIGN §3.1. Per-семья membership table —
+  // source of truth для access control, replaces tree.memberIds[] +
+  // tree.creatorId как primary mechanism (legacy fields preserved
+  // через dual-write compat shim в Week 3).
+  // Hidden persons — per-user opaque filter, не mutates tree.
+  // Invitations + browse tokens mirror Phase 6.5 kinshipChecks state
+  // machine pattern.
+  semyi: [],
+  semyaMembers: [],
+  semyaMemberHiddenPersons: [],
+  semyaInvitations: [],
+  semyaBrowseTokens: [],
   persons: [],
   personIdentities: [],
   personAttributes: [],
@@ -190,6 +205,23 @@ function normalizeDbState(parsed) {
         ? parsed.migrationStatus
         : {},
     trees: Array.isArray(parsed?.trees) ? parsed.trees : [],
+    // Phase B федеративные семьи. Backend identifiers ASCII
+    // transliterated (semyi / semyaMembers) — JSON tooling +
+    // codepaths comfortable c Latin keys. UI text + docs continue
+    // c Cyrillic «семья». См. ENTITY-DESIGN.md §1.
+    semyi: Array.isArray(parsed?.semyi) ? parsed.semyi : [],
+    semyaMembers: Array.isArray(parsed?.semyaMembers)
+      ? parsed.semyaMembers
+      : [],
+    semyaMemberHiddenPersons: Array.isArray(parsed?.semyaMemberHiddenPersons)
+      ? parsed.semyaMemberHiddenPersons
+      : [],
+    semyaInvitations: Array.isArray(parsed?.semyaInvitations)
+      ? parsed.semyaInvitations
+      : [],
+    semyaBrowseTokens: Array.isArray(parsed?.semyaBrowseTokens)
+      ? parsed.semyaBrowseTokens
+      : [],
     persons: Array.isArray(parsed?.persons) ? parsed.persons : [],
     personIdentities: Array.isArray(parsed?.personIdentities)
       ? parsed.personIdentities
@@ -7585,6 +7617,131 @@ class FileStore {
     const db = await this._read();
     const tree = db.trees.find((entry) => entry.id === treeId);
     return tree ? structuredClone(tree) : null;
+  }
+
+  // ---------------------------------------------------------------
+  // Phase B federated семьи — entity CRUD (Week 2 Ship 1).
+  //
+  // Атомарный createSemya: семья record + owner membership row,
+  // gated через single _write. Pattern mirrors `createTree` + member
+  // setup chain, но без legacy fields (tree.memberIds compat shim
+  // приходит в Week 3).
+  //
+  // Invariants enforced на этом layer (см. ENTITY-DESIGN.md §3):
+  //   - One-tree-per-семья — treeId уникален среди не-deleted семей.
+  //   - Membership uniqueness — (semyaId, userId) pair единственный.
+  //   - At-least-one-owner — countActiveOwners(semyaId) >= 1
+  //     (enforced на role transition + member kick paths в Ship 3+).
+  // ---------------------------------------------------------------
+
+  async createSemya({ownerId, name, treeId, description = null}) {
+    if (!ownerId || typeof ownerId !== "string") {
+      throw new Error("INVALID_OWNER_ID");
+    }
+    if (!name || typeof name !== "string" || !name.trim()) {
+      throw new Error("INVALID_NAME");
+    }
+    if (!treeId || typeof treeId !== "string") {
+      throw new Error("INVALID_TREE_ID");
+    }
+
+    const db = await this._read();
+    const owner = db.users.find((entry) => entry.id === ownerId);
+    if (!owner) {
+      throw new Error("OWNER_NOT_FOUND");
+    }
+    const tree = db.trees.find((entry) => entry.id === treeId);
+    if (!tree) {
+      throw new Error("TREE_NOT_FOUND");
+    }
+    // One-tree-per-семья invariant (§3.1).
+    const existingForTree = (db.semyi || []).find(
+      (entry) => entry.treeId === treeId && !entry.deletedAt,
+    );
+    if (existingForTree) {
+      throw new Error("TREE_ALREADY_BOUND");
+    }
+
+    const createdAt = nowIso();
+    const semya = {
+      id: crypto.randomUUID(),
+      name: name.trim(),
+      ownerId,
+      treeId,
+      description: description ? String(description).trim() : null,
+      createdAt,
+      updatedAt: createdAt,
+      deletedAt: null,
+    };
+    const ownerMembership = {
+      id: crypto.randomUUID(),
+      semyaId: semya.id,
+      userId: ownerId,
+      role: "owner",
+      joinedAt: createdAt,
+      invitedByUserId: null,
+      hasInviteGrant: true,
+      hiddenAt: null,
+    };
+
+    db.semyi.push(semya);
+    db.semyaMembers.push(ownerMembership);
+
+    await this._write(db);
+    return structuredClone(semya);
+  }
+
+  async findSemyaById(semyaId) {
+    if (!semyaId || typeof semyaId !== "string") {
+      return null;
+    }
+    const db = await this._read();
+    const semya = (db.semyi || []).find((entry) => entry.id === semyaId);
+    return semya ? structuredClone(semya) : null;
+  }
+
+  async listSemyiForUser(userId) {
+    if (!userId || typeof userId !== "string") {
+      return [];
+    }
+    const db = await this._read();
+    const memberSemyaIds = new Set(
+      (db.semyaMembers || [])
+        .filter((m) => m.userId === userId && !m.hiddenAt)
+        .map((m) => m.semyaId),
+    );
+    return (db.semyi || [])
+      .filter((entry) => !entry.deletedAt && memberSemyaIds.has(entry.id))
+      .sort((left, right) =>
+        String(right.updatedAt || "").localeCompare(
+          String(left.updatedAt || ""),
+        ),
+      )
+      .map((entry) => structuredClone(entry));
+  }
+
+  async listMembershipsForSemya(semyaId) {
+    if (!semyaId || typeof semyaId !== "string") {
+      return [];
+    }
+    const db = await this._read();
+    return (db.semyaMembers || [])
+      .filter((m) => m.semyaId === semyaId && !m.hiddenAt)
+      .sort((left, right) =>
+        String(left.joinedAt || "").localeCompare(String(right.joinedAt || "")),
+      )
+      .map((entry) => structuredClone(entry));
+  }
+
+  async findMembership(semyaId, userId) {
+    if (!semyaId || !userId) {
+      return null;
+    }
+    const db = await this._read();
+    const row = (db.semyaMembers || []).find(
+      (m) => m.semyaId === semyaId && m.userId === userId && !m.hiddenAt,
+    );
+    return row ? structuredClone(row) : null;
   }
 
   _circleMemberCount(db, circle) {
