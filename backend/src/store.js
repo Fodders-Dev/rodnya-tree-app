@@ -7744,6 +7744,112 @@ class FileStore {
     return row ? structuredClone(row) : null;
   }
 
+  async updateSemya({semyaId, actorUserId, name, description}) {
+    if (!semyaId || typeof semyaId !== "string") {
+      throw new Error("INVALID_SEMYA_ID");
+    }
+    if (!actorUserId) {
+      throw new Error("INVALID_ACTOR");
+    }
+
+    const db = await this._read();
+    const semya = (db.semyi || []).find(
+      (entry) => entry.id === semyaId && !entry.deletedAt,
+    );
+    if (!semya) {
+      throw new Error("SEMYA_NOT_FOUND");
+    }
+    // Owner-only mutation (Q2 — name editable by owner only).
+    const actorMembership = (db.semyaMembers || []).find(
+      (m) =>
+        m.semyaId === semyaId &&
+        m.userId === actorUserId &&
+        m.role === "owner" &&
+        !m.hiddenAt,
+    );
+    if (!actorMembership) {
+      throw new Error("NOT_OWNER");
+    }
+
+    let mutated = false;
+    if (name !== undefined && name !== null) {
+      if (typeof name !== "string" || !name.trim()) {
+        throw new Error("INVALID_NAME");
+      }
+      const trimmed = name.trim();
+      if (trimmed !== semya.name) {
+        semya.name = trimmed;
+        mutated = true;
+      }
+    }
+    if (description !== undefined) {
+      // null clears, string sets, no-op для same value
+      const next = description === null ? null : String(description).trim();
+      const current = semya.description ?? null;
+      if (next !== current) {
+        semya.description = next;
+        mutated = true;
+      }
+    }
+
+    if (mutated) {
+      semya.updatedAt = nowIso();
+      await this._write(db);
+    }
+    return structuredClone(semya);
+  }
+
+  // Soft-delete семья per ENTITY-DESIGN §1.1 lifecycle + Q4 orphan
+  // policy. Sets `deletedAt` and hides все memberships (their listings
+  // exclude). Persons + relations preserved (orphan), identity links
+  // preserve через personIdentities (twin persons в других семей
+  // continue работать). Hard-delete background job extends Phase 3.6
+  // pattern (90d window — Q5 answer).
+  // Notification dispatch к members — async, deferred к Week 3 broadcast
+  // scope work (Ship 2 строго CRUD).
+  async softDeleteSemya({semyaId, actorUserId}) {
+    if (!semyaId || typeof semyaId !== "string") {
+      throw new Error("INVALID_SEMYA_ID");
+    }
+    if (!actorUserId) {
+      throw new Error("INVALID_ACTOR");
+    }
+
+    const db = await this._read();
+    const semya = (db.semyi || []).find(
+      (entry) => entry.id === semyaId && !entry.deletedAt,
+    );
+    if (!semya) {
+      throw new Error("SEMYA_NOT_FOUND");
+    }
+    const actorMembership = (db.semyaMembers || []).find(
+      (m) =>
+        m.semyaId === semyaId &&
+        m.userId === actorUserId &&
+        m.role === "owner" &&
+        !m.hiddenAt,
+    );
+    if (!actorMembership) {
+      throw new Error("NOT_OWNER");
+    }
+
+    const deletedAt = nowIso();
+    semya.deletedAt = deletedAt;
+    semya.updatedAt = deletedAt;
+
+    // Memberships hidden — listSemyiForUser + findMembership exclude
+    // hidden rows, поэтому members перестают видеть семья в их list.
+    // Membership records preserved (audit trail).
+    for (const m of db.semyaMembers || []) {
+      if (m.semyaId === semyaId && !m.hiddenAt) {
+        m.hiddenAt = deletedAt;
+      }
+    }
+
+    await this._write(db);
+    return structuredClone(semya);
+  }
+
   _circleMemberCount(db, circle) {
     if (!circle) {
       return 0;

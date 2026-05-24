@@ -40,6 +40,7 @@ const {registerGraphRoutes} = require("./routes/graph-routes");
 const {registerGraphPersonRoutes} = require("./routes/graph-person-routes");
 const {registerOnboardingRoutes} = require("./routes/onboarding-routes");
 const {registerKinshipChecksRoutes} = require("./routes/kinship-checks-routes");
+const {registerSemyaRoutes} = require("./routes/semya-routes");
 const {registerIdentityRoutes} = require("./routes/identity-routes");
 const {registerMaxAuthRoutes} = require("./routes/max-auth-routes");
 const {registerMergeRoutes} = require("./routes/merge-routes");
@@ -1740,6 +1741,41 @@ function createApp({
     return tree;
   }
 
+  // Phase B (ENTITY-DESIGN §2): unified gate для семья endpoints.
+  // requiredRole — minimum role chain: viewer < editor < owner.
+  // Returns {semya, membership} либо null after sending 403/404.
+  //
+  // Role hierarchy (per ENTITY-DESIGN §2.1):
+  //   viewer  → read семья + tree (no mutations)
+  //   editor  → viewer + add/edit persons + invite (if hasInviteGrant)
+  //   owner   → editor + rename/delete семья + role transitions
+  //
+  // Soft-deleted семьи treat как not-found (404), не denied (403).
+  async function requireSemyaAccess(req, res, semyaId, {requiredRole = "viewer"} = {}) {
+    const semya = await store.findSemyaById(semyaId);
+    if (!semya || semya.deletedAt) {
+      res.status(404).json({message: "Семья не найдена"});
+      return null;
+    }
+    const membership = await store.findMembership(semyaId, req.auth.user.id);
+    if (!membership) {
+      res.status(403).json({message: "Доступ к семье запрещён"});
+      return null;
+    }
+    const roleRank = {viewer: 0, editor: 1, owner: 2};
+    const actorRank = roleRank[membership.role] ?? -1;
+    const requiredRank = roleRank[requiredRole] ?? 0;
+    if (actorRank < requiredRank) {
+      res.status(403).json({
+        message: "Недостаточно прав для этого действия",
+        requiredRole,
+        actorRole: membership.role,
+      });
+      return null;
+    }
+    return {semya, membership};
+  }
+
   // Phase 3.2 (DECISIONS.md 2026-05-10 ответы C/Q1): owner-model
   // gate для mutate-routes на graphPerson canonical / soft-delete /
   // merge. Layered:
@@ -2499,6 +2535,13 @@ function createApp({
     store,
     requireAuth,
     createAndDispatchNotification,
+  });
+
+  // Phase B Week 2 Ship 2: семья HTTP endpoints (5 routes).
+  registerSemyaRoutes(app, {
+    store,
+    requireAuth,
+    requireSemyaAccess,
   });
 
   registerTreeRoutes(app, {
