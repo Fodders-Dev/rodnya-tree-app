@@ -8015,6 +8015,292 @@ class FileStore {
     return {membership: structuredClone(target), wasSelfLeave: actorIsSelf};
   }
 
+  // ---------------------------------------------------------------
+  // Invitation flow (Ship 4). State machine: pending → accepted |
+  // revoked | expired. Simpler than kinship-checks (no reject ветка
+  // — recipient just не accept'ит до expiry либо revoke).
+  //
+  // Mirror Phase 6.5 kinship-checks lazy-expiry pattern: each read
+  // sweeps invitations for этого semyaId where expiresAt < now()
+  // и status='pending' → status='expired'. Reduces background-job
+  // surface (no separate sweep task needed Ship 4).
+  // ---------------------------------------------------------------
+
+  _lazyExpireInvitations(db, semyaId) {
+    const now = Date.now();
+    let mutated = false;
+    for (const inv of db.semyaInvitations || []) {
+      if (semyaId && inv.semyaId !== semyaId) continue;
+      if (inv.status !== "pending") continue;
+      const expiresAtMs = inv.expiresAt ? Date.parse(inv.expiresAt) : null;
+      if (expiresAtMs && expiresAtMs <= now) {
+        inv.status = "expired";
+        inv.expiredAt = nowIso();
+        mutated = true;
+      }
+    }
+    return mutated;
+  }
+
+  async createInvitation({
+    semyaId,
+    inviterUserId,
+    recipientUserId = null,
+    recipientEmail = null,
+    recipientPhone = null,
+    role,
+    expiresInDays = 30,
+  }) {
+    if (!semyaId || typeof semyaId !== "string") {
+      throw new Error("INVALID_SEMYA_ID");
+    }
+    if (!inviterUserId) {
+      throw new Error("INVALID_INVITER");
+    }
+    if (role !== "editor" && role !== "viewer") {
+      throw new Error("INVALID_ROLE");
+    }
+    const hasRecipient =
+      (recipientUserId && typeof recipientUserId === "string") ||
+      (recipientEmail && typeof recipientEmail === "string") ||
+      (recipientPhone && typeof recipientPhone === "string");
+    if (!hasRecipient) {
+      throw new Error("MISSING_RECIPIENT");
+    }
+
+    const db = await this._read();
+    const semya = (db.semyi || []).find(
+      (entry) => entry.id === semyaId && !entry.deletedAt,
+    );
+    if (!semya) {
+      throw new Error("SEMYA_NOT_FOUND");
+    }
+    // Validate recipientUserId if provided.
+    if (recipientUserId) {
+      const recipient = (db.users || []).find((u) => u.id === recipientUserId);
+      if (!recipient) {
+        throw new Error("RECIPIENT_NOT_FOUND");
+      }
+      // Если recipient already member → no point creating invitation.
+      const existingMembership = (db.semyaMembers || []).find(
+        (m) =>
+          m.semyaId === semyaId &&
+          m.userId === recipientUserId &&
+          !m.hiddenAt,
+      );
+      if (existingMembership) {
+        throw new Error("ALREADY_MEMBER");
+      }
+    }
+
+    // Lazy-expire previous invitations for этого семья перед
+    // duplicate-check (так stale pending не блокирует resend).
+    this._lazyExpireInvitations(db, semyaId);
+
+    // Idempotent re-create — if existing pending invitation для same
+    // (semyaId, recipientUserId либо recipientEmail/Phone) → return it.
+    let existing = null;
+    if (recipientUserId) {
+      existing = (db.semyaInvitations || []).find(
+        (inv) =>
+          inv.semyaId === semyaId &&
+          inv.recipientUserId === recipientUserId &&
+          inv.status === "pending",
+      );
+    } else if (recipientEmail) {
+      const targetEmail = recipientEmail.toLowerCase().trim();
+      existing = (db.semyaInvitations || []).find(
+        (inv) =>
+          inv.semyaId === semyaId &&
+          (inv.recipientEmail || "").toLowerCase() === targetEmail &&
+          inv.status === "pending",
+      );
+    } else if (recipientPhone) {
+      const targetPhone = recipientPhone.replace(/\s+/g, "");
+      existing = (db.semyaInvitations || []).find(
+        (inv) =>
+          inv.semyaId === semyaId &&
+          (inv.recipientPhone || "").replace(/\s+/g, "") === targetPhone &&
+          inv.status === "pending",
+      );
+    }
+    if (existing) {
+      return {created: false, invitation: structuredClone(existing)};
+    }
+
+    const createdAt = nowIso();
+    const expiresAt = new Date(
+      Date.now() + Math.max(1, expiresInDays) * 24 * 60 * 60 * 1000,
+    ).toISOString();
+    const invitation = {
+      id: crypto.randomUUID(),
+      // Token = uuid (32-char URL-safe). Sufficient entropy для
+      // shareable link capability. Treat как Bearer secret.
+      token: crypto.randomUUID() + crypto.randomUUID().replace(/-/g, ""),
+      semyaId,
+      inviterUserId,
+      recipientUserId: recipientUserId || null,
+      recipientEmail: recipientEmail
+        ? String(recipientEmail).toLowerCase().trim()
+        : null,
+      recipientPhone: recipientPhone
+        ? String(recipientPhone).trim()
+        : null,
+      role,
+      createdAt,
+      expiresAt,
+      status: "pending",
+      acceptedAt: null,
+      revokedAt: null,
+      revokedByUserId: null,
+      expiredAt: null,
+    };
+    db.semyaInvitations.push(invitation);
+    await this._write(db);
+    return {created: true, invitation: structuredClone(invitation)};
+  }
+
+  async findInvitationByToken(token) {
+    if (!token || typeof token !== "string") {
+      return null;
+    }
+    const db = await this._read();
+    this._lazyExpireInvitations(db, null);
+    const found = (db.semyaInvitations || []).find((inv) => inv.token === token);
+    return found ? structuredClone(found) : null;
+  }
+
+  async listInvitationsForSemya(semyaId) {
+    if (!semyaId || typeof semyaId !== "string") {
+      return [];
+    }
+    const db = await this._read();
+    this._lazyExpireInvitations(db, semyaId);
+    return (db.semyaInvitations || [])
+      .filter((inv) => inv.semyaId === semyaId)
+      .sort((a, b) =>
+        String(b.createdAt || "").localeCompare(String(a.createdAt || "")),
+      )
+      .map((entry) => structuredClone(entry));
+  }
+
+  async acceptInvitation({token, acceptingUserId}) {
+    if (!token || typeof token !== "string") {
+      throw new Error("INVALID_TOKEN");
+    }
+    if (!acceptingUserId) {
+      throw new Error("INVALID_ACTOR");
+    }
+
+    const db = await this._read();
+    this._lazyExpireInvitations(db, null);
+    const invitation = (db.semyaInvitations || []).find(
+      (inv) => inv.token === token,
+    );
+    if (!invitation) {
+      throw new Error("INVITATION_NOT_FOUND");
+    }
+    if (invitation.status !== "pending") {
+      throw new Error("INVITATION_NOT_PENDING");
+    }
+    // If invitation targets specific user, accepting user must match.
+    // Иначе (email/phone либо bare token mode) — any authenticated
+    // user with token can accept (token = capability).
+    if (
+      invitation.recipientUserId &&
+      invitation.recipientUserId !== acceptingUserId
+    ) {
+      throw new Error("WRONG_RECIPIENT");
+    }
+
+    const semya = (db.semyi || []).find(
+      (entry) => entry.id === invitation.semyaId && !entry.deletedAt,
+    );
+    if (!semya) {
+      throw new Error("SEMYA_NOT_FOUND");
+    }
+
+    // Atomic accept + membership create.
+    const now = nowIso();
+    invitation.status = "accepted";
+    invitation.acceptedAt = now;
+
+    // Idempotent membership add — если already member (race либо
+    // hidden re-join), skip new row.
+    const existingMembership = (db.semyaMembers || []).find(
+      (m) =>
+        m.semyaId === invitation.semyaId &&
+        m.userId === acceptingUserId &&
+        !m.hiddenAt,
+    );
+    let membership;
+    if (existingMembership) {
+      membership = existingMembership;
+    } else {
+      membership = {
+        id: crypto.randomUUID(),
+        semyaId: invitation.semyaId,
+        userId: acceptingUserId,
+        role: invitation.role,
+        joinedAt: now,
+        invitedByUserId: invitation.inviterUserId,
+        hasInviteGrant: false,
+        hiddenAt: null,
+      };
+      db.semyaMembers.push(membership);
+    }
+
+    semya.updatedAt = now;
+    await this._write(db);
+    return {
+      invitation: structuredClone(invitation),
+      membership: structuredClone(membership),
+    };
+  }
+
+  async revokeInvitation({invitationId, actingUserId}) {
+    if (!invitationId || typeof invitationId !== "string") {
+      throw new Error("INVALID_INVITATION_ID");
+    }
+    if (!actingUserId) {
+      throw new Error("INVALID_ACTOR");
+    }
+
+    const db = await this._read();
+    const invitation = (db.semyaInvitations || []).find(
+      (inv) => inv.id === invitationId,
+    );
+    if (!invitation) {
+      throw new Error("INVITATION_NOT_FOUND");
+    }
+    // Per Ship 4 spec: revoker = inviter либо semya owner.
+    const isInviter = invitation.inviterUserId === actingUserId;
+    let isOwner = false;
+    if (!isInviter) {
+      isOwner = !!(db.semyaMembers || []).find(
+        (m) =>
+          m.semyaId === invitation.semyaId &&
+          m.userId === actingUserId &&
+          m.role === "owner" &&
+          !m.hiddenAt,
+      );
+    }
+    if (!isInviter && !isOwner) {
+      throw new Error("NOT_INVITER_OR_OWNER");
+    }
+    if (invitation.status !== "pending") {
+      throw new Error("INVITATION_NOT_PENDING");
+    }
+
+    const now = nowIso();
+    invitation.status = "revoked";
+    invitation.revokedAt = now;
+    invitation.revokedByUserId = actingUserId;
+
+    await this._write(db);
+    return structuredClone(invitation);
+  }
+
   // Soft-delete семья per ENTITY-DESIGN §1.1 lifecycle + Q4 orphan
   // policy. Sets `deletedAt` and hides все memberships (their listings
   // exclude). Persons + relations preserved (orphan), identity links

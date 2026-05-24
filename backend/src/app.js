@@ -42,6 +42,9 @@ const {registerOnboardingRoutes} = require("./routes/onboarding-routes");
 const {registerKinshipChecksRoutes} = require("./routes/kinship-checks-routes");
 const {registerSemyaRoutes} = require("./routes/semya-routes");
 const {registerMembershipRoutes} = require("./routes/membership-routes");
+const {
+  registerSemyaInvitationRoutes,
+} = require("./routes/semya-invitation-routes");
 const {registerIdentityRoutes} = require("./routes/identity-routes");
 const {registerMaxAuthRoutes} = require("./routes/max-auth-routes");
 const {registerMergeRoutes} = require("./routes/merge-routes");
@@ -2550,6 +2553,14 @@ function createApp({
     store,
     requireAuth,
     requireSemyaAccess,
+  });
+
+  // Phase B Week 2 Ship 4: семья invitation flow (3 routes).
+  registerSemyaInvitationRoutes(app, {
+    store,
+    requireAuth,
+    requireSemyaAccess,
+    createAndDispatchNotification,
   });
 
   registerTreeRoutes(app, {
