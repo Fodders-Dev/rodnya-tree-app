@@ -41,6 +41,7 @@ const {registerGraphPersonRoutes} = require("./routes/graph-person-routes");
 const {registerOnboardingRoutes} = require("./routes/onboarding-routes");
 const {registerKinshipChecksRoutes} = require("./routes/kinship-checks-routes");
 const {registerSemyaRoutes} = require("./routes/semya-routes");
+const {registerMembershipRoutes} = require("./routes/membership-routes");
 const {registerIdentityRoutes} = require("./routes/identity-routes");
 const {registerMaxAuthRoutes} = require("./routes/max-auth-routes");
 const {registerMergeRoutes} = require("./routes/merge-routes");
@@ -2539,6 +2540,13 @@ function createApp({
 
   // Phase B Week 2 Ship 2: семья HTTP endpoints (5 routes).
   registerSemyaRoutes(app, {
+    store,
+    requireAuth,
+    requireSemyaAccess,
+  });
+
+  // Phase B Week 2 Ship 3: семья membership HTTP endpoints (4 routes).
+  registerMembershipRoutes(app, {
     store,
     requireAuth,
     requireSemyaAccess,

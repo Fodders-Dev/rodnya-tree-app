@@ -7799,6 +7799,222 @@ class FileStore {
     return structuredClone(semya);
   }
 
+  // ---------------------------------------------------------------
+  // Membership mutations (Ship 3). Built на findMembership +
+  // listMembershipsForSemya (Ship 1) + access patterns в Ship 2 routes.
+  //
+  // Invariants enforced (ENTITY-DESIGN §3):
+  //   - addMembership: role ∈ {editor, viewer} (owner role only через
+  //     PATCH promote либо initial createSemya), one membership per
+  //     (semyaId, userId) pair (idempotent re-call).
+  //   - updateMembership: role transitions allowed only by owner.
+  //     Self role change blocked (always need another owner для
+  //     self-demote). Last-owner demote rejected.
+  //     hasInviteGrant toggle meaningful только для editor.
+  //   - removeMembership: self-leave permitted (если не последний
+  //     owner). Kick others requires owner role.
+  // ---------------------------------------------------------------
+
+  _countActiveOwners(db, semyaId) {
+    return (db.semyaMembers || []).filter(
+      (m) => m.semyaId === semyaId && m.role === "owner" && !m.hiddenAt,
+    ).length;
+  }
+
+  async addMembership({
+    semyaId,
+    userId,
+    role,
+    invitedByUserId,
+    hasInviteGrant = false,
+  }) {
+    if (!semyaId || typeof semyaId !== "string") {
+      throw new Error("INVALID_SEMYA_ID");
+    }
+    if (!userId || typeof userId !== "string") {
+      throw new Error("INVALID_USER_ID");
+    }
+    if (role !== "editor" && role !== "viewer") {
+      throw new Error("INVALID_ROLE");
+    }
+
+    const db = await this._read();
+    const semya = (db.semyi || []).find(
+      (entry) => entry.id === semyaId && !entry.deletedAt,
+    );
+    if (!semya) {
+      throw new Error("SEMYA_NOT_FOUND");
+    }
+    const user = (db.users || []).find((entry) => entry.id === userId);
+    if (!user) {
+      throw new Error("USER_NOT_FOUND");
+    }
+    // Idempotent — если already member (любой role), return existing.
+    const existing = (db.semyaMembers || []).find(
+      (m) => m.semyaId === semyaId && m.userId === userId && !m.hiddenAt,
+    );
+    if (existing) {
+      return {created: false, membership: structuredClone(existing)};
+    }
+    // hasInviteGrant only meaningful для editor (ENTITY-DESIGN §3.4).
+    const grant = role === "editor" ? !!hasInviteGrant : false;
+    const createdAt = nowIso();
+    const membership = {
+      id: crypto.randomUUID(),
+      semyaId,
+      userId,
+      role,
+      joinedAt: createdAt,
+      invitedByUserId: invitedByUserId || null,
+      hasInviteGrant: grant,
+      hiddenAt: null,
+    };
+    db.semyaMembers.push(membership);
+    await this._write(db);
+    return {created: true, membership: structuredClone(membership)};
+  }
+
+  async updateMembership({
+    semyaId,
+    targetUserId,
+    actorUserId,
+    role,
+    hasInviteGrant,
+  }) {
+    if (!semyaId || typeof semyaId !== "string") {
+      throw new Error("INVALID_SEMYA_ID");
+    }
+    if (!targetUserId || typeof targetUserId !== "string") {
+      throw new Error("INVALID_USER_ID");
+    }
+    if (!actorUserId) {
+      throw new Error("INVALID_ACTOR");
+    }
+    if (role !== undefined && !["owner", "editor", "viewer"].includes(role)) {
+      throw new Error("INVALID_ROLE");
+    }
+    if (role === undefined && hasInviteGrant === undefined) {
+      throw new Error("NO_CHANGES");
+    }
+
+    const db = await this._read();
+    const semya = (db.semyi || []).find(
+      (entry) => entry.id === semyaId && !entry.deletedAt,
+    );
+    if (!semya) {
+      throw new Error("SEMYA_NOT_FOUND");
+    }
+    const actor = (db.semyaMembers || []).find(
+      (m) =>
+        m.semyaId === semyaId &&
+        m.userId === actorUserId &&
+        m.role === "owner" &&
+        !m.hiddenAt,
+    );
+    if (!actor) {
+      throw new Error("NOT_OWNER");
+    }
+    const target = (db.semyaMembers || []).find(
+      (m) =>
+        m.semyaId === semyaId && m.userId === targetUserId && !m.hiddenAt,
+    );
+    if (!target) {
+      throw new Error("MEMBERSHIP_NOT_FOUND");
+    }
+
+    let mutated = false;
+    if (role !== undefined && role !== target.role) {
+      // Self role change blocked (ENTITY-DESIGN §2.1 «Owner → editor
+      // требует ≥1 другой active owner»; self-promotion uncommon
+      // case but blocked для symmetry, requires другой owner).
+      if (targetUserId === actorUserId) {
+        throw new Error("SELF_ROLE_CHANGE_FORBIDDEN");
+      }
+      // Demote owner → editor/viewer requires ≥1 другой owner remaining.
+      if (target.role === "owner" && role !== "owner") {
+        if (this._countActiveOwners(db, semyaId) <= 1) {
+          throw new Error("LAST_OWNER_DEMOTE_FORBIDDEN");
+        }
+      }
+      target.role = role;
+      // Clear invite grant when not editor (ENTITY-DESIGN §3.4).
+      if (role !== "editor") {
+        target.hasInviteGrant = false;
+      }
+      mutated = true;
+    }
+    if (hasInviteGrant !== undefined) {
+      const targetRole = target.role; // after possible role change
+      if (targetRole !== "editor") {
+        // Owner implicitly имеет invite power; viewer cannot invite.
+        // Toggle nonsensical для non-editor — reject explicitly.
+        throw new Error("INVITE_GRANT_ONLY_EDITOR");
+      }
+      const next = !!hasInviteGrant;
+      if (target.hasInviteGrant !== next) {
+        target.hasInviteGrant = next;
+        mutated = true;
+      }
+    }
+
+    if (mutated) {
+      semya.updatedAt = nowIso();
+      await this._write(db);
+    }
+    return structuredClone(target);
+  }
+
+  async removeMembership({semyaId, targetUserId, actorUserId}) {
+    if (!semyaId || typeof semyaId !== "string") {
+      throw new Error("INVALID_SEMYA_ID");
+    }
+    if (!targetUserId || typeof targetUserId !== "string") {
+      throw new Error("INVALID_USER_ID");
+    }
+    if (!actorUserId) {
+      throw new Error("INVALID_ACTOR");
+    }
+
+    const db = await this._read();
+    const semya = (db.semyi || []).find(
+      (entry) => entry.id === semyaId && !entry.deletedAt,
+    );
+    if (!semya) {
+      throw new Error("SEMYA_NOT_FOUND");
+    }
+    const target = (db.semyaMembers || []).find(
+      (m) =>
+        m.semyaId === semyaId && m.userId === targetUserId && !m.hiddenAt,
+    );
+    if (!target) {
+      throw new Error("MEMBERSHIP_NOT_FOUND");
+    }
+    const actorIsSelf = targetUserId === actorUserId;
+    if (!actorIsSelf) {
+      // Kick others — owner only.
+      const actor = (db.semyaMembers || []).find(
+        (m) =>
+          m.semyaId === semyaId &&
+          m.userId === actorUserId &&
+          m.role === "owner" &&
+          !m.hiddenAt,
+      );
+      if (!actor) {
+        throw new Error("NOT_OWNER");
+      }
+    }
+    // At-least-one-owner invariant. Both kick + self-leave paths check.
+    if (target.role === "owner" && this._countActiveOwners(db, semyaId) <= 1) {
+      throw new Error("LAST_OWNER_REMOVE_FORBIDDEN");
+    }
+
+    const removedAt = nowIso();
+    target.hiddenAt = removedAt;
+    semya.updatedAt = removedAt;
+    await this._write(db);
+    return {membership: structuredClone(target), wasSelfLeave: actorIsSelf};
+  }
+
   // Soft-delete семья per ENTITY-DESIGN §1.1 lifecycle + Q4 orphan
   // policy. Sets `deletedAt` and hides все memberships (their listings
   // exclude). Persons + relations preserved (orphan), identity links
