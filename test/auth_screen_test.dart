@@ -144,7 +144,11 @@ void main() {
     // mobile hero minimal — just brand + tagline + subtitle — so they
     // are now wide-layout only. The auth form below carries the social
     // CTAs which are the actionable surface.
-    expect(find.text('Google'), findsOneWidget);
+    //
+    // Ship Q3 (2026-05-26): Google button HIDDEN когда provider не
+    // configured (UX audit 2026-05-25 Critical #3). _FakeAuthService
+    // не is CustomApiAuthService → _supportsGoogleAuth=false → no button.
+    expect(find.text('Google'), findsNothing);
     expect(find.text('Telegram'), findsOneWidget);
   });
 

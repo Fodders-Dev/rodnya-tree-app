@@ -21,6 +21,7 @@ import '../services/call_preferences.dart';
 import '../config/storefront_config.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/flow_overlays.dart';
+import '../widgets/sign_out_confirmation_dialog.dart';
 import '../utils/user_facing_error.dart';
 
 // --- ID нашего тестового продукта ---
@@ -1143,6 +1144,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
           title: 'Выйти',
           subtitle: 'Сменить аккаунт',
           onTap: () async {
+            // Ship Q3 (2026-05-26): confirmation gate ПЕРЕД destructive
+            // signOut. UX audit 2026-05-25 Critical #1.
+            final confirmed = await showSignOutConfirmationDialog(
+              context,
+              _authService,
+            );
+            if (!confirmed || !mounted) return;
             await _authService.signOut();
             if (GetIt.I.isRegistered<TreeProvider>()) {
               await GetIt.I<TreeProvider>().clearSelection();

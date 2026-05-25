@@ -1393,9 +1393,16 @@ class _AuthScreenState extends State<AuthScreen> {
             : AppTheme.warmLine.withValues(alpha: 0.72),
         child: Form(
           key: _formKey,
-          autovalidateMode: _hasSubmitted
-              ? AutovalidateMode.onUserInteraction
-              : AutovalidateMode.disabled,
+          // Ship Q3 (2026-05-26): form-level autovalidate disabled —
+          // per-field gating via TextFormField.autovalidateMode below.
+          // UX audit 2026-05-25 Critical #2: form-level
+          // onUserInteraction triggered ALL validators on EVERY
+          // keystroke, so typing в «Имя» surfaced empty-email error
+          // под Email field (visually adjacent → looked like wrong-
+          // field mapping). Per-field mode validates only the field
+          // user is interacting with; submit still runs Form.validate()
+          // через все validators.
+          autovalidateMode: AutovalidateMode.disabled,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -1470,6 +1477,11 @@ class _AuthScreenState extends State<AuthScreen> {
                   keyboardType: TextInputType.name,
                   textCapitalization: TextCapitalization.words,
                   textInputAction: TextInputAction.next,
+                  // Ship Q3: per-field autovalidate. Validator никогда
+                  // не surface'ит email-related errors здесь.
+                  autovalidateMode: _hasSubmitted
+                      ? AutovalidateMode.onUserInteraction
+                      : AutovalidateMode.disabled,
                   validator: (value) {
                     if (!_isLogin &&
                         (value == null || value.trim().length < 2)) {
@@ -1490,6 +1502,10 @@ class _AuthScreenState extends State<AuthScreen> {
                 ),
                 keyboardType: TextInputType.emailAddress,
                 textInputAction: TextInputAction.next,
+                // Ship Q3: per-field autovalidate (см. Form-level комментарий).
+                autovalidateMode: _hasSubmitted
+                    ? AutovalidateMode.onUserInteraction
+                    : AutovalidateMode.disabled,
                 validator: (value) {
                   if (value == null ||
                       !value.contains('@') ||
@@ -1544,6 +1560,10 @@ class _AuthScreenState extends State<AuthScreen> {
                     _submit();
                   }
                 },
+                // Ship Q3: per-field autovalidate (см. Form-level комментарий).
+                autovalidateMode: _hasSubmitted
+                    ? AutovalidateMode.onUserInteraction
+                    : AutovalidateMode.disabled,
                 validator: (value) {
                   if (value == null || value.length < 6) {
                     return 'Пароль должен содержать не менее 6 символов';
@@ -1596,18 +1616,20 @@ class _AuthScreenState extends State<AuthScreen> {
               // layout the previous version had came from one
               // right-aligned Google pill on top of three center-wrapped
               // OutlinedButtons of varying widths.
-              if (kIsWeb) ...[
+              // Ship Q3 (2026-05-26): UX audit 2026-05-25 Critical #3 —
+              // «advertised-but-broken» Google login (snackbar «Google
+              // появится после подключения ключей провайдера») gone.
+              // Render Google button ONLY when capability check passes;
+              // unconfigured environments просто не показывают кнопку.
+              if (kIsWeb && _supportsGoogleAuth) ...[
                 Center(
                   child: buildGoogleSignInAction(
                     theme: theme,
                     isLoading: _isGoogleLoading,
                     enabled: !_isLoading &&
                         !_isTelegramLoading &&
-                        !_isVkLoading &&
-                        _supportsGoogleAuth,
-                    onPressed: _supportsGoogleAuth
-                        ? _signInWithGoogle
-                        : () => _showPlannedSocialAuthMessage('Google'),
+                        !_isVkLoading,
+                    onPressed: _signInWithGoogle,
                     useNativeWebButton: true,
                   ),
                 ),
@@ -1623,7 +1645,9 @@ class _AuthScreenState extends State<AuthScreen> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
-                  if (!kIsWeb)
+                  // Ship Q3 (2026-05-26): см. kIsWeb branch выше — кнопка
+                  // показывается только когда provider configured.
+                  if (!kIsWeb && _supportsGoogleAuth)
                     _SocialAuthChip(
                       label: 'Google',
                       icon: Icons.g_mobiledata_rounded,
@@ -1634,11 +1658,7 @@ class _AuthScreenState extends State<AuthScreen> {
                             _isVkLoading) {
                           return;
                         }
-                        if (_supportsGoogleAuth) {
-                          _signInWithGoogle();
-                        } else {
-                          _showPlannedSocialAuthMessage('Google');
-                        }
+                        _signInWithGoogle();
                       },
                     ),
                   _SocialAuthChip(
