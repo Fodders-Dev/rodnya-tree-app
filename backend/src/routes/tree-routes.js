@@ -365,7 +365,24 @@ function registerTreeRoutes(
       return;
     }
 
-    const persons = await store.listPersons(tree.id);
+    let persons = await store.listPersons(tree.id);
+
+    // Phase B Ship 8: per-user hide filter. Applies whenever tree
+    // bound к семя (tree.semyaId set) и caller has hide rows для
+    // этой семи. Orphan hides (caller no longer member) harmless —
+    // filter just shrinks их view. Cross-семя scoped: twin person
+    // в другой семе НЕ auto-hidden.
+    if (tree.semyaId) {
+      const hiddenIds = await store.listHiddenPersonIdsForCaller(
+        tree.semyaId,
+        req.auth.user.id,
+      );
+      if (hiddenIds.length > 0) {
+        const hiddenSet = new Set(hiddenIds);
+        persons = persons.filter((p) => !hiddenSet.has(p.id));
+      }
+    }
+
     res.json({
       persons: persons.map(mapPerson),
     });

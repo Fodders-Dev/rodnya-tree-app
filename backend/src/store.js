@@ -8511,6 +8511,90 @@ class FileStore {
     return structuredClone(token);
   }
 
+  // ---------------------------------------------------------------
+  // Hide filter (Ship 8). Per-user opaque personId filter. Stored
+  // в db.semyaMemberHiddenPersons composite-key collection
+  // ({semyaId, userId, personId, hiddenAt}). Не visible другим
+  // members (per ENTITY-DESIGN §1.3) — semantically «не показывать
+  // мне». Cross-семя scoped: hiding в семе X не hide twin в семе Y.
+  //
+  // Storage chosen over membership.hideFilterPersonIds[] array (per
+  // original spec) для query efficiency: per-tree filter requires
+  // O(1) Set lookup, composite-key row gives natural index. Same
+  // semantics, better access pattern.
+  // ---------------------------------------------------------------
+
+  async addHidePerson({semyaId, userId, personId}) {
+    if (!semyaId || typeof semyaId !== "string") {
+      throw new Error("INVALID_SEMYA_ID");
+    }
+    if (!userId || typeof userId !== "string") {
+      throw new Error("INVALID_USER_ID");
+    }
+    if (!personId || typeof personId !== "string") {
+      throw new Error("INVALID_PERSON_ID");
+    }
+
+    const db = await this._read();
+    // Idempotent: existing row → no-op (composite-key unique).
+    const existing = (db.semyaMemberHiddenPersons || []).find(
+      (h) =>
+        h.semyaId === semyaId &&
+        h.userId === userId &&
+        h.personId === personId,
+    );
+    if (existing) {
+      return {created: false, hide: structuredClone(existing)};
+    }
+    const hide = {
+      semyaId,
+      userId,
+      personId,
+      hiddenAt: nowIso(),
+    };
+    db.semyaMemberHiddenPersons.push(hide);
+    await this._write(db);
+    return {created: true, hide: structuredClone(hide)};
+  }
+
+  async removeHidePerson({semyaId, userId, personId}) {
+    if (!semyaId || typeof semyaId !== "string") {
+      throw new Error("INVALID_SEMYA_ID");
+    }
+    if (!userId || typeof userId !== "string") {
+      throw new Error("INVALID_USER_ID");
+    }
+    if (!personId || typeof personId !== "string") {
+      throw new Error("INVALID_PERSON_ID");
+    }
+
+    const db = await this._read();
+    const before = (db.semyaMemberHiddenPersons || []).length;
+    db.semyaMemberHiddenPersons = (db.semyaMemberHiddenPersons || []).filter(
+      (h) =>
+        !(
+          h.semyaId === semyaId &&
+          h.userId === userId &&
+          h.personId === personId
+        ),
+    );
+    const removed = db.semyaMemberHiddenPersons.length < before;
+    if (removed) {
+      await this._write(db);
+    }
+    return {removed};
+  }
+
+  async listHiddenPersonIdsForCaller(semyaId, userId) {
+    if (!semyaId || !userId) {
+      return [];
+    }
+    const db = await this._read();
+    return (db.semyaMemberHiddenPersons || [])
+      .filter((h) => h.semyaId === semyaId && h.userId === userId)
+      .map((h) => h.personId);
+  }
+
   // Soft-delete семья per ENTITY-DESIGN §1.1 lifecycle + Q4 orphan
   // policy. Sets `deletedAt` and hides все memberships (their listings
   // exclude). Persons + relations preserved (orphan), identity links

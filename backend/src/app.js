@@ -47,6 +47,9 @@ const {
 } = require("./routes/semya-invitation-routes");
 const {registerSemyaPullRoutes} = require("./routes/semya-pull-routes");
 const {registerSemyaBrowseRoutes} = require("./routes/semya-browse-routes");
+const {
+  registerSemyaHideFilterRoutes,
+} = require("./routes/semya-hide-filter-routes");
 const {registerIdentityRoutes} = require("./routes/identity-routes");
 const {registerMaxAuthRoutes} = require("./routes/max-auth-routes");
 const {registerMergeRoutes} = require("./routes/merge-routes");
@@ -2603,6 +2606,13 @@ function createApp({
 
   // Phase B Week 3 Ship 7: browse mode (read-only capability tokens).
   registerSemyaBrowseRoutes(app, {
+    store,
+    requireAuth,
+    requireSemyaAccess,
+  });
+
+  // Phase B Week 3 Ship 8: hide-filter endpoints (privacy-critical).
+  registerSemyaHideFilterRoutes(app, {
     store,
     requireAuth,
     requireSemyaAccess,
