@@ -15,6 +15,7 @@ import '../backend/interfaces/identity_conflicts_capable_family_tree_service.dar
 import '../backend/interfaces/identity_duplicate_capable_family_tree_service.dart';
 import '../backend/interfaces/identity_suggestions_capable_family_tree_service.dart';
 import '../backend/interfaces/kinship_check_capable_family_tree_service.dart';
+import '../backend/interfaces/semya_capable_family_tree_service.dart';
 import '../backend/interfaces/onboarding_capable_family_tree_service.dart';
 import '../backend/interfaces/profile_service_interface.dart';
 import '../backend/interfaces/tree_graph_capable_family_tree_service.dart';
@@ -28,6 +29,7 @@ import '../backend/models/cross_tree_person_suggestion.dart';
 import '../backend/models/include_rules.dart';
 import '../backend/models/kinship_check.dart';
 import '../backend/models/onboarding_state.dart';
+import '../backend/models/semya.dart';
 import '../backend/models/visibility_choice.dart';
 import '../backend/models/selectable_tree.dart';
 import '../backend/models/tree_invitation.dart';
@@ -58,7 +60,8 @@ class CustomApiFamilyTreeService
         GraphPersonAccessCapableFamilyTreeService,
         ExtendedNetworkCapableFamilyTreeService,
         OnboardingCapableFamilyTreeService,
-        KinshipCheckCapableFamilyTreeService {
+        KinshipCheckCapableFamilyTreeService,
+        SemyaCapableFamilyTreeService {
   CustomApiFamilyTreeService({
     required CustomApiAuthService authService,
     required BackendRuntimeConfig runtimeConfig,
@@ -2560,5 +2563,73 @@ class CustomApiFamilyTreeService
         code = 'UNKNOWN';
     }
     return KinshipCheckError(code: code, message: e.message);
+  }
+
+  // ---------- Phase B Ship FE1: семя read endpoints ----------
+
+  @override
+  Future<List<Semya>> listMySemya() async {
+    try {
+      final response = await _requestJson(
+        method: 'GET',
+        path: '/v1/me/semya',
+      );
+      final rawList = response['semyi'];
+      if (rawList is! List) return const <Semya>[];
+      return rawList
+          .whereType<Map>()
+          .map((e) => Semya.fromJson(Map<String, dynamic>.from(e)))
+          .toList(growable: false);
+    } catch (_) {
+      // Graceful degradation — UI shows empty state.
+      return const <Semya>[];
+    }
+  }
+
+  @override
+  Future<SemyaDetails?> findSemyaById(String semyaId) async {
+    final trimmed = semyaId.trim();
+    if (trimmed.isEmpty) {
+      return null;
+    }
+    try {
+      final response = await _requestJson(
+        method: 'GET',
+        path: '/v1/semya/$trimmed',
+      );
+      return SemyaDetails.fromJson(response);
+    } on CustomApiException catch (e) {
+      throw _mapSemyaException(e, endpoint: 'detail');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Map [CustomApiException.statusCode] к domain-specific
+  /// [SemyaError] code. Backend response payloads documented в
+  /// backend/src/routes/semya-routes.js + entity-design §1.
+  SemyaError _mapSemyaException(
+    CustomApiException e, {
+    required String endpoint,
+  }) {
+    final status = e.statusCode;
+    String code;
+    switch (status) {
+      case 400:
+        code = 'INVALID_INPUT';
+        break;
+      case 403:
+        code = 'FORBIDDEN';
+        break;
+      case 404:
+        code = 'SEMYA_NOT_FOUND';
+        break;
+      case 409:
+        code = 'TREE_ALREADY_BOUND';
+        break;
+      default:
+        code = 'UNKNOWN';
+    }
+    return SemyaError(code: code, message: e.message);
   }
 }
