@@ -15318,6 +15318,23 @@ class FileStore {
       audience.add(grant.granteeUserId);
     }
 
+    // Phase B Ship 9: extension к семя members когда tree bound
+    // (tree.semyaId set). Strictly ADDITIVE — Set union semantics
+    // never reduces existing audience. См. SHIP-9-AUDIENCE-DIFF.md
+    // для full safety analysis. Edge: pre-Ship-5 семьи without
+    // dual-write, либо seyma membership drift из tree.memberIds —
+    // catches missing recipients. Soft-deleted семья memberships
+    // (hiddenAt set by softDeleteSemya) excluded автоматически.
+    if (tree.semyaId) {
+      for (const m of db.semyaMembers || []) {
+        if (m.semyaId !== tree.semyaId) continue;
+        if (m.hiddenAt) continue;
+        if (!m.userId) continue;
+        if (m.userId === normalizedExcluded) continue;
+        audience.add(m.userId);
+      }
+    }
+
     return Array.from(audience);
   }
 
