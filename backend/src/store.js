@@ -7542,6 +7542,9 @@ class FileStore {
       publicSlug: null,
       isCertified: false,
       certificationNote: null,
+      // Phase B Ship 5: reverse-FK к семья. Null = tree «свободный»
+      // (не bound к семье). createSemya sets к семья.id atomically.
+      semyaId: null,
     };
 
     const creator = db.users.find((entry) => entry.id === creatorId);
@@ -7686,6 +7689,13 @@ class FileStore {
 
     db.semyi.push(semya);
     db.semyaMembers.push(ownerMembership);
+
+    // Phase B Ship 5: reverse-FK + dual-write. Write tree.semyaId
+    // atomically с семья record так чтобы requireTreeAccess (когда
+    // feature flag ON) могла O(1) lookup семья без index walk.
+    // Owner уже в tree.memberIds[] (createTree always seeds
+    // memberIds: [creatorId]), поэтому не дублируем здесь.
+    tree.semyaId = semya.id;
 
     await this._write(db);
     return structuredClone(semya);
@@ -7870,6 +7880,22 @@ class FileStore {
       hiddenAt: null,
     };
     db.semyaMembers.push(membership);
+    // Phase B Ship 5: dual-write к tree.memberIds[] для backward
+    // compat пока legacy tree-routes (requireTreeAccess pre-Phase-B
+    // path) sunset не закроется (Week 8 staged rollout). Без этого
+    // existing endpoints не видели бы новых членов семьи.
+    const tree = (db.trees || []).find((t) => t.id === semya.treeId);
+    if (tree) {
+      tree.memberIds = Array.isArray(tree.memberIds) ? tree.memberIds : [];
+      if (!tree.memberIds.includes(userId)) {
+        tree.memberIds.push(userId);
+      }
+      // Legacy `tree.members` alias — same content, preserved.
+      tree.members = Array.isArray(tree.members) ? tree.members : [];
+      if (!tree.members.includes(userId)) {
+        tree.members.push(userId);
+      }
+    }
     await this._write(db);
     return {created: true, membership: structuredClone(membership)};
   }
@@ -8011,6 +8037,21 @@ class FileStore {
     const removedAt = nowIso();
     target.hiddenAt = removedAt;
     semya.updatedAt = removedAt;
+    // Phase B Ship 5: dual-write cleanup tree.memberIds[] так чтобы
+    // legacy tree-routes (pre-Phase-B path) тоже видели removal.
+    // NB: tree.creatorId preserved — никогда не «kick'аем» creator
+    // из legacy field, иначе tree-routes гасят весь access. После
+    // semya.deletedAt (Q4 orphan policy) tree becomes inaccessible
+    // через семья model только.
+    const tree = (db.trees || []).find((t) => t.id === semya.treeId);
+    if (tree && targetUserId !== tree.creatorId) {
+      if (Array.isArray(tree.memberIds)) {
+        tree.memberIds = tree.memberIds.filter((id) => id !== targetUserId);
+      }
+      if (Array.isArray(tree.members)) {
+        tree.members = tree.members.filter((id) => id !== targetUserId);
+      }
+    }
     await this._write(db);
     return {membership: structuredClone(target), wasSelfLeave: actorIsSelf};
   }

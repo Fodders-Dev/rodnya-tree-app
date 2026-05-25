@@ -110,6 +110,16 @@ function createApp({
   rateLimitBackend = null,
 }) {
   const app = express();
+  // Phase B Ship 5: feature flag. When ON (env
+  // `RODNYA_FEDERATED_SEMYI_ENABLED=true`), `requireTreeAccess` uses
+  // семья membership для trees bound к семья (tree.semyaId set).
+  // Default OFF — preserves existing behavior pre-Phase-B (legacy
+  // creator + tree.memberIds gate). Production-flip Week 8 staged
+  // rollout after migration script lands.
+  const useSemyaModel =
+    String(process.env.RODNYA_FEDERATED_SEMYI_ENABLED || "")
+      .trim()
+      .toLowerCase() === "true";
   const resolvedPushGateway =
     pushGateway ?? new PushGateway({store, config});
   const resolvedMediaStorage = mediaStorage ?? createMediaStorage(config);
@@ -1731,6 +1741,24 @@ function createApp({
     if (!tree) {
       res.status(404).json({message: "Семейное дерево не найдено"});
       return null;
+    }
+
+    // Phase B Ship 5: если feature flag ON и tree bound к семья —
+    // gate via семья membership. Иначе fallback к legacy
+    // (creator + tree.memberIds) для backward compat пока migration
+    // не накатилась и frontend клиентов не обновили (Week 8 staged
+    // rollout). Без этого dual-path existing endpoints ломаются
+    // на pre-Phase-B users чьи trees not yet bound.
+    if (useSemyaModel && tree.semyaId) {
+      const membership = await store.findMembership(tree.semyaId, req.auth.user.id);
+      if (!membership) {
+        res.status(403).json({message: "Доступ к дереву запрещён"});
+        return null;
+      }
+      // Любая роль (viewer/editor/owner) даёт read access к tree.
+      // Granular per-mutation gating — existing
+      // requireGraphPersonEdit + tree-routes-specific checks (Ship 6+).
+      return tree;
     }
 
     const memberIds = Array.isArray(tree.memberIds) ? tree.memberIds : [];
