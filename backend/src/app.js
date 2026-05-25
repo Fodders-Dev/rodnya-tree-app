@@ -46,6 +46,7 @@ const {
   registerSemyaInvitationRoutes,
 } = require("./routes/semya-invitation-routes");
 const {registerSemyaPullRoutes} = require("./routes/semya-pull-routes");
+const {registerSemyaBrowseRoutes} = require("./routes/semya-browse-routes");
 const {registerIdentityRoutes} = require("./routes/identity-routes");
 const {registerMaxAuthRoutes} = require("./routes/max-auth-routes");
 const {registerMergeRoutes} = require("./routes/merge-routes");
@@ -2598,6 +2599,13 @@ function createApp({
     requireAuth,
     requireSemyaAccess,
     createAndDispatchNotification,
+  });
+
+  // Phase B Week 3 Ship 7: browse mode (read-only capability tokens).
+  registerSemyaBrowseRoutes(app, {
+    store,
+    requireAuth,
+    requireSemyaAccess,
   });
 
   registerTreeRoutes(app, {

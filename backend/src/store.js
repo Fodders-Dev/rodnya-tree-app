@@ -8378,6 +8378,139 @@ class FileStore {
     return structuredClone(invitation);
   }
 
+  // ---------------------------------------------------------------
+  // Browse tokens (Ship 7). Per ENTITY-DESIGN §1.5 + SHARED-TREE-
+  // PROPOSAL §3.4 Mode 2. Token = capability — anyone с valid token
+  // gets ephemeral read-only access. NOT persistent membership.
+  //
+  // Token chains explicitly blocked в Ship 7: browse holder cannot
+  // generate new tokens (per Артёма recommendation). Direct invites
+  // only — owner либо editor с invite-grant generate tokens.
+  // ---------------------------------------------------------------
+
+  async createBrowseToken({semyaId, createdByUserId, expiresInDays = 30}) {
+    if (!semyaId || typeof semyaId !== "string") {
+      throw new Error("INVALID_SEMYA_ID");
+    }
+    if (!createdByUserId) {
+      throw new Error("INVALID_ACTOR");
+    }
+
+    const db = await this._read();
+    const semya = (db.semyi || []).find(
+      (entry) => entry.id === semyaId && !entry.deletedAt,
+    );
+    if (!semya) {
+      throw new Error("SEMYA_NOT_FOUND");
+    }
+
+    const createdAt = nowIso();
+    const expiresAt = new Date(
+      Date.now() + Math.max(1, expiresInDays) * 24 * 60 * 60 * 1000,
+    ).toISOString();
+    const token = {
+      id: crypto.randomUUID(),
+      // Capability secret — same 2× uuid construction как invitation
+      // tokens. Logging plaintext запрещено (see semya-browse-routes
+      // comment).
+      token: crypto.randomUUID() + crypto.randomUUID().replace(/-/g, ""),
+      semyaId,
+      createdByUserId,
+      createdAt,
+      expiresAt,
+      revokedAt: null,
+      lastUsedAt: null,
+    };
+    db.semyaBrowseTokens.push(token);
+    await this._write(db);
+    return structuredClone(token);
+  }
+
+  async findBrowseTokenByValue(tokenValue) {
+    if (!tokenValue || typeof tokenValue !== "string") {
+      return null;
+    }
+    const db = await this._read();
+    const found = (db.semyaBrowseTokens || []).find(
+      (t) => t.token === tokenValue,
+    );
+    return found ? structuredClone(found) : null;
+  }
+
+  async findBrowseTokenById(tokenId) {
+    if (!tokenId || typeof tokenId !== "string") {
+      return null;
+    }
+    const db = await this._read();
+    const found = (db.semyaBrowseTokens || []).find((t) => t.id === tokenId);
+    return found ? structuredClone(found) : null;
+  }
+
+  async listBrowseTokensForSemya(semyaId) {
+    if (!semyaId || typeof semyaId !== "string") {
+      return [];
+    }
+    const db = await this._read();
+    return (db.semyaBrowseTokens || [])
+      .filter((t) => t.semyaId === semyaId)
+      .sort((a, b) =>
+        String(b.createdAt || "").localeCompare(String(a.createdAt || "")),
+      )
+      .map((t) => structuredClone(t));
+  }
+
+  // Touches lastUsedAt (best-effort analytics — does NOT throw).
+  // Called from GET /v1/browse/:token on resolve.
+  async touchBrowseTokenLastUsed(tokenId) {
+    if (!tokenId) return;
+    try {
+      const db = await this._read();
+      const found = (db.semyaBrowseTokens || []).find((t) => t.id === tokenId);
+      if (!found) return;
+      found.lastUsedAt = nowIso();
+      await this._write(db);
+    } catch (_) {
+      // best-effort
+    }
+  }
+
+  async revokeBrowseToken({tokenId, actingUserId}) {
+    if (!tokenId || typeof tokenId !== "string") {
+      throw new Error("INVALID_TOKEN_ID");
+    }
+    if (!actingUserId) {
+      throw new Error("INVALID_ACTOR");
+    }
+
+    const db = await this._read();
+    const token = (db.semyaBrowseTokens || []).find((t) => t.id === tokenId);
+    if (!token) {
+      throw new Error("TOKEN_NOT_FOUND");
+    }
+    if (token.revokedAt) {
+      throw new Error("TOKEN_ALREADY_REVOKED");
+    }
+    // Revoker = token creator либо семья owner (per Артёма spec).
+    const isCreator = token.createdByUserId === actingUserId;
+    let isOwner = false;
+    if (!isCreator) {
+      isOwner = !!(db.semyaMembers || []).find(
+        (m) =>
+          m.semyaId === token.semyaId &&
+          m.userId === actingUserId &&
+          m.role === "owner" &&
+          !m.hiddenAt,
+      );
+    }
+    if (!isCreator && !isOwner) {
+      throw new Error("NOT_CREATOR_OR_OWNER");
+    }
+
+    token.revokedAt = nowIso();
+    await this._write(db);
+    return structuredClone(token);
+  }
+
   // Soft-delete семья per ENTITY-DESIGN §1.1 lifecycle + Q4 orphan
   // policy. Sets `deletedAt` and hides все memberships (their listings
   // exclude). Persons + relations preserved (orphan), identity links
