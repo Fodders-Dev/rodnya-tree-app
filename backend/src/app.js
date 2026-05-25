@@ -45,6 +45,7 @@ const {registerMembershipRoutes} = require("./routes/membership-routes");
 const {
   registerSemyaInvitationRoutes,
 } = require("./routes/semya-invitation-routes");
+const {registerSemyaPullRoutes} = require("./routes/semya-pull-routes");
 const {registerIdentityRoutes} = require("./routes/identity-routes");
 const {registerMaxAuthRoutes} = require("./routes/max-auth-routes");
 const {registerMergeRoutes} = require("./routes/merge-routes");
@@ -2585,6 +2586,14 @@ function createApp({
 
   // Phase B Week 2 Ship 4: семья invitation flow (3 routes).
   registerSemyaInvitationRoutes(app, {
+    store,
+    requireAuth,
+    requireSemyaAccess,
+    createAndDispatchNotification,
+  });
+
+  // Phase B Week 3 Ship 6: cross-семья pull-selectively endpoint.
+  registerSemyaPullRoutes(app, {
     store,
     requireAuth,
     requireSemyaAccess,

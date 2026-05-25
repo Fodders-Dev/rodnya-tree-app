@@ -5775,6 +5775,42 @@ class FileStore {
     return record;
   }
 
+  // Phase B Ship 6: public wrapper для route-layer additive audit
+  // entries (e.g. person.pulled-from-semya). Existing pattern —
+  // change records appended inside store mutation methods. Когда
+  // change source = composite route (pull = bulkImport + audit +
+  // notify), route нужен hook без re-walking entire mutation flow.
+  async appendTreeChangeRecord({
+    treeId,
+    actorId = null,
+    type,
+    personId = null,
+    personIds = [],
+    relationId = null,
+    mediaId = null,
+    details = {},
+  }) {
+    if (!treeId || typeof treeId !== "string") {
+      throw new Error("INVALID_TREE_ID");
+    }
+    if (!type || typeof type !== "string") {
+      throw new Error("INVALID_TYPE");
+    }
+    const db = await this._read();
+    const record = this._appendTreeChangeRecord(db, {
+      treeId,
+      actorId,
+      type,
+      personId,
+      personIds,
+      relationId,
+      mediaId,
+      details,
+    });
+    await this._write(db);
+    return structuredClone(record);
+  }
+
   _ensurePersonIdentityCollection(db) {
     db.personIdentities = Array.isArray(db.personIdentities)
       ? db.personIdentities
