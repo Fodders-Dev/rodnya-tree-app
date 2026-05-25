@@ -43,6 +43,9 @@ class _FakeAuthService implements AuthServiceInterface {
   bool get currentRequiresOnboarding => false;
 
   @override
+  Future<void> markOnboardingSkipped() async {}
+
+  @override
   Stream<String?> get authStateChanges => _controller.stream;
 
   @override

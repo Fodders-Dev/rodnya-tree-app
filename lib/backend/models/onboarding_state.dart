@@ -13,6 +13,8 @@ class OnboardingState {
     this.personIds = const <String>[],
     this.completedAt,
     this.updatedAt,
+    this.skipped = false,
+    this.skippedAt,
   });
 
   final String userId;
@@ -22,6 +24,22 @@ class OnboardingState {
   final List<String> personIds;
   final String? completedAt;
   final String? updatedAt;
+
+  /// Ship Q1 (2026-05-25): true если user explicitly «Пропустил»
+  /// wizard. session.requiresOnboarding=false → main app accessible.
+  /// Banner на home reminds к завершению. Completion (currentStep
+  /// = done) clears this flag.
+  final bool skipped;
+
+  /// Timestamp когда user pressed «Пропустить». `null` если never.
+  final String? skippedAt;
+
+  /// Convenience: wizard «pending» как UX signal — incomplete + not
+  /// skipped. Used by router guards / banners.
+  bool get isPending => !completed && !skipped;
+
+  /// Banner trigger: skipped без completion → show reminder.
+  bool get shouldShowResumeBanner => skipped && !completed;
 
   factory OnboardingState.fromJson(Map<String, dynamic> json) {
     return OnboardingState(
@@ -37,6 +55,8 @@ class OnboardingState {
           : const <String>[],
       completedAt: _nullableString(json['completedAt']),
       updatedAt: _nullableString(json['updatedAt']),
+      skipped: json['skipped'] == true,
+      skippedAt: _nullableString(json['skippedAt']),
     );
   }
 
@@ -53,6 +73,8 @@ class OnboardingState {
     OnboardingStep? currentStep,
     String? treeId,
     List<String>? personIds,
+    bool? skipped,
+    String? skippedAt,
   }) {
     return OnboardingState(
       userId: userId,
@@ -62,6 +84,8 @@ class OnboardingState {
       personIds: personIds ?? this.personIds,
       completedAt: completedAt,
       updatedAt: updatedAt,
+      skipped: skipped ?? this.skipped,
+      skippedAt: skippedAt ?? this.skippedAt,
     );
   }
 }

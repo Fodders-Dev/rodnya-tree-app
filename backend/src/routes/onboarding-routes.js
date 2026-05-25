@@ -66,6 +66,28 @@ function registerOnboardingRoutes(app, {store, requireAuth}) {
     }
     res.json({state: updated});
   });
+
+  // Ship Q1 (2026-05-25): explicit skip endpoint. User wants main
+  // app access без завершения wizard'а. Backend sets skipped=true →
+  // hasIncompleteOnboarding returns false → session
+  // .requiresOnboarding=false → router guards не redirect к /setup.
+  //
+  // Wizard remains resumable via direct nav (home banner CTA).
+  // Идempotent — re-call returns existing state без re-mutation.
+  app.post(
+    "/v1/me/onboarding-state/skip",
+    requireAuth,
+    async (req, res) => {
+      const state = await store.skipOnboardingState({
+        userId: req.auth.user.id,
+      });
+      if (!state) {
+        res.status(400).json({message: "Не удалось обработать запрос"});
+        return;
+      }
+      res.json({state});
+    },
+  );
 }
 
 module.exports = {registerOnboardingRoutes};

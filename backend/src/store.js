@@ -18076,9 +18076,22 @@ class FileStore {
         currentStep: "welcome",
         treeId: null,
         personIds: [],
+        // Ship Q1: skipped state default false. Field added for
+        // mama-unblock — user может попросить «Пропустить» wizard,
+        // backend marks skipped=true чтобы `hasIncompleteOnboarding`
+        // returns false (session.requiresOnboarding=false → no
+        // forced redirect). Wizard остаётся resumable.
+        skipped: false,
+        skippedAt: null,
       };
     }
-    return structuredClone(state);
+    // Backward-compat: existing pre-Q1 records без skipped field —
+    // default к false без mutating storage.
+    return {
+      ...structuredClone(state),
+      skipped: state.skipped === true,
+      skippedAt: state.skippedAt ?? null,
+    };
   }
 
   /// Phase 6 chunk 4a: distinguishes «mid-wizard user» from «legacy
@@ -18108,7 +18121,13 @@ class FileStore {
     const state = (db.onboardingStates || []).find(
       (s) => s.userId === normalizedUser,
     );
-    const result = state ? state.completed !== true : false;
+    // Ship Q1: skipped users treated как «not requiring onboarding»
+    // (session.requiresOnboarding=false). Wizard accessible via direct
+    // nav (banner CTA на home), но не блокирует main app navigation.
+    // Без этого мама stuck в wizard — issue #1 reported 2026-05-25.
+    const result = state
+      ? state.completed !== true && state.skipped !== true
+      : false;
     this._onboardingIncompleteCache.set(normalizedUser, result);
     return result;
   }
@@ -18131,6 +18150,12 @@ class FileStore {
       db.onboardingStates[idx].updatedAt = now;
       if (normalizedStep === "done") {
         db.onboardingStates[idx].completed = true;
+        // Ship Q1: completion overrides skip — wizard finished, clear
+        // skipped flag чтобы state semantics consistent (skipped=true
+        // означает «I haven't done wizard yet, deferred»; completed=true
+        // implies wizard finished, regardless of prior skip).
+        db.onboardingStates[idx].skipped = false;
+        db.onboardingStates[idx].skippedAt = null;
       }
     } else {
       db.onboardingStates.push({
@@ -18140,6 +18165,8 @@ class FileStore {
         treeId: null,
         personIds: [],
         updatedAt: now,
+        skipped: false,
+        skippedAt: null,
       });
     }
     await this._write(db);
@@ -18150,9 +18177,62 @@ class FileStore {
     // нового состояния (см. комментарий в `hasIncompleteOnboarding`).
     this._onboardingIncompleteCache.set(
       normalizedUser,
-      persisted.completed !== true,
+      persisted.completed !== true && persisted.skipped !== true,
     );
     return structuredClone(persisted);
+  }
+
+  /// Ship Q1 (2026-05-25): user explicitly defers wizard. Sets
+  /// skipped=true, skippedAt=now atomically. Idempotent — re-calling
+  /// no-ops если already skipped. completed=true takes precedence
+  /// (skipping after completion = no-op, completion stays).
+  ///
+  /// Effect: `hasIncompleteOnboarding` returns false → session
+  /// .requiresOnboarding=false → main app accessible. Wizard
+  /// resumable via direct nav (home banner CTA).
+  async skipOnboardingState({userId}) {
+    const normalizedUser = normalizeNullableString(userId);
+    if (!normalizedUser) return null;
+    const db = await this._read();
+    db.onboardingStates = db.onboardingStates || [];
+    const idx = db.onboardingStates.findIndex(
+      (s) => s.userId === normalizedUser,
+    );
+    const now = nowIso();
+    let state;
+    if (idx >= 0) {
+      // No-op если уже completed (completion takes precedence)
+      if (db.onboardingStates[idx].completed === true) {
+        state = db.onboardingStates[idx];
+      } else {
+        if (db.onboardingStates[idx].skipped !== true) {
+          db.onboardingStates[idx].skipped = true;
+          db.onboardingStates[idx].skippedAt = now;
+          db.onboardingStates[idx].updatedAt = now;
+          await this._write(db);
+        }
+        state = db.onboardingStates[idx];
+      }
+    } else {
+      // No prior record — create one с skipped=true, step=welcome
+      state = {
+        userId: normalizedUser,
+        completed: false,
+        currentStep: "welcome",
+        treeId: null,
+        personIds: [],
+        updatedAt: now,
+        skipped: true,
+        skippedAt: now,
+      };
+      db.onboardingStates.push(state);
+      await this._write(db);
+    }
+    this._onboardingIncompleteCache.set(
+      normalizedUser,
+      state.completed !== true && state.skipped !== true,
+    );
+    return structuredClone(state);
   }
 
   // ── Kinship checks (BFS «мы родственники?») ─────────────────────

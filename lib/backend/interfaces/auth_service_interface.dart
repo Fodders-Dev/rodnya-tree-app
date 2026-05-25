@@ -17,6 +17,12 @@ abstract class AuthServiceInterface {
   /// чтобы surface real value.
   bool get currentRequiresOnboarding => false;
 
+  /// Ship Q1 (2026-05-25): mark local session's requiresOnboarding=false
+  /// after successful POST /v1/me/onboarding-state/skip. Default
+  /// no-op для fake implementations — production CustomApiAuthService
+  /// overrides + persists.
+  Future<void> markOnboardingSkipped() async {}
+
   Future<Object?> registerWithEmail({
     required String email,
     required String password,

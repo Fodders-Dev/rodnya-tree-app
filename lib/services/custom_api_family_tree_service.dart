@@ -2436,6 +2436,21 @@ class CustomApiFamilyTreeService
     }
   }
 
+  @override
+  Future<OnboardingState?> skipOnboarding() async {
+    try {
+      final response = await _requestJson(
+        method: 'POST',
+        path: '/v1/me/onboarding-state/skip',
+      );
+      final stateRaw = response['state'];
+      if (stateRaw is! Map<String, dynamic>) return null;
+      return OnboardingState.fromJson(stateRaw);
+    } catch (_) {
+      return null;
+    }
+  }
+
   // ── Phase 6 chunk 3: kinship-checks (bilateral «мы родственники?») ──
 
   @override

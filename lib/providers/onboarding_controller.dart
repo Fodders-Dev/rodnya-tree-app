@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/onboarding_capable_family_tree_service.dart';
 import '../backend/models/onboarding_state.dart';
 
@@ -21,11 +22,18 @@ import '../backend/models/onboarding_state.dart';
 class OnboardingController extends ChangeNotifier {
   OnboardingController({
     required OnboardingCapableFamilyTreeService? service,
-  }) : _service = service {
+    AuthServiceInterface? authService,
+  })  : _service = service,
+        _authService = authService {
     _hydrateFromServer();
   }
 
   final OnboardingCapableFamilyTreeService? _service;
+
+  /// Ship Q1: invoked после successful skip / submit чтобы local
+  /// session.requiresOnboarding=false без waiting for next refresh.
+  /// Optional — tests / fakes могут omit'нуть.
+  final AuthServiceInterface? _authService;
 
   OnboardingState _state = OnboardingState.fresh;
   bool _isLoading = true;
@@ -96,6 +104,44 @@ class OnboardingController extends ChangeNotifier {
     if (service != null) {
       // Fire-and-forget update — UI doesn't block on persistence.
       unawaited(service.updateOnboardingState(currentStep: step));
+    }
+  }
+
+  /// Ship Q1 (2026-05-25): user explicitly «Пропустил» wizard. Calls
+  /// backend POST /v1/me/onboarding-state/skip → server sets
+  /// state.skipped=true + session.requiresOnboarding=false. Locally
+  /// marks auth session чтобы router guards immediately unblock.
+  ///
+  /// Returns `true` если backend confirmed skip. На failure
+  /// (incapable либо network), returns `false` — wizard остаётся
+  /// open, UI shows error.
+  Future<bool> skipOnboarding() async {
+    final service = _service;
+    if (service == null) return false;
+    if (_isSubmitting) return false;
+    _isSubmitting = true;
+    _error = null;
+    notifyListeners();
+    try {
+      final updated = await service.skipOnboarding();
+      if (updated == null) {
+        _error = 'Не удалось сохранить — попробуйте ещё раз.';
+        _isSubmitting = false;
+        notifyListeners();
+        return false;
+      }
+      _state = updated;
+      _isSubmitting = false;
+      // Local session mutation — fire-and-forget; auth service
+      // persists через secure storage и broadcast'нёт subscribers.
+      unawaited(_authService?.markOnboardingSkipped() ?? Future<void>.value());
+      notifyListeners();
+      return true;
+    } catch (e) {
+      _error = '$e';
+      _isSubmitting = false;
+      notifyListeners();
+      return false;
     }
   }
 
@@ -191,6 +237,10 @@ class OnboardingController extends ChangeNotifier {
         personIds: result.personIds,
       );
       _isSubmitting = false;
+      // Completion implies onboarding satisfied — clear session flag
+      // (defensive: same path as skip, ensures resume banner hides
+      // regardless of next refresh timing).
+      unawaited(_authService?.markOnboardingSkipped() ?? Future<void>.value());
       notifyListeners();
       return true;
     } catch (e) {

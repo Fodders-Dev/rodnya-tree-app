@@ -3,6 +3,7 @@ import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../../backend/interfaces/auth_service_interface.dart';
 import '../../backend/interfaces/family_tree_service_interface.dart';
 import '../../backend/interfaces/onboarding_capable_family_tree_service.dart';
 import '../../backend/models/onboarding_state.dart';
@@ -33,6 +34,11 @@ class _OnboardingWizardScreenState extends State<OnboardingWizardScreen> {
     _controller = OnboardingController(
       service: service is OnboardingCapableFamilyTreeService
           ? service as OnboardingCapableFamilyTreeService
+          : null,
+      // Ship Q1: controller needs auth service для markOnboardingSkipped()
+      // после skip/complete (clears local session.requiresOnboarding).
+      authService: GetIt.I.isRegistered<AuthServiceInterface>()
+          ? GetIt.I<AuthServiceInterface>()
           : null,
     );
   }
@@ -96,7 +102,24 @@ class _OnboardingWizardScreenState extends State<OnboardingWizardScreen> {
   Widget _buildStep(OnboardingController controller) {
     switch (controller.currentStep) {
       case OnboardingStep.welcome:
-        return _WelcomeStep(controller: controller);
+        return _WelcomeStep(
+          controller: controller,
+          onSkip: () async {
+            final ok = await controller.skipOnboarding();
+            if (!mounted) return;
+            if (ok) {
+              context.go('/');
+            } else {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    controller.error ?? 'Не удалось пропустить — попробуйте ещё раз.',
+                  ),
+                ),
+              );
+            }
+          },
+        );
       case OnboardingStep.profile:
         return _ProfileStep(controller: controller);
       case OnboardingStep.relatives:
@@ -181,9 +204,10 @@ class _WizardStepIndicator extends StatelessWidget {
 // ── Step 1: Welcome ───────────────────────────────────────────────
 
 class _WelcomeStep extends StatelessWidget {
-  const _WelcomeStep({required this.controller});
+  const _WelcomeStep({required this.controller, required this.onSkip});
 
   final OnboardingController controller;
+  final Future<void> Function() onSkip;
 
   @override
   Widget build(BuildContext context) {
@@ -219,13 +243,34 @@ class _WelcomeStep extends StatelessWidget {
             textAlign: TextAlign.center,
           ),
           const Spacer(),
-          FilledButton(
-            onPressed: () => controller.setStep(OnboardingStep.profile),
-            child: const Padding(
-              padding: EdgeInsets.symmetric(vertical: 12),
-              child: Text('Начать', style: TextStyle(fontSize: 16)),
+          if (controller.isSubmitting)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 16),
+              child: Center(child: CircularProgressIndicator()),
+            )
+          else ...[
+            FilledButton(
+              onPressed: () => controller.setStep(OnboardingStep.profile),
+              child: const Padding(
+                padding: EdgeInsets.symmetric(vertical: 12),
+                child: Text('Начать', style: TextStyle(fontSize: 16)),
+              ),
             ),
-          ),
+            const SizedBox(height: 8),
+            // Ship Q1 (2026-05-25): explicit «skip» path после Артём's
+            // observation что mandatory wizard blocked его mama от
+            // making calls. Skip → backend persists state.skipped=true,
+            // session.requiresOnboarding=false, home screen surfaces
+            // resume banner. Wizard остаётся available via banner CTA.
+            TextButton(
+              key: const Key('onboarding-skip-button'),
+              onPressed: onSkip,
+              child: const Text(
+                'Пропустить',
+                style: TextStyle(fontSize: 14),
+              ),
+            ),
+          ],
         ],
       ),
     );

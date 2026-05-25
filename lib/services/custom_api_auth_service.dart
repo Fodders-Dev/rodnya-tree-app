@@ -306,6 +306,26 @@ class CustomApiAuthService implements AuthServiceInterface {
   bool get currentRequiresOnboarding =>
       _session?.requiresOnboarding ?? false;
 
+  /// Ship Q1 (2026-05-25): mark local session's requiresOnboarding=false
+  /// после wizard skip. Called by OnboardingController после successful
+  /// POST /v1/me/onboarding-state/skip. Без этой mutation app router
+  /// guards continue redirect'ить к /setup пока next session refresh
+  /// (login/refresh) не подтянет updated value от backend.
+  ///
+  /// Persists через _saveSession чтобы restoreSession после app
+  /// relaunch не undo'нет skip.
+  @override
+  Future<void> markOnboardingSkipped() async {
+    final current = _session;
+    if (current == null) return;
+    if (!current.requiresOnboarding) return; // already cleared
+    await _saveSession(
+      current.copyWith(requiresOnboarding: false),
+    );
+    // Broadcast so UI subscribers (resume banner, router) re-evaluate.
+    _authStateController.add(current.userId);
+  }
+
   bool get isGoogleSignInConfigured =>
       _runtimeConfig.googleWebClientId.trim().isNotEmpty;
 

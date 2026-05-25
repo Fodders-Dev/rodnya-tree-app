@@ -37,6 +37,9 @@ class _FakeService implements OnboardingCapableFamilyTreeService {
     required OnboardingStep currentStep,
   }) async =>
       state;
+
+  @override
+  Future<OnboardingState?> skipOnboarding() async => state;
 }
 
 // Lightweight wizard harness: pumps controller-driven step content

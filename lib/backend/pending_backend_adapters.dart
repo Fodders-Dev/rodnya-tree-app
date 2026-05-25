@@ -76,6 +76,9 @@ class PendingBackendAuthService implements AuthServiceInterface {
   bool get currentRequiresOnboarding => false;
 
   @override
+  Future<void> markOnboardingSkipped() async {}
+
+  @override
   Stream<String?> get authStateChanges => Stream<String?>.value(null);
 
   @override
