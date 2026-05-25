@@ -1,3 +1,5 @@
+import '../models/google_account_preview.dart';
+
 abstract class AuthServiceInterface {
   String? get currentUserId;
   String? get currentUserEmail;
@@ -30,7 +32,16 @@ abstract class AuthServiceInterface {
   });
 
   Future<Object?> loginWithEmail(String email, String password);
-  Future<Object?> signInWithGoogle();
+
+  /// Ship Q2 (2026-05-25): optional [confirm] callback invoked после
+  /// Google chooser returns account info, ПЕРЕД backend session
+  /// exchange. Returning [GoogleAccountConfirmDecision.confirm]
+  /// proceeds; `switchAccount` triggers Google signOut + chooser
+  /// retry; `cancel` aborts (throws CustomApiException). Default
+  /// null → auto-confirm (backward-compat for tests / scripted flows).
+  Future<Object?> signInWithGoogle({
+    GoogleAccountConfirmCallback? confirm,
+  });
   Future<void> signOut();
   Future<void> resetPassword(String email);
   Future<void> confirmPasswordReset({

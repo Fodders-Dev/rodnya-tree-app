@@ -13,6 +13,7 @@ import 'package:google_sign_in_platform_interface/google_sign_in_platform_interf
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:rodnya/backend/backend_runtime_config.dart';
+import 'package:rodnya/backend/models/google_account_preview.dart';
 import 'package:rodnya/services/custom_api_auth_service.dart';
 import 'package:rodnya/services/invitation_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -36,11 +37,13 @@ class _RecordingGoogleSignInPlatform extends GoogleSignInPlatform {
     required this.userId,
     required this.userEmail,
     required this.idToken,
+    this.displayName,
   });
 
   final String userId;
   final String userEmail;
   final String idToken;
+  final String? displayName;
 
   InitParameters? lastInitParams;
   int initCount = 0;
@@ -68,7 +71,11 @@ class _RecordingGoogleSignInPlatform extends GoogleSignInPlatform {
   ) async {
     authenticateCount += 1;
     return AuthenticationResults(
-      user: GoogleSignInUserData(id: userId, email: userEmail),
+      user: GoogleSignInUserData(
+        id: userId,
+        email: userEmail,
+        displayName: displayName,
+      ),
       authenticationTokens: AuthenticationTokenData(idToken: idToken),
     );
   }
@@ -226,6 +233,186 @@ void main() {
         expect(error.message, contains('отмен'),
             reason: 'Expected localized "сancelled" text in the message');
       }
+    },
+  );
+
+  // ── Ship Q2 (2026-05-25): confirm callback wiring ──────────────────
+  //
+  // Triggered by Артёма call с мамой: Google chooser показал только
+  // его account on his old phone → мама by reflex tapped it → landed
+  // в его production. The confirm hook surfaces account info в нашем
+  // UI voice ДО backend session exchange, giving an explicit choice.
+
+  test(
+    'Q2: confirm=confirm → preview surfaces email+displayName, proceeds to backend',
+    () async {
+      final fakePlatform = _RecordingGoogleSignInPlatform(
+        userId: 'gid-mama',
+        userEmail: 'artem@example.com',
+        idToken: 'mock-id-token',
+        displayName: 'Артём Кузнецов',
+      );
+      GoogleSignInPlatform.instance = fakePlatform;
+
+      int backendCallCount = 0;
+      final mockClient = MockClient((request) async {
+        if (request.url.path == '/v1/auth/google') {
+          backendCallCount += 1;
+          return http.Response(
+            jsonEncode({
+              'accessToken': 'access-token',
+              'refreshToken': 'refresh-token',
+              'user': {
+                'id': 'user-1',
+                'email': 'artem@example.com',
+                'displayName': 'Артём Кузнецов',
+                'providerIds': ['google'],
+              },
+              'profileStatus': {
+                'isComplete': true,
+                'missingFields': <String>[],
+              },
+            }),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+        return http.Response('{}', 404);
+      });
+
+      final service = await CustomApiAuthService.create(
+        httpClient: mockClient,
+        preferences: await SharedPreferences.getInstance(),
+        runtimeConfig: const BackendRuntimeConfig(
+          apiBaseUrl: 'https://api.example.ru',
+          googleWebClientId: 'web-client.apps.googleusercontent.com',
+        ),
+        invitationService: InvitationService(),
+      );
+
+      GoogleAccountPreview? capturedPreview;
+      await service.signInWithGoogle(
+        confirm: (preview) async {
+          capturedPreview = preview;
+          return GoogleAccountConfirmDecision.confirm;
+        },
+      );
+
+      expect(capturedPreview, isNotNull);
+      expect(capturedPreview!.email, 'artem@example.com');
+      expect(capturedPreview!.displayName, 'Артём Кузнецов');
+      expect(backendCallCount, 1, reason: 'confirm → one backend call');
+      expect(service.currentUserId, 'user-1');
+    },
+  );
+
+  test(
+    'Q2: confirm=cancel → CustomApiException, no backend call',
+    () async {
+      final fakePlatform = _RecordingGoogleSignInPlatform(
+        userId: 'gid-mama',
+        userEmail: 'artem@example.com',
+        idToken: 'mock-id-token',
+      );
+      GoogleSignInPlatform.instance = fakePlatform;
+
+      int backendCallCount = 0;
+      final mockClient = MockClient((request) async {
+        if (request.url.path == '/v1/auth/google') {
+          backendCallCount += 1;
+        }
+        return http.Response('{}', 404);
+      });
+
+      final service = await CustomApiAuthService.create(
+        httpClient: mockClient,
+        preferences: await SharedPreferences.getInstance(),
+        runtimeConfig: const BackendRuntimeConfig(
+          apiBaseUrl: 'https://api.example.ru',
+          googleWebClientId: 'web-client.apps.googleusercontent.com',
+        ),
+        invitationService: InvitationService(),
+      );
+
+      try {
+        await service.signInWithGoogle(
+          confirm: (_) async => GoogleAccountConfirmDecision.cancel,
+        );
+        fail('Expected CustomApiException for cancel decision');
+      } on CustomApiException catch (error) {
+        expect(error.message, contains('отмен'));
+      }
+      expect(backendCallCount, 0,
+          reason: 'cancel must NOT submit idToken to backend');
+      expect(service.currentUserId, isNull);
+    },
+  );
+
+  test(
+    'Q2: confirm=switchAccount → Google signOut + retry chooser, then confirm on 2nd attempt',
+    () async {
+      final fakePlatform = _RecordingGoogleSignInPlatform(
+        userId: 'gid-mama',
+        userEmail: 'artem@example.com',
+        idToken: 'mock-id-token',
+      );
+      GoogleSignInPlatform.instance = fakePlatform;
+
+      int backendCallCount = 0;
+      final mockClient = MockClient((request) async {
+        if (request.url.path == '/v1/auth/google') {
+          backendCallCount += 1;
+          return http.Response(
+            jsonEncode({
+              'accessToken': 'a',
+              'refreshToken': 'r',
+              'user': {
+                'id': 'user-1',
+                'email': 'artem@example.com',
+                'displayName': '',
+                'providerIds': ['google'],
+              },
+              'profileStatus': {
+                'isComplete': true,
+                'missingFields': <String>[],
+              },
+            }),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+        return http.Response('{}', 404);
+      });
+
+      final service = await CustomApiAuthService.create(
+        httpClient: mockClient,
+        preferences: await SharedPreferences.getInstance(),
+        runtimeConfig: const BackendRuntimeConfig(
+          apiBaseUrl: 'https://api.example.ru',
+          googleWebClientId: 'web-client.apps.googleusercontent.com',
+        ),
+        invitationService: InvitationService(),
+      );
+
+      var confirmCallCount = 0;
+      await service.signInWithGoogle(
+        confirm: (_) async {
+          confirmCallCount += 1;
+          // First call: switch → retries authenticate.
+          // Second call: confirm → proceeds.
+          return confirmCallCount == 1
+              ? GoogleAccountConfirmDecision.switchAccount
+              : GoogleAccountConfirmDecision.confirm;
+        },
+      );
+
+      expect(confirmCallCount, 2, reason: 'switch retries → 2 confirms');
+      expect(fakePlatform.signOutCount, greaterThanOrEqualTo(1),
+          reason: 'switch must call Google signOut to force fresh chooser');
+      expect(fakePlatform.authenticateCount, 2,
+          reason: 'switch → second authenticate prompts chooser again');
+      expect(backendCallCount, 1, reason: 'only 2nd attempt submits');
+      expect(service.currentUserId, 'user-1');
     },
   );
 }

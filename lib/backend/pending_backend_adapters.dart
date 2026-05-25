@@ -33,6 +33,7 @@ import '../models/tree_change_record.dart';
 import '../models/public_identity_result.dart';
 import '../models/user_block_record.dart';
 import 'interfaces/auth_service_interface.dart';
+import 'models/google_account_preview.dart';
 import 'interfaces/call_service_interface.dart';
 import 'interfaces/chat_service_interface.dart';
 import 'interfaces/circle_service_interface.dart';
@@ -131,7 +132,9 @@ class PendingBackendAuthService implements AuthServiceInterface {
   Future<void> signOut() async {}
 
   @override
-  Future<Object?> signInWithGoogle() {
+  Future<Object?> signInWithGoogle({
+    GoogleAccountConfirmCallback? confirm,
+  }) {
     throw UnsupportedError(_pendingProviderMessage('auth'));
   }
 

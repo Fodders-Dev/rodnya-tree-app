@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../backend/backend_runtime_config.dart';
 import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/models/custom_api_session.dart';
+import '../backend/models/google_account_preview.dart';
 import 'app_status_service.dart';
 import 'invitation_service.dart';
 import 'secure_session_storage.dart';
@@ -457,14 +458,16 @@ class CustomApiAuthService implements AuthServiceInterface {
   }
 
   @override
-  Future<Object?> signInWithGoogle() {
+  Future<Object?> signInWithGoogle({
+    GoogleAccountConfirmCallback? confirm,
+  }) {
     if (!isGoogleSignInConfigured) {
       throw const CustomApiException(
         'Google sign-in не настроен. Нужен RODNYA_GOOGLE_WEB_CLIENT_ID.',
       );
     }
 
-    return _signInWithResolvedGoogleAccount();
+    return _signInWithResolvedGoogleAccount(confirm: confirm);
   }
 
   Future<void> linkGoogleIdentity() async {
@@ -499,7 +502,9 @@ class CustomApiAuthService implements AuthServiceInterface {
     }
   }
 
-  Future<Object?> _signInWithResolvedGoogleAccount() async {
+  Future<Object?> _signInWithResolvedGoogleAccount({
+    GoogleAccountConfirmCallback? confirm,
+  }) async {
     final account = kIsWeb
         ? await _resolveCurrentGoogleAccountForTokenExchange(
             interactiveCancelledMessage: 'Выберите Google-аккаунт.',
@@ -507,6 +512,39 @@ class CustomApiAuthService implements AuthServiceInterface {
         : await _resolveGoogleAccountForTokenExchange(
             interactiveCancelledMessage: 'Вход через Google отменён.',
           );
+    // Ship Q2 (2026-05-25): surface confirm dialog before backend
+    // exchange. Артёма mama hit «silent wrong-account» — Google chooser
+    // showed только Артёма's account, she tapped reflex, landed в его
+    // production. Confirmation в нашем UI voice gives a chance to
+    // catch this before session creation.
+    if (confirm != null) {
+      final preview = GoogleAccountPreview(
+        email: (account.email).trim(),
+        displayName: account.displayName?.trim().isNotEmpty == true
+            ? account.displayName!.trim()
+            : (account.email).trim(),
+        photoUrl: account.photoUrl,
+      );
+      final decision = await confirm(preview);
+      switch (decision) {
+        case GoogleAccountConfirmDecision.confirm:
+          break;
+        case GoogleAccountConfirmDecision.switchAccount:
+          // Force chooser: clear Google session + cached account so
+          // next attempt prompts fresh. Recursive call respects same
+          // confirm callback так пользователь сможет confirm второй
+          // pick.
+          try {
+            await GoogleSignIn.instance.signOut();
+          } catch (_) {
+            // Best-effort — proceed even if signOut fails.
+          }
+          _lastGoogleAccount = null;
+          return _signInWithResolvedGoogleAccount(confirm: confirm);
+        case GoogleAccountConfirmDecision.cancel:
+          throw const CustomApiException('Вход через Google отменён.');
+      }
+    }
     final idToken = await _resolveGoogleIdToken(account);
     return _authenticate(
       path: '/v1/auth/google',

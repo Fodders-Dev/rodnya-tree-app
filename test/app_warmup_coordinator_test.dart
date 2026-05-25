@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:rodnya/backend/interfaces/auth_service_interface.dart';
+import 'package:rodnya/backend/models/google_account_preview.dart';
 import 'package:rodnya/startup/app_startup_pipeline.dart';
 import 'package:rodnya/startup/app_warmup_coordinator.dart';
 
@@ -96,7 +97,9 @@ class _FakeAuthService implements AuthServiceInterface {
   }
 
   @override
-  Future<Object?> signInWithGoogle() {
+  Future<Object?> signInWithGoogle({
+    GoogleAccountConfirmCallback? confirm,
+  }) {
     throw UnimplementedError();
   }
 

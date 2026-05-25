@@ -7,6 +7,7 @@ import 'dart:async';
 
 import '../backend/backend_provider_config.dart';
 import '../backend/interfaces/auth_service_interface.dart';
+import '../backend/models/google_account_preview.dart';
 import '../providers/tree_provider.dart';
 import '../services/app_status_service.dart';
 import '../services/custom_api_auth_service.dart';
@@ -17,6 +18,7 @@ import '../theme/app_theme.dart';
 import '../utils/user_facing_error.dart';
 import '../widgets/dismiss_keyboard.dart';
 import '../widgets/glass_panel.dart';
+import '../widgets/google_account_confirm_dialog.dart';
 import '../widgets/google_sign_in_action.dart';
 import '../widgets/offline_indicator.dart';
 
@@ -290,7 +292,17 @@ class _AuthScreenState extends State<AuthScreen> {
     });
 
     try {
-      await _authService.signInWithGoogle();
+      // Ship Q2 (2026-05-25): surface confirm dialog после Google
+      // chooser returns account info, ПЕРЕД backend session exchange.
+      // Captures «silent wrong-account» case (Артёма mama hit это on
+      // his old phone — Google chooser showed только his account,
+      // she tapped reflex, landed в его production).
+      await _authService.signInWithGoogle(
+        confirm: (preview) async {
+          if (!mounted) return GoogleAccountConfirmDecision.cancel;
+          return showGoogleAccountConfirmDialog(context, preview);
+        },
+      );
 
       if (mounted && _authService.currentUserId != null) {
         context.go(_resolvePostAuthRedirect());
