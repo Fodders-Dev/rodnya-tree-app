@@ -731,20 +731,18 @@ void main() {
     treeWidget.onPersonTap(person);
     await tester.pumpAndSettle();
 
-    // Sheet now starts collapsed (reference design): peek bar shows
-    // avatar + name + meta + chevron only. The chevron up/down icon is
-    // unique to the peek bar — tap that to expand the sheet.
-    await tester.tap(
-      find.byIcon(Icons.keyboard_arrow_up_rounded),
-      warnIfMissed: false,
-    );
-    await tester.pumpAndSettle();
+    // Ship Q4 (2026-05-26): tap on tree person теперь surface'ит modal
+    // action sheet (UX audit 2026-05-25 Critical #4) — Профиль / Edit /
+    // Add / Connect / Delete доступны immediately, без chevron-to-expand
+    // peek dance. Inline sheet остаётся selected underneath для
+    // edit-mode workflows; modal pops on top in non-edit mode.
+    expect(find.text('Открыть профиль'), findsOneWidget);
+    expect(find.text('Редактировать'), findsOneWidget);
+    expect(find.text('Добавить родственника'), findsOneWidget);
+    expect(find.text('Связать с существующим'), findsOneWidget);
+    expect(find.text('Удалить'), findsOneWidget);
 
-    expect(find.text('Профиль'), findsOneWidget);
-    expect(find.text('Ветка'), findsOneWidget);
-    expect(find.text('Связь'), findsOneWidget);
-
-    await tester.tap(find.text('Профиль'));
+    await tester.tap(find.byKey(const Key('tree-action-open-profile')));
     await tester.pumpAndSettle();
 
     expect(find.text('details:${person.id}'), findsOneWidget);

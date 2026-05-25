@@ -31,6 +31,7 @@ import '../widgets/extended_network_toggle.dart';
 import '../widgets/foreign_node_sheet.dart';
 import '../widgets/interactive_family_tree.dart';
 import '../widgets/tree_history_sheet.dart';
+import '../widgets/tree_person_action_sheet.dart';
 import '../widgets/glass_panel.dart';
 import '../providers/tree_provider.dart'; // Импортируем TreeProvider
 import 'package:go_router/go_router.dart'; // Для навигации
@@ -1266,6 +1267,109 @@ class _TreeViewScreenState extends State<TreeViewScreen>
       case _TreeToolbarAction.resetLayout:
         await _resetManualTreeLayout(selectedTreeId);
         return;
+    }
+  }
+
+  // Ship Q4 (2026-05-26): action sheet pops on tap (non-edit mode).
+  // UX audit 2026-05-25 Critical #4 — make Профиль / Edit / Add /
+  // Connect / Delete discoverable from single tap, не через скрытые
+  // gestures либо chevron-to-expand peek panel.
+  void _showTreePersonActionSheet(FamilyPerson person) {
+    final treeId = _currentTreeId;
+    if (treeId == null) return;
+    showTreePersonActionSheet(
+      context,
+      person: person,
+      onOpenProfile: () => _openPersonDetails(person),
+      onEdit: () {
+        context.push<dynamic>(
+          '/relatives/edit/$treeId/${person.id}',
+          extra: person,
+        ).then((_) {
+          if (!mounted) return;
+          _loadData(treeId);
+        });
+      },
+      onAddRelative: () {
+        context.push<dynamic>(
+          '/relatives/add/$treeId',
+          extra: <String, dynamic>{
+            'contextPersonId': person.id,
+            'quickAddMode': true,
+          },
+        ).then((result) {
+          if (!mounted) return;
+          if (result == true ||
+              (result is Map<String, dynamic> && result['updated'] == true)) {
+            _loadData(treeId);
+          }
+        });
+      },
+      onConnect: () => _openPersonDetails(person, action: 'relations'),
+      onDelete: () => _showDeletePersonConfirmation(person),
+    );
+  }
+
+  // Ship Q4: destructive delete с consequence copy (audit recommendation:
+  // «Удалить карточку из дерева? Связи с родственниками будут удалены»).
+  // Backend `deleteRelative` is immediate — no soft-delete / 30-day undo,
+  // поэтому copy honest: «Это действие нельзя отменить».
+  Future<void> _showDeletePersonConfirmation(FamilyPerson person) async {
+    final treeId = _currentTreeId;
+    if (treeId == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return AlertDialog(
+          icon: Icon(
+            Icons.delete_outline_rounded,
+            color: Theme.of(dialogContext).colorScheme.error,
+          ),
+          title: Text('Удалить ${person.name}?'),
+          content: const Text(
+            'Карточка и связи с родственниками будут удалены '
+            'из дерева. Это действие нельзя отменить.',
+          ),
+          actions: [
+            TextButton(
+              key: const Key('tree-delete-cancel'),
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Отмена'),
+            ),
+            FilledButton.tonal(
+              key: const Key('tree-delete-confirm'),
+              style: FilledButton.styleFrom(
+                foregroundColor: Theme.of(dialogContext).colorScheme.error,
+                backgroundColor:
+                    Theme.of(dialogContext).colorScheme.errorContainer,
+              ),
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Удалить'),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await _familyService.deleteRelative(treeId, person.id);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${person.name} удалён${person.gender == Gender.female ? 'а' : ''} из дерева'),
+        ),
+      );
+      _clearSelectedTreePerson();
+      await _loadData(treeId);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Не удалось удалить: $error'),
+          backgroundColor: Colors.red.shade800,
+        ),
+      );
     }
   }
 

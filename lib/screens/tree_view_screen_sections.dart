@@ -1339,6 +1339,13 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
                       _selectedEditPersonId = person.id;
                       _personSheetExpanded = true;
                     });
+                  } else {
+                    // Ship Q4 (2026-05-26): UX audit 2026-05-25 Critical #4 —
+                    // tap on tree person теперь surface'ит modal action sheet
+                    // (Профиль / Редактировать / Добавить / Связать / Удалить).
+                    // Inline person sheet остаётся active для contextual
+                    // selection в edit mode и для drag/zoom/PiP interactions.
+                    _showTreePersonActionSheet(person);
                   }
                 },
                 onPersonDoubleTap: (person) {
