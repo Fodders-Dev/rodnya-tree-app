@@ -1,5 +1,6 @@
 import '../models/semya.dart';
 import '../models/semya_invitation.dart';
+import '../models/semya_pull_person_result.dart';
 
 /// Phase B Ship FE1: capability mixin для семя read endpoints.
 ///
@@ -91,4 +92,27 @@ abstract class SemyaCapableFamilyTreeService {
   /// WRONG_RECIPIENT (403 — token addressed к different user),
   /// SEMYA_NOT_FOUND (404).
   Future<SemyaInvitationAcceptResult> acceptInvitation(String token);
+
+  /// Ship FE5 (2026-05-26): `POST /v1/semya/:targetSemyaId/pull-person`.
+  /// Copies person из source семья к caller's target семья. Backend wraps
+  /// bulkImportPersonsToTree (Ship 6) — identity-aware dedup means
+  /// re-pull of same person returns existing twin (idempotent).
+  ///
+  /// Permissions: caller must be editor+ в target семя AND any-role
+  /// member of source семя. Backend independently enforces.
+  ///
+  /// Throws [SemyaError] для:
+  ///   • INVALID_INPUT (400 — missing IDs либо source == target)
+  ///   • FORBIDDEN (403 — no source membership либо no target editor)
+  ///   • SEMYA_NOT_FOUND (404 — source семя deleted либо missing)
+  ///   • PERSON_NOT_FOUND (404 — source person не в source tree)
+  ///
+  /// Response includes pulled person row + new relations created
+  /// via bulk import. Caller typically discards relations и refreshes
+  /// target tree view.
+  Future<SemyaPullPersonResult> pullPersonToSemya({
+    required String targetSemyaId,
+    required String sourceSemyaId,
+    required String sourcePersonId,
+  });
 }

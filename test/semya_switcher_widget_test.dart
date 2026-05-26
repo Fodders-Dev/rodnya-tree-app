@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:rodnya/backend/interfaces/semya_capable_family_tree_service.dart';
 import 'package:rodnya/backend/models/semya.dart';
 import 'package:rodnya/backend/models/semya_invitation.dart';
+import 'package:rodnya/backend/models/semya_pull_person_result.dart';
 import 'package:rodnya/providers/semya_list_controller.dart';
 import 'package:rodnya/widgets/semya_switcher.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -172,5 +173,13 @@ class _FakeSemyaService implements SemyaCapableFamilyTreeService {
 
   @override
   Future<SemyaInvitationAcceptResult> acceptInvitation(String token) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<SemyaPullPersonResult> pullPersonToSemya({
+    required String targetSemyaId,
+    required String sourceSemyaId,
+    required String sourcePersonId,
+  }) async =>
       throw UnimplementedError();
 }

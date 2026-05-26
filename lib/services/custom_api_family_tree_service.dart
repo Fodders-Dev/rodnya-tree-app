@@ -31,6 +31,7 @@ import '../backend/models/kinship_check.dart';
 import '../backend/models/onboarding_state.dart';
 import '../backend/models/semya.dart';
 import '../backend/models/semya_invitation.dart';
+import '../backend/models/semya_pull_person_result.dart';
 import '../backend/models/visibility_choice.dart';
 import '../backend/models/selectable_tree.dart';
 import '../backend/models/tree_invitation.dart';
@@ -2746,6 +2747,42 @@ class CustomApiFamilyTreeService
       return SemyaInvitationAcceptResult.fromJson(response);
     } on CustomApiException catch (e) {
       throw _mapSemyaException(e, endpoint: 'invitation_accept');
+    }
+  }
+
+  @override
+  Future<SemyaPullPersonResult> pullPersonToSemya({
+    required String targetSemyaId,
+    required String sourceSemyaId,
+    required String sourcePersonId,
+  }) async {
+    final target = targetSemyaId.trim();
+    final source = sourceSemyaId.trim();
+    final personId = sourcePersonId.trim();
+    if (target.isEmpty || source.isEmpty || personId.isEmpty) {
+      throw const SemyaError(
+        code: 'INVALID_INPUT',
+        message: 'Некорректные параметры',
+      );
+    }
+    if (target == source) {
+      throw const SemyaError(
+        code: 'INVALID_INPUT',
+        message: 'Источник и цель не могут быть одной семьёй',
+      );
+    }
+    try {
+      final response = await _requestJson(
+        method: 'POST',
+        path: '/v1/semya/$target/pull-person',
+        body: <String, dynamic>{
+          'sourceSemyaId': source,
+          'sourcePersonId': personId,
+        },
+      );
+      return SemyaPullPersonResult.fromJson(response);
+    } on CustomApiException catch (e) {
+      throw _mapSemyaException(e, endpoint: 'pull_person');
     }
   }
 

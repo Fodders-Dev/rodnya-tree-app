@@ -11,6 +11,7 @@ import 'package:rodnya/backend/interfaces/family_tree_service_interface.dart';
 import 'package:rodnya/backend/interfaces/semya_capable_family_tree_service.dart';
 import 'package:rodnya/backend/models/semya.dart';
 import 'package:rodnya/backend/models/semya_invitation.dart';
+import 'package:rodnya/backend/models/semya_pull_person_result.dart';
 import 'package:rodnya/screens/semya_details_screen.dart';
 
 class _FakeFamilyTreeService
@@ -60,6 +61,14 @@ class _FakeFamilyTreeService
 
   @override
   Future<SemyaInvitationAcceptResult> acceptInvitation(String token) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<SemyaPullPersonResult> pullPersonToSemya({
+    required String targetSemyaId,
+    required String sourceSemyaId,
+    required String sourcePersonId,
+  }) async =>
       throw UnimplementedError();
 
   // FamilyTreeServiceInterface has широкий surface — все остальные
