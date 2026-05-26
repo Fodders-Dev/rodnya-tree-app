@@ -116,8 +116,22 @@ function createOperationalStatus({
       rustorePushEnabled: config.rustorePushEnabled === true,
       webPushEnabled: config.webPushEnabled === true,
       liveKitEnabled: liveKitService?.isConfigured === true,
+      // Ship Q3a (2026-05-26): full provider availability surface.
+      // Existing flat vkAuthEnabled / maxAuthEnabled preserved для
+      // backward compat (deploy smoke contract). Plus new googleAuth
+      // Enabled + telegramAuthEnabled flat fields + grouped object
+      // `authProviders` для idiomatic frontend reading. Frontend uses
+      // grouped form, ops dashboards / scripts могут поднимать flat.
       vkAuthEnabled: vkAuthClient?.isEnabled === true,
       maxAuthEnabled: maxAuthClient?.isEnabled === true,
+      googleAuthEnabled: config.googleAuthEnabled === true,
+      telegramAuthEnabled: config.telegramLoginEnabled === true,
+      authProviders: {
+        google: config.googleAuthEnabled === true,
+        vk: vkAuthClient?.isEnabled === true,
+        telegram: config.telegramLoginEnabled === true,
+        max: maxAuthClient?.isEnabled === true,
+      },
       adminEmailsConfigured: Array.isArray(config.adminEmails)
         ? config.adminEmails.length
         : 0,

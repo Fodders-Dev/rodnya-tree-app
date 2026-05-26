@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../backend/backend_runtime_config.dart';
 import '../backend/interfaces/auth_service_interface.dart';
+import '../backend/models/auth_providers_availability.dart';
 import '../backend/models/custom_api_session.dart';
 import '../backend/models/google_account_preview.dart';
 import 'app_status_service.dart';
@@ -329,6 +330,24 @@ class CustomApiAuthService implements AuthServiceInterface {
 
   bool get isGoogleSignInConfigured =>
       _runtimeConfig.googleWebClientId.trim().isNotEmpty;
+
+  /// Ship Q3a (2026-05-26): fetch backend provider availability flags.
+  /// Hits public /health endpoint (no auth header). Result null → caller
+  /// renders ВСЕ buttons (legacy server без authProviders field).
+  @override
+  Future<AuthProvidersAvailability?> fetchAuthProvidersAvailability() async {
+    try {
+      final response = await _httpClient.get(
+        _buildUri('/health'),
+      );
+      if (response.statusCode != 200) return null;
+      final json = jsonDecode(response.body);
+      if (json is! Map<String, dynamic>) return null;
+      return AuthProvidersAvailability.fromHealthJson(json);
+    } catch (_) {
+      return null;
+    }
+  }
 
   Stream<void> get googleWebAuthenticationEvents {
     _googleWebAuthenticationController ??= StreamController<void>.broadcast();

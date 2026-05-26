@@ -1,3 +1,4 @@
+import '../models/auth_providers_availability.dart';
 import '../models/google_account_preview.dart';
 
 abstract class AuthServiceInterface {
@@ -53,4 +54,12 @@ abstract class AuthServiceInterface {
   Future<void> processPendingInvitation();
   Future<void> updateDisplayName(String displayName);
   String describeError(Object error);
+
+  /// Ship Q3a (2026-05-26): fetch auth-provider capability flags
+  /// from backend `/health` endpoint. Returns `null` если backend
+  /// incapable (legacy server), либо network failure → frontend
+  /// falls back на legacy «render all providers» behavior. Default
+  /// no-op для fake implementations.
+  Future<AuthProvidersAvailability?> fetchAuthProvidersAvailability() async =>
+      null;
 }

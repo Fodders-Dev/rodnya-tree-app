@@ -93,3 +93,72 @@ test("operational status payload preserves deploy smoke contract", () => {
   assert.equal(payload.runtime.realtime.onlineUsers, 2);
   assert.equal(payload.requestId, "request-1");
 });
+
+// ── Ship Q3a (2026-05-26): backend auth provider capability gate ──
+//
+// Finishes UX audit 2026-05-25 Critical #3 — frontend can now hide
+// ANY unconfigured social-login button (not just Google as Q3 did).
+// `authProviders` grouped object is the idiomatic frontend shape;
+// flat googleAuthEnabled + telegramAuthEnabled added for ops parity
+// с existing vk/max flat fields.
+
+test("Q3a: buildStatusPayload exposes all 4 auth providers", () => {
+  const status = createOperationalStatus({
+    store: {storageMode: "file-store"},
+    config: {
+      adminEmails: [],
+      mediaBackend: "local-filesystem",
+      googleAuthEnabled: true,
+      telegramLoginEnabled: true,
+    },
+    realtimeHub: null,
+    mediaStorage: {mediaMode: "s3", ensureReady: async () => {}},
+    liveKitService: {isConfigured: false},
+    vkAuthClient: {isEnabled: true},
+    maxAuthClient: {isEnabled: false},
+    runtimeInfo: {
+      startedAt: "2026-05-26T00:00:00.000Z",
+      releaseLabel: "q3a-test",
+      pid: 1,
+      nodeVersion: "v22.0.0-test",
+    },
+  });
+
+  const payload = status.buildStatusPayload("ready", {requestId: "r"});
+
+  // Flat fields — backward-compat ops dashboards.
+  assert.equal(payload.googleAuthEnabled, true);
+  assert.equal(payload.telegramAuthEnabled, true);
+  assert.equal(payload.vkAuthEnabled, true);
+  assert.equal(payload.maxAuthEnabled, false);
+
+  // Grouped object — primary frontend reader path.
+  assert.ok(payload.authProviders, "authProviders object missing");
+  assert.equal(payload.authProviders.google, true);
+  assert.equal(payload.authProviders.telegram, true);
+  assert.equal(payload.authProviders.vk, true);
+  assert.equal(payload.authProviders.max, false);
+});
+
+test("Q3a: providers default to false when config flags absent", () => {
+  const status = createOperationalStatus({
+    store: {storageMode: "file-store"},
+    config: {adminEmails: [], mediaBackend: "local-filesystem"},
+    mediaStorage: {mediaMode: "local-filesystem", ensureReady: async () => {}},
+    runtimeInfo: {
+      startedAt: "2026-05-26T00:00:00.000Z",
+      releaseLabel: null,
+      pid: 1,
+      nodeVersion: "v22.0.0-test",
+    },
+  });
+
+  const payload = status.buildStatusPayload("ready", {requestId: "r"});
+
+  assert.equal(payload.authProviders.google, false);
+  assert.equal(payload.authProviders.telegram, false);
+  assert.equal(payload.authProviders.vk, false);
+  assert.equal(payload.authProviders.max, false);
+  assert.equal(payload.googleAuthEnabled, false);
+  assert.equal(payload.telegramAuthEnabled, false);
+});

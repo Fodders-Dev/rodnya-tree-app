@@ -33,6 +33,7 @@ import '../models/tree_change_record.dart';
 import '../models/public_identity_result.dart';
 import '../models/user_block_record.dart';
 import 'interfaces/auth_service_interface.dart';
+import 'models/auth_providers_availability.dart';
 import 'models/google_account_preview.dart';
 import 'interfaces/call_service_interface.dart';
 import 'interfaces/chat_service_interface.dart';
@@ -137,6 +138,10 @@ class PendingBackendAuthService implements AuthServiceInterface {
   }) {
     throw UnsupportedError(_pendingProviderMessage('auth'));
   }
+
+  @override
+  Future<AuthProvidersAvailability?> fetchAuthProvidersAvailability() async =>
+      null;
 
   @override
   Future<void> updateDisplayName(String displayName) {

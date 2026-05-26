@@ -7,6 +7,7 @@ import 'dart:async';
 
 import '../backend/backend_provider_config.dart';
 import '../backend/interfaces/auth_service_interface.dart';
+import '../backend/models/auth_providers_availability.dart';
 import '../backend/models/google_account_preview.dart';
 import '../providers/tree_provider.dart';
 import '../services/app_status_service.dart';
@@ -51,6 +52,12 @@ class _AuthScreenState extends State<AuthScreen> {
   bool _isMaxLoading = false;
   bool _hasSubmitted = false;
   late final bool _supportsGoogleAuth;
+  // Ship Q3a (2026-05-26): backend-driven capability flags for VK/
+  // Telegram/MAX (and confirms Google). Null когда capability data
+  // не loaded yet (in-flight либо legacy server без /health authProviders
+  // field) → render «as-is» fallback (Telegram/VK/MAX show, Google
+  // already gated by _supportsGoogleAuth). Non-null → gate per flag.
+  AuthProvidersAvailability? _providersAvailability;
   StreamSubscription<void>? _googleWebAuthenticationSubscription;
   StreamSubscription<Uri>? _appLinkSubscription;
   String? _pendingTelegramLinkCode;
@@ -108,7 +115,34 @@ class _AuthScreenState extends State<AuthScreen> {
       unawaited(_handleSocialRedirectResults());
     });
     _bindAppLinksListener();
+    // Ship Q3a (2026-05-26): fetch backend provider availability.
+    // Fire-and-forget — UI initially renders fallback (как раньше);
+    // when data arrives, setState triggers re-render с gated buttons.
+    unawaited(_loadProvidersAvailability());
   }
+
+  Future<void> _loadProvidersAvailability() async {
+    final result = await _authService.fetchAuthProvidersAvailability();
+    if (!mounted || result == null) return;
+    setState(() {
+      _providersAvailability = result;
+    });
+  }
+
+  /// Ship Q3a: helpers gate each social button. Когда availability
+  /// not yet loaded (либо backend incapable) — return true для
+  /// preserved legacy behavior, except Google which сохраняет existing
+  /// client-side _supportsGoogleAuth check.
+  ///
+  /// MAX chip not currently rendered в provider chip row (audit обозначил
+  /// что MAX hidden пока OAuth flow не shipped), поэтому MAX gate not
+  /// needed here — _providersAvailability.max остаётся accessible
+  /// caller'у когда / если MAX button gets reintroduced.
+  bool get _showGoogleButton =>
+      _supportsGoogleAuth &&
+      (_providersAvailability?.google ?? true);
+  bool get _showTelegramButton => _providersAvailability?.telegram ?? true;
+  bool get _showVkButton => _providersAvailability?.vk ?? true;
 
   /// Subscribe to deep-link OAuth callbacks (Android opens the system
   /// browser for the OAuth dance, the backend redirects to
@@ -1621,7 +1655,10 @@ class _AuthScreenState extends State<AuthScreen> {
               // появится после подключения ключей провайдера») gone.
               // Render Google button ONLY when capability check passes;
               // unconfigured environments просто не показывают кнопку.
-              if (kIsWeb && _supportsGoogleAuth) ...[
+              // Ship Q3a (2026-05-26): additionally gated by backend
+              // authProviders.google flag — covers case когда client has
+              // ID но backend has not enabled the provider.
+              if (kIsWeb && _showGoogleButton) ...[
                 Center(
                   child: buildGoogleSignInAction(
                     theme: theme,
@@ -1647,7 +1684,8 @@ class _AuthScreenState extends State<AuthScreen> {
                 children: [
                   // Ship Q3 (2026-05-26): см. kIsWeb branch выше — кнопка
                   // показывается только когда provider configured.
-                  if (!kIsWeb && _supportsGoogleAuth)
+                  // Ship Q3a (2026-05-26): + backend capability gate.
+                  if (!kIsWeb && _showGoogleButton)
                     _SocialAuthChip(
                       label: 'Google',
                       icon: Icons.g_mobiledata_rounded,
@@ -1661,22 +1699,27 @@ class _AuthScreenState extends State<AuthScreen> {
                         _signInWithGoogle();
                       },
                     ),
-                  _SocialAuthChip(
-                    label: 'Telegram',
-                    icon: Icons.send_rounded,
-                    isLoading: _isTelegramLoading,
-                    onTap: _isLoading || _isAnySocialLoading
-                        ? null
-                        : _startTelegramSignIn,
-                  ),
-                  _SocialAuthChip(
-                    label: 'VK ID',
-                    icon: Icons.alternate_email_rounded,
-                    isLoading: _isVkLoading,
-                    onTap: _isLoading || _isAnySocialLoading
-                        ? null
-                        : _startVkSignIn,
-                  ),
+                  // Ship Q3a: Telegram/VK gated by backend availability.
+                  // Null availability (legacy server либо load in-flight)
+                  // → render (legacy behavior preserved).
+                  if (_showTelegramButton)
+                    _SocialAuthChip(
+                      label: 'Telegram',
+                      icon: Icons.send_rounded,
+                      isLoading: _isTelegramLoading,
+                      onTap: _isLoading || _isAnySocialLoading
+                          ? null
+                          : _startTelegramSignIn,
+                    ),
+                  if (_showVkButton)
+                    _SocialAuthChip(
+                      label: 'VK ID',
+                      icon: Icons.alternate_email_rounded,
+                      isLoading: _isVkLoading,
+                      onTap: _isLoading || _isAnySocialLoading
+                          ? null
+                          : _startVkSignIn,
+                    ),
                 ],
               ),
               // The mode toggle above the form already switches to register,

@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
 import 'package:rodnya/backend/interfaces/auth_service_interface.dart';
+import 'package:rodnya/backend/models/auth_providers_availability.dart';
 import 'package:rodnya/screens/auth_screen.dart';
 import 'package:rodnya/services/app_status_service.dart';
 
@@ -38,6 +39,14 @@ class _FakeAuthService implements AuthServiceInterface {
     _currentUserId = 'user-1';
     return null;
   }
+
+  // Ship Q3a (2026-05-26): auth_screen.initState fires
+  // fetchAuthProvidersAvailability. Return null = «availability data
+  // not loaded» — auth_screen falls back на legacy render-all behavior,
+  // matching existing test expectations (Telegram/VK visible, MAX absent).
+  @override
+  Future<AuthProvidersAvailability?> fetchAuthProvidersAvailability() async =>
+      null;
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
