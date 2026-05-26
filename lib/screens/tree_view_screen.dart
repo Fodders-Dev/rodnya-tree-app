@@ -27,6 +27,7 @@ import '../widgets/extended_network_empty_state.dart';
 import '../widgets/extended_network_filter_sheet.dart';
 import '../widgets/extended_network_filter_sidebar.dart';
 import '../widgets/extended_network_search_sheet.dart';
+import '../widgets/empty_tree_guided_cta.dart';
 import '../widgets/extended_network_toggle.dart';
 import '../widgets/foreign_node_sheet.dart';
 import '../widgets/interactive_family_tree.dart';
@@ -1975,6 +1976,49 @@ class _TreeViewScreenState extends State<TreeViewScreen>
         mounted) {
       await _loadData(treeId);
     }
+  }
+
+  /// Ship 2026-05-26 (UX audit Screen 4.1): relation-first guided CTA
+  /// dispatch. Caller (EmptyTreeGuidedCta) passes RelationType +
+  /// optional Gender + optional contextPersonId (self person when
+  /// tree уже has caller's card). AddRelativeScreen reads extras
+  /// и pre-fills relation dropdown + gender selector.
+  Future<void> _navigateToAddRelativeWithHint(
+    String treeId, {
+    required RelationType relation,
+    Gender? gender,
+    String? contextPersonId,
+  }) async {
+    final extra = <String, dynamic>{
+      'relationType': relation,
+      'quickAddMode': true,
+      if (gender != null) 'prefilledGender': gender,
+      if (contextPersonId != null) 'contextPersonId': contextPersonId,
+    };
+    final result = await context.push(
+      '/relatives/add/$treeId',
+      extra: extra,
+    );
+    if (!mounted) return;
+    if (result == true ||
+        (result is Map<String, dynamic> && result['updated'] == true)) {
+      await _loadData(treeId);
+    }
+  }
+
+  /// Returns current user's person card in the active tree, либо null
+  /// when not present. Used by empty-tree guided CTA to determine
+  /// «only self» state (≠ truly empty tree).
+  FamilyPerson? _findSelfPerson() {
+    final currentUserId = _authService.currentUserId;
+    if (currentUserId == null) return null;
+    for (final entry in _relativesData) {
+      final person = entry['person'];
+      if (person is FamilyPerson && person.userId == currentUserId) {
+        return person;
+      }
+    }
+    return null;
   }
 
   Set<String> _buildBranchVisiblePersonIds(String branchRootPersonId) {

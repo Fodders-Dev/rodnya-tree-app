@@ -272,13 +272,9 @@ class _FakeAuthService implements AuthServiceInterface {
 }
 
 class _FakePostService implements PostServiceInterface {
-  _FakePostService({
-    required this.onToggleLike,
-    this.onDelete,
-  });
+  _FakePostService({required this.onToggleLike});
 
   final Future<Post> Function(String postId) onToggleLike;
-  final Future<void> Function(String postId)? onDelete;
 
   int deleteCalls = 0;
   String? lastDeletedId;
@@ -290,9 +286,6 @@ class _FakePostService implements PostServiceInterface {
   Future<void> deletePost(String postId) async {
     deleteCalls += 1;
     lastDeletedId = postId;
-    if (onDelete != null) {
-      await onDelete!(postId);
-    }
   }
 
   @override

@@ -584,9 +584,15 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    expect(find.text('Добавить'), findsOneWidget);
+    // Ship 2026-05-26 (UX audit Screen 4.1): empty-tree state now
+    // surfaces relation-first guided CTAs (мама/папа/ребёнок/партнёр)
+    // + «Другой родственник» secondary. Single «Добавить» button gone.
+    // Tap «Добавить маму» CTA — routes к /relatives/add same path.
+    expect(find.text('Начни своё семейное дерево'), findsOneWidget);
+    expect(find.byKey(const Key('empty-tree-cta-mama')), findsOneWidget);
 
-    await tester.tap(find.text('Добавить'));
+    await tester.ensureVisible(find.byKey(const Key('empty-tree-cta-mama')));
+    await tester.tap(find.byKey(const Key('empty-tree-cta-mama')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Сохранить человека'));
     await tester.pumpAndSettle();

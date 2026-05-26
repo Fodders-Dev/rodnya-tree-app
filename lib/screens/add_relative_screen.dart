@@ -275,6 +275,25 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
             widget.predefinedRelation,
           );
         });
+      } else if (extra is Map<String, dynamic> &&
+          extra['relationType'] is RelationType) {
+        // Ship 2026-05-26 (UX audit Screen 4.1): empty-tree guided CTA
+        // path — relationType comes без contextPersonId (user creating
+        // first person without anchor). Pre-fill relation dropdown +
+        // optional gender hint from prefilledGender extra. User fills
+        // name + submits — tree gets first person.
+        final RelationType relationType = extra['relationType'];
+        final prefilledGender = extra['prefilledGender'];
+        debugPrint(
+          'AddRelativeScreen initState: anchor-less relation hint — '
+          'relation=$relationType, gender=$prefilledGender',
+        );
+        setState(() {
+          _selectedRelationType = relationType;
+          if (prefilledGender is Gender) {
+            _selectedGender = prefilledGender;
+          }
+        });
       } else {
         // Добавление родственника к текущему пользователю
         debugPrint(

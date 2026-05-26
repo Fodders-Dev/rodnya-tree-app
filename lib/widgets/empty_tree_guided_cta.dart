@@ -1,0 +1,173 @@
+import 'package:flutter/material.dart';
+
+import '../models/family_person.dart';
+import '../models/family_relation.dart';
+
+/// Ship 2026-05-26 (UX audit Screen 4.1): guided CTA для empty-либо-
+/// only-self tree state. Closes «mama-fear» surface — replaced blank
+/// canvas (либо canvas с single tiny self card lost в empty space) с
+/// relation-first action buttons.
+///
+/// 4 primary CTAs:
+///   • Мама — parent + female pre-fill
+///   • Папа — parent + male pre-fill
+///   • Ребёнок — child
+///   • Партнёр — spouse
+///
+/// Plus secondary «Другой родственник» — opens generic add form.
+///
+/// Caller (tree_view_screen_sections) detects empty-либо-only-self
+/// state и renders this widget instead of canvas. Each CTA tap calls
+/// [onAddRelative] с the chosen [RelationType] и pre-filled [Gender]
+/// (когда applicable). Caller dispatches к
+/// `/relatives/add/{treeId}` с extras — AddRelativeScreen reads
+/// relationType + prefilledGender + optional contextPersonId.
+///
+/// Audit spec: «For 0-1 person trees, show a guided empty canvas:
+/// «Добавьте маму, папу, детей или партнёра», with relation-based
+/// buttons near the current person.»
+class EmptyTreeGuidedCta extends StatelessWidget {
+  const EmptyTreeGuidedCta({
+    super.key,
+    required this.onAddRelative,
+    required this.onAddOther,
+    this.hasSelfPerson = false,
+  });
+
+  /// Invoked when one of the 4 primary CTAs tapped.
+  /// Receives the [RelationType] + optional [Gender] hint.
+  final void Function(RelationType relation, Gender? gender) onAddRelative;
+
+  /// Invoked when «Другой родственник» secondary action tapped.
+  /// Opens generic add-form без relation hint.
+  final VoidCallback onAddOther;
+
+  /// True когда tree уже has caller's self-person (только he/her alone).
+  /// Affects header copy: «Добавь близких к своей карточке» (self exists)
+  /// vs «Начни своё семейное дерево» (truly empty).
+  final bool hasSelfPerson;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    // SingleChildScrollView allows the column to fit on small surfaces
+    // (test viewports often 600px tall; production phones similar).
+    // Pure Center+Column overflows when keyboard либо other chrome
+    // shrinks the viewport. Scrollable центрирует контент via Align.
+    return SingleChildScrollView(
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+              Icon(
+                Icons.account_tree_rounded,
+                size: 64,
+                color: theme.colorScheme.primary.withValues(alpha: 0.85),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                hasSelfPerson
+                    ? 'Добавь близких'
+                    : 'Начни своё семейное дерево',
+                style: theme.textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w800,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                hasSelfPerson
+                    ? 'Сохрани историю семьи — добавь родителей, '
+                        'детей или партнёра.'
+                    : 'Добавь родственников, чтобы сохранить '
+                        'историю семьи.',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 24),
+              _PrimaryCtaButton(
+                key: const Key('empty-tree-cta-mama'),
+                icon: Icons.face_3_outlined,
+                label: 'Добавить маму',
+                onPressed: () => onAddRelative(
+                  RelationType.parent,
+                  Gender.female,
+                ),
+              ),
+              const SizedBox(height: 10),
+              _PrimaryCtaButton(
+                key: const Key('empty-tree-cta-papa'),
+                icon: Icons.face_outlined,
+                label: 'Добавить папу',
+                onPressed: () => onAddRelative(
+                  RelationType.parent,
+                  Gender.male,
+                ),
+              ),
+              const SizedBox(height: 10),
+              _PrimaryCtaButton(
+                key: const Key('empty-tree-cta-child'),
+                icon: Icons.child_care_outlined,
+                label: 'Добавить ребёнка',
+                onPressed: () =>
+                    onAddRelative(RelationType.child, null),
+              ),
+              const SizedBox(height: 10),
+              _PrimaryCtaButton(
+                key: const Key('empty-tree-cta-partner'),
+                icon: Icons.favorite_outline_rounded,
+                label: 'Добавить партнёра',
+                onPressed: () =>
+                    onAddRelative(RelationType.spouse, null),
+              ),
+              const SizedBox(height: 16),
+              TextButton.icon(
+                key: const Key('empty-tree-cta-other'),
+                icon: const Icon(Icons.person_add_alt_1_outlined),
+                label: const Text('Другой родственник'),
+                onPressed: onAddOther,
+              ),
+              const SizedBox(height: 12),
+            ],
+          ),
+        ),
+      ),
+    ),
+    );
+  }
+}
+
+class _PrimaryCtaButton extends StatelessWidget {
+  const _PrimaryCtaButton({
+    super.key,
+    required this.icon,
+    required this.label,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return FilledButton.tonalIcon(
+      onPressed: onPressed,
+      icon: Icon(icon),
+      label: Text(label, style: const TextStyle(fontSize: 16)),
+      style: FilledButton.styleFrom(
+        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 18),
+        alignment: Alignment.centerLeft,
+        minimumSize: const Size.fromHeight(52),
+      ),
+    );
+  }
+}

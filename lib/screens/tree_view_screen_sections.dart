@@ -19,25 +19,60 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
           );
         }
 
+        // Ship 2026-05-26 (UX audit Screen 4.1): replaced single «Добавить»
+        // button с relation-first guided CTA per audit «mama-fear»
+        // observation. Also surfaces guided CTA когда tree has только
+        // self person (canvas с tiny lone card в empty space — audit's
+        // primary complaint).
         if (isEmptyTree) {
-          return _buildTreeState(
-            icon: Icons.account_tree_outlined,
-            title: 'Дерево пока пустое',
-            message: _isFriendsTree
-                ? 'Добавьте первого человека в этот круг.'
-                : 'Добавьте первого человека в это дерево.',
-            actions: [
-              FilledButton.icon(
-                onPressed: () => _navigateToAddRelative(selectedTreeId),
-                icon: const Icon(Icons.person_add_alt_1),
-                label: const Text('Добавить'),
-              ),
-              OutlinedButton.icon(
-                onPressed: () => _retryCurrentTree(selectedTreeId),
-                icon: const Icon(Icons.refresh),
-                label: const Text('Обновить'),
-              ),
-            ],
+          if (_isFriendsTree) {
+            // Friends tree (Круг) — relation-first CTAs don't apply
+            // (no «mama/papa» concept). Keep original single-button state.
+            return _buildTreeState(
+              icon: Icons.account_tree_outlined,
+              title: 'Круг пока пустой',
+              message: 'Добавьте первого человека в этот круг.',
+              actions: [
+                FilledButton.icon(
+                  onPressed: () => _navigateToAddRelative(selectedTreeId),
+                  icon: const Icon(Icons.person_add_alt_1),
+                  label: const Text('Добавить'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: () => _retryCurrentTree(selectedTreeId),
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Обновить'),
+                ),
+              ],
+            );
+          }
+          return EmptyTreeGuidedCta(
+            hasSelfPerson: false,
+            onAddRelative: (relation, gender) =>
+                _navigateToAddRelativeWithHint(
+              selectedTreeId,
+              relation: relation,
+              gender: gender,
+            ),
+            onAddOther: () => _navigateToAddRelative(selectedTreeId),
+          );
+        }
+
+        final selfPerson = _findSelfPerson();
+        final treeHasOnlySelf = _relativesData.length == 1 &&
+            selfPerson != null &&
+            !_isFriendsTree;
+        if (treeHasOnlySelf) {
+          return EmptyTreeGuidedCta(
+            hasSelfPerson: true,
+            onAddRelative: (relation, gender) =>
+                _navigateToAddRelativeWithHint(
+              selectedTreeId,
+              relation: relation,
+              gender: gender,
+              contextPersonId: selfPerson.id,
+            ),
+            onAddOther: () => _navigateToAddRelative(selectedTreeId),
           );
         }
 
