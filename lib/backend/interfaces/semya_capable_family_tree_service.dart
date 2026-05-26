@@ -1,4 +1,5 @@
 import '../models/semya.dart';
+import '../models/semya_browse_token.dart';
 import '../models/semya_invitation.dart';
 import '../models/semya_pull_person_result.dart';
 
@@ -115,4 +116,32 @@ abstract class SemyaCapableFamilyTreeService {
     required String sourceSemyaId,
     required String sourcePersonId,
   });
+
+  /// Ship FE6a (2026-05-26): `POST /v1/semya/:id/browse-token`. Creates
+  /// shareable read-only capability link к семя's tree. Owner либо
+  /// editor-с-grant only (backend enforces). Default expiresInDays=30
+  /// (server-side cap 90).
+  ///
+  /// Plaintext secret leaks ONCE — caller must surface immediately
+  /// в share UI без persistence.
+  ///
+  /// Throws [SemyaError] для: FORBIDDEN (403 — no role либо grant),
+  /// SEMYA_NOT_FOUND (404), INVALID_INPUT (400).
+  Future<SemyaBrowseToken> createBrowseToken({
+    required String semyaId,
+    int? expiresInDays,
+  });
+
+  /// Ship FE6a (2026-05-26): `GET /v1/browse/:token`. Resolves token
+  /// → семя + tree summary с persons/relations (read-only, privacy-
+  /// filtered). NO auth required — token само is capability.
+  ///
+  /// Persons returned с minimal fields: name, maidenName, gender,
+  /// birthDate, deathDate, identityId. Photos / bio / sensitive
+  /// attributes intentionally omitted (privacy boundary).
+  ///
+  /// Throws [SemyaError] для: TOKEN_NOT_FOUND (404), TOKEN_REVOKED
+  /// (410), TOKEN_EXPIRED (410), SEMYA_NOT_FOUND (404), TREE_NOT_FOUND
+  /// (404).
+  Future<BrowsedSemyaTree> fetchBrowseTree(String token);
 }

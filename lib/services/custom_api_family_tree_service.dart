@@ -30,6 +30,7 @@ import '../backend/models/include_rules.dart';
 import '../backend/models/kinship_check.dart';
 import '../backend/models/onboarding_state.dart';
 import '../backend/models/semya.dart';
+import '../backend/models/semya_browse_token.dart';
 import '../backend/models/semya_invitation.dart';
 import '../backend/models/semya_pull_person_result.dart';
 import '../backend/models/visibility_choice.dart';
@@ -2783,6 +2784,109 @@ class CustomApiFamilyTreeService
       return SemyaPullPersonResult.fromJson(response);
     } on CustomApiException catch (e) {
       throw _mapSemyaException(e, endpoint: 'pull_person');
+    }
+  }
+
+  @override
+  Future<SemyaBrowseToken> createBrowseToken({
+    required String semyaId,
+    int? expiresInDays,
+  }) async {
+    final trimmed = semyaId.trim();
+    if (trimmed.isEmpty) {
+      throw const SemyaError(
+        code: 'INVALID_INPUT',
+        message: 'Некорректный идентификатор семьи',
+      );
+    }
+    final body = <String, dynamic>{};
+    if (expiresInDays != null) body['expiresInDays'] = expiresInDays;
+    try {
+      final response = await _requestJson(
+        method: 'POST',
+        path: '/v1/semya/$trimmed/browse-token',
+        body: body,
+      );
+      final tokenRaw = response['token'];
+      if (tokenRaw is! Map<String, dynamic>) {
+        throw const CustomApiException(
+          'browse-token backend не вернул token объект',
+        );
+      }
+      return SemyaBrowseToken.fromJson(tokenRaw);
+    } on CustomApiException catch (e) {
+      throw _mapSemyaException(e, endpoint: 'browse_token_create');
+    }
+  }
+
+  @override
+  Future<BrowsedSemyaTree> fetchBrowseTree(String token) async {
+    final trimmed = token.trim();
+    if (trimmed.isEmpty) {
+      throw const SemyaError(
+        code: 'INVALID_TOKEN',
+        message: 'Некорректный токен',
+      );
+    }
+    // /v1/browse/:token — no auth required (token is capability).
+    // Bypass _requestJson (which always sends Authorization header)
+    // и hit endpoint directly via _httpClient.get + manual response
+    // mapping. Backend treats Authorization-less GET as anonymous
+    // capability resolve.
+    try {
+      final uri = _buildUri('/v1/browse/$trimmed');
+      final response = await _httpClient.get(
+        uri,
+        headers: <String, String>{'Accept': 'application/json'},
+      );
+      if (response.statusCode == 410) {
+        // 410 Gone: revoked либо expired. Backend message includes
+        // «отозвана» либо «истёк». Map к specific SemyaError codes
+        // так UI может render targeted copy.
+        final body = response.body.isEmpty
+            ? const <String, dynamic>{}
+            : (jsonDecode(response.body) as Map<String, dynamic>);
+        final msg = body['message']?.toString() ?? 'Ссылка недействительна';
+        final isRevoked = msg.toLowerCase().contains('отозва');
+        throw SemyaError(
+          code: isRevoked ? 'TOKEN_REVOKED' : 'TOKEN_EXPIRED',
+          message: msg,
+        );
+      }
+      if (response.statusCode == 404) {
+        final body = response.body.isEmpty
+            ? const <String, dynamic>{}
+            : (jsonDecode(response.body) as Map<String, dynamic>);
+        throw SemyaError(
+          code: 'TOKEN_NOT_FOUND',
+          message: body['message']?.toString() ?? 'Ссылка не найдена',
+        );
+      }
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        final body = response.body.isEmpty
+            ? const <String, dynamic>{}
+            : (jsonDecode(response.body) as Map<String, dynamic>);
+        throw SemyaError(
+          code: 'UNKNOWN',
+          message: body['message']?.toString() ??
+              'Не удалось загрузить дерево (${response.statusCode})',
+        );
+      }
+      final body = jsonDecode(response.body);
+      if (body is! Map<String, dynamic>) {
+        throw const SemyaError(
+          code: 'UNKNOWN',
+          message: 'Сервер вернул некорректный ответ',
+        );
+      }
+      return BrowsedSemyaTree.fromJson(body);
+    } on SemyaError {
+      rethrow;
+    } catch (error) {
+      throw SemyaError(
+        code: 'NETWORK',
+        message: 'Не удалось подключиться к серверу: $error',
+      );
     }
   }
 

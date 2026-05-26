@@ -16,6 +16,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rodnya/backend/interfaces/semya_capable_family_tree_service.dart';
 import 'package:rodnya/backend/models/semya.dart';
+import 'package:rodnya/backend/models/semya_browse_token.dart';
 import 'package:rodnya/backend/models/semya_invitation.dart';
 import 'package:rodnya/backend/models/semya_pull_person_result.dart';
 import 'package:rodnya/widgets/pull_person_sheet.dart';
@@ -91,6 +92,17 @@ class _FakeService implements SemyaCapableFamilyTreeService {
       sourcePersonId: sourcePersonId,
     );
   }
+
+  @override
+  Future<SemyaBrowseToken> createBrowseToken({
+    required String semyaId,
+    int? expiresInDays,
+  }) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<BrowsedSemyaTree> fetchBrowseTree(String token) async =>
+      throw UnimplementedError();
 }
 
 Semya _semya({required String id, String? name}) {

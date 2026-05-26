@@ -103,6 +103,10 @@ class AppRouterGuards {
     final setupWizard = state.matchedLocation == '/setup';
     final invitePage = state.matchedLocation == '/invite';
     final publicTreePage = state.matchedLocation.startsWith('/public/tree/');
+    // Ship FE6a (2026-05-26): browse-token capability route — token
+    // самo is auth (backend GET /v1/browse/:token works anonymous).
+    // Mirror /public/tree/* exemption pattern.
+    final browseTokenPage = state.matchedLocation.startsWith('/browse/');
     final e2eIdlePage = state.matchedLocation == '/__e2e__/idle';
 
     if (e2eIdlePage && BackendRuntimeConfig.current.enableE2e) {
@@ -113,7 +117,7 @@ class AppRouterGuards {
       return _handleInviteRoute(isLoggedIn: isLoggedIn, state: state);
     }
 
-    if (publicTreePage) {
+    if (publicTreePage || browseTokenPage) {
       return null;
     }
 

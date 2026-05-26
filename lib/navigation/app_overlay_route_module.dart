@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../backend/interfaces/auth_service_interface.dart';
 import '../models/family_tree.dart';
 import '../screens/auth_screen.dart';
+import '../screens/browse_tree_screen.dart';
 import '../screens/complete_profile_screen.dart';
 import '../screens/create_story_screen.dart';
 import '../screens/chat_screen.dart';
@@ -440,6 +441,22 @@ class AppOverlayRouteModule {
           return RodnyaCustomTransitionPage(
             key: state.pageKey,
             child: PublicTreeViewerScreen(publicTreeId: publicTreeId),
+            transitionsBuilder: AppRouteTransitions.slide,
+          );
+        },
+      ),
+      // Ship FE6a (2026-05-26): browse-token capability route.
+      // Mirrors /public/tree/* anonymous-allowed pattern. Anonymous
+      // GET — token itself is capability. Auth bypass enforced via
+      // app_router_guards.dart prefix check.
+      GoRoute(
+        path: '/browse/:browseToken',
+        parentNavigatorKey: rootNavigatorKey,
+        pageBuilder: (context, state) {
+          final browseToken = state.pathParameters['browseToken'] ?? '';
+          return RodnyaCustomTransitionPage(
+            key: state.pageKey,
+            child: BrowseTreeScreen(browseToken: browseToken),
             transitionsBuilder: AppRouteTransitions.slide,
           );
         },

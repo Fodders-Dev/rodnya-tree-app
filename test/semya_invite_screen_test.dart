@@ -7,6 +7,7 @@ import 'package:get_it/get_it.dart';
 import 'package:rodnya/backend/interfaces/family_tree_service_interface.dart';
 import 'package:rodnya/backend/interfaces/semya_capable_family_tree_service.dart';
 import 'package:rodnya/backend/models/semya.dart';
+import 'package:rodnya/backend/models/semya_browse_token.dart';
 import 'package:rodnya/backend/models/semya_invitation.dart';
 import 'package:rodnya/backend/models/semya_pull_person_result.dart';
 import 'package:rodnya/screens/semya_invite_screen.dart';
@@ -74,6 +75,17 @@ class _FakeService
     required String sourceSemyaId,
     required String sourcePersonId,
   }) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<SemyaBrowseToken> createBrowseToken({
+    required String semyaId,
+    int? expiresInDays,
+  }) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<BrowsedSemyaTree> fetchBrowseTree(String token) async =>
       throw UnimplementedError();
 
   @override

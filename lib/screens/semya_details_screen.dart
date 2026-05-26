@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../backend/models/semya.dart';
 import '../providers/semya_details_controller.dart';
 import '../theme/app_theme.dart';
+import '../widgets/share_browse_token_modal.dart';
 import 'semya_invitations_list_screen.dart';
 
 /// Ship FE2 (2026-05-26): семя details screen.
@@ -134,6 +135,26 @@ class _SemyaDetailsScreenState extends State<SemyaDetailsScreen> {
               );
             },
           ),
+          // Ship FE6a (2026-05-26): «Поделиться деревом» tile —
+          // generates browse-token capability link для read-only
+          // viewing вне семя. Owner либо editor-с-grant only
+          // (backend Ship 7 enforces); UI gate matches canInvite
+          // since invite-grant required для editor case.
+          if (details.canInvite)
+            ListTile(
+              key: const Key('semya-details-share-browse'),
+              leading: const Icon(Icons.share_outlined),
+              title: const Text('Поделиться деревом'),
+              subtitle: const Text(
+                'Создать ссылку для просмотра без регистрации.',
+              ),
+              trailing: const Icon(Icons.chevron_right_rounded),
+              onTap: () => showShareBrowseTokenModal(
+                context,
+                semyaId: details.semya.id,
+                semyaName: details.semya.name,
+              ),
+            ),
           const SizedBox(height: 24),
         ],
       ),
