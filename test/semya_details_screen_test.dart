@@ -177,7 +177,8 @@ void main() {
     expect(find.text('Повторить'), findsOneWidget);
   });
 
-  testWidgets('owner-only tiles render как locked placeholders', (tester) async {
+  testWidgets('owner-only management tile remains locked placeholder; '
+      'invitations tile now active (FE3)', (tester) async {
     final fake = _FakeFamilyTreeService(details: _details());
     getIt.registerSingleton<FamilyTreeServiceInterface>(fake);
 
@@ -190,8 +191,12 @@ void main() {
 
     expect(find.text('Управление семьёй'), findsOneWidget);
     expect(find.text('Приглашения'), findsOneWidget);
-    // Both are disabled — verify lock icons present (2 instances).
-    expect(find.byIcon(Icons.lock_outline_rounded), findsNWidgets(2));
+    // FE3 (2026-05-26): «Приглашения» tile changed from disabled
+    // placeholder к active ListTile → only «Управление семьёй»
+    // remains locked placeholder. One lock icon expected (was 2).
+    expect(find.byIcon(Icons.lock_outline_rounded), findsOneWidget);
+    // Invitations tile теперь shows chevron (navigable).
+    expect(find.byKey(const Key('semya-details-invitations')), findsOneWidget);
   });
 
   testWidgets('viewer role surfaces correctly', (tester) async {

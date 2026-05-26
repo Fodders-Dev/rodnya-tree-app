@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../backend/models/semya.dart';
 import '../providers/semya_details_controller.dart';
 import '../theme/app_theme.dart';
+import 'semya_invitations_list_screen.dart';
 
 /// Ship FE2 (2026-05-26): семя details screen.
 ///
@@ -108,12 +109,30 @@ class _SemyaDetailsScreenState extends State<SemyaDetailsScreen> {
             visibleAsOwner: details.callerRole == SemyaRole.owner,
             placeholder: 'Появится в следующем обновлении',
           ),
-          _OwnerOnlyTile(
-            icon: Icons.mail_outline_rounded,
-            label: 'Приглашения',
-            subtitle: 'Пригласить родственника в семью.',
-            visibleAsOwner: details.canInvite,
-            placeholder: 'Появится в следующем обновлении',
+          // Ship FE3 (2026-05-26): «Приглашения» tile активен для всех
+          // member'ов (viewer+) — даже non-inviter может see existing
+          // invitations и понять контекст. Кнопка «Пригласить» в самом
+          // списке gated by canInvite.
+          ListTile(
+            key: const Key('semya-details-invitations'),
+            leading: const Icon(Icons.mail_outline_rounded),
+            title: const Text('Приглашения'),
+            subtitle: Text(
+              details.canInvite
+                  ? 'Отправить или отозвать приглашения.'
+                  : 'Список приглашений семьи.',
+            ),
+            trailing: const Icon(Icons.chevron_right_rounded),
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => SemyaInvitationsListScreen(
+                    semyaId: details.semya.id,
+                    canInvite: details.canInvite,
+                  ),
+                ),
+              );
+            },
           ),
           const SizedBox(height: 24),
         ],
