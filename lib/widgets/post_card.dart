@@ -18,6 +18,7 @@ import 'media_lightbox.dart';
 import 'reaction_chip_strip.dart';
 import 'reaction_picker.dart';
 import 'rodnya_avatar.dart';
+import 'safe_delete_confirmation_dialog.dart';
 
 class PostCard extends StatefulWidget {
   const PostCard({super.key, required this.post, this.onDeleted});
@@ -269,42 +270,40 @@ class _PostCardState extends State<PostCard>
   }
 
   Future<void> _deletePost() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Удалить публикацию?'),
-        content: const Text('Это действие нельзя будет отменить.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Отмена'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
-            child: const Text('Удалить'),
-          ),
-        ],
-      ),
+    // Ship 2026-05-26 (UX audit Screen 3.5 polish): уровнить delete UX
+    // с Q4 tree person pattern. Pre-fix: plain AlertDialog с TextButton
+    // в красном цвете, barrierDismissible=true (tap-outside cancels —
+    // плохо для destructive), consequence copy generic. Post-fix: shared
+    // SafeDeleteConfirmationDialog (severity icon + destructive filled
+    // tonal button + barrierDismissible=false + audit-aligned copy
+    // mentioning «у всех родственников» reach).
+    //
+    // Backend `store.deletePost` is hard delete (splice from db.posts
+    // + cascade comments/reactions); copy honest about irreversibility.
+    final confirmed = await showSafeDeleteConfirmation(
+      context,
+      title: 'Удалить публикацию?',
+      body:
+          'Пост исчезнет у всех родственников. '
+          'Это действие нельзя отменить.',
     );
+    if (!confirmed || !mounted) return;
 
-    if (confirmed == true) {
-      try {
-        await _postService.deletePost(widget.post.id);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Публикация удалена')),
-          );
-          if (widget.onDeleted != null) {
-            widget.onDeleted!();
-          }
+    try {
+      await _postService.deletePost(widget.post.id);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Публикация удалена')),
+        );
+        if (widget.onDeleted != null) {
+          widget.onDeleted!();
         }
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Ошибка при удалении: $e')),
-          );
-        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Ошибка при удалении: $e')),
+        );
       }
     }
   }

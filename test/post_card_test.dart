@@ -137,6 +137,112 @@ void main() {
     expect(find.byIcon(Icons.broken_image_outlined), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  // ── Ship 2026-05-26 (UX audit Screen 3.5): post delete confirmation ──
+  //
+  // Pre-fix: plain AlertDialog с TextButton(red), barrierDismissible
+  // (tap outside cancels), generic copy. Post-fix: shared
+  // SafeDeleteConfirmationDialog с severity icon + destructive button
+  // + barrierDismissible=false + audit-aligned consequence copy.
+
+  testWidgets(
+    'PostCard delete: overflow → menu Удалить → safe-delete dialog → confirm '
+    'calls deletePost',
+    (tester) async {
+      final postService = _FakePostService(
+        onToggleLike: (_) async => throw Exception('unused'),
+      );
+      getIt.registerSingleton<PostServiceInterface>(postService);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: PostCard(
+              post: Post(
+                id: 'post-to-delete',
+                treeId: 'tree-1',
+                // Author matches _FakeAuthService.currentUserId='user-1' so
+                // overflow menu is visible.
+                authorId: 'user-1',
+                authorName: 'Я',
+                content: 'Удалить меня',
+                createdAt: DateTime(2026, 5, 26, 10),
+                likedBy: const [],
+                commentCount: 0,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Open overflow menu.
+      await tester.tap(find.byIcon(Icons.more_horiz_rounded));
+      await tester.pumpAndSettle();
+      expect(find.text('Удалить'), findsOneWidget);
+
+      // Tap «Удалить» menu item → confirmation dialog appears.
+      await tester.tap(find.text('Удалить'));
+      await tester.pumpAndSettle();
+
+      // Audit-aligned dialog surface.
+      expect(find.text('Удалить публикацию?'), findsOneWidget);
+      expect(
+        find.textContaining('у всех родственников'),
+        findsOneWidget,
+        reason: 'consequence copy mentions reach (audit Screen 3.5)',
+      );
+      expect(find.byIcon(Icons.delete_outline_rounded), findsOneWidget);
+      expect(find.byKey(const Key('safe-delete-cancel')), findsOneWidget);
+      expect(find.byKey(const Key('safe-delete-confirm')), findsOneWidget);
+
+      // Confirm — backend deletePost should fire.
+      await tester.tap(find.byKey(const Key('safe-delete-confirm')));
+      await tester.pumpAndSettle();
+      expect(postService.deleteCalls, 1);
+      expect(postService.lastDeletedId, 'post-to-delete');
+      expect(find.text('Публикация удалена'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'PostCard delete: Cancel preserves post (no backend call)',
+    (tester) async {
+      final postService = _FakePostService(
+        onToggleLike: (_) async => throw Exception('unused'),
+      );
+      getIt.registerSingleton<PostServiceInterface>(postService);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: PostCard(
+              post: Post(
+                id: 'keep-me',
+                treeId: 'tree-1',
+                authorId: 'user-1',
+                authorName: 'Я',
+                content: 'Не трогай',
+                createdAt: DateTime(2026, 5, 26, 10),
+                likedBy: const [],
+                commentCount: 0,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byIcon(Icons.more_horiz_rounded));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Удалить'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('safe-delete-cancel')));
+      await tester.pumpAndSettle();
+      expect(postService.deleteCalls, 0);
+      // Post still visible.
+      expect(find.text('Не трогай'), findsOneWidget);
+    },
+  );
 }
 
 class _FakeAuthService implements AuthServiceInterface {
@@ -168,12 +274,26 @@ class _FakeAuthService implements AuthServiceInterface {
 class _FakePostService implements PostServiceInterface {
   _FakePostService({
     required this.onToggleLike,
+    this.onDelete,
   });
 
   final Future<Post> Function(String postId) onToggleLike;
+  final Future<void> Function(String postId)? onDelete;
+
+  int deleteCalls = 0;
+  String? lastDeletedId;
 
   @override
   Future<Post> toggleLike(String postId) => onToggleLike(postId);
+
+  @override
+  Future<void> deletePost(String postId) async {
+    deleteCalls += 1;
+    lastDeletedId = postId;
+    if (onDelete != null) {
+      await onDelete!(postId);
+    }
+  }
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);

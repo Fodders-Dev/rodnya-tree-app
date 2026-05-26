@@ -30,6 +30,7 @@ import '../widgets/extended_network_search_sheet.dart';
 import '../widgets/extended_network_toggle.dart';
 import '../widgets/foreign_node_sheet.dart';
 import '../widgets/interactive_family_tree.dart';
+import '../widgets/safe_delete_confirmation_dialog.dart';
 import '../widgets/tree_history_sheet.dart';
 import '../widgets/tree_person_action_sheet.dart';
 import '../widgets/glass_panel.dart';
@@ -1314,44 +1315,21 @@ class _TreeViewScreenState extends State<TreeViewScreen>
   // «Удалить карточку из дерева? Связи с родственниками будут удалены»).
   // Backend `deleteRelative` is immediate — no soft-delete / 30-day undo,
   // поэтому copy honest: «Это действие нельзя отменить».
+  //
+  // Ship 2026-05-26 (Post delete polish): refactored inline dialog к
+  // shared SafeDeleteConfirmationDialog widget — same pattern reused
+  // для post delete (audit Screen 3.5).
   Future<void> _showDeletePersonConfirmation(FamilyPerson person) async {
     final treeId = _currentTreeId;
     if (treeId == null) return;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) {
-        return AlertDialog(
-          icon: Icon(
-            Icons.delete_outline_rounded,
-            color: Theme.of(dialogContext).colorScheme.error,
-          ),
-          title: Text('Удалить ${person.name}?'),
-          content: const Text(
-            'Карточка и связи с родственниками будут удалены '
-            'из дерева. Это действие нельзя отменить.',
-          ),
-          actions: [
-            TextButton(
-              key: const Key('tree-delete-cancel'),
-              onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: const Text('Отмена'),
-            ),
-            FilledButton.tonal(
-              key: const Key('tree-delete-confirm'),
-              style: FilledButton.styleFrom(
-                foregroundColor: Theme.of(dialogContext).colorScheme.error,
-                backgroundColor:
-                    Theme.of(dialogContext).colorScheme.errorContainer,
-              ),
-              onPressed: () => Navigator.of(dialogContext).pop(true),
-              child: const Text('Удалить'),
-            ),
-          ],
-        );
-      },
+    final confirmed = await showSafeDeleteConfirmation(
+      context,
+      title: 'Удалить ${person.name}?',
+      body:
+          'Карточка и связи с родственниками будут удалены из дерева. '
+          'Это действие нельзя отменить.',
     );
-    if (confirmed != true || !mounted) return;
+    if (!confirmed || !mounted) return;
     try {
       await _familyService.deleteRelative(treeId, person.id);
       if (!mounted) return;
