@@ -202,6 +202,110 @@ void main() {
     },
   );
 
+  // Ship FE7 (2026-05-26): hide-toggle tile tests.
+  testWidgets('FE7: onToggleHide null → hide tile not rendered',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: TreePersonActionSheet(
+            person: _samplePerson(),
+            onOpenProfile: () {},
+            onEdit: () {},
+            onAddRelative: () {},
+            onConnect: () {},
+            onDelete: () {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('tree-action-toggle-hide')), findsNothing);
+  });
+
+  testWidgets(
+    'FE7: onToggleHide provided + isHidden=false → «Скрыть от меня»',
+    (tester) async {
+      var hideCalls = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: TreePersonActionSheet(
+              person: _samplePerson(),
+              onOpenProfile: () {},
+              onEdit: () {},
+              onAddRelative: () {},
+              onConnect: () {},
+              onDelete: () {},
+              onToggleHide: () => hideCalls++,
+              isHidden: false,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('tree-action-toggle-hide')), findsOneWidget);
+      expect(find.text('Скрыть от меня'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('tree-action-toggle-hide')));
+      await tester.pumpAndSettle();
+      expect(hideCalls, 1);
+    },
+  );
+
+  testWidgets(
+    'FE7: onToggleHide provided + isHidden=true → «Показывать снова»',
+    (tester) async {
+      var unhideCalls = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: TreePersonActionSheet(
+              person: _samplePerson(),
+              onOpenProfile: () {},
+              onEdit: () {},
+              onAddRelative: () {},
+              onConnect: () {},
+              onDelete: () {},
+              onToggleHide: () => unhideCalls++,
+              isHidden: true,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Показывать снова'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('tree-action-toggle-hide')));
+      await tester.pumpAndSettle();
+      expect(unhideCalls, 1);
+    },
+  );
+
+  testWidgets(
+    'FE7: hide tile available even в viewerMode (viewer can hide too)',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: TreePersonActionSheet(
+              person: _samplePerson(),
+              viewerMode: true,
+              onOpenProfile: () {},
+              onEdit: () {},
+              onAddRelative: () {},
+              onConnect: () {},
+              onDelete: () {},
+              onToggleHide: () {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      // Editorial tiles hidden, но «Скрыть от меня» доступно.
+      expect(find.byKey(const Key('tree-action-edit')), findsNothing);
+      expect(find.byKey(const Key('tree-action-toggle-hide')), findsOneWidget);
+    },
+  );
+
   testWidgets('showTreePersonActionSheet pops dialog после action',
       (tester) async {
     int openCount = 0;

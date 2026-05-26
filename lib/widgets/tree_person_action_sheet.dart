@@ -28,6 +28,8 @@ Future<void> showTreePersonActionSheet(
   required VoidCallback onConnect,
   required VoidCallback onDelete,
   bool viewerMode = false,
+  VoidCallback? onToggleHide,
+  bool isHidden = false,
 }) async {
   await showModalBottomSheet<void>(
     context: context,
@@ -36,6 +38,7 @@ Future<void> showTreePersonActionSheet(
     builder: (sheetContext) => TreePersonActionSheet(
       person: person,
       viewerMode: viewerMode,
+      isHidden: isHidden,
       onOpenProfile: () {
         Navigator.of(sheetContext).pop();
         onOpenProfile();
@@ -56,6 +59,12 @@ Future<void> showTreePersonActionSheet(
         Navigator.of(sheetContext).pop();
         onDelete();
       },
+      onToggleHide: onToggleHide == null
+          ? null
+          : () {
+              Navigator.of(sheetContext).pop();
+              onToggleHide();
+            },
     ),
   );
 }
@@ -70,6 +79,8 @@ class TreePersonActionSheet extends StatelessWidget {
     required this.onConnect,
     required this.onDelete,
     this.viewerMode = false,
+    this.onToggleHide,
+    this.isHidden = false,
   });
 
   final FamilyPerson person;
@@ -85,6 +96,17 @@ class TreePersonActionSheet extends StatelessWidget {
   /// side regardless (defense-in-depth); hiding UI спasает viewer от
   /// «доступно, но не работает» confusion.
   final bool viewerMode;
+
+  /// Ship FE7 (2026-05-26): hide-filter toggle callback. When non-null,
+  /// «Скрыть от меня» либо «Показывать снова» tile renders (label
+  /// flips based on [isHidden]). Hide is per-user — не affects other
+  /// семя members' view. Null когда tree unbound либо seller decides
+  /// не expose hide feature (e.g., public tree).
+  final VoidCallback? onToggleHide;
+
+  /// Ship FE7 (2026-05-26): current hide state из caller's filter.
+  /// Used к flip toggle tile copy + icon (visibility_off → visibility).
+  final bool isHidden;
 
   @override
   Widget build(BuildContext context) {
@@ -152,6 +174,19 @@ class TreePersonActionSheet extends StatelessWidget {
               label: 'Открыть профиль',
               onTap: onOpenProfile,
             ),
+            // Ship FE7 (2026-05-26): hide-filter toggle. Tile renders
+            // когда callback provided (tree bound к семя + caller
+            // is member). Hide is per-user — другие members видят
+            // person как обычно.
+            if (onToggleHide != null)
+              _ActionTile(
+                key: const Key('tree-action-toggle-hide'),
+                icon: isHidden
+                    ? Icons.visibility_outlined
+                    : Icons.visibility_off_outlined,
+                label: isHidden ? 'Показывать снова' : 'Скрыть от меня',
+                onTap: onToggleHide!,
+              ),
             // Ship FE4 (2026-05-26): editorial actions gated by
             // viewerMode. Viewer role → mutation tiles hidden;
             // only «Открыть профиль» surfaces. Server-side gating

@@ -112,6 +112,18 @@ class _FakeService implements SemyaCapableFamilyTreeService {
       revokedAt: '2026-05-26T12:00:00.000Z',
     );
   }
+
+  @override
+  Future<List<String>> listHiddenPersonIds({required String semyaId}) async =>
+      const <String>[];
+
+  @override
+  Future<List<String>> updateHideFilter({
+    required String semyaId,
+    List<String> addPersonIds = const <String>[],
+    List<String> removePersonIds = const <String>[],
+  }) async =>
+      throw UnimplementedError();
 }
 
 SemyaBrowseTokenSummary _summary({

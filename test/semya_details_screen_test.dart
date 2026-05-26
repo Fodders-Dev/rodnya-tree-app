@@ -96,6 +96,18 @@ class _FakeFamilyTreeService
   }) async =>
       throw UnimplementedError();
 
+  @override
+  Future<List<String>> listHiddenPersonIds({required String semyaId}) async =>
+      const <String>[];
+
+  @override
+  Future<List<String>> updateHideFilter({
+    required String semyaId,
+    List<String> addPersonIds = const <String>[],
+    List<String> removePersonIds = const <String>[],
+  }) async =>
+      throw UnimplementedError();
+
   // FamilyTreeServiceInterface has широкий surface — все остальные
   // методы falling through к noSuchMethod (тесты SemyaDetailsScreen
   // не trigger'ят их).

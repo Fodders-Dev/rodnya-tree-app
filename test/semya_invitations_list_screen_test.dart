@@ -101,6 +101,18 @@ class _FakeService
       throw UnimplementedError();
 
   @override
+  Future<List<String>> listHiddenPersonIds({required String semyaId}) async =>
+      const <String>[];
+
+  @override
+  Future<List<String>> updateHideFilter({
+    required String semyaId,
+    List<String> addPersonIds = const <String>[],
+    List<String> removePersonIds = const <String>[],
+  }) async =>
+      throw UnimplementedError();
+
+  @override
   dynamic noSuchMethod(Invocation invocation) =>
       super.noSuchMethod(invocation);
 }

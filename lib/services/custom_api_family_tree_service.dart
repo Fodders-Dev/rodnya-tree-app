@@ -2970,6 +2970,80 @@ class CustomApiFamilyTreeService
     }
   }
 
+  @override
+  Future<List<String>> listHiddenPersonIds({required String semyaId}) async {
+    final trimmed = semyaId.trim();
+    if (trimmed.isEmpty) {
+      throw const SemyaError(
+        code: 'INVALID_INPUT',
+        message: 'Некорректный идентификатор семьи',
+      );
+    }
+    try {
+      final response = await _requestJson(
+        method: 'GET',
+        path: '/v1/me/semya/$trimmed/hide-filter',
+      );
+      final raw = response['hiddenPersonIds'];
+      if (raw is! List) return const <String>[];
+      return raw
+          .map((e) => e?.toString() ?? '')
+          .where((s) => s.isNotEmpty)
+          .toList(growable: false);
+    } on CustomApiException catch (e) {
+      throw _mapSemyaException(e, endpoint: 'hide_filter_list');
+    }
+  }
+
+  @override
+  Future<List<String>> updateHideFilter({
+    required String semyaId,
+    List<String> addPersonIds = const <String>[],
+    List<String> removePersonIds = const <String>[],
+  }) async {
+    final trimmed = semyaId.trim();
+    if (trimmed.isEmpty) {
+      throw const SemyaError(
+        code: 'INVALID_INPUT',
+        message: 'Некорректный идентификатор семьи',
+      );
+    }
+    if (addPersonIds.isEmpty && removePersonIds.isEmpty) {
+      throw const SemyaError(
+        code: 'INVALID_INPUT',
+        message: 'Нужны personId-ы для скрытия либо снятия',
+      );
+    }
+    final body = <String, dynamic>{};
+    if (addPersonIds.isNotEmpty) {
+      body['add'] = addPersonIds
+          .map((s) => s.trim())
+          .where((s) => s.isNotEmpty)
+          .toList(growable: false);
+    }
+    if (removePersonIds.isNotEmpty) {
+      body['remove'] = removePersonIds
+          .map((s) => s.trim())
+          .where((s) => s.isNotEmpty)
+          .toList(growable: false);
+    }
+    try {
+      final response = await _requestJson(
+        method: 'PATCH',
+        path: '/v1/me/semya/$trimmed/hide-filter',
+        body: body,
+      );
+      final raw = response['hiddenPersonIds'];
+      if (raw is! List) return const <String>[];
+      return raw
+          .map((e) => e?.toString() ?? '')
+          .where((s) => s.isNotEmpty)
+          .toList(growable: false);
+    } on CustomApiException catch (e) {
+      throw _mapSemyaException(e, endpoint: 'hide_filter_update');
+    }
+  }
+
   /// Map [CustomApiException.statusCode] к domain-specific
   /// [SemyaError] code. Backend response payloads documented в
   /// backend/src/routes/semya-routes.js + entity-design §1.

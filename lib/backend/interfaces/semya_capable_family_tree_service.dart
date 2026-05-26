@@ -171,4 +171,38 @@ abstract class SemyaCapableFamilyTreeService {
     required String semyaId,
     required String tokenId,
   });
+
+  /// Ship FE7 (2026-05-26): `GET /v1/me/semya/:id/hide-filter`. Returns
+  /// caller's personally-hidden person IDs для этой семя. Per-user
+  /// filter — не affects other members' view (per SHARED-TREE-PROPOSAL
+  /// §3.3 privacy invariant).
+  ///
+  /// Permission: viewer+ (member access). Returns empty list при
+  /// graceful failures (network, 403/404). UI uses list для:
+  ///   • Gating «Скрыть»/«Показать снова» tile в action sheet
+  ///   • Rendering hidden-persons management section
+  ///
+  /// Throws [SemyaError] для: SEMYA_NOT_FOUND (404), FORBIDDEN (403).
+  Future<List<String>> listHiddenPersonIds({required String semyaId});
+
+  /// Ship FE7 (2026-05-26): `PATCH /v1/me/semya/:id/hide-filter`.
+  /// Batched add/remove of person IDs in caller's hide filter.
+  /// Idempotent: existing add = no-op, unknown remove = no-op.
+  /// Backend filters tree-routes responses per caller's hide list
+  /// — frontend doesn't need к maintain local filter state, just
+  /// re-fetch tree после toggle.
+  ///
+  /// At least one of [addPersonIds] либо [removePersonIds] must be
+  /// non-empty — backend returns 400 если both empty.
+  ///
+  /// Returns updated `hiddenPersonIds` list (post-mutation snapshot).
+  ///
+  /// Throws [SemyaError] для: INVALID_INPUT (400 — empty payload либо
+  /// malformed person id), FORBIDDEN (403 — no семя access),
+  /// SEMYA_NOT_FOUND (404).
+  Future<List<String>> updateHideFilter({
+    required String semyaId,
+    List<String> addPersonIds = const <String>[],
+    List<String> removePersonIds = const <String>[],
+  });
 }

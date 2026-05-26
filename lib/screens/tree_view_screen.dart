@@ -200,6 +200,13 @@ class _TreeViewScreenState extends State<TreeViewScreen>
   // compat — don't accidentally hide controls для self-owned trees).
   SemyaDetails? _currentSemyaContext;
 
+  /// Ship FE7 (2026-05-26): caller's personally-hidden person IDs
+  /// для current семя. Empty list когда tree unbound либо никто
+  /// не скрыт. Server filters tree-routes per этой list — поэтому
+  /// frontend не re-filters локально (just re-fetches после toggle).
+  /// Used к gate «Скрыть / Показывать снова» tile в action sheet.
+  List<String> _hiddenPersonIds = const <String>[];
+
   /// Convenience: caller's role в active семья (null когда unbound).
   SemyaRole? get _callerSemyaRole => _currentSemyaContext?.callerRole;
 
@@ -783,6 +790,14 @@ class _TreeViewScreenState extends State<TreeViewScreen>
       relations = graphSnapshot.relations;
       treeMeta = loadResults[1] as FamilyTree?;
       semyaContext = loadResults[2] as SemyaDetails?;
+      // Ship FE7 (2026-05-26): pull caller's hide list AFTER semya
+      // context resolves — needed to seed action sheet «Скрыть /
+      // Показывать снова» tile state. Best-effort: failure → empty
+      // list (action sheet hide tile still works, just default к
+      // «Скрыть» — backend will accept add либо surface 4xx).
+      final hiddenIds = semyaContext != null
+          ? await _fetchHiddenPersonIds(semyaContext.semya.id)
+          : const <String>[];
       debugPrint(
         'Загружено родственников: ${relatives.length}, связей: ${relations.length}'
         '${semyaContext != null ? '; семя: ${semyaContext.semya.name} '
@@ -800,6 +815,7 @@ class _TreeViewScreenState extends State<TreeViewScreen>
           _relationsData = [];
           _currentTreeMeta = treeMeta;
           _currentSemyaContext = semyaContext;
+          _hiddenPersonIds = hiddenIds;
           _manualNodePositions = <String, Offset>{};
           _graphSnapshot = graphSnapshot;
           _currentUserIsInTree = graphSnapshot.viewerPersonId != null;
@@ -843,6 +859,7 @@ class _TreeViewScreenState extends State<TreeViewScreen>
           _relationsData = relations;
           _currentTreeMeta = treeMeta;
           _currentSemyaContext = semyaContext;
+          _hiddenPersonIds = hiddenIds;
           _manualNodePositions = filteredPositions;
           _graphSnapshot = graphSnapshot;
           _isLoading = false;
@@ -1319,6 +1336,15 @@ class _TreeViewScreenState extends State<TreeViewScreen>
   void _showTreePersonActionSheet(FamilyPerson person) {
     final treeId = _currentTreeId;
     if (treeId == null) return;
+    // Ship FE7 (2026-05-26): hide-toggle tile gating. Available when:
+    //   • tree bound к семя (semyaContext resolved)
+    //   • caller is member (any role — viewer can hide too)
+    //   • person ≠ caller's own person (don't let user hide self —
+    //     would lock them out of their own tree row visibility)
+    final semyaContext = _currentSemyaContext;
+    final viewerPersonId = _graphSnapshot?.viewerPersonId;
+    final canToggleHide = semyaContext != null && person.id != viewerPersonId;
+    final isCurrentlyHidden = _hiddenPersonIds.contains(person.id);
     showTreePersonActionSheet(
       context,
       person: person,
@@ -1326,6 +1352,9 @@ class _TreeViewScreenState extends State<TreeViewScreen>
       // tile surfaces, editorial actions hidden. Backend independently
       // rejects mutations с 403; UI gate just keeps виду cleaner.
       viewerMode: _isViewerOnly,
+      isHidden: isCurrentlyHidden,
+      onToggleHide:
+          canToggleHide ? () => _toggleHidePerson(person, isCurrentlyHidden) : null,
       onOpenProfile: () => _openPersonDetails(person),
       onEdit: () {
         context.push<dynamic>(
@@ -1354,6 +1383,52 @@ class _TreeViewScreenState extends State<TreeViewScreen>
       onConnect: () => _openPersonDetails(person, action: 'relations'),
       onDelete: () => _showDeletePersonConfirmation(person),
     );
+  }
+
+  /// Ship FE7 (2026-05-26): toggle person hide state. Hide = add к
+  /// caller's hideFilter; unhide = remove. Backend filters tree-routes
+  /// per the canonical list, so after toggle we just re-fetch tree (it
+  /// auto-applies filter). Snackbar feedback. Errors surface inline.
+  Future<void> _toggleHidePerson(
+    FamilyPerson person,
+    bool isCurrentlyHidden,
+  ) async {
+    final semyaContext = _currentSemyaContext;
+    final treeId = _currentTreeId;
+    if (semyaContext == null || treeId == null) return;
+    final service = _familyService;
+    if (service is! SemyaCapableFamilyTreeService) return;
+    final capable = service as SemyaCapableFamilyTreeService;
+    try {
+      final updated = await capable.updateHideFilter(
+        semyaId: semyaContext.semya.id,
+        addPersonIds: isCurrentlyHidden ? const <String>[] : [person.id],
+        removePersonIds: isCurrentlyHidden ? [person.id] : const <String>[],
+      );
+      if (!mounted) return;
+      setState(() {
+        _hiddenPersonIds = updated;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            isCurrentlyHidden
+                ? '${person.name} снова отображается'
+                : '${person.name} скрыт${person.gender == Gender.female ? 'а' : ''} от вас',
+          ),
+        ),
+      );
+      // Re-fetch tree — backend now applies filter с updated list.
+      await _loadData(treeId);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Не удалось: $error'),
+          backgroundColor: Colors.red.shade800,
+        ),
+      );
+    }
   }
 
   // Ship Q4: destructive delete с consequence copy (audit recommendation:
@@ -2062,6 +2137,23 @@ class _TreeViewScreenState extends State<TreeViewScreen>
   ///
   /// Caller treats null as «unbound / legacy» — full mutation rights
   /// preserved для personal trees.
+  /// Ship FE7 (2026-05-26): fetch caller's hide-filter list для семя.
+  /// Best-effort — failures return empty list (action sheet's hide
+  /// tile still works, default «Скрыть»; PATCH endpoint will accept
+  /// либо surface error). Backend filters tree-routes по the canonical
+  /// store list regardless of local state, so frontend can degrade
+  /// gracefully.
+  Future<List<String>> _fetchHiddenPersonIds(String semyaId) async {
+    final service = _familyService;
+    if (service is! SemyaCapableFamilyTreeService) return const <String>[];
+    final capable = service as SemyaCapableFamilyTreeService;
+    try {
+      return await capable.listHiddenPersonIds(semyaId: semyaId);
+    } catch (_) {
+      return const <String>[];
+    }
+  }
+
   Future<SemyaDetails?> _resolveSemyaContextForTree(String treeId) async {
     final service = _familyService;
     if (service is! SemyaCapableFamilyTreeService) return null;

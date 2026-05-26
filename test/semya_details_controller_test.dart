@@ -99,6 +99,18 @@ class _FakeSemyaService implements SemyaCapableFamilyTreeService {
     required String tokenId,
   }) async =>
       throw UnimplementedError();
+
+  @override
+  Future<List<String>> listHiddenPersonIds({required String semyaId}) async =>
+      const <String>[];
+
+  @override
+  Future<List<String>> updateHideFilter({
+    required String semyaId,
+    List<String> addPersonIds = const <String>[],
+    List<String> removePersonIds = const <String>[],
+  }) async =>
+      throw UnimplementedError();
 }
 
 SemyaDetails _details({

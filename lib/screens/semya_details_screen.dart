@@ -7,6 +7,7 @@ import '../backend/models/semya.dart';
 import '../providers/semya_details_controller.dart';
 import '../theme/app_theme.dart';
 import '../widgets/browse_tokens_list_section.dart';
+import '../widgets/hidden_persons_section.dart';
 import '../widgets/share_browse_token_modal.dart';
 import 'semya_invitations_list_screen.dart';
 
@@ -170,6 +171,15 @@ class _SemyaDetailsScreenState extends State<SemyaDetailsScreen> {
               callerRole: details.callerRole,
               currentUserId: _resolveCurrentUserId(),
             ),
+          // Ship FE7 (2026-05-26): «Скрытые от меня» management section.
+          // Per-user filter — каждый член семьи может скрыть кого
+          // угодно из своего view (включая viewer). Backend allows
+          // viewer+, поэтому секция render'ится для всех ролей.
+          HiddenPersonsSection(
+            key: const Key('semya-details-hidden-persons-section'),
+            semyaId: details.semya.id,
+            treeId: details.semya.treeId,
+          ),
           const SizedBox(height: 24),
         ],
       ),
