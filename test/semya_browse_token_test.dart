@@ -169,4 +169,66 @@ void main() {
       expect(result.persons.first.birthDate, isNull);
     });
   });
+
+  // Ship FE6b (2026-05-26): list-view summary shape (NO plaintext
+  // secret — backend strips on listings, leaks ONCE on create).
+  group('SemyaBrowseTokenSummary.fromJson', () {
+    test('parses full summary с computed status', () {
+      final s = SemyaBrowseTokenSummary.fromJson({
+        'id': 't-1',
+        'semyaId': 's-1',
+        'createdByUserId': 'u-1',
+        'createdAt': '2026-05-26T00:00:00.000Z',
+        'expiresAt': '2026-06-25T00:00:00.000Z',
+        'revokedAt': null,
+        'lastUsedAt': null,
+        'status': 'active',
+      });
+      expect(s.id, 't-1');
+      expect(s.semyaId, 's-1');
+      expect(s.createdByUserId, 'u-1');
+      expect(s.isActive, isTrue);
+      expect(s.isRevoked, isFalse);
+      expect(s.isExpired, isFalse);
+    });
+
+    test('isRevoked when status=revoked', () {
+      final s = SemyaBrowseTokenSummary.fromJson({
+        'id': 't-1',
+        'semyaId': 's-1',
+        'createdByUserId': 'u-1',
+        'createdAt': '2026-05-01T00:00:00.000Z',
+        'expiresAt': '2099-01-01T00:00:00.000Z',
+        'revokedAt': '2026-05-15T00:00:00.000Z',
+        'status': 'revoked',
+      });
+      expect(s.isRevoked, isTrue);
+      expect(s.isActive, isFalse);
+    });
+
+    test('isExpired when status=expired', () {
+      final s = SemyaBrowseTokenSummary.fromJson({
+        'id': 't-1',
+        'semyaId': 's-1',
+        'createdByUserId': 'u-1',
+        'createdAt': '2024-01-01T00:00:00.000Z',
+        'expiresAt': '2024-01-02T00:00:00.000Z',
+        'status': 'expired',
+      });
+      expect(s.isExpired, isTrue);
+      expect(s.isActive, isFalse);
+    });
+
+    test('status defaults к active when missing', () {
+      final s = SemyaBrowseTokenSummary.fromJson({
+        'id': 't-1',
+        'semyaId': 's-1',
+        'createdByUserId': 'u-1',
+        'createdAt': '2026-05-26T00:00:00.000Z',
+        'expiresAt': '2026-06-25T00:00:00.000Z',
+      });
+      expect(s.status, 'active');
+      expect(s.isActive, isTrue);
+    });
+  });
 }

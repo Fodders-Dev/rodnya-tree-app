@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:get_it/get_it.dart';
 import 'package:provider/provider.dart';
 
+import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/models/semya.dart';
 import '../providers/semya_details_controller.dart';
 import '../theme/app_theme.dart';
+import '../widgets/browse_tokens_list_section.dart';
 import '../widgets/share_browse_token_modal.dart';
 import 'semya_invitations_list_screen.dart';
 
@@ -155,6 +158,18 @@ class _SemyaDetailsScreenState extends State<SemyaDetailsScreen> {
                 semyaName: details.semya.name,
               ),
             ),
+          // Ship FE6b (2026-05-26): «Активные ссылки» management section.
+          // Same canInvite gate как share tile (UX consistency — если
+          // can create, can also see/manage). Backend allows viewer+
+          // listing, но showing list к viewers без revoke power adds
+          // noise. Per-row revoke gated separately (owner OR creator).
+          if (details.canInvite)
+            BrowseTokensListSection(
+              key: const Key('semya-details-browse-tokens-section'),
+              semyaId: details.semya.id,
+              callerRole: details.callerRole,
+              currentUserId: _resolveCurrentUserId(),
+            ),
           const SizedBox(height: 24),
         ],
       ),
@@ -168,6 +183,16 @@ class _SemyaDetailsScreenState extends State<SemyaDetailsScreen> {
     return members
         .map((m) => _MemberRow(membership: m, callerRole: callerRole))
         .toList(growable: false);
+  }
+
+  /// Resolve caller's user id via AuthServiceInterface — used by
+  /// browse-tokens revoke gate (creator-or-owner permission). Returns
+  /// null если AuthService не registered (test scenarios без full
+  /// GetIt bootstrap). Section degrades gracefully — revoke button
+  /// hidden для non-owners когда userId unknown.
+  String? _resolveCurrentUserId() {
+    if (!GetIt.I.isRegistered<AuthServiceInterface>()) return null;
+    return GetIt.I<AuthServiceInterface>().currentUserId;
   }
 }
 

@@ -144,4 +144,31 @@ abstract class SemyaCapableFamilyTreeService {
   /// (410), TOKEN_EXPIRED (410), SEMYA_NOT_FOUND (404), TREE_NOT_FOUND
   /// (404).
   Future<BrowsedSemyaTree> fetchBrowseTree(String token);
+
+  /// Ship FE6b (2026-05-26): `GET /v1/semya/:id/browse-tokens`. Returns
+  /// active + expired + revoked browse tokens для семя (server includes
+  /// all statuses; frontend filters/styles per status).
+  ///
+  /// Permission: viewer+ (member access — backend enforces). UI gates
+  /// section render на canInvite separately (UX choice).
+  ///
+  /// Plaintext token secret NOT included (security: leaks ONCE на
+  /// create). Каждая row carries computed status field.
+  ///
+  /// Returns empty list при graceful failures (network, 403/404).
+  Future<List<SemyaBrowseTokenSummary>> listBrowseTokens({
+    required String semyaId,
+  });
+
+  /// Ship FE6b (2026-05-26): `DELETE /v1/semya/:id/browse-token/:tokenId`.
+  /// Revokes browse token. Backend permission: семя owner (any token) либо
+  /// token creator (own tokens). Frontend gates revoke button accordingly.
+  ///
+  /// Throws [SemyaError] для: NOT_CREATOR_OR_OWNER (403),
+  /// TOKEN_NOT_FOUND (404), TOKEN_ALREADY_REVOKED (409),
+  /// INVALID_TOKEN_ID (400).
+  Future<SemyaBrowseTokenSummary> revokeBrowseToken({
+    required String semyaId,
+    required String tokenId,
+  });
 }

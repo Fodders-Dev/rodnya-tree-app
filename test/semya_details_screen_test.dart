@@ -83,6 +83,19 @@ class _FakeFamilyTreeService
   Future<BrowsedSemyaTree> fetchBrowseTree(String token) async =>
       throw UnimplementedError();
 
+  @override
+  Future<List<SemyaBrowseTokenSummary>> listBrowseTokens({
+    required String semyaId,
+  }) async =>
+      const <SemyaBrowseTokenSummary>[];
+
+  @override
+  Future<SemyaBrowseTokenSummary> revokeBrowseToken({
+    required String semyaId,
+    required String tokenId,
+  }) async =>
+      throw UnimplementedError();
+
   // FamilyTreeServiceInterface has широкий surface — все остальные
   // методы falling through к noSuchMethod (тесты SemyaDetailsScreen
   // не trigger'ят их).

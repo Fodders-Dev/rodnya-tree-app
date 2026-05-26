@@ -89,6 +89,19 @@ class _FakeService
       throw UnimplementedError();
 
   @override
+  Future<List<SemyaBrowseTokenSummary>> listBrowseTokens({
+    required String semyaId,
+  }) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<SemyaBrowseTokenSummary> revokeBrowseToken({
+    required String semyaId,
+    required String tokenId,
+  }) async =>
+      throw UnimplementedError();
+
+  @override
   dynamic noSuchMethod(Invocation invocation) =>
       super.noSuchMethod(invocation);
 }

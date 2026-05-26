@@ -2890,6 +2890,86 @@ class CustomApiFamilyTreeService
     }
   }
 
+  @override
+  Future<List<SemyaBrowseTokenSummary>> listBrowseTokens({
+    required String semyaId,
+  }) async {
+    final trimmed = semyaId.trim();
+    if (trimmed.isEmpty) {
+      throw const SemyaError(
+        code: 'INVALID_INPUT',
+        message: 'Некорректный идентификатор семьи',
+      );
+    }
+    try {
+      final response = await _requestJson(
+        method: 'GET',
+        path: '/v1/semya/$trimmed/browse-tokens',
+      );
+      final raw = response['tokens'];
+      if (raw is! List) return const <SemyaBrowseTokenSummary>[];
+      return raw
+          .whereType<Map>()
+          .map((e) =>
+              SemyaBrowseTokenSummary.fromJson(Map<String, dynamic>.from(e)))
+          .toList(growable: false);
+    } on CustomApiException catch (e) {
+      throw _mapSemyaException(e, endpoint: 'browse_tokens_list');
+    }
+  }
+
+  @override
+  Future<SemyaBrowseTokenSummary> revokeBrowseToken({
+    required String semyaId,
+    required String tokenId,
+  }) async {
+    final trimmedSemya = semyaId.trim();
+    final trimmedToken = tokenId.trim();
+    if (trimmedSemya.isEmpty || trimmedToken.isEmpty) {
+      throw const SemyaError(
+        code: 'INVALID_INPUT',
+        message: 'Некорректные параметры',
+      );
+    }
+    try {
+      final response = await _requestJson(
+        method: 'DELETE',
+        path: '/v1/semya/$trimmedSemya/browse-token/$trimmedToken',
+      );
+      final tokenRaw = response['token'];
+      if (tokenRaw is! Map<String, dynamic>) {
+        throw const CustomApiException(
+          'revoke browse-token: backend не вернул token объект',
+        );
+      }
+      return SemyaBrowseTokenSummary.fromJson(tokenRaw);
+    } on CustomApiException catch (e) {
+      // Inline mapping — generic _mapSemyaException treats 409 как
+      // TREE_ALREADY_BOUND. Здесь 409 = TOKEN_ALREADY_REVOKED, 404 =
+      // TOKEN_NOT_FOUND, 403 = NOT_CREATOR_OR_OWNER. Surface domain
+      // codes так UI может render targeted copy.
+      final status = e.statusCode;
+      String code;
+      switch (status) {
+        case 400:
+          code = 'INVALID_TOKEN_ID';
+          break;
+        case 403:
+          code = 'NOT_CREATOR_OR_OWNER';
+          break;
+        case 404:
+          code = 'TOKEN_NOT_FOUND';
+          break;
+        case 409:
+          code = 'TOKEN_ALREADY_REVOKED';
+          break;
+        default:
+          code = 'UNKNOWN';
+      }
+      throw SemyaError(code: code, message: e.message);
+    }
+  }
+
   /// Map [CustomApiException.statusCode] к domain-specific
   /// [SemyaError] code. Backend response payloads documented в
   /// backend/src/routes/semya-routes.js + entity-design §1.

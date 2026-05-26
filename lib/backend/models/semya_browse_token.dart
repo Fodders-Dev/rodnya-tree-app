@@ -3,7 +3,10 @@
 ///
 /// Two shapes:
 ///   • [SemyaBrowseToken] — full record c plaintext secret (on create)
-///   • [SemyaBrowseTokenSummary] — list view без secret (FE6b territory)
+///   • [SemyaBrowseTokenSummary] — list view без secret (FE6b — list +
+///     revoke management в семя details). Backend deliberately strips
+///     plaintext token из subsequent listings (secret leaks ONCE на
+///     create); summary carries metadata + computed status.
 class SemyaBrowseToken {
   const SemyaBrowseToken({
     required this.id,
@@ -50,6 +53,60 @@ class SemyaBrowseToken {
       createdByUserId: (json['createdByUserId'] ?? '').toString(),
       createdAt: (json['createdAt'] ?? '').toString(),
       expiresAt: (json['expiresAt'] ?? '').toString(),
+      revokedAt: _nullableString(json['revokedAt']),
+      lastUsedAt: _nullableString(json['lastUsedAt']),
+    );
+  }
+}
+
+/// Ship FE6b (2026-05-26): list-view shape для browse tokens
+/// management section. Backend's `mapTokenSummary` projection —
+/// metadata only, NO plaintext `token` secret.
+///
+/// `status` enum mirrors backend computation:
+///   • 'active'  — not revoked, not expired
+///   • 'expired' — expiresAt <= now
+///   • 'revoked' — revokedAt set
+///
+/// Used in GET /v1/semya/:id/browse-tokens response + revoke-endpoint
+/// reply (response carries summary of the revoked row).
+class SemyaBrowseTokenSummary {
+  const SemyaBrowseTokenSummary({
+    required this.id,
+    required this.semyaId,
+    required this.createdByUserId,
+    required this.createdAt,
+    required this.expiresAt,
+    required this.status,
+    this.revokedAt,
+    this.lastUsedAt,
+  });
+
+  final String id;
+  final String semyaId;
+  final String createdByUserId;
+  final String createdAt;
+  final String expiresAt;
+
+  /// Server-computed: 'active' | 'expired' | 'revoked'. Frontend
+  /// trusts server здесь — clock skew + canonical truth lives там.
+  final String status;
+
+  final String? revokedAt;
+  final String? lastUsedAt;
+
+  bool get isActive => status == 'active';
+  bool get isRevoked => status == 'revoked';
+  bool get isExpired => status == 'expired';
+
+  factory SemyaBrowseTokenSummary.fromJson(Map<String, dynamic> json) {
+    return SemyaBrowseTokenSummary(
+      id: (json['id'] ?? '').toString(),
+      semyaId: (json['semyaId'] ?? '').toString(),
+      createdByUserId: (json['createdByUserId'] ?? '').toString(),
+      createdAt: (json['createdAt'] ?? '').toString(),
+      expiresAt: (json['expiresAt'] ?? '').toString(),
+      status: (json['status'] ?? 'active').toString(),
       revokedAt: _nullableString(json['revokedAt']),
       lastUsedAt: _nullableString(json['lastUsedAt']),
     );
