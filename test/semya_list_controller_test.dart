@@ -195,4 +195,10 @@ class _FakeSemyaService implements SemyaCapableFamilyTreeService {
 
   @override
   Future<SemyaDetails?> findSemyaById(String semyaId) async => null;
+
+  @override
+  Future<List<SemyaMembership>> listMembershipsForSemya(
+    String semyaId,
+  ) async =>
+      const <SemyaMembership>[];
 }

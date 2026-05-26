@@ -35,4 +35,13 @@ abstract class SemyaCapableFamilyTreeService {
   ///   - SEMYA_NOT_FOUND (id mismatch либо soft-deleted)
   ///   - FORBIDDEN (caller not member)
   Future<SemyaDetails?> findSemyaById(String semyaId);
+
+  /// Ship FE2 (2026-05-26): `GET /v1/semya/:id/memberships`. Returns
+  /// list of all member rows для этой семя — used by SemyaDetailsScreen
+  /// для render members list. Permission gate viewer+ (same as findSemyaById).
+  ///
+  /// Returns empty list при graceful failures (network, 403/404 → caller
+  /// can fall back на empty state). Throws [SemyaError] only когда
+  /// server returns structured domain error.
+  Future<List<SemyaMembership>> listMembershipsForSemya(String semyaId);
 }

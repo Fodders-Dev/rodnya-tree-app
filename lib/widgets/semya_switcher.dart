@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../backend/models/semya.dart';
 import '../providers/semya_list_controller.dart';
+import '../screens/semya_details_screen.dart';
 
 /// Phase B Ship FE1: семя switcher widget.
 ///
@@ -334,6 +335,25 @@ class _SemyaTile extends StatelessWidget {
             )
           : null,
       onTap: onTap,
+      // Ship FE2 (2026-05-26): trailing info button opens details screen
+      // (members list + owner-only management placeholders). Tap row
+      // itself остаётся selection action (existing FE1 behavior).
+      trailing: IconButton(
+        key: Key('semya-details-${semya.id}'),
+        tooltip: 'Подробнее',
+        icon: Icon(
+          Icons.info_outline_rounded,
+          color: theme.colorScheme.onSurfaceVariant,
+        ),
+        onPressed: () {
+          Navigator.of(context).maybePop();
+          Navigator.of(context, rootNavigator: true).push(
+            MaterialPageRoute(
+              builder: (_) => SemyaDetailsScreen(semyaId: semya.id),
+            ),
+          );
+        },
+      ),
     );
   }
 }

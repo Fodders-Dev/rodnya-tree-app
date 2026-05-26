@@ -2620,6 +2620,32 @@ class CustomApiFamilyTreeService
     }
   }
 
+  @override
+  Future<List<SemyaMembership>> listMembershipsForSemya(String semyaId) async {
+    final trimmed = semyaId.trim();
+    if (trimmed.isEmpty) return const <SemyaMembership>[];
+    try {
+      final response = await _requestJson(
+        method: 'GET',
+        path: '/v1/semya/$trimmed/memberships',
+      );
+      final raw = response['memberships'];
+      if (raw is! List) return const <SemyaMembership>[];
+      return raw
+          .whereType<Map>()
+          .map((e) => SemyaMembership.fromJson(Map<String, dynamic>.from(e)))
+          .toList(growable: false);
+    } on CustomApiException catch (e) {
+      // 403/404 → return empty list (UI shows «не доступно»); other
+      // codes throw mapped SemyaError so controller surface их.
+      final status = e.statusCode;
+      if (status == 403 || status == 404) return const <SemyaMembership>[];
+      throw _mapSemyaException(e, endpoint: 'memberships');
+    } catch (_) {
+      return const <SemyaMembership>[];
+    }
+  }
+
   /// Map [CustomApiException.statusCode] к domain-specific
   /// [SemyaError] code. Backend response payloads documented в
   /// backend/src/routes/semya-routes.js + entity-design §1.
