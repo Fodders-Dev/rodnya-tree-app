@@ -32,6 +32,7 @@ class EmptyTreeGuidedCta extends StatelessWidget {
     required this.onAddRelative,
     required this.onAddOther,
     this.hasSelfPerson = false,
+    this.viewerMode = false,
   });
 
   /// Invoked when one of the 4 primary CTAs tapped.
@@ -47,8 +48,18 @@ class EmptyTreeGuidedCta extends StatelessWidget {
   /// vs «Начни своё семейное дерево» (truly empty).
   final bool hasSelfPerson;
 
+  /// Ship FE4 (2026-05-26): viewer-role gating. When `true`, no CTAs
+  /// render — caller cannot mutate tree. Shows informational copy
+  /// instead («Когда владелец добавит родственников, они появятся
+  /// здесь»). Server-side gating enforces; UI just hides surfaces
+  /// чтобы viewer не тыкал в кнопки которые отвалятся с 403.
+  final bool viewerMode;
+
   @override
   Widget build(BuildContext context) {
+    if (viewerMode) {
+      return _ViewerEmptyState();
+    }
     final theme = Theme.of(context);
     // SingleChildScrollView allows the column to fit on small surfaces
     // (test viewports often 600px tall; production phones similar).
@@ -167,6 +178,49 @@ class _PrimaryCtaButton extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 18),
         alignment: Alignment.centerLeft,
         minimumSize: const Size.fromHeight(52),
+      ),
+    );
+  }
+}
+
+/// Ship FE4 (2026-05-26): viewer-role empty state. Replaces guided
+/// CTAs с информационным сообщением — viewer не имеет права mutating
+/// tree, так предлагать «Добавить маму» misleading. Server-side gates
+/// reject mutations independently; UI просто скрывает affordances.
+class _ViewerEmptyState extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.account_tree_outlined,
+              size: 56,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+            const SizedBox(height: 14),
+            Text(
+              'Здесь пока никого нет',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Когда владелец семьи добавит родственников, '
+              'они появятся здесь.',
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

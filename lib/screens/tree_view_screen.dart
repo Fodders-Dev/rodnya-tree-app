@@ -13,7 +13,9 @@ import '../backend/interfaces/blood_relation_capable_family_tree_service.dart';
 import '../backend/interfaces/bulk_import_capable_family_tree_service.dart';
 import '../backend/interfaces/identity_conflicts_capable_family_tree_service.dart';
 import '../backend/interfaces/identity_suggestions_capable_family_tree_service.dart';
+import '../backend/interfaces/semya_capable_family_tree_service.dart';
 import '../backend/models/blood_relation.dart';
+import '../backend/models/semya.dart';
 import '../backend/models/identity_field_conflict.dart';
 import '../backend/models/identity_suggestion.dart';
 import '../models/family_person.dart';
@@ -29,12 +31,14 @@ import '../widgets/extended_network_filter_sidebar.dart';
 import '../widgets/extended_network_search_sheet.dart';
 import '../widgets/empty_tree_guided_cta.dart';
 import '../widgets/extended_network_toggle.dart';
+import '../widgets/semya_context_badge.dart';
 import '../widgets/foreign_node_sheet.dart';
 import '../widgets/interactive_family_tree.dart';
 import '../widgets/safe_delete_confirmation_dialog.dart';
 import '../widgets/tree_history_sheet.dart';
 import '../widgets/tree_person_action_sheet.dart';
 import '../widgets/glass_panel.dart';
+import 'semya_details_screen.dart';
 import '../providers/tree_provider.dart'; // Импортируем TreeProvider
 import 'package:go_router/go_router.dart'; // Для навигации
 import '../backend/interfaces/auth_service_interface.dart';
@@ -185,6 +189,30 @@ class _TreeViewScreenState extends State<TreeViewScreen>
   bool _currentUserIsInTree = true; // Изначально true, пока не проверили
 
   bool get _isFriendsTree => _currentTreeMeta?.isFriendsTree == true;
+
+  // ── Ship FE4 (2026-05-26): семя context state ──
+  //
+  // Resolved при tree load — if active tree bound к семя (per Ship 5
+  // tree.semyaId), we fetch SemyaDetails to learn caller's role.
+  // Used to gate edit/add/delete UI affordances per ENTITY-DESIGN §2.1
+  // role matrix. Null означает либо unbound tree (legacy / personal) либо
+  // не yet loaded / fetch failed → треат как owner-equivalent (legacy
+  // compat — don't accidentally hide controls для self-owned trees).
+  SemyaDetails? _currentSemyaContext;
+
+  /// Convenience: caller's role в active семья (null когда unbound).
+  SemyaRole? get _callerSemyaRole => _currentSemyaContext?.callerRole;
+
+  /// True when caller has mutation rights (owner либо editor) — либо
+  /// tree unbound (legacy/personal trees default to full access).
+  bool get _canEditCurrentTree {
+    final role = _callerSemyaRole;
+    if (role == null) return true; // unbound либо not loaded → legacy full
+    return role == SemyaRole.owner || role == SemyaRole.editor;
+  }
+
+  /// Convenience flag для viewer-role gating (inverse of edit access).
+  bool get _isViewerOnly => !_canEditCurrentTree;
 
   // Phase 4 chunk 2: per-tree state для mode toggle + filter panel.
   // Создаётся когда tree selected (см. _syncExtendedNetworkController),
@@ -739,16 +767,26 @@ class _TreeViewScreenState extends State<TreeViewScreen>
       late final List<FamilyPerson> relatives;
       late final List<FamilyRelation> relations;
       late final FamilyTree? treeMeta;
+      late final SemyaDetails? semyaContext;
+      // Ship FE4 (2026-05-26): added семя context fetch к parallel
+      // load. Resolves caller's role когда tree bound к семя per
+      // tree.semyaId (Ship 5). Result null когда unbound либо
+      // capability service incapable — caller defaults к legacy
+      // full-access mode.
       final loadResults = await Future.wait<Object?>([
         graphTreeService.getTreeGraphSnapshot(treeId),
         _loadCurrentTreeMeta(treeId),
+        _resolveSemyaContextForTree(treeId),
       ]);
       final graphSnapshot = loadResults[0] as TreeGraphSnapshot;
       relatives = graphSnapshot.people;
       relations = graphSnapshot.relations;
       treeMeta = loadResults[1] as FamilyTree?;
+      semyaContext = loadResults[2] as SemyaDetails?;
       debugPrint(
-        'Загружено родственников: ${relatives.length}, связей: ${relations.length}',
+        'Загружено родственников: ${relatives.length}, связей: ${relations.length}'
+        '${semyaContext != null ? '; семя: ${semyaContext.semya.name} '
+            '(role: ${semyaContext.callerRole.serverValue})' : '; tree unbound'}',
       );
 
       if (!mounted) return;
@@ -761,6 +799,7 @@ class _TreeViewScreenState extends State<TreeViewScreen>
           _relativesData = [];
           _relationsData = [];
           _currentTreeMeta = treeMeta;
+          _currentSemyaContext = semyaContext;
           _manualNodePositions = <String, Offset>{};
           _graphSnapshot = graphSnapshot;
           _currentUserIsInTree = graphSnapshot.viewerPersonId != null;
@@ -803,6 +842,7 @@ class _TreeViewScreenState extends State<TreeViewScreen>
           _relativesData = peopleData;
           _relationsData = relations;
           _currentTreeMeta = treeMeta;
+          _currentSemyaContext = semyaContext;
           _manualNodePositions = filteredPositions;
           _graphSnapshot = graphSnapshot;
           _isLoading = false;
@@ -1282,6 +1322,10 @@ class _TreeViewScreenState extends State<TreeViewScreen>
     showTreePersonActionSheet(
       context,
       person: person,
+      // Ship FE4 (2026-05-26): viewer-role gating — only «Открыть профиль»
+      // tile surfaces, editorial actions hidden. Backend independently
+      // rejects mutations с 403; UI gate just keeps виду cleaner.
+      viewerMode: _isViewerOnly,
       onOpenProfile: () => _openPersonDetails(person),
       onEdit: () {
         context.push<dynamic>(
@@ -2003,6 +2047,48 @@ class _TreeViewScreenState extends State<TreeViewScreen>
     if (result == true ||
         (result is Map<String, dynamic> && result['updated'] == true)) {
       await _loadData(treeId);
+    }
+  }
+
+  /// Ship FE4 (2026-05-26): resolves семя binding for active tree (if
+  /// any) using SemyaListController.semyi as lookup (already loaded
+  /// app-wide). Reverse-match via Semya.treeId == treeId. Then fetches
+  /// SemyaDetails to learn caller's role.
+  ///
+  /// Returns null когда:
+  ///   • Tree not bound к семя (no Semya entry с matching treeId)
+  ///   • Capability service unavailable (legacy backend)
+  ///   • findSemyaById fails либо returns null (network / 403)
+  ///
+  /// Caller treats null as «unbound / legacy» — full mutation rights
+  /// preserved для personal trees.
+  Future<SemyaDetails?> _resolveSemyaContextForTree(String treeId) async {
+    final service = _familyService;
+    if (service is! SemyaCapableFamilyTreeService) return null;
+    final capable = service as SemyaCapableFamilyTreeService;
+    try {
+      // Pull all семья caller belongs to и reverse-match by treeId.
+      // SemyaListController caches this list app-wide; calling listMySemya
+      // directly keeps tree_view_screen independent от Provider plumbing
+      // плюс ensures we have fresh data (any семя created after app boot
+      // would still be visible since listMySemya hits backend).
+      final mySemyi = await capable.listMySemya();
+      Semya? bound;
+      for (final entry in mySemyi) {
+        if (entry.treeId == treeId) {
+          bound = entry;
+          break;
+        }
+      }
+      if (bound == null) return null;
+      // Found семя — fetch details (includes caller's membership row).
+      return await capable.findSemyaById(bound.id);
+    } catch (_) {
+      // Graceful degradation — на network failure treат tree as unbound
+      // (legacy full-access). Backend mutation gates still enforce
+      // serverside per ship pattern, поэтому viewer случайно
+      // не сломает чужое дерево даже если UI ошибочно показал кнопки.
+      return null;
     }
   }
 

@@ -158,6 +158,37 @@ void main() {
     expect(otherCount, 1);
   });
 
+  testWidgets(
+    'Ship FE4: viewerMode=true → no CTAs, shows informational copy only',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: EmptyTreeGuidedCta(
+              hasSelfPerson: false,
+              viewerMode: true,
+              onAddRelative: (_, __) {},
+              onAddOther: () {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      // Viewer empty state copy present.
+      expect(find.text('Здесь пока никого нет'), findsOneWidget);
+      expect(
+        find.textContaining('владелец семьи добавит'),
+        findsOneWidget,
+      );
+      // CTAs MUST be hidden.
+      expect(find.byKey(const Key('empty-tree-cta-mama')), findsNothing);
+      expect(find.byKey(const Key('empty-tree-cta-papa')), findsNothing);
+      expect(find.byKey(const Key('empty-tree-cta-child')), findsNothing);
+      expect(find.byKey(const Key('empty-tree-cta-partner')), findsNothing);
+      expect(find.byKey(const Key('empty-tree-cta-other')), findsNothing);
+    },
+  );
+
   testWidgets('header copy + sub-copy differ between hasSelfPerson states',
       (tester) async {
     await tester.pumpWidget(

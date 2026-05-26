@@ -27,6 +27,7 @@ Future<void> showTreePersonActionSheet(
   required VoidCallback onAddRelative,
   required VoidCallback onConnect,
   required VoidCallback onDelete,
+  bool viewerMode = false,
 }) async {
   await showModalBottomSheet<void>(
     context: context,
@@ -34,6 +35,7 @@ Future<void> showTreePersonActionSheet(
     showDragHandle: true,
     builder: (sheetContext) => TreePersonActionSheet(
       person: person,
+      viewerMode: viewerMode,
       onOpenProfile: () {
         Navigator.of(sheetContext).pop();
         onOpenProfile();
@@ -67,6 +69,7 @@ class TreePersonActionSheet extends StatelessWidget {
     required this.onAddRelative,
     required this.onConnect,
     required this.onDelete,
+    this.viewerMode = false,
   });
 
   final FamilyPerson person;
@@ -75,6 +78,13 @@ class TreePersonActionSheet extends StatelessWidget {
   final VoidCallback onAddRelative;
   final VoidCallback onConnect;
   final VoidCallback onDelete;
+
+  /// Ship FE4 (2026-05-26): viewer-role gating. When `true`, only
+  /// «Открыть профиль» tile renders — editorial actions (edit / add /
+  /// connect / delete) hidden. Mutation rejection is enforced server-
+  /// side regardless (defense-in-depth); hiding UI спasает viewer от
+  /// «доступно, но не работает» confusion.
+  final bool viewerMode;
 
   @override
   Widget build(BuildContext context) {
@@ -142,31 +152,38 @@ class TreePersonActionSheet extends StatelessWidget {
               label: 'Открыть профиль',
               onTap: onOpenProfile,
             ),
-            _ActionTile(
-              key: const Key('tree-action-edit'),
-              icon: Icons.edit_outlined,
-              label: 'Редактировать',
-              onTap: onEdit,
-            ),
-            _ActionTile(
-              key: const Key('tree-action-add-relative'),
-              icon: Icons.person_add_alt_outlined,
-              label: 'Добавить родственника',
-              onTap: onAddRelative,
-            ),
-            _ActionTile(
-              key: const Key('tree-action-connect'),
-              icon: Icons.link_rounded,
-              label: 'Связать с существующим',
-              onTap: onConnect,
-            ),
-            _ActionTile(
-              key: const Key('tree-action-delete'),
-              icon: Icons.delete_outline_rounded,
-              label: 'Удалить',
-              isDestructive: true,
-              onTap: onDelete,
-            ),
+            // Ship FE4 (2026-05-26): editorial actions gated by
+            // viewerMode. Viewer role → mutation tiles hidden;
+            // only «Открыть профиль» surfaces. Server-side gating
+            // separately enforces, мы здесь только cleanup UX
+            // surface to avoid «доступно, но 403» confusion.
+            if (!viewerMode) ...[
+              _ActionTile(
+                key: const Key('tree-action-edit'),
+                icon: Icons.edit_outlined,
+                label: 'Редактировать',
+                onTap: onEdit,
+              ),
+              _ActionTile(
+                key: const Key('tree-action-add-relative'),
+                icon: Icons.person_add_alt_outlined,
+                label: 'Добавить родственника',
+                onTap: onAddRelative,
+              ),
+              _ActionTile(
+                key: const Key('tree-action-connect'),
+                icon: Icons.link_rounded,
+                label: 'Связать с существующим',
+                onTap: onConnect,
+              ),
+              _ActionTile(
+                key: const Key('tree-action-delete'),
+                icon: Icons.delete_outline_rounded,
+                label: 'Удалить',
+                isDestructive: true,
+                onTap: onDelete,
+              ),
+            ],
           ],
         ),
       ),

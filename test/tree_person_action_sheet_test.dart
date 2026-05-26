@@ -144,6 +144,64 @@ void main() {
     expect(deleteText.style?.fontWeight, FontWeight.w700);
   });
 
+  testWidgets(
+    'Ship FE4: viewerMode=true → only «Открыть профиль» tile, '
+    'editorial actions hidden',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: TreePersonActionSheet(
+              person: _samplePerson(),
+              viewerMode: true,
+              onOpenProfile: () {},
+              onEdit: () {},
+              onAddRelative: () {},
+              onConnect: () {},
+              onDelete: () {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('tree-action-open-profile')),
+        findsOneWidget,
+      );
+      // Editorial action tiles MUST be hidden in viewer mode.
+      expect(find.byKey(const Key('tree-action-edit')), findsNothing);
+      expect(find.byKey(const Key('tree-action-add-relative')), findsNothing);
+      expect(find.byKey(const Key('tree-action-connect')), findsNothing);
+      expect(find.byKey(const Key('tree-action-delete')), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'Ship FE4: viewerMode=false (default) preserves все 5 actions',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: TreePersonActionSheet(
+              person: _samplePerson(),
+              onOpenProfile: () {},
+              onEdit: () {},
+              onAddRelative: () {},
+              onConnect: () {},
+              onDelete: () {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('tree-action-open-profile')), findsOneWidget);
+      expect(find.byKey(const Key('tree-action-edit')), findsOneWidget);
+      expect(find.byKey(const Key('tree-action-add-relative')), findsOneWidget);
+      expect(find.byKey(const Key('tree-action-connect')), findsOneWidget);
+      expect(find.byKey(const Key('tree-action-delete')), findsOneWidget);
+    },
+  );
+
   testWidgets('showTreePersonActionSheet pops dialog после action',
       (tester) async {
     int openCount = 0;

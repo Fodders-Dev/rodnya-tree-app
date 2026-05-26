@@ -46,8 +46,12 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
               ],
             );
           }
+          // Ship FE4 (2026-05-26): viewer-role empty state shows
+          // informational copy (no add CTAs) — viewer cannot mutate
+          // tree, поэтому surfacing buttons would mislead.
           return EmptyTreeGuidedCta(
             hasSelfPerson: false,
+            viewerMode: _isViewerOnly,
             onAddRelative: (relation, gender) =>
                 _navigateToAddRelativeWithHint(
               selectedTreeId,
@@ -65,6 +69,7 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
         if (treeHasOnlySelf) {
           return EmptyTreeGuidedCta(
             hasSelfPerson: true,
+            viewerMode: _isViewerOnly,
             onAddRelative: (relation, gender) =>
                 _navigateToAddRelativeWithHint(
               selectedTreeId,
@@ -329,6 +334,26 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
             branchRootPerson: branchRootPerson,
             accent: accent,
             compact: compact,
+          ),
+          SizedBox(width: compact ? 8 : 10),
+          // Ship FE4 (2026-05-26): семя context badge — shows binding
+          // name + caller's role. Tap routes к SemyaDetailsScreen
+          // когда tree bound. Compact mode hides label на small screens
+          // (badge widget self-truncates с TextOverflow.ellipsis).
+          Flexible(
+            child: SemyaContextBadge(
+              semya: _currentSemyaContext?.semya,
+              callerRole: _currentSemyaContext?.callerRole,
+              onTap: _currentSemyaContext != null
+                  ? () => Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => SemyaDetailsScreen(
+                            semyaId: _currentSemyaContext!.semya.id,
+                          ),
+                        ),
+                      )
+                  : null,
+            ),
           ),
           SizedBox(width: compact ? 8 : 10),
           if (showStatPills)
