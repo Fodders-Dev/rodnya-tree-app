@@ -29,9 +29,16 @@ class SemyaDetailsScreen extends StatefulWidget {
   const SemyaDetailsScreen({
     super.key,
     required this.semyaId,
+    this.scrollToHidden = false,
   });
 
   final String semyaId;
+
+  /// Ship FE7b (2026-05-26): scroll-to-hidden-section flag. Set когда
+  /// caller arrives via settings tile «Скрытые родственники» — после
+  /// первого build scrolls so HiddenPersonsSection visible immediately.
+  /// Other entry points (семя switcher, browse list) leave default false.
+  final bool scrollToHidden;
 
   @override
   State<SemyaDetailsScreen> createState() => _SemyaDetailsScreenState();
@@ -39,12 +46,33 @@ class SemyaDetailsScreen extends StatefulWidget {
 
 class _SemyaDetailsScreenState extends State<SemyaDetailsScreen> {
   late final SemyaDetailsController _controller;
+  // Ship FE7b: GlobalKey на HiddenPersonsSection container — после
+  // controller load completes attempts Scrollable.ensureVisible если
+  // flag set. Fires once per screen instance.
+  final GlobalKey _hiddenSectionKey = GlobalKey();
+  bool _scrolledToHidden = false;
 
   @override
   void initState() {
     super.initState();
     _controller = SemyaDetailsController(semyaId: widget.semyaId);
     WidgetsBinding.instance.addPostFrameCallback((_) => _controller.load());
+  }
+
+  void _maybeScrollToHidden() {
+    if (!widget.scrollToHidden || _scrolledToHidden) return;
+    final ctx = _hiddenSectionKey.currentContext;
+    if (ctx == null) return;
+    _scrolledToHidden = true;
+    // Defer один tick — let RefreshIndicator + ListView mount fully.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      Scrollable.ensureVisible(
+        ctx,
+        duration: const Duration(milliseconds: 280),
+        curve: Curves.easeOut,
+      );
+    });
   }
 
   @override
@@ -86,6 +114,14 @@ class _SemyaDetailsScreenState extends State<SemyaDetailsScreen> {
         message: controller.errorMessage ?? 'Семья не найдена',
         onRetry: controller.refresh,
       );
+    }
+    // Ship FE7b: after first render с loaded details, scroll к hidden
+    // section если flag passed. Called every build but guarded by
+    // _scrolledToHidden bool — fires exactly once.
+    if (widget.scrollToHidden) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _maybeScrollToHidden();
+      });
     }
     return RefreshIndicator(
       onRefresh: controller.refresh,
@@ -175,10 +211,13 @@ class _SemyaDetailsScreenState extends State<SemyaDetailsScreen> {
           // Per-user filter — каждый член семьи может скрыть кого
           // угодно из своего view (включая viewer). Backend allows
           // viewer+, поэтому секция render'ится для всех ролей.
-          HiddenPersonsSection(
-            key: const Key('semya-details-hidden-persons-section'),
-            semyaId: details.semya.id,
-            treeId: details.semya.treeId,
+          KeyedSubtree(
+            key: _hiddenSectionKey,
+            child: HiddenPersonsSection(
+              key: const Key('semya-details-hidden-persons-section'),
+              semyaId: details.semya.id,
+              treeId: details.semya.treeId,
+            ),
           ),
           const SizedBox(height: 24),
         ],

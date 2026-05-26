@@ -13,7 +13,11 @@ import 'package:flutter_rustore_billing/pigeons/rustore.dart' as billing;
 import 'package:get_it/get_it.dart'; // Для доступа к RustoreService
 import 'package:go_router/go_router.dart';
 import '../backend/interfaces/auth_service_interface.dart';
+import '../backend/interfaces/family_tree_service_interface.dart';
+import '../backend/interfaces/semya_capable_family_tree_service.dart';
 import '../providers/tree_provider.dart';
+import '../screens/semya_details_screen.dart';
+import '../widgets/hidden_semya_picker_sheet.dart';
 import '../services/custom_api_notification_service.dart';
 import '../services/app_status_service.dart';
 import '../services/audio_route_service.dart';
@@ -114,6 +118,62 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() {
       _notificationsEnabled = notificationService.notificationsEnabled;
     });
+  }
+
+  /// Ship FE7b (2026-05-26): hidden-persons entry point handler.
+  /// Resolves caller's семья list → routes по count. Backend list call
+  /// best-effort (network blip → snackbar). Picker shown только когда
+  /// ≥2 семей; single-семя skips picker для меньшего trения.
+  Future<void> _openHiddenPersonsEntry() async {
+    if (!GetIt.I.isRegistered<FamilyTreeServiceInterface>()) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Семьи временно недоступны')),
+      );
+      return;
+    }
+    final service = GetIt.I<FamilyTreeServiceInterface>();
+    if (service is! SemyaCapableFamilyTreeService) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Семьи временно недоступны')),
+      );
+      return;
+    }
+    final capable = service as SemyaCapableFamilyTreeService;
+    try {
+      final semyi = await capable.listMySemya();
+      if (!mounted) return;
+      if (semyi.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'У вас пока нет семьи — список скрытых появится, когда '
+              'присоединитесь к семье',
+            ),
+          ),
+        );
+        return;
+      }
+      if (semyi.length == 1) {
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => SemyaDetailsScreen(
+              semyaId: semyi.first.id,
+              scrollToHidden: true,
+            ),
+          ),
+        );
+        return;
+      }
+      // 2+ семей — picker sheet.
+      await showHiddenSemyaPickerSheet(context, semyi: semyi);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Не удалось загрузить семьи: $error')),
+      );
+    }
   }
 
   Future<void> _toggleNotifications(bool value) async {
@@ -1060,6 +1120,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
           title: 'Активные сеансы',
           subtitle: 'Управление устройствами и QR-вход',
           onTap: () => GoRouter.of(context).push('/profile/sessions'),
+        ),
+        // Ship FE7b (2026-05-26): entry point для HiddenPersonsSection в
+        // FE2 семя details. Tap → fetch semyi → routing по count:
+        //   0 → snackbar «Нет семей»
+        //   1 → direct push к семя details с scroll
+        //   2+ → picker sheet
+        _buildActionRow(
+          icon: Icons.visibility_off_outlined,
+          title: 'Скрытые родственники',
+          subtitle: 'Управлять списком в своей семье',
+          onTap: _openHiddenPersonsEntry,
         ),
       ]),
       _buildCallSettingsSection(),
