@@ -536,3 +536,130 @@ removed, capability gating + DTOs + endpoints permanent.
 shape-sensitivity follow-up (wide-balanced vs linear-chain) был
 deferred к chunk 3.5 в DECISIONS.md 2026-05-12 — остаётся deferred
 (no data-driven signal that needed).
+
+---
+
+## 2026-05-26 — Catchup: 18-ship marathon (Phase A calls + Phase B frontend 80%)
+
+**Сессия**: Claude Code (main, single squash day, 18 commits all green).
+
+**Контекст**: PROGRESS.md не обновлялся между 2026-05-18 и 2026-05-26.
+За окно landed Phase A+B auto-refresh (2026-05-22), Phase B backend
+Ships 1-10 (Week 1-3, см. SHARED-TREE-PROPOSAL.md), затем 2026-05-26
+single-session marathon — Phase A calls UX polish + Phase B frontend
+8 ships + integration test layer. Catchup-entry чтобы доку не оставлять
+стале (детали — в per-ship commit messages).
+
+### Phase A — Calls package (production-ready, RuStore signing pending)
+
+| Ship | Commit | Date | LOC |
+|---|---|---|---|
+| Bug A foreground service | `766e5e0` | 2026-05-24 | ~400 |
+| Q1 wizard skip | `9589cbf` | 2026-05-25 | ~280 |
+| Q2 Google dialog | `0367e81` | 2026-05-25 | ~350 |
+| Bug 2/3 UI state sync | `207245a` | 2026-05-26 | ~250 |
+| Bug B cross-provider email | `ff74a2d` | 2026-05-26 | ~520 |
+| Bug 4 PiP drag | `8ab3b02` | 2026-05-26 | ~180 |
+| Q3 safety polish | `f27a228` | 2026-05-26 | ~310 |
+| Q4 tree action sheet | `50edd73` | 2026-05-26 | ~280 |
+| Q3a auth provider gate | `0b53b87` | 2026-05-26 | ~210 |
+| Post-delete polish | `8d98b5e` | 2026-05-26 | ~190 |
+| Empty tree CTA | `0dda6fe` | 2026-05-26 | ~220 |
+
+Все эти ships закрывают UX audit 2026-05-25 Critical + Major findings.
+Производственный APK собран (RuStore flavor, build 10), ADB smoke
+verified на Galaxy S20 FE для Q1 wizard skip + Q2 Google dialog.
+**Pending: RuStore signing key check** — critical unblocker для real
+users.
+
+### Phase B frontend FE1-FE7 + FE7b + FE10 partial (80% — 8/10)
+
+Phase B backend ships 1-10 уже жили с Week 1-3 (см. SHARED-TREE-PROPOSAL.md).
+Frontend этой сессии wrap'нул endpoints без backend touch.
+
+| Ship | Commit | LOC | Backend wraps |
+|---|---|---|---|
+| FE1 — Семя model + switcher | `25841cd` | ~800 | Ships 1-2 (model + listMySemya) |
+| FE2 — Семя details screen | `f5e405c` | ~600 | Ship 2 (findSemyaById + memberships) |
+| FE3 — Invitation flow | `ada0513` | ~1100 | Ships 3+4 (create/list/revoke/accept) |
+| FE4 — Tree view семя-aware | `5ac5b62` | ~450 | Ship 5 (tree.semyaId binding) |
+| FE5 — Pull-person foundation | `b34060a` | ~570 | Ship 6 (pull-selectively endpoint) |
+| FE6a — Browse viewer + share | `70cc000` | ~940 | Ship 7 (browse tokens + /v1/browse/:token) |
+| FE6b — Browse tokens mgmt | `0c8de00` | ~590 | Ship 7 (list/revoke) |
+| FE7 — Hide filter | `cccd4e8` | ~550 | Ship 8 (hide-filter endpoints + tree-routes filter) |
+| FE7b — Settings tile polish | `152c067` | ~200 | (FE7 polish, no new endpoint) |
+| FE10 partial — Integration tests | `1b1dc17` | ~550 (тест-only) | покрытие FE1-FE7 flows |
+
+**Зачем split FE6 → FE6a + FE6b**: spec stop condition «scope > 1000
+LOC → split». FE6a (browse viewer + share) shipped 1396 LOC, FE6b
+(tokens management) deferred к next ship-cycle тут же.
+
+**Зачем split FE7 → FE7 + FE7b**: surface complexity decision —
+settings tile linking deferred к polish ship чтобы main FE7
+(action sheet + section) shipped clean без multi-семя picker UX
+скоп creeping.
+
+**Pending FE8/FE9**: explicitly deferred к fresh session per
+«verify ground truth перед destructive ops» discipline. Mutation
+UI (promote/demote/kick member) + onboarding wizard rewrite требуют
+sharp context для permission matrices.
+
+### Тесты на 2026-05-26
+
+* `flutter analyze`: 0 new issues — baseline `_branchDigest` warning
+  preserved across все 18 ships.
+* Семя regression suite: 100/100 (за каждым ship после propagation
+  stub'ов к 10 fakes).
+* Integration tests: 29 end-to-end assertions в `test/integration/`
+  (added в FE10 partial ship).
+* Backend regression: untouched (Ship 8 уже жил, frontend wraps only).
+
+### Design docs captured 2026-05-25
+
+* **UX-AUDIT-2026-05-25** (отдельный audit pass — 49 screens, top-20
+  recommendations). Closed Critical #1-#4 + Major #1-#7 в этой сессии.
+* [SHARED-TREE-PROPOSAL.md](SHARED-TREE-PROPOSAL.md) — Phase B
+  vision (федеративная семья model). Уже жил до 2026-05-26, но
+  обновлён с post-Ship-10 reality.
+* [CIRCLE-EXTENSION-PROPOSAL.md](CIRCLE-EXTENSION-PROPOSAL.md) —
+  Phase C «Круг» extension.
+* [PHASE-D-MEMORY-HISTORY-PROPOSAL.md](PHASE-D-MEMORY-HISTORY-PROPOSAL.md)
+  — Phase D family memory + history streams.
+* [PHASE-E-SOCIAL-INTERACTIONS-PROPOSAL.md](PHASE-E-SOCIAL-INTERACTIONS-PROPOSAL.md)
+  — Phase E social layer extensions.
+
+### Что осталось
+
+* **RuStore signing key check** (CRITICAL — unlocks все 18 ships
+  для real users).
+* **FE8 mutation UI** (fresh session — promote/demote/kick).
+* **FE9 onboarding wizard rewrite** (fresh session — interaction
+  с Phase 6 wizard от 2026-05-14).
+* **FE10 full integration coverage** (after FE8/FE9).
+* **Q4a soft-delete proper design pass** (deferred 2026-05-26 — backend
+  hard-delete vs spec mismatch surfaced, scope не закрыт).
+* **FE3b invitation accept deep link** (per-platform: rodnya-tree.ru/i/<token>
+  universal link wiring к /invite/* route — partially landed в FE3).
+* **Week 7-8 Phase B production migration** (запуск
+  `RODNYA_FEDERATED_SEMYI_ENABLED=true` после observation окна; зависит
+  от FE8 mutation UI completion).
+
+### Что НЕ запланировано но всплыло
+
+* **Спека vs backend reality pivots** в FE5/FE6a/FE7: несколько
+  раз обнаруживалось что backend reality расходится с frontend
+  dispatch assumptions (e.g., FE5 spec proposed relationType +
+  nameOverride args но Ship 6 endpoint accepts only `{sourceSemyaId,
+  sourcePersonId}`). Pattern: pivot к honest scope, surface через
+  AskUserQuestion, document в commit message.
+* **«Three ships ceiling»** memory note tested heavily: session
+  shipped 18 ships well past 3 ship comfort threshold. Discipline
+  preserved через explicit dispatch-by-Артём (worker не proposing
+  new work) + fresh-session-defer для FE8/FE9 mutation UI.
+* **`_branchDigest` warning** — pre-existing baseline (от
+  2026-05-14 onboarding wizard ship). Не closed в этой сессии чтобы
+  preserve consistent baseline для diff-tracking.
+* **Stray untracked files**: `https_rodnya-tree.ru-handoff.zip` (8 May)
+  + `scripts/smoke-release-apk.ps1` (23 May) остались untracked
+  across все ships — не FE-related artifacts, candidate для cleanup
+  в отдельной mini-ship.

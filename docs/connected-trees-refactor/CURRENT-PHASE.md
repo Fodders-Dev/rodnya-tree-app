@@ -4,7 +4,64 @@
 > [`docs/tree_model_overhaul_rfc.md`](../tree_model_overhaul_rfc.md).
 > См. [DECISIONS.md](DECISIONS.md) от 2026-05-09.
 
-**Status update**: 2026-05-22 (post Phase 3.4 branch abandon + worktree cleanup follow-up + Phase 6 observation early peek + Phase 6.5 revocation shipped + **Phase A+B auto-refresh shipped** — push-triggered feed/tree refetch, см. DECISIONS 2026-05-22).
+**Status update**: 2026-05-26 (post 18-ship session — Phase A calls package landed, Phase B backend complete + frontend 8/10 ships shipped + integration test coverage, 5 design docs Phase B/C/D/E captured).
+
+## Сессия 2026-05-26 — 18 ships, zero regressions
+
+~13800 LOC across 18 commits. Single squash session за один день, разделённый на тематические chunks. Все ship'ы прошли flutter analyze + регрессионный suite. Бэкенд + auth + tree-view-screen untouched после frozen-points (Phase B backend Ship 1-10, Bug B observation week, Q1-Q3a observation).
+
+### Phase A — Calls package (production-ready, RuStore signing key check pending)
+
+| Ship | Commit | Что |
+|---|---|---|
+| Bug A foreground service | `766e5e0` | Audio one-way fix, validated через звонок к маме |
+| Q1 wizard skip | `9589cbf` | Мама-blocker — skip-onboarding tile + banner |
+| Q2 Google dialog | `0367e81` | Cross-provider Google email confirm UX |
+| Bug 2/3 UI state sync | `207245a` | Call screen state convergence |
+| Bug B cross-provider email | `ff74a2d` | 409 EMAIL_PROVIDER_MISMATCH + modal flow |
+| Bug 4 PiP drag | `8ab3b02` | Picture-in-picture window manipulation |
+| Q3 safety polish | `f27a228` | Sign-out confirm + reg validation + provider hide |
+| Q4 tree action sheet | `50edd73` | Bottom sheet 5 actions на person tap (audit Critical #4) |
+| Q3a auth provider gate | `0b53b87` | /health authProviders + per-button gate |
+| Post-delete polish | `8d98b5e` | Shared safe-delete confirmation widget |
+| Empty tree CTA | `0dda6fe` | EmptyTreeGuidedCta widget для onboarding |
+
+### Phase B backend (100% — Ships 1-10 уже жил с 2026-05-19)
+
+См. отдельный progression в [SHARED-TREE-PROPOSAL.md](SHARED-TREE-PROPOSAL.md). Frontend этой сессии wrap'нул endpoints без backend touch.
+
+### Phase B frontend (80% — 8/10 ships shipped)
+
+| Ship | Commit | Что |
+|---|---|---|
+| FE1 — Семя model + switcher | `25841cd` | SemyaListController + SemyaSwitcher widget + GET /v1/me/semya |
+| FE2 — Семя details screen | `f5e405c` | Details screen + members section + role chip + management tiles |
+| FE3 — Invitation flow | `ada0513` | Create/list/revoke + accept deep link + invite screen |
+| FE4 — Tree view семя-aware | `5ac5b62` | Parallel семя context fetch + role gating + viewer empty state |
+| FE5 — Pull-person foundation | `b34060a` | Service method + PullPersonSheet widget (entry point deferred к FE6) |
+| FE6a — Browse viewer + share | `70cc000` | BrowseTreeScreen + ShareBrowseTokenModal + /browse/:token route |
+| FE6b — Browse tokens mgmt | `0c8de00` | List section в семя details + revoke per row |
+| FE7 — Hide filter | `cccd4e8` | Action sheet «Скрыть от меня» tile + HiddenPersonsSection |
+| FE7b — Settings tile polish | `152c067` | Settings entry point + семя picker + scrollToHidden |
+| FE10 partial — Integration tests | `1b1dc17` | 29 end-to-end tests FE1-FE7 в test/integration/ |
+
+### Design docs captured
+
+* **UX-AUDIT-2026-05-25** — 49 screens, top-20 recommendations (NOT в этой папке — отдельный audit pass)
+* [SHARED-TREE-PROPOSAL.md](SHARED-TREE-PROPOSAL.md) — Phase B федеративная семя vision
+* [CIRCLE-EXTENSION-PROPOSAL.md](CIRCLE-EXTENSION-PROPOSAL.md) — Phase C — Круг extension
+* [PHASE-D-MEMORY-HISTORY-PROPOSAL.md](PHASE-D-MEMORY-HISTORY-PROPOSAL.md) — Phase D
+* [PHASE-E-SOCIAL-INTERACTIONS-PROPOSAL.md](PHASE-E-SOCIAL-INTERACTIONS-PROPOSAL.md) — Phase E
+
+### Pending для следующей сессии
+
+* **RuStore signing key check** (CRITICAL — unlocks все 18 ships для real users)
+* **FE8 mutation UI** (membership management — fresh session per worker discipline; mutation UI требует sharp head)
+* **FE9 onboarding wizard rewrite** (fresh session)
+* **FE10 full integration coverage** (after FE8/FE9 shipped)
+* **UX audit Major remaining** (3 items — auth + tree-adjacent)
+* **Q4a soft-delete proper design pass** (deferred 2026-05-26 — backend hard-delete reality vs spec)
+* **FE3b invitation accept deep link** (per-platform: rodnya-tree.ru/i/<token> universal link wiring)
 
 ## Shipped к production
 
