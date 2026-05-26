@@ -1,4 +1,5 @@
 import '../models/semya.dart';
+import '../models/semya_invitation.dart';
 
 /// Phase B Ship FE1: capability mixin для семя read endpoints.
 ///
@@ -44,4 +45,50 @@ abstract class SemyaCapableFamilyTreeService {
   /// can fall back на empty state). Throws [SemyaError] only когда
   /// server returns structured domain error.
   Future<List<SemyaMembership>> listMembershipsForSemya(String semyaId);
+
+  /// Ship FE3 (2026-05-26): `POST /v1/semya/:id/invitation`. Creates
+  /// pending invitation для recipient (email либо phone — userId not
+  /// surfaced UI-side в этом ship). Idempotent на (semyaId + recipient).
+  ///
+  /// Returns invitation including `token` (capability for accept flow).
+  /// Permission: owner либо editor с invite-grant. Backend rejects
+  /// otherwise via 403.
+  ///
+  /// Throws [SemyaError] для: ALREADY_MEMBER (409), RECIPIENT_NOT_FOUND
+  /// (404), SEMYA_NOT_FOUND (404), INVALID_PARAMS (400), FORBIDDEN (403).
+  Future<SemyaInvitation> createInvitation({
+    required String semyaId,
+    required SemyaRole role,
+    String? recipientEmail,
+    String? recipientPhone,
+    String? recipientUserId,
+  });
+
+  /// Ship FE3: `GET /v1/semya/:id/invitations`. Returns all invitations
+  /// для семя (статусы pending/accepted/revoked/expired mixed) — caller
+  /// filters per UI needs.
+  ///
+  /// Permission: viewer+ (member access). Returns empty list при network
+  /// failure либо 403/404.
+  Future<List<SemyaInvitation>> listInvitationsForSemya(String semyaId);
+
+  /// Ship FE3: `DELETE /v1/semya/:id/invitation/:invitationId`. Revokes
+  /// pending invitation. Only inviter либо semya owner can revoke.
+  ///
+  /// Returns updated invitation (status='revoked'). Throws [SemyaError]
+  /// для: NOT_INVITER_OR_OWNER (403), INVITATION_NOT_FOUND (404),
+  /// INVITATION_NOT_PENDING (409 — терминальный state).
+  Future<SemyaInvitation> revokeInvitation({
+    required String semyaId,
+    required String invitationId,
+  });
+
+  /// Ship FE3: `POST /v1/invitation/:token/accept`. Accepts invitation
+  /// via token (capability). Atomic accept + membership creation.
+  ///
+  /// Throws [SemyaError] для: INVITATION_NOT_FOUND (404),
+  /// INVITATION_NOT_PENDING (409 — already accepted/revoked/expired),
+  /// WRONG_RECIPIENT (403 — token addressed к different user),
+  /// SEMYA_NOT_FOUND (404).
+  Future<SemyaInvitationAcceptResult> acceptInvitation(String token);
 }

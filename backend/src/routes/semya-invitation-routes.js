@@ -46,6 +46,25 @@ function registerSemyaInvitationRoutes(
     };
   }
 
+  // FE3 (2026-05-26): list-endpoint addition. Originally Ship 4
+  // deferred это к Phase B+1 — но frontend FE3 invitation-list
+  // screen needs cross-device sync (locally-persisted списки уязвимы
+  // к device wipe / re-install). Backend store.listInvitationsForSemya
+  // уже существовал; здесь только thin route wrapper.
+  //
+  // Permission: viewer+ allowed (matches POST/DELETE access tier для
+  // соответствия с requireSemyaAccess) — outsider не может probe.
+  // Список возвращает ВСЕ статусы (pending/accepted/revoked/expired)
+  // — UI фильтрует по необходимости.
+  app.get("/v1/semya/:id/invitations", requireAuth, async (req, res) => {
+    const access = await requireSemyaAccess(req, res, req.params.id, {
+      requiredRole: "viewer",
+    });
+    if (!access) return;
+    const rows = await store.listInvitationsForSemya(req.params.id);
+    res.json({invitations: rows.map(mapInvitation)});
+  });
+
   // POST /v1/semya/:id/invitation — owner либо editor c grant
   // creates pending invitation. Idempotent на (semyaId + recipient).
   app.post("/v1/semya/:id/invitation", requireAuth, async (req, res) => {

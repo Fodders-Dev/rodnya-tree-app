@@ -92,6 +92,144 @@ async function seedSemyaWithOwner(store, baseUrl, ownerEmail) {
   return {owner, tree, semya};
 }
 
+// ---------- GET list (FE3 2026-05-26) ----------
+//
+// Lightweight тонкий route wrapper around store.listInvitationsForSemya.
+// Permission: viewer+ via requireSemyaAccess (outsider blocked).
+// Returns ALL invitations (status mixed) — UI filters.
+
+test("GET invitations: owner sees все 3 status кодов", async () => {
+  const ctx = await startTestServer();
+  try {
+    const {owner, semya} = await seedSemyaWithOwner(
+      ctx.store,
+      ctx.baseUrl,
+      "list-owner@example.com",
+    );
+    const recA = await makeUser(ctx.store, ctx.baseUrl, "list-a@example.com");
+    const recB = await makeUser(ctx.store, ctx.baseUrl, "list-b@example.com");
+    const recC = await makeUser(ctx.store, ctx.baseUrl, "list-c@example.com");
+
+    // Create 3 invitations: pending (A), revoked (B), accepted (C).
+    const createPending = await fetch(
+      `${ctx.baseUrl}/v1/semya/${semya.id}/invitation`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${owner.token}`,
+        },
+        body: JSON.stringify({recipientUserId: recA.userId, role: "editor"}),
+      },
+    );
+    assert.equal(createPending.status, 201);
+
+    const createRevoked = await fetch(
+      `${ctx.baseUrl}/v1/semya/${semya.id}/invitation`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${owner.token}`,
+        },
+        body: JSON.stringify({recipientUserId: recB.userId, role: "viewer"}),
+      },
+    );
+    const revokedBody = await createRevoked.json();
+    await fetch(
+      `${ctx.baseUrl}/v1/semya/${semya.id}/invitation/${revokedBody.invitation.id}`,
+      {
+        method: "DELETE",
+        headers: {Authorization: `Bearer ${owner.token}`},
+      },
+    );
+
+    const createAccepted = await fetch(
+      `${ctx.baseUrl}/v1/semya/${semya.id}/invitation`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${owner.token}`,
+        },
+        body: JSON.stringify({recipientUserId: recC.userId, role: "viewer"}),
+      },
+    );
+    const acceptedBody = await createAccepted.json();
+    await fetch(
+      `${ctx.baseUrl}/v1/invitation/${acceptedBody.invitation.token}/accept`,
+      {
+        method: "POST",
+        headers: {Authorization: `Bearer ${recC.token}`},
+      },
+    );
+
+    // GET list — owner sees все 3 statuses.
+    const listRes = await fetch(
+      `${ctx.baseUrl}/v1/semya/${semya.id}/invitations`,
+      {headers: {Authorization: `Bearer ${owner.token}`}},
+    );
+    assert.equal(listRes.status, 200);
+    const listBody = await listRes.json();
+    assert.ok(Array.isArray(listBody.invitations));
+    assert.equal(listBody.invitations.length, 3);
+    const statuses = listBody.invitations.map((inv) => inv.status).sort();
+    assert.deepEqual(statuses, ["accepted", "pending", "revoked"]);
+  } finally {
+    await shutdown(ctx);
+  }
+});
+
+test("GET invitations: viewer member allowed", async () => {
+  const ctx = await startTestServer();
+  try {
+    const {owner, semya} = await seedSemyaWithOwner(
+      ctx.store,
+      ctx.baseUrl,
+      "list-vo@example.com",
+    );
+    const viewer = await makeUser(ctx.store, ctx.baseUrl, "list-vv@example.com");
+    await ctx.store.addMembership({
+      semyaId: semya.id,
+      userId: viewer.userId,
+      role: "viewer",
+      actorUserId: owner.userId,
+    });
+
+    const listRes = await fetch(
+      `${ctx.baseUrl}/v1/semya/${semya.id}/invitations`,
+      {headers: {Authorization: `Bearer ${viewer.token}`}},
+    );
+    assert.equal(listRes.status, 200);
+  } finally {
+    await shutdown(ctx);
+  }
+});
+
+test("GET invitations: outsider rejected (403/404)", async () => {
+  const ctx = await startTestServer();
+  try {
+    const {semya} = await seedSemyaWithOwner(
+      ctx.store,
+      ctx.baseUrl,
+      "list-os@example.com",
+    );
+    const outsider = await makeUser(ctx.store, ctx.baseUrl, "list-out@example.com");
+
+    const listRes = await fetch(
+      `${ctx.baseUrl}/v1/semya/${semya.id}/invitations`,
+      {headers: {Authorization: `Bearer ${outsider.token}`}},
+    );
+    // requireSemyaAccess returns 403 (or 404 if treated as not-found).
+    assert.ok(
+      listRes.status === 403 || listRes.status === 404,
+      `expected 403/404 outsider rejection, got ${listRes.status}`,
+    );
+  } finally {
+    await shutdown(ctx);
+  }
+});
+
 // ---------- POST create ----------
 
 test("POST invitation: owner creates pending для existing user (201)", async () => {

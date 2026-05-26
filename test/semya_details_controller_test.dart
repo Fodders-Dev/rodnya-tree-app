@@ -5,6 +5,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rodnya/backend/interfaces/semya_capable_family_tree_service.dart';
 import 'package:rodnya/backend/models/semya.dart';
+import 'package:rodnya/backend/models/semya_invitation.dart';
 import 'package:rodnya/providers/semya_details_controller.dart';
 
 class _FakeSemyaService implements SemyaCapableFamilyTreeService {
@@ -37,6 +38,33 @@ class _FakeSemyaService implements SemyaCapableFamilyTreeService {
     membershipsCalls += 1;
     return memberships;
   }
+
+  @override
+  Future<SemyaInvitation> createInvitation({
+    required String semyaId,
+    required SemyaRole role,
+    String? recipientEmail,
+    String? recipientPhone,
+    String? recipientUserId,
+  }) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<List<SemyaInvitation>> listInvitationsForSemya(
+    String semyaId,
+  ) async =>
+      const <SemyaInvitation>[];
+
+  @override
+  Future<SemyaInvitation> revokeInvitation({
+    required String semyaId,
+    required String invitationId,
+  }) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<SemyaInvitationAcceptResult> acceptInvitation(String token) async =>
+      throw UnimplementedError();
 }
 
 SemyaDetails _details({

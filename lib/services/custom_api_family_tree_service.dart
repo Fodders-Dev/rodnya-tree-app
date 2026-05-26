@@ -30,6 +30,7 @@ import '../backend/models/include_rules.dart';
 import '../backend/models/kinship_check.dart';
 import '../backend/models/onboarding_state.dart';
 import '../backend/models/semya.dart';
+import '../backend/models/semya_invitation.dart';
 import '../backend/models/visibility_choice.dart';
 import '../backend/models/selectable_tree.dart';
 import '../backend/models/tree_invitation.dart';
@@ -2643,6 +2644,108 @@ class CustomApiFamilyTreeService
       throw _mapSemyaException(e, endpoint: 'memberships');
     } catch (_) {
       return const <SemyaMembership>[];
+    }
+  }
+
+  @override
+  Future<SemyaInvitation> createInvitation({
+    required String semyaId,
+    required SemyaRole role,
+    String? recipientEmail,
+    String? recipientPhone,
+    String? recipientUserId,
+  }) async {
+    final body = <String, dynamic>{'role': role.serverValue};
+    final email = recipientEmail?.trim();
+    final phone = recipientPhone?.trim();
+    final userId = recipientUserId?.trim();
+    if (email != null && email.isNotEmpty) body['recipientEmail'] = email;
+    if (phone != null && phone.isNotEmpty) body['recipientPhone'] = phone;
+    if (userId != null && userId.isNotEmpty) {
+      body['recipientUserId'] = userId;
+    }
+    try {
+      final response = await _requestJson(
+        method: 'POST',
+        path: '/v1/semya/${semyaId.trim()}/invitation',
+        body: body,
+      );
+      final invRaw = response['invitation'];
+      if (invRaw is! Map<String, dynamic>) {
+        throw const CustomApiException(
+          'invitation backend не вернул invitation объект',
+        );
+      }
+      return SemyaInvitation.fromJson(invRaw);
+    } on CustomApiException catch (e) {
+      throw _mapSemyaException(e, endpoint: 'invitation_create');
+    }
+  }
+
+  @override
+  Future<List<SemyaInvitation>> listInvitationsForSemya(String semyaId) async {
+    final trimmed = semyaId.trim();
+    if (trimmed.isEmpty) return const <SemyaInvitation>[];
+    try {
+      final response = await _requestJson(
+        method: 'GET',
+        path: '/v1/semya/$trimmed/invitations',
+      );
+      final raw = response['invitations'];
+      if (raw is! List) return const <SemyaInvitation>[];
+      return raw
+          .whereType<Map>()
+          .map((e) => SemyaInvitation.fromJson(Map<String, dynamic>.from(e)))
+          .toList(growable: false);
+    } on CustomApiException catch (e) {
+      final status = e.statusCode;
+      if (status == 403 || status == 404) return const <SemyaInvitation>[];
+      throw _mapSemyaException(e, endpoint: 'invitations');
+    } catch (_) {
+      return const <SemyaInvitation>[];
+    }
+  }
+
+  @override
+  Future<SemyaInvitation> revokeInvitation({
+    required String semyaId,
+    required String invitationId,
+  }) async {
+    try {
+      final response = await _requestJson(
+        method: 'DELETE',
+        path:
+            '/v1/semya/${semyaId.trim()}/invitation/${invitationId.trim()}',
+      );
+      final invRaw = response['invitation'];
+      if (invRaw is! Map<String, dynamic>) {
+        throw const CustomApiException(
+          'invitation revoke не вернул invitation объект',
+        );
+      }
+      return SemyaInvitation.fromJson(invRaw);
+    } on CustomApiException catch (e) {
+      throw _mapSemyaException(e, endpoint: 'invitation_revoke');
+    }
+  }
+
+  @override
+  Future<SemyaInvitationAcceptResult> acceptInvitation(String token) async {
+    final trimmed = token.trim();
+    if (trimmed.isEmpty) {
+      throw const SemyaError(
+        code: 'INVALID_TOKEN',
+        message: 'Некорректный токен',
+      );
+    }
+    try {
+      final response = await _requestJson(
+        method: 'POST',
+        path: '/v1/invitation/$trimmed/accept',
+      );
+      return SemyaInvitationAcceptResult.fromJson(response);
+    } on CustomApiException catch (e) {
+      throw _mapSemyaException(e, endpoint: 'invitation_accept');
     }
   }
 
