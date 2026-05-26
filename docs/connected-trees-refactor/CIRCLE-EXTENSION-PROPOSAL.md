@@ -530,70 +530,67 @@ Friend graph = Phase C Week 4 territory. Full design в separate sub-proposal п
 
 ## 9. Decision questions для Артёма (pre-Phase C)
 
+> **Status**: ✅ All 8 questions answered Артём + Claude 2026-05-26.
+> Locked decisions for Phase C kickoff.
+
 ### Q1 — Friend tier ownership
 
-User имеет single friend list (current proposal) либо multiple lists (mirror Семя «multiple семей»)?
+✅ **DECIDED: Single list с groupTags.**
 
-- **Single list**: simpler, friends categorized by groupTags
-- **Multiple lists**: «Универ друзья», «Работа коллеги», parallel к семей
-- **Recommend**: single list с groupTags. Multiple lists adds complexity без clear value (groupTags handle clustering).
+Friends — personal contact book, не sharable entity. Multiple lists adds «which list?» friction без clear value. groupTags ('работа', 'универ', 'соседи') handle clustering organically. Power users get «virtual lists» через tag filters.
 
 ### Q2 — Phone book scan timing
 
-When prompt user для phone book permission?
+✅ **DECIDED: Onboarding skippable banner + settings always available.**
 
-- Onboarding (after Phase B wizard): immediate exposure, mama might be overwhelmed
-- Deferred to first call/chat attempt: contextual but adds friction
-- Settings only: explicit opt-in, slowest discovery
-- **Recommend**: onboarding skippable banner + settings always available. Mama can defer.
+Banner appears post Phase B wizard (либо post-skip): «Найти близких в Rodnya?» с [Разрешить] / [Позже]. Не gate flows на это. Always accessible from settings для users who deferred. Mama avoids overwhelm via skip, power users get instant discovery.
 
 ### Q3 — Friend «закрытость» / privacy
 
-Default friend visibility:
-- **Private** (current proposal): friend list visible только к owner. Friends don't know they're friends.
-- **Bilateral confirmed**: friends see each other's friend status, no list visibility
-- **Public круг**: friends see whole list of mutual connections
-- **Recommend**: private default с opt-in bilateral confirmation. Mama-friendly.
+✅ **DECIDED: Private default + opt-in bilateral badge.**
+
+Friend list private к owner only. Когда both users добавили each other → «взаимный друг» badge appears (visible в chat/profile, NOT in friend list discovery). No third-party visibility, no public круг. Mama-test: «никто не видит мои контакты без моего разрешения» = passes.
 
 ### Q4 — SMS invite copy ownership
 
-SMS invite text:
-- **Personalized**: «{InviterName} приглашает тебя в Rodnya» — feels human
-- **Generic**: «Скачай Rodnya — приложение для семьи» — feels spam
-- **Hybrid с control**: user can edit SMS text per-invite
-- **Recommend**: personalized с fixed template, no edit (prevents misuse, spam, fraud).
+✅ **DECIDED: Personalized fixed template, no edit.**
+
+Brand-controlled + authentic feel. Template:
+
+```
+Привет от {InviterName}!
+
+{InviterName} пользуется Rodnya — личный архив семьи и друзей.
+Хочет добавить тебя в свой круг.
+
+Скачать: https://rodnya-tree.ru/invite/{token}
+```
+
+Editable invites = spam vector risk. Fixed template = trust + consistency.
 
 ### Q5 — Friend graph default visibility
 
-Friend graph (Week 4):
-- **Always shown в друзья tab**
-- **Hidden by default, expand on tap**
-- **Disabled below 10 friends threshold**
-- **Recommend**: hidden until tap, disabled при <5 friends.
+✅ **DECIDED: Hidden default, button «Показать дерево друзей» when count >= 5 friends.**
+
+Empty graph = ugly UI. Below 5 friends viz adds nothing. Button appears in friends list when threshold reached. Tap expands. Progressive disclosure mirrors how Telegram reveals advanced features.
 
 ### Q6 — Feed audience default
 
-When posting, default audience:
-- **Вся семья**: family-first default, conservative
-- **Все** (семья + друзья): максимально inclusive
-- **Last used**: remembers user preference per session
-- **Recommend**: last-used с initial default = «Вся семья». User explicit control on first post.
+✅ **DECIDED: Last-used remembered per user, initial default «Вся семья».**
+
+Conservative privacy-first default. First post ever → «Вся семья» selected. After user explicit choice → system remembers per-user. Selector always visible на post composer — user has explicit control каждый раз.
 
 ### Q7 — Cross-tier promotion (друг → родственник)
 
-When user promotes friend к семя:
-- **Remove from friend list**: clean (no duplication)
-- **Keep in both**: legacy preserved, шев semantic redundancy
-- **User choice**: ask «оставить в друзьях?» при promotion
-- **Recommend**: user choice. Mama might want both initially, can clean up позже.
+✅ **DECIDED: User choice dialog при promotion, default «Убрать из друзей».**
+
+Когда promote друга в семя, dialog: «Маша теперь в семье. Оставить также в друзьях? [Оставить] / [Убрать из друзей]». Default «Убрать» (cleaner state). User can opt-in keep если есть reason. Mama-friendly explicit choice.
 
 ### Q8 — Existing user migration к friend tier
 
-For existing 70+ users с only семя tier today:
-- **No friend list pre-populated**: user adds friends from scratch
-- **Suggest «найти друзей в Rodnya»**: prompt phone book на first login post Phase C rollout
-- **Pre-populate matched users**: existing matched contacts auto-suggested
-- **Recommend**: prompt suggestion (option 2) — explicit user choice, не silent auto-add.
+✅ **DECIDED: Prompt phone book scan banner on first login post-Phase C rollout.**
+
+Same pattern как Q2 onboarding banner. No silent auto-add (privacy violation). Banner appears once after Phase C reaches user's client. Skippable, settings-accessible. Explicit choice preserves trust.
 
 ---
 
@@ -658,10 +655,12 @@ _To be filled by Артём + Claude после rodnya.app investigation._
 - **Phase C timeline**: 8 weeks после Phase B Week 8 done (~2026-08-01 kickoff)
 - **Privacy stance**: opt-in phone book scan с hashed numbers, revocable permission
 - **Доминирующий tier**: Семья (tree-first preserved). Друзья = supporting secondary tier.
-- **Decision answers pending**: 8 questions Section 9 awaiting Артёмов sign-off
+- **Decision answers**: ✅ All 8 questions answered 2026-05-26 (Section 9 locked)
 - **Competitor analysis**: pending Артёмов rodnya.app research
 
-**Doc status**: design proposal awaiting Артёмов sign-off перед Phase C kickoff. Открытые вопросы Section 9 + Competitor data Section 10 решить first.
+**Doc status**: design proposal с answered decision questions. Competitor data Section 10 остаётся pending — fillable когда Артём investigates rodnya.app. Phase C kickoff blocked только на:
+1. Phase B Week 8 production rollout completion (~2026-08-01)
+2. Competitor research (optional но recommended)
 
 Когда Артём confirms direction + completes competitor research → доcument finalized + Phase C kickoff dispatched (~2026-08-01 либо когда Phase B Week 8 done).
 
