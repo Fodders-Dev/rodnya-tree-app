@@ -7086,9 +7086,33 @@ class FileStore {
 
     const emailMatchedUser = await this.findUserByEmail(email);
     if (emailMatchedUser) {
+      // Ship Bug B (2026-05-26): block silent cross-provider merge.
+      // Pre-fix: any email match triggered linkAuthIdentity → Bob's
+      // Google would silently link к Alice's account because
+      // emails matched. Account-takeover risk если email reused.
+      //
+      // Post-fix: refuse merge — return `email_provider_mismatch`
+      // reason без user object. Route layer translates to 409 с
+      // existing provider list так что user может log in via their
+      // actual existing provider (then add new one через authenticated
+      // /v1/auth/{provider}/link endpoint).
+      //
+      // Note: behavior strictly safer than Q2 spec literal — even
+      // when the new attempt's provider TYPE matches an existing
+      // identity (different providerUserId), мы refuse because the
+      // exact provider+sub combo не matched в `findUserByAuthIdentity`
+      // above. Scenario: Alice has google linked with alice-sub;
+      // Bob attempts google login с different sub but same email —
+      // we refuse merge (audit-aligned).
+      const identities = listAuthIdentitiesForUser(emailMatchedUser);
+      const existingProviders = Array.from(
+        new Set(identities.map((entry) => entry.provider)),
+      );
       return {
-        reason: "email",
-        user: emailMatchedUser,
+        reason: "email_provider_mismatch",
+        user: null,
+        existingProviders,
+        email: emailMatchedUser.email || null,
       };
     }
 

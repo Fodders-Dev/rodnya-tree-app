@@ -10,6 +10,7 @@ import '../backend/backend_runtime_config.dart';
 import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/models/auth_providers_availability.dart';
 import '../backend/models/custom_api_session.dart';
+import '../backend/models/email_provider_mismatch.dart';
 import '../backend/models/google_account_preview.dart';
 import 'app_status_service.dart';
 import 'invitation_service.dart';
@@ -985,6 +986,22 @@ class CustomApiAuthService implements AuthServiceInterface {
       );
     }
 
+    // Ship Bug B (2026-05-26): cross-provider email collision routed
+    // через handoff payload (VK не returns 409 inline — flow is
+    // browser-redirect + handoff exchange). Convert к same typed
+    // exception as Google's 409 path so caller catches uniformly.
+    if (status == 'email_provider_mismatch') {
+      final mismatch = EmailProviderMismatch.fromJson(<String, dynamic>{
+        'error': 'EMAIL_PROVIDER_MISMATCH',
+        'email': response['email'],
+        'existingProviders': response['existingProviders'],
+        'message': response['message'],
+      });
+      if (mismatch != null) {
+        throw EmailProviderMismatchException(mismatch);
+      }
+    }
+
     throw const CustomApiException(
       'VK ID auth backend вернул неизвестный статус',
     );
@@ -1514,6 +1531,17 @@ class CustomApiAuthService implements AuthServiceInterface {
 
     if (response.statusCode >= 200 && response.statusCode < 300) {
       return bodyMap;
+    }
+
+    // Ship Bug B (2026-05-26): structured 409 EMAIL_PROVIDER_MISMATCH
+    // → typed exception so UI catches specifically и shows disambig
+    // modal. Pre-Bug-B: generic CustomApiException(message) was
+    // surfaced как red snackbar; insufficient guidance для user.
+    if (response.statusCode == 409) {
+      final mismatch = EmailProviderMismatch.fromJson(bodyMap);
+      if (mismatch != null) {
+        throw EmailProviderMismatchException(mismatch);
+      }
     }
 
     final message = bodyMap['message']?.toString() ??

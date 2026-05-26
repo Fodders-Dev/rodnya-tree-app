@@ -28,6 +28,22 @@ function registerGoogleAuthRoutes(
         email: verifiedEmail,
       });
 
+      // Ship Bug B (2026-05-26): refuse silent cross-provider merge.
+      // resolveAuthIdentityTarget surfaces email_provider_mismatch
+      // когда email matches existing user без provider+sub match.
+      // Frontend ловит 409 → shows disambig modal с existingProviders
+      // list so user can log in via their actual existing identity.
+      if (resolution?.reason === "email_provider_mismatch") {
+        res.status(409).json({
+          error: "EMAIL_PROVIDER_MISMATCH",
+          message:
+            "Этот email уже привязан к другому способу входа в Родне.",
+          email: resolution.email || verifiedEmail,
+          existingProviders: resolution.existingProviders || [],
+        });
+        return;
+      }
+
       let user = null;
       // Phase 6 chunk 4a: track create-vs-link to compute
       // `requiresOnboarding` flag.

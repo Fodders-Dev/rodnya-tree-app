@@ -8,6 +8,7 @@ import 'dart:async';
 import '../backend/backend_provider_config.dart';
 import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/models/auth_providers_availability.dart';
+import '../backend/models/email_provider_mismatch.dart';
 import '../backend/models/google_account_preview.dart';
 import '../providers/tree_provider.dart';
 import '../services/app_status_service.dart';
@@ -18,6 +19,7 @@ import 'package:app_links/app_links.dart';
 import '../theme/app_theme.dart';
 import '../utils/user_facing_error.dart';
 import '../widgets/dismiss_keyboard.dart';
+import '../widgets/email_provider_mismatch_dialog.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/google_account_confirm_dialog.dart';
 import '../widgets/google_sign_in_action.dart';
@@ -341,6 +343,12 @@ class _AuthScreenState extends State<AuthScreen> {
       if (mounted && _authService.currentUserId != null) {
         context.go(_resolvePostAuthRedirect());
       }
+    } on EmailProviderMismatchException catch (mismatch) {
+      // Ship Bug B (2026-05-26): cross-provider email collision blocked
+      // by backend. Show disambig modal so user can log in via existing
+      // identity вместо silent-merge.
+      if (!mounted) return;
+      await _handleEmailProviderMismatch(mismatch.payload);
     } catch (e) {
       if (!mounted) {
         return;
@@ -696,6 +704,13 @@ class _AuthScreenState extends State<AuthScreen> {
           ),
         ),
       );
+    } on EmailProviderMismatchException catch (mismatch) {
+      // Ship Bug B (2026-05-26): cross-provider email collision arrived
+      // through VK handoff payload (exchangeVkAuthCode throws когда
+      // backend returns status='email_provider_mismatch'). Same modal
+      // pattern как Google.
+      if (!mounted) return;
+      await _handleEmailProviderMismatch(mismatch.payload);
     } catch (e) {
       if (!mounted) {
         return;
@@ -717,6 +732,35 @@ class _AuthScreenState extends State<AuthScreen> {
           _isVkLoading = false;
         });
       }
+    }
+  }
+
+  /// Ship Bug B (2026-05-26): central handler для 409
+  /// EMAIL_PROVIDER_MISMATCH. Shows disambig modal — user picks
+  /// existing provider, мы dispatch к correct flow.
+  Future<void> _handleEmailProviderMismatch(
+    EmailProviderMismatch payload,
+  ) async {
+    final picked = await showEmailProviderMismatchDialog(context, payload);
+    if (!mounted || picked == null) return;
+    switch (picked) {
+      case 'password':
+        // Switch to login mode + pre-fill email so user знает что
+        // ввести именно его password.
+        _setMode(true);
+        _emailController.text = payload.email;
+        _focusPrimaryField();
+        break;
+      case 'google':
+        if (_showGoogleButton) await _signInWithGoogle();
+        break;
+      case 'vk':
+        if (_showVkButton) await _startVkSignIn();
+        break;
+      case 'telegram':
+        if (_showTelegramButton) await _startTelegramSignIn();
+        break;
+      // 'max' currently не has UI entry-point (chip absent); skip.
     }
   }
 

@@ -248,6 +248,37 @@ function registerVkAuthRoutes(
         photoUrl: vkIdentity.metadata?.avatar || "",
       };
 
+      // Ship Bug B (2026-05-26): refuse silent cross-provider merge.
+      // Only applies to login intent — link intent is post-auth,
+      // already handles собственную same-user check ниже. VK flow
+      // exits через handoff so we surface mismatch via dedicated
+      // status кодуа что frontend сможет render disambig modal
+      // mirror Q2 pattern.
+      if (
+        intent === "login" &&
+        resolution?.reason === "email_provider_mismatch"
+      ) {
+        const authHandoff = await store.createAuthHandoff({
+          type: "vk_auth_result",
+          payload: {
+            status: "email_provider_mismatch",
+            email: resolution.email || vkIdentity.email || null,
+            existingProviders: resolution.existingProviders || [],
+            vkProfile,
+            message:
+              "Этот email уже привязан к другому способу входа в Родне.",
+          },
+        });
+        res.redirect(
+          302,
+          vkAuthRedirectUrl(authHandoff.code, {
+            intent,
+            finalRedirect: stashedFinalRedirect,
+          }),
+        );
+        return;
+      }
+
       if (intent === "link") {
         const pendingLinkHandoff = await store.createAuthHandoff({
           type: "vk_pending_link",

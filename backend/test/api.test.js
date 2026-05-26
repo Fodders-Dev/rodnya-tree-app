@@ -1782,7 +1782,16 @@ test("google auth creates a social account and reuses it on repeated login", asy
   }
 });
 
-test("google auth links to an existing password account by verified email", async () => {
+test("Bug B (2026-05-26): google auth refuses silent merge to existing password account", async () => {
+  // Pre-Bug-B behavior: silent linkAuthIdentity → password user
+  // suddenly has Google linked без consent. Audit Critical: account-
+  // takeover risk если email is reused или different person tries
+  // Google login с same email.
+  //
+  // Post-Bug-B behavior: 409 EMAIL_PROVIDER_MISMATCH с existing
+  // provider list. User must log in via existing identity (password
+  // here), then add Google via authenticated /v1/auth/google/link
+  // endpoint.
   const googleTokenVerifier = {
     async verifyIdToken() {
       return {
@@ -1816,7 +1825,7 @@ test("google auth links to an existing password account by verified email", asyn
   }
 
   try {
-    const registered = await registerUser(
+    await registerUser(
       "existing-google@rodnya.app",
       "Existing Email User",
     );
@@ -1825,13 +1834,107 @@ test("google auth links to an existing password account by verified email", asyn
       headers: {"content-type": "application/json"},
       body: JSON.stringify({idToken: "google-token-existing-email"}),
     });
-    assert.equal(googleResponse.status, 200);
-    const googlePayload = await googleResponse.json();
-    assert.equal(googlePayload.user.id, registered.user.id);
-    assert.deepEqual(
-      [...googlePayload.user.providerIds].sort(),
-      ["google", "password"],
+    assert.equal(
+      googleResponse.status,
+      409,
+      "expected 409 EMAIL_PROVIDER_MISMATCH instead of silent link",
     );
+    const googlePayload = await googleResponse.json();
+    assert.equal(googlePayload.error, "EMAIL_PROVIDER_MISMATCH");
+    assert.equal(googlePayload.email, "existing-google@rodnya.app");
+    assert.ok(
+      Array.isArray(googlePayload.existingProviders),
+      "existingProviders should be array",
+    );
+    assert.ok(
+      googlePayload.existingProviders.includes("password"),
+      "should list password as existing provider",
+    );
+    assert.ok(googlePayload.message, "should include user-facing message");
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("Bug B: google login still succeeds for actual same-provider re-login", async () => {
+  // Sanity check — provider_identity match path должен оставаться
+  // unaffected. Google user A logs in → out → in again через Google
+  // = success without 409.
+  const googleTokenVerifier = {
+    async verifyIdToken() {
+      return {
+        sub: "google-sub-stable",
+        email: "stable-google@rodnya.app",
+        email_verified: true,
+        name: "Stable Google",
+      };
+    },
+  };
+  const ctx = await startConfiguredTestServer({
+    configOverrides: {
+      googleWebClientId:
+        "676171184233-hl6gauj8c1trtn25a8me7pvm4m4clndv.apps.googleusercontent.com",
+    },
+    googleTokenVerifier,
+  });
+
+  try {
+    // First login = fresh signup
+    const first = await fetch(`${ctx.baseUrl}/v1/auth/google`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({idToken: "tok-1"}),
+    });
+    assert.equal(first.status, 200);
+    const firstPayload = await first.json();
+
+    // Second login — same Google account = provider_identity hit,
+    // returns same user.
+    const second = await fetch(`${ctx.baseUrl}/v1/auth/google`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({idToken: "tok-2"}),
+    });
+    assert.equal(second.status, 200);
+    const secondPayload = await second.json();
+    assert.equal(secondPayload.user.id, firstPayload.user.id);
+  } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("Bug B: brand-new email signup still creates fresh account", async () => {
+  // Sanity check — 'new_account' path unaffected. Brand new email
+  // через Google → create user, status 200, fresh signup.
+  const googleTokenVerifier = {
+    async verifyIdToken() {
+      return {
+        sub: "google-sub-new",
+        email: "brand-new@rodnya.app",
+        email_verified: true,
+        name: "Brand New",
+      };
+    },
+  };
+  const ctx = await startConfiguredTestServer({
+    configOverrides: {
+      googleWebClientId:
+        "676171184233-hl6gauj8c1trtn25a8me7pvm4m4clndv.apps.googleusercontent.com",
+    },
+    googleTokenVerifier,
+  });
+
+  try {
+    const response = await fetch(`${ctx.baseUrl}/v1/auth/google`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({idToken: "new-token"}),
+    });
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.equal(payload.user.email, "brand-new@rodnya.app");
+    assert.ok(payload.user.providerIds.includes("google"));
+    assert.equal(payload.requiresOnboarding, true);
   } finally {
     await stopTestServer(ctx);
   }
