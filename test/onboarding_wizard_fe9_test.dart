@@ -7,9 +7,7 @@
 //   • Accept invitation tap → controller.acceptInvitation called
 //   • Empty list → no invitation card rendered
 
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:provider/provider.dart';
 import 'package:rodnya/backend/interfaces/auth_service_interface.dart';
 import 'package:rodnya/backend/interfaces/onboarding_capable_family_tree_service.dart';
 import 'package:rodnya/backend/interfaces/semya_capable_family_tree_service.dart';

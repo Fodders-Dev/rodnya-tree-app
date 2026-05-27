@@ -22,6 +22,7 @@ import 'package:rodnya/models/family_person.dart';
 class IntegrationFakeService implements SemyaCapableFamilyTreeService {
   IntegrationFakeService({
     required this.currentUserId,
+    this.currentUserEmail = '',
     List<Semya> initialSemyi = const <Semya>[],
     Map<String, List<SemyaMembership>>? initialMemberships,
     Map<String, List<SemyaInvitation>>? initialInvitations,
@@ -48,6 +49,10 @@ class IntegrationFakeService implements SemyaCapableFamilyTreeService {
         _personRegistry = {...?personRegistry};
 
   final String currentUserId;
+  // Ship FE10 full (2026-05-27): optional caller email — used by
+  // listPendingInvitations к match email-only invitations sent
+  // perед user existed (post-registration matching flow).
+  final String currentUserEmail;
   final List<Semya> _semyi;
   final Map<String, List<SemyaMembership>> _memberships;
   final Map<String, List<SemyaInvitation>> _invitations;
@@ -522,10 +527,44 @@ class IntegrationFakeService implements SemyaCapableFamilyTreeService {
 
   @override
   Future<List<SemyaInvitation>> listPendingInvitations() async {
-    // Integration tests don't exercise FE9 wizard flow yet — default
-    // returns empty list. FE10 full coverage может extend этот fake
-    // с pending invitations seeded per scenario.
-    return const <SemyaInvitation>[];
+    // Ship FE10 full (2026-05-27): mimic backend store filtering —
+    // pending invitations addressed к currentUserId либо к
+    // currentUserEmail (when recipientUserId == null). Enrich
+    // каждый row с denormalized semyaName per FE9 endpoint shape.
+    final normalizedEmail = currentUserEmail.toLowerCase().trim();
+    final results = <SemyaInvitation>[];
+    for (final entry in _invitations.entries) {
+      for (final inv in entry.value) {
+        if (inv.status != SemyaInvitationStatus.pending) continue;
+        final matchesUserId = inv.recipientUserId == currentUserId;
+        final invEmail = (inv.recipientEmail ?? '').toLowerCase().trim();
+        final matchesEmail = inv.recipientUserId == null &&
+            normalizedEmail.isNotEmpty &&
+            invEmail.isNotEmpty &&
+            invEmail == normalizedEmail;
+        if (!matchesUserId && !matchesEmail) continue;
+        final semya = _semyi.firstWhere(
+          (s) => s.id == inv.semyaId && s.deletedAt == null,
+          orElse: () => makeSemya(id: '__missing__', name: ''),
+        );
+        if (semya.id == '__missing__') continue;
+        results.add(SemyaInvitation(
+          id: inv.id,
+          token: inv.token,
+          semyaId: inv.semyaId,
+          inviterUserId: inv.inviterUserId,
+          role: inv.role,
+          status: inv.status,
+          recipientUserId: inv.recipientUserId,
+          recipientEmail: inv.recipientEmail,
+          recipientPhone: inv.recipientPhone,
+          createdAt: inv.createdAt,
+          expiresAt: inv.expiresAt,
+          semyaName: semya.name,
+        ));
+      }
+    }
+    return results;
   }
 }
 
