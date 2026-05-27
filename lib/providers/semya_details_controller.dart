@@ -28,12 +28,38 @@ class SemyaDetailsController with ChangeNotifier {
   bool _isLoading = false;
   bool _hasLoaded = false;
   String? _errorMessage;
+  // Ship FE8 (2026-05-27): per-row mutation guard — userId of row
+  // currently in-flight для membership mutation. UI disables menu
+  // while in set чтобы prevent double-clicks.
+  final Set<String> _pendingMutations = <String>{};
+  String? _mutationErrorMessage;
 
   SemyaDetails? get details => _details;
   List<SemyaMembership> get memberships => _memberships;
   bool get isLoading => _isLoading;
   bool get hasLoaded => _hasLoaded;
   String? get errorMessage => _errorMessage;
+  Set<String> get pendingMutations => Set.unmodifiable(_pendingMutations);
+
+  /// Last membership mutation error message (non-null после неудачного
+  /// updateMembership либо removeMembership call). UI surfaces через
+  /// snackbar и calls [clearMutationError] после показа.
+  String? get mutationErrorMessage => _mutationErrorMessage;
+
+  /// Ship FE8: count active owners across current memberships. Used UI-
+  /// side для last-owner gating (self-leave disabled когда caller is
+  /// sole owner). Memberships list представляет snapshot после last
+  /// load — fresh между mutations.
+  int get activeOwnerCount =>
+      _memberships.where((m) => m.role == SemyaRole.owner).length;
+
+  bool isPending(String userId) => _pendingMutations.contains(userId);
+
+  void clearMutationError() {
+    if (_mutationErrorMessage == null) return;
+    _mutationErrorMessage = null;
+    notifyListeners();
+  }
 
   /// True когда backend service capable (Phase B endpoints exposed).
   bool get isCapable => _resolveService() != null;
@@ -84,6 +110,87 @@ class SemyaDetailsController with ChangeNotifier {
   }
 
   Future<void> refresh() => load();
+
+  /// Ship FE8 (2026-05-27): change membership role либо invite-grant.
+  /// On success refreshes memberships list. On error sets
+  /// [mutationErrorMessage] для UI snackbar surface — caller invokes
+  /// [clearMutationError] после показа.
+  ///
+  /// At least one of [role] либо [hasInviteGrant] должен быть non-null
+  /// — service layer surfaces 400 INVALID_INPUT otherwise.
+  Future<bool> updateMemberRoleOrGrant({
+    required String userId,
+    SemyaRole? role,
+    bool? hasInviteGrant,
+  }) async {
+    final service = _resolveService();
+    if (service == null) {
+      _mutationErrorMessage = 'Управление участниками недоступно';
+      notifyListeners();
+      return false;
+    }
+    _pendingMutations.add(userId);
+    _mutationErrorMessage = null;
+    notifyListeners();
+    try {
+      await service.updateMembership(
+        semyaId: semyaId,
+        userId: userId,
+        role: role,
+        hasInviteGrant: hasInviteGrant,
+      );
+      _pendingMutations.remove(userId);
+      // Refresh для consistent state. updateMembership returns updated
+      // row но membership list might have дополнительные ripple
+      // effects (например, hasInviteGrant auto-cleared при demote из
+      // editor). Full reload — safest.
+      await load();
+      return true;
+    } catch (error) {
+      _pendingMutations.remove(userId);
+      _mutationErrorMessage = _describeError(error);
+      notifyListeners();
+      return false;
+    }
+  }
+
+  /// Ship FE8: kick member либо self-leave (backend infers from
+  /// actor vs target). Returns SemyaMembershipRemoveResult on success
+  /// (wasSelfLeave flag lets UI route к pop-screen vs refresh-list).
+  /// На error sets mutationErrorMessage.
+  Future<SemyaMembershipRemoveResult?> removeMember({
+    required String userId,
+  }) async {
+    final service = _resolveService();
+    if (service == null) {
+      _mutationErrorMessage = 'Управление участниками недоступно';
+      notifyListeners();
+      return null;
+    }
+    _pendingMutations.add(userId);
+    _mutationErrorMessage = null;
+    notifyListeners();
+    try {
+      final result = await service.removeMembership(
+        semyaId: semyaId,
+        userId: userId,
+      );
+      _pendingMutations.remove(userId);
+      if (!result.wasSelfLeave) {
+        // Caller will refresh для kick case. Self-leave UI обычно
+        // pops screen, чтобы refresh бессмыслен.
+        await load();
+      } else {
+        notifyListeners();
+      }
+      return result;
+    } catch (error) {
+      _pendingMutations.remove(userId);
+      _mutationErrorMessage = _describeError(error);
+      notifyListeners();
+      return null;
+    }
+  }
 
   String _describeError(Object error) {
     if (error is SemyaError) return error.message;

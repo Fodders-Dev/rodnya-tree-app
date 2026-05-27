@@ -411,6 +411,114 @@ class IntegrationFakeService implements SemyaCapableFamilyTreeService {
     createdAt: '',
     expiresAt: '',
   );
+
+  @override
+  Future<SemyaMembership> updateMembership({
+    required String semyaId,
+    required String userId,
+    SemyaRole? role,
+    bool? hasInviteGrant,
+  }) async {
+    // Mimic backend: requires actor to be owner. Find target row,
+    // apply role change with invariant checks parallel к store.js.
+    final members = _memberships[semyaId];
+    if (members == null) {
+      throw const SemyaError(
+        code: 'SEMYA_NOT_FOUND',
+        message: 'нет семьи',
+      );
+    }
+    final idx = members.indexWhere((m) => m.userId == userId);
+    if (idx < 0) {
+      throw const SemyaError(
+        code: 'MEMBERSHIP_NOT_FOUND',
+        message: 'нет участника',
+      );
+    }
+    if (role == null && hasInviteGrant == null) {
+      throw const SemyaError(
+        code: 'INVALID_INPUT',
+        message: 'нечего обновлять',
+      );
+    }
+    final orig = members[idx];
+    if (role != null && role != orig.role) {
+      if (orig.userId == currentUserId) {
+        throw const SemyaError(
+          code: 'SELF_ROLE_CHANGE_FORBIDDEN',
+          message: 'свою роль изменить нельзя',
+        );
+      }
+      if (orig.role == SemyaRole.owner && role != SemyaRole.owner) {
+        final owners = members.where((m) => m.role == SemyaRole.owner).length;
+        if (owners <= 1) {
+          throw const SemyaError(
+            code: 'LAST_OWNER_DEMOTE_FORBIDDEN',
+            message: 'нельзя понизить последнего владельца',
+          );
+        }
+      }
+    }
+    final nextRole = role ?? orig.role;
+    var nextGrant = hasInviteGrant ?? orig.hasInviteGrant;
+    if (nextRole != SemyaRole.editor) {
+      if (hasInviteGrant != null && hasInviteGrant && nextRole != SemyaRole.editor) {
+        throw const SemyaError(
+          code: 'INVITE_GRANT_ONLY_EDITOR',
+          message: 'право приглашать только для редакторов',
+        );
+      }
+      nextGrant = false;
+    }
+    final updated = SemyaMembership(
+      id: orig.id,
+      semyaId: orig.semyaId,
+      userId: orig.userId,
+      role: nextRole,
+      joinedAt: orig.joinedAt,
+      invitedByUserId: orig.invitedByUserId,
+      hasInviteGrant: nextGrant,
+    );
+    members[idx] = updated;
+    return updated;
+  }
+
+  @override
+  Future<SemyaMembershipRemoveResult> removeMembership({
+    required String semyaId,
+    required String userId,
+  }) async {
+    final members = _memberships[semyaId];
+    if (members == null) {
+      throw const SemyaError(
+        code: 'SEMYA_NOT_FOUND',
+        message: 'нет семьи',
+      );
+    }
+    final idx = members.indexWhere((m) => m.userId == userId);
+    if (idx < 0) {
+      throw const SemyaError(
+        code: 'MEMBERSHIP_NOT_FOUND',
+        message: 'нет участника',
+      );
+    }
+    final target = members[idx];
+    final wasSelfLeave = target.userId == currentUserId;
+    if (target.role == SemyaRole.owner) {
+      final owners = members.where((m) => m.role == SemyaRole.owner).length;
+      if (owners <= 1) {
+        throw const SemyaError(
+          code: 'LAST_OWNER_REMOVE_FORBIDDEN',
+          message: 'нельзя удалить последнего владельца',
+        );
+      }
+    }
+    members.removeAt(idx);
+    return SemyaMembershipRemoveResult(
+      membership: target,
+      wasSelfLeave: wasSelfLeave,
+    );
+  }
 }
 
 // ============== Factories ==============

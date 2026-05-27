@@ -139,6 +139,22 @@ class _FakeSemyaService implements SemyaCapableFamilyTreeService {
     }
     return [..._currentHidden];
   }
+
+  @override
+  Future<SemyaMembership> updateMembership({
+    required String semyaId,
+    required String userId,
+    SemyaRole? role,
+    bool? hasInviteGrant,
+  }) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<SemyaMembershipRemoveResult> removeMembership({
+    required String semyaId,
+    required String userId,
+  }) async =>
+      throw UnimplementedError();
 }
 
 class _FakeFamilyService implements FamilyTreeServiceInterface {

@@ -205,4 +205,68 @@ abstract class SemyaCapableFamilyTreeService {
     List<String> addPersonIds = const <String>[],
     List<String> removePersonIds = const <String>[],
   });
+
+  /// Ship FE8 (2026-05-27): `PATCH /v1/semya/:id/membership/:userId`.
+  /// Owner-only mutation: change member role либо toggle invite-grant.
+  ///
+  /// At least one of [role] либо [hasInviteGrant] must be non-null —
+  /// backend returns 400 NO_CHANGES если both omitted.
+  ///
+  /// Backend-enforced invariants (per ENTITY-DESIGN §2.1 + §3.4):
+  ///   • SELF_ROLE_CHANGE_FORBIDDEN — actor cannot change own role
+  ///   • LAST_OWNER_DEMOTE_FORBIDDEN — cannot demote last owner
+  ///   • INVITE_GRANT_ONLY_EDITOR — grant toggle requires editor role
+  ///
+  /// All three return **409** (not 403 — common spec error). Frontend
+  /// surface'ит specific copy для each case.
+  ///
+  /// Returns updated [SemyaMembership] row. Throws [SemyaError] для:
+  ///   • SELF_ROLE_CHANGE_FORBIDDEN (409)
+  ///   • LAST_OWNER_DEMOTE_FORBIDDEN (409)
+  ///   • INVITE_GRANT_ONLY_EDITOR (409)
+  ///   • NOT_OWNER (403 — caller not owner)
+  ///   • MEMBERSHIP_NOT_FOUND (404)
+  ///   • SEMYA_NOT_FOUND (404)
+  ///   • INVALID_INPUT (400 — INVALID_ROLE | NO_CHANGES | INVALID_USER_ID)
+  Future<SemyaMembership> updateMembership({
+    required String semyaId,
+    required String userId,
+    SemyaRole? role,
+    bool? hasInviteGrant,
+  });
+
+  /// Ship FE8 (2026-05-27): `DELETE /v1/semya/:id/membership/:userId`.
+  /// Kick member (owner only) либо self-leave (any role когда не last
+  /// owner). Backend distinguishes автоматически — actor == target →
+  /// self-leave; otherwise kick (requires actor.role == owner).
+  ///
+  /// Backend-enforced invariant: LAST_OWNER_REMOVE_FORBIDDEN — cannot
+  /// remove last active owner (kick либо self-leave). Frontend pre-
+  /// emptively disables self-leave button когда caller is sole owner.
+  ///
+  /// Returns updated [SemyaMembership] (status="left" либо "kicked")
+  /// + [wasSelfLeave] flag for UI routing (e.g., pop screen on self
+  /// leave). Throws [SemyaError] для:
+  ///   • LAST_OWNER_REMOVE_FORBIDDEN (409)
+  ///   • NOT_OWNER (403 — caller not owner, kicking another)
+  ///   • MEMBERSHIP_NOT_FOUND (404)
+  ///   • SEMYA_NOT_FOUND (404)
+  ///   • INVALID_INPUT (400)
+  Future<SemyaMembershipRemoveResult> removeMembership({
+    required String semyaId,
+    required String userId,
+  });
+}
+
+/// Ship FE8: result wrapper для removeMembership endpoint —
+/// surfaces wasSelfLeave для caller routing decision (pop screen on
+/// self-leave, refresh list on kick).
+class SemyaMembershipRemoveResult {
+  const SemyaMembershipRemoveResult({
+    required this.membership,
+    required this.wasSelfLeave,
+  });
+
+  final SemyaMembership membership;
+  final bool wasSelfLeave;
 }

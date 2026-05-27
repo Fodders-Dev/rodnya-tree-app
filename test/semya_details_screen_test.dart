@@ -108,6 +108,22 @@ class _FakeFamilyTreeService
   }) async =>
       throw UnimplementedError();
 
+  @override
+  Future<SemyaMembership> updateMembership({
+    required String semyaId,
+    required String userId,
+    SemyaRole? role,
+    bool? hasInviteGrant,
+  }) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<SemyaMembershipRemoveResult> removeMembership({
+    required String semyaId,
+    required String userId,
+  }) async =>
+      throw UnimplementedError();
+
   // FamilyTreeServiceInterface has широкий surface — все остальные
   // методы falling through к noSuchMethod (тесты SemyaDetailsScreen
   // не trigger'ят их).

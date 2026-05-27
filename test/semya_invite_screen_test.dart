@@ -114,6 +114,22 @@ class _FakeService
       throw UnimplementedError();
 
   @override
+  Future<SemyaMembership> updateMembership({
+    required String semyaId,
+    required String userId,
+    SemyaRole? role,
+    bool? hasInviteGrant,
+  }) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<SemyaMembershipRemoveResult> removeMembership({
+    required String semyaId,
+    required String userId,
+  }) async =>
+      throw UnimplementedError();
+
+  @override
   dynamic noSuchMethod(Invocation invocation) =>
       super.noSuchMethod(invocation);
 }

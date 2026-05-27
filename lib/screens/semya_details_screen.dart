@@ -8,6 +8,7 @@ import '../providers/semya_details_controller.dart';
 import '../theme/app_theme.dart';
 import '../widgets/browse_tokens_list_section.dart';
 import '../widgets/hidden_persons_section.dart';
+import '../widgets/membership_action_menu.dart';
 import '../widgets/share_browse_token_modal.dart';
 import 'semya_invitations_list_screen.dart';
 
@@ -115,6 +116,19 @@ class _SemyaDetailsScreenState extends State<SemyaDetailsScreen> {
         onRetry: controller.refresh,
       );
     }
+    // Ship FE8 (2026-05-27): surface mutation errors через snackbar
+    // — runs once per error message (controller.clearMutationError
+    // resets state). post-frame чтобы избежать setState-during-build.
+    final mutationError = controller.mutationErrorMessage;
+    if (mutationError != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(mutationError)),
+        );
+        controller.clearMutationError();
+      });
+    }
     // Ship FE7b: after first render с loaded details, scroll к hidden
     // section если flag passed. Called every build but guarded by
     // _scrolledToHidden bool — fires exactly once.
@@ -141,7 +155,11 @@ class _SemyaDetailsScreenState extends State<SemyaDetailsScreen> {
               child: Text('Пока нет других участников.'),
             )
           else
-            ..._buildMemberRows(controller.memberships, details.callerRole),
+            ..._buildMemberRows(
+              controller,
+              controller.memberships,
+              details.callerRole,
+            ),
           const _SectionHeader('Управление'),
           _OwnerOnlyTile(
             icon: Icons.settings_outlined,
@@ -219,6 +237,12 @@ class _SemyaDetailsScreenState extends State<SemyaDetailsScreen> {
               treeId: details.semya.treeId,
             ),
           ),
+          // Ship FE8 (2026-05-27): «Покинуть семью» tile внизу
+          // секции «Управление». Доступно всем ролям (backend allows
+          // self-leave for viewer+). Disabled с tooltip когда caller
+          // is last active owner — backstops backend's
+          // LAST_OWNER_REMOVE_FORBIDDEN invariant.
+          _buildSelfLeaveTile(context, controller, details),
           const SizedBox(height: 24),
         ],
       ),
@@ -226,11 +250,18 @@ class _SemyaDetailsScreenState extends State<SemyaDetailsScreen> {
   }
 
   List<Widget> _buildMemberRows(
+    SemyaDetailsController controller,
     List<SemyaMembership> members,
     SemyaRole callerRole,
   ) {
+    final currentUserId = _resolveCurrentUserId();
     return members
-        .map((m) => _MemberRow(membership: m, callerRole: callerRole))
+        .map((m) => _MemberRow(
+              membership: m,
+              callerRole: callerRole,
+              currentUserId: currentUserId,
+              controller: controller,
+            ))
         .toList(growable: false);
   }
 
@@ -242,6 +273,95 @@ class _SemyaDetailsScreenState extends State<SemyaDetailsScreen> {
   String? _resolveCurrentUserId() {
     if (!GetIt.I.isRegistered<AuthServiceInterface>()) return null;
     return GetIt.I<AuthServiceInterface>().currentUserId;
+  }
+
+  /// Ship FE8 (2026-05-27): self-leave tile. Visible всегда (если
+  /// caller membership resolvable). Enabled когда caller НЕ last
+  /// active owner — backstops LAST_OWNER_REMOVE_FORBIDDEN.
+  /// Confirmation dialog с destructive copy. On success pops screen.
+  Widget _buildSelfLeaveTile(
+    BuildContext context,
+    SemyaDetailsController controller,
+    SemyaDetails details,
+  ) {
+    final currentUserId = _resolveCurrentUserId();
+    if (currentUserId == null) return const SizedBox.shrink();
+    final isLastOwner = details.callerRole == SemyaRole.owner &&
+        controller.activeOwnerCount <= 1;
+    final isPending = controller.isPending(currentUserId);
+    final theme = Theme.of(context);
+    return ListTile(
+      key: const Key('semya-details-self-leave'),
+      enabled: !isLastOwner && !isPending,
+      leading: Icon(
+        Icons.logout_rounded,
+        color: isLastOwner ? theme.disabledColor : theme.colorScheme.error,
+      ),
+      title: Text(
+        'Покинуть семью',
+        style: TextStyle(
+          color: isLastOwner ? null : theme.colorScheme.error,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      subtitle: Text(
+        isLastOwner
+            ? 'Сначала передайте право владения другому участнику'
+            : 'Вы перестанете видеть и редактировать это дерево',
+      ),
+      trailing: isPending
+          ? const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : null,
+      onTap: isLastOwner || isPending
+          ? null
+          : () => _confirmAndSelfLeave(context, controller, details, currentUserId),
+    );
+  }
+
+  Future<void> _confirmAndSelfLeave(
+    BuildContext context,
+    SemyaDetailsController controller,
+    SemyaDetails details,
+    String currentUserId,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        title: Text('Выйти из семьи ${details.semya.name}?'),
+        content: const Text(
+          'Вы больше не сможете смотреть и редактировать дерево '
+          'этой семьи. Действие нельзя отменить.',
+        ),
+        actions: [
+          TextButton(
+            key: const Key('self-leave-cancel'),
+            onPressed: () => Navigator.of(dialogCtx).pop(false),
+            child: const Text('Отмена'),
+          ),
+          TextButton(
+            key: const Key('self-leave-confirm'),
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.error,
+            ),
+            onPressed: () => Navigator.of(dialogCtx).pop(true),
+            child: const Text('Выйти'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    final result = await controller.removeMember(userId: currentUserId);
+    if (!context.mounted) return;
+    if (result != null && result.wasSelfLeave) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Вы покинули семью ${details.semya.name}')),
+      );
+      Navigator.of(context).maybePop();
+    }
   }
 }
 
@@ -460,10 +580,22 @@ class _MemberRow extends StatelessWidget {
   const _MemberRow({
     required this.membership,
     required this.callerRole,
+    required this.currentUserId,
+    required this.controller,
   });
 
   final SemyaMembership membership;
   final SemyaRole callerRole;
+  final String? currentUserId;
+  final SemyaDetailsController controller;
+
+  bool get _isSelf =>
+      currentUserId != null && currentUserId == membership.userId;
+
+  /// Ship FE8 (2026-05-27): menu visible только для owner caller
+  /// AND target ≠ self. Self-row uses dedicated «Покинуть семью»
+  /// tile внизу секции «Управление».
+  bool get _showMenu => callerRole == SemyaRole.owner && !_isSelf;
 
   @override
   Widget build(BuildContext context) {
@@ -482,10 +614,27 @@ class _MemberRow extends StatelessWidget {
           ),
         ),
       ),
-      title: Text(
-        membership.userId,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
+      title: Row(
+        children: [
+          Flexible(
+            child: Text(
+              membership.userId,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: _isSelf ? const TextStyle(fontWeight: FontWeight.w700) : null,
+            ),
+          ),
+          if (_isSelf)
+            Padding(
+              padding: const EdgeInsets.only(left: 6),
+              child: Text(
+                '(это я)',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+        ],
       ),
       subtitle: Text(
         _formatJoinedAt(membership.joinedAt),
@@ -493,7 +642,36 @@ class _MemberRow extends StatelessWidget {
           color: theme.colorScheme.onSurfaceVariant,
         ),
       ),
-      trailing: _RoleChip(role: membership.role),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _RoleChip(role: membership.role),
+          if (_showMenu) ...[
+            const SizedBox(width: 4),
+            MembershipActionMenu(
+              membership: membership,
+              isPending: controller.isPending(membership.userId),
+              actions: MembershipActions(
+                onChangeRole: (role) =>
+                    controller.updateMemberRoleOrGrant(
+                  userId: membership.userId,
+                  role: role,
+                ),
+                onToggleInviteGrant: (enabled) =>
+                    controller.updateMemberRoleOrGrant(
+                  userId: membership.userId,
+                  hasInviteGrant: enabled,
+                ),
+                onKick: () async {
+                  await controller.removeMember(
+                    userId: membership.userId,
+                  );
+                },
+              ),
+            ),
+          ],
+        ],
+      ),
     );
   }
 

@@ -3044,6 +3044,130 @@ class CustomApiFamilyTreeService
     }
   }
 
+  @override
+  Future<SemyaMembership> updateMembership({
+    required String semyaId,
+    required String userId,
+    SemyaRole? role,
+    bool? hasInviteGrant,
+  }) async {
+    final trimmedSemya = semyaId.trim();
+    final trimmedUser = userId.trim();
+    if (trimmedSemya.isEmpty || trimmedUser.isEmpty) {
+      throw const SemyaError(
+        code: 'INVALID_INPUT',
+        message: 'Некорректные параметры',
+      );
+    }
+    if (role == null && hasInviteGrant == null) {
+      throw const SemyaError(
+        code: 'INVALID_INPUT',
+        message: 'Нечего обновлять',
+      );
+    }
+    final body = <String, dynamic>{};
+    if (role != null) body['role'] = role.serverValue;
+    if (hasInviteGrant != null) body['hasInviteGrant'] = hasInviteGrant;
+    try {
+      final response = await _requestJson(
+        method: 'PATCH',
+        path: '/v1/semya/$trimmedSemya/membership/$trimmedUser',
+        body: body,
+      );
+      final raw = response['membership'];
+      if (raw is! Map<String, dynamic>) {
+        throw const CustomApiException(
+          'updateMembership: backend не вернул membership объект',
+        );
+      }
+      return SemyaMembership.fromJson(raw);
+    } on CustomApiException catch (e) {
+      throw _mapMembershipException(e, isRemove: false);
+    }
+  }
+
+  @override
+  Future<SemyaMembershipRemoveResult> removeMembership({
+    required String semyaId,
+    required String userId,
+  }) async {
+    final trimmedSemya = semyaId.trim();
+    final trimmedUser = userId.trim();
+    if (trimmedSemya.isEmpty || trimmedUser.isEmpty) {
+      throw const SemyaError(
+        code: 'INVALID_INPUT',
+        message: 'Некорректные параметры',
+      );
+    }
+    try {
+      final response = await _requestJson(
+        method: 'DELETE',
+        path: '/v1/semya/$trimmedSemya/membership/$trimmedUser',
+      );
+      final raw = response['membership'];
+      if (raw is! Map<String, dynamic>) {
+        throw const CustomApiException(
+          'removeMembership: backend не вернул membership объект',
+        );
+      }
+      return SemyaMembershipRemoveResult(
+        membership: SemyaMembership.fromJson(raw),
+        wasSelfLeave: response['wasSelfLeave'] == true,
+      );
+    } on CustomApiException catch (e) {
+      throw _mapMembershipException(e, isRemove: true);
+    }
+  }
+
+  /// Ship FE8: dedicated mapper для 4 backend invariants. Generic
+  /// _mapSemyaException treats 409 как TREE_ALREADY_BOUND — wrong
+  /// для membership endpoints. Здесь 409 carries domain-specific
+  /// code derivable из message text (backend returns localized
+  /// message but not error code in body — frontend pattern-matches
+  /// на ключевые words).
+  SemyaError _mapMembershipException(
+    CustomApiException e, {
+    required bool isRemove,
+  }) {
+    final status = e.statusCode;
+    final messageLower = e.message.toLowerCase();
+    String code;
+    switch (status) {
+      case 400:
+        code = 'INVALID_INPUT';
+        break;
+      case 403:
+        code = 'NOT_OWNER';
+        break;
+      case 404:
+        // MEMBERSHIP_NOT_FOUND либо SEMYA_NOT_FOUND — discriminate
+        // через message keyword «участник» (membership) vs «семь» (semya).
+        if (messageLower.contains('участник')) {
+          code = 'MEMBERSHIP_NOT_FOUND';
+        } else {
+          code = 'SEMYA_NOT_FOUND';
+        }
+        break;
+      case 409:
+        if (isRemove) {
+          code = 'LAST_OWNER_REMOVE_FORBIDDEN';
+        } else if (messageLower.contains('свою роль')) {
+          code = 'SELF_ROLE_CHANGE_FORBIDDEN';
+        } else if (messageLower.contains('последнего владельца')) {
+          code = 'LAST_OWNER_DEMOTE_FORBIDDEN';
+        } else if (messageLower.contains('право приглашать') ||
+            messageLower.contains('только для редакторов')) {
+          code = 'INVITE_GRANT_ONLY_EDITOR';
+        } else {
+          code = 'CONFLICT';
+        }
+        break;
+      default:
+        code = 'UNKNOWN';
+    }
+    return SemyaError(code: code, message: e.message);
+  }
+
   /// Map [CustomApiException.statusCode] к domain-specific
   /// [SemyaError] code. Backend response payloads documented в
   /// backend/src/routes/semya-routes.js + entity-design §1.

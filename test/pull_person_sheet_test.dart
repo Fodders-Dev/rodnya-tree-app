@@ -128,6 +128,22 @@ class _FakeService implements SemyaCapableFamilyTreeService {
     List<String> removePersonIds = const <String>[],
   }) async =>
       throw UnimplementedError();
+
+  @override
+  Future<SemyaMembership> updateMembership({
+    required String semyaId,
+    required String userId,
+    SemyaRole? role,
+    bool? hasInviteGrant,
+  }) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<SemyaMembershipRemoveResult> removeMembership({
+    required String semyaId,
+    required String userId,
+  }) async =>
+      throw UnimplementedError();
 }
 
 Semya _semya({required String id, String? name}) {
