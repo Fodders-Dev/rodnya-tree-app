@@ -129,6 +129,10 @@ class _FakeService
       throw UnimplementedError();
 
   @override
+  Future<List<SemyaInvitation>> listPendingInvitations() async =>
+      const <SemyaInvitation>[];
+
+  @override
   dynamic noSuchMethod(Invocation invocation) =>
       super.noSuchMethod(invocation);
 }

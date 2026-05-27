@@ -164,6 +164,10 @@ class _FakeService implements SemyaCapableFamilyTreeService {
       wasSelfLeave: false,
     );
   }
+
+  @override
+  Future<List<SemyaInvitation>> listPendingInvitations() async =>
+      const <SemyaInvitation>[];
 }
 
 SemyaMembership _mem({

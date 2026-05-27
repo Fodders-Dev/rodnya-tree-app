@@ -124,6 +124,10 @@ class _FakeFamilyTreeService
   }) async =>
       throw UnimplementedError();
 
+  @override
+  Future<List<SemyaInvitation>> listPendingInvitations() async =>
+      const <SemyaInvitation>[];
+
   // FamilyTreeServiceInterface has широкий surface — все остальные
   // методы falling through к noSuchMethod (тесты SemyaDetailsScreen
   // не trigger'ят их).

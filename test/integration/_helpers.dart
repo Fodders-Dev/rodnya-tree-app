@@ -519,6 +519,14 @@ class IntegrationFakeService implements SemyaCapableFamilyTreeService {
       wasSelfLeave: wasSelfLeave,
     );
   }
+
+  @override
+  Future<List<SemyaInvitation>> listPendingInvitations() async {
+    // Integration tests don't exercise FE9 wizard flow yet — default
+    // returns empty list. FE10 full coverage может extend этот fake
+    // с pending invitations seeded per scenario.
+    return const <SemyaInvitation>[];
+  }
 }
 
 // ============== Factories ==============

@@ -127,6 +127,10 @@ class _FakeSemyaService implements SemyaCapableFamilyTreeService {
     required String userId,
   }) async =>
       throw UnimplementedError();
+
+  @override
+  Future<List<SemyaInvitation>> listPendingInvitations() async =>
+      const <SemyaInvitation>[];
 }
 
 SemyaDetails _details({

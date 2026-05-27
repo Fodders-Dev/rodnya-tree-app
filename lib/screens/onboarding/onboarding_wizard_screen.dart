@@ -6,7 +6,9 @@ import 'package:provider/provider.dart';
 import '../../backend/interfaces/auth_service_interface.dart';
 import '../../backend/interfaces/family_tree_service_interface.dart';
 import '../../backend/interfaces/onboarding_capable_family_tree_service.dart';
+import '../../backend/interfaces/semya_capable_family_tree_service.dart';
 import '../../backend/models/onboarding_state.dart';
+import '../../backend/models/semya_invitation.dart';
 import '../../providers/onboarding_controller.dart';
 import '../../providers/tree_provider.dart';
 
@@ -39,6 +41,12 @@ class _OnboardingWizardScreenState extends State<OnboardingWizardScreen> {
       // после skip/complete (clears local session.requiresOnboarding).
       authService: GetIt.I.isRegistered<AuthServiceInterface>()
           ? GetIt.I<AuthServiceInterface>()
+          : null,
+      // Ship FE9 (2026-05-27): семя service для pending invitations
+      // detection. Optional capability — null degrades gracefully
+      // (welcome step shows create-only path).
+      semyaService: service is SemyaCapableFamilyTreeService
+          ? service as SemyaCapableFamilyTreeService
           : null,
     );
   }
@@ -99,6 +107,35 @@ class _OnboardingWizardScreenState extends State<OnboardingWizardScreen> {
     treeProvider.selectTree(treeId, 'Моя семья');
   }
 
+  /// Ship FE9 (2026-05-27): handle «Принять приглашение» tap. Calls
+  /// controller.acceptInvitation → on success navigate к /tree (caller
+  /// joins existing семя's tree). On error surface через snackbar.
+  Future<void> _handleAcceptInvitation(
+    OnboardingController controller,
+    SemyaInvitation invitation,
+  ) async {
+    final result = await controller.acceptInvitation(invitation.token);
+    if (!mounted) return;
+    if (result == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            controller.error ?? 'Не удалось принять приглашение',
+          ),
+        ),
+      );
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Вы присоединились к семье${invitation.semyaName != null ? " ${invitation.semyaName}" : ""}',
+        ),
+      ),
+    );
+    context.go('/');
+  }
+
   Widget _buildStep(OnboardingController controller) {
     switch (controller.currentStep) {
       case OnboardingStep.welcome:
@@ -119,6 +156,8 @@ class _OnboardingWizardScreenState extends State<OnboardingWizardScreen> {
               );
             }
           },
+          onAcceptInvitation: (invitation) =>
+              _handleAcceptInvitation(controller, invitation),
         );
       case OnboardingStep.profile:
         return _ProfileStep(controller: controller);
@@ -204,14 +243,22 @@ class _WizardStepIndicator extends StatelessWidget {
 // ── Step 1: Welcome ───────────────────────────────────────────────
 
 class _WelcomeStep extends StatelessWidget {
-  const _WelcomeStep({required this.controller, required this.onSkip});
+  const _WelcomeStep({
+    required this.controller,
+    required this.onSkip,
+    required this.onAcceptInvitation,
+  });
 
   final OnboardingController controller;
   final Future<void> Function() onSkip;
+  // Ship FE9 (2026-05-27): invitation accept handler, invoked with
+  // the chosen invitation row. Wizard screen routes к /tree on success.
+  final Future<void> Function(SemyaInvitation) onAcceptInvitation;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final hasInvitations = controller.hasPendingInvitations;
     return Padding(
       padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
       child: Column(
@@ -242,6 +289,19 @@ class _WelcomeStep extends StatelessWidget {
             ),
             textAlign: TextAlign.center,
           ),
+          // Ship FE9 (2026-05-27): pending invitations CTA section.
+          // Renders когда есть приглашения addressed к caller — top of
+          // welcome step pushes invitation accept выше «Начать» since
+          // joining existing семья more likely user intent.
+          if (hasInvitations) ...[
+            const SizedBox(height: 24),
+            ...controller.pendingInvitations
+                .map((inv) => _PendingInvitationCard(
+                      invitation: inv,
+                      onAccept: () => onAcceptInvitation(inv),
+                      isAccepting: controller.isAccepting,
+                    )),
+          ],
           const Spacer(),
           if (controller.isSubmitting)
             const Padding(
@@ -249,11 +309,20 @@ class _WelcomeStep extends StatelessWidget {
               child: Center(child: CircularProgressIndicator()),
             )
           else ...[
+            // «Начать» (create own семя) — primary action когда нет
+            // приглашений; secondary когда есть (invitation cards
+            // outranks visually).
             FilledButton(
-              onPressed: () => controller.setStep(OnboardingStep.profile),
+              key: const Key('onboarding-create-button'),
+              onPressed: controller.isAccepting
+                  ? null
+                  : () => controller.setStep(OnboardingStep.profile),
               child: const Padding(
                 padding: EdgeInsets.symmetric(vertical: 12),
-                child: Text('Начать', style: TextStyle(fontSize: 16)),
+                child: Text(
+                  'Создать свою семью',
+                  style: TextStyle(fontSize: 16),
+                ),
               ),
             ),
             const SizedBox(height: 8),
@@ -264,7 +333,7 @@ class _WelcomeStep extends StatelessWidget {
             // resume banner. Wizard остаётся available via banner CTA.
             TextButton(
               key: const Key('onboarding-skip-button'),
-              onPressed: onSkip,
+              onPressed: controller.isAccepting ? null : onSkip,
               child: const Text(
                 'Пропустить',
                 style: TextStyle(fontSize: 14),
@@ -272,6 +341,89 @@ class _WelcomeStep extends StatelessWidget {
             ),
           ],
         ],
+      ),
+    );
+  }
+}
+
+/// Ship FE9 (2026-05-27): pending invitation card rendered на welcome
+/// step. Each invitation gets dedicated CTA «Принять приглашение от
+/// семьи {semyaName}». Visual prominence — primary FilledButton on
+/// invitation row (vs secondary «Создать свою семью» button below).
+class _PendingInvitationCard extends StatelessWidget {
+  const _PendingInvitationCard({
+    required this.invitation,
+    required this.onAccept,
+    required this.isAccepting,
+  });
+
+  final SemyaInvitation invitation;
+  final Future<void> Function() onAccept;
+  final bool isAccepting;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final semyaName = (invitation.semyaName ?? '').trim();
+    final displayName =
+        semyaName.isNotEmpty ? semyaName : 'Семья';
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Card(
+        margin: EdgeInsets.zero,
+        color: theme.colorScheme.primaryContainer.withValues(alpha: 0.4),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    Icons.family_restroom_rounded,
+                    color: theme.colorScheme.primary,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Приглашение от семьи $displayName',
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Роль: ${invitation.role.displayLabel.toLowerCase()}',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 10),
+              FilledButton(
+                key: Key('onboarding-accept-${invitation.id}'),
+                onPressed: isAccepting ? null : onAccept,
+                child: isAccepting
+                    ? const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 6),
+                        child: SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      )
+                    : const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 8),
+                        child: Text('Принять приглашение'),
+                      ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

@@ -8285,6 +8285,53 @@ class FileStore {
       .map((entry) => structuredClone(entry));
   }
 
+  // Ship FE9 (2026-05-27): list invitations addressed к caller — used
+  // by onboarding wizard к surface «У вас есть приглашение от семьи X»
+  // CTA. Returns only `pending` status invitations matched по userId
+  // либо email (с lazy expiry sweep). Each row enriched с denormalized
+  // semya name to spare frontend extra round-trip.
+  //
+  // Matching logic:
+  //   • recipientUserId == userId — explicit user-targeted invitation
+  //   • recipientEmail == email AND recipientUserId == null —
+  //     email-only invitation matches after user registered с тем же
+  //     email (typical post-registration flow для invitations sent
+  //     before user existed)
+  //
+  // Phone matches not supported здесь (phone-based invitations rare).
+  async listPendingInvitationsForUser({userId, email}) {
+    if (!userId || typeof userId !== "string") {
+      return [];
+    }
+    const normalizedEmail = (email || "").toLowerCase().trim();
+    const db = await this._read();
+    this._lazyExpireInvitations(db, null);
+    const matching = (db.semyaInvitations || []).filter((inv) => {
+      if (inv.status !== "pending") return false;
+      if (inv.recipientUserId === userId) return true;
+      if (!inv.recipientUserId && normalizedEmail) {
+        const invEmail = (inv.recipientEmail || "").toLowerCase().trim();
+        if (invEmail && invEmail === normalizedEmail) return true;
+      }
+      return false;
+    });
+    // Enrich с семя name. Soft-deleted semya excluded (their pending
+    // invitations stale — recipient cannot accept anyway).
+    const enriched = [];
+    for (const inv of matching) {
+      const semya = (db.semyi || []).find(
+        (s) => s.id === inv.semyaId && !s.deletedAt,
+      );
+      if (!semya) continue;
+      const clone = structuredClone(inv);
+      clone.semyaName = semya.name;
+      enriched.push(clone);
+    }
+    return enriched.sort((a, b) =>
+      String(b.createdAt || "").localeCompare(String(a.createdAt || "")),
+    );
+  }
+
   async acceptInvitation({token, acceptingUserId}) {
     if (!token || typeof token !== "string") {
       throw new Error("INVALID_TOKEN");

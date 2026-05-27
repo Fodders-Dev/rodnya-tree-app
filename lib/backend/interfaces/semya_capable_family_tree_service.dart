@@ -94,6 +94,23 @@ abstract class SemyaCapableFamilyTreeService {
   /// SEMYA_NOT_FOUND (404).
   Future<SemyaInvitationAcceptResult> acceptInvitation(String token);
 
+  /// Ship FE9 (2026-05-27): `GET /v1/me/pending-invitations`. Returns
+  /// pending семя invitations addressed к caller. Used by onboarding
+  /// wizard к surface «У вас есть приглашение в семью X» CTA на
+  /// welcome step.
+  ///
+  /// Matches invitations where:
+  ///   • recipientUserId == caller.id (explicit target), либо
+  ///   • recipientEmail == caller.email AND recipientUserId == null
+  ///     (email-only invite sent before user existed)
+  ///
+  /// Soft-deleted семья invitations filtered out by store. Each row
+  /// includes denormalized `semyaName` для wizard copy без extra
+  /// round-trip.
+  ///
+  /// Returns empty list при graceful failures (network).
+  Future<List<SemyaInvitation>> listPendingInvitations();
+
   /// Ship FE5 (2026-05-26): `POST /v1/semya/:targetSemyaId/pull-person`.
   /// Copies person из source семья к caller's target семья. Backend wraps
   /// bulkImportPersonsToTree (Ship 6) — identity-aware dedup means

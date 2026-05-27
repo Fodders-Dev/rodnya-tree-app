@@ -1,10 +1,15 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:get_it/get_it.dart';
 
 import '../backend/interfaces/auth_service_interface.dart';
+import '../backend/interfaces/family_tree_service_interface.dart';
 import '../backend/interfaces/onboarding_capable_family_tree_service.dart';
+import '../backend/interfaces/semya_capable_family_tree_service.dart';
 import '../backend/models/onboarding_state.dart';
+import '../backend/models/semya.dart';
+import '../backend/models/semya_invitation.dart';
 
 /// Phase 6 chunk 2 (PHASE-6-PROPOSAL.md §3.1): wizard state controller.
 ///
@@ -23,9 +28,12 @@ class OnboardingController extends ChangeNotifier {
   OnboardingController({
     required OnboardingCapableFamilyTreeService? service,
     AuthServiceInterface? authService,
+    SemyaCapableFamilyTreeService? semyaService,
   })  : _service = service,
-        _authService = authService {
+        _authService = authService,
+        _semyaService = semyaService {
     _hydrateFromServer();
+    _loadPendingInvitations();
   }
 
   final OnboardingCapableFamilyTreeService? _service;
@@ -35,10 +43,20 @@ class OnboardingController extends ChangeNotifier {
   /// Optional — tests / fakes могут omit'нуть.
   final AuthServiceInterface? _authService;
 
+  /// Ship FE9 (2026-05-27): for listing pending семья invitations on
+  /// welcome step. Optional — resolved через GetIt при null. Tests
+  /// inject fake directly.
+  final SemyaCapableFamilyTreeService? _semyaService;
+
   OnboardingState _state = OnboardingState.fresh;
   bool _isLoading = true;
   bool _isSubmitting = false;
   String? _error;
+  // Ship FE9: pending семья invitations addressed к caller.
+  // Resolved через GET /v1/me/pending-invitations on mount.
+  List<SemyaInvitation> _pendingInvitations = const <SemyaInvitation>[];
+  bool _isLoadingInvitations = false;
+  bool _isAccepting = false;
 
   // Local form state (in-memory only — Q8 «form lost on abandon»).
   String _profileName = '';
@@ -55,6 +73,16 @@ class OnboardingController extends ChangeNotifier {
   bool get isLoading => _isLoading;
   bool get isSubmitting => _isSubmitting;
   String? get error => _error;
+
+  /// Ship FE9 (2026-05-27): pending semя invitations addressed к caller.
+  /// Welcome step UI iterates через эти для surfacing «Принять
+  /// приглашение от семьи {name}» CTAs.
+  List<SemyaInvitation> get pendingInvitations =>
+      List<SemyaInvitation>.unmodifiable(_pendingInvitations);
+
+  bool get isLoadingInvitations => _isLoadingInvitations;
+  bool get isAccepting => _isAccepting;
+  bool get hasPendingInvitations => _pendingInvitations.isNotEmpty;
 
   OnboardingState get state => _state;
   OnboardingStep get currentStep => _state.currentStep;
@@ -75,6 +103,78 @@ class OnboardingController extends ChangeNotifier {
   bool get profileStepValid => _profileName.trim().isNotEmpty;
 
   // ── Server sync ──────────────────────────────────────────────────
+
+  /// Ship FE9 (2026-05-27): resolve семя service via injected param либо
+  /// GetIt fallback (mirror existing patterns в FE2 controller). Returns
+  /// null если capability not present — caller treats как «no
+  /// invitations available».
+  SemyaCapableFamilyTreeService? _resolveSemyaService() {
+    if (_semyaService != null) return _semyaService;
+    if (!GetIt.I.isRegistered<FamilyTreeServiceInterface>()) return null;
+    final svc = GetIt.I<FamilyTreeServiceInterface>();
+    if (svc is SemyaCapableFamilyTreeService) {
+      return svc as SemyaCapableFamilyTreeService;
+    }
+    return null;
+  }
+
+  Future<void> _loadPendingInvitations() async {
+    final svc = _resolveSemyaService();
+    if (svc == null) return;
+    _isLoadingInvitations = true;
+    notifyListeners();
+    try {
+      final list = await svc.listPendingInvitations();
+      _pendingInvitations = List<SemyaInvitation>.unmodifiable(list);
+    } catch (_) {
+      // Graceful degradation — onboarding work continues с default
+      // create flow если invitations fetch fails.
+      _pendingInvitations = const <SemyaInvitation>[];
+    } finally {
+      _isLoadingInvitations = false;
+      notifyListeners();
+    }
+  }
+
+  /// Ship FE9 (2026-05-27): accept pending invitation by token. On
+  /// success returns acceptResult с семя metadata. Caller (wizard)
+  /// уже знает что invitation accepted, marks onboarding skipped,
+  /// navigates к /tree. На error sets _error.
+  Future<SemyaInvitationAcceptResult?> acceptInvitation(String token) async {
+    final svc = _resolveSemyaService();
+    if (svc == null) {
+      _error = 'Сервис недоступен';
+      notifyListeners();
+      return null;
+    }
+    if (_isAccepting) return null;
+    _isAccepting = true;
+    _error = null;
+    notifyListeners();
+    try {
+      final result = await svc.acceptInvitation(token);
+      // Mark onboarding skipped — recipient теперь in семья, не нужно
+      // продолжать «create» wizard flow.
+      unawaited(_authService?.markOnboardingSkipped() ?? Future<void>.value());
+      _isAccepting = false;
+      // Remove accepted invitation из local list к избежать stale UI.
+      _pendingInvitations = _pendingInvitations
+          .where((i) => i.token != token)
+          .toList(growable: false);
+      notifyListeners();
+      return result;
+    } on SemyaError catch (e) {
+      _error = e.message;
+      _isAccepting = false;
+      notifyListeners();
+      return null;
+    } catch (e) {
+      _error = 'Не удалось принять приглашение: $e';
+      _isAccepting = false;
+      notifyListeners();
+      return null;
+    }
+  }
 
   Future<void> _hydrateFromServer() async {
     final service = _service;

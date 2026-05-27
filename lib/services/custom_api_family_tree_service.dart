@@ -2752,6 +2752,26 @@ class CustomApiFamilyTreeService
   }
 
   @override
+  Future<List<SemyaInvitation>> listPendingInvitations() async {
+    try {
+      final response = await _requestJson(
+        method: 'GET',
+        path: '/v1/me/pending-invitations',
+      );
+      final raw = response['invitations'];
+      if (raw is! List) return const <SemyaInvitation>[];
+      return raw
+          .whereType<Map>()
+          .map((e) => SemyaInvitation.fromJson(Map<String, dynamic>.from(e)))
+          .toList(growable: false);
+    } on CustomApiException {
+      // Graceful degradation — onboarding wizard fallback к default
+      // «create» path when service unreachable либо backend incapable.
+      return const <SemyaInvitation>[];
+    }
+  }
+
+  @override
   Future<SemyaPullPersonResult> pullPersonToSemya({
     required String targetSemyaId,
     required String sourceSemyaId,

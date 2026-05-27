@@ -27,7 +27,7 @@ function registerSemyaInvitationRoutes(
 ) {
   function mapInvitation(invitation) {
     if (!invitation) return null;
-    return {
+    const base = {
       id: invitation.id,
       token: invitation.token,
       semyaId: invitation.semyaId,
@@ -44,6 +44,13 @@ function registerSemyaInvitationRoutes(
       revokedByUserId: invitation.revokedByUserId ?? null,
       expiredAt: invitation.expiredAt ?? null,
     };
+    // Ship FE9 (2026-05-27): listPendingInvitationsForUser enriches
+    // с semyaName (denormalized для frontend wizard CTA copy «семья
+    // {name}» — saves extra GET /v1/semya/:id round-trip).
+    if (invitation.semyaName !== undefined) {
+      base.semyaName = invitation.semyaName;
+    }
+    return base;
   }
 
   // FE3 (2026-05-26): list-endpoint addition. Originally Ship 4
@@ -62,6 +69,23 @@ function registerSemyaInvitationRoutes(
     });
     if (!access) return;
     const rows = await store.listInvitationsForSemya(req.params.id);
+    res.json({invitations: rows.map(mapInvitation)});
+  });
+
+  // Ship FE9 (2026-05-27): «my pending семя invitations» endpoint
+  // для onboarding wizard. Returns pending invitations addressed
+  // explicitly к caller (recipientUserId) либо к caller's email
+  // (recipientEmail match для invitations sent before user existed).
+  //
+  // Auth: requireAuth only — anyone authenticated can ask «what's
+  // waiting for me?». Soft-deleted семья invitations filtered out
+  // (store layer enforces).
+  //
+  // Response: {invitations: [{...mapInvitation, semyaName}]}.
+  app.get("/v1/me/pending-invitations", requireAuth, async (req, res) => {
+    const userId = req.auth.user.id;
+    const email = req.auth.user.email || "";
+    const rows = await store.listPendingInvitationsForUser({userId, email});
     res.json({invitations: rows.map(mapInvitation)});
   });
 

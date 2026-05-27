@@ -26,6 +26,7 @@ class SemyaInvitation {
     this.revokedAt,
     this.revokedByUserId,
     this.expiredAt,
+    this.semyaName,
   });
 
   final String id;
@@ -44,6 +45,13 @@ class SemyaInvitation {
   final String? revokedAt;
   final String? revokedByUserId;
   final String? expiredAt;
+
+  /// Ship FE9 (2026-05-27): denormalized семя name. Populated только
+  /// для responses от GET /v1/me/pending-invitations endpoint —
+  /// other invitation surfaces (per-семя list) leave null. Frontend
+  /// wizard использует для CTA copy «Принять приглашение от семьи
+  /// {semyaName}» без дополнительного GET /v1/semya/:id round-trip.
+  final String? semyaName;
 
   bool get isPending => status == SemyaInvitationStatus.pending;
   bool get isTerminal => !isPending;
@@ -66,6 +74,7 @@ class SemyaInvitation {
       revokedAt: _nullableString(json['revokedAt']),
       revokedByUserId: _nullableString(json['revokedByUserId']),
       expiredAt: _nullableString(json['expiredAt']),
+      semyaName: _nullableString(json['semyaName']),
     );
   }
 

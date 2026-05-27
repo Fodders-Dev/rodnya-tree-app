@@ -822,6 +822,173 @@ test("DELETE invitation: revoke twice rejected (409)", async () => {
   }
 });
 
+// ---------- GET /v1/me/pending-invitations (FE9 2026-05-27) ----------
+//
+// Surface для onboarding wizard к detect «у вас есть приглашение в семью».
+// Auth: requireAuth only (anyone authenticated может ask). Matches по
+// recipientUserId либо recipientEmail (sans recipientUserId set).
+// Soft-deleted семья invitations filtered out.
+
+test("GET /v1/me/pending-invitations: empty список когда никого не пригласили", async () => {
+  const ctx = await startTestServer();
+  try {
+    const user = await makeUser(ctx.store, ctx.baseUrl, "fe9-empty@example.com");
+    const res = await fetch(`${ctx.baseUrl}/v1/me/pending-invitations`, {
+      headers: {Authorization: `Bearer ${user.token}`},
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.deepEqual(body.invitations, []);
+  } finally {
+    await shutdown(ctx);
+  }
+});
+
+test("GET /v1/me/pending-invitations: returns explicit userId-targeted invitation с semyaName", async () => {
+  const ctx = await startTestServer();
+  try {
+    const {owner, semya} = await seedSemyaWithOwner(
+      ctx.store,
+      ctx.baseUrl,
+      "fe9-owner@example.com",
+    );
+    const recipient = await makeUser(
+      ctx.store,
+      ctx.baseUrl,
+      "fe9-recipient@example.com",
+    );
+    // Owner creates invitation explicitly targeting recipient by userId.
+    const createRes = await fetch(
+      `${ctx.baseUrl}/v1/semya/${semya.id}/invitation`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${owner.token}`,
+        },
+        body: JSON.stringify({
+          recipientUserId: recipient.userId,
+          role: "editor",
+        }),
+      },
+    );
+    assert.equal(createRes.status, 201);
+    // Recipient fetches own pending.
+    const res = await fetch(`${ctx.baseUrl}/v1/me/pending-invitations`, {
+      headers: {Authorization: `Bearer ${recipient.token}`},
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.invitations.length, 1);
+    const inv = body.invitations[0];
+    assert.equal(inv.semyaId, semya.id);
+    assert.equal(inv.semyaName, "Тестовая семья");
+    assert.equal(inv.recipientUserId, recipient.userId);
+    assert.equal(inv.status, "pending");
+    assert.equal(inv.role, "editor");
+  } finally {
+    await shutdown(ctx);
+  }
+});
+
+test("GET /v1/me/pending-invitations: matches email-only invitation (sent before user registered) after recipient signs up", async () => {
+  const ctx = await startTestServer();
+  try {
+    const {owner, semya} = await seedSemyaWithOwner(
+      ctx.store,
+      ctx.baseUrl,
+      "fe9-email-owner@example.com",
+    );
+    // Owner creates email-only invitation BEFORE recipient registers.
+    const createRes = await fetch(
+      `${ctx.baseUrl}/v1/semya/${semya.id}/invitation`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${owner.token}`,
+        },
+        body: JSON.stringify({
+          recipientEmail: "fe9-late-arrival@example.com",
+          role: "viewer",
+        }),
+      },
+    );
+    assert.equal(createRes.status, 201);
+    // Recipient registers с тем же email.
+    const recipient = await makeUser(
+      ctx.store,
+      ctx.baseUrl,
+      "fe9-late-arrival@example.com",
+    );
+    const res = await fetch(`${ctx.baseUrl}/v1/me/pending-invitations`, {
+      headers: {Authorization: `Bearer ${recipient.token}`},
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.invitations.length, 1);
+    assert.equal(body.invitations[0].recipientEmail, "fe9-late-arrival@example.com");
+    assert.equal(body.invitations[0].recipientUserId, null);
+  } finally {
+    await shutdown(ctx);
+  }
+});
+
+test("GET /v1/me/pending-invitations: filters out non-pending statuses", async () => {
+  const ctx = await startTestServer();
+  try {
+    const {owner, semya} = await seedSemyaWithOwner(
+      ctx.store,
+      ctx.baseUrl,
+      "fe9-filter-owner@example.com",
+    );
+    const recipient = await makeUser(
+      ctx.store,
+      ctx.baseUrl,
+      "fe9-filter-recipient@example.com",
+    );
+    // Create + accept invitation → status=accepted.
+    const createRes = await fetch(
+      `${ctx.baseUrl}/v1/semya/${semya.id}/invitation`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${owner.token}`,
+        },
+        body: JSON.stringify({
+          recipientUserId: recipient.userId,
+          role: "editor",
+        }),
+      },
+    );
+    const created = await createRes.json();
+    await fetch(`${ctx.baseUrl}/v1/invitation/${created.invitation.token}/accept`, {
+      method: "POST",
+      headers: {Authorization: `Bearer ${recipient.token}`},
+    });
+    // Pending list now должна быть пустой.
+    const res = await fetch(`${ctx.baseUrl}/v1/me/pending-invitations`, {
+      headers: {Authorization: `Bearer ${recipient.token}`},
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.invitations.length, 0);
+  } finally {
+    await shutdown(ctx);
+  }
+});
+
+test("GET /v1/me/pending-invitations: unauthorized rejected", async () => {
+  const ctx = await startTestServer();
+  try {
+    const res = await fetch(`${ctx.baseUrl}/v1/me/pending-invitations`);
+    assert.equal(res.status, 401);
+  } finally {
+    await shutdown(ctx);
+  }
+});
+
 test("DELETE invitation: outsider can't even probe IDs (403 via семья access)", async () => {
   const ctx = await startTestServer();
   try {
