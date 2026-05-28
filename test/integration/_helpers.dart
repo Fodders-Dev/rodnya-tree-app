@@ -10,6 +10,8 @@
 
 import 'package:flutter/material.dart';
 import 'package:rodnya/backend/interfaces/semya_capable_family_tree_service.dart';
+import 'package:rodnya/backend/models/deleted_person.dart';
+import 'package:rodnya/backend/models/deleted_post.dart';
 import 'package:rodnya/backend/models/semya.dart';
 import 'package:rodnya/backend/models/semya_browse_token.dart';
 import 'package:rodnya/backend/models/semya_invitation.dart';
@@ -402,6 +404,59 @@ class IntegrationFakeService implements SemyaCapableFamilyTreeService {
     set.removeAll(removePersonIds);
     set.addAll(addPersonIds);
     return set.toList(growable: false);
+  }
+
+  // Ship Q4a frontend (2026-05-28, Ship 31): trash endpoints. Minimal
+  // stateful stub — integration тесты пока не drive soft-delete flows
+  // end-to-end (backend mutates collection напрямую), но interface
+  // must compile. Returns [] для list, throws NOT_FOUND для destructive
+  // ops с unknown id.
+
+  @override
+  Future<List<DeletedPerson>> listMyDeletedPersons() async {
+    return const <DeletedPerson>[];
+  }
+
+  @override
+  Future<List<DeletedPerson>> listDeletedPersonsForSemya(String semyaId) async {
+    return const <DeletedPerson>[];
+  }
+
+  @override
+  Future<void> restoreDeletedPerson(String deletedPersonId) async {
+    throw const SemyaError(
+      code: 'DELETED_PERSON_NOT_FOUND',
+      message: 'нет такой записи в корзине',
+    );
+  }
+
+  @override
+  Future<void> permanentlyDeletePerson(String deletedPersonId) async {
+    throw const SemyaError(
+      code: 'DELETED_PERSON_NOT_FOUND',
+      message: 'нет такой записи в корзине',
+    );
+  }
+
+  @override
+  Future<List<DeletedPost>> listMyDeletedPosts() async {
+    return const <DeletedPost>[];
+  }
+
+  @override
+  Future<void> restoreDeletedPost(String deletedPostId) async {
+    throw const SemyaError(
+      code: 'DELETED_POST_NOT_FOUND',
+      message: 'нет такой записи в корзине',
+    );
+  }
+
+  @override
+  Future<void> permanentlyDeletePost(String deletedPostId) async {
+    throw const SemyaError(
+      code: 'DELETED_POST_NOT_FOUND',
+      message: 'нет такой записи в корзине',
+    );
   }
 
   // Sentinel для acceptInvitation lookup miss check (orElse can't

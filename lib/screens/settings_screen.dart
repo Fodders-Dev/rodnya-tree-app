@@ -17,6 +17,7 @@ import '../backend/interfaces/family_tree_service_interface.dart';
 import '../backend/interfaces/semya_capable_family_tree_service.dart';
 import '../providers/tree_provider.dart';
 import '../screens/semya_details_screen.dart';
+import '../screens/trash_screen.dart';
 import '../widgets/hidden_semya_picker_sheet.dart';
 import '../services/custom_api_notification_service.dart';
 import '../services/app_status_service.dart';
@@ -1131,6 +1132,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
           title: 'Скрытые родственники',
           subtitle: 'Управлять списком в своей семье',
           onTap: _openHiddenPersonsEntry,
+        ),
+        // Ship Q4a frontend (2026-05-28, Ship 31): «Корзина» cross-семя.
+        // Объединяет caller's удалённые карточки + посты с 30-дневным
+        // окном восстановления. Push к dedicated TrashScreen — счётчик
+        // намеренно отсутствует чтобы избежать extra round-trip при
+        // открытии настроек (TrashScreen грузит сам).
+        _buildActionRow(
+          icon: Icons.delete_outline_rounded,
+          title: 'Корзина',
+          subtitle: 'Удалённые карточки и посты — 30 дней до удаления',
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => const TrashScreen(),
+            ),
+          ),
         ),
       ]),
       _buildCallSettingsSection(),

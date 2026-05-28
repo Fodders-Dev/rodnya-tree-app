@@ -278,14 +278,15 @@ class _PostCardState extends State<PostCard>
     // tonal button + barrierDismissible=false + audit-aligned copy
     // mentioning «у всех родственников» reach).
     //
-    // Backend `store.deletePost` is hard delete (splice from db.posts
-    // + cascade comments/reactions); copy honest about irreversibility.
+    // Ship Q4a frontend (2026-05-28, Ship 31): backend now soft-deletes
+    // через deletedPosts collection с 30-day retention + Settings →
+    // Корзина restore. Copy обновлён — «нельзя отменить» был ложью.
     final confirmed = await showSafeDeleteConfirmation(
       context,
       title: 'Удалить публикацию?',
       body:
-          'Пост исчезнет у всех родственников. '
-          'Это действие нельзя отменить.',
+          'Пост исчезнет у всех родственников и переедет в корзину. '
+          'Восстановить можно в течение 30 дней в Настройки → Корзина.',
     );
     if (!confirmed || !mounted) return;
 

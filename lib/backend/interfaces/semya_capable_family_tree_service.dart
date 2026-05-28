@@ -1,3 +1,5 @@
+import '../models/deleted_person.dart';
+import '../models/deleted_post.dart';
 import '../models/semya.dart';
 import '../models/semya_browse_token.dart';
 import '../models/semya_invitation.dart';
@@ -273,6 +275,38 @@ abstract class SemyaCapableFamilyTreeService {
     required String semyaId,
     required String userId,
   });
+
+  /// Ship Q4a (2026-05-28, Ship 31): list caller's deleted persons
+  /// across all семей (cross-семя view). Used by «Корзина» settings
+  /// screen. Backend filters rows where caller deleter либо member
+  /// of bound семя. Returns empty list on graceful failure.
+  Future<List<DeletedPerson>> listMyDeletedPersons();
+
+  /// Ship Q4a (Ship 31): list deleted persons scoped к specific
+  /// семя. Used by FE2 семя details «Удалённые» section. Caller
+  /// must be active member — backend returns 403 otherwise.
+  Future<List<DeletedPerson>> listDeletedPersonsForSemya(String semyaId);
+
+  /// Ship Q4a (Ship 31): restore deleted person из snapshot.
+  /// Permission: original actor либо семя member. Throws SemyaError
+  /// для terminal cases (DELETED_PERSON_NOT_FOUND, ALREADY_RESTORED,
+  /// HARD_DELETE_ELAPSED, SEMYA_DELETED, FORBIDDEN).
+  Future<void> restoreDeletedPerson(String deletedPersonId);
+
+  /// Ship Q4a (Ship 31): manual hard-purge with 3h floor protection.
+  /// Throws FLOOR_NOT_MET если earliestHardDelete > now.
+  Future<void> permanentlyDeletePerson(String deletedPersonId);
+
+  /// Ship Q4a (Ship 31): list caller's deleted posts. Author-only
+  /// (deletedByUserId === caller per backend gate).
+  Future<List<DeletedPost>> listMyDeletedPosts();
+
+  /// Ship Q4a (Ship 31): restore deleted post + comments + reactions
+  /// snapshot. Permission: author либо семя owner of post's tree.
+  Future<void> restoreDeletedPost(String deletedPostId);
+
+  /// Ship Q4a (Ship 31): manual hard-purge с 3h floor. Author only.
+  Future<void> permanentlyDeletePost(String deletedPostId);
 }
 
 /// Ship FE8: result wrapper для removeMembership endpoint —

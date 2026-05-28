@@ -1435,12 +1435,14 @@ class _TreeViewScreenState extends State<TreeViewScreen>
 
   // Ship Q4: destructive delete с consequence copy (audit recommendation:
   // «Удалить карточку из дерева? Связи с родственниками будут удалены»).
-  // Backend `deleteRelative` is immediate — no soft-delete / 30-day undo,
-  // поэтому copy honest: «Это действие нельзя отменить».
   //
   // Ship 2026-05-26 (Post delete polish): refactored inline dialog к
   // shared SafeDeleteConfirmationDialog widget — same pattern reused
   // для post delete (audit Screen 3.5).
+  //
+  // Ship Q4a frontend (2026-05-28, Ship 31): backend now soft-deletes
+  // через deletedPersons collection с 30-day retention + Settings →
+  // Корзина restore. Copy обновлён — «нельзя отменить» был ложью.
   Future<void> _showDeletePersonConfirmation(FamilyPerson person) async {
     final treeId = _currentTreeId;
     if (treeId == null) return;
@@ -1448,8 +1450,8 @@ class _TreeViewScreenState extends State<TreeViewScreen>
       context,
       title: 'Удалить ${person.name}?',
       body:
-          'Карточка и связи с родственниками будут удалены из дерева. '
-          'Это действие нельзя отменить.',
+          'Карточка и связи с родственниками переедут в корзину. '
+          'Восстановить можно в течение 30 дней в Настройки → Корзина.',
     );
     if (!confirmed || !mounted) return;
     try {

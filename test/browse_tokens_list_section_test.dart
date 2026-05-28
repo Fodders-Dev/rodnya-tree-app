@@ -13,6 +13,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rodnya/backend/interfaces/semya_capable_family_tree_service.dart';
+import 'package:rodnya/backend/models/deleted_person.dart';
+import 'package:rodnya/backend/models/deleted_post.dart';
 import 'package:rodnya/backend/models/semya.dart';
 import 'package:rodnya/backend/models/semya_browse_token.dart';
 import 'package:rodnya/backend/models/semya_invitation.dart';
@@ -144,6 +146,36 @@ class _FakeService implements SemyaCapableFamilyTreeService {
   @override
   Future<List<SemyaInvitation>> listPendingInvitations() async =>
       const <SemyaInvitation>[];
+
+  // Ship Q4a frontend (Ship 31): trash endpoint stubs.
+
+  @override
+  Future<List<DeletedPerson>> listMyDeletedPersons() async =>
+      const <DeletedPerson>[];
+
+  @override
+  Future<List<DeletedPerson>> listDeletedPersonsForSemya(String semyaId) async =>
+      const <DeletedPerson>[];
+
+  @override
+  Future<void> restoreDeletedPerson(String deletedPersonId) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<void> permanentlyDeletePerson(String deletedPersonId) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<List<DeletedPost>> listMyDeletedPosts() async =>
+      const <DeletedPost>[];
+
+  @override
+  Future<void> restoreDeletedPost(String deletedPostId) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<void> permanentlyDeletePost(String deletedPostId) async =>
+      throw UnimplementedError();
 }
 
 SemyaBrowseTokenSummary _summary({
