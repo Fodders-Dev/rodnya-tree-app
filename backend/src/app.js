@@ -53,6 +53,9 @@ const {
 const {
   registerDeletedPersonsRoutes,
 } = require("./routes/deleted-persons-routes");
+const {
+  registerDeletedPostsRoutes,
+} = require("./routes/deleted-posts-routes");
 const {registerIdentityRoutes} = require("./routes/identity-routes");
 const {registerMaxAuthRoutes} = require("./routes/max-auth-routes");
 const {registerMergeRoutes} = require("./routes/merge-routes");
@@ -2623,6 +2626,12 @@ function createApp({
 
   // Ship Q4a (2026-05-28): «корзина» — soft-deleted persons recovery.
   registerDeletedPersonsRoutes(app, {
+    store,
+    requireAuth,
+  });
+
+  // Ship Q4a (2026-05-28, Ship 30b): same для posts.
+  registerDeletedPostsRoutes(app, {
     store,
     requireAuth,
   });

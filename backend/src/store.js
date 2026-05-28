@@ -129,6 +129,9 @@ const EMPTY_DB = {
   // by construction. Hard-delete job sweeps этот set per
   // hardDeleteScheduledAt + earliestHardDelete (3h floor) gates.
   deletedPersons: [],
+  // Ship Q4a (2026-05-28, Ship 30b): same pattern для posts.
+  // Snapshot captures post + comments + reactions для full restore.
+  deletedPosts: [],
   personIdentities: [],
   personAttributes: [],
   circles: [],
@@ -233,6 +236,10 @@ function normalizeDbState(parsed) {
     // without deletedPersons field treated as empty.
     deletedPersons: Array.isArray(parsed?.deletedPersons)
       ? parsed.deletedPersons
+      : [],
+    // Ship Q4a (2026-05-28, Ship 30b): same для deletedPosts.
+    deletedPosts: Array.isArray(parsed?.deletedPosts)
+      ? parsed.deletedPosts
       : [],
     personIdentities: Array.isArray(parsed?.personIdentities)
       ? parsed.personIdentities
@@ -15701,6 +15708,22 @@ class FileStore {
   }
 
   async deletePost(postId, actorUserId) {
+    // Ship Q4a (2026-05-28, Ship 30b): soft-delete semantics для
+    // posts. Mirror persons pattern (Ship 30) — move snapshot к
+    // db.deletedPosts вместо splice. External behavior identical:
+    //   • 204 status returned by route
+    //   • Post not visible in subsequent listings
+    //   • Comments + reactions cleared from active state
+    //
+    // Snapshot captures full state для restore:
+    //   • Post body, media, audience, branchIds
+    //   • All comments (postId-scoped)
+    //   • postReactions + postCommentReactions (для restored comments)
+    //
+    // Snapshot row carries: hardDeleteScheduledAt (deletedAt + 30d),
+    // earliestHardDelete (deletedAt + 3h floor), deletedByUserId.
+    // Restore (restorePost) reverses: push back к db.posts, db.comments,
+    // и reaction collections. Phase 3.6 sweep prunes after retention.
     const db = await this._read();
     const postIndex = db.posts.findIndex((entry) => entry.id === postId);
     if (postIndex < 0) {
@@ -15712,24 +15735,190 @@ class FileStore {
       return false;
     }
 
-    db.posts.splice(postIndex, 1);
-    const removedCommentIds = db.comments
+    const snapshotPost = structuredClone(post);
+    const snapshotComments = db.comments
       .filter((entry) => entry.postId === postId)
-      .map((entry) => entry.id);
+      .map((entry) => structuredClone(entry));
+    const snapshotPostReactions = ensurePostReactions(db)
+      .filter((entry) => String(entry?.postId || "").trim() === postId)
+      .map((entry) => structuredClone(entry));
+    const removedCommentIds = snapshotComments.map((c) => c.id);
+    const removedCommentIdSet = new Set(removedCommentIds);
+    const snapshotCommentReactions = removedCommentIds.length > 0
+      ? ensurePostCommentReactions(db)
+          .filter((entry) =>
+            removedCommentIdSet.has(String(entry?.commentId || "").trim()),
+          )
+          .map((entry) => structuredClone(entry))
+      : [];
+
+    db.posts.splice(postIndex, 1);
     db.comments = db.comments.filter((entry) => entry.postId !== postId);
     // Cleanup reaction rows so they don't outlive their post / comment.
     db.postReactions = ensurePostReactions(db).filter(
       (entry) => String(entry?.postId || "").trim() !== postId,
     );
     if (removedCommentIds.length > 0) {
-      const removedSet = new Set(removedCommentIds);
       db.postCommentReactions = ensurePostCommentReactions(db).filter(
         (entry) =>
-          !removedSet.has(String(entry?.commentId || "").trim()),
+          !removedCommentIdSet.has(String(entry?.commentId || "").trim()),
       );
     }
+
+    // Ship Q4a: write snapshot row to deletedPosts для 30d restore.
+    const nowIsoStr = nowIso();
+    const retentionDays = Number(process.env.RODNYA_DELETED_POSTS_RETENTION_DAYS) || 30;
+    const floorHours = Number(process.env.RODNYA_DELETED_POSTS_FLOOR_HOURS) || 3;
+    const hardDeleteAt = new Date(
+      Date.parse(nowIsoStr) + retentionDays * 24 * 3600 * 1000,
+    ).toISOString();
+    const earliestHardDelete = new Date(
+      Date.parse(nowIsoStr) + floorHours * 3600 * 1000,
+    ).toISOString();
+    db.deletedPosts = Array.isArray(db.deletedPosts) ? db.deletedPosts : [];
+    db.deletedPosts.push({
+      id: crypto.randomUUID(),
+      originalPostId: postId,
+      treeId: post.treeId,
+      snapshot: snapshotPost,
+      commentsSnapshot: snapshotComments,
+      postReactionsSnapshot: snapshotPostReactions,
+      commentReactionsSnapshot: snapshotCommentReactions,
+      deletedAt: nowIsoStr,
+      deletedByUserId: actorUserId,
+      hardDeleteScheduledAt: hardDeleteAt,
+      earliestHardDelete,
+      restoredAt: null,
+      restoredByUserId: null,
+    });
+
     await this._write(db);
     return structuredClone(post);
+  }
+
+  /// Ship Q4a (2026-05-28, Ship 30b): list caller's deleted posts.
+  /// Returns rows где caller был author (deletedByUserId match —
+  /// они одинаковые because только author может delete own post per
+  /// route gate at line 287).
+  async listDeletedPostsForUser({userId}) {
+    if (!userId || typeof userId !== "string") return [];
+    const db = await this._read();
+    return (db.deletedPosts || [])
+      .filter((entry) => !entry.restoredAt && entry.deletedByUserId === userId)
+      .sort((a, b) =>
+        String(b.deletedAt || "").localeCompare(String(a.deletedAt || "")),
+      )
+      .map((entry) => structuredClone(entry));
+  }
+
+  /// Ship Q4a (2026-05-28, Ship 30b): restore post snapshot →
+  /// db.posts + comments + reactions. Permission: original author
+  /// либо семья owner of post's tree (если tree bound к семья).
+  /// Throws:
+  ///   • DELETED_POST_NOT_FOUND (404)
+  ///   • ALREADY_RESTORED (409)
+  ///   • HARD_DELETE_ELAPSED (410)
+  ///   • FORBIDDEN (403)
+  async restorePost({deletedPostId, actorUserId}) {
+    if (!deletedPostId || typeof deletedPostId !== "string") {
+      throw new Error("INVALID_INPUT");
+    }
+    if (!actorUserId) throw new Error("INVALID_ACTOR");
+
+    const db = await this._read();
+    const row = (db.deletedPosts || []).find(
+      (entry) => entry.id === deletedPostId,
+    );
+    if (!row) throw new Error("DELETED_POST_NOT_FOUND");
+    if (row.restoredAt) throw new Error("ALREADY_RESTORED");
+    if (
+      row.hardDeleteScheduledAt &&
+      Date.parse(row.hardDeleteScheduledAt) < Date.now()
+    ) {
+      throw new Error("HARD_DELETE_ELAPSED");
+    }
+
+    // Permission: actor was original deleter (= author per route gate)
+    // либо owner of семья bound к post's tree.
+    const isOriginalActor = row.deletedByUserId === actorUserId;
+    let isSemyaOwner = false;
+    const tree = (db.trees || []).find((t) => t.id === row.treeId);
+    if (tree?.semyaId) {
+      const semya = (db.semyi || []).find(
+        (s) => s.id === tree.semyaId && !s.deletedAt,
+      );
+      if (semya?.ownerId === actorUserId) {
+        isSemyaOwner = true;
+      }
+    }
+    if (!isOriginalActor && !isSemyaOwner) {
+      throw new Error("FORBIDDEN");
+    }
+
+    // Restore snapshot к live state.
+    db.posts = Array.isArray(db.posts) ? db.posts : [];
+    db.posts.push(structuredClone(row.snapshot));
+    if (Array.isArray(row.commentsSnapshot)) {
+      db.comments = Array.isArray(db.comments) ? db.comments : [];
+      for (const c of row.commentsSnapshot) {
+        db.comments.push(structuredClone(c));
+      }
+    }
+    if (Array.isArray(row.postReactionsSnapshot)) {
+      db.postReactions = ensurePostReactions(db);
+      for (const r of row.postReactionsSnapshot) {
+        db.postReactions.push(structuredClone(r));
+      }
+    }
+    if (Array.isArray(row.commentReactionsSnapshot)) {
+      db.postCommentReactions = ensurePostCommentReactions(db);
+      for (const r of row.commentReactionsSnapshot) {
+        db.postCommentReactions.push(structuredClone(r));
+      }
+    }
+
+    row.restoredAt = nowIso();
+    row.restoredByUserId = actorUserId;
+
+    await this._write(db);
+    return structuredClone(row);
+  }
+
+  /// Ship Q4a (2026-05-28, Ship 30b): manual hard-purge с 3h floor.
+  /// Throws:
+  ///   • DELETED_POST_NOT_FOUND (404)
+  ///   • ALREADY_RESTORED (409)
+  ///   • FLOOR_NOT_MET (409)
+  ///   • FORBIDDEN (403)
+  async hardDeletePost({deletedPostId, actorUserId}) {
+    if (!deletedPostId || typeof deletedPostId !== "string") {
+      throw new Error("INVALID_INPUT");
+    }
+    if (!actorUserId) throw new Error("INVALID_ACTOR");
+
+    const db = await this._read();
+    const idx = (db.deletedPosts || []).findIndex(
+      (entry) => entry.id === deletedPostId,
+    );
+    if (idx < 0) throw new Error("DELETED_POST_NOT_FOUND");
+    const row = db.deletedPosts[idx];
+    if (row.restoredAt) throw new Error("ALREADY_RESTORED");
+    if (
+      row.earliestHardDelete &&
+      Date.parse(row.earliestHardDelete) > Date.now()
+    ) {
+      throw new Error("FLOOR_NOT_MET");
+    }
+
+    // Manual hard-purge: only author (per dispatch — «Manual
+    // hard-delete post: only author»).
+    if (row.deletedByUserId !== actorUserId) {
+      throw new Error("FORBIDDEN");
+    }
+
+    db.deletedPosts.splice(idx, 1);
+    await this._write(db);
+    return {purged: true, deletedPostId};
   }
 
   async togglePostLike(postId, userId) {
@@ -18883,6 +19072,8 @@ class FileStore {
       // swept by same job. Path 2 architecture (ec12804) — physical
       // erasure after retention + 3h floor (earliestHardDelete).
       deletedPersons: 0,
+      // Ship Q4a (2026-05-28, Ship 30b): deletedPosts swept same way.
+      deletedPosts: 0,
       auditPruned: 0,
     };
     const sampleIds = {};
@@ -18961,6 +19152,38 @@ class FileStore {
       budget -= 1;
     }
 
+    // Ship Q4a (2026-05-28, Ship 30b): same sweep для deletedPosts.
+    // Identical eligibility logic (3h floor + retention) — copy-paste
+    // of persons block. Posts data sleeker (post + comments +
+    // reactions snapshot), so physical erasure removes whole row.
+    const removeDeletedPostIds = new Set();
+    for (const row of db.deletedPosts || []) {
+      if (budget <= 0) break;
+      if (row.restoredAt) continue;
+      if (!isEligible(row)) continue;
+      if (
+        row.earliestHardDelete &&
+        Date.parse(row.earliestHardDelete) > startedTs
+      ) {
+        continue;
+      }
+      newAuditEntries.push({
+        runId: effectiveRunId,
+        entityType: "deletedPost",
+        entityId: row.id,
+        deletedAt: row.deletedAt,
+        scheduledAt: row.hardDeleteScheduledAt,
+        hardDeletedAt: startedAt.toISOString(),
+      });
+      removeDeletedPostIds.add(row.id);
+      deletedCounts.deletedPosts += 1;
+      if (!sampleIds.deletedPost) sampleIds.deletedPost = [];
+      if (sampleIds.deletedPost.length < 5) {
+        sampleIds.deletedPost.push(row.id);
+      }
+      budget -= 1;
+    }
+
     // Orphan cleanup для branchPersonViews — views ссылающиеся на
     // branches/graphPersons удалёнными в этом run. Views не имеют
     // собственного `deletedAt`, потому отдельный path.
@@ -19012,7 +19235,8 @@ class FileStore {
       deletedCounts.branches +
       deletedCounts.personIdentities +
       deletedCounts.branchPersonViews +
-      deletedCounts.deletedPersons;
+      deletedCounts.deletedPersons +
+      deletedCounts.deletedPosts;
 
     if (!dryRun) {
       db.graphRelations = (db.graphRelations || []).filter(
@@ -19036,6 +19260,10 @@ class FileStore {
       // beyond этого point.
       db.deletedPersons = (db.deletedPersons || []).filter(
         (r) => !removeDeletedPersonIds.has(r.id),
+      );
+      // Ship Q4a (Ship 30b): same для deletedPosts.
+      db.deletedPosts = (db.deletedPosts || []).filter(
+        (r) => !removeDeletedPostIds.has(r.id),
       );
       db.hardDeleteAudit = [...survivingAudit, ...newAuditEntries];
       db.hardDeleteLastRunAt = startedAt.toISOString();
