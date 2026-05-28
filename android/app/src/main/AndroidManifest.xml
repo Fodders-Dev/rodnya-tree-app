@@ -171,6 +171,26 @@
                 <data android:pathPrefix="/oauth/"/>
             </intent-filter>
 
+            <!-- Ship FE3b (2026-05-28): семя invitation deep link
+                 (https://rodnya-tree.ru/invite/{token}). Sibling
+                 verified-App-Link filter — autoVerify ставит assetlinks.json
+                 owner-check тот же, что для /oauth/ блока (release keystore
+                 SHA-256 listed once в JSON, covers all path prefixes этого
+                 host). NO separate keystore wiring required.
+
+                 Token = one-shot capability secret (backend Ship 4). Тап
+                 от email opens app via этот filter, Flutter intercepts
+                 path через GoRouter's /invite/:token route, guard
+                 persists token + handles login redirect если нужно. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="https"/>
+                <data android:host="rodnya-tree.ru"/>
+                <data android:pathPrefix="/invite/"/>
+            </intent-filter>
+
         </activity>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->

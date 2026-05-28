@@ -22,6 +22,7 @@ import '../screens/public_tree_entry_screen.dart';
 import '../screens/qr_login_display_screen.dart';
 import '../screens/public_tree_viewer_screen.dart';
 import '../screens/relative_details_screen.dart';
+import '../screens/semya_invitation_accept_screen.dart';
 import '../screens/send_relation_request_screen.dart';
 import '../screens/story_viewer_screen.dart';
 import '../screens/user_profile_entry_screen.dart';
@@ -420,6 +421,24 @@ class AppOverlayRouteModule {
           child: const SizedBox.shrink(),
           transitionsBuilder: AppRouteTransitions.fade,
         ),
+      ),
+      // Ship FE3b (2026-05-28): семя invitation deep link с token
+      // path. Distinct из legacy `/invite` (Phase 3.4 — treeId+personId
+      // query params) — этот route accepts ONE-shot capability token
+      // в path segment. Mirror /browse/:token (FE6a) structure.
+      // Guard handles logged-out persistence + redirect к /login;
+      // screen invokes acceptInvitation on mount.
+      GoRoute(
+        path: '/invite/:token',
+        parentNavigatorKey: rootNavigatorKey,
+        pageBuilder: (context, state) {
+          final token = state.pathParameters['token'] ?? '';
+          return RodnyaCustomTransitionPage(
+            key: state.pageKey,
+            child: SemyaInvitationAcceptScreen(token: token),
+            transitionsBuilder: AppRouteTransitions.fade,
+          );
+        },
       ),
       GoRoute(
         path: '/public/tree/:publicTreeId',

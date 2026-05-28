@@ -5,6 +5,7 @@ import '../backend/backend_runtime_config.dart';
 import '../backend/interfaces/auth_service_interface.dart';
 import '../providers/tree_provider.dart';
 import '../services/invitation_service.dart';
+import '../services/semya_invitation_deep_link_service.dart';
 
 class AppRouterGuards {
   AppRouterGuards({
@@ -102,6 +103,15 @@ class AppRouterGuards {
     // redirects fresh user к /complete_profile, обнуляя wizard entirely.
     final setupWizard = state.matchedLocation == '/setup';
     final invitePage = state.matchedLocation == '/invite';
+    // Ship FE3b (2026-05-28): семя invitation token deep link.
+    // Distinct from legacy /invite (treeId+personId query params)
+    // — token-based capability lives на /invite/:token path. Guard
+    // persists token to disk before potential login redirect so
+    // OAuth bounces / cold starts don't lose it (mirror legacy
+    // InvitationService pattern).
+    final semyaInvitationTokenPage =
+        state.matchedLocation.startsWith('/invite/') &&
+            state.matchedLocation.length > '/invite/'.length;
     final publicTreePage = state.matchedLocation.startsWith('/public/tree/');
     // Ship FE6a (2026-05-26): browse-token capability route — token
     // самo is auth (backend GET /v1/browse/:token works anonymous).
@@ -115,6 +125,13 @@ class AppRouterGuards {
 
     if (invitePage) {
       return _handleInviteRoute(isLoggedIn: isLoggedIn, state: state);
+    }
+
+    if (semyaInvitationTokenPage) {
+      return _handleSemyaInvitationTokenRoute(
+        isLoggedIn: isLoggedIn,
+        state: state,
+      );
     }
 
     if (publicTreePage || browseTokenPage) {
@@ -165,6 +182,27 @@ class AppRouterGuards {
       return '/login';
     }
     return isLoggedIn ? '/' : '/login';
+  }
+
+  /// Ship FE3b (2026-05-28): handle deep link `/invite/:token` route
+  /// guard. Persists token к disk perед any redirect chain (covers
+  /// OAuth round-trips + cold starts). Authed user passes through к
+  /// SemyaInvitationAcceptScreen which invokes acceptInvitation.
+  /// Unauthed user redirected к /login?from=/invite/{token} —
+  /// after login, router re-resolves same path с authed context.
+  String? _handleSemyaInvitationTokenRoute({
+    required bool isLoggedIn,
+    required GoRouterState state,
+  }) {
+    final token = state.pathParameters['token']?.trim() ?? '';
+    if (token.isEmpty) {
+      return isLoggedIn ? '/' : '/login';
+    }
+    SemyaInvitationDeepLinkService().setPendingToken(token);
+    if (!isLoggedIn) {
+      return buildLoginRedirectTarget(state);
+    }
+    return null;
   }
 
   Future<String?> _ensureCompletedProfile(GoRouterState state) async {
