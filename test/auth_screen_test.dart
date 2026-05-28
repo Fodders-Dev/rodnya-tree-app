@@ -96,6 +96,51 @@ void main() {
     expect(find.text('MAX'), findsNothing);
   });
 
+  testWidgets(
+    'UX audit Screen 1.2: password field decoration allows error wrap',
+    (tester) async {
+      // Mobile-narrow layout — original truncation surface.
+      await tester.binding.setSurfaceSize(const Size(360, 800));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: AuthScreen(),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Verify InputDecorator (Flutter's internal widget for each
+      // TextFormField) carrying labelText='Пароль' has errorMaxLines
+      // ≥ 2. Это самый прямой assert на fix surface: _fieldDecoration
+      // sets errorMaxLines: 2, so validator error («Пароль должен
+      // содержать не менее 6 символов» — 42 chars Cyrillic) wraps
+      // вместо truncate'нуться с ellipsis.
+      final decorators = tester.widgetList<InputDecorator>(
+        find.byType(InputDecorator),
+      );
+      final passwordDecorator = decorators.firstWhere(
+        (d) => d.decoration.labelText == 'Пароль',
+      );
+      expect(
+        passwordDecorator.decoration.errorMaxLines,
+        greaterThanOrEqualTo(2),
+        reason: 'UX audit Screen 1.2 fix — error wraps across lines '
+            'instead of ellipsis-truncating',
+      );
+
+      // Same invariant applies к Email field (any future long
+      // validator copy там too will wrap).
+      final emailDecorator = decorators.firstWhere(
+        (d) => d.decoration.labelText == 'Email',
+      );
+      expect(
+        emailDecorator.decoration.errorMaxLines,
+        greaterThanOrEqualTo(2),
+      );
+    },
+  );
+
   testWidgets('wide CTA switches auth screen into registration mode',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(1280, 900));

@@ -1853,6 +1853,14 @@ class _AuthScreenState extends State<AuthScreen> {
       filled: true,
       fillColor:
           theme.colorScheme.surfaceContainerLowest.withValues(alpha: 0.9),
+      // UX audit 2026-05-25 Screen 1.2 (ed62ba6): validation error
+      // («Пароль должен содержать не менее 6 символов») truncated
+      // на narrow screens к «Пароль должен содержать не мене...».
+      // Flutter default `errorMaxLines: 1` причина. Allow до 2-х
+      // строк wrap так every validator message helper читается
+      // полностью (longest current is password message at ~42 chars
+      // в Cyrillic, fits 2 lines comfortably на любом mobile width).
+      errorMaxLines: 2,
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(22),
         borderSide: BorderSide.none,
