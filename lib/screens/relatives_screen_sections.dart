@@ -55,7 +55,12 @@ extension _RelativesScreenSections on _RelativesScreenState {
     }
 
     if (value == 'add') {
-      context.push('/relatives/add/$selectedTreeId');
+      // Audit Screen 4.2 (2026-05-28): explicit «Кем приходится?»
+      // step ПЕРЕД name form.
+      showRelationPickerAndNavigateAdd(
+        context,
+        treeId: selectedTreeId,
+      );
     } else if (value == 'find') {
       context.push('/relatives/find/$selectedTreeId');
     } else if (value == 'tree_view') {

@@ -30,6 +30,7 @@ import '../utils/user_facing_error.dart';
 import '../widgets/branch_switcher_chip.dart';
 import '../widgets/identity_conflicts_badge.dart';
 import '../widgets/identity_conflicts_sheet.dart';
+import '../widgets/relation_picker_sheet.dart';
 
 part 'relatives_screen_sections.dart';
 
@@ -652,7 +653,10 @@ class _RelativesScreenState extends State<RelativesScreen> {
                 FloatingActionButton(
                   heroTag: 'add_relative_fab',
                   onPressed: () {
-                    context.push('/relatives/add/$selectedTreeId');
+                    showRelationPickerAndNavigateAdd(
+                      context,
+                      treeId: selectedTreeId,
+                    );
                   },
                   tooltip: _graphAddLabel(treeProvider),
                   child: Icon(Icons.add),
@@ -926,7 +930,10 @@ class _RelativesScreenState extends State<RelativesScreen> {
               FilledButton.icon(
                 onPressed: _currentTreeId == null
                     ? null
-                    : () => context.push('/relatives/add/${_currentTreeId!}'),
+                    : () => showRelationPickerAndNavigateAdd(
+                          context,
+                          treeId: _currentTreeId!,
+                        ),
                 icon: const Icon(Icons.person_add_alt_1_outlined),
                 label: const Text('Добавить'),
               ),
@@ -1234,8 +1241,10 @@ class _RelativesScreenState extends State<RelativesScreen> {
                   FilledButton.icon(
                     onPressed: _currentTreeId == null
                         ? null
-                        : () =>
-                            context.push('/relatives/add/${_currentTreeId!}'),
+                        : () => showRelationPickerAndNavigateAdd(
+                              context,
+                              treeId: _currentTreeId!,
+                            ),
                     style: FilledButton.styleFrom(
                       visualDensity: VisualDensity.compact,
                       tapTargetSize: MaterialTapTargetSize.shrinkWrap,

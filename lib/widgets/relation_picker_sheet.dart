@@ -1,0 +1,287 @@
+// Ship Audit 4.2 (2026-05-28): shared «Кем приходится?» relation
+// picker sheet. Mama-friendly first step before name-form в add-
+// relative flow.
+//
+// UX audit (ed62ba6) Screen 4.2 — текущий entry points (relatives
+// screen FAB, find_relative_screen, action sheet «Добавить
+// родственника») открывают AddRelativeScreen без explicit relation
+// hint. Mama-сценарий: видит длинный form с relation dropdown,
+// тыкается случайно. Этот picker делает relation FIRST step.
+//
+// Pattern mirrors EmptyTreeGuidedCta (Ship 11, 0dda6fe) which уже
+// shipped relation-first для empty-tree state. Этот sheet extracts
+// same idea для non-empty entry points.
+//
+// AddRelativeScreen already supports `predefinedRelation` + extras
+// (per Ship 11 wiring). Этот sheet just shims the navigation —
+// no AddRelativeScreen refactor.
+
+import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
+
+import '../models/family_person.dart';
+import '../models/family_relation.dart';
+
+/// Public picker result — relation + optional gender hint.
+/// `relationType == null` означает user chose «Другое родство —
+/// заполню сам» (signal к AddRelativeScreen use generic UI без
+/// pre-fill).
+class RelationPickerResult {
+  const RelationPickerResult({this.relationType, this.gender});
+  final RelationType? relationType;
+  final Gender? gender;
+}
+
+/// Test-friendly low-level — shows picker sheet и returns chosen
+/// relation. Returns null если sheet dismissed без selection.
+/// Separated из navigation wrapper чтобы tests can verify picker
+/// behavior без needing GoRouter scaffolding.
+Future<RelationPickerResult?> showRelationPickerSheet(
+  BuildContext context,
+) async {
+  return showModalBottomSheet<RelationPickerResult>(
+    context: context,
+    isScrollControlled: true,
+    showDragHandle: true,
+    builder: (sheetCtx) => const _RelationPickerSheet(),
+  );
+}
+
+/// Shows relation picker sheet AND navigates к /relatives/add с
+/// pre-filled relation extras. Returns navigation result от
+/// AddRelativeScreen (null если user dismissed sheet без tap).
+///
+/// [contextPersonId] — anchor person. Когда provided, AddRelativeScreen
+/// renders «Бабушка {anchor.name} — добавить» header. Null для FAB-
+/// style entry points (anchor = caller's self person).
+Future<dynamic> showRelationPickerAndNavigateAdd(
+  BuildContext context, {
+  required String treeId,
+  String? contextPersonId,
+}) async {
+  final pick = await showRelationPickerSheet(context);
+  if (pick == null) return null;
+  if (!context.mounted) return null;
+  final extras = <String, dynamic>{
+    if (contextPersonId != null) 'contextPersonId': contextPersonId,
+    'quickAddMode': true,
+    if (pick.relationType != null) 'predefinedRelation': pick.relationType,
+    if (pick.gender != null) 'prefilledGender': pick.gender,
+  };
+  return context.push<dynamic>(
+    '/relatives/add/$treeId',
+    extra: extras,
+  );
+}
+
+class _RelationPickerSheet extends StatefulWidget {
+  const _RelationPickerSheet();
+
+  @override
+  State<_RelationPickerSheet> createState() => _RelationPickerSheetState();
+}
+
+class _RelationPickerSheetState extends State<_RelationPickerSheet> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(4, 8, 4, 4),
+                child: Text(
+                  'Кем приходится?',
+                  style: theme.textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              const Padding(
+                padding: EdgeInsets.fromLTRB(4, 0, 4, 12),
+                child: Text(
+                  'Выбери связь — потом заполнишь имя и дату.',
+                ),
+              ),
+              // Primary CTAs (mirror EmptyTreeGuidedCta).
+              _PrimaryTile(
+                key: const Key('relation-picker-mama'),
+                icon: Icons.face_3_outlined,
+                label: 'Мама',
+                onTap: () => _pick(
+                  context,
+                  RelationType.parent,
+                  Gender.female,
+                ),
+              ),
+              const SizedBox(height: 8),
+              _PrimaryTile(
+                key: const Key('relation-picker-papa'),
+                icon: Icons.face_outlined,
+                label: 'Папа',
+                onTap: () => _pick(
+                  context,
+                  RelationType.parent,
+                  Gender.male,
+                ),
+              ),
+              const SizedBox(height: 8),
+              _PrimaryTile(
+                key: const Key('relation-picker-child'),
+                icon: Icons.child_care_outlined,
+                label: 'Ребёнок',
+                onTap: () => _pick(context, RelationType.child, null),
+              ),
+              const SizedBox(height: 8),
+              _PrimaryTile(
+                key: const Key('relation-picker-partner'),
+                icon: Icons.favorite_outline_rounded,
+                label: 'Супруг / Партнёр',
+                onTap: () => _pick(context, RelationType.spouse, null),
+              ),
+              const SizedBox(height: 8),
+              _PrimaryTile(
+                key: const Key('relation-picker-sibling'),
+                icon: Icons.group_outlined,
+                label: 'Брат / Сестра',
+                onTap: () => _pick(context, RelationType.sibling, null),
+              ),
+              const SizedBox(height: 8),
+              _PrimaryTile(
+                key: const Key('relation-picker-grandparent'),
+                icon: Icons.elderly_outlined,
+                label: 'Дедушка / Бабушка',
+                onTap: () => _pick(context, RelationType.grandparent, null),
+              ),
+              const SizedBox(height: 12),
+              // Expand secondary relations.
+              if (!_expanded)
+                TextButton.icon(
+                  key: const Key('relation-picker-other-expand'),
+                  icon: const Icon(Icons.add_rounded),
+                  label: const Text('Другой родственник'),
+                  onPressed: () => setState(() => _expanded = true),
+                )
+              else ...[
+                const Divider(),
+                _SecondaryTile(
+                  keyName: 'aunt',
+                  label: 'Тётя',
+                  onTap: () => _pick(context, RelationType.aunt, Gender.female),
+                ),
+                _SecondaryTile(
+                  keyName: 'uncle',
+                  label: 'Дядя',
+                  onTap: () => _pick(context, RelationType.uncle, Gender.male),
+                ),
+                _SecondaryTile(
+                  keyName: 'nephew',
+                  label: 'Племянник',
+                  onTap: () =>
+                      _pick(context, RelationType.nephew, Gender.male),
+                ),
+                _SecondaryTile(
+                  keyName: 'niece',
+                  label: 'Племянница',
+                  onTap: () =>
+                      _pick(context, RelationType.niece, Gender.female),
+                ),
+                _SecondaryTile(
+                  keyName: 'cousin',
+                  label: 'Кузен / Кузина',
+                  onTap: () => _pick(context, RelationType.cousin, null),
+                ),
+                _SecondaryTile(
+                  keyName: 'great-grandparent',
+                  label: 'Прадед / Прабабка',
+                  onTap: () =>
+                      _pick(context, RelationType.greatGrandparent, null),
+                ),
+                _SecondaryTile(
+                  keyName: 'parent-in-law',
+                  label: 'Тесть / Тёща / Свёкр / Свекровь',
+                  onTap: () => _pick(context, RelationType.parentInLaw, null),
+                ),
+                _SecondaryTile(
+                  keyName: 'sibling-in-law',
+                  label: 'Деверь / Золовка / Шурин',
+                  onTap: () => _pick(context, RelationType.siblingInLaw, null),
+                ),
+                _SecondaryTile(
+                  keyName: 'other',
+                  label: 'Другое родство — заполню сам',
+                  trailing: const Icon(Icons.edit_outlined, size: 18),
+                  onTap: () =>
+                      Navigator.of(context).pop(const RelationPickerResult()),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _pick(BuildContext ctx, RelationType type, Gender? gender) {
+    Navigator.of(ctx).pop(RelationPickerResult(relationType: type, gender: gender));
+  }
+}
+
+class _PrimaryTile extends StatelessWidget {
+  const _PrimaryTile({
+    super.key,
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return FilledButton.tonalIcon(
+      onPressed: onTap,
+      icon: Icon(icon),
+      label: Text(label, style: const TextStyle(fontSize: 16)),
+      style: FilledButton.styleFrom(
+        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 18),
+        alignment: Alignment.centerLeft,
+        minimumSize: const Size.fromHeight(52),
+      ),
+    );
+  }
+}
+
+class _SecondaryTile extends StatelessWidget {
+  const _SecondaryTile({
+    required this.keyName,
+    required this.label,
+    required this.onTap,
+    this.trailing,
+  });
+
+  final String keyName;
+  final String label;
+  final VoidCallback onTap;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      key: Key('relation-picker-$keyName'),
+      title: Text(label),
+      trailing: trailing ?? const Icon(Icons.chevron_right_rounded, size: 18),
+      onTap: onTap,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+    );
+  }
+}

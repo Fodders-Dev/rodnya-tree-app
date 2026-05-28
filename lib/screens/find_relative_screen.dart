@@ -11,6 +11,7 @@ import '../backend/interfaces/family_tree_service_interface.dart';
 import '../backend/interfaces/profile_service_interface.dart';
 import '../models/family_relation.dart';
 import '../models/user_profile.dart';
+import '../widgets/relation_picker_sheet.dart';
 import '../services/app_status_service.dart';
 import '../utils/photo_url.dart';
 import '../utils/user_facing_error.dart';
@@ -737,8 +738,12 @@ class _FindRelativeScreenState extends State<FindRelativeScreen>
                 ),
                 const SizedBox(height: 12),
                 OutlinedButton.icon(
-                  onPressed: () =>
-                      context.push('/relatives/add/${widget.treeId}'),
+                  // Audit Screen 4.2 (2026-05-28): «Кем приходится?»
+                  // step ПЕРЕД name form.
+                  onPressed: () => showRelationPickerAndNavigateAdd(
+                    context,
+                    treeId: widget.treeId,
+                  ),
                   icon: const Icon(Icons.person_add_alt_1_outlined),
                   label: const Text('Добавить карточку родственника'),
                 ),

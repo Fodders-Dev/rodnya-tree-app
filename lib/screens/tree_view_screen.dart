@@ -30,6 +30,7 @@ import '../widgets/extended_network_filter_sheet.dart';
 import '../widgets/extended_network_filter_sidebar.dart';
 import '../widgets/extended_network_search_sheet.dart';
 import '../widgets/empty_tree_guided_cta.dart';
+import '../widgets/relation_picker_sheet.dart';
 import '../widgets/extended_network_toggle.dart';
 import '../widgets/semya_context_badge.dart';
 import '../widgets/foreign_node_sheet.dart';
@@ -1366,12 +1367,13 @@ class _TreeViewScreenState extends State<TreeViewScreen>
         });
       },
       onAddRelative: () {
-        context.push<dynamic>(
-          '/relatives/add/$treeId',
-          extra: <String, dynamic>{
-            'contextPersonId': person.id,
-            'quickAddMode': true,
-          },
+        // Audit Screen 4.2 (2026-05-28): explicit «Кем приходится?»
+        // step ПЕРЕД name form. Picker → push с predefinedRelation
+        // extra → AddRelativeScreen reads already-supported param.
+        showRelationPickerAndNavigateAdd(
+          context,
+          treeId: treeId,
+          contextPersonId: person.id,
         ).then((result) {
           if (!mounted) return;
           if (result == true ||

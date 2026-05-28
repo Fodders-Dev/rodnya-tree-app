@@ -1,0 +1,133 @@
+// Ship Audit 4.2 (2026-05-28): RelationPickerSheet widget tests.
+//
+// Covers:
+//   • Sheet renders header «Кем приходится?» + 6 primary tiles
+//   • «+Другой родственник» expand reveals secondary picker rows
+//   • Primary tile tap pops sheet с correct RelationType + Gender hint
+//   • Secondary tile (например, Тётя) pops с aunt + female
+//   • «Другое родство — заполню сам» pops с null relation
+//     (signal к AddRelativeScreen использовать default UI)
+
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:rodnya/models/family_person.dart';
+import 'package:rodnya/models/family_relation.dart';
+import 'package:rodnya/widgets/relation_picker_sheet.dart';
+
+/// Reusable test harness — uses lower-level `showRelationPickerSheet`
+/// (returns pick synchronously) к избежать GoRouter dependency.
+/// Production wrapper `showRelationPickerAndNavigateAdd` adds
+/// context.push на top — tested indirectly through wire-up sites.
+RelationPickerResult? capturedResult;
+
+Future<void> _openSheet(WidgetTester tester) async {
+  capturedResult = null;
+  await tester.pumpWidget(
+    MaterialApp(
+      home: Scaffold(
+        body: Builder(
+          builder: (ctx) => Center(
+            child: ElevatedButton(
+              onPressed: () async {
+                capturedResult = await showRelationPickerSheet(ctx);
+              },
+              child: const Text('open'),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+  await tester.tap(find.text('open'));
+  await tester.pumpAndSettle();
+}
+
+void main() {
+  testWidgets('sheet header + 6 primary relations rendered', (tester) async {
+    await _openSheet(tester);
+    expect(find.text('Кем приходится?'), findsOneWidget);
+    // Primary tiles.
+    expect(find.text('Мама'), findsOneWidget);
+    expect(find.text('Папа'), findsOneWidget);
+    expect(find.text('Ребёнок'), findsOneWidget);
+    expect(find.text('Супруг / Партнёр'), findsOneWidget);
+    expect(find.text('Брат / Сестра'), findsOneWidget);
+    expect(find.text('Дедушка / Бабушка'), findsOneWidget);
+    // «Другой» expand entry visible.
+    expect(find.text('Другой родственник'), findsOneWidget);
+  });
+
+  testWidgets('«+Другой родственник» expand reveals secondary tiles',
+      (tester) async {
+    await _openSheet(tester);
+    expect(find.text('Тётя'), findsNothing);
+    await tester.tap(find.byKey(const Key('relation-picker-other-expand')));
+    await tester.pumpAndSettle();
+    // Expand collapses the button.
+    expect(find.byKey(const Key('relation-picker-other-expand')), findsNothing);
+    // Secondary tiles visible.
+    expect(find.text('Тётя'), findsOneWidget);
+    expect(find.text('Дядя'), findsOneWidget);
+    expect(find.text('Племянник'), findsOneWidget);
+    expect(find.text('Племянница'), findsOneWidget);
+    expect(find.text('Кузен / Кузина'), findsOneWidget);
+    expect(find.text('Прадед / Прабабка'), findsOneWidget);
+    expect(find.text('Тесть / Тёща / Свёкр / Свекровь'), findsOneWidget);
+    expect(find.text('Деверь / Золовка / Шурин'), findsOneWidget);
+    expect(find.text('Другое родство — заполню сам'), findsOneWidget);
+  });
+
+  testWidgets('tap «Мама» pops sheet с parent + female', (tester) async {
+    await _openSheet(tester);
+    await tester.tap(find.byKey(const Key('relation-picker-mama')));
+    await tester.pumpAndSettle();
+    expect(find.text('Кем приходится?'), findsNothing);
+    expect(capturedResult?.relationType, RelationType.parent);
+    expect(capturedResult?.gender, Gender.female);
+  });
+
+  testWidgets('tap «Папа» pops sheet с parent + male', (tester) async {
+    await _openSheet(tester);
+    await tester.tap(find.byKey(const Key('relation-picker-papa')));
+    await tester.pumpAndSettle();
+    expect(capturedResult?.relationType, RelationType.parent);
+    expect(capturedResult?.gender, Gender.male);
+  });
+
+  testWidgets('tap «Тётя» from expanded → aunt + female', (tester) async {
+    await _openSheet(tester);
+    await tester.tap(find.byKey(const Key('relation-picker-other-expand')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('relation-picker-aunt')));
+    await tester.pumpAndSettle();
+    expect(capturedResult?.relationType, RelationType.aunt);
+    expect(capturedResult?.gender, Gender.female);
+  });
+
+  testWidgets('«Другое родство — заполню сам» → null relation',
+      (tester) async {
+    await _openSheet(tester);
+    await tester.tap(find.byKey(const Key('relation-picker-other-expand')));
+    await tester.pumpAndSettle();
+    // Scroll bottom row into view ПЕРЕД tap (small test viewport
+    // may render «other» offscreen).
+    await tester.ensureVisible(find.byKey(const Key('relation-picker-other')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('relation-picker-other')));
+    await tester.pumpAndSettle();
+    // Sheet returned RelationPickerResult с null relation —
+    // signal к AddRelativeScreen использовать generic UI.
+    expect(capturedResult, isNotNull);
+    expect(capturedResult?.relationType, isNull);
+    expect(capturedResult?.gender, isNull);
+  });
+
+  testWidgets('dismiss sheet без выбора returns null', (tester) async {
+    await _openSheet(tester);
+    expect(find.text('Кем приходится?'), findsOneWidget);
+    await tester.tapAt(const Offset(10, 10));
+    await tester.pumpAndSettle();
+    expect(find.text('Кем приходится?'), findsNothing);
+    expect(capturedResult, isNull);
+  });
+}
