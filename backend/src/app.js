@@ -56,6 +56,9 @@ const {
 const {
   registerDeletedPostsRoutes,
 } = require("./routes/deleted-posts-routes");
+const {
+  registerProfileArticleRoutes,
+} = require("./routes/profile-article-routes");
 const {registerIdentityRoutes} = require("./routes/identity-routes");
 const {registerMaxAuthRoutes} = require("./routes/max-auth-routes");
 const {registerMergeRoutes} = require("./routes/merge-routes");
@@ -2634,6 +2637,16 @@ function createApp({
   registerDeletedPostsRoutes(app, {
     store,
     requireAuth,
+  });
+
+  // Profile Phase 1 (2026-05-28): article-style biography CRUD.
+  // Writes reuse requireGraphPersonEdit (same gate as person edits);
+  // reads use requireTreeAccess.
+  registerProfileArticleRoutes(app, {
+    store,
+    requireAuth,
+    requireTreeAccess,
+    requireGraphPersonEdit,
   });
 
   registerTreeRoutes(app, {

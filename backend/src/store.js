@@ -132,6 +132,14 @@ const EMPTY_DB = {
   // Ship Q4a (2026-05-28, Ship 30b): same pattern для posts.
   // Snapshot captures post + comments + reactions для full restore.
   deletedPosts: [],
+  // Profile Phase 1 (2026-05-28): article-style biography entity.
+  // One row per person — ordered content blocks (paragraph / header /
+  // photo / gallery / audio / quote / divider). Separate collection
+  // (NOT a person field) — keeps existing 95 db.persons read sites
+  // untouched. Per-block authorUserId = multi-author attribution;
+  // full history reuses treeChangeRecords (type `article.*`). Media
+  // referenced by url (no media table — mirrors photoGallery).
+  profileArticles: [],
   personIdentities: [],
   personAttributes: [],
   circles: [],
@@ -240,6 +248,9 @@ function normalizeDbState(parsed) {
     // Ship Q4a (2026-05-28, Ship 30b): same для deletedPosts.
     deletedPosts: Array.isArray(parsed?.deletedPosts)
       ? parsed.deletedPosts
+      : [],
+    profileArticles: Array.isArray(parsed?.profileArticles)
+      ? parsed.profileArticles
       : [],
     personIdentities: Array.isArray(parsed?.personIdentities)
       ? parsed.personIdentities
@@ -4939,6 +4950,153 @@ function createTreeChangeRecord({
     createdAt: nowIso(),
     details:
       details && typeof details === "object" ? structuredClone(details) : {},
+  };
+}
+
+// ===== Profile Phase 1 (2026-05-28): article-block helpers =====
+//
+// Blocks are validated-but-flexible: the store enforces the per-type
+// content shape (so the entity stays stable across Phases 2-6) but
+// stores the normalized object as-is. Media referenced by url —
+// there is no media table (mirrors photoGallery). Inline rich text +
+// родственник-mentions use structured spans so mention display names
+// can auto-sync from personId at render time (proposal §4.9).
+
+const ARTICLE_BLOCK_TYPES = Object.freeze([
+  "paragraph",
+  "header",
+  "photo",
+  "gallery",
+  "audio",
+  "quote",
+  "divider",
+]);
+
+// Normalize one inline span inside a paragraph block. Drops malformed
+// spans rather than throwing — a stray span shouldn't reject a whole
+// save. Recognized: plain text, родственник-mention (personId ref +
+// fallbackText for offline render), external link.
+function normalizeArticleSpan(rawSpan) {
+  if (typeof rawSpan === "string") {
+    return rawSpan ? {text: rawSpan} : null;
+  }
+  if (!rawSpan || typeof rawSpan !== "object") return null;
+  const type = normalizeNullableString(rawSpan.type);
+  if (type === "mention") {
+    const personId = normalizeNullableString(rawSpan.personId);
+    if (!personId) return null;
+    return {
+      type: "mention",
+      personId,
+      fallbackText: String(rawSpan.fallbackText || rawSpan.text || "").trim(),
+    };
+  }
+  if (type === "link") {
+    const href = normalizeNullableString(rawSpan.href);
+    if (!href) return null;
+    return {
+      type: "link",
+      href,
+      text: String(rawSpan.text || href).trim(),
+    };
+  }
+  // Plain text span (default).
+  const text = typeof rawSpan.text === "string" ? rawSpan.text : "";
+  return {text};
+}
+
+function normalizeArticleSpans(rawSpans) {
+  if (!Array.isArray(rawSpans)) return [];
+  return rawSpans.map(normalizeArticleSpan).filter(Boolean);
+}
+
+function normalizeArticleMediaItem(rawItem) {
+  if (typeof rawItem === "string") {
+    rawItem = {url: rawItem};
+  }
+  if (!rawItem || typeof rawItem !== "object") return null;
+  const url = normalizeNullableString(rawItem.url);
+  if (!url) return null;
+  const accuracy = normalizeNullableString(rawItem.dateTakenAccuracy);
+  return {
+    url,
+    thumbnailUrl: normalizeNullableString(rawItem.thumbnailUrl),
+    caption: normalizeNullableString(rawItem.caption),
+    dateTaken: normalizeOptionalIsoTimestamp(rawItem.dateTaken) || null,
+    dateTakenAccuracy:
+      accuracy === "exact" || accuracy === "year" || accuracy === "decade"
+        ? accuracy
+        : null,
+  };
+}
+
+// Validate + normalize content for a block type. Throws
+// INVALID_BLOCK_TYPE / INVALID_BLOCK_CONTENT (mapped to 400 in routes).
+function normalizeArticleBlockContent(type, rawContent) {
+  const normalizedType = normalizeNullableString(type);
+  if (!normalizedType || !ARTICLE_BLOCK_TYPES.includes(normalizedType)) {
+    throw new Error("INVALID_BLOCK_TYPE");
+  }
+  const content =
+    rawContent && typeof rawContent === "object" ? rawContent : {};
+
+  switch (normalizedType) {
+    case "paragraph":
+      return {spans: normalizeArticleSpans(content.spans)};
+    case "header": {
+      const level = Number(content.level);
+      return {
+        text: String(content.text || "").trim(),
+        level: level === 1 ? 1 : 2,
+      };
+    }
+    case "photo": {
+      const item = normalizeArticleMediaItem(content);
+      if (!item) throw new Error("INVALID_BLOCK_CONTENT");
+      return item;
+    }
+    case "gallery": {
+      const items = Array.isArray(content.items)
+        ? content.items.map(normalizeArticleMediaItem).filter(Boolean)
+        : [];
+      if (items.length === 0) throw new Error("INVALID_BLOCK_CONTENT");
+      return {items};
+    }
+    case "audio": {
+      const url = normalizeNullableString(content.url);
+      if (!url) throw new Error("INVALID_BLOCK_CONTENT");
+      const durationSec = Number(content.durationSec);
+      return {
+        url,
+        durationSec:
+          Number.isFinite(durationSec) && durationSec > 0
+            ? Math.round(durationSec)
+            : null,
+        transcript: normalizeNullableString(content.transcript),
+      };
+    }
+    case "quote":
+      return {
+        text: String(content.text || "").trim(),
+        attribution: normalizeNullableString(content.attribution),
+      };
+    case "divider":
+    default:
+      return {};
+  }
+}
+
+function createArticleBlockRecord({type, content, actorUserId}) {
+  const createdAt = nowIso();
+  const author = normalizeNullableString(actorUserId);
+  return {
+    id: crypto.randomUUID(),
+    type: normalizeNullableString(type),
+    content: normalizeArticleBlockContent(type, content),
+    createdByUserId: author,
+    authorUserId: author,
+    createdAt,
+    updatedAt: createdAt,
   };
 }
 
@@ -13368,6 +13526,288 @@ class FileStore {
     db.deletedPersons.splice(idx, 1);
     await this._write(db);
     return {purged: true, deletedPersonId};
+  }
+
+  // ===== Profile Phase 1 (2026-05-28): article CRUD =====
+  //
+  // Permission is enforced at the route layer (requireTreeAccess for
+  // reads, requireGraphPersonEdit for writes) — these methods are
+  // attribution-aware mutators: record actorUserId per block + append
+  // `article.*` records to treeChangeRecords (history reuses that log
+  // per proposal §9.3). Media url-addressed; block content validated
+  // by normalizeArticleBlockContent (throws INVALID_BLOCK_TYPE/CONTENT).
+
+  _findPersonRecordById(db, personId) {
+    const id = String(personId || "").trim();
+    if (!id) return null;
+    return (
+      (Array.isArray(db.persons) ? db.persons : []).find(
+        (entry) => entry.id === id,
+      ) || null
+    );
+  }
+
+  // Resolve {person, treeId, semyaId}. semyaId = person's tree's bound
+  // active семья (null when standalone tree). Throws PERSON_NOT_FOUND.
+  _resolveArticleContext(db, personId) {
+    const person = this._findPersonRecordById(db, personId);
+    if (!person) throw new Error("PERSON_NOT_FOUND");
+    const treeId = person.treeId;
+    const tree = (db.trees || []).find((entry) => entry.id === treeId);
+    const semyaId =
+      tree?.semyaId &&
+      (db.semyi || []).some((s) => s.id === tree.semyaId && !s.deletedAt)
+        ? tree.semyaId
+        : null;
+    return {person, treeId, semyaId};
+  }
+
+  // Find existing article or create+persist an empty one. Returns the
+  // live object (caller is inside a read/write cycle).
+  _ensureProfileArticle(db, personId, ctx) {
+    db.profileArticles = Array.isArray(db.profileArticles)
+      ? db.profileArticles
+      : [];
+    let article = db.profileArticles.find(
+      (entry) => entry.personId === personId,
+    );
+    if (!article) {
+      const timestamp = nowIso();
+      article = {
+        id: crypto.randomUUID(),
+        personId,
+        treeId: ctx.treeId,
+        semyaId: ctx.semyaId,
+        blocks: [],
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      };
+      db.profileArticles.push(article);
+    }
+    return article;
+  }
+
+  // GET — returns the article. Synthesizes an empty shape if none yet
+  // (NOT persisted on read). Throws PERSON_NOT_FOUND.
+  async getProfileArticle({personId}) {
+    const id = String(personId || "").trim();
+    if (!id) throw new Error("INVALID_INPUT");
+    const db = await this._read();
+    const ctx = this._resolveArticleContext(db, id);
+    const article = (db.profileArticles || []).find(
+      (entry) => entry.personId === id,
+    );
+    if (article) return structuredClone(article);
+    return {
+      id: null,
+      personId: id,
+      treeId: ctx.treeId,
+      semyaId: ctx.semyaId,
+      blocks: [],
+      createdAt: null,
+      updatedAt: null,
+    };
+  }
+
+  async appendArticleBlock({personId, type, content, actorUserId}) {
+    const id = String(personId || "").trim();
+    if (!id) throw new Error("INVALID_INPUT");
+    if (!actorUserId) throw new Error("INVALID_ACTOR");
+    const db = await this._read();
+    const ctx = this._resolveArticleContext(db, id);
+    // Validates shape (throws) BEFORE we touch db — no empty-article
+    // side effect on a rejected block.
+    const block = createArticleBlockRecord({type, content, actorUserId});
+    const article = this._ensureProfileArticle(db, id, ctx);
+    article.blocks.push(block);
+    article.updatedAt = block.createdAt;
+    this._appendTreeChangeRecord(db, {
+      treeId: ctx.treeId,
+      actorId: actorUserId,
+      type: "article.block-added",
+      personId: id,
+      details: {blockId: block.id, blockType: block.type},
+    });
+    await this._write(db);
+    return structuredClone(block);
+  }
+
+  // PATCH one block. Optional baseUpdatedAt = the updatedAt the editor
+  // loaded; if the block changed since (another author wrote), it's a
+  // conflict. Per Q3 (locked 2026-05-28): last-write-wins — apply the
+  // write, keep prior content in the audit `before` snapshot, notify
+  // the previous author. Returns {block, conflict}.
+  async updateArticleBlock({
+    personId,
+    blockId,
+    content,
+    actorUserId,
+    baseUpdatedAt = null,
+  }) {
+    const id = String(personId || "").trim();
+    const bId = String(blockId || "").trim();
+    if (!id || !bId) throw new Error("INVALID_INPUT");
+    if (!actorUserId) throw new Error("INVALID_ACTOR");
+    const db = await this._read();
+    const ctx = this._resolveArticleContext(db, id);
+    const article = (db.profileArticles || []).find(
+      (entry) => entry.personId === id,
+    );
+    const block = article?.blocks?.find((b) => b.id === bId);
+    if (!block) throw new Error("ARTICLE_BLOCK_NOT_FOUND");
+
+    const nextContent = normalizeArticleBlockContent(block.type, content);
+    const beforeContent = structuredClone(block.content);
+    const priorAuthor = block.authorUserId;
+    const conflict =
+      baseUpdatedAt != null &&
+      String(baseUpdatedAt) !== String(block.updatedAt);
+
+    const timestamp = nowIso();
+    block.content = nextContent;
+    block.authorUserId = normalizeNullableString(actorUserId);
+    block.updatedAt = timestamp;
+    article.updatedAt = timestamp;
+
+    this._appendTreeChangeRecord(db, {
+      treeId: ctx.treeId,
+      actorId: actorUserId,
+      type: "article.block-updated",
+      personId: id,
+      details: {
+        blockId: bId,
+        blockType: block.type,
+        before: beforeContent,
+        conflict,
+      },
+    });
+
+    // Q3: notify previous author when their text was overwritten.
+    if (conflict && priorAuthor && priorAuthor !== actorUserId) {
+      db.notifications = Array.isArray(db.notifications)
+        ? db.notifications
+        : [];
+      db.notifications.push(
+        createNotificationRecord({
+          userId: priorAuthor,
+          type: "article_block_conflict",
+          title: "Ваш текст в карточке изменили",
+          body:
+            "Другой родственник отредактировал абзац, который вы писали. " +
+            "Прежняя версия сохранена в истории изменений.",
+          data: {personId: id, blockId: bId, treeId: ctx.treeId},
+          silent: false,
+        }),
+      );
+    }
+
+    await this._write(db);
+    return {block: structuredClone(block), conflict};
+  }
+
+  async removeArticleBlock({personId, blockId, actorUserId}) {
+    const id = String(personId || "").trim();
+    const bId = String(blockId || "").trim();
+    if (!id || !bId) throw new Error("INVALID_INPUT");
+    if (!actorUserId) throw new Error("INVALID_ACTOR");
+    const db = await this._read();
+    const ctx = this._resolveArticleContext(db, id);
+    const article = (db.profileArticles || []).find(
+      (entry) => entry.personId === id,
+    );
+    const blockIdx = article
+      ? article.blocks.findIndex((b) => b.id === bId)
+      : -1;
+    if (!article || blockIdx < 0) {
+      throw new Error("ARTICLE_BLOCK_NOT_FOUND");
+    }
+    const [removed] = article.blocks.splice(blockIdx, 1);
+    article.updatedAt = nowIso();
+    this._appendTreeChangeRecord(db, {
+      treeId: ctx.treeId,
+      actorId: actorUserId,
+      type: "article.block-removed",
+      personId: id,
+      details: {
+        blockId: bId,
+        blockType: removed?.type || null,
+        before: removed?.content ?? null,
+      },
+    });
+    await this._write(db);
+    return {removed: true, blockId: bId};
+  }
+
+  // Reorder blocks to match orderedBlockIds. Unknown ids ignored;
+  // blocks omitted from the list keep their relative order at the end
+  // (defensive — never drops a block on a stale client list).
+  async reorderArticleBlocks({personId, orderedBlockIds, actorUserId}) {
+    const id = String(personId || "").trim();
+    if (!id) throw new Error("INVALID_INPUT");
+    if (!actorUserId) throw new Error("INVALID_ACTOR");
+    if (!Array.isArray(orderedBlockIds)) throw new Error("INVALID_INPUT");
+    const db = await this._read();
+    const ctx = this._resolveArticleContext(db, id);
+    const article = (db.profileArticles || []).find(
+      (entry) => entry.personId === id,
+    );
+    if (!article) throw new Error("ARTICLE_NOT_FOUND");
+    const byId = new Map(article.blocks.map((b) => [b.id, b]));
+    const seen = new Set();
+    const reordered = [];
+    for (const wantId of orderedBlockIds) {
+      const b = byId.get(String(wantId));
+      if (b && !seen.has(b.id)) {
+        reordered.push(b);
+        seen.add(b.id);
+      }
+    }
+    for (const b of article.blocks) {
+      if (!seen.has(b.id)) reordered.push(b);
+    }
+    article.blocks = reordered;
+    article.updatedAt = nowIso();
+    this._appendTreeChangeRecord(db, {
+      treeId: ctx.treeId,
+      actorId: actorUserId,
+      type: "article.reordered",
+      personId: id,
+      details: {order: reordered.map((b) => b.id)},
+    });
+    await this._write(db);
+    return structuredClone(article);
+  }
+
+  // History — filtered treeChangeRecords (proposal §9.3 reuse).
+  // Newest first. Throws PERSON_NOT_FOUND.
+  async getArticleHistory({personId}) {
+    const id = String(personId || "").trim();
+    if (!id) throw new Error("INVALID_INPUT");
+    const db = await this._read();
+    this._resolveArticleContext(db, id); // PERSON_NOT_FOUND guard
+    return (db.treeChangeRecords || [])
+      .filter(
+        (r) =>
+          r.personId === id &&
+          typeof r.type === "string" &&
+          r.type.startsWith("article."),
+      )
+      .sort((a, b) =>
+        String(b.createdAt || "").localeCompare(String(a.createdAt || "")),
+      )
+      .map((r) => structuredClone(r));
+  }
+
+  // Lightweight by-id tree resolver — articles are addressed by
+  // personId alone (person ids are globally unique). Returns null if
+  // the person doesn't exist. Read-only; route permission gates use it
+  // to obtain treeId before requireTreeAccess / requireGraphPersonEdit.
+  async findPersonTreeId(personId) {
+    const id = String(personId || "").trim();
+    if (!id) return null;
+    const db = await this._read();
+    const person = this._findPersonRecordById(db, id);
+    return person ? person.treeId : null;
   }
 
   async addPersonMedia({
