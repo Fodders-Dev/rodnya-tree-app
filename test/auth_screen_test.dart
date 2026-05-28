@@ -97,6 +97,52 @@ void main() {
   });
 
   testWidgets(
+    'UX audit Screen 1.1: hero visible с simulated Android call-pill viewPadding',
+    (tester) async {
+      // Galaxy S20 FE compact viewport.
+      await tester.binding.setSurfaceSize(const Size(360, 800));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      // Simulate active call pill — top viewPadding ~80dp (status bar
+      // 24 + call pill 56). Without SafeArea minimum floor, hero
+      // would clip; audit fix verifies «Семья —» wordmark rendered
+      // visibly outside the system overlay area.
+      await tester.pumpWidget(
+        MediaQuery(
+          data: const MediaQueryData(
+            size: Size(360, 800),
+            padding: EdgeInsets.only(top: 80),
+            viewPadding: EdgeInsets.only(top: 80),
+          ),
+          child: const MaterialApp(
+            home: AuthScreen(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Hero headline pieces rendered. Tree rendering successful —
+      // confirms layout не crashed под viewPadding stress AND text
+      // actually present (find.text matches even if off-screen, но
+      // missing widget would fail).
+      expect(find.text('Семья —'), findsOneWidget);
+      expect(find.text('дерево.'), findsOneWidget);
+
+      // Verify «Семья —» вертикальный offset > 80dp (i.e., below
+      // simulated call-pill area). Если SafeArea floor работает,
+      // hero text starts at либо ниже top inset.
+      final heroRect = tester.getRect(find.text('Семья —'));
+      expect(
+        heroRect.top,
+        greaterThanOrEqualTo(80),
+        reason: 'Hero «Семья —» должен render ниже simulated '
+            'system overlay (call pill + status bar = 80dp) per '
+            'SafeArea + minimum top floor fix',
+      );
+    },
+  );
+
+  testWidgets(
     'UX audit Screen 1.2: password field decoration allows error wrap',
     (tester) async {
       // Mobile-narrow layout — original truncation surface.

@@ -1122,6 +1122,16 @@ class _AuthScreenState extends State<AuthScreen> {
           ),
         ),
         child: SafeArea(
+          // UX audit 2026-05-25 Screen 1.1 (ed62ba6): Samsung S20 FE с
+          // active Android call/status pill clip'ил hero — user видел
+          // только «...дерево.» tail of headline. Default SafeArea
+          // полагается на MediaQuery.padding, который на Android при
+          // call-pill активном иногда reports lower than actual safe
+          // area. `minimum: EdgeInsets.only(top: 12)` устанавливает
+          // floor — даже если system padding несоответствует, hero
+          // получает breathing room above. Bottom intentionally
+          // omitted — keyboard / nav bar handled другими mechanisms.
+          minimum: const EdgeInsets.only(top: 12),
           child: Column(
             children: [
               const OfflineIndicator(),
@@ -1137,7 +1147,11 @@ class _AuthScreenState extends State<AuthScreen> {
                         child: Padding(
                           padding: EdgeInsets.symmetric(
                             horizontal: isWide ? 24 : 16,
-                            vertical: isWide ? 28 : 16,
+                            // Compact bumped 16 → 20 — extra breathing
+                            // perч после SafeArea minimum (per Audit
+                            // 1.1). Wide unchanged — большой viewport
+                            // не has the same clip risk.
+                            vertical: isWide ? 28 : 20,
                           ),
                           child: isWide
                               ? _buildWideLayout(theme)
