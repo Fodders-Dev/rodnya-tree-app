@@ -25,6 +25,7 @@ import '../backend/models/deleted_person.dart';
 import '../backend/models/deleted_post.dart';
 import '../backend/models/semya.dart';
 import '../utils/photo_url.dart';
+import '../widgets/deleted_item_row.dart';
 import '../widgets/safe_delete_confirmation_dialog.dart';
 
 class TrashScreen extends StatefulWidget {
@@ -269,11 +270,8 @@ class _TrashScreenState extends State<TrashScreen>
   Widget _buildPersonRow(DeletedPerson row) {
     final theme = Theme.of(context);
     final now = DateTime.now();
-    final daysLeft = row.daysUntilHardDelete(now);
-    final floorPassed = row.isFloorPassed(now);
-    final busy = _busyId == row.id;
     final image = buildAvatarImageProvider(normalizePhotoUrl(row.photoUrl));
-    return ListTile(
+    return DeletedItemRow(
       key: Key('trash-person-${row.id}'),
       leading: CircleAvatar(
         radius: 22,
@@ -289,39 +287,24 @@ class _TrashScreenState extends State<TrashScreen>
           ),
         ),
       ),
-      title: Text(row.displayName, maxLines: 1, overflow: TextOverflow.ellipsis),
-      subtitle: Text(
-        'Удалится через $daysLeft ${_daysLabel(daysLeft)}',
-        style: theme.textTheme.bodySmall?.copyWith(
-          color: theme.colorScheme.onSurfaceVariant,
-        ),
-      ),
-      trailing: busy
-          ? const SizedBox(
-              width: 24,
-              height: 24,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
-          : _buildRowActions(
-              floorPassed: floorPassed,
-              onRestore: () => _restorePerson(row),
-              onPurge: () => _permanentlyDeletePerson(row),
-              restoreKey: Key('trash-person-restore-${row.id}'),
-              purgeKey: Key('trash-person-purge-${row.id}'),
-            ),
+      title: row.displayName,
+      daysLeft: row.daysUntilHardDelete(now),
+      floorPassed: row.isFloorPassed(now),
+      busy: _busyId == row.id,
+      onRestore: () => _restorePerson(row),
+      onPurge: () => _permanentlyDeletePerson(row),
+      restoreKey: Key('trash-person-restore-${row.id}'),
+      purgeKey: Key('trash-person-purge-${row.id}'),
     );
   }
 
   Widget _buildPostRow(DeletedPost row) {
     final theme = Theme.of(context);
     final now = DateTime.now();
-    final daysLeft = row.daysUntilHardDelete(now);
-    final floorPassed = row.isFloorPassed(now);
-    final busy = _busyId == row.id;
     final thumb = buildAvatarImageProvider(
       normalizePhotoUrl(row.firstImageUrl),
     );
-    return ListTile(
+    return DeletedItemRow(
       key: Key('trash-post-${row.id}'),
       leading: CircleAvatar(
         radius: 22,
@@ -334,64 +317,16 @@ class _TrashScreenState extends State<TrashScreen>
               )
             : null,
       ),
-      title: Text(row.bodyPreview, maxLines: 2, overflow: TextOverflow.ellipsis),
-      subtitle: Text(
-        'Удалится через $daysLeft ${_daysLabel(daysLeft)}',
-        style: theme.textTheme.bodySmall?.copyWith(
-          color: theme.colorScheme.onSurfaceVariant,
-        ),
-      ),
+      title: row.bodyPreview,
+      titleMaxLines: 2,
       isThreeLine: row.bodyPreview.length > 40,
-      trailing: busy
-          ? const SizedBox(
-              width: 24,
-              height: 24,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
-          : _buildRowActions(
-              floorPassed: floorPassed,
-              onRestore: () => _restorePost(row),
-              onPurge: () => _permanentlyDeletePost(row),
-              restoreKey: Key('trash-post-restore-${row.id}'),
-              purgeKey: Key('trash-post-purge-${row.id}'),
-            ),
-    );
-  }
-
-  Widget _buildRowActions({
-    required bool floorPassed,
-    required VoidCallback onRestore,
-    required VoidCallback onPurge,
-    required Key restoreKey,
-    required Key purgeKey,
-  }) {
-    final theme = Theme.of(context);
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        IconButton(
-          key: restoreKey,
-          tooltip: 'Восстановить',
-          icon: Icon(
-            Icons.restore_rounded,
-            color: theme.colorScheme.primary,
-          ),
-          onPressed: onRestore,
-        ),
-        IconButton(
-          key: purgeKey,
-          tooltip: floorPassed
-              ? 'Удалить навсегда'
-              : 'Подождите немного перед окончательным удалением',
-          icon: Icon(
-            Icons.delete_forever_outlined,
-            color: floorPassed
-                ? theme.colorScheme.error
-                : theme.disabledColor,
-          ),
-          onPressed: floorPassed ? onPurge : null,
-        ),
-      ],
+      daysLeft: row.daysUntilHardDelete(now),
+      floorPassed: row.isFloorPassed(now),
+      busy: _busyId == row.id,
+      onRestore: () => _restorePost(row),
+      onPurge: () => _permanentlyDeletePost(row),
+      restoreKey: Key('trash-post-restore-${row.id}'),
+      purgeKey: Key('trash-post-purge-${row.id}'),
     );
   }
 
@@ -446,15 +381,5 @@ class _TrashScreenState extends State<TrashScreen>
         ),
       ),
     );
-  }
-
-  static String _daysLabel(int n) {
-    final mod10 = n % 10;
-    final mod100 = n % 100;
-    if (mod10 == 1 && mod100 != 11) return 'день';
-    if ([2, 3, 4].contains(mod10) && ![12, 13, 14].contains(mod100)) {
-      return 'дня';
-    }
-    return 'дней';
   }
 }

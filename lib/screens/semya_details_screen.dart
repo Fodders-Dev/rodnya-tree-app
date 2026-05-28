@@ -7,6 +7,7 @@ import '../backend/models/semya.dart';
 import '../providers/semya_details_controller.dart';
 import '../theme/app_theme.dart';
 import '../widgets/browse_tokens_list_section.dart';
+import '../widgets/deleted_persons_section.dart';
 import '../widgets/hidden_persons_section.dart';
 import '../widgets/membership_action_menu.dart';
 import '../widgets/share_browse_token_modal.dart';
@@ -236,6 +237,15 @@ class _SemyaDetailsScreenState extends State<SemyaDetailsScreen> {
               semyaId: details.semya.id,
               treeId: details.semya.treeId,
             ),
+          ),
+          // Ship Q4a frontend (2026-05-28, Ship 31b): per-семя
+          // «Удалённые родственники» entry. Self-hiding tile — appears
+          // только когда семья has soft-deleted persons. Tap → dedicated
+          // SemyaDeletedPersonsScreen (restore / purge). Mirror global
+          // Корзина (Settings, Ship 31) scoped к этой семье.
+          DeletedPersonsSection(
+            semyaId: details.semya.id,
+            semyaName: details.semya.name,
           ),
           // Ship FE8 (2026-05-27): «Покинуть семью» tile внизу
           // секции «Управление». Доступно всем ролям (backend allows
