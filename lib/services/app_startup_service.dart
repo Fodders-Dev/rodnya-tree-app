@@ -20,6 +20,7 @@ import '../backend/interfaces/identity_service_interface.dart';
 import '../backend/interfaces/invitation_link_service_interface.dart';
 import '../backend/interfaces/notification_service_interface.dart';
 import '../backend/interfaces/post_service_interface.dart';
+import '../backend/interfaces/profile_article_service_interface.dart';
 import '../backend/interfaces/profile_service_interface.dart';
 import '../backend/interfaces/safety_service_interface.dart';
 import '../backend/interfaces/story_service_interface.dart';
@@ -57,6 +58,7 @@ import 'custom_api_family_tree_service.dart';
 import 'custom_api_identity_service.dart';
 import 'custom_api_notification_service.dart';
 import 'custom_api_post_service.dart';
+import 'custom_api_profile_article_service.dart';
 import 'custom_api_profile_service.dart';
 import 'custom_api_realtime_service.dart';
 import 'custom_api_safety_service.dart';
@@ -150,6 +152,18 @@ class AppStartupService implements AppStartupServiceInterface {
     );
     _registerOrReplaceSingleton<StorageServiceInterface>(
       customApiStorageService,
+    );
+
+    // Profile Phase 2 (2026-05-29): article editor backend client.
+    final customApiProfileArticleService = CustomApiProfileArticleService(
+      authService: customApiAuthService,
+      runtimeConfig: runtimeConfig,
+    );
+    _registerOrReplaceSingleton<CustomApiProfileArticleService>(
+      customApiProfileArticleService,
+    );
+    _registerOrReplaceSingleton<ProfileArticleServiceInterface>(
+      customApiProfileArticleService,
     );
 
     final customApiProfileService = await CustomApiProfileService.create(
