@@ -50,6 +50,9 @@ const {registerSemyaBrowseRoutes} = require("./routes/semya-browse-routes");
 const {
   registerSemyaHideFilterRoutes,
 } = require("./routes/semya-hide-filter-routes");
+const {
+  registerDeletedPersonsRoutes,
+} = require("./routes/deleted-persons-routes");
 const {registerIdentityRoutes} = require("./routes/identity-routes");
 const {registerMaxAuthRoutes} = require("./routes/max-auth-routes");
 const {registerMergeRoutes} = require("./routes/merge-routes");
@@ -2616,6 +2619,12 @@ function createApp({
     store,
     requireAuth,
     requireSemyaAccess,
+  });
+
+  // Ship Q4a (2026-05-28): «корзина» — soft-deleted persons recovery.
+  registerDeletedPersonsRoutes(app, {
+    store,
+    requireAuth,
   });
 
   registerTreeRoutes(app, {

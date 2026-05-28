@@ -123,6 +123,12 @@ const EMPTY_DB = {
   semyaInvitations: [],
   semyaBrowseTokens: [],
   persons: [],
+  // Ship Q4a (2026-05-28): soft-delete snapshot collection. Path 2
+  // from PHASE-Q4A-SOFT-DELETE-DESIGN (ec12804) — separate
+  // collection чтобы 95 db.persons read sites остаются untouched
+  // by construction. Hard-delete job sweeps этот set per
+  // hardDeleteScheduledAt + earliestHardDelete (3h floor) gates.
+  deletedPersons: [],
   personIdentities: [],
   personAttributes: [],
   circles: [],
@@ -223,6 +229,11 @@ function normalizeDbState(parsed) {
       ? parsed.semyaBrowseTokens
       : [],
     persons: Array.isArray(parsed?.persons) ? parsed.persons : [],
+    // Ship Q4a (2026-05-28): backwards-compat — older data files
+    // without deletedPersons field treated as empty.
+    deletedPersons: Array.isArray(parsed?.deletedPersons)
+      ? parsed.deletedPersons
+      : [],
     personIdentities: Array.isArray(parsed?.personIdentities)
       ? parsed.personIdentities
       : [],
@@ -13033,6 +13044,29 @@ class FileStore {
   }
 
   async deletePerson(treeId, personId, actorId = null) {
+    // Ship Q4a (2026-05-28): soft-delete semantics. Previously hard-
+    // delete via db.persons.filter (line 13052). Now moves person к
+    // db.deletedPersons snapshot collection + filter-removes из
+    // db.persons + db.relations (preserves 95 read sites unchanged
+    // — Path 2 from design doc ec12804).
+    //
+    // External behavior identical:
+    //   • DELETE returns true (was true)
+    //   • Subsequent GET /v1/trees/.../persons returns без person
+    //   • person.deleted tree-change event emitted с before snapshot
+    //   • tree.memberIds + tree.members updated when applicable
+    //   • relations cleaned up (snapshot retained в deletedPersons)
+    //
+    // New internal state:
+    //   • db.deletedPersons row carries snapshot + relations + audit
+    //   • hardDeleteScheduledAt = deletedAt + 30d (configurable)
+    //   • earliestHardDelete = deletedAt + 3h (floor — protects vs
+    //     immediate purge if user misclicks restore либо config bad)
+    //
+    // Restore (restorePerson) reverses: moves snapshot back к
+    // db.persons + relations back к db.relations, clears tree-change
+    // audit annotation. Idempotent — re-restore of already-restored
+    // row = 404 «уже восстановлен».
     const db = await this._read();
     const person = db.persons.find(
       (entry) => entry.id === personId && entry.treeId === treeId,
@@ -13096,11 +13130,237 @@ class FileStore {
         before: deletedPerson,
       },
     });
+
+    // Ship Q4a: write snapshot row to deletedPersons для 30d restore.
+    // Find семья binding (if any) — affects permission gate in
+    // restore endpoint (members of bound семя can restore).
+    const tree = db.trees.find((entry) => entry.id === treeId);
+    const boundSemyaId = tree?.semyaId
+      ? (db.semyi || []).find(
+          (s) => s.id === tree.semyaId && !s.deletedAt,
+        )?.id || null
+      : null;
+    const nowIsoStr = nowIso();
+    const retentionDays = Number(process.env.RODNYA_DELETED_PERSONS_RETENTION_DAYS) || 30;
+    const floorHours = Number(process.env.RODNYA_DELETED_PERSONS_FLOOR_HOURS) || 3;
+    const hardDeleteAt = new Date(
+      Date.parse(nowIsoStr) + retentionDays * 24 * 3600 * 1000,
+    ).toISOString();
+    const earliestHardDelete = new Date(
+      Date.parse(nowIsoStr) + floorHours * 3600 * 1000,
+    ).toISOString();
+    db.deletedPersons = Array.isArray(db.deletedPersons) ? db.deletedPersons : [];
+    db.deletedPersons.push({
+      id: crypto.randomUUID(),
+      originalPersonId: personId,
+      treeId,
+      semyaId: boundSemyaId,
+      snapshot: deletedPerson,
+      relationsSnapshot: removedRelations,
+      deletedAt: nowIsoStr,
+      deletedByUserId: actorId,
+      hardDeleteScheduledAt: hardDeleteAt,
+      earliestHardDelete,
+      restoredAt: null,
+      restoredByUserId: null,
+    });
+
     this._reconcilePersonIdentities(db);
     ensureCirclesForTree(db, treeId);
 
     await this._write(db);
     return true;
+  }
+
+  /// Ship Q4a (2026-05-28): list deleted persons for caller.
+  /// Scoped by семя membership — caller sees deleted persons из
+  /// семья where they're an active member, plus deletions they
+  /// themselves performed (even если no longer member). Empty
+  /// list if no matches либо storage incapable.
+  async listDeletedPersonsForUser({userId}) {
+    if (!userId || typeof userId !== "string") return [];
+    const db = await this._read();
+    const memberSemyaIds = new Set(
+      (db.semyaMembers || [])
+        .filter((m) => m.userId === userId && !m.hiddenAt)
+        .map((m) => m.semyaId),
+    );
+    const rows = (db.deletedPersons || []).filter((entry) => {
+      if (entry.restoredAt) return false;
+      if (entry.deletedByUserId === userId) return true;
+      if (entry.semyaId && memberSemyaIds.has(entry.semyaId)) return true;
+      return false;
+    });
+    return rows
+      .sort((a, b) =>
+        String(b.deletedAt || "").localeCompare(String(a.deletedAt || "")),
+      )
+      .map((entry) => structuredClone(entry));
+  }
+
+  /// Ship Q4a: list deleted persons in specific семя. Permission —
+  /// caller must be active member.
+  async listDeletedPersonsForSemya({semyaId, userId}) {
+    if (!semyaId || typeof semyaId !== "string") return [];
+    if (!userId) return [];
+    const db = await this._read();
+    const isMember = (db.semyaMembers || []).some(
+      (m) => m.userId === userId && m.semyaId === semyaId && !m.hiddenAt,
+    );
+    if (!isMember) {
+      throw new Error("NOT_MEMBER");
+    }
+    return (db.deletedPersons || [])
+      .filter((entry) => entry.semyaId === semyaId && !entry.restoredAt)
+      .sort((a, b) =>
+        String(b.deletedAt || "").localeCompare(String(a.deletedAt || "")),
+      )
+      .map((entry) => structuredClone(entry));
+  }
+
+  /// Ship Q4a: restore person из deletedPersons → live db.persons.
+  /// Restores person snapshot + relations snapshot. Updates
+  /// tree.memberIds/members if person had userId. Emits
+  /// person.restored tree-change event. Throws:
+  ///   • DELETED_PERSON_NOT_FOUND (404)
+  ///   • ALREADY_RESTORED (409)
+  ///   • HARD_DELETE_ELAPSED (410 — past retention window)
+  ///   • FORBIDDEN (403 — not семя member либо not original actor)
+  ///   • SEMYA_DELETED (410 — parent семя soft-deleted, restore
+  ///     would orphan person)
+  async restorePerson({deletedPersonId, actorUserId}) {
+    if (!deletedPersonId || typeof deletedPersonId !== "string") {
+      throw new Error("INVALID_INPUT");
+    }
+    if (!actorUserId) throw new Error("INVALID_ACTOR");
+
+    const db = await this._read();
+    const row = (db.deletedPersons || []).find(
+      (entry) => entry.id === deletedPersonId,
+    );
+    if (!row) throw new Error("DELETED_PERSON_NOT_FOUND");
+    if (row.restoredAt) throw new Error("ALREADY_RESTORED");
+    const now = Date.now();
+    if (
+      row.hardDeleteScheduledAt &&
+      Date.parse(row.hardDeleteScheduledAt) < now
+    ) {
+      throw new Error("HARD_DELETE_ELAPSED");
+    }
+
+    // Permission: actor must be member of bound семя либо original
+    // deleter. Семя-less deletions allow original actor only.
+    const isOriginalActor = row.deletedByUserId === actorUserId;
+    let isSemyaMember = false;
+    if (row.semyaId) {
+      isSemyaMember = (db.semyaMembers || []).some(
+        (m) =>
+          m.userId === actorUserId &&
+          m.semyaId === row.semyaId &&
+          !m.hiddenAt,
+      );
+      // Защитный gate — если семя soft-deleted, restore would orphan
+      // (no membership context, no tree owner). Reject.
+      const semya = (db.semyi || []).find((s) => s.id === row.semyaId);
+      if (semya?.deletedAt) {
+        throw new Error("SEMYA_DELETED");
+      }
+    }
+    if (!isOriginalActor && !isSemyaMember) {
+      throw new Error("FORBIDDEN");
+    }
+
+    // Restore snapshot к live state.
+    db.persons = Array.isArray(db.persons) ? db.persons : [];
+    db.persons.push(structuredClone(row.snapshot));
+    if (Array.isArray(row.relationsSnapshot)) {
+      db.relations = Array.isArray(db.relations) ? db.relations : [];
+      for (const rel of row.relationsSnapshot) {
+        db.relations.push(structuredClone(rel));
+      }
+    }
+
+    // Restore tree.memberIds linkage если person had userId.
+    if (row.snapshot?.userId) {
+      const tree = db.trees.find((entry) => entry.id === row.treeId);
+      if (tree) {
+        tree.memberIds = Array.isArray(tree.memberIds) ? tree.memberIds : [];
+        if (!tree.memberIds.includes(row.snapshot.userId)) {
+          tree.memberIds.push(row.snapshot.userId);
+        }
+        tree.members = Array.isArray(tree.members) ? tree.members : [];
+        if (!tree.members.includes(row.snapshot.userId)) {
+          tree.members.push(row.snapshot.userId);
+        }
+        tree.updatedAt = nowIso();
+      }
+    }
+
+    row.restoredAt = nowIso();
+    row.restoredByUserId = actorUserId;
+
+    this._appendTreeChangeRecord(db, {
+      treeId: row.treeId,
+      actorId: actorUserId,
+      type: "person.restored",
+      personId: row.originalPersonId,
+      details: {
+        deletedPersonId: row.id,
+        deletedAt: row.deletedAt,
+      },
+    });
+    this._reconcilePersonIdentities(db);
+    ensureCirclesForTree(db, row.treeId);
+
+    await this._write(db);
+    return structuredClone(row);
+  }
+
+  /// Ship Q4a: explicit hard-purge of deleted person (skip 30d wait).
+  /// User-initiated GDPR-style erasure. 3h floor protection — even
+  /// если user immediately tries to purge, must wait floor period.
+  /// Throws:
+  ///   • DELETED_PERSON_NOT_FOUND (404)
+  ///   • FLOOR_NOT_MET (409 — earliestHardDelete > now)
+  ///   • FORBIDDEN (403 — permission similar к restore)
+  ///   • ALREADY_RESTORED (409 — restored row не purge-able)
+  async hardDeletePerson({deletedPersonId, actorUserId}) {
+    if (!deletedPersonId || typeof deletedPersonId !== "string") {
+      throw new Error("INVALID_INPUT");
+    }
+    if (!actorUserId) throw new Error("INVALID_ACTOR");
+
+    const db = await this._read();
+    const idx = (db.deletedPersons || []).findIndex(
+      (entry) => entry.id === deletedPersonId,
+    );
+    if (idx < 0) throw new Error("DELETED_PERSON_NOT_FOUND");
+    const row = db.deletedPersons[idx];
+    if (row.restoredAt) throw new Error("ALREADY_RESTORED");
+    if (
+      row.earliestHardDelete &&
+      Date.parse(row.earliestHardDelete) > Date.now()
+    ) {
+      throw new Error("FLOOR_NOT_MET");
+    }
+
+    const isOriginalActor = row.deletedByUserId === actorUserId;
+    let isSemyaMember = false;
+    if (row.semyaId) {
+      isSemyaMember = (db.semyaMembers || []).some(
+        (m) =>
+          m.userId === actorUserId &&
+          m.semyaId === row.semyaId &&
+          !m.hiddenAt,
+      );
+    }
+    if (!isOriginalActor && !isSemyaMember) {
+      throw new Error("FORBIDDEN");
+    }
+
+    db.deletedPersons.splice(idx, 1);
+    await this._write(db);
+    return {purged: true, deletedPersonId};
   }
 
   async addPersonMedia({
@@ -18619,6 +18879,10 @@ class FileStore {
       branches: 0,
       personIdentities: 0,
       branchPersonViews: 0,
+      // Ship Q4a (2026-05-28): deletedPersons snapshot collection
+      // swept by same job. Path 2 architecture (ec12804) — physical
+      // erasure after retention + 3h floor (earliestHardDelete).
+      deletedPersons: 0,
       auditPruned: 0,
     };
     const sampleIds = {};
@@ -18660,6 +18924,42 @@ class FileStore {
     takeEligible(db.branches, "branch");
     takeEligible(db.personIdentities, "personIdentity");
     takeEligible(db.graphPersons, "graphPerson");
+
+    // Ship Q4a (2026-05-28): deletedPersons sweep. Eligible rows:
+    //   • restoredAt == null
+    //   • hardDeleteScheduledAt < now (per existing isEligible)
+    //   • earliestHardDelete < now (3h floor protection — defends
+    //     against мисconfigured retention env)
+    const removeDeletedPersonIds = new Set();
+    for (const row of db.deletedPersons || []) {
+      if (budget <= 0) break;
+      if (row.restoredAt) continue;
+      // Reuse isEligible — deletedPersons rows carry deletedAt +
+      // hardDeleteScheduledAt в той же shape as graph entities.
+      if (!isEligible(row)) continue;
+      // Floor check — never purge before earliestHardDelete.
+      if (
+        row.earliestHardDelete &&
+        Date.parse(row.earliestHardDelete) > startedTs
+      ) {
+        continue;
+      }
+      newAuditEntries.push({
+        runId: effectiveRunId,
+        entityType: "deletedPerson",
+        entityId: row.id,
+        deletedAt: row.deletedAt,
+        scheduledAt: row.hardDeleteScheduledAt,
+        hardDeletedAt: startedAt.toISOString(),
+      });
+      removeDeletedPersonIds.add(row.id);
+      deletedCounts.deletedPersons += 1;
+      if (!sampleIds.deletedPerson) sampleIds.deletedPerson = [];
+      if (sampleIds.deletedPerson.length < 5) {
+        sampleIds.deletedPerson.push(row.id);
+      }
+      budget -= 1;
+    }
 
     // Orphan cleanup для branchPersonViews — views ссылающиеся на
     // branches/graphPersons удалёнными в этом run. Views не имеют
@@ -18711,7 +19011,8 @@ class FileStore {
       deletedCounts.graphRelations +
       deletedCounts.branches +
       deletedCounts.personIdentities +
-      deletedCounts.branchPersonViews;
+      deletedCounts.branchPersonViews +
+      deletedCounts.deletedPersons;
 
     if (!dryRun) {
       db.graphRelations = (db.graphRelations || []).filter(
@@ -18730,6 +19031,12 @@ class FileStore {
         const key = v.id ?? `${v.branchId || ""}:${v.graphPersonId || ""}`;
         return !removeIdsByType.branchPersonView.has(key);
       });
+      // Ship Q4a: physically erase deletedPersons rows past retention
+      // + floor. Snapshot data permanently gone — recovery impossible
+      // beyond этого point.
+      db.deletedPersons = (db.deletedPersons || []).filter(
+        (r) => !removeDeletedPersonIds.has(r.id),
+      );
       db.hardDeleteAudit = [...survivingAudit, ...newAuditEntries];
       db.hardDeleteLastRunAt = startedAt.toISOString();
       await this._write(db);
