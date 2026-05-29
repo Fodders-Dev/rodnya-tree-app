@@ -1,14 +1,20 @@
-// Profile Phase 2a (2026-05-29): article editor widget tests.
+// Profile Phase 2a/2b (2026-05-29): article editor widget tests.
 //
-// Covers: render loaded blocks, debounced paragraph auto-save (PATCH),
-// «+ Раздел» append, темы-промпт sheet insert (header + paragraph),
-// debounce timing, and the empty state.
+// 2a: render loaded blocks, debounced paragraph auto-save (PATCH),
+// «+ Раздел» append, темы-промпт sheet insert, debounce timing, empty
+// state. 2b-1: photo add (mock pick+upload), caption auto-save, set
+// date, delete.
+
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:rodnya/backend/interfaces/profile_article_service_interface.dart';
+import 'package:rodnya/backend/interfaces/storage_service_interface.dart';
 import 'package:rodnya/backend/models/profile_article.dart';
 import 'package:rodnya/screens/profile_article_editor_screen.dart';
+import 'package:rodnya/widgets/article_photo_block.dart';
 
 class _FakeArticleService implements ProfileArticleServiceInterface {
   _FakeArticleService({List<ArticleBlock>? blocks})
@@ -171,15 +177,154 @@ void main() {
     expect(find.text('Детство'), findsOneWidget);
   });
 
-  testWidgets('media toolbar buttons show «скоро» snackbar', (tester) async {
+  testWidgets('voice toolbar button still shows «скоро» (2b-2)',
+      (tester) async {
     final svc = _FakeArticleService(blocks: [_paragraph('b1', 'x')]);
     await tester.pumpWidget(_wrap(svc));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const Key('article-add-photo')));
+    await tester.tap(find.byKey(const Key('article-add-voice')));
     await tester.pump();
     expect(find.textContaining('следующем обновлении'), findsOneWidget);
-    // No block append for media in 2a.
     expect(svc.calls.any((c) => c.startsWith('append')), false);
   });
+
+  // ===== Phase 2b-1: photo blocks =====
+
+  testWidgets('add photo: source → pick → upload → photo block appended',
+      (tester) async {
+    final svc = _FakeArticleService();
+    final storage = _FakeStorage();
+    await tester.pumpWidget(_wrapPhoto(svc, storage));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('article-add-photo')));
+    await tester.pumpAndSettle(); // source chooser
+    await tester.tap(find.byKey(const Key('photo-source-gallery')));
+    // Let pick + upload + append resolve (avoid pumpAndSettle — the
+    // photo block's network image would never settle).
+    for (var i = 0; i < 5; i++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+    expect(storage.uploadCalls, 1);
+    expect(svc.calls.contains('append:photo'), true);
+    expect(find.byType(ArticlePhotoBlock), findsOneWidget);
+  });
+
+  testWidgets('photo caption auto-saves through updateBlock', (tester) async {
+    final svc = _FakeArticleService(blocks: [_photo('ph1')]);
+    final storage = _FakeStorage();
+    await tester.pumpWidget(
+      _wrapPhoto(svc, storage, debounce: const Duration(milliseconds: 150)),
+    );
+    for (var i = 0; i < 4; i++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+
+    await tester.enterText(
+      find.byKey(const Key('article-photo-caption-ph1')),
+      'Бабушка в саду',
+    );
+    await tester.pump(const Duration(milliseconds: 200));
+    for (var i = 0; i < 4; i++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+    expect(svc.calls.contains('update:ph1'), true);
+    expect(svc.lastUpdatedContent?['caption'], 'Бабушка в саду');
+    // url preserved through the caption patch.
+    expect(svc.lastUpdatedContent?['url'], 'https://img/ph1.jpg');
+  });
+
+  testWidgets('set photo date (год) patches dateTaken + accuracy',
+      (tester) async {
+    final svc = _FakeArticleService(blocks: [_photo('ph1')]);
+    final storage = _FakeStorage();
+    await tester.pumpWidget(_wrapPhoto(svc, storage));
+    for (var i = 0; i < 4; i++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+
+    // A recent year sits at the top of the (descending) lazy list, so
+    // it's rendered without scrolling.
+    final year = DateTime.now().year - 1;
+    final dateBtn = find.byKey(const Key('article-photo-date-ph1'));
+    await tester.ensureVisible(dateBtn); // below the tall image
+    await tester.pumpAndSettle();
+    await tester.tap(dateBtn);
+    await tester.pumpAndSettle(); // date sheet
+    await tester.tap(find.byKey(const Key('photo-date-year')));
+    await tester.pumpAndSettle(); // year list
+    await tester.tap(find.byKey(Key('photo-year-$year')));
+    for (var i = 0; i < 4; i++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+    expect(svc.calls.contains('update:ph1'), true);
+    expect(svc.lastUpdatedContent?['dateTakenAccuracy'], 'year');
+    expect(
+      (svc.lastUpdatedContent?['dateTaken'] as String).startsWith('$year'),
+      true,
+    );
+  });
+
+  testWidgets('delete photo block calls removeBlock + drops it',
+      (tester) async {
+    final svc = _FakeArticleService(blocks: [_photo('ph1')]);
+    final storage = _FakeStorage();
+    await tester.pumpWidget(_wrapPhoto(svc, storage));
+    for (var i = 0; i < 4; i++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+
+    await tester.tap(find.byKey(const Key('article-photo-menu-ph1')));
+    await tester.pumpAndSettle(); // popup menu
+    await tester.tap(find.text('Удалить'));
+    for (var i = 0; i < 4; i++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+    expect(svc.calls.contains('remove:ph1'), true);
+    expect(find.byType(ArticlePhotoBlock), findsNothing);
+  });
 }
+
+class _FakeStorage implements StorageServiceInterface {
+  int uploadCalls = 0;
+
+  @override
+  Future<String?> uploadImage(XFile imageFile, String folder) async {
+    uploadCalls += 1;
+    return 'https://img/uploaded.jpg';
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      super.noSuchMethod(invocation);
+}
+
+ArticleBlock _photo(String id, {String url = 'https://img/ph1.jpg'}) =>
+    ArticleBlock(
+      id: id,
+      type: 'photo',
+      content: {'url': url},
+      createdAt: 't',
+      updatedAt: 't',
+    );
+
+Widget _wrapPhoto(
+  _FakeArticleService svc,
+  _FakeStorage storage, {
+  Duration? debounce,
+}) =>
+    MaterialApp(
+      home: ProfileArticleEditorScreen(
+        personId: 'p1',
+        personName: 'Лидия',
+        serviceOverride: svc,
+        storageOverride: storage,
+        pickImageOverride: (_) async => XFile.fromData(
+          Uint8List.fromList(const [1, 2, 3]),
+          name: 'photo.jpg',
+          mimeType: 'image/jpeg',
+        ),
+        saveDebounce: debounce ?? const Duration(milliseconds: 200),
+      ),
+    );

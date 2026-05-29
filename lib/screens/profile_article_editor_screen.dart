@@ -14,10 +14,14 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../backend/interfaces/profile_article_service_interface.dart';
+import '../backend/interfaces/storage_service_interface.dart';
 import '../backend/models/profile_article.dart';
 import '../widgets/article_idea_prompts_sheet.dart';
+import '../widgets/article_photo_block.dart';
+import '../widgets/photo_date_picker_sheet.dart';
 
 class ProfileArticleEditorScreen extends StatefulWidget {
   const ProfileArticleEditorScreen({
@@ -27,6 +31,8 @@ class ProfileArticleEditorScreen extends StatefulWidget {
     this.personRelation,
     this.personGender,
     this.serviceOverride,
+    this.storageOverride,
+    this.pickImageOverride,
     this.saveDebounce = const Duration(seconds: 5),
   });
 
@@ -40,6 +46,13 @@ class ProfileArticleEditorScreen extends StatefulWidget {
 
   /// Test seam — production resolves via GetIt.
   final ProfileArticleServiceInterface? serviceOverride;
+
+  /// Test seam — photo upload. Production resolves StorageServiceInterface
+  /// via GetIt.
+  final StorageServiceInterface? storageOverride;
+
+  /// Test seam — image picking. Production uses ImagePicker.
+  final Future<XFile?> Function(ImageSource source)? pickImageOverride;
 
   /// Debounce before a dirty block auto-saves (overridable for tests).
   final Duration saveDebounce;
@@ -62,6 +75,8 @@ class _ProfileArticleEditorScreenState
   bool _hasLoaded = false;
   bool _saving = false;
   bool _conflictNoticed = false;
+  bool _photoUploading = false;
+  String? _busyBlockId; // photo block with an in-flight replace/date patch
   String? _error;
   DateTime? _lastSavedAt;
 
@@ -87,6 +102,14 @@ class _ProfileArticleEditorScreenState
     if (widget.serviceOverride != null) return widget.serviceOverride;
     if (GetIt.I.isRegistered<ProfileArticleServiceInterface>()) {
       return GetIt.I<ProfileArticleServiceInterface>();
+    }
+    return null;
+  }
+
+  StorageServiceInterface? _storage() {
+    if (widget.storageOverride != null) return widget.storageOverride;
+    if (GetIt.I.isRegistered<StorageServiceInterface>()) {
+      return GetIt.I<StorageServiceInterface>();
     }
     return null;
   }
@@ -127,10 +150,16 @@ class _ProfileArticleEditorScreenState
     }
   }
 
+  String _initialTextFor(ArticleBlock b) {
+    if (b.type == 'photo') return b.content['caption']?.toString() ?? '';
+    if (b.isHeader) return b.headerText;
+    return b.plainText;
+  }
+
   void _bind(ArticleBlock b) {
     _controllers.putIfAbsent(
       b.id,
-      () => TextEditingController(text: b.isHeader ? b.headerText : b.plainText),
+      () => TextEditingController(text: _initialTextFor(b)),
     );
     _focus.putIfAbsent(b.id, () {
       final node = FocusNode();
@@ -166,9 +195,18 @@ class _ProfileArticleEditorScreenState
       if (idx < 0) continue;
       final block = _blocks[idx];
       final text = _controllers[id]?.text ?? '';
-      final content = block.isHeader
-          ? ArticleBlock.headerContent(text, level: block.headerLevel)
-          : ArticleBlock.paragraphContent(text);
+      final Map<String, dynamic> content;
+      if (block.type == 'photo') {
+        // Only the caption is editable inline; keep url + date metadata.
+        content = {
+          ...block.content,
+          'caption': text.trim().isEmpty ? null : text.trim(),
+        };
+      } else if (block.isHeader) {
+        content = ArticleBlock.headerContent(text, level: block.headerLevel);
+      } else {
+        content = ArticleBlock.paragraphContent(text);
+      }
       try {
         final result = await svc.updateBlock(
           widget.personId,
@@ -238,6 +276,161 @@ class _ProfileArticleEditorScreenState
     }
   }
 
+  // ===== Phase 2b-1: photo blocks =====
+
+  Future<XFile?> _pickImage(ImageSource source) {
+    if (widget.pickImageOverride != null) {
+      return widget.pickImageOverride!(source);
+    }
+    return ImagePicker().pickImage(
+      source: source,
+      maxWidth: 2048,
+      imageQuality: 85,
+    );
+  }
+
+  // Pick → upload → url. null on cancel or failure (snackbar on failure).
+  Future<String?> _pickAndUpload(ImageSource source) async {
+    final storage = _storage();
+    if (storage == null) {
+      _snack('Загрузка фото недоступна');
+      return null;
+    }
+    XFile? file;
+    try {
+      file = await _pickImage(source);
+    } catch (_) {
+      _snack('Не удалось открыть фото');
+      return null;
+    }
+    if (file == null) return null;
+    if (mounted) setState(() => _photoUploading = true);
+    String? url;
+    try {
+      url = await storage.uploadImage(file, 'article-photos');
+    } catch (_) {
+      url = null;
+    }
+    if (mounted) setState(() => _photoUploading = false);
+    if (url == null || url.isEmpty) {
+      _snack('Не удалось загрузить фото');
+      return null;
+    }
+    return url;
+  }
+
+  Future<ImageSource?> _choosePhotoSource() {
+    return showModalBottomSheet<ImageSource>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              key: const Key('photo-source-camera'),
+              leading: const Icon(Icons.photo_camera_outlined),
+              title: const Text('Снять на камеру'),
+              onTap: () => Navigator.of(ctx).pop(ImageSource.camera),
+            ),
+            ListTile(
+              key: const Key('photo-source-gallery'),
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text('Выбрать из галереи'),
+              onTap: () => Navigator.of(ctx).pop(ImageSource.gallery),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _addPhoto() async {
+    final source = await _choosePhotoSource();
+    if (source == null || !mounted) return;
+    final url = await _pickAndUpload(source);
+    if (url == null || !mounted) return;
+    final svc = _service();
+    if (svc == null) return;
+    try {
+      final block = await svc.appendBlock(
+        widget.personId,
+        type: 'photo',
+        content: {'url': url},
+      );
+      if (!mounted) return;
+      _bind(block);
+      setState(() => _blocks.add(block));
+    } catch (_) {
+      _snack('Не удалось добавить фото');
+    }
+  }
+
+  Future<void> _replacePhoto(ArticleBlock block) async {
+    final source = await _choosePhotoSource();
+    if (source == null || !mounted) return;
+    final url = await _pickAndUpload(source);
+    if (url == null) return;
+    await _patchPhotoContent(block, {...block.content, 'url': url});
+  }
+
+  Future<void> _setPhotoDate(ArticleBlock block) async {
+    final result = await showPhotoDatePickerSheet(
+      context,
+      currentYear: DateTime.now().year,
+    );
+    if (result == null || !mounted) return;
+    await _patchPhotoContent(block, {
+      ...block.content,
+      'dateTaken': result.dateTaken,
+      'dateTakenAccuracy': result.accuracy,
+    });
+  }
+
+  Future<void> _patchPhotoContent(
+    ArticleBlock block,
+    Map<String, dynamic> content,
+  ) async {
+    final svc = _service();
+    if (svc == null) return;
+    final idx = _blocks.indexWhere((b) => b.id == block.id);
+    if (idx < 0) return;
+    setState(() => _busyBlockId = block.id);
+    try {
+      final result = await svc.updateBlock(
+        widget.personId,
+        block.id,
+        content: content,
+        baseUpdatedAt: block.updatedAt,
+      );
+      if (!mounted) return;
+      setState(() {
+        _blocks[idx] = result.block;
+        _busyBlockId = null;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _busyBlockId = null);
+      _snack('Не удалось сохранить фото');
+    }
+  }
+
+  Future<void> _deleteBlock(ArticleBlock block) async {
+    final svc = _service();
+    if (svc == null) return;
+    final idx = _blocks.indexWhere((b) => b.id == block.id);
+    if (idx < 0) return;
+    setState(() => _blocks.removeAt(idx));
+    _dirty.remove(block.id);
+    _controllers.remove(block.id)?.dispose();
+    _focus.remove(block.id)?.dispose();
+    try {
+      await svc.removeBlock(widget.personId, block.id);
+    } catch (_) {
+      _snack('Не удалось удалить');
+    }
+  }
+
   Future<void> _openIdeas() async {
     final prompt = await showArticleIdeaPromptsSheet(
       context,
@@ -257,8 +450,8 @@ class _ProfileArticleEditorScreenState
     );
   }
 
-  void _mediaSoon() {
-    _snack('Фото и голос добавим в следующем обновлении');
+  void _voiceSoon() {
+    _snack('Голос добавим в следующем обновлении');
   }
 
   Future<bool> _onWillPop() async {
@@ -351,6 +544,7 @@ class _ProfileArticleEditorScreenState
           _buildEmpty(theme)
         else
           for (var i = 0; i < _blocks.length; i++) _buildBlockRow(theme, i),
+        if (_photoUploading) _buildUploadingRow(theme),
         const SizedBox(height: 8),
         if (_blocks.isNotEmpty) _buildSaveStatus(theme),
       ],
@@ -422,6 +616,22 @@ class _ProfileArticleEditorScreenState
 
   Widget _buildBlockRow(ThemeData theme, int index) {
     final block = _blocks[index];
+
+    // Phase 2b-1: photo blocks render as an image + caption, not a
+    // TextField. The caption reuses the per-block controller.
+    if (block.type == 'photo') {
+      return ArticlePhotoBlock(
+        key: Key('article-block-${block.id}'),
+        block: block,
+        captionController: _controllers[block.id]!,
+        busy: _busyBlockId == block.id,
+        onCaptionChanged: () => _onChanged(block.id),
+        onSetDate: () => _setPhotoDate(block),
+        onReplace: () => _replacePhoto(block),
+        onDelete: () => _deleteBlock(block),
+      );
+    }
+
     final controller = _controllers[block.id]!;
     final focusNode = _focus[block.id]!;
     final hint = _hints[block.id];
@@ -488,6 +698,29 @@ class _ProfileArticleEditorScreenState
     );
   }
 
+  Widget _buildUploadingRow(ThemeData theme) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 16),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+          const SizedBox(width: 10),
+          Text(
+            'Загрузка фото…',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildSaveStatus(ThemeData theme) {
     final String label;
     if (_saving) {
@@ -542,15 +775,14 @@ class _ProfileArticleEditorScreenState
               key: const Key('article-add-photo'),
               icon: Icons.photo_outlined,
               label: 'Фото',
-              onTap: _mediaSoon,
-              dimmed: true,
+              onTap: _addPhoto,
             ),
             _toolbarButton(
               theme,
               key: const Key('article-add-voice'),
               icon: Icons.mic_none_rounded,
               label: 'Голос',
-              onTap: _mediaSoon,
+              onTap: _voiceSoon,
               dimmed: true,
             ),
           ],
