@@ -13,6 +13,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:get_it/get_it.dart';
 import 'package:image_picker/image_picker.dart';
 
@@ -431,6 +432,68 @@ class _ProfileArticleEditorScreenState
     }
   }
 
+  // Text-block delete via the «⋮» menu. Empty block → delete straight
+  // away; non-empty → a light confirm so a paragraph isn't lost by a
+  // stray tap.
+  Future<void> _deleteTextBlock(ArticleBlock block) async {
+    final text = _controllers[block.id]?.text.trim() ?? '';
+    if (text.isNotEmpty) {
+      final confirmed = await _confirmDeleteBlock(block.isHeader);
+      if (confirmed != true || !mounted) return;
+    }
+    await _deleteBlock(block);
+  }
+
+  Future<bool?> _confirmDeleteBlock(bool isHeader) {
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(isHeader ? 'Удалить раздел?' : 'Удалить абзац?'),
+        content: const Text('Текст этого блока будет удалён.'),
+        actions: [
+          TextButton(
+            key: const Key('article-delete-cancel'),
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton.tonal(
+            key: const Key('article-delete-confirm'),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Удалить'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Backspace at the start of an empty block → remove it and drop the
+  // caret into the previous block. Standard Telegraph/Notion behaviour.
+  // Fires only for hardware/web key events (Android soft keyboards
+  // don't emit it — that's what the «⋮» menu delete is for).
+  KeyEventResult _handleBlockKey(int index, KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    if (event.logicalKey != LogicalKeyboardKey.backspace) {
+      return KeyEventResult.ignored;
+    }
+    if (index <= 0 || index >= _blocks.length) return KeyEventResult.ignored;
+    final block = _blocks[index];
+    final controller = _controllers[block.id];
+    if (controller == null || controller.text.isNotEmpty) {
+      return KeyEventResult.ignored;
+    }
+    final prev = _blocks[index - 1];
+    _deleteBlock(block); // local remove is synchronous; backend async
+    final prevController = _controllers[prev.id];
+    final prevFocus = _focus[prev.id];
+    if (prevController != null && prevFocus != null) {
+      prevFocus.requestFocus();
+      prevController.selection = TextSelection.collapsed(
+        offset: prevController.text.length,
+      );
+    }
+    return KeyEventResult.handled;
+  }
+
   Future<void> _openIdeas() async {
     final prompt = await showArticleIdeaPromptsSheet(
       context,
@@ -660,38 +723,67 @@ class _ProfileArticleEditorScreenState
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Expanded(
-            child: TextField(
-              key: Key('article-block-${block.id}'),
-              controller: controller,
-              focusNode: focusNode,
-              style: style,
-              maxLines: null,
-              keyboardType: TextInputType.multiline,
-              textCapitalization: TextCapitalization.sentences,
-              decoration: InputDecoration(
-                isDense: true,
-                border: InputBorder.none,
-                hintText: hint ?? fallbackHint,
-                hintStyle: style?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant
-                      .withValues(alpha: 0.6),
-                  fontWeight: block.isHeader ? FontWeight.w600 : null,
+            // Focus ancestor (canRequestFocus:false) catches Backspace
+            // that bubbles up from the empty TextField → delete-on-empty.
+            // Works on web/desktop/hardware kbd; no-ops on Android soft
+            // keyboards (which don't emit the key event) — explicit menu
+            // delete covers that case.
+            child: Focus(
+              canRequestFocus: false,
+              onKeyEvent: (_, event) => _handleBlockKey(index, event),
+              child: TextField(
+                key: Key('article-block-${block.id}'),
+                controller: controller,
+                focusNode: focusNode,
+                style: style,
+                maxLines: null,
+                keyboardType: TextInputType.multiline,
+                textCapitalization: TextCapitalization.sentences,
+                decoration: InputDecoration(
+                  isDense: true,
+                  border: InputBorder.none,
+                  hintText: hint ?? fallbackHint,
+                  hintStyle: style?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant
+                        .withValues(alpha: 0.6),
+                    fontWeight: block.isHeader ? FontWeight.w600 : null,
+                  ),
                 ),
+                onChanged: (_) => _onChanged(block.id),
               ),
-              onChanged: (_) => _onChanged(block.id),
             ),
           ),
-          // Positional insert: «+» adds a paragraph right after this block.
-          IconButton(
-            key: Key('article-insert-after-${block.id}'),
-            tooltip: 'Добавить абзац ниже',
-            visualDensity: VisualDensity.compact,
+          // Per-block «⋮» menu — insert below + delete. Consistent с
+          // фото-блоком (PopupMenuButton).
+          PopupMenuButton<String>(
+            key: Key('article-block-menu-${block.id}'),
+            tooltip: 'Действия с блоком',
+            padding: EdgeInsets.zero,
             icon: Icon(
-              Icons.add_rounded,
+              Icons.more_vert_rounded,
               size: 18,
-              color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+              color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
             ),
-            onPressed: () => _addBlock('paragraph', afterIndex: index),
+            onSelected: (value) {
+              switch (value) {
+                case 'insert':
+                  _addBlock('paragraph', afterIndex: index);
+                  break;
+                case 'delete':
+                  _deleteTextBlock(block);
+                  break;
+              }
+            },
+            itemBuilder: (_) => [
+              const PopupMenuItem(
+                value: 'insert',
+                child: Text('Добавить абзац ниже'),
+              ),
+              PopupMenuItem(
+                value: 'delete',
+                child: Text(block.isHeader ? 'Удалить раздел' : 'Удалить абзац'),
+              ),
+            ],
           ),
         ],
       ),

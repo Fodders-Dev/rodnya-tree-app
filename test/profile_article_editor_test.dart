@@ -5,9 +5,8 @@
 // state. 2b-1: photo add (mock pick+upload), caption auto-save, set
 // date, delete.
 
-import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:rodnya/backend/interfaces/profile_article_service_interface.dart';
@@ -283,6 +282,98 @@ void main() {
     }
     expect(svc.calls.contains('remove:ph1'), true);
     expect(find.byType(ArticlePhotoBlock), findsNothing);
+  });
+
+  // ===== Phase 2b-1b: text block delete =====
+
+  testWidgets('delete non-empty paragraph → confirm → removeBlock',
+      (tester) async {
+    final svc = _FakeArticleService(
+      blocks: [_paragraph('b1', 'Удаляемый'), _paragraph('b2', 'Остаётся')],
+    );
+    await tester.pumpWidget(_wrap(svc));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('article-block-menu-b1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Удалить абзац'));
+    await tester.pumpAndSettle(); // confirm dialog (non-empty)
+    expect(find.text('Удалить абзац?'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('article-delete-confirm')));
+    await tester.pumpAndSettle();
+
+    expect(svc.calls.contains('remove:b1'), true);
+    expect(find.byKey(const Key('article-block-b1')), findsNothing);
+    expect(find.byKey(const Key('article-block-b2')), findsOneWidget);
+  });
+
+  testWidgets('delete empty paragraph → no confirm dialog', (tester) async {
+    final svc = _FakeArticleService(
+      blocks: [_paragraph('b1', ''), _paragraph('b2', 'keep')],
+    );
+    await tester.pumpWidget(_wrap(svc));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('article-block-menu-b1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Удалить абзац'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Удалить абзац?'), findsNothing); // no dialog for empty
+    expect(svc.calls.contains('remove:b1'), true);
+    expect(find.byKey(const Key('article-block-b1')), findsNothing);
+  });
+
+  testWidgets('deleting the last block returns to empty state',
+      (tester) async {
+    final svc = _FakeArticleService(blocks: [_paragraph('b1', '')]);
+    await tester.pumpWidget(_wrap(svc));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('article-block-menu-b1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Удалить абзац'));
+    await tester.pumpAndSettle();
+
+    expect(svc.calls.contains('remove:b1'), true);
+    expect(find.text('Биография ещё не написана.'), findsOneWidget);
+    expect(find.byKey(const Key('article-empty-start')), findsOneWidget);
+  });
+
+  testWidgets('header menu label says «Удалить раздел»', (tester) async {
+    final svc = _FakeArticleService(blocks: [
+      ArticleBlock(
+        id: 'h1',
+        type: 'header',
+        content: ArticleBlock.headerContent('Детство'),
+        createdAt: 't',
+        updatedAt: 't',
+      ),
+      _paragraph('b2', 'x'),
+    ]);
+    await tester.pumpWidget(_wrap(svc));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('article-block-menu-h1')));
+    await tester.pumpAndSettle();
+    expect(find.text('Удалить раздел'), findsOneWidget);
+  });
+
+  testWidgets('backspace on empty block removes it + focuses previous',
+      (tester) async {
+    final svc = _FakeArticleService(
+      blocks: [_paragraph('b1', 'Первый'), _paragraph('b2', '')],
+    );
+    await tester.pumpWidget(_wrap(svc));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('article-block-b2')));
+    await tester.pumpAndSettle();
+    await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
+    await tester.pumpAndSettle();
+
+    expect(svc.calls.contains('remove:b2'), true);
+    expect(find.byKey(const Key('article-block-b2')), findsNothing);
+    expect(find.byKey(const Key('article-block-b1')), findsOneWidget);
   });
 }
 
