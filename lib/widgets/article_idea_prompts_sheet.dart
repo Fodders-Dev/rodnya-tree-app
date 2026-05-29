@@ -4,8 +4,35 @@
 // theme → editor inserts a section header + an empty paragraph whose
 // placeholder is the prompt question. «Свой раздел» → empty custom
 // header the user titles themselves.
+//
+// Gender agreement (2026-05-29): prompt questions reference the person
+// in 3rd person, so gendered verbs (родился / работал / он был) must
+// agree with the card's gender. genderForm picks the form; for
+// unknown / other we use a clean noun-based neutral reformulation
+// rather than «родился(ась)» скобки. Section titles are nouns — no
+// agreement needed.
 
 import 'package:flutter/material.dart';
+
+/// Picks a gender-agreeing string. `gender` is the raw person gender
+/// ('male' / 'female' / 'other' / 'unknown' / null). female → feminine,
+/// male → masculine; everything else → neutral (or masculine if no
+/// neutral form was supplied).
+String genderForm(
+  String? gender, {
+  required String masculine,
+  required String feminine,
+  String? neutral,
+}) {
+  switch (gender) {
+    case 'female':
+      return feminine;
+    case 'male':
+      return masculine;
+    default:
+      return neutral ?? masculine;
+  }
+}
 
 class ArticleIdeaPrompt {
   const ArticleIdeaPrompt({
@@ -24,32 +51,51 @@ class ArticleIdeaPrompt {
   final bool custom;
 }
 
-const List<ArticleIdeaPrompt> _presets = [
-  ArticleIdeaPrompt(
-    title: 'Детство',
-    prompt: 'Где и когда родился? Каким было детство, каким был дом?',
-  ),
-  ArticleIdeaPrompt(
-    title: 'Семья',
-    prompt: 'Расскажите о родителях, братьях и сёстрах.',
-  ),
-  ArticleIdeaPrompt(
-    title: 'Свадьба',
-    prompt: 'Как познакомились? Когда и где поженились?',
-  ),
-  ArticleIdeaPrompt(
-    title: 'Работа',
-    prompt: 'Кем работал? Чем гордился в своём деле?',
-  ),
-  ArticleIdeaPrompt(
-    title: 'Война',
-    prompt: 'Как война коснулась семьи? Что запомнилось из тех лет?',
-  ),
-  ArticleIdeaPrompt(
-    title: 'Характер и увлечения',
-    prompt: 'Каким он был человеком? Чем увлекался в свободное время?',
-  ),
-];
+// Built per-gender so the prompt questions agree with the card. Titles
+// are gender-neutral nouns. Семья / Свадьба / Война carry no person-
+// gendered verb (plural / inanimate-subject agreement) — same string
+// for everyone; only Детство / Работа / Характер vary.
+List<ArticleIdeaPrompt> _presetsFor(String? gender) => [
+      ArticleIdeaPrompt(
+        title: 'Детство',
+        prompt: genderForm(
+          gender,
+          masculine: 'Где и когда родился? Каким было детство, каким был дом?',
+          feminine: 'Где и когда родилась? Каким было детство, каким был дом?',
+          neutral: 'Место и год рождения. Каким было детство, каким был дом?',
+        ),
+      ),
+      const ArticleIdeaPrompt(
+        title: 'Семья',
+        prompt: 'Расскажите о родителях, братьях и сёстрах.',
+      ),
+      const ArticleIdeaPrompt(
+        title: 'Свадьба',
+        prompt: 'Как познакомились? Когда и где поженились?',
+      ),
+      ArticleIdeaPrompt(
+        title: 'Работа',
+        prompt: genderForm(
+          gender,
+          masculine: 'Кем работал? Чем гордился в своём деле?',
+          feminine: 'Кем работала? Чем гордилась в своём деле?',
+          neutral: 'Работа и призвание. Что приносило гордость в своём деле?',
+        ),
+      ),
+      const ArticleIdeaPrompt(
+        title: 'Война',
+        prompt: 'Как война коснулась семьи? Что запомнилось из тех лет?',
+      ),
+      ArticleIdeaPrompt(
+        title: 'Характер и увлечения',
+        prompt: genderForm(
+          gender,
+          masculine: 'Каким он был? Чем увлекался в свободное время?',
+          feminine: 'Какой она была? Чем увлекалась в свободное время?',
+          neutral: 'Что за человек? Какие были увлечения в свободное время?',
+        ),
+      ),
+    ];
 
 const ArticleIdeaPrompt _customPrompt = ArticleIdeaPrompt(
   title: '',
@@ -57,9 +103,14 @@ const ArticleIdeaPrompt _customPrompt = ArticleIdeaPrompt(
   custom: true,
 );
 
-/// Shows the idea-prompts sheet. Returns the chosen prompt, or null if
-/// dismissed.
-Future<ArticleIdeaPrompt?> showArticleIdeaPromptsSheet(BuildContext context) {
+/// Shows the idea-prompts sheet. `personGender` ('male' / 'female' /
+/// 'other' / 'unknown' / null) tunes the prompt wording. Returns the
+/// chosen prompt, or null if dismissed.
+Future<ArticleIdeaPrompt?> showArticleIdeaPromptsSheet(
+  BuildContext context, {
+  String? personGender,
+}) {
+  final presets = _presetsFor(personGender);
   return showModalBottomSheet<ArticleIdeaPrompt>(
     context: context,
     showDragHandle: true,
@@ -91,10 +142,10 @@ Future<ArticleIdeaPrompt?> showArticleIdeaPromptsSheet(BuildContext context) {
                 child: SingleChildScrollView(
                   child: Column(
                     children: [
-                      for (var i = 0; i < _presets.length; i++)
+                      for (var i = 0; i < presets.length; i++)
                         _PromptTile(
-                          key: Key('article-idea-${_slug(_presets[i].title)}'),
-                          prompt: _presets[i],
+                          key: Key('article-idea-${_slug(presets[i].title)}'),
+                          prompt: presets[i],
                           icon: Icons.auto_stories_outlined,
                         ),
                       _PromptTile(

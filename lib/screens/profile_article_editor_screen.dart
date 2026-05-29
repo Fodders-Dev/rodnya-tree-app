@@ -25,6 +25,7 @@ class ProfileArticleEditorScreen extends StatefulWidget {
     required this.personId,
     this.personName,
     this.personRelation,
+    this.personGender,
     this.serviceOverride,
     this.saveDebounce = const Duration(seconds: 5),
   });
@@ -32,6 +33,10 @@ class ProfileArticleEditorScreen extends StatefulWidget {
   final String personId;
   final String? personName;
   final String? personRelation;
+
+  /// Raw person gender ('male' / 'female' / 'other' / 'unknown' / null)
+  /// — tunes идея-prompt wording so verbs agree with the card.
+  final String? personGender;
 
   /// Test seam — production resolves via GetIt.
   final ProfileArticleServiceInterface? serviceOverride;
@@ -234,7 +239,10 @@ class _ProfileArticleEditorScreenState
   }
 
   Future<void> _openIdeas() async {
-    final prompt = await showArticleIdeaPromptsSheet(context);
+    final prompt = await showArticleIdeaPromptsSheet(
+      context,
+      personGender: widget.personGender,
+    );
     if (prompt == null || !mounted) return;
     if (prompt.custom) {
       // Empty section the user titles themselves.

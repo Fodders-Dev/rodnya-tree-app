@@ -207,6 +207,7 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
                 personId: person.id,
                 personName: fullName,
                 personRelation: directRelationLabel,
+                personGender: person.gender.name,
               ),
             ),
           ),
