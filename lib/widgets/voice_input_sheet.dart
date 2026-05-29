@@ -195,7 +195,15 @@ class _VoiceInputSheetState extends State<_VoiceInputSheet> {
           ),
         ),
         const SizedBox(height: 16),
-        Row(
+        // OverflowBar (не Row+Spacer): action-ряд, устойчивый к нехватке
+        // ширины. При узком экране / крупном системном шрифте сам
+        // разворачивается в вертикальную колонку вместо overflow.
+        // (S20 FE ловил "RIGHT OVERFLOWED BY 15 PIXELS" на Row+Spacer.)
+        OverflowBar(
+          alignment: MainAxisAlignment.end,
+          spacing: 8,
+          overflowAlignment: OverflowBarAlignment.end,
+          overflowSpacing: 4,
           children: [
             if (!_listening)
               TextButton.icon(
@@ -204,13 +212,11 @@ class _VoiceInputSheetState extends State<_VoiceInputSheet> {
                 icon: const Icon(Icons.refresh_rounded, size: 18),
                 label: const Text('Записать ещё'),
               ),
-            const Spacer(),
             TextButton(
               key: const Key('voice-cancel'),
               onPressed: _cancel,
               child: const Text('Отмена'),
             ),
-            const SizedBox(width: 8),
             FilledButton(
               key: const Key('voice-done'),
               onPressed: _text.trim().isEmpty ? null : _stopAndAccept,
