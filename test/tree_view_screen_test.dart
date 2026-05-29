@@ -21,6 +21,7 @@ import 'package:rodnya/providers/tree_provider.dart';
 import 'package:rodnya/screens/tree_view_screen.dart';
 import 'package:rodnya/services/app_status_service.dart';
 import 'package:rodnya/services/local_storage_service.dart';
+import 'package:rodnya/services/tree_mutation_history.dart';
 import 'package:rodnya/widgets/interactive_family_tree.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
@@ -650,6 +651,60 @@ void main() {
     // carries tooltip "Добавить из панели дерева".
     expect(
         find.byTooltip('Добавить из панели дерева'), findsOneWidget);
+    expect(find.byTooltip('Действия дерева'), findsOneWidget);
+  });
+
+  testWidgets(
+      'topbar trailing actions live in a horizontal scroll (no overflow)',
+      (tester) async {
+    // Bug 1 fix: the trailing action controls (switcher / undo / redo /
+    // «⋮») are wrapped in a horizontal SingleChildScrollView, so the
+    // topbar Row can never overflow — it scrolls instead. We assert the
+    // wrapper is present + actions reachable at a phone width. Behavioural
+    // «no RenderFlex overflow at any width» follows structurally from the
+    // scroll wrap (a scrollable child has unbounded main-axis extent).
+    //
+    // Registering TreeMutationHistory renders the undo/redo pills so the
+    // wrapper genuinely holds the full trailing set. Width 390 (iPhone-
+    // class) keeps the unrelated body toolbar — which has its own ~22px
+    // overflow below ~382px, flagged separately — out of this assertion.
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    getIt.registerSingleton<TreeMutationHistory>(TreeMutationHistory());
+    final familyService = _FakeFamilyTreeService()..showFirstPerson = true;
+    getIt.registerSingleton<FamilyTreeServiceInterface>(familyService);
+    final treeProvider = TreeProvider();
+    await treeProvider.selectTree('tree-1', 'Длинное имя дерева Ивановых');
+
+    final router = GoRouter(
+      initialLocation: '/tree/view/tree-1?name=%D0%A2%D0%B5%D1%81%D1%82',
+      routes: [
+        GoRoute(
+          path: '/tree/view/:treeId',
+          builder: (context, state) => TreeViewScreen(
+            routeTreeId: state.pathParameters['treeId'],
+            routeTreeName: state.uri.queryParameters['name'],
+          ),
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<TreeProvider>.value(
+        value: treeProvider,
+        child: MaterialApp.router(routerConfig: router),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    // The fix is wired: trailing actions are inside the horizontal scroll.
+    expect(
+      find.byKey(const Key('tree-topbar-actions-scroll')),
+      findsOneWidget,
+    );
+    // Actions remain reachable (the «⋮» menu is the rightmost, kept in view).
     expect(find.byTooltip('Действия дерева'), findsOneWidget);
   });
 

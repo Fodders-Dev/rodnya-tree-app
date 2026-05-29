@@ -1124,6 +1124,21 @@ class _TreeViewScreenState extends State<TreeViewScreen>
                   ),
                 ] else
                   const Spacer(),
+                // Bug fix (S20 FE: RenderFlex overflowed by 191px on a
+                // narrow phone). The trailing action controls now live
+                // in a horizontal scroll view, so the topbar never
+                // overflows at any width — it degrades to a scroll
+                // instead. reverse:true keeps the rightmost «⋮» actions
+                // menu in view; lower-priority controls scroll off the
+                // left when space is tight.
+                Flexible(
+                  child: SingleChildScrollView(
+                    key: const Key('tree-topbar-actions-scroll'),
+                    scrollDirection: Axis.horizontal,
+                    reverse: true,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
                 _TreeTopbarPill(
                   tokens: tokens,
                   tooltip: 'Выбрать дерево',
@@ -1240,6 +1255,10 @@ class _TreeViewScreenState extends State<TreeViewScreen>
                     ),
                   ),
                 ],
+                      ],
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
