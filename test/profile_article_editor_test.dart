@@ -22,6 +22,7 @@ class _FakeArticleService implements ProfileArticleServiceInterface {
   final List<ArticleBlock> _blocks;
   final List<String> calls = [];
   Map<String, dynamic>? lastUpdatedContent;
+  Map<String, dynamic>? lastAppendContent;
   int _seq = 0;
 
   @override
@@ -37,6 +38,7 @@ class _FakeArticleService implements ProfileArticleServiceInterface {
     required Map<String, dynamic> content,
   }) async {
     calls.add('append:$type');
+    lastAppendContent = content;
     return ArticleBlock(
       id: 'new-${_seq++}',
       type: type,
@@ -174,18 +176,6 @@ void main() {
     expect(svc.calls.where((c) => c == 'append:header').length, 1);
     expect(svc.calls.where((c) => c == 'append:paragraph').length, 1);
     expect(find.text('Детство'), findsOneWidget);
-  });
-
-  testWidgets('voice toolbar button still shows «скоро» (2b-2)',
-      (tester) async {
-    final svc = _FakeArticleService(blocks: [_paragraph('b1', 'x')]);
-    await tester.pumpWidget(_wrap(svc));
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.byKey(const Key('article-add-voice')));
-    await tester.pump();
-    expect(find.textContaining('следующем обновлении'), findsOneWidget);
-    expect(svc.calls.any((c) => c.startsWith('append')), false);
   });
 
   // ===== Phase 2b-1: photo blocks =====
@@ -422,6 +412,57 @@ void main() {
       expect(text.maxLines, 1, reason: label);
       expect(text.softWrap, false, reason: label);
     }
+  });
+
+  // ===== Phase 2b-2: voice transcript accelerator =====
+
+  testWidgets('voice → transcript appended as an editable paragraph',
+      (tester) async {
+    final svc = _FakeArticleService();
+    const transcript = 'Лидия родилась в селе Иваново в 1949 году';
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ProfileArticleEditorScreen(
+          personId: 'p1',
+          serviceOverride: svc,
+          voiceInputOverride: (_) async => transcript,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('article-add-voice')));
+    await tester.pumpAndSettle();
+
+    // The recognized text became a new paragraph block (editable).
+    expect(svc.calls.contains('append:paragraph'), true);
+    expect(
+      (svc.lastAppendContent?['spans'] as List).first['text'],
+      transcript,
+    );
+    expect(find.text(transcript), findsOneWidget);
+  });
+
+  testWidgets('voice cancelled / denied → no block, no crash (can type)',
+      (tester) async {
+    final svc = _FakeArticleService();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ProfileArticleEditorScreen(
+          personId: 'p1',
+          serviceOverride: svc,
+          voiceInputOverride: (_) async => null, // cancel / permission denied
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('article-add-voice')));
+    await tester.pumpAndSettle();
+
+    expect(svc.calls.any((c) => c.startsWith('append')), false);
+    // Editor still usable — the empty-state «Начать писать» is there to type.
+    expect(find.byKey(const Key('article-empty-start')), findsOneWidget);
   });
 }
 

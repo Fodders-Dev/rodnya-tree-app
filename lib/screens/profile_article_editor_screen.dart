@@ -23,6 +23,7 @@ import '../backend/models/profile_article.dart';
 import '../widgets/article_idea_prompts_sheet.dart';
 import '../widgets/article_photo_block.dart';
 import '../widgets/photo_date_picker_sheet.dart';
+import '../widgets/voice_input_sheet.dart';
 
 class ProfileArticleEditorScreen extends StatefulWidget {
   const ProfileArticleEditorScreen({
@@ -34,6 +35,7 @@ class ProfileArticleEditorScreen extends StatefulWidget {
     this.serviceOverride,
     this.storageOverride,
     this.pickImageOverride,
+    this.voiceInputOverride,
     this.saveDebounce = const Duration(seconds: 5),
   });
 
@@ -54,6 +56,10 @@ class ProfileArticleEditorScreen extends StatefulWidget {
 
   /// Test seam — image picking. Production uses ImagePicker.
   final Future<XFile?> Function(ImageSource source)? pickImageOverride;
+
+  /// Test seam — voice input. Production opens showVoiceInputSheet
+  /// (speech_to_text, ru_RU). Returns the transcript or null.
+  final Future<String?> Function(BuildContext context)? voiceInputOverride;
 
   /// Debounce before a dirty block auto-saves (overridable for tests).
   final Duration saveDebounce;
@@ -513,8 +519,16 @@ class _ProfileArticleEditorScreenState
     );
   }
 
-  void _voiceSoon() {
-    _snack('Голос добавим в следующем обновлении');
+  // Phase 2b-2: voice → transcript accelerator. Speak → on-device STT
+  // (ru_RU) → the recognized text is appended as an editable paragraph
+  // (auto-saved on the same path as typed text). No audio is saved —
+  // transcript-only by design. Permission-denied / cancel → no-op (the
+  // user can still type).
+  Future<void> _addVoice() async {
+    final transcribe = widget.voiceInputOverride ?? showVoiceInputSheet;
+    final text = await transcribe(context);
+    if (text == null || text.trim().isEmpty || !mounted) return;
+    await _addBlock('paragraph', initialText: text.trim());
   }
 
   Future<bool> _onWillPop() async {
@@ -883,8 +897,7 @@ class _ProfileArticleEditorScreenState
               key: const Key('article-add-voice'),
               icon: Icons.mic_none_rounded,
               label: 'Голос',
-              onTap: _voiceSoon,
-              dimmed: true,
+              onTap: _addVoice,
             ),
           ],
         ),
