@@ -192,6 +192,25 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
           variant: PillButtonVariant.outlined,
           onPressed: _isUpdatingPrivacy ? null : _showPrivacySettings,
         ),
+      // TEMPORARY entry point для тестирования Profile редактора (Phase 2a).
+      // Phase 5 (profile view rewrite) заменит это на правильный вход —
+      // удалить этот PillButton + импорт profile_article_editor_screen.dart.
+      // См. PROFILE-UX-REDESIGN-PROPOSAL.md Phase 5.
+      if (_canDirectEditProfile())
+        PillButton(
+          label: 'Биография (бета)',
+          icon: Icons.menu_book_outlined,
+          variant: PillButtonVariant.outlined,
+          onPressed: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => ProfileArticleEditorScreen(
+                personId: person.id,
+                personName: fullName,
+                personRelation: directRelationLabel,
+              ),
+            ),
+          ),
+        ),
     ];
 
     final headerStatus = Column(

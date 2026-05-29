@@ -39,6 +39,7 @@ import '../widgets/visibility_toggle_section.dart';
 import '../theme/app_theme.dart';
 import '../utils/photo_url.dart';
 import '../utils/user_facing_error.dart';
+import 'profile_article_editor_screen.dart';
 
 part 'relative_details_screen_sections.dart';
 

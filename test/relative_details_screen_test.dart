@@ -28,6 +28,7 @@ import 'package:rodnya/models/tree_graph_snapshot.dart';
 import 'package:rodnya/models/tree_change_record.dart';
 import 'package:rodnya/models/user_profile.dart';
 import 'package:rodnya/providers/tree_provider.dart';
+import 'package:rodnya/screens/profile_article_editor_screen.dart';
 import 'package:rodnya/screens/relative_details_screen.dart';
 import 'package:rodnya/services/local_storage_service.dart';
 import 'package:provider/provider.dart';
@@ -1158,6 +1159,43 @@ void main() {
         find.text('Удалить из дерева', skipOffstage: false),
         findsOneWidget,
       );
+    },
+  );
+
+  // Profile Phase 2a-entry (2026-05-29): temporary «Биография (бета)»
+  // editor entry on the relative card. Shown when the viewer can edit
+  // (grandmother is anonymous → _canDirectEditProfile true).
+  testWidgets(
+    'temporary «Биография (бета)» button opens the article editor',
+    (tester) async {
+      tester.view.physicalSize = const Size(1400, 2600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final treeProvider = TreeProvider();
+      await treeProvider.selectTree('tree-1', 'Семья Кузнецовых');
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider<TreeProvider>.value(
+          value: treeProvider,
+          child: const MaterialApp(
+            home: RelativeDetailsScreen(personId: 'grandmother'),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final bioButton = find.text('Биография (бета)', skipOffstage: false);
+      expect(bioButton, findsOneWidget);
+
+      await tester.ensureVisible(bioButton);
+      await tester.tap(bioButton);
+      await tester.pumpAndSettle();
+
+      // Navigated to the editor (it resolves its own service via GetIt;
+      // unregistered here → shows its error state, but the route is
+      // pushed, which is what we assert).
+      expect(find.byType(ProfileArticleEditorScreen), findsOneWidget);
     },
   );
 }
