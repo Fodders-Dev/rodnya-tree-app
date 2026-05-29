@@ -406,7 +406,9 @@ void main() {
     );
     await tester.pumpAndSettle();
     final scaffold = tester.widget<Scaffold>(find.byType(Scaffold));
-    expect(scaffold.backgroundColor, const Color(0xFF1C1814));
+    // Theme B — darker-but-clearly-warm сепия (device-verified; #1C1814
+    // read as near-black to the eye).
+    expect(scaffold.backgroundColor, const Color(0xFF2A211A));
     expect(scaffold.backgroundColor, isNot(Colors.black));
   });
 

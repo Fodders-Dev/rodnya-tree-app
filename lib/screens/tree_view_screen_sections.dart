@@ -330,38 +330,43 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
       borderColor: tokens.surfaceLine,
       child: Row(
         children: [
-          _buildTreeBranchFilterChip(
-            branchRootPerson: branchRootPerson,
-            accent: accent,
-            compact: compact,
-          ),
-          SizedBox(width: compact ? 8 : 10),
-          // Ship FE4 (2026-05-26): семя context badge — shows binding
-          // name + caller's role. Tap routes к SemyaDetailsScreen
-          // когда tree bound. Compact mode hides label на small screens
-          // (badge widget self-truncates с TextOverflow.ellipsis).
-          Flexible(
-            child: SemyaContextBadge(
-              semya: _currentSemyaContext?.semya,
-              callerRole: _currentSemyaContext?.callerRole,
-              onTap: _currentSemyaContext != null
-                  ? () => Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => SemyaDetailsScreen(
-                            semyaId: _currentSemyaContext!.semya.id,
-                          ),
-                        ),
-                      )
-                  : null,
-            ),
-          ),
-          SizedBox(width: compact ? 8 : 10),
-          if (showStatPills)
-            Expanded(
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  children: [
+          // Bug fix (S20 FE: body toolbar overflowed past the trailing
+          // icons at 360-393dp). The informational cluster (branch filter
+          // chip + семя badge + stat pills) now lives in ONE horizontal
+          // scroll bounded by Expanded, so it always yields space to the
+          // fixed, always-visible action icons — the Row can't overflow at
+          // any width (it scrolls instead). Responsive; no hardcoded width.
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  _buildTreeBranchFilterChip(
+                    branchRootPerson: branchRootPerson,
+                    accent: accent,
+                    compact: compact,
+                  ),
+                  SizedBox(width: compact ? 8 : 10),
+                  // семя context badge. Bounded so its internal ellipsis
+                  // works inside the (otherwise unbounded) horizontal scroll.
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 220),
+                    child: SemyaContextBadge(
+                      semya: _currentSemyaContext?.semya,
+                      callerRole: _currentSemyaContext?.callerRole,
+                      onTap: _currentSemyaContext != null
+                          ? () => Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => SemyaDetailsScreen(
+                                    semyaId: _currentSemyaContext!.semya.id,
+                                  ),
+                                ),
+                              )
+                          : null,
+                    ),
+                  ),
+                  if (showStatPills) ...[
+                    SizedBox(width: compact ? 8 : 10),
                     _buildTreeToolbarStat(
                       icon: Icons.people_outline,
                       label: '${_relativesData.length}',
@@ -390,11 +395,10 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
                       accent: warnings.isEmpty ? accent : tokens.warm,
                     ),
                   ],
-                ),
+                ],
               ),
-            )
-          else
-            const Spacer(),
+            ),
+          ),
           SizedBox(width: compact ? 8 : 10),
           _buildTreeToolbarIconButton(
             icon: Icons.person_add_alt_1_outlined,

@@ -709,6 +709,48 @@ void main() {
   });
 
   testWidgets(
+      'body tree toolbar не overflow\'ит на 360dp (branch chip Flexible)',
+      (tester) async {
+    // The body toolbar (branch filter chip + семя badge + stat pills +
+    // action icons) overflowed ~22px past the icons at 360dp because the
+    // branch chip was a fixed maxWidth-128 element. With it wrapped in
+    // Flexible, the informational cluster yields and the Row fits. This
+    // test pumps at the S20 FE width and asserts no RenderFlex overflow.
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final familyService = _FakeFamilyTreeService()..showFirstPerson = true;
+    getIt.registerSingleton<FamilyTreeServiceInterface>(familyService);
+    final treeProvider = TreeProvider();
+    await treeProvider.selectTree('tree-1', 'Длинное имя дерева Ивановых');
+
+    final router = GoRouter(
+      initialLocation: '/tree/view/tree-1?name=%D0%A2%D0%B5%D1%81%D1%82',
+      routes: [
+        GoRoute(
+          path: '/tree/view/:treeId',
+          builder: (context, state) => TreeViewScreen(
+            routeTreeId: state.pathParameters['treeId'],
+            routeTreeName: state.uri.queryParameters['name'],
+          ),
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<TreeProvider>.value(
+        value: treeProvider,
+        child: MaterialApp.router(routerConfig: router),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    // The add-person action (in the body toolbar) stays reachable.
+    expect(find.byTooltip('Добавить из панели дерева'), findsOneWidget);
+  });
+
+  testWidgets(
       'desktop tree view показывает контекстную колонку и быстрые действия',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(1440, 1024));

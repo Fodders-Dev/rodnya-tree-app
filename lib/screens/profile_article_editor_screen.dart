@@ -537,7 +537,9 @@ class _ProfileArticleEditorScreenState
   // keeps the album feel. Localized to the article surface; does not
   // touch the app theme.
   static const Color _paperLight = Color(0xFFFAF7F2); // кремовый
-  static const Color _paperDark = Color(0xFF1C1814); // тёплый тёмный сепия
+  // Theme B (device-verified on S20 FE): #1C1814 read as near-black to
+  // the eye. #2A211A (RGB 42,33,26) is darker-but-clearly-warm сепия.
+  static const Color _paperDark = Color(0xFF2A211A); // тёплый сепия
 
   @override
   Widget build(BuildContext context) {
