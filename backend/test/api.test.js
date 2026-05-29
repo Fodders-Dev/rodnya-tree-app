@@ -2836,8 +2836,13 @@ test("auth identity linking resolves by provider first, then email", async () =>
       providerUserId: "vk-777",
       email: secondary.user.email,
     });
-    assert.equal(emailResolved.reason, "email");
-    assert.equal(emailResolved.user.id, secondary.user.id);
+    // Bug B (ff74a2d): email-match без linked provider больше НЕ
+    // мёржит молча (account-takeover risk). Возвращает
+    // email_provider_mismatch + user=null + existingProviders, чтобы
+    // route отдал 409 и юзер вошёл через свой реальный провайдер.
+    assert.equal(emailResolved.reason, "email_provider_mismatch");
+    assert.equal(emailResolved.user, null);
+    assert.deepEqual(emailResolved.existingProviders, ["password"]);
 
     const newAccountResolved = await ctx.store.resolveAuthIdentityTarget({
       provider: "max",
