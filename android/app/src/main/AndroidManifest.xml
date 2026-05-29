@@ -204,5 +204,11 @@
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
         </intent>
+        <!-- Profile Phase 2b-2 STT spike (2026-05-29): lets speech_to_text
+             discover the on-device recognition service on Android 11+.
+             Keep if voice ships; remove with the spike if STT is no-go. -->
+        <intent>
+            <action android:name="android.speech.RecognitionService"/>
+        </intent>
     </queries>
 </manifest>

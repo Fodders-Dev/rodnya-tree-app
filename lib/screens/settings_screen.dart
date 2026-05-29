@@ -2,6 +2,7 @@
 // ignore_for_file: library_private_types_in_public_api
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:livekit_client/livekit_client.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -17,6 +18,7 @@ import '../backend/interfaces/family_tree_service_interface.dart';
 import '../backend/interfaces/semya_capable_family_tree_service.dart';
 import '../providers/tree_provider.dart';
 import '../screens/semya_details_screen.dart';
+import '../screens/stt_spike_screen.dart';
 import '../screens/trash_screen.dart';
 import '../widgets/hidden_semya_picker_sheet.dart';
 import '../services/custom_api_notification_service.dart';
@@ -1148,6 +1150,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
         ),
+        // TEMPORARY — Profile Phase 2b-2 STT validation spike. Debug-only
+        // (kDebugMode → hidden in release). Remove this tile + the import
+        // + stt_spike_screen.dart + the speech_to_text dep once Артём
+        // reports go/no-go on Russian recognition quality.
+        if (kDebugMode)
+          _buildActionRow(
+            icon: Icons.mic_rounded,
+            title: 'STT тест (dev)',
+            subtitle: 'Проверка распознавания русской речи',
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => const SttSpikeScreen(),
+              ),
+            ),
+          ),
       ]),
       _buildCallSettingsSection(),
     ];

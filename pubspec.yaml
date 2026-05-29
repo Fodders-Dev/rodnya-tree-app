@@ -115,6 +115,11 @@ dependencies:
   shimmer: ^3.0.0
   record: ^6.2.0
   audioplayers: ^6.6.0
+  # Profile Phase 2b-2 validation spike (2026-05-29): on-device STT.
+  # Added to validate Russian recognition quality before building the
+  # voice block. If the spike shows Russian is unusable on-device, this
+  # dep + the spike screen get reverted (no «впечатай сам» костыль).
+  speech_to_text: ^7.0.0
   video_player: ^2.9.2
   # Telegram-style in-app кружок recording. The OS native camera UI
   # (image_picker.pickVideo) felt detached — the user described it as
