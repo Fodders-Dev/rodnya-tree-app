@@ -375,6 +375,52 @@ void main() {
     expect(find.byKey(const Key('article-block-b2')), findsNothing);
     expect(find.byKey(const Key('article-block-b1')), findsOneWidget);
   });
+
+  // ===== UI cluster: warm surface (bug 2) + toolbar labels (bug 3) =====
+
+  testWidgets('editor surface is warm cream in light theme', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(brightness: Brightness.light),
+        home: ProfileArticleEditorScreen(
+          personId: 'p1',
+          serviceOverride: _FakeArticleService(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final scaffold = tester.widget<Scaffold>(find.byType(Scaffold));
+    expect(scaffold.backgroundColor, const Color(0xFFFAF7F2));
+  });
+
+  testWidgets('editor surface is warm sepia (not black) in dark theme',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(brightness: Brightness.dark),
+        home: ProfileArticleEditorScreen(
+          personId: 'p1',
+          serviceOverride: _FakeArticleService(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final scaffold = tester.widget<Scaffold>(find.byType(Scaffold));
+    expect(scaffold.backgroundColor, const Color(0xFF1C1814));
+    expect(scaffold.backgroundColor, isNot(Colors.black));
+  });
+
+  testWidgets('toolbar labels stay on one line (no wrap)', (tester) async {
+    await tester.pumpWidget(_wrap(_FakeArticleService(blocks: [
+      _paragraph('b1', 'x'),
+    ])));
+    await tester.pumpAndSettle();
+    for (final label in ['Идеи', 'Раздел', 'Фото', 'Голос']) {
+      final text = tester.widget<Text>(find.text(label));
+      expect(text.maxLines, 1, reason: label);
+      expect(text.softWrap, false, reason: label);
+    }
+  });
 }
 
 class _FakeStorage implements StorageServiceInterface {

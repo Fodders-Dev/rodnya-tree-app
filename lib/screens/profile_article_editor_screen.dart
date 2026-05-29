@@ -532,11 +532,18 @@ class _ProfileArticleEditorScreenState
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
+  // Warm «family album» surface (PROFILE-UX-REDESIGN §8.1) — applied in
+  // BOTH themes. Dark mode must NOT fall to pure black: a warm sepia
+  // keeps the album feel. Localized to the article surface; does not
+  // touch the app theme.
+  static const Color _paperLight = Color(0xFFFAF7F2); // кремовый
+  static const Color _paperDark = Color(0xFF1C1814); // тёплый тёмный сепия
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isLight = theme.brightness == Brightness.light;
-    final bg = isLight ? const Color(0xFFFBF7EF) : theme.scaffoldBackgroundColor;
+    final bg = isLight ? _paperLight : _paperDark;
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) async {
@@ -894,13 +901,35 @@ class _ProfileArticleEditorScreenState
     final color = dimmed
         ? theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.5)
         : theme.colorScheme.primary;
+    // Vertical icon-over-label: gives the label the full slot width so
+    // «Раздел» / «Голос» fit on one line on narrow phones (was a
+    // horizontal TextButton.icon whose label wrapped). FittedBox is a
+    // belt-and-braces guard against very narrow widths.
     return Expanded(
-      child: TextButton.icon(
+      child: InkWell(
         key: key,
-        onPressed: onTap,
-        style: TextButton.styleFrom(foregroundColor: color),
-        icon: Icon(icon, size: 20),
-        label: Text(label, style: const TextStyle(fontSize: 12)),
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 2),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 20, color: color),
+              const SizedBox(height: 3),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  softWrap: false,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 12, color: color),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
