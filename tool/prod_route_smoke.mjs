@@ -844,6 +844,24 @@ function isIgnorableConsoleError(message) {
   );
 }
 
+// Chromium surfaces request *cancellations* as net::ERR_ABORTED. These
+// are not server/network failures: the browser or the Flutter web
+// engine deliberately cancelled an in-flight request (a superseded
+// navigation, an AbortController, a font/asset refetch during startup).
+// They fire non-deterministically on slow cold-start loads — exactly
+// the flake that reddened the [anonymous] login route post-deploy while
+// the route itself loaded fine (final=#/login, empty statusCodes). A
+// genuine same-origin failure still surfaces as a connection-level
+// error (ERR_CONNECTION_*, ERR_NAME_NOT_RESOLVED, ERR_TIMED_OUT, …),
+// which is intentionally NOT matched here and still fails the route.
+const IGNORABLE_REQUEST_FAILURE_PATTERNS = [/net::ERR_ABORTED/i];
+
+function isIgnorableFailedRequest(errorText) {
+  return IGNORABLE_REQUEST_FAILURE_PATTERNS.some((pattern) =>
+    pattern.test(String(errorText || "")),
+  );
+}
+
 async function withRouteMetrics(page, config, routeName, targetUrl, task) {
   const baseOrigin = new URL(config.baseUrl).origin;
   const routeMetrics = {
@@ -857,6 +875,7 @@ async function withRouteMetrics(page, config, routeName, targetUrl, task) {
     pageErrors: [],
     ignoredPageErrors: [],
     failedRequests: [],
+    ignoredFailedRequests: [],
     statusCodes: [],
   };
   const startedAtMs = Date.now();
@@ -876,10 +895,15 @@ async function withRouteMetrics(page, config, routeName, targetUrl, task) {
     }
   };
   const onRequestFailed = (request) => {
-    routeMetrics.failedRequests.push({
+    const entry = {
       url: request.url(),
       errorText: request.failure()?.errorText || "requestfailed",
-    });
+    };
+    if (isIgnorableFailedRequest(entry.errorText)) {
+      routeMetrics.ignoredFailedRequests.push(entry);
+      return;
+    }
+    routeMetrics.failedRequests.push(entry);
   };
   const onConsole = (message) => {
     if (message.type() === "error") {
