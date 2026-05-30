@@ -23,6 +23,8 @@ import '../backend/models/profile_article.dart';
 import '../widgets/article_idea_prompts_sheet.dart';
 import '../widgets/article_photo_block.dart';
 import '../widgets/photo_date_picker_sheet.dart';
+import '../widgets/article_audio_block.dart';
+import '../widgets/audio_record_sheet.dart';
 import '../widgets/voice_input_sheet.dart';
 
 class ProfileArticleEditorScreen extends StatefulWidget {
@@ -36,6 +38,7 @@ class ProfileArticleEditorScreen extends StatefulWidget {
     this.storageOverride,
     this.pickImageOverride,
     this.voiceInputOverride,
+    this.audioRecordOverride,
     this.saveDebounce = const Duration(seconds: 5),
   });
 
@@ -60,6 +63,11 @@ class ProfileArticleEditorScreen extends StatefulWidget {
   /// Test seam — voice input. Production opens showVoiceInputSheet
   /// (speech_to_text, ru_RU). Returns the transcript or null.
   final Future<String?> Function(BuildContext context)? voiceInputOverride;
+
+  /// Test seam — voice recording. Production opens showAudioRecordSheet
+  /// (record pkg). Returns the recorded artifact or null.
+  final Future<AudioRecordResult?> Function(BuildContext context)?
+      audioRecordOverride;
 
   /// Debounce before a dirty block auto-saves (overridable for tests).
   final Duration saveDebounce;
@@ -378,7 +386,7 @@ class _ProfileArticleEditorScreenState
     if (source == null || !mounted) return;
     final url = await _pickAndUpload(source);
     if (url == null) return;
-    await _patchPhotoContent(block, {...block.content, 'url': url});
+    await _patchBlockContent(block, {...block.content, 'url': url});
   }
 
   Future<void> _setPhotoDate(ArticleBlock block) async {
@@ -387,14 +395,78 @@ class _ProfileArticleEditorScreenState
       currentYear: DateTime.now().year,
     );
     if (result == null || !mounted) return;
-    await _patchPhotoContent(block, {
+    await _patchBlockContent(block, {
       ...block.content,
       'dateTaken': result.dateTaken,
       'dateTakenAccuracy': result.accuracy,
     });
   }
 
-  Future<void> _patchPhotoContent(
+  // ===== Phase 2b-2 audio: voice recording (artifact) =====
+
+  // Record → upload → returns the url + duration. null on cancel/failure.
+  Future<_AudioUpload?> _recordAndUpload() async {
+    final record = widget.audioRecordOverride ?? showAudioRecordSheet;
+    final result = await record(context);
+    if (result == null || !mounted) return null;
+    final storage = _storage();
+    if (storage == null) {
+      _snack('Загрузка записи недоступна');
+      return null;
+    }
+    setState(() => _photoUploading = true); // shared «загрузка…» indicator
+    String? url;
+    try {
+      final bytes = await result.file.readAsBytes();
+      url = await storage.uploadBytes(
+        bucket: 'article-audio',
+        path: result.file.name,
+        fileBytes: bytes,
+        fileOptions: FileOptions(contentType: result.mimeType),
+      );
+    } catch (_) {
+      url = null;
+    }
+    if (mounted) setState(() => _photoUploading = false);
+    if (url == null || url.isEmpty) {
+      _snack('Не удалось загрузить запись');
+      return null;
+    }
+    return _AudioUpload(url, result.durationSec);
+  }
+
+  Future<void> _addAudio() async {
+    final res = await _recordAndUpload();
+    if (res == null || !mounted) return;
+    final svc = _service();
+    if (svc == null) return;
+    try {
+      final block = await svc.appendBlock(
+        widget.personId,
+        type: 'audio',
+        content: ArticleBlock.audioContent(
+          url: res.url,
+          durationSec: res.durationSec,
+        ),
+      );
+      if (!mounted) return;
+      _bind(block);
+      setState(() => _blocks.add(block));
+    } catch (_) {
+      _snack('Не удалось добавить запись');
+    }
+  }
+
+  Future<void> _replaceAudio(ArticleBlock block) async {
+    final res = await _recordAndUpload();
+    if (res == null) return;
+    await _patchBlockContent(
+      block,
+      ArticleBlock.audioContent(url: res.url, durationSec: res.durationSec),
+    );
+  }
+
+  Future<void> _patchBlockContent(
     ArticleBlock block,
     Map<String, dynamic> content,
   ) async {
@@ -418,7 +490,7 @@ class _ProfileArticleEditorScreenState
     } catch (_) {
       if (!mounted) return;
       setState(() => _busyBlockId = null);
-      _snack('Не удалось сохранить фото');
+      _snack('Не удалось сохранить');
     }
   }
 
@@ -524,11 +596,47 @@ class _ProfileArticleEditorScreenState
   // (auto-saved on the same path as typed text). No audio is saved —
   // transcript-only by design. Permission-denied / cancel → no-op (the
   // user can still type).
-  Future<void> _addVoice() async {
+  Future<void> _addVoiceTranscript() async {
     final transcribe = widget.voiceInputOverride ?? showVoiceInputSheet;
     final text = await transcribe(context);
     if (text == null || text.trim().isEmpty || !mounted) return;
     await _addBlock('paragraph', initialText: text.trim());
+  }
+
+  // «Голос» toolbar entry → chooser: dictate (STT → editable text) OR
+  // record (save the living voice as a playable artifact).
+  Future<void> _openVoiceMenu() async {
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              key: const Key('voice-menu-dictate'),
+              leading: const Icon(Icons.keyboard_voice_outlined),
+              title: const Text('Надиктовать текст'),
+              subtitle: const Text('Речь превратится в текст — можно править'),
+              onTap: () => Navigator.of(ctx).pop('dictate'),
+            ),
+            ListTile(
+              key: const Key('voice-menu-record'),
+              leading: const Icon(Icons.mic_rounded),
+              title: const Text('Записать голос'),
+              subtitle: const Text('Сохранить живой голос — можно послушать'),
+              onTap: () => Navigator.of(ctx).pop('record'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (choice == null || !mounted) return;
+    if (choice == 'dictate') {
+      await _addVoiceTranscript();
+    } else if (choice == 'record') {
+      await _addAudio();
+    }
   }
 
   Future<bool> _onWillPop() async {
@@ -718,6 +826,18 @@ class _ProfileArticleEditorScreenState
       );
     }
 
+    // Phase 2b-2 audio: a saved voice recording — play/pause + duration,
+    // with replace/delete in the editor.
+    if (block.isAudio) {
+      return ArticleAudioBlock(
+        key: Key('article-block-${block.id}'),
+        block: block,
+        busy: _busyBlockId == block.id,
+        onReplace: () => _replaceAudio(block),
+        onDelete: () => _deleteBlock(block),
+      );
+    }
+
     final controller = _controllers[block.id]!;
     final focusNode = _focus[block.id]!;
     final hint = _hints[block.id];
@@ -897,7 +1017,7 @@ class _ProfileArticleEditorScreenState
               key: const Key('article-add-voice'),
               icon: Icons.mic_none_rounded,
               label: 'Голос',
-              onTap: _addVoice,
+              onTap: _openVoiceMenu,
             ),
           ],
         ),
@@ -948,4 +1068,10 @@ class _ProfileArticleEditorScreenState
       ),
     );
   }
+}
+
+class _AudioUpload {
+  const _AudioUpload(this.url, this.durationSec);
+  final String url;
+  final int durationSec;
 }

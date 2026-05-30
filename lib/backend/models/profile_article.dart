@@ -94,6 +94,21 @@ class ArticleBlock {
 
   bool get isParagraph => type == 'paragraph';
   bool get isHeader => type == 'header';
+  bool get isAudio => type == 'audio';
+
+  /// Audio block url (the saved voice recording), null if absent.
+  String? get audioUrl {
+    final raw = content['url'];
+    return raw is String && raw.isNotEmpty ? raw : null;
+  }
+
+  /// Audio block duration in seconds, null if unknown.
+  int? get audioDurationSec {
+    final raw = content['durationSec'];
+    if (raw is int) return raw;
+    if (raw is num) return raw.round();
+    return null;
+  }
 
   ArticleBlock copyWith({
     Map<String, dynamic>? content,
@@ -139,6 +154,24 @@ class ArticleBlock {
   /// Build header content.
   static Map<String, dynamic> headerContent(String text, {int level = 2}) {
     return {'text': text, 'level': level == 1 ? 1 : 2};
+  }
+
+  /// Build audio block content — the saved voice recording (artifact).
+  /// transcript stays null (record-only, no STT — that's the separate
+  /// dictate path). Shape mirrors backend normalizeArticleBlockContent
+  /// case "audio": {url required, durationSec rounded positive int | null,
+  /// transcript string | null}.
+  static Map<String, dynamic> audioContent({
+    required String url,
+    int? durationSec,
+    String? transcript,
+  }) {
+    return {
+      'url': url,
+      'durationSec':
+          (durationSec != null && durationSec > 0) ? durationSec.round() : null,
+      'transcript': transcript,
+    };
   }
 }
 

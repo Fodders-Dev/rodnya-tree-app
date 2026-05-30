@@ -92,6 +92,37 @@ void main() {
       expect(h.headerText, 'Детство');
       expect(h.headerLevel, 2);
     });
+
+    test('audioContent matches backend normalization', () {
+      // url required, durationSec rounded positive int | null, transcript
+      // nullable (record-only → null).
+      expect(
+        ArticleBlock.audioContent(url: 'https://a/v.m4a', durationSec: 42),
+        {'url': 'https://a/v.m4a', 'durationSec': 42, 'transcript': null},
+      );
+      // Non-positive / null duration → null.
+      expect(ArticleBlock.audioContent(url: 'u', durationSec: 0)['durationSec'],
+          isNull);
+      expect(ArticleBlock.audioContent(url: 'u')['durationSec'], isNull);
+      // transcript passes through when given.
+      expect(
+        ArticleBlock.audioContent(url: 'u', transcript: 'привет')['transcript'],
+        'привет',
+      );
+    });
+
+    test('audio getters read content', () {
+      final a = ArticleBlock.fromJson({
+        'id': 'au1',
+        'type': 'audio',
+        'content': {'url': 'https://a/v.m4a', 'durationSec': 42},
+        'createdAt': 't',
+        'updatedAt': 't',
+      });
+      expect(a.isAudio, true);
+      expect(a.audioUrl, 'https://a/v.m4a');
+      expect(a.audioDurationSec, 42);
+    });
   });
 
   test('getArticle GETs the article endpoint + parses blocks', () async {

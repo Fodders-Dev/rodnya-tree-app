@@ -13,7 +13,9 @@ import 'package:rodnya/backend/interfaces/profile_article_service_interface.dart
 import 'package:rodnya/backend/interfaces/storage_service_interface.dart';
 import 'package:rodnya/backend/models/profile_article.dart';
 import 'package:rodnya/screens/profile_article_editor_screen.dart';
+import 'package:rodnya/widgets/article_audio_block.dart';
 import 'package:rodnya/widgets/article_photo_block.dart';
+import 'package:rodnya/widgets/audio_record_sheet.dart';
 
 class _FakeArticleService implements ProfileArticleServiceInterface {
   _FakeArticleService({List<ArticleBlock>? blocks})
@@ -416,7 +418,7 @@ void main() {
 
   // ===== Phase 2b-2: voice transcript accelerator =====
 
-  testWidgets('voice → transcript appended as an editable paragraph',
+  testWidgets('«Голос» → «Надиктовать текст» → transcript as paragraph',
       (tester) async {
     final svc = _FakeArticleService();
     const transcript = 'Лидия родилась в селе Иваново в 1949 году';
@@ -432,9 +434,10 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.tap(find.byKey(const Key('article-add-voice')));
+    await tester.pumpAndSettle(); // chooser
+    await tester.tap(find.byKey(const Key('voice-menu-dictate')));
     await tester.pumpAndSettle();
 
-    // The recognized text became a new paragraph block (editable).
     expect(svc.calls.contains('append:paragraph'), true);
     expect(
       (svc.lastAppendContent?['spans'] as List).first['text'],
@@ -443,7 +446,7 @@ void main() {
     expect(find.text(transcript), findsOneWidget);
   });
 
-  testWidgets('voice cancelled / denied → no block, no crash (can type)',
+  testWidgets('dictate cancelled / denied → no block (can still type)',
       (tester) async {
     final svc = _FakeArticleService();
     await tester.pumpWidget(
@@ -459,20 +462,80 @@ void main() {
 
     await tester.tap(find.byKey(const Key('article-add-voice')));
     await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('voice-menu-dictate')));
+    await tester.pumpAndSettle();
 
     expect(svc.calls.any((c) => c.startsWith('append')), false);
-    // Editor still usable — the empty-state «Начать писать» is there to type.
     expect(find.byKey(const Key('article-empty-start')), findsOneWidget);
+  });
+
+  testWidgets('«Голос» → «Записать голос» → audio block (record + upload)',
+      (tester) async {
+    final svc = _FakeArticleService();
+    final storage = _FakeStorage();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ProfileArticleEditorScreen(
+          personId: 'p1',
+          serviceOverride: svc,
+          storageOverride: storage,
+          audioRecordOverride: (_) async => AudioRecordResult(
+            file: XFile.fromData(
+              Uint8List.fromList(const [1, 2, 3]),
+              name: 'rec.m4a',
+              mimeType: 'audio/m4a',
+            ),
+            mimeType: 'audio/m4a',
+            durationSec: 42,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('article-add-voice')));
+    await tester.pumpAndSettle(); // chooser
+    await tester.tap(find.byKey(const Key('voice-menu-record')));
+    // Let record-override + uploadBytes + append resolve (avoid
+    // pumpAndSettle — the audio block could keep a stream open).
+    for (var i = 0; i < 5; i++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+
+    expect(storage.uploadBytesCalls, 1);
+    expect(storage.lastBucket, 'article-audio');
+    expect(storage.lastContentType, 'audio/m4a');
+    expect(svc.calls.contains('append:audio'), true);
+    expect(svc.lastAppendContent?['url'], 'https://audio/rec.m4a');
+    expect(svc.lastAppendContent?['durationSec'], 42);
+    expect(svc.lastAppendContent?['transcript'], isNull);
+    expect(find.byType(ArticleAudioBlock), findsOneWidget);
   });
 }
 
 class _FakeStorage implements StorageServiceInterface {
   int uploadCalls = 0;
+  int uploadBytesCalls = 0;
+  String? lastBucket;
+  String? lastContentType;
 
   @override
   Future<String?> uploadImage(XFile imageFile, String folder) async {
     uploadCalls += 1;
     return 'https://img/uploaded.jpg';
+  }
+
+  @override
+  Future<String?> uploadBytes({
+    required String bucket,
+    required String path,
+    required Uint8List fileBytes,
+    FileOptions? fileOptions,
+  }) async {
+    uploadBytesCalls += 1;
+    lastBucket = bucket;
+    lastContentType = fileOptions?.contentType;
+    return 'https://audio/rec.m4a';
   }
 
   @override
