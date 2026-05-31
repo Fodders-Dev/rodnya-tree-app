@@ -63,7 +63,7 @@ class _FakeArticleService implements ProfileArticleServiceInterface {
     return ArticleBlockUpdateResult(
       block: ArticleBlock(
         id: blockId,
-        type: content.containsKey('spans') ? 'paragraph' : 'header',
+        type: _inferBlockType(content),
         content: content,
         authorUserId: 'u1',
         createdAt: 't',
@@ -88,10 +88,41 @@ class _FakeArticleService implements ProfileArticleServiceInterface {
   }
 }
 
+// Mirror the backend's type-preserving update: a block keeps its type
+// across a content patch. The fake infers it from the content shape so a
+// quote re-renders as a quote (not as a header) after auto-save.
+String _inferBlockType(Map<String, dynamic> content) {
+  if (content.containsKey('spans')) return 'paragraph';
+  if (content.containsKey('level')) return 'header';
+  if (content.containsKey('attribution')) return 'quote';
+  if (content.containsKey('url')) {
+    return content.containsKey('durationSec') ? 'audio' : 'photo';
+  }
+  if (content.isEmpty) return 'divider';
+  return 'paragraph';
+}
+
 ArticleBlock _paragraph(String id, String text) => ArticleBlock(
       id: id,
       type: 'paragraph',
       content: ArticleBlock.paragraphContent(text),
+      createdAt: 't',
+      updatedAt: 't',
+    );
+
+ArticleBlock _quote(String id, {required String text, String? attribution}) =>
+    ArticleBlock(
+      id: id,
+      type: 'quote',
+      content: ArticleBlock.quoteContent(text: text, attribution: attribution),
+      createdAt: 't',
+      updatedAt: 't',
+    );
+
+ArticleBlock _divider(String id) => ArticleBlock(
+      id: id,
+      type: 'divider',
+      content: ArticleBlock.dividerContent(),
       createdAt: 't',
       updatedAt: 't',
     );
@@ -152,14 +183,99 @@ void main() {
     );
   });
 
-  testWidgets('«+ Раздел» appends a header block', (tester) async {
+  testWidgets('«Блок» → «Раздел» appends a header block', (tester) async {
     final svc = _FakeArticleService(blocks: [_paragraph('b1', 'текст')]);
     await tester.pumpWidget(_wrap(svc));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const Key('article-add-header')));
+    await tester.tap(find.byKey(const Key('article-add-block')));
+    await tester.pumpAndSettle(); // block picker
+    await tester.tap(find.byKey(const Key('block-menu-header')));
     await tester.pumpAndSettle();
     expect(svc.calls.contains('append:header'), true);
+  });
+
+  // ===== Phase 2c: quote + divider blocks =====
+
+  testWidgets('«Блок» → «Цитата» appends a quote block with both fields',
+      (tester) async {
+    final svc = _FakeArticleService();
+    await tester.pumpWidget(_wrap(svc));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('article-add-block')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('block-menu-quote')));
+    await tester.pumpAndSettle();
+
+    expect(svc.calls.contains('append:quote'), true);
+    expect(svc.lastAppendContent, {'text': '', 'attribution': null});
+    // The appended block (new-0) renders the quote text + attribution.
+    expect(find.byKey(const Key('article-block-new-0')), findsOneWidget);
+    expect(
+      find.byKey(const Key('article-quote-attribution-new-0')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('quote edit auto-saves text + attribution', (tester) async {
+    final svc = _FakeArticleService(
+      blocks: [_quote('q1', text: 'старая', attribution: 'Дед')],
+    );
+    await tester.pumpWidget(
+      _wrap(svc, debounce: const Duration(milliseconds: 150)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byKey(const Key('article-block-q1')),
+      'Жизнь прожить — не поле перейти',
+    );
+    await tester.enterText(
+      find.byKey(const Key('article-quote-attribution-q1')),
+      'Бабушка Лидия',
+    );
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pumpAndSettle();
+
+    expect(svc.calls.contains('update:q1'), true);
+    expect(svc.lastUpdatedContent?['text'], 'Жизнь прожить — не поле перейти');
+    expect(svc.lastUpdatedContent?['attribution'], 'Бабушка Лидия');
+  });
+
+  testWidgets('«Блок» → «Разделитель» appends a divider + renders a line',
+      (tester) async {
+    final svc = _FakeArticleService();
+    await tester.pumpWidget(_wrap(svc));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('article-add-block')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('block-menu-divider')));
+    await tester.pumpAndSettle();
+
+    expect(svc.calls.contains('append:divider'), true);
+    expect(svc.lastAppendContent, isEmpty); // {}
+    expect(find.byKey(const Key('article-divider-new-0')), findsOneWidget);
+  });
+
+  testWidgets('divider deletes from the ⋮ menu without a confirm dialog',
+      (tester) async {
+    final svc = _FakeArticleService(
+      blocks: [_paragraph('b1', 'keep'), _divider('d1')],
+    );
+    await tester.pumpWidget(_wrap(svc));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('article-block-menu-d1')));
+    await tester.pumpAndSettle();
+    expect(find.text('Удалить разделитель'), findsOneWidget);
+    await tester.tap(find.text('Удалить разделитель'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Удалить разделитель?'), findsNothing); // no confirm
+    expect(svc.calls.contains('remove:d1'), true);
+    expect(find.byKey(const Key('article-divider-d1')), findsNothing);
   });
 
   testWidgets('идеи sheet inserts a section + paragraph', (tester) async {
@@ -409,7 +525,7 @@ void main() {
       _paragraph('b1', 'x'),
     ])));
     await tester.pumpAndSettle();
-    for (final label in ['Идеи', 'Раздел', 'Фото', 'Голос']) {
+    for (final label in ['Идеи', 'Блок', 'Фото', 'Голос']) {
       final text = tester.widget<Text>(find.text(label));
       expect(text.maxLines, 1, reason: label);
       expect(text.softWrap, false, reason: label);

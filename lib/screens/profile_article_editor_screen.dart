@@ -81,6 +81,9 @@ class _ProfileArticleEditorScreenState
     extends State<ProfileArticleEditorScreen> {
   final List<ArticleBlock> _blocks = [];
   final Map<String, TextEditingController> _controllers = {};
+  // Quote blocks have a second editable field («— кто сказал»); its
+  // controller lives here, keyed by block id, alongside the main one.
+  final Map<String, TextEditingController> _attributionControllers = {};
   final Map<String, FocusNode> _focus = {};
   final Map<String, String> _hints = {}; // blockId → placeholder prompt
   final Set<String> _dirty = {};
@@ -105,6 +108,9 @@ class _ProfileArticleEditorScreenState
   void dispose() {
     _debounce?.cancel();
     for (final c in _controllers.values) {
+      c.dispose();
+    }
+    for (final c in _attributionControllers.values) {
       c.dispose();
     }
     for (final f in _focus.values) {
@@ -168,6 +174,7 @@ class _ProfileArticleEditorScreenState
   String _initialTextFor(ArticleBlock b) {
     if (b.type == 'photo') return b.content['caption']?.toString() ?? '';
     if (b.isHeader) return b.headerText;
+    if (b.isQuote) return b.quoteText;
     return b.plainText;
   }
 
@@ -176,6 +183,12 @@ class _ProfileArticleEditorScreenState
       b.id,
       () => TextEditingController(text: _initialTextFor(b)),
     );
+    if (b.isQuote) {
+      _attributionControllers.putIfAbsent(
+        b.id,
+        () => TextEditingController(text: b.quoteAttribution ?? ''),
+      );
+    }
     _focus.putIfAbsent(b.id, () {
       final node = FocusNode();
       node.addListener(() {
@@ -219,6 +232,11 @@ class _ProfileArticleEditorScreenState
         };
       } else if (block.isHeader) {
         content = ArticleBlock.headerContent(text, level: block.headerLevel);
+      } else if (block.isQuote) {
+        content = ArticleBlock.quoteContent(
+          text: text,
+          attribution: _attributionControllers[id]?.text,
+        );
       } else {
         content = ArticleBlock.paragraphContent(text);
       }
@@ -259,9 +277,20 @@ class _ProfileArticleEditorScreenState
     final svc = _service();
     if (svc == null) return;
     final text = initialText ?? '';
-    final content = type == 'header'
-        ? ArticleBlock.headerContent(text)
-        : ArticleBlock.paragraphContent(text);
+    final Map<String, dynamic> content;
+    switch (type) {
+      case 'header':
+        content = ArticleBlock.headerContent(text);
+        break;
+      case 'quote':
+        content = ArticleBlock.quoteContent(text: text);
+        break;
+      case 'divider':
+        content = ArticleBlock.dividerContent();
+        break;
+      default:
+        content = ArticleBlock.paragraphContent(text);
+    }
     try {
       final block =
           await svc.appendBlock(widget.personId, type: type, content: content);
@@ -285,7 +314,8 @@ class _ProfileArticleEditorScreenState
           _blocks.map((b) => b.id).toList(growable: false),
         );
       }
-      _focus[block.id]?.requestFocus();
+      // Divider has no editable field — nothing to focus.
+      if (type != 'divider') _focus[block.id]?.requestFocus();
     } catch (_) {
       _snack('Не удалось добавить блок');
     }
@@ -502,6 +532,7 @@ class _ProfileArticleEditorScreenState
     setState(() => _blocks.removeAt(idx));
     _dirty.remove(block.id);
     _controllers.remove(block.id)?.dispose();
+    _attributionControllers.remove(block.id)?.dispose();
     _focus.remove(block.id)?.dispose();
     try {
       await svc.removeBlock(widget.personId, block.id);
@@ -516,17 +547,24 @@ class _ProfileArticleEditorScreenState
   Future<void> _deleteTextBlock(ArticleBlock block) async {
     final text = _controllers[block.id]?.text.trim() ?? '';
     if (text.isNotEmpty) {
-      final confirmed = await _confirmDeleteBlock(block.isHeader);
+      final confirmed = await _confirmDeleteBlock(_deleteNoun(block));
       if (confirmed != true || !mounted) return;
     }
     await _deleteBlock(block);
   }
 
-  Future<bool?> _confirmDeleteBlock(bool isHeader) {
+  // Accusative noun for the delete dialog / menu label.
+  String _deleteNoun(ArticleBlock block) {
+    if (block.isHeader) return 'раздел';
+    if (block.isQuote) return 'цитату';
+    return 'абзац';
+  }
+
+  Future<bool?> _confirmDeleteBlock(String noun) {
     return showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text(isHeader ? 'Удалить раздел?' : 'Удалить абзац?'),
+        title: Text('Удалить $noun?'),
         content: const Text('Текст этого блока будет удалён.'),
         actions: [
           TextButton(
@@ -557,6 +595,12 @@ class _ProfileArticleEditorScreenState
     final block = _blocks[index];
     final controller = _controllers[block.id];
     if (controller == null || controller.text.isNotEmpty) {
+      return KeyEventResult.ignored;
+    }
+    // A quote whose text is empty but still carries an attribution is not
+    // "empty" — don't delete it out from under the user.
+    if (block.isQuote &&
+        (_attributionControllers[block.id]?.text.trim().isNotEmpty ?? false)) {
       return KeyEventResult.ignored;
     }
     final prev = _blocks[index - 1];
@@ -637,6 +681,47 @@ class _ProfileArticleEditorScreenState
     } else if (choice == 'record') {
       await _addAudio();
     }
+  }
+
+  // «Блок» toolbar entry → compact picker. The bottom toolbar is already
+  // at its width limit (4 buttons), so new block types live behind one
+  // entry instead of adding more buttons. Раздел kept here (used to be its
+  // own button); Цитата / Разделитель are new.
+  Future<void> _openBlockMenu() async {
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              key: const Key('block-menu-header'),
+              leading: const Icon(Icons.title_rounded),
+              title: const Text('Раздел'),
+              subtitle: const Text('Заголовок новой части'),
+              onTap: () => Navigator.of(ctx).pop('header'),
+            ),
+            ListTile(
+              key: const Key('block-menu-quote'),
+              leading: const Icon(Icons.format_quote_rounded),
+              title: const Text('Цитата'),
+              subtitle: const Text('Чьи-то слова, с автором'),
+              onTap: () => Navigator.of(ctx).pop('quote'),
+            ),
+            ListTile(
+              key: const Key('block-menu-divider'),
+              leading: const Icon(Icons.horizontal_rule_rounded),
+              title: const Text('Разделитель'),
+              subtitle: const Text('Тонкая линия между частями'),
+              onTap: () => Navigator.of(ctx).pop('divider'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (choice == null || !mounted) return;
+    await _addBlock(choice);
   }
 
   Future<bool> _onWillPop() async {
@@ -838,6 +923,18 @@ class _ProfileArticleEditorScreenState
       );
     }
 
+    // «Цитата» — quoted words + optional attribution. Edited inline (text
+    // mirrors a paragraph; attribution is a second light field).
+    if (block.isQuote) {
+      return _buildQuoteRow(theme, index, block);
+    }
+
+    // «Разделитель» — a thin rule between parts. Not editable; managed via
+    // the shared block «⋮» menu (insert / delete).
+    if (block.isDivider) {
+      return _buildDividerRow(theme, index, block);
+    }
+
     final controller = _controllers[block.id]!;
     final focusNode = _focus[block.id]!;
     final hint = _hints[block.id];
@@ -896,38 +993,161 @@ class _ProfileArticleEditorScreenState
               ),
             ),
           ),
-          // Per-block «⋮» menu — insert below + delete. Consistent с
-          // фото-блоком (PopupMenuButton).
-          PopupMenuButton<String>(
-            key: Key('article-block-menu-${block.id}'),
-            tooltip: 'Действия с блоком',
-            padding: EdgeInsets.zero,
-            icon: Icon(
-              Icons.more_vert_rounded,
-              size: 18,
-              color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
-            ),
-            onSelected: (value) {
-              switch (value) {
-                case 'insert':
-                  _addBlock('paragraph', afterIndex: index);
-                  break;
-                case 'delete':
-                  _deleteTextBlock(block);
-                  break;
-              }
-            },
-            itemBuilder: (_) => [
-              const PopupMenuItem(
-                value: 'insert',
-                child: Text('Добавить абзац ниже'),
-              ),
-              PopupMenuItem(
-                value: 'delete',
-                child: Text(block.isHeader ? 'Удалить раздел' : 'Удалить абзац'),
-              ),
-            ],
+          // Per-block «⋮» menu — insert below + delete.
+          _blockMenu(theme, index, block),
+        ],
+      ),
+    );
+  }
+
+  // Shared per-block «⋮» menu (insert paragraph below + delete). Reused by
+  // paragraph / header / quote / divider so every block has consistent
+  // actions. Divider has no text, so its delete skips the confirm.
+  Widget _blockMenu(ThemeData theme, int index, ArticleBlock block) {
+    return PopupMenuButton<String>(
+      key: Key('article-block-menu-${block.id}'),
+      tooltip: 'Действия с блоком',
+      padding: EdgeInsets.zero,
+      icon: Icon(
+        Icons.more_vert_rounded,
+        size: 18,
+        color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+      ),
+      onSelected: (value) {
+        switch (value) {
+          case 'insert':
+            _addBlock('paragraph', afterIndex: index);
+            break;
+          case 'delete':
+            if (block.isDivider) {
+              _deleteBlock(block); // nothing to lose — no confirm
+            } else {
+              _deleteTextBlock(block);
+            }
+            break;
+        }
+      },
+      itemBuilder: (_) => [
+        const PopupMenuItem(
+          value: 'insert',
+          child: Text('Добавить абзац ниже'),
+        ),
+        PopupMenuItem(
+          value: 'delete',
+          child: Text(
+            block.isDivider ? 'Удалить разделитель' : 'Удалить ${_deleteNoun(block)}',
           ),
+        ),
+      ],
+    );
+  }
+
+  // «Цитата» row — accent left border, italic serif quote + a lighter
+  // attribution field («— …»). Warm theme; reads as a pull-quote.
+  Widget _buildQuoteRow(ThemeData theme, int index, ArticleBlock block) {
+    final controller = _controllers[block.id]!;
+    final focusNode = _focus[block.id]!;
+    final attribution = _attributionControllers[block.id]!;
+    final quoteStyle = theme.textTheme.bodyLarge?.copyWith(
+      fontFamily: 'Lora',
+      fontSize: 18,
+      height: 1.5,
+      fontStyle: FontStyle.italic,
+    );
+    final attributionStyle = theme.textTheme.bodyMedium?.copyWith(
+      fontFamily: 'Lora',
+      color: theme.colorScheme.onSurfaceVariant,
+    );
+    return Padding(
+      padding: const EdgeInsets.only(top: 12, bottom: 2),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Container(
+              padding: const EdgeInsets.only(left: 14),
+              decoration: BoxDecoration(
+                border: Border(
+                  left: BorderSide(
+                    color: theme.colorScheme.primary.withValues(alpha: 0.55),
+                    width: 3,
+                  ),
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Focus(
+                    canRequestFocus: false,
+                    onKeyEvent: (_, event) => _handleBlockKey(index, event),
+                    child: TextField(
+                      key: Key('article-block-${block.id}'),
+                      controller: controller,
+                      focusNode: focusNode,
+                      style: quoteStyle,
+                      maxLines: null,
+                      keyboardType: TextInputType.multiline,
+                      textCapitalization: TextCapitalization.sentences,
+                      decoration: InputDecoration(
+                        isDense: true,
+                        border: InputBorder.none,
+                        hintText: 'Цитата…',
+                        hintStyle: quoteStyle?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant
+                              .withValues(alpha: 0.6),
+                        ),
+                      ),
+                      onChanged: (_) => _onChanged(block.id),
+                    ),
+                  ),
+                  TextField(
+                    key: Key('article-quote-attribution-${block.id}'),
+                    controller: attribution,
+                    style: attributionStyle,
+                    textCapitalization: TextCapitalization.words,
+                    decoration: InputDecoration(
+                      isDense: true,
+                      border: InputBorder.none,
+                      prefixText: '— ',
+                      prefixStyle: attributionStyle,
+                      hintText: 'кто сказал (необязательно)',
+                      hintStyle: attributionStyle?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant
+                            .withValues(alpha: 0.6),
+                      ),
+                    ),
+                    onChanged: (_) => _onChanged(block.id),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          _blockMenu(theme, index, block),
+        ],
+      ),
+    );
+  }
+
+  // «Разделитель» row — a thin warm rule with breathing room, plus the
+  // shared «⋮» menu so it can be removed / followed by a new paragraph.
+  Widget _buildDividerRow(ThemeData theme, int index, ArticleBlock block) {
+    return Padding(
+      key: Key('article-block-${block.id}'),
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              child: Divider(
+                key: Key('article-divider-${block.id}'),
+                thickness: 1,
+                color: theme.colorScheme.outlineVariant.withValues(alpha: 0.7),
+              ),
+            ),
+          ),
+          _blockMenu(theme, index, block),
         ],
       ),
     );
@@ -1000,10 +1220,10 @@ class _ProfileArticleEditorScreenState
             ),
             _toolbarButton(
               theme,
-              key: const Key('article-add-header'),
-              icon: Icons.title_rounded,
-              label: 'Раздел',
-              onTap: () => _addBlock('header'),
+              key: const Key('article-add-block'),
+              icon: Icons.add_box_outlined,
+              label: 'Блок',
+              onTap: _openBlockMenu,
             ),
             _toolbarButton(
               theme,

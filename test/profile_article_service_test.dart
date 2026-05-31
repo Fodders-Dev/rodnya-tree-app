@@ -123,6 +123,60 @@ void main() {
       expect(a.audioUrl, 'https://a/v.m4a');
       expect(a.audioDurationSec, 42);
     });
+
+    test('quoteContent matches backend normalization', () {
+      // text trimmed; attribution trimmed → string | null (empty → null).
+      expect(
+        ArticleBlock.quoteContent(
+          text: '  Жизнь прекрасна  ',
+          attribution: ' Лев Толстой ',
+        ),
+        {'text': 'Жизнь прекрасна', 'attribution': 'Лев Толстой'},
+      );
+      // No / blank attribution → null.
+      expect(ArticleBlock.quoteContent(text: 'x')['attribution'], isNull);
+      expect(
+        ArticleBlock.quoteContent(text: 'x', attribution: '   ')['attribution'],
+        isNull,
+      );
+    });
+
+    test('dividerContent is empty (mirrors backend {})', () {
+      expect(ArticleBlock.dividerContent(), isEmpty);
+    });
+
+    test('quote + divider getters read content', () {
+      final q = ArticleBlock.fromJson({
+        'id': 'q1',
+        'type': 'quote',
+        'content': {'text': 'Слова', 'attribution': 'Автор'},
+        'createdAt': 't',
+        'updatedAt': 't',
+      });
+      expect(q.isQuote, true);
+      expect(q.quoteText, 'Слова');
+      expect(q.quoteAttribution, 'Автор');
+
+      // attribution null / blank → null getter.
+      final qNoAttr = ArticleBlock.fromJson({
+        'id': 'q2',
+        'type': 'quote',
+        'content': {'text': 'Без автора', 'attribution': null},
+        'createdAt': 't',
+        'updatedAt': 't',
+      });
+      expect(qNoAttr.quoteAttribution, isNull);
+
+      final d = ArticleBlock.fromJson({
+        'id': 'd1',
+        'type': 'divider',
+        'content': <String, dynamic>{},
+        'createdAt': 't',
+        'updatedAt': 't',
+      });
+      expect(d.isDivider, true);
+      expect(d.isQuote, false);
+    });
   });
 
   test('getArticle GETs the article endpoint + parses blocks', () async {

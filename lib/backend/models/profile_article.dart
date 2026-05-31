@@ -95,6 +95,19 @@ class ArticleBlock {
   bool get isParagraph => type == 'paragraph';
   bool get isHeader => type == 'header';
   bool get isAudio => type == 'audio';
+  bool get isQuote => type == 'quote';
+  bool get isDivider => type == 'divider';
+
+  /// Quote text — the words being quoted.
+  String get quoteText => content['text']?.toString() ?? '';
+
+  /// Quote attribution («— кто сказал»), null if absent / empty.
+  String? get quoteAttribution {
+    final raw = content['attribution'];
+    if (raw == null) return null;
+    final s = raw.toString().trim();
+    return s.isEmpty ? null : s;
+  }
 
   /// Audio block url (the saved voice recording), null if absent.
   String? get audioUrl {
@@ -173,6 +186,23 @@ class ArticleBlock {
       'transcript': transcript,
     };
   }
+
+  /// Build quote content. Shape mirrors backend
+  /// normalizeArticleBlockContent case "quote": {text trimmed, attribution
+  /// string | null (empty → null)}.
+  static Map<String, dynamic> quoteContent({
+    required String text,
+    String? attribution,
+  }) {
+    final attr = attribution?.trim();
+    return {
+      'text': text.trim(),
+      'attribution': (attr == null || attr.isEmpty) ? null : attr,
+    };
+  }
+
+  /// Build divider content — empty, mirrors backend case "divider": {}.
+  static Map<String, dynamic> dividerContent() => <String, dynamic>{};
 }
 
 /// Result of a block update — carries the multi-author conflict flag
