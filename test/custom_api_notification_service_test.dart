@@ -17,6 +17,17 @@ import 'package:rodnya/services/custom_api_notification_service.dart';
 import 'package:rodnya/services/invitation_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+/// Notification fixtures must look *recent* to the service under test.
+/// `CustomApiNotificationService.syncPendingNotifications` refuses to replay
+/// anything older than `_maxReplayAge` (24h) as a local notification, so a
+/// hard-coded absolute `createdAt` silently ages out of that window and turns
+/// these delivery assertions red with the mere passage of wall-clock time —
+/// which is exactly what happened once the stale-replay cap landed (cecc0ba).
+/// Anchoring the timestamps to `now` keeps the fixtures inside the replay
+/// window no matter when the suite runs.
+String _recentlyCreatedAt({Duration ago = const Duration(minutes: 5)}) =>
+    DateTime.now().toUtc().subtract(ago).toIso8601String();
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -131,7 +142,7 @@ void main() {
           'type': 'chat_message',
           'title': 'Собеседник',
           'body': 'Привет из чата',
-          'createdAt': '2026-03-27T12:00:00.000Z',
+          'createdAt': _recentlyCreatedAt(ago: const Duration(minutes: 6)),
           'data': {
             'chatId': 'chat-1',
             'senderId': 'user-2',
@@ -143,7 +154,7 @@ void main() {
           'type': 'tree_invitation',
           'title': 'Приглашение в дерево',
           'body': 'Вас пригласили в дерево семьи',
-          'createdAt': '2026-03-27T12:01:00.000Z',
+          'createdAt': _recentlyCreatedAt(ago: const Duration(minutes: 5)),
           'data': {
             'treeId': 'tree-1',
             'treeName': 'Семья',
@@ -302,7 +313,7 @@ void main() {
           'type': 'chat_message',
           'title': 'Собеседник',
           'body': 'Тихий чат не должен всплыть',
-          'createdAt': '2026-03-27T12:00:00.000Z',
+          'createdAt': _recentlyCreatedAt(ago: const Duration(minutes: 6)),
           'data': {
             'chatId': 'chat-muted-1',
             'senderId': 'user-2',
@@ -314,7 +325,7 @@ void main() {
           'type': 'tree_invitation',
           'title': 'Приглашение в дерево',
           'body': 'Это уведомление должно прийти',
-          'createdAt': '2026-03-27T12:01:00.000Z',
+          'createdAt': _recentlyCreatedAt(ago: const Duration(minutes: 5)),
           'data': {'treeId': 'tree-1'},
         },
       ];
@@ -417,7 +428,7 @@ void main() {
           'type': 'chat_message',
           'title': 'Собеседник',
           'body': 'Тихий режим',
-          'createdAt': '2026-03-27T12:00:00.000Z',
+          'createdAt': _recentlyCreatedAt(ago: const Duration(minutes: 5)),
           'data': {
             'chatId': 'chat-silent-1',
             'senderId': 'user-2',

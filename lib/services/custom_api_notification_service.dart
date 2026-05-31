@@ -184,16 +184,23 @@ class CustomApiNotificationService implements NotificationServiceInterface {
 
   @override
   Future<void> initialize() async {
+    // Idempotent on purpose. Delivery helpers (`_showGenericNotification`,
+    // `showChatMessageNotification`, `showIncomingCallNotification`, …) call
+    // `initialize()` as a lazy "is the plugin ready?" guard — including from
+    // inside `syncPendingNotifications`'s delivery loop. The one-time
+    // hydration below MUST stay behind this guard: re-running
+    // `_deliveredNotificationIds.clear()` on every call would discard the ids
+    // the sync loop has added-but-not-yet-persisted, re-notifying the user
+    // for the same items on the next poll.
+    if (_isInitialized) {
+      return;
+    }
+
     _deliveredNotificationIds
       ..clear()
       ..addAll(_preferences.getStringList(_deliveredIdsStorageKey) ?? const []);
     _notificationsEnabled =
         _preferences.getBool(_notificationsEnabledStorageKey) ?? true;
-
-    if (_isInitialized) {
-      _isInitialized = true;
-      return;
-    }
 
     if (kIsWeb) {
       _isInitialized = true;
