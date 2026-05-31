@@ -81,6 +81,45 @@ void main() {
 
     expect(fake.calls, ['play', 'pause', 'resume']);
   });
+
+  testWidgets('seek commits the chosen position immediately (no snap to 0)',
+      (tester) async {
+    final fake = _FakePlayer();
+    await tester.pumpWidget(
+      _wrap(ArticleAudioBlock(
+        block: _audioBlock(), // durationSec 42 → slider enabled, total 0:42
+        busy: false,
+        onReplace: () {},
+        onDelete: () {},
+        playerFactory: () => fake,
+      )),
+    );
+    await tester.pump();
+
+    // Before any interaction the timer reads 0:00 / 0:42.
+    expect(find.text('0:00 / 0:42'), findsOneWidget);
+
+    // Drag-release at 6s via the Slider's onChangeEnd. The fake's position
+    // stream never ticks (paused/stopped), reproducing the bug condition —
+    // the widget must reflect the target itself.
+    final slider = tester.widget<Slider>(
+      find.byKey(const Key('article-audio-seek-au1')),
+    );
+    slider.onChangeEnd!(6000.0);
+    for (var i = 0; i < 4; i++) {
+      await tester.pump(const Duration(milliseconds: 10));
+    }
+
+    // Functionally seeked, and the timer/thumb now show 0:06 — not the
+    // stale 0:00 it used to snap back to.
+    expect(fake.calls.contains('seek'), true);
+    expect(find.text('0:06 / 0:42'), findsOneWidget);
+    expect(find.text('0:00 / 0:42'), findsNothing);
+    final after = tester.widget<Slider>(
+      find.byKey(const Key('article-audio-seek-au1')),
+    );
+    expect(after.value, 6000.0);
+  });
 }
 
 /// A plugin-free [AudioPlayer] stand-in. Records the control calls and

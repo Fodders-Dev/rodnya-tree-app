@@ -114,9 +114,18 @@ class _ArticleAudioBlockState extends State<ArticleAudioBlock> {
 
   /// Seek to [position]. Loads the source first if the user scrubs before
   /// ever pressing play, so the playhead can move ahead of playback.
+  ///
+  /// onPositionChanged does NOT tick after a seek while paused/stopped, so
+  /// we commit [position] to `_position` ourselves — and clear the drag —
+  /// in a single setState. Otherwise the thumb/timer would snap back to
+  /// the stale streamed position (0:00) for a frame after release, even
+  /// though the seek itself worked.
   Future<void> _seekTo(Duration position) async {
     final url = widget.block.audioUrl;
-    if (url == null) return;
+    if (url == null) {
+      if (mounted && _dragMs != null) setState(() => _dragMs = null);
+      return;
+    }
     _ensurePlayer();
     final p = _player!;
     try {
@@ -125,8 +134,16 @@ class _ArticleAudioBlockState extends State<ArticleAudioBlock> {
         _sourceLoaded = true;
       }
       await p.seek(position);
+      if (mounted) {
+        setState(() {
+          _position = position;
+          _dragMs = null;
+        });
+      }
     } catch (_) {
-      // Seeking before the source is ready is non-fatal.
+      // Seeking before the source is ready is non-fatal — reconcile the
+      // thumb to the playback position instead of stranding the drag.
+      if (mounted) setState(() => _dragMs = null);
     }
   }
 
@@ -239,7 +256,11 @@ class _ArticleAudioBlockState extends State<ArticleAudioBlock> {
                       onChangeEnd: !hasDuration || widget.busy
                           ? null
                           : (v) async {
-                              setState(() => _dragMs = null);
+                              // Hold the thumb at the released value while
+                              // the async seek runs; _seekTo commits it to
+                              // _position and clears the drag together, so
+                              // there's no snap-back-to-0 frame.
+                              setState(() => _dragMs = v);
                               await _seekTo(Duration(milliseconds: v.round()));
                             },
                     ),
