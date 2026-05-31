@@ -309,6 +309,11 @@ class S3MediaStorage {
   }
 
   setObjectResponseHeaders(res, objectMetadata) {
+    // Advertise byte-range support so clients (Android MediaPlayer /
+    // audioplayers via UrlSource, video scrubbing, browsers) issue
+    // Range requests instead of giving up. Required for non-faststart
+    // m4a whose moov atom sits at the end of the file.
+    res.setHeader("accept-ranges", "bytes");
     if (objectMetadata.ContentType) {
       res.setHeader("content-type", objectMetadata.ContentType);
     }
@@ -383,29 +388,69 @@ class S3MediaStorage {
     throw new Error("UNSUPPORTED_MEDIA_BODY");
   }
 
+  isRangeNotSatisfiable(error) {
+    const statusCode = Number(error?.$metadata?.httpStatusCode || 0);
+    return (
+      statusCode === 416 ||
+      error?.name === "InvalidRange" ||
+      error?.Code === "InvalidRange"
+    );
+  }
+
+  async sendRangeNotSatisfiable(res, objectKey) {
+    res.setHeader("accept-ranges", "bytes");
+    try {
+      const head = await this._client.send(
+        new HeadObjectCommand({Bucket: this.bucket, Key: objectKey}),
+      );
+      if (Number.isFinite(head.ContentLength)) {
+        res.setHeader("content-range", `bytes */${head.ContentLength}`);
+      }
+    } catch (_) {
+      // Best-effort — still return 416 even if the size probe fails.
+    }
+    res.status(416).end();
+  }
+
   async streamObjectResponse({req, res, objectKey}) {
-    const commandInput = {
-      Bucket: this.bucket,
-      Key: objectKey,
-    };
     const isHeadRequest = String(req.method || "GET").toUpperCase() === "HEAD";
+    const rangeHeader =
+      (req.headers && req.headers.range) ||
+      (typeof req.get === "function" ? req.get("range") : undefined) ||
+      undefined;
 
     try {
       if (isHeadRequest) {
         const headResponse = await this._client.send(
-          new HeadObjectCommand(commandInput),
+          new HeadObjectCommand({Bucket: this.bucket, Key: objectKey}),
         );
         this.setObjectResponseHeaders(res, headResponse);
         res.status(200).end();
         return;
       }
 
+      const commandInput = {Bucket: this.bucket, Key: objectKey};
+      if (rangeHeader) {
+        // S3 / S3-compatible storage understands Range natively and
+        // returns ContentRange + the chunk's ContentLength + a partial
+        // Body. We just forward the header and relay the result as 206.
+        commandInput.Range = rangeHeader;
+      }
+
       const objectResponse = await this._client.send(
         new GetObjectCommand(commandInput),
       );
       this.setObjectResponseHeaders(res, objectResponse);
+      if (rangeHeader && objectResponse.ContentRange) {
+        res.setHeader("content-range", objectResponse.ContentRange);
+        res.status(206);
+      }
       await this.sendReadableBody(objectResponse.Body, res);
     } catch (error) {
+      if (this.isRangeNotSatisfiable(error)) {
+        await this.sendRangeNotSatisfiable(res, objectKey);
+        return;
+      }
       if (this.isMissingObjectError(error)) {
         throw new Error("MEDIA_FILE_NOT_FOUND");
       }
