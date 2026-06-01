@@ -533,6 +533,41 @@ class _ProfileArticleEditorScreenState
     await _patchBlockContent(block, ArticleBlock.galleryContent(items: items));
   }
 
+  // Drag-reorder: move the item so it lands at [newIndex] in the result.
+  Future<void> _galleryReorder(
+    ArticleBlock block,
+    int oldIndex,
+    int newIndex,
+  ) async {
+    final items = [...block.galleryItems];
+    if (oldIndex < 0 || oldIndex >= items.length) return;
+    final moved = items.removeAt(oldIndex);
+    items.insert(newIndex.clamp(0, items.length), moved);
+    await _patchBlockContent(block, ArticleBlock.galleryContent(items: items));
+  }
+
+  // Per-item caption (edited in the full-screen viewer). Empty → drop the
+  // key so the item shape stays minimal.
+  Future<void> _gallerySetCaption(
+    ArticleBlock block,
+    int index,
+    String caption,
+  ) async {
+    final items = [...block.galleryItems];
+    if (index < 0 || index >= items.length) return;
+    final trimmed = caption.trim();
+    final current = (items[index]['caption']?.toString() ?? '').trim();
+    if (trimmed == current) return; // no-op — avoid a redundant PATCH
+    final item = {...items[index]};
+    if (trimmed.isEmpty) {
+      item.remove('caption');
+    } else {
+      item['caption'] = trimmed;
+    }
+    items[index] = item;
+    await _patchBlockContent(block, ArticleBlock.galleryContent(items: items));
+  }
+
   // ===== Phase 2b-2 audio: voice recording (artifact) =====
 
   // Record → upload → returns the url + duration. null on cancel/failure.
@@ -1034,6 +1069,10 @@ class _ProfileArticleEditorScreenState
         busy: _busyBlockId == block.id,
         onAddMore: () => _galleryAddMore(block),
         onRemoveItem: (index) => _galleryRemoveItem(block, index),
+        onReorder: (oldIndex, newIndex) =>
+            _galleryReorder(block, oldIndex, newIndex),
+        onCaptionChanged: (index, caption) =>
+            _gallerySetCaption(block, index, caption),
         onDelete: () => _deleteBlock(block),
       );
     }

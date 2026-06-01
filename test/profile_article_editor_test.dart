@@ -340,6 +340,53 @@ void main() {
     expect(find.byType(ArticleGalleryBlock), findsNothing);
   });
 
+  testWidgets('gallery v2: reorder moves the photo (items order updated)',
+      (tester) async {
+    final svc = _FakeArticleService(blocks: [_gallery('g1', 3)]);
+    final storage = _FakeStorage();
+    await tester.pumpWidget(_wrapGallery(svc, storage));
+    for (var i = 0; i < 5; i++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+
+    // Invoke the reorder callback directly — drag gestures are awkward to
+    // drive in a widget test. Move photo 0 so it lands at the end.
+    final gallery =
+        tester.widget<ArticleGalleryBlock>(find.byType(ArticleGalleryBlock));
+    gallery.onReorder!(0, 2);
+    for (var i = 0; i < 5; i++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+
+    expect(svc.calls.contains('update:g1'), true);
+    final items = (svc.lastUpdatedContent?['items'] as List).cast<Map>();
+    expect(
+      items.map((m) => m['url']).toList(),
+      ['https://img/g1.jpg', 'https://img/g2.jpg', 'https://img/g0.jpg'],
+    );
+  });
+
+  testWidgets('gallery v2: caption saves onto the item', (tester) async {
+    final svc = _FakeArticleService(blocks: [_gallery('g1', 2)]);
+    final storage = _FakeStorage();
+    await tester.pumpWidget(_wrapGallery(svc, storage));
+    for (var i = 0; i < 5; i++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+
+    final gallery =
+        tester.widget<ArticleGalleryBlock>(find.byType(ArticleGalleryBlock));
+    gallery.onCaptionChanged!(0, 'Лето 1970');
+    for (var i = 0; i < 5; i++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+
+    expect(svc.calls.contains('update:g1'), true);
+    final items = (svc.lastUpdatedContent?['items'] as List).cast<Map>();
+    expect(items[0]['caption'], 'Лето 1970');
+    expect(items[1].containsKey('caption'), false); // untouched item
+  });
+
   testWidgets('идеи sheet inserts a section + paragraph', (tester) async {
     final svc = _FakeArticleService();
     await tester.pumpWidget(_wrap(svc));

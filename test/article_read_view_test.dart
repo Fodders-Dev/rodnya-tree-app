@@ -36,7 +36,7 @@ List<ArticleBlock> _allSevenTypes() => [
           'g1',
           'gallery',
           ArticleBlock.galleryContent(items: [
-            <String, dynamic>{'url': 'https://img/g0.jpg'},
+            <String, dynamic>{'url': 'https://img/g0.jpg', 'caption': 'Свадьба'},
             <String, dynamic>{'url': 'https://img/g1.jpg'},
           ])),
       _block('au1', 'audio',
@@ -68,6 +68,7 @@ void main() {
     expect(find.text('Подпись фото'), findsOneWidget); // photo caption (static)
     expect(find.byType(ArticlePhotoBlock), findsOneWidget);
     expect(find.byType(ArticleGalleryBlock), findsOneWidget);
+    expect(find.text('Свадьба'), findsOneWidget); // gallery caption (read)
     expect(find.byType(ArticleAudioBlock), findsOneWidget);
 
     // NO edit affordances anywhere.
