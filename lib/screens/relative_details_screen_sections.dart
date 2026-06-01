@@ -192,26 +192,6 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
           variant: PillButtonVariant.outlined,
           onPressed: _isUpdatingPrivacy ? null : _showPrivacySettings,
         ),
-      // TEMPORARY entry point для тестирования Profile редактора (Phase 2a).
-      // Phase 5 (profile view rewrite) заменит это на правильный вход —
-      // удалить этот PillButton + импорт profile_article_editor_screen.dart.
-      // См. PROFILE-UX-REDESIGN-PROPOSAL.md Phase 5.
-      if (_canDirectEditProfile())
-        PillButton(
-          label: 'Биография (бета)',
-          icon: Icons.menu_book_outlined,
-          variant: PillButtonVariant.outlined,
-          onPressed: () => Navigator.of(context).push(
-            MaterialPageRoute<void>(
-              builder: (_) => ProfileArticleEditorScreen(
-                personId: person.id,
-                personName: fullName,
-                personRelation: directRelationLabel,
-                personGender: person.gender.name,
-              ),
-            ),
-          ),
-        ),
     ];
 
     final headerStatus = Column(
@@ -325,6 +305,18 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
               if (dossier.familySummary.trim().isNotEmpty ||
                   dossier.aboutFamily.trim().isNotEmpty)
                 _buildRelativeFamilyNoteSection(dossier),
+              // «Биография» — read-first article. Visible to ANY viewer of
+              // the card when non-empty; the ✏️ / «Добавить историю» edit
+              // affordances inside are gated by _canDirectEditProfile.
+              // (Replaces the old temporary «Биография (бета)» pill.)
+              if (_person != null)
+                ProfileBiographySection(
+                  personId: person.id,
+                  fullName: fullName,
+                  relation: directRelationLabel,
+                  gender: person.gender.name,
+                  canEdit: _canDirectEditProfile(),
+                ),
               if (galleryEntries.isNotEmpty || _canEditOrDelete())
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 18, 16, 0),

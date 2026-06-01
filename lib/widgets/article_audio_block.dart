@@ -26,18 +26,22 @@ class ArticleAudioBlock extends StatefulWidget {
   const ArticleAudioBlock({
     super.key,
     required this.block,
-    required this.busy,
-    required this.onReplace,
-    required this.onDelete,
+    this.busy = false,
+    this.onReplace,
+    this.onDelete,
     this.playerFactory,
+    this.readOnly = false,
   });
 
   final ArticleBlock block;
 
   /// Replace / patch in flight — overlays a spinner, locks the menu.
   final bool busy;
-  final VoidCallback onReplace;
-  final VoidCallback onDelete;
+  final VoidCallback? onReplace;
+  final VoidCallback? onDelete;
+
+  /// Read mode — hide the ⋮ menu. Playback (play / pause / seek) stays.
+  final bool readOnly;
 
   /// Test seam: supplies the [AudioPlayer]. Defaults to a real one,
   /// constructed lazily on first interaction. Injecting a fake keeps a
@@ -275,23 +279,24 @@ class _ArticleAudioBlockState extends State<ArticleAudioBlock> {
                 ],
               ),
             ),
-            PopupMenuButton<String>(
-              key: Key('article-audio-menu-${widget.block.id}'),
-              tooltip: 'Действия с записью',
-              enabled: !widget.busy,
-              icon: Icon(
-                Icons.more_vert_rounded,
-                color: theme.colorScheme.onSurfaceVariant,
+            if (!widget.readOnly)
+              PopupMenuButton<String>(
+                key: Key('article-audio-menu-${widget.block.id}'),
+                tooltip: 'Действия с записью',
+                enabled: !widget.busy,
+                icon: Icon(
+                  Icons.more_vert_rounded,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+                onSelected: (value) {
+                  if (value == 'replace') widget.onReplace?.call();
+                  if (value == 'delete') widget.onDelete?.call();
+                },
+                itemBuilder: (_) => const [
+                  PopupMenuItem(value: 'replace', child: Text('Перезаписать')),
+                  PopupMenuItem(value: 'delete', child: Text('Удалить')),
+                ],
               ),
-              onSelected: (value) {
-                if (value == 'replace') widget.onReplace();
-                if (value == 'delete') widget.onDelete();
-              },
-              itemBuilder: (_) => const [
-                PopupMenuItem(value: 'replace', child: Text('Перезаписать')),
-                PopupMenuItem(value: 'delete', child: Text('Удалить')),
-              ],
-            ),
           ],
         ),
       ),

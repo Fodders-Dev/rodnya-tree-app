@@ -19,19 +19,24 @@ class ArticleGalleryBlock extends StatelessWidget {
   const ArticleGalleryBlock({
     super.key,
     required this.block,
-    required this.busy,
-    required this.onAddMore,
-    required this.onRemoveItem,
-    required this.onDelete,
+    this.busy = false,
+    this.onAddMore,
+    this.onRemoveItem,
+    this.onDelete,
+    this.readOnly = false,
   });
 
   final ArticleBlock block;
 
   /// Add / remove / delete in flight — overlays a spinner, locks actions.
   final bool busy;
-  final VoidCallback onAddMore;
-  final void Function(int index) onRemoveItem;
-  final VoidCallback onDelete;
+  final VoidCallback? onAddMore;
+  final void Function(int index)? onRemoveItem;
+  final VoidCallback? onDelete;
+
+  /// Read mode — hide the ⋮ menu, per-photo ✕, and the add tile. Grid +
+  /// full-screen viewer stay.
+  final bool readOnly;
 
   @override
   Widget build(BuildContext context) {
@@ -62,26 +67,30 @@ class ArticleGalleryBlock extends StatelessWidget {
                 ),
               ),
               const Spacer(),
-              PopupMenuButton<String>(
-                key: Key('article-gallery-menu-${block.id}'),
-                tooltip: 'Действия с галереей',
-                enabled: !busy,
-                padding: EdgeInsets.zero,
-                icon: Icon(
-                  Icons.more_vert_rounded,
-                  size: 18,
-                  color:
-                      theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+              if (!readOnly)
+                PopupMenuButton<String>(
+                  key: Key('article-gallery-menu-${block.id}'),
+                  tooltip: 'Действия с галереей',
+                  enabled: !busy,
+                  padding: EdgeInsets.zero,
+                  icon: Icon(
+                    Icons.more_vert_rounded,
+                    size: 18,
+                    color: theme.colorScheme.onSurfaceVariant
+                        .withValues(alpha: 0.6),
+                  ),
+                  onSelected: (value) {
+                    if (value == 'add') onAddMore?.call();
+                    if (value == 'delete') onDelete?.call();
+                  },
+                  itemBuilder: (_) => const [
+                    PopupMenuItem(value: 'add', child: Text('Добавить фото')),
+                    PopupMenuItem(
+                      value: 'delete',
+                      child: Text('Удалить галерею'),
+                    ),
+                  ],
                 ),
-                onSelected: (value) {
-                  if (value == 'add') onAddMore();
-                  if (value == 'delete') onDelete();
-                },
-                itemBuilder: (_) => const [
-                  PopupMenuItem(value: 'add', child: Text('Добавить фото')),
-                  PopupMenuItem(value: 'delete', child: Text('Удалить галерею')),
-                ],
-              ),
             ],
           ),
           const SizedBox(height: 6),
@@ -98,7 +107,7 @@ class ArticleGalleryBlock extends StatelessWidget {
                     children: [
                       for (var i = 0; i < urls.length; i++)
                         _thumb(context, theme, urls, i, size),
-                      _addTile(theme, size),
+                      if (!readOnly) _addTile(theme, size),
                     ],
                   );
                 },
@@ -161,22 +170,24 @@ class ArticleGalleryBlock extends StatelessWidget {
                       ),
                     ),
             ),
-            Positioned(
-              top: 2,
-              right: 2,
-              child: GestureDetector(
-                key: Key('article-gallery-remove-${block.id}-$index'),
-                onTap: busy ? null : () => onRemoveItem(index),
-                child: Container(
-                  decoration: const BoxDecoration(
-                    color: Colors.black54,
-                    shape: BoxShape.circle,
+            if (!readOnly)
+              Positioned(
+                top: 2,
+                right: 2,
+                child: GestureDetector(
+                  key: Key('article-gallery-remove-${block.id}-$index'),
+                  onTap: busy ? null : () => onRemoveItem?.call(index),
+                  child: Container(
+                    decoration: const BoxDecoration(
+                      color: Colors.black54,
+                      shape: BoxShape.circle,
+                    ),
+                    padding: const EdgeInsets.all(3),
+                    child:
+                        const Icon(Icons.close, size: 14, color: Colors.white),
                   ),
-                  padding: const EdgeInsets.all(3),
-                  child: const Icon(Icons.close, size: 14, color: Colors.white),
                 ),
               ),
-            ),
           ],
         ),
       ),

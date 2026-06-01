@@ -1162,11 +1162,13 @@ void main() {
     },
   );
 
-  // Profile Phase 2a-entry (2026-05-29): temporary «Биография (бета)»
-  // editor entry on the relative card. Shown when the viewer can edit
-  // (grandmother is anonymous → _canDirectEditProfile true).
+  // Viewer phase SUB-CHUNK 1 (2026-06-01): the «Биография» read section
+  // replaced the temporary «Биография (бета)» pill. For an editor with no
+  // article (ProfileArticleServiceInterface unregistered here → treated as
+  // empty), the empty CTA «Добавить историю» opens the article editor.
+  // (grandmother is anonymous → _canDirectEditProfile true.)
   testWidgets(
-    'temporary «Биография (бета)» button opens the article editor',
+    'biography «Добавить историю» CTA opens the article editor',
     (tester) async {
       tester.view.physicalSize = const Size(1400, 2600);
       tester.view.devicePixelRatio = 1.0;
@@ -1185,11 +1187,12 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      final bioButton = find.text('Биография (бета)', skipOffstage: false);
-      expect(bioButton, findsOneWidget);
+      final addButton =
+          find.byKey(const Key('biography-add'), skipOffstage: false);
+      expect(addButton, findsOneWidget);
 
-      await tester.ensureVisible(bioButton);
-      await tester.tap(bioButton);
+      await tester.ensureVisible(addButton);
+      await tester.tap(addButton);
       await tester.pumpAndSettle();
 
       // Navigated to the editor (it resolves its own service via GetIt;
