@@ -14,6 +14,7 @@ import 'package:rodnya/backend/interfaces/storage_service_interface.dart';
 import 'package:rodnya/backend/models/profile_article.dart';
 import 'package:rodnya/screens/profile_article_editor_screen.dart';
 import 'package:rodnya/widgets/article_audio_block.dart';
+import 'package:rodnya/widgets/article_gallery_block.dart';
 import 'package:rodnya/widgets/article_photo_block.dart';
 import 'package:rodnya/widgets/audio_record_sheet.dart';
 
@@ -95,6 +96,7 @@ String _inferBlockType(Map<String, dynamic> content) {
   if (content.containsKey('spans')) return 'paragraph';
   if (content.containsKey('level')) return 'header';
   if (content.containsKey('attribution')) return 'quote';
+  if (content.containsKey('items')) return 'gallery';
   if (content.containsKey('url')) {
     return content.containsKey('durationSec') ? 'audio' : 'photo';
   }
@@ -276,6 +278,66 @@ void main() {
     expect(find.text('Удалить разделитель?'), findsNothing); // no confirm
     expect(svc.calls.contains('remove:d1'), true);
     expect(find.byKey(const Key('article-divider-d1')), findsNothing);
+  });
+
+  // ===== Phase 2c: gallery (multi-photo) =====
+
+  testWidgets('«Блок» → «Галерея» multi-picks → uploads → gallery block',
+      (tester) async {
+    final svc = _FakeArticleService();
+    final storage = _FakeStorage();
+    await tester.pumpWidget(_wrapGallery(svc, storage, pickCount: 2));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('article-add-block')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('block-menu-gallery')));
+    // Avoid pumpAndSettle — the gallery's network images never settle.
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+
+    expect(storage.uploadCalls, 2); // both picks uploaded
+    expect(svc.calls.contains('append:gallery'), true);
+    expect((svc.lastAppendContent?['items'] as List).length, 2);
+    expect(find.byType(ArticleGalleryBlock), findsOneWidget);
+  });
+
+  testWidgets('gallery: remove one photo patches items (keeps the rest)',
+      (tester) async {
+    final svc = _FakeArticleService(blocks: [_gallery('g1', 3)]);
+    final storage = _FakeStorage();
+    await tester.pumpWidget(_wrapGallery(svc, storage));
+    for (var i = 0; i < 5; i++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+
+    await tester.tap(find.byKey(const Key('article-gallery-remove-g1-0')));
+    for (var i = 0; i < 5; i++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+
+    expect(svc.calls.contains('update:g1'), true);
+    expect((svc.lastUpdatedContent?['items'] as List).length, 2);
+    expect(find.byType(ArticleGalleryBlock), findsOneWidget); // still a gallery
+  });
+
+  testWidgets('gallery: removing the last photo deletes the block',
+      (tester) async {
+    final svc = _FakeArticleService(blocks: [_gallery('g1', 1)]);
+    final storage = _FakeStorage();
+    await tester.pumpWidget(_wrapGallery(svc, storage));
+    for (var i = 0; i < 5; i++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+
+    await tester.tap(find.byKey(const Key('article-gallery-remove-g1-0')));
+    for (var i = 0; i < 5; i++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+
+    expect(svc.calls.contains('remove:g1'), true); // ≥1 rule — block removed
+    expect(find.byType(ArticleGalleryBlock), findsNothing);
   });
 
   testWidgets('идеи sheet inserts a section + paragraph', (tester) async {
@@ -666,6 +728,42 @@ ArticleBlock _photo(String id, {String url = 'https://img/ph1.jpg'}) =>
       content: {'url': url},
       createdAt: 't',
       updatedAt: 't',
+    );
+
+ArticleBlock _gallery(String id, int count) => ArticleBlock(
+      id: id,
+      type: 'gallery',
+      content: ArticleBlock.galleryContent(
+        items: [
+          for (var i = 0; i < count; i++)
+            <String, dynamic>{'url': 'https://img/g$i.jpg'},
+        ],
+      ),
+      createdAt: 't',
+      updatedAt: 't',
+    );
+
+Widget _wrapGallery(
+  _FakeArticleService svc,
+  _FakeStorage storage, {
+  int pickCount = 2,
+}) =>
+    MaterialApp(
+      home: ProfileArticleEditorScreen(
+        personId: 'p1',
+        personName: 'Лидия',
+        serviceOverride: svc,
+        storageOverride: storage,
+        pickMultiImageOverride: () async => [
+          for (var i = 0; i < pickCount; i++)
+            XFile.fromData(
+              Uint8List.fromList(const [1, 2, 3]),
+              name: 'g$i.jpg',
+              mimeType: 'image/jpeg',
+            ),
+        ],
+        saveDebounce: const Duration(milliseconds: 200),
+      ),
     );
 
 Widget _wrapPhoto(

@@ -177,6 +177,40 @@ void main() {
       expect(d.isDivider, true);
       expect(d.isQuote, false);
     });
+
+    test('galleryContent matches backend shape ({items: [...]})', () {
+      final items = [
+        <String, dynamic>{'url': 'https://a/1.jpg'},
+        <String, dynamic>{'url': 'https://a/2.jpg', 'caption': 'Лето'},
+      ];
+      expect(ArticleBlock.galleryContent(items: items), {'items': items});
+    });
+
+    test('gallery getters read items', () {
+      final g = ArticleBlock.fromJson({
+        'id': 'g1',
+        'type': 'gallery',
+        'content': {
+          'items': [
+            {'url': 'https://a/1.jpg'},
+            {'url': 'https://a/2.jpg'},
+          ],
+        },
+        'createdAt': 't',
+        'updatedAt': 't',
+      });
+      expect(g.isGallery, true);
+      expect(g.galleryItems.length, 2);
+      expect(g.galleryItems.first['url'], 'https://a/1.jpg');
+      // Non-gallery → empty items, false flag.
+      expect(ArticleBlock.fromJson({
+        'id': 'p1',
+        'type': 'paragraph',
+        'content': {'spans': []},
+        'createdAt': 't',
+        'updatedAt': 't',
+      }).galleryItems, isEmpty);
+    });
   });
 
   test('getArticle GETs the article endpoint + parses blocks', () async {

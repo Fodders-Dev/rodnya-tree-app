@@ -97,6 +97,18 @@ class ArticleBlock {
   bool get isAudio => type == 'audio';
   bool get isQuote => type == 'quote';
   bool get isDivider => type == 'divider';
+  bool get isGallery => type == 'gallery';
+
+  /// Gallery items — each a media-item map ({url, caption?, dateTaken?,
+  /// dateTakenAccuracy?}), the same shape as a photo block.
+  List<Map<String, dynamic>> get galleryItems {
+    final raw = content['items'];
+    if (raw is! List) return const <Map<String, dynamic>>[];
+    return raw
+        .whereType<Map>()
+        .map((m) => Map<String, dynamic>.from(m))
+        .toList(growable: false);
+  }
 
   /// Quote text — the words being quoted.
   String get quoteText => content['text']?.toString() ?? '';
@@ -203,6 +215,16 @@ class ArticleBlock {
 
   /// Build divider content — empty, mirrors backend case "divider": {}.
   static Map<String, dynamic> dividerContent() => <String, dynamic>{};
+
+  /// Build gallery content. Shape mirrors backend case "gallery":
+  /// {items: [<media item>, …]} (server enforces ≥1). Each item is the
+  /// same media-item shape as a photo block (url + optional caption /
+  /// dateTaken); v1 stores just the url.
+  static Map<String, dynamic> galleryContent({
+    required List<Map<String, dynamic>> items,
+  }) {
+    return {'items': items};
+  }
 }
 
 /// Result of a block update — carries the multi-author conflict flag

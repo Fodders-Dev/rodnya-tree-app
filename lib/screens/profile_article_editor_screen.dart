@@ -22,6 +22,7 @@ import '../backend/interfaces/storage_service_interface.dart';
 import '../backend/models/profile_article.dart';
 import '../widgets/article_idea_prompts_sheet.dart';
 import '../widgets/article_photo_block.dart';
+import '../widgets/article_gallery_block.dart';
 import '../widgets/photo_date_picker_sheet.dart';
 import '../widgets/article_audio_block.dart';
 import '../widgets/audio_record_sheet.dart';
@@ -37,6 +38,7 @@ class ProfileArticleEditorScreen extends StatefulWidget {
     this.serviceOverride,
     this.storageOverride,
     this.pickImageOverride,
+    this.pickMultiImageOverride,
     this.voiceInputOverride,
     this.audioRecordOverride,
     this.saveDebounce = const Duration(seconds: 5),
@@ -59,6 +61,11 @@ class ProfileArticleEditorScreen extends StatefulWidget {
 
   /// Test seam — image picking. Production uses ImagePicker.
   final Future<XFile?> Function(ImageSource source)? pickImageOverride;
+
+  /// Test seam — multi-image picking (gallery). Production uses
+  /// ImagePicker().pickMultiImage. Returns the picked files (empty if
+  /// cancelled).
+  final Future<List<XFile>> Function()? pickMultiImageOverride;
 
   /// Test seam — voice input. Production opens showVoiceInputSheet
   /// (speech_to_text, ru_RU). Returns the transcript or null.
@@ -432,6 +439,100 @@ class _ProfileArticleEditorScreenState
     });
   }
 
+  // ===== Phase 2c: gallery (multi-photo) =====
+
+  Future<List<XFile>> _pickMultiImage() {
+    if (widget.pickMultiImageOverride != null) {
+      return widget.pickMultiImageOverride!();
+    }
+    return ImagePicker().pickMultiImage(maxWidth: 2048, imageQuality: 85);
+  }
+
+  // Multi-pick → upload each → urls. Resilient: a failed upload is skipped
+  // (the rest still land); returns [] on cancel / all-failed. Snackbar
+  // explains a partial / total failure.
+  Future<List<String>> _pickAndUploadMany() async {
+    final storage = _storage();
+    if (storage == null) {
+      _snack('Загрузка фото недоступна');
+      return const [];
+    }
+    List<XFile> files;
+    try {
+      files = await _pickMultiImage();
+    } catch (_) {
+      _snack('Не удалось открыть галерею');
+      return const [];
+    }
+    if (files.isEmpty) return const [];
+    if (mounted) setState(() => _photoUploading = true);
+    final urls = <String>[];
+    var failed = 0;
+    for (final file in files) {
+      try {
+        final url = await storage.uploadImage(file, 'article-photos');
+        if (url != null && url.isNotEmpty) {
+          urls.add(url);
+        } else {
+          failed++;
+        }
+      } catch (_) {
+        failed++;
+      }
+    }
+    if (mounted) setState(() => _photoUploading = false);
+    if (failed > 0) {
+      _snack(urls.isEmpty
+          ? 'Не удалось загрузить фото'
+          : 'Часть фото не загрузилась — добавили остальные');
+    }
+    return urls;
+  }
+
+  Future<void> _addGallery() async {
+    final urls = await _pickAndUploadMany();
+    if (urls.isEmpty || !mounted) return; // backend requires ≥1 item
+    final svc = _service();
+    if (svc == null) return;
+    try {
+      final block = await svc.appendBlock(
+        widget.personId,
+        type: 'gallery',
+        content: ArticleBlock.galleryContent(
+          items: [for (final url in urls) <String, dynamic>{'url': url}],
+        ),
+      );
+      if (!mounted) return;
+      _bind(block);
+      setState(() => _blocks.add(block));
+    } catch (_) {
+      _snack('Не удалось добавить галерею');
+    }
+  }
+
+  Future<void> _galleryAddMore(ArticleBlock block) async {
+    final urls = await _pickAndUploadMany();
+    if (urls.isEmpty || !mounted) return;
+    final items = [
+      ...block.galleryItems,
+      for (final url in urls) <String, dynamic>{'url': url},
+    ];
+    await _patchBlockContent(block, ArticleBlock.galleryContent(items: items));
+  }
+
+  Future<void> _galleryRemoveItem(ArticleBlock block, int index) async {
+    final items = [...block.galleryItems];
+    if (index < 0 || index >= items.length) return;
+    items.removeAt(index);
+    if (items.isEmpty) {
+      // A gallery can't be empty (backend requires ≥1) — removing the last
+      // photo removes the whole block.
+      await _deleteBlock(block);
+      return;
+    }
+    await _patchBlockContent(block, ArticleBlock.galleryContent(items: items));
+  }
+
   // ===== Phase 2b-2 audio: voice recording (artifact) =====
 
   // Record → upload → returns the url + duration. null on cancel/failure.
@@ -710,6 +811,13 @@ class _ProfileArticleEditorScreenState
               onTap: () => Navigator.of(ctx).pop('quote'),
             ),
             ListTile(
+              key: const Key('block-menu-gallery'),
+              leading: const Icon(Icons.collections_outlined),
+              title: const Text('Галерея'),
+              subtitle: const Text('Несколько фото вместе'),
+              onTap: () => Navigator.of(ctx).pop('gallery'),
+            ),
+            ListTile(
               key: const Key('block-menu-divider'),
               leading: const Icon(Icons.horizontal_rule_rounded),
               title: const Text('Разделитель'),
@@ -721,7 +829,13 @@ class _ProfileArticleEditorScreenState
       ),
     );
     if (choice == null || !mounted) return;
-    await _addBlock(choice);
+    // Gallery needs the multi-pick → upload flow; the rest are plain
+    // appends (empty content the user then fills in).
+    if (choice == 'gallery') {
+      await _addGallery();
+    } else {
+      await _addBlock(choice);
+    }
   }
 
   Future<bool> _onWillPop() async {
@@ -907,6 +1021,19 @@ class _ProfileArticleEditorScreenState
         onCaptionChanged: () => _onChanged(block.id),
         onSetDate: () => _setPhotoDate(block),
         onReplace: () => _replacePhoto(block),
+        onDelete: () => _deleteBlock(block),
+      );
+    }
+
+    // Phase 2c gallery: multi-photo grid + full-screen viewer; add / remove
+    // photos and delete the whole block from its own menu.
+    if (block.isGallery) {
+      return ArticleGalleryBlock(
+        key: Key('article-block-${block.id}'),
+        block: block,
+        busy: _busyBlockId == block.id,
+        onAddMore: () => _galleryAddMore(block),
+        onRemoveItem: (index) => _galleryRemoveItem(block, index),
         onDelete: () => _deleteBlock(block),
       );
     }
