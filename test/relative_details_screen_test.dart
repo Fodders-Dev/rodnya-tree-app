@@ -293,6 +293,21 @@ class _FakeFamilyTreeService
     updatedAt: DateTime(2024, 1, 1),
   );
 
+  // Deceased + anonymous (no account) → editable by the tree owner →
+  // exercises the read-first header's memorial framing.
+  final _greatGrandfather = FamilyPerson(
+    id: 'great-grandfather',
+    treeId: 'tree-1',
+    creatorId: 'user-1',
+    name: 'Кузнецов Иван Степанович',
+    gender: Gender.male,
+    isAlive: false,
+    birthDate: DateTime(1920, 3, 5),
+    deathDate: DateTime(1998, 11, 20),
+    createdAt: DateTime(2024, 1, 1),
+    updatedAt: DateTime(2024, 1, 1),
+  );
+
   late final List<FamilyPerson> _people = [
     _father,
     _mother,
@@ -300,6 +315,7 @@ class _FakeFamilyTreeService
     _daughter,
     _grandmother,
     _guardian,
+    _greatGrandfather,
   ];
   late final List<FamilyRelation> _relations = [
     FamilyRelation(
@@ -781,7 +797,18 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('Написать', skipOffstage: false), findsOneWidget);
-      expect(find.text('Для вас: Отец', skipOffstage: false), findsOneWidget);
+      // Read-first header (§3.1): relation now lives in the «relation ·
+      // age|years» line under the name (was the «Для вас: …» hero badge).
+      expect(
+        find.byKey(const Key('profile-relation-line')),
+        findsOneWidget,
+      );
+      expect(
+        tester
+            .widget<Text>(find.byKey(const Key('profile-relation-line')))
+            .data,
+        contains('Отец'),
+      );
       // Profile Redesign: ProfileSection uppercases section titles.
       expect(find.text('СЕМЬЯ', skipOffstage: false), findsOneWidget);
       expect(find.text('Кузнецов Артем', skipOffstage: false), findsOneWidget);
@@ -1162,13 +1189,12 @@ void main() {
     },
   );
 
-  // Viewer phase SUB-CHUNK 1 (2026-06-01): the «Биография» read section
-  // replaced the temporary «Биография (бета)» pill. For an editor with no
-  // article (ProfileArticleServiceInterface unregistered here → treated as
-  // empty), the empty CTA «Добавить историю» opens the article editor.
-  // (grandmother is anonymous → _canDirectEditProfile true.)
+  // Viewer §3.1 (sub-chunk 2a): the read-first header's primary CTA
+  // «Добавить историю» (live) opens the article editor. Editor-gated
+  // (grandmother is anonymous → _canDirectEditProfile true). The body
+  // biography section's own empty-CTA is suppressed (header owns it).
   testWidgets(
-    'biography «Добавить историю» CTA opens the article editor',
+    'header «Добавить историю» CTA opens the article editor',
     (tester) async {
       tester.view.physicalSize = const Size(1400, 2600);
       tester.view.devicePixelRatio = 1.0;
@@ -1188,8 +1214,10 @@ void main() {
       await tester.pumpAndSettle();
 
       final addButton =
-          find.byKey(const Key('biography-add'), skipOffstage: false);
+          find.byKey(const Key('profile-add-story'), skipOffstage: false);
       expect(addButton, findsOneWidget);
+      // Live person → «Добавить историю» (not «воспоминание»).
+      expect(find.text('Добавить историю'), findsOneWidget);
 
       await tester.ensureVisible(addButton);
       await tester.tap(addButton);
@@ -1199,6 +1227,104 @@ void main() {
       // unregistered here → shows its error state, but the route is
       // pushed, which is what we assert).
       expect(find.byType(ProfileArticleEditorScreen), findsOneWidget);
+    },
+  );
+
+  // Viewer §3.1 (sub-chunk 2a): deceased → memorial framing «† Память: …»,
+  // years (not age) in the relation line, and the «Добавить воспоминание»
+  // CTA wording.
+  testWidgets(
+    'read-first header: deceased shows memorial framing + воспоминание',
+    (tester) async {
+      tester.view.physicalSize = const Size(1400, 2600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final treeProvider = TreeProvider();
+      await treeProvider.selectTree('tree-1', 'Семья Кузнецовых');
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider<TreeProvider>.value(
+          value: treeProvider,
+          child: const MaterialApp(
+            home: RelativeDetailsScreen(personId: 'great-grandfather'),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('† Память: Кузнецов Иван Степанович', skipOffstage: false),
+        findsOneWidget,
+      );
+      expect(
+        tester
+            .widget<Text>(find.byKey(const Key('profile-relation-line')))
+            .data,
+        contains('1920 — 1998'),
+      );
+      expect(find.text('Добавить воспоминание', skipOffstage: false),
+          findsOneWidget);
+      expect(find.text('Добавить историю', skipOffstage: false), findsNothing);
+    },
+  );
+
+  // CTA gating: a person with an account who is alive isn't directly
+  // editable → no story CTA and no AppBar ✏️ (⋯ and «Написать» remain).
+  testWidgets(
+    'read-first header: account person → no story CTA, no ✏️',
+    (tester) async {
+      tester.view.physicalSize = const Size(1400, 2600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final treeProvider = TreeProvider();
+      await treeProvider.selectTree('tree-1', 'Семья Кузнецовых');
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider<TreeProvider>.value(
+          value: treeProvider,
+          child: const MaterialApp(
+            home: RelativeDetailsScreen(personId: 'father'),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('profile-add-story'), skipOffstage: false),
+          findsNothing);
+      expect(find.byKey(const Key('profile-appbar-edit')), findsNothing);
+      expect(find.byKey(const Key('profile-appbar-menu')), findsOneWidget);
+    },
+  );
+
+  // Nothing lost: the AppBar ✏️ trash/unlink/privacy actions migrated into
+  // the ⋯ sheet. Opening it surfaces «Удалить из дерева» for an editor.
+  testWidgets(
+    'read-first header: ⋯ menu surfaces preserved actions',
+    (tester) async {
+      tester.view.physicalSize = const Size(1400, 2600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final treeProvider = TreeProvider();
+      await treeProvider.selectTree('tree-1', 'Семья Кузнецовых');
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider<TreeProvider>.value(
+          value: treeProvider,
+          child: const MaterialApp(
+            home: RelativeDetailsScreen(personId: 'grandmother'),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('profile-appbar-menu')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('action-delete')), findsOneWidget);
+      expect(find.text('Удалить из дерева'), findsWidgets);
     },
   );
 }

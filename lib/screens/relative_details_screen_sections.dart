@@ -146,53 +146,8 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
     final fullName = dossier.displayName.isNotEmpty
         ? dossier.displayName
         : person.name;
-    final nameParts = _splitNameParts(person, dossier);
-    final firstNameTrimmed = nameParts.firstName;
-    final lastNameTrimmed = nameParts.lastName;
-    final patronymicTrimmed = nameParts.patronymic;
-
     final loc = _composeRelativeLocation(dossier);
     final years = _composeYears(person);
-
-    final actions = <Widget>[
-      if (canStartChat)
-        PillButton(
-          label: 'Написать',
-          icon: Icons.message_outlined,
-          onPressed: _openChatWithPerson,
-        ),
-      if (canInvite)
-        PillButton(
-          label: _isGeneratingLink ? 'Готовим…' : 'Пригласить в Родню',
-          icon: Icons.person_add_alt_1_outlined,
-          variant: PillButtonVariant.outlined,
-          onPressed: _isGeneratingLink ? null : _generateAndShareInviteLink,
-        ),
-      if (_canSuggestProfileEdits())
-        PillButton(
-          label: 'Предложить правку',
-          icon: Icons.edit_note_outlined,
-          variant: PillButtonVariant.outlined,
-          onPressed: _suggestProfileChanges,
-        ),
-      if (_identityService != null &&
-          _currentTreeId != null &&
-          person.userId != _authService.currentUserId)
-        PillButton(
-          label:
-              _isUpdatingIdentity ? 'Подтверждение…' : 'Это моя карточка',
-          icon: Icons.verified_user_outlined,
-          variant: PillButtonVariant.outlined,
-          onPressed: _isUpdatingIdentity ? null : _requestIdentityClaim,
-        ),
-      if (_identityService != null && _canEditOrDelete())
-        PillButton(
-          label: _isUpdatingPrivacy ? 'Сохраняем…' : 'Приватность',
-          icon: Icons.lock_outline_rounded,
-          variant: PillButtonVariant.outlined,
-          onPressed: _isUpdatingPrivacy ? null : _showPrivacySettings,
-        ),
-    ];
 
     final headerStatus = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -249,37 +204,38 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              ProfileHeroCard(
+              _buildReadFirstHeader(
+                person: person,
+                dossier: dossier,
                 fullName: fullName,
-                firstName:
-                    firstNameTrimmed.isEmpty ? null : firstNameTrimmed,
-                lastName:
-                    lastNameTrimmed.isEmpty ? null : lastNameTrimmed,
-                patronymic:
-                    patronymicTrimmed.isEmpty ? null : patronymicTrimmed,
-                photoUrl: dossier.photoUrl,
+                isDeceased: isDeceased,
+                directRelationLabel: directRelationLabel,
                 location: loc,
+                deceasedYears: years,
                 bio: dossier.bio.trim().isNotEmpty
                     ? dossier.bio.trim()
                     : (person.bio?.trim().isNotEmpty == true
                         ? person.bio!.trim()
                         : null),
-                relBadge: directRelationLabel == null
-                    ? null
-                    : 'Для вас: $directRelationLabel',
-                useWarmAvatar: true,
-                deceased: isDeceased,
-                deceasedYears: years,
-                actions: actions,
-                onEditPressed:
-                    _canDirectEditProfile() ? _editRelative : null,
-                editLabel: 'Редактировать',
+                canStartChat: canStartChat,
+                canInvite: canInvite,
               ),
               Padding(
-                padding:
-                    const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
                 child: headerStatus,
               ),
+              // «Биография» — read-first article, right under the header
+              // (§3.1 order: шапка → биография → остальное). Empty-CTA
+              // suppressed: the header's primary CTA already offers it.
+              if (_person != null)
+                ProfileBiographySection(
+                  personId: person.id,
+                  fullName: fullName,
+                  relation: directRelationLabel,
+                  gender: person.gender.name,
+                  canEdit: _canDirectEditProfile(),
+                  showEmptyCta: false,
+                ),
               // Phase 3.4 chunk 5: conflict header-banner.
               // Showcase'ит «у этого человека N расхождений с
               // другими ветками» с CTA «Посмотреть и решить» →
@@ -305,18 +261,6 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
               if (dossier.familySummary.trim().isNotEmpty ||
                   dossier.aboutFamily.trim().isNotEmpty)
                 _buildRelativeFamilyNoteSection(dossier),
-              // «Биография» — read-first article. Visible to ANY viewer of
-              // the card when non-empty; the ✏️ / «Добавить историю» edit
-              // affordances inside are gated by _canDirectEditProfile.
-              // (Replaces the old temporary «Биография (бета)» pill.)
-              if (_person != null)
-                ProfileBiographySection(
-                  personId: person.id,
-                  fullName: fullName,
-                  relation: directRelationLabel,
-                  gender: person.gender.name,
-                  canEdit: _canDirectEditProfile(),
-                ),
               if (galleryEntries.isNotEmpty || _canEditOrDelete())
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 18, 16, 0),
@@ -398,6 +342,353 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
           ),
         ),
       ),
+    );
+  }
+
+  // ── Viewer §3.1: read-first header ─────────────────────────────────────────
+
+  // Replaces the cover-style ProfileHeroCard on this screen with the
+  // read-first header: centred 120px avatar, name (memorial framing when
+  // deceased), «relation · age|years», preserved bio/location, a primary
+  // «Добавить историю/воспоминание» CTA (editor-gated → article editor),
+  // plus Написать/Пригласить as secondary CTAs. Management actions live in
+  // the AppBar ⋯ menu; structured-field edit stays as the AppBar ✏️.
+  Widget _buildReadFirstHeader({
+    required FamilyPerson person,
+    required PersonDossier dossier,
+    required String fullName,
+    required bool isDeceased,
+    required String? directRelationLabel,
+    required String? location,
+    required String? deceasedYears,
+    required String? bio,
+    required bool canStartChat,
+    required bool canInvite,
+  }) {
+    final theme = Theme.of(context);
+    final photoUrl = normalizePhotoUrl(dossier.photoUrl);
+    final initials = _avatarInitials(fullName);
+    final subtitle = _composeRelationLine(
+      directRelationLabel,
+      person,
+      isDeceased,
+      deceasedYears,
+    );
+    final canEditStory = _canDirectEditProfile();
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          _buildHeaderAvatar(photoUrl, initials),
+          const SizedBox(height: 14),
+          Text(
+            isDeceased ? '† Память: $fullName' : fullName,
+            key: const Key('profile-name'),
+            textAlign: TextAlign.center,
+            style: AppTheme.serif(
+              color: theme.colorScheme.onSurface,
+              fontSize: 23,
+              fontWeight: FontWeight.w700,
+              letterSpacing: -0.3,
+              height: 1.2,
+            ),
+          ),
+          if (subtitle != null) ...[
+            const SizedBox(height: 5),
+            Text(
+              subtitle,
+              key: const Key('profile-relation-line'),
+              textAlign: TextAlign.center,
+              style: AppTheme.sans(
+                color: theme.colorScheme.onSurfaceVariant,
+                fontSize: 14.5,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0,
+              ),
+            ),
+          ],
+          if (location != null && location.isNotEmpty) ...[
+            const SizedBox(height: 3),
+            Text(
+              location,
+              textAlign: TextAlign.center,
+              style: AppTheme.sans(
+                color:
+                    theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.8),
+                fontSize: 12.5,
+                fontWeight: FontWeight.w500,
+                letterSpacing: 0,
+              ),
+            ),
+          ],
+          if (bio != null && bio.trim().isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Text(
+              bio.trim(),
+              textAlign: TextAlign.center,
+              style: AppTheme.serif(
+                color: theme.colorScheme.onSurfaceVariant,
+                fontSize: 14.5,
+                fontWeight: FontWeight.w400,
+                height: 1.4,
+              ),
+            ),
+          ],
+          const SizedBox(height: 18),
+          if (canEditStory)
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                key: const Key('profile-add-story'),
+                onPressed: () => _openBiographyEditor(
+                  name: fullName,
+                  relation: directRelationLabel,
+                  gender: person.gender.name,
+                ),
+                icon: const Icon(Icons.edit_outlined, size: 18),
+                label: Text(
+                  isDeceased ? 'Добавить воспоминание' : 'Добавить историю',
+                ),
+              ),
+            ),
+          if (canStartChat) ...[
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                key: const Key('profile-write'),
+                onPressed: _openChatWithPerson,
+                icon: const Icon(Icons.message_outlined, size: 18),
+                label: const Text('Написать'),
+              ),
+            ),
+          ],
+          if (canInvite) ...[
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                key: const Key('profile-invite'),
+                onPressed:
+                    _isGeneratingLink ? null : _generateAndShareInviteLink,
+                icon: const Icon(Icons.person_add_alt_1_outlined, size: 18),
+                label: Text(
+                  _isGeneratingLink ? 'Готовим…' : 'Пригласить в Родню',
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHeaderAvatar(String? photoUrl, String initials) {
+    final theme = Theme.of(context);
+    return Container(
+      width: 120,
+      height: 120,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: theme.colorScheme.primary.withValues(alpha: 0.12),
+        border: Border.all(color: theme.colorScheme.surface, width: 4),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.18),
+            blurRadius: 16,
+            spreadRadius: -6,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: ClipOval(
+        child: (photoUrl != null && photoUrl.isNotEmpty)
+            ? CachedNetworkImage(
+                imageUrl: photoUrl,
+                width: 120,
+                height: 120,
+                fit: BoxFit.cover,
+                placeholder: (_, __) => _avatarFallback(initials),
+                errorWidget: (_, __, ___) => _avatarFallback(initials),
+              )
+            : _avatarFallback(initials),
+      ),
+    );
+  }
+
+  Widget _avatarFallback(String initials) {
+    final theme = Theme.of(context);
+    return Center(
+      child: Text(
+        initials,
+        style: TextStyle(
+          fontSize: 38,
+          fontWeight: FontWeight.w800,
+          color: theme.colorScheme.primary,
+        ),
+      ),
+    );
+  }
+
+  String _avatarInitials(String name) {
+    final parts = name
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((p) => p.isNotEmpty)
+        .toList();
+    if (parts.isEmpty) return '?';
+    if (parts.length == 1) return parts.first.substring(0, 1).toUpperCase();
+    return (parts[0].substring(0, 1) + parts[1].substring(0, 1)).toUpperCase();
+  }
+
+  String? _composeRelationLine(
+    String? relation,
+    FamilyPerson person,
+    bool isDeceased,
+    String? deceasedYears,
+  ) {
+    final parts = <String>[];
+    final rel = relation?.trim();
+    if (rel != null && rel.isNotEmpty) parts.add(rel);
+    if (isDeceased) {
+      if (deceasedYears != null && deceasedYears.trim().isNotEmpty) {
+        parts.add(deceasedYears.trim());
+      }
+    } else {
+      final age = _composeAge(person);
+      if (age != null) parts.add(age);
+    }
+    if (parts.isEmpty) return null;
+    return parts.join(' · ');
+  }
+
+  String? _composeAge(FamilyPerson person) {
+    final birth = person.birthDate;
+    if (birth == null) return null;
+    final now = DateTime.now();
+    var age = now.year - birth.year;
+    if (now.month < birth.month ||
+        (now.month == birth.month && now.day < birth.day)) {
+      age--;
+    }
+    if (age < 0 || age > 130) return null;
+    return '$age ${_pluralYears(age)}';
+  }
+
+  String _pluralYears(int n) {
+    final mod10 = n % 10;
+    final mod100 = n % 100;
+    if (mod10 == 1 && mod100 != 11) return 'год';
+    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return 'года';
+    return 'лет';
+  }
+
+  void _openBiographyEditor({
+    required String name,
+    String? relation,
+    String? gender,
+  }) {
+    final person = _person;
+    if (person == null) return;
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ProfileArticleEditorScreen(
+          personId: person.id,
+          personName: name,
+          personRelation: relation,
+          personGender: gender,
+        ),
+      ),
+    );
+  }
+
+  // AppBar ⋯ overflow — management actions that aren't the primary CTAs.
+  // 2a parks the current action set here (заглушка); the full §3.2 menu
+  // (Основная информация / Соавторы / История / Голосовые / Все фото /
+  // Поделиться / Открыть в дереве …) is sub-chunk 2b.
+  Future<void> _openActionsMenu() async {
+    final person = _person;
+    if (person == null) return;
+    final tiles = <Widget>[];
+    if (_canSuggestProfileEdits()) {
+      tiles.add(_actionTile(
+        keyValue: 'action-suggest-edits',
+        icon: Icons.edit_note_outlined,
+        label: 'Предложить правку',
+        onTap: _suggestProfileChanges,
+      ));
+    }
+    if (_identityService != null &&
+        _currentTreeId != null &&
+        person.userId != _authService.currentUserId) {
+      tiles.add(_actionTile(
+        keyValue: 'action-claim',
+        icon: Icons.verified_user_outlined,
+        label: _isUpdatingIdentity ? 'Подтверждение…' : 'Это моя карточка',
+        onTap: _requestIdentityClaim,
+      ));
+    }
+    if (_identityService != null && _canEditOrDelete()) {
+      tiles.add(_actionTile(
+        keyValue: 'action-privacy',
+        icon: Icons.lock_outline_rounded,
+        label: _isUpdatingPrivacy ? 'Сохраняем…' : 'Кто видит карточку',
+        onTap: _showPrivacySettings,
+      ));
+    }
+    if (_canUnlinkUser()) {
+      tiles.add(_actionTile(
+        keyValue: 'action-unlink',
+        icon: Icons.person_remove_outlined,
+        label: 'Отвязать пользователя',
+        onTap: _unlinkUser,
+      ));
+    }
+    if (_canDirectEditProfile()) {
+      tiles.add(_actionTile(
+        keyValue: 'action-delete',
+        icon: Icons.delete_outline,
+        label: 'Удалить из дерева',
+        destructive: true,
+        onTap: _deleteRelative,
+      ));
+    }
+    if (tiles.isEmpty) {
+      tiles.add(const ListTile(
+        leading: Icon(Icons.info_outline),
+        title: Text('Дополнительных действий нет'),
+      ));
+    }
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (_) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: tiles,
+        ),
+      ),
+    );
+  }
+
+  Widget _actionTile({
+    required String keyValue,
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+    bool destructive = false,
+  }) {
+    final color = destructive ? Colors.redAccent : null;
+    return ListTile(
+      key: Key(keyValue),
+      leading: Icon(icon, color: color),
+      title: Text(label, style: color == null ? null : TextStyle(color: color)),
+      onTap: () {
+        Navigator.of(context).pop();
+        onTap();
+      },
     );
   }
 
@@ -611,54 +902,6 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
       ));
     }
     return ProfileSection(title: 'Заметка для семьи', children: rows);
-  }
-
-  _RelativeNameParts _splitNameParts(
-    FamilyPerson person,
-    PersonDossier dossier,
-  ) {
-    final linked = dossier.linkedProfile;
-    if (linked != null) {
-      return _RelativeNameParts(
-        firstName: linked.firstName.trim(),
-        lastName: linked.lastName.trim(),
-        patronymic: linked.middleName.trim(),
-      );
-    }
-    final raw = person.name.trim();
-    if (raw.isEmpty) {
-      return const _RelativeNameParts(
-        firstName: '',
-        lastName: '',
-        patronymic: '',
-      );
-    }
-    // FamilyPerson stores name as «Фамилия Имя Отчество». Splitting
-    // by whitespace gives us back those three parts (or fewer when the
-    // record is partial). The hero-card composes them again as
-    // «Имя Отчество\nФамилия» so both halves get the redesign's split
-    // typography.
-    final parts =
-        raw.split(RegExp(r'\s+')).where((part) => part.isNotEmpty).toList();
-    if (parts.length == 1) {
-      return _RelativeNameParts(
-        firstName: parts.first,
-        lastName: '',
-        patronymic: '',
-      );
-    }
-    if (parts.length == 2) {
-      return _RelativeNameParts(
-        firstName: parts[1],
-        lastName: parts.first,
-        patronymic: '',
-      );
-    }
-    return _RelativeNameParts(
-      firstName: parts[1],
-      lastName: parts.first,
-      patronymic: parts.sublist(2).join(' '),
-    );
   }
 
   String _formatRussianDate(DateTime d) {
@@ -1810,18 +2053,6 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
 
     return rows;
   }
-}
-
-class _RelativeNameParts {
-  const _RelativeNameParts({
-    required this.firstName,
-    required this.lastName,
-    required this.patronymic,
-  });
-
-  final String firstName;
-  final String lastName;
-  final String patronymic;
 }
 
 /// Bottom-of-card destructive button for «Удалить из дерева». Matches

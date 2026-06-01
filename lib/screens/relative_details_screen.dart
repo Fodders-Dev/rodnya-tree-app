@@ -40,6 +40,7 @@ import '../theme/app_theme.dart';
 import '../utils/photo_url.dart';
 import '../utils/user_facing_error.dart';
 import '../widgets/profile_biography_section.dart';
+import 'profile_article_editor_screen.dart';
 
 part 'relative_details_screen_sections.dart';
 
@@ -377,33 +378,23 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
           onPressed: () => context.pop(),
         ),
         actions: [
+          // §3.1 top-right: ✏️ (structured-field edit) + ⋯ (everything
+          // else). Отвязать / Удалить / Приватность / claim / Предложить
+          // правку moved into the ⋯ sheet so nothing is lost (full §3.2
+          // menu is sub-chunk 2b).
           if (_canDirectEditProfile())
             IconButton(
-              icon: Icon(Icons.edit_outlined),
-              tooltip: 'Редактировать профиль',
+              key: const Key('profile-appbar-edit'),
+              icon: const Icon(Icons.edit_outlined),
+              tooltip: 'Редактировать данные',
               onPressed: _editRelative,
             ),
-          if (_canUnlinkUser())
+          if (_person != null)
             IconButton(
-              // Иконка раньше была `Icons.link_off_rounded` —
-              // прозрачная в текущем tree-shaken Material font'е,
-              // юзер видел невидимую кнопку. `person_remove_outlined`
-              // — стандартный glyph, гарантированно отрисовывается.
-              // Цвет — Material's amber для acent, чтобы выделялась
-              // на фоне дефолтного навыков иконок и явно сигналила
-              // «осторожнее, действие меняет связь юзера».
-              icon: const Icon(
-                Icons.person_remove_outlined,
-                color: Colors.orangeAccent,
-              ),
-              tooltip: 'Отвязать пользователя',
-              onPressed: _unlinkUser,
-            ),
-          if (_canDirectEditProfile())
-            IconButton(
-              icon: Icon(Icons.delete_outline, color: Colors.redAccent),
-              tooltip: 'Удалить профиль',
-              onPressed: _deleteRelative,
+              key: const Key('profile-appbar-menu'),
+              icon: const Icon(Icons.more_horiz),
+              tooltip: 'Ещё',
+              onPressed: _openActionsMenu,
             ),
         ],
       ),

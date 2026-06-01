@@ -28,6 +28,7 @@ class ProfileBiographySection extends StatefulWidget {
     this.relation,
     this.gender,
     this.serviceOverride,
+    this.showEmptyCta = true,
   });
 
   final String personId;
@@ -38,6 +39,11 @@ class ProfileBiographySection extends StatefulWidget {
   final bool canEdit;
   final String? relation;
   final String? gender;
+
+  /// When false, the empty-state «Добавить историю» CTA is suppressed —
+  /// used when the screen header already provides the primary add-story
+  /// CTA (Viewer §3.1), so it isn't shown twice.
+  final bool showEmptyCta;
 
   /// Test seam — production resolves ProfileArticleServiceInterface via GetIt.
   final ProfileArticleServiceInterface? serviceOverride;
@@ -106,7 +112,10 @@ class _ProfileBiographySectionState extends State<ProfileBiographySection> {
     // viewer — no phantom section gap on the profile.
     if (!_loaded) return const SizedBox.shrink();
     final hasContent = _blocks.isNotEmpty;
-    if (!hasContent && !widget.canEdit) return const SizedBox.shrink();
+    // Empty state shows the «Добавить историю» CTA only to editors, and
+    // only when the screen header isn't already providing it.
+    final showEmpty = widget.canEdit && widget.showEmptyCta;
+    if (!hasContent && !showEmpty) return const SizedBox.shrink();
 
     final theme = Theme.of(context);
     return Padding(
