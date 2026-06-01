@@ -30,8 +30,6 @@ import '../services/app_status_service.dart';
 import '../services/posts_cache.dart';
 import '../services/posts_refresh_coordinator.dart';
 import '../theme/app_theme.dart';
-import '../backend/interfaces/branch_digest_capable_family_tree_service.dart';
-import '../backend/models/branch_digest.dart';
 import '../widgets/branch_switcher_chip.dart';
 import '../widgets/post_card.dart';
 import '../widgets/post_card_shimmer.dart';
@@ -65,11 +63,6 @@ class _HomeScreenState extends State<HomeScreen>
   String? _selectedEventCategoryFilter;
   bool _isLoadingEvents = true;
   bool _isLoadingPosts = false;
-  // Phase 6.3: home-screen «Эта неделя в семье» strip. Loaded
-  // best-effort in the background; widget self-hides when null
-  // or empty. Older backends without the digest endpoint just
-  // never populate this — no errors visible to the user.
-  BranchDigest? _branchDigest;
   bool _isLoadingStories = false;
   bool _postsUnavailable = false;
   bool _storiesUnavailable = false;
@@ -154,7 +147,6 @@ class _HomeScreenState extends State<HomeScreen>
       if (_currentTreeId != null) {
         _loadStories(_currentTreeId!);
         _loadEvents(_currentTreeId!);
-        _loadBranchDigest(_currentTreeId!);
       } else {
         setState(() {
           _isLoadingStories = false;
@@ -228,7 +220,6 @@ class _HomeScreenState extends State<HomeScreen>
       if (_currentTreeId != null) {
         _loadStories(_currentTreeId!);
         _loadEvents(_currentTreeId!);
-        _loadBranchDigest(_currentTreeId!);
         // The feed is intentionally NOT reloaded on branch change —
         // it tracks `_selectedFeedBranchId`, not the active branch
         // of the BranchSwitcher. This is what fixes the "выбрал
@@ -239,7 +230,6 @@ class _HomeScreenState extends State<HomeScreen>
           _isLoadingEvents = false;
           _stories = [];
           _upcomingEvents = [];
-          _branchDigest = null;
           _selectedEventCategoryFilter = null;
         });
       }
@@ -304,25 +294,6 @@ class _HomeScreenState extends State<HomeScreen>
           _isLoadingStories = false;
         });
       }
-    }
-  }
-
-  // Phase 6.3: best-effort fetch of the per-branch digest. Older
-  // services that don't implement the capability are skipped
-  // silently — the strip simply doesn't appear.
-  Future<void> _loadBranchDigest(String treeId) async {
-    final service = _familyTreeService;
-    if (service is! BranchDigestCapableFamilyTreeService) return;
-    final capable = service as BranchDigestCapableFamilyTreeService;
-    try {
-      final digest = await capable.getBranchDigest(treeId: treeId);
-      if (!mounted || _currentTreeId != treeId) return;
-      setState(() {
-        _branchDigest = digest;
-      });
-    } catch (_) {
-      // Best-effort — the home screen still works without the
-      // strip. Don't surface in UI.
     }
   }
 
@@ -608,8 +579,8 @@ class _HomeScreenState extends State<HomeScreen>
           await _customNotificationService?.refreshUnreadNotificationsCount();
           await _loadIdentityReviewSummary();
           // Feed always refreshes — it's branch-independent. Stories
-          // / events / digest only refresh when there's an active
-          // branch (those are tied to the BranchSwitcher selection).
+          // and events only refresh when there's an active branch
+          // (those are tied to the BranchSwitcher selection).
           await _loadPosts(branchId: _selectedFeedBranchId);
           if (_currentTreeId != null) {
             await Future.wait([
