@@ -15,11 +15,13 @@ import 'package:rodnya/widgets/article_photo_block.dart';
 import 'package:rodnya/widgets/article_read_view.dart';
 import 'package:rodnya/widgets/profile_biography_section.dart';
 
-ArticleBlock _block(String id, String type, Map<String, dynamic> content) =>
+ArticleBlock _block(String id, String type, Map<String, dynamic> content,
+        {String? author}) =>
     ArticleBlock(
       id: id,
       type: type,
       content: content,
+      authorUserId: author,
       createdAt: 't',
       updatedAt: 't',
     );
@@ -80,6 +82,59 @@ void main() {
     expect(find.byKey(const Key('article-gallery-menu-g1')), findsNothing);
     expect(find.byKey(const Key('article-gallery-add-g1')), findsNothing);
     expect(find.byKey(const Key('article-gallery-remove-g1-0')), findsNothing);
+  });
+
+  testWidgets('coauthors line shows for a multi-author section',
+      (tester) async {
+    final blocks = [
+      _block('h1', 'header', ArticleBlock.headerContent('Детство')),
+      _block('p1', 'paragraph', ArticleBlock.paragraphContent('абзац 1'),
+          author: 'u-artem'),
+      _block('p2', 'paragraph', ArticleBlock.paragraphContent('абзац 2'),
+          author: 'u-natasha'),
+      _block('h2', 'header', ArticleBlock.headerContent('Один автор')),
+      _block('p3', 'paragraph', ArticleBlock.paragraphContent('абзац 3'),
+          author: 'u-artem'),
+    ];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: ArticleReadView(
+              blocks: blocks,
+              authorNames: const {'u-artem': 'Артём', 'u-natasha': 'Наталья'},
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    // The 2-author section gets a coauthors line (insertion order); the
+    // single-author section does not → exactly one line total.
+    expect(find.text('Соавторы: Артём, Наталья'), findsOneWidget);
+    expect(find.textContaining('Соавторы:'), findsOneWidget);
+  });
+
+  testWidgets('coauthors line hidden when authors are unresolved',
+      (tester) async {
+    final blocks = [
+      _block('h1', 'header', ArticleBlock.headerContent('Детство')),
+      _block('p1', 'paragraph', ArticleBlock.paragraphContent('a'),
+          author: 'unknown-1'),
+      _block('p2', 'paragraph', ArticleBlock.paragraphContent('b'),
+          author: 'unknown-2'),
+    ];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ArticleReadView(blocks: blocks, authorNames: const {}),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.textContaining('Соавторы:'), findsNothing);
   });
 
   testWidgets('biography section: viewer reads, no edit button', (tester) async {

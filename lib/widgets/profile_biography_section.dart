@@ -29,6 +29,7 @@ class ProfileBiographySection extends StatefulWidget {
     this.gender,
     this.serviceOverride,
     this.showEmptyCta = true,
+    this.authorNames = const {},
   });
 
   final String personId;
@@ -44,6 +45,10 @@ class ProfileBiographySection extends StatefulWidget {
   /// used when the screen header already provides the primary add-story
   /// CTA (Viewer §3.1), so it isn't shown twice.
   final bool showEmptyCta;
+
+  /// userId → display name, forwarded to ArticleReadView for the
+  /// «Соавторы: …» line under multi-author sections (Viewer §3.1, 2d).
+  final Map<String, String> authorNames;
 
   /// Test seam — production resolves ProfileArticleServiceInterface via GetIt.
   final ProfileArticleServiceInterface? serviceOverride;
@@ -145,7 +150,7 @@ class _ProfileBiographySectionState extends State<ProfileBiographySection> {
           ),
           const SizedBox(height: 8),
           if (hasContent)
-            ArticleReadView(blocks: _blocks)
+            ArticleReadView(blocks: _blocks, authorNames: widget.authorNames)
           else
             _emptyCta(theme),
         ],

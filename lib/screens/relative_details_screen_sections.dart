@@ -235,6 +235,7 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
                   gender: person.gender.name,
                   canEdit: _canDirectEditProfile(),
                   showEmptyCta: false,
+                  authorNames: _authorNamesMap(),
                 ),
               // Phase 3.4 chunk 5: conflict header-banner.
               // Showcase'ит «у этого человека N расхождений с

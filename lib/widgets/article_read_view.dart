@@ -15,17 +15,69 @@ import 'article_gallery_block.dart';
 import 'article_photo_block.dart';
 
 class ArticleReadView extends StatelessWidget {
-  const ArticleReadView({super.key, required this.blocks});
+  const ArticleReadView({
+    super.key,
+    required this.blocks,
+    this.authorNames = const {},
+  });
 
   final List<ArticleBlock> blocks;
 
+  /// userId → display name. When a header-delimited section has two or
+  /// more distinct *resolvable* authors, a «Соавторы: …» line is rendered
+  /// under it (Viewer §3.1). Unresolvable authors are silently skipped.
+  final Map<String, String> authorNames;
+
   @override
   Widget build(BuildContext context) {
+    // Walk blocks, tracking the distinct resolved authors since the last
+    // header; flush a «Соавторы» line when a section ends (next header or
+    // end of article).
+    final children = <Widget>[];
+    final sectionAuthors = <String>{};
+
+    void flushSection() {
+      if (sectionAuthors.length >= 2) {
+        children.add(_coauthorsLine(context, sectionAuthors.toList()));
+      }
+      sectionAuthors.clear();
+    }
+
+    for (final block in blocks) {
+      if (block.isHeader) {
+        flushSection();
+      } else {
+        final name = _authorNameFor(block);
+        if (name != null) sectionAuthors.add(name);
+      }
+      children.add(_block(context, block));
+    }
+    flushSection();
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        for (final block in blocks) _block(context, block),
-      ],
+      children: children,
+    );
+  }
+
+  String? _authorNameFor(ArticleBlock block) {
+    final id = block.authorUserId ?? block.createdByUserId;
+    if (id == null) return null;
+    final name = authorNames[id];
+    return (name != null && name.trim().isNotEmpty) ? name.trim() : null;
+  }
+
+  Widget _coauthorsLine(BuildContext context, List<String> names) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(top: 8, bottom: 4),
+      child: Text(
+        'Соавторы: ${names.join(', ')}',
+        style: theme.textTheme.bodySmall?.copyWith(
+          color: theme.colorScheme.onSurfaceVariant,
+          fontStyle: FontStyle.italic,
+        ),
+      ),
     );
   }
 
