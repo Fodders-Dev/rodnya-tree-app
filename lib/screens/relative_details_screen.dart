@@ -35,7 +35,6 @@ import '../widgets/media_lightbox.dart';
 import '../widgets/profile_redesign.dart';
 import '../widgets/sensitive_contacts_section.dart';
 import '../widgets/tree_history_sheet.dart';
-import '../widgets/visibility_toggle_section.dart';
 import '../theme/app_theme.dart';
 import '../utils/photo_url.dart';
 import '../utils/user_facing_error.dart';
@@ -43,6 +42,7 @@ import '../widgets/profile_biography_section.dart';
 import 'profile_all_photos_screen.dart';
 import 'profile_article_editor_screen.dart';
 import 'profile_basic_info_screen.dart';
+import 'profile_visibility_screen.dart';
 import 'profile_voice_recordings_screen.dart';
 
 part 'relative_details_screen_sections.dart';

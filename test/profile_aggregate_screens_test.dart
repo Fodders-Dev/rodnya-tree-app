@@ -5,12 +5,15 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:rodnya/backend/interfaces/family_tree_service_interface.dart';
 import 'package:rodnya/backend/interfaces/profile_article_service_interface.dart';
 import 'package:rodnya/backend/models/profile_article.dart';
 import 'package:rodnya/screens/profile_all_photos_screen.dart';
 import 'package:rodnya/screens/profile_basic_info_screen.dart';
+import 'package:rodnya/screens/profile_visibility_screen.dart';
 import 'package:rodnya/screens/profile_voice_recordings_screen.dart';
 import 'package:rodnya/widgets/article_audio_block.dart';
+import 'package:rodnya/widgets/visibility_toggle_section.dart';
 
 ArticleBlock _b(String id, String type, Map<String, dynamic> content,
         {String? author}) =>
@@ -31,6 +34,14 @@ class _StubArticleService implements ProfileArticleServiceInterface {
   Future<ProfileArticle> getArticle(String personId) async =>
       ProfileArticle(personId: personId, blocks: _blocks);
 
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      super.noSuchMethod(invocation);
+}
+
+// Plain service (not GraphPersonAccessCapable) → VisibilityToggleSection
+// self-hides without calling any method.
+class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
   @override
   dynamic noSuchMethod(Invocation invocation) =>
       super.noSuchMethod(invocation);
@@ -162,6 +173,23 @@ void main() {
     await tester.pump();
     expect(find.text('Иван'), findsOneWidget);
     expect(find.byKey(const Key('basic-info-edit')), findsNothing);
+  });
+
+  testWidgets('Кто видит карточку: screen wraps the visibility section',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ProfileVisibilityScreen(
+          graphPersonId: 'gp1',
+          viewerUserId: 'u1',
+          familyTreeService: _FakeFamilyTreeService(),
+        ),
+      ),
+    );
+    await tester.pump(); // snapshot load (no graph capability → self-hides)
+
+    expect(find.text('Кто видит карточку'), findsOneWidget); // AppBar
+    expect(find.byType(VisibilityToggleSection), findsOneWidget);
   });
 
   testWidgets('Все фото: no photos → empty state', (tester) async {

@@ -281,20 +281,9 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
                   padding: const EdgeInsets.fromLTRB(16, 18, 16, 0),
                   child: _buildFamilySection(),
                 ),
-              // Phase 3.4 chunk 2 (PHASE-3.4-UI-PROPOSAL §2.2):
-              // visibility toggle section. Скрывается если viewer не
-              // owner графа (widget сам gate'ит через
-              // GraphPersonAccessSnapshot.effectiveOwnerUserId), либо
-              // если backend без Phase 3.4-prep capability.
-              if (person.identityId != null && person.identityId!.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 18, 16, 0),
-                  child: VisibilityToggleSection(
-                    graphPersonId: person.identityId!,
-                    viewerUserId: _authService.currentUserId ?? '',
-                    familyTreeService: _familyService,
-                  ),
-                ),
+              // «Кто видит карточку» (§3.2.2 card visibility + 100-year
+              // rule) moved to its own ⋯-screen (ProfileVisibilityScreen)
+              // — no longer inline on the main card.
               // Phase 3.4 chunk 4 (PHASE-3.4-UI-PROPOSAL §2.4):
               // sensitive contacts section с явным «Видно тебе»
               // badge. Owner-only-всегда (даже edit grant не
@@ -620,11 +609,23 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
         onTap: _suggestProfileChanges,
       ));
     }
+    // §3.2.2 card visibility (radio + 100-year rule) — its own screen,
+    // replacing the old inline VisibilityToggleSection.
+    if (person.identityId != null && person.identityId!.isNotEmpty) {
+      tiles.add(_actionTile(
+        keyValue: 'action-visibility',
+        icon: Icons.visibility_outlined,
+        label: 'Кто видит карточку',
+        onTap: _openVisibilityScreen,
+      ));
+    }
+    // Per-field visibility (name / photo / dates …) — kept as a separate
+    // entry so nothing is lost.
     if (_identityService != null && _canEditOrDelete()) {
       tiles.add(_actionTile(
-        keyValue: 'action-privacy',
+        keyValue: 'action-privacy-fields',
         icon: Icons.lock_outline_rounded,
-        label: _isUpdatingPrivacy ? 'Сохраняем…' : 'Кто видит карточку',
+        label: _isUpdatingPrivacy ? 'Сохраняем…' : 'Видимость по полям',
         onTap: _showPrivacySettings,
       ));
     }
@@ -733,6 +734,24 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
     final treeId = _currentTreeId;
     if (treeId == null) return;
     context.go('/tree/view/$treeId');
+  }
+
+  void _openVisibilityScreen() {
+    final person = _person;
+    if (person == null ||
+        person.identityId == null ||
+        person.identityId!.isEmpty) {
+      return;
+    }
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ProfileVisibilityScreen(
+          graphPersonId: person.identityId!,
+          viewerUserId: _authService.currentUserId ?? '',
+          familyTreeService: _familyService,
+        ),
+      ),
+    );
   }
 
   // The person's dossier (linked profile → tree person fallback). Shared by
