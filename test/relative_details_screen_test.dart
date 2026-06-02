@@ -30,6 +30,7 @@ import 'package:rodnya/models/user_profile.dart';
 import 'package:rodnya/providers/tree_provider.dart';
 import 'package:rodnya/screens/profile_all_photos_screen.dart';
 import 'package:rodnya/screens/profile_article_editor_screen.dart';
+import 'package:rodnya/screens/profile_basic_info_screen.dart';
 import 'package:rodnya/screens/profile_voice_recordings_screen.dart';
 import 'package:rodnya/screens/relative_details_screen.dart';
 import 'package:rodnya/services/local_storage_service.dart';
@@ -1421,5 +1422,34 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(ProfileAllPhotosScreen), findsOneWidget);
+  });
+
+  // §3.2.1 (C1): «Основная информация» opens the read-view facts screen
+  // (was a direct jump into the structured editor).
+  testWidgets('⋯ → «Основная информация» opens the facts screen',
+      (tester) async {
+    tester.view.physicalSize = const Size(1400, 2600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final treeProvider = TreeProvider();
+    await treeProvider.selectTree('tree-1', 'Семья Кузнецовых');
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<TreeProvider>.value(
+        value: treeProvider,
+        child: const MaterialApp(
+          home: RelativeDetailsScreen(personId: 'grandmother'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('profile-appbar-menu')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('action-basic-info')));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ProfileBasicInfoScreen), findsOneWidget);
   });
 }

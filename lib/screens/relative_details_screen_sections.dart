@@ -125,16 +125,7 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
       );
     }
 
-    final dossier = _dossier ??
-        (_userProfile != null
-            ? PersonDossier.fromProfile(
-                _userProfile!,
-                treePerson: _person,
-              )
-            : PersonDossier.fromPerson(
-                _person!,
-                canEditFamilyFields: _canEditOrDelete(),
-              ));
+    final dossier = _resolveDossier();
     final bool canStartChat = _canStartChatWithPerson();
     final bool canInvite = _canInvitePerson();
     final contactStatus = _getContactStatus();
@@ -257,8 +248,9 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
                 ),
               if (_kinshipSectionHasContent())
                 _buildKinshipSection(),
-              if (_relativeFactsHaveContent(dossier, person))
-                _buildRelativeFactsSection(dossier, person),
+              // «О человеке» (structured facts) moved to the «Основная
+              // информация» ⋯-screen (§3.2.1) — keeps the main card
+              // read-first.
               if (dossier.familySummary.trim().isNotEmpty ||
                   dossier.aboutFamily.trim().isNotEmpty)
                 _buildRelativeFamilyNoteSection(dossier),
@@ -612,14 +604,14 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
     final person = _person;
     if (person == null) return;
     final tiles = <Widget>[];
-    if (_canDirectEditProfile()) {
-      tiles.add(_actionTile(
-        keyValue: 'action-basic-info',
-        icon: Icons.assignment_outlined,
-        label: 'Основная информация',
-        onTap: _editRelative,
-      ));
-    }
+    // Read-view of the structured facts (§3.2.1) — open to any viewer;
+    // the [Редактировать] button inside is gated by edit-rights.
+    tiles.add(_actionTile(
+      keyValue: 'action-basic-info',
+      icon: Icons.assignment_outlined,
+      label: 'Основная информация',
+      onTap: _openBasicInfo,
+    ));
     if (_canSuggestProfileEdits()) {
       tiles.add(_actionTile(
         keyValue: 'action-suggest-edits',
@@ -743,6 +735,93 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
     context.go('/tree/view/$treeId');
   }
 
+  // The person's dossier (linked profile → tree person fallback). Shared by
+  // the main card and the «Основная информация» screen.
+  PersonDossier _resolveDossier() {
+    return _dossier ??
+        (_userProfile != null
+            ? PersonDossier.fromProfile(_userProfile!, treePerson: _person)
+            : PersonDossier.fromPerson(
+                _person!,
+                canEditFamilyFields: _canEditOrDelete(),
+              ));
+  }
+
+  String? _basicGenderLabel(Gender gender) {
+    switch (gender) {
+      case Gender.male:
+        return 'Мужской';
+      case Gender.female:
+        return 'Женский';
+      case Gender.other:
+        return 'Другой';
+      case Gender.unknown:
+        return null;
+    }
+  }
+
+  List<BasicInfoField> _buildBasicInfoFields() {
+    final person = _person;
+    if (person == null) return const [];
+    final d = _resolveDossier();
+    final fullName = d.displayName.isNotEmpty ? d.displayName : person.name;
+    final fields = <BasicInfoField>[
+      BasicInfoField('Имя', fullName),
+    ];
+    if (d.maidenName.trim().isNotEmpty) {
+      fields.add(BasicInfoField('Девичья фамилия', d.maidenName.trim()));
+    }
+    if (person.birthDate != null) {
+      fields.add(
+          BasicInfoField('Дата рождения', _formatRussianDate(person.birthDate!)));
+    }
+    if (person.deathDate != null) {
+      fields.add(BasicInfoField(
+        'Дата смерти',
+        _formatRussianDate(person.deathDate!),
+        memorial: true,
+      ));
+    }
+    final relation = _getDirectRelationLabel();
+    if (relation != null && relation.trim().isNotEmpty) {
+      fields.add(BasicInfoField('Отношение', relation.trim()));
+    }
+    final gender = _basicGenderLabel(person.gender);
+    if (gender != null) fields.add(BasicInfoField('Пол', gender));
+    if ((d.birthPlace ?? '').trim().isNotEmpty) {
+      fields.add(BasicInfoField('Место рождения', d.birthPlace!.trim()));
+    }
+    if (d.hometown.trim().isNotEmpty) {
+      fields.add(BasicInfoField('Родом из', d.hometown.trim()));
+    }
+    if (d.education.trim().isNotEmpty) {
+      fields.add(BasicInfoField('Образование', d.education.trim()));
+    }
+    if (d.work.trim().isNotEmpty) {
+      fields.add(BasicInfoField('Работа', d.work.trim()));
+    }
+    if (d.languages.trim().isNotEmpty) {
+      fields.add(BasicInfoField('Языки', d.languages.trim()));
+    }
+    if (d.interests.trim().isNotEmpty) {
+      fields.add(BasicInfoField('Интересы', d.interests.trim()));
+    }
+    return fields;
+  }
+
+  void _openBasicInfo() {
+    if (_person == null) return;
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ProfileBasicInfoScreen(
+          fields: _buildBasicInfoFields(),
+          canEdit: _canDirectEditProfile(),
+          onEdit: _editRelative,
+        ),
+      ),
+    );
+  }
+
   Widget _actionTile({
     required String keyValue,
     required IconData icon,
@@ -837,105 +916,6 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
       ));
     }
     return ProfileSection(title: 'Связь', children: rows);
-  }
-
-  bool _relativeFactsHaveContent(PersonDossier d, FamilyPerson p) {
-    return p.birthDate != null ||
-        (d.birthPlace ?? '').trim().isNotEmpty ||
-        d.hometown.trim().isNotEmpty ||
-        d.education.trim().isNotEmpty ||
-        d.work.trim().isNotEmpty ||
-        d.languages.trim().isNotEmpty ||
-        d.interests.trim().isNotEmpty ||
-        d.maidenName.trim().isNotEmpty;
-  }
-
-  Widget _buildRelativeFactsSection(PersonDossier d, FamilyPerson p) {
-    final rows = <Widget>[];
-    if (p.birthDate != null) {
-      rows.add(InfoRow(
-        icon: Icons.cake_outlined,
-        label: 'Дата рождения',
-        value: _formatRussianDate(p.birthDate!),
-        warm: true,
-        isFirst: rows.isEmpty,
-      ));
-    }
-    if ((d.birthPlace ?? '').trim().isNotEmpty) {
-      rows.add(InfoRow(
-        icon: Icons.place_outlined,
-        label: 'Место рождения',
-        value: d.birthPlace!.trim(),
-        warm: true,
-        isFirst: rows.isEmpty,
-      ));
-    }
-    if (d.hometown.trim().isNotEmpty) {
-      rows.add(InfoRow(
-        icon: Icons.account_tree_outlined,
-        label: 'Родом из',
-        value: d.hometown.trim(),
-        warm: true,
-        isFirst: rows.isEmpty,
-      ));
-    }
-    if (d.education.trim().isNotEmpty) {
-      rows.add(InfoRow(
-        icon: Icons.school_outlined,
-        label: 'Образование',
-        value: d.education.trim(),
-        warm: true,
-        isFirst: rows.isEmpty,
-      ));
-    }
-    if (d.work.trim().isNotEmpty) {
-      rows.add(InfoRow(
-        icon: Icons.work_outline_rounded,
-        label: 'Работа',
-        value: d.work.trim(),
-        warm: true,
-        isFirst: rows.isEmpty,
-      ));
-    }
-    if (d.languages.trim().isNotEmpty) {
-      rows.add(InfoRow(
-        icon: Icons.language_outlined,
-        label: 'Языки',
-        value: d.languages.trim(),
-        warm: true,
-        isFirst: rows.isEmpty,
-      ));
-    }
-    if (d.interests.trim().isNotEmpty) {
-      rows.add(InfoRow(
-        icon: Icons.auto_awesome_outlined,
-        label: 'Интересы',
-        value: d.interests.trim(),
-        warm: true,
-        isFirst: rows.isEmpty,
-      ));
-    }
-    if (d.maidenName.trim().isNotEmpty) {
-      rows.add(InfoRow(
-        icon: Icons.label_outline,
-        label: 'Девичья фамилия',
-        value: d.maidenName.trim(),
-        warm: true,
-        isFirst: rows.isEmpty,
-      ));
-    }
-    if (rows.isNotEmpty) {
-      final last = rows.removeLast() as InfoRow;
-      rows.add(InfoRow(
-        icon: last.icon,
-        label: last.label,
-        value: last.value,
-        warm: last.warm,
-        isFirst: last.isFirst,
-        isLast: true,
-      ));
-    }
-    return ProfileSection(title: 'О человеке', children: rows);
   }
 
   Widget _buildRelativeFamilyNoteSection(PersonDossier d) {
