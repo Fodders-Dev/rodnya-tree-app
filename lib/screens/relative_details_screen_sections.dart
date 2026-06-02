@@ -246,6 +246,14 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
                       const EdgeInsets.fromLTRB(12, 18, 12, 0),
                   child: _buildDuplicateSuggestionBanner(),
                 ),
+              // §3.1 read-first: «Семья» sits right under the biography
+              // (only alerts between). «Связь», заметка, галерея,
+              // история-audit … follow below — nothing removed/hidden.
+              if (_buildDirectFamilyRows().isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 18, 16, 0),
+                  child: _buildFamilySection(),
+                ),
               if (_kinshipSectionHasContent())
                 _buildKinshipSection(),
               // «О человеке» (structured facts) moved to the «Основная
@@ -275,11 +283,6 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 18, 16, 0),
                   child: _buildRelationToolsSection(),
-                ),
-              if (_buildDirectFamilyRows().isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 18, 16, 0),
-                  child: _buildFamilySection(),
                 ),
               // «Кто видит карточку» (§3.2.2 card visibility + 100-year
               // rule) moved to its own ⋯-screen (ProfileVisibilityScreen)
