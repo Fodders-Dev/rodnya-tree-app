@@ -811,8 +811,17 @@ void main() {
             .data,
         contains('Отец'),
       );
-      // Profile Redesign: ProfileSection uppercases section titles.
-      expect(find.text('СЕМЬЯ', skipOffstage: false), findsOneWidget);
+      // Viewer §3.1 (2c): read-first «Семья» section — serif heading +
+      // the «🌳 Открыть в дереве» button (replaced the uppercase «СЕМЬЯ»
+      // ProfileSection card).
+      expect(
+        find.byKey(const Key('family-section-title'), skipOffstage: false),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key('family-open-tree'), skipOffstage: false),
+        findsOneWidget,
+      );
       expect(find.text('Кузнецов Артем', skipOffstage: false), findsOneWidget);
       expect(find.text('Кузнецова Валентина', skipOffstage: false),
           findsWidgets);

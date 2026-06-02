@@ -286,10 +286,7 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
               if (_buildDirectFamilyRows().isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 18, 16, 0),
-                  child: _buildInfoSection(
-                    'Семья',
-                    _buildDirectFamilyRows(),
-                  ),
+                  child: _buildFamilySection(),
                 ),
               // Phase 3.4 chunk 2 (PHASE-3.4-UI-PROPOSAL §2.2):
               // visibility toggle section. Скрывается если viewer не
@@ -2062,6 +2059,40 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
   // PersonDossierView header area. The new redesign hero card surfaces
   // the same information through `relBadge` + the status text rendered
   // directly under the hero — the chip helper is no longer needed.
+
+  // Viewer §3.1 «## Семья»: read-first family section — serif heading,
+  // the direct relatives (each tappable → their card) with relation
+  // labels, and a «🌳 Открыть в дереве» button. Reuses _buildDirectFamilyRows.
+  Widget _buildFamilySection() {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Семья',
+          key: const Key('family-section-title'),
+          style: AppTheme.serif(
+            color: theme.colorScheme.onSurface,
+            fontSize: 20,
+            fontWeight: FontWeight.w700,
+            letterSpacing: -0.2,
+          ),
+        ),
+        const SizedBox(height: 12),
+        ..._buildDirectFamilyRows(),
+        const SizedBox(height: 4),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: OutlinedButton.icon(
+            key: const Key('family-open-tree'),
+            onPressed: _currentTreeId == null ? null : _openInTree,
+            icon: const Icon(Icons.account_tree_outlined, size: 18),
+            label: const Text('Открыть в дереве'),
+          ),
+        ),
+      ],
+    );
+  }
 
   List<Widget> _buildDirectFamilyRows() {
     if (_person == null) {
