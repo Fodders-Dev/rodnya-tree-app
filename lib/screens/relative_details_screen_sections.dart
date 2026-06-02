@@ -604,20 +604,58 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
     );
   }
 
-  // AppBar ⋯ overflow — management actions that aren't the primary CTAs.
-  // 2a parks the current action set here (заглушка); the full §3.2 menu
-  // (Основная информация / Соавторы / История / Голосовые / Все фото /
-  // Поделиться / Открыть в дереве …) is sub-chunk 2b.
+  // AppBar ⋯ overflow — the §3.2 card menu. Each item maps to an existing
+  // action or a dedicated screen, and is shown only when it has a
+  // destination. Deferred: 📜 История изменений (needs a backend edit-
+  // history endpoint — flagged as a separate заход) and 👥 Соавторы
+  // (sub-chunk 2d). 🔗 Поделиться (browse-token, §3.2.7) isn't wired in
+  // this context yet (only invite-to-family exists — that's the header CTA).
   Future<void> _openActionsMenu() async {
     final person = _person;
     if (person == null) return;
     final tiles = <Widget>[];
+    if (_canDirectEditProfile()) {
+      tiles.add(_actionTile(
+        keyValue: 'action-basic-info',
+        icon: Icons.assignment_outlined,
+        label: 'Основная информация',
+        onTap: _editRelative,
+      ));
+    }
     if (_canSuggestProfileEdits()) {
       tiles.add(_actionTile(
         keyValue: 'action-suggest-edits',
         icon: Icons.edit_note_outlined,
         label: 'Предложить правку',
         onTap: _suggestProfileChanges,
+      ));
+    }
+    if (_identityService != null && _canEditOrDelete()) {
+      tiles.add(_actionTile(
+        keyValue: 'action-privacy',
+        icon: Icons.lock_outline_rounded,
+        label: _isUpdatingPrivacy ? 'Сохраняем…' : 'Кто видит карточку',
+        onTap: _showPrivacySettings,
+      ));
+    }
+    tiles.add(_actionTile(
+      keyValue: 'action-voice',
+      icon: Icons.graphic_eq_rounded,
+      label: 'Голосовые записи',
+      onTap: _openVoiceRecordings,
+    ));
+    tiles.add(_actionTile(
+      keyValue: 'action-photos',
+      icon: Icons.photo_library_outlined,
+      label: 'Все фото',
+      onTap: _openAllPhotos,
+    ));
+    if (_currentTreeId != null) {
+      tiles.add(_actionTile(
+        keyValue: 'action-open-tree',
+        icon: Icons.account_tree_outlined,
+        label: 'Открыть в дереве',
+        onTap: _openInTree,
       ));
     }
     if (_identityService != null &&
@@ -628,14 +666,6 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
         icon: Icons.verified_user_outlined,
         label: _isUpdatingIdentity ? 'Подтверждение…' : 'Это моя карточка',
         onTap: _requestIdentityClaim,
-      ));
-    }
-    if (_identityService != null && _canEditOrDelete()) {
-      tiles.add(_actionTile(
-        keyValue: 'action-privacy',
-        icon: Icons.lock_outline_rounded,
-        label: _isUpdatingPrivacy ? 'Сохраняем…' : 'Кто видит карточку',
-        onTap: _showPrivacySettings,
       ));
     }
     if (_canUnlinkUser()) {
@@ -655,22 +685,64 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
         onTap: _deleteRelative,
       ));
     }
-    if (tiles.isEmpty) {
-      tiles.add(const ListTile(
-        leading: Icon(Icons.info_outline),
-        title: Text('Дополнительных действий нет'),
-      ));
-    }
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
       builder: (_) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: tiles,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: tiles,
+          ),
         ),
       ),
     );
+  }
+
+  // userId → display name, from the people on this tree — for «кто записал»
+  // (Голосовые) and «Соавторы» (2d).
+  Map<String, String> _authorNamesMap() {
+    final map = <String, String>{};
+    for (final person in _treePeople) {
+      final uid = person.userId;
+      if (uid != null && uid.isNotEmpty && person.name.trim().isNotEmpty) {
+        map[uid] = person.name.trim();
+      }
+    }
+    return map;
+  }
+
+  void _openVoiceRecordings() {
+    final person = _person;
+    if (person == null) return;
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ProfileVoiceRecordingsScreen(
+          personId: person.id,
+          personName: person.name,
+          authorNames: _authorNamesMap(),
+        ),
+      ),
+    );
+  }
+
+  void _openAllPhotos() {
+    final person = _person;
+    if (person == null) return;
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ProfileAllPhotosScreen(
+          personId: person.id,
+          personName: person.name,
+        ),
+      ),
+    );
+  }
+
+  void _openInTree() {
+    final treeId = _currentTreeId;
+    if (treeId == null) return;
+    context.go('/tree/view/$treeId');
   }
 
   Widget _actionTile({

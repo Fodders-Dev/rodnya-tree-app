@@ -28,7 +28,9 @@ import 'package:rodnya/models/tree_graph_snapshot.dart';
 import 'package:rodnya/models/tree_change_record.dart';
 import 'package:rodnya/models/user_profile.dart';
 import 'package:rodnya/providers/tree_provider.dart';
+import 'package:rodnya/screens/profile_all_photos_screen.dart';
 import 'package:rodnya/screens/profile_article_editor_screen.dart';
+import 'package:rodnya/screens/profile_voice_recordings_screen.dart';
 import 'package:rodnya/screens/relative_details_screen.dart';
 import 'package:rodnya/services/local_storage_service.dart';
 import 'package:provider/provider.dart';
@@ -1327,4 +1329,88 @@ void main() {
       expect(find.text('Удалить из дерева'), findsWidgets);
     },
   );
+
+  // §3.2 menu (sub-chunk 2b): the full card menu — Основная информация /
+  // Кто видит / Голосовые записи / Все фото / Открыть в дереве / Удалить.
+  testWidgets('⋯ menu shows the §3.2 items', (tester) async {
+    tester.view.physicalSize = const Size(1400, 2600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final treeProvider = TreeProvider();
+    await treeProvider.selectTree('tree-1', 'Семья Кузнецовых');
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<TreeProvider>.value(
+        value: treeProvider,
+        child: const MaterialApp(
+          home: RelativeDetailsScreen(personId: 'grandmother'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('profile-appbar-menu')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('action-basic-info')), findsOneWidget);
+    expect(find.byKey(const Key('action-voice')), findsOneWidget);
+    expect(find.byKey(const Key('action-photos')), findsOneWidget);
+    expect(find.byKey(const Key('action-open-tree')), findsOneWidget);
+    expect(find.byKey(const Key('action-delete')), findsOneWidget);
+  });
+
+  testWidgets('⋯ menu → «Голосовые записи» opens the voice screen',
+      (tester) async {
+    tester.view.physicalSize = const Size(1400, 2600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final treeProvider = TreeProvider();
+    await treeProvider.selectTree('tree-1', 'Семья Кузнецовых');
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<TreeProvider>.value(
+        value: treeProvider,
+        child: const MaterialApp(
+          home: RelativeDetailsScreen(personId: 'grandmother'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('profile-appbar-menu')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('action-voice')));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ProfileVoiceRecordingsScreen), findsOneWidget);
+  });
+
+  testWidgets('⋯ menu → «Все фото» opens the all-photos screen',
+      (tester) async {
+    tester.view.physicalSize = const Size(1400, 2600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final treeProvider = TreeProvider();
+    await treeProvider.selectTree('tree-1', 'Семья Кузнецовых');
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<TreeProvider>.value(
+        value: treeProvider,
+        child: const MaterialApp(
+          home: RelativeDetailsScreen(personId: 'grandmother'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('profile-appbar-menu')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('action-photos')));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ProfileAllPhotosScreen), findsOneWidget);
+  });
 }
