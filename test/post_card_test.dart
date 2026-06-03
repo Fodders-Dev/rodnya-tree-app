@@ -246,6 +246,54 @@ void main() {
   );
 
   testWidgets(
+    'PostCard multi-photo carousel shows one page-dot per photo (P3c)',
+    (tester) async {
+      getIt.registerSingleton<PostServiceInterface>(
+        _FakePostService(onToggleLike: (_) async => throw Exception('unused')),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: PostCard(
+                post: Post(
+                  id: 'post-gallery',
+                  treeId: 'tree-1',
+                  authorId: 'author-1',
+                  authorName: 'Анна',
+                  content: 'Галерея',
+                  imageUrls: const [
+                    'https://example.com/a.jpg',
+                    'https://example.com/b.jpg',
+                    'https://example.com/c.jpg',
+                  ],
+                  createdAt: DateTime(2026, 4, 13, 10),
+                  likedBy: const [],
+                  commentCount: 0,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      // Network images never resolve in tests — they sit on the shimmer
+      // placeholder, which animates forever — so pump a couple of frames
+      // rather than pumpAndSettle.
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      final dots = find.byKey(const Key('post-carousel-dots'));
+      expect(dots, findsOneWidget);
+      expect(
+        tester.widget<Row>(dots).children.length,
+        3,
+        reason: 'one page-dot per photo (3 images)',
+      );
+    },
+  );
+
+  testWidgets(
     'PostCard delete: Cancel preserves post (no backend call)',
     (tester) async {
       final postService = _FakePostService(

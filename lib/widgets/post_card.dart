@@ -449,7 +449,8 @@ class _PostCardState extends State<PostCard>
           if (_currentUserId == widget.post.authorId)
             PopupMenuButton<String>(
               padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              // ≥44dp tap target for the overflow menu (was 32×32).
+              constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
               icon: Icon(
                 Icons.more_horiz_rounded,
                 color: tokens.inkMuted,
@@ -580,31 +581,11 @@ class _PostCardState extends State<PostCard>
     return Padding(
       padding: EdgeInsets.fromLTRB(
           tokens.space12, 0, tokens.space12, tokens.space12),
-      child: CarouselSlider.builder(
-        itemCount: images.length,
-        itemBuilder: (context, index, _) {
-          return ClipRRect(
-            borderRadius: borderRadius,
-            child: MouseRegion(
-              cursor: SystemMouseCursors.click,
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: () => openLightbox(index),
-                child: SizedBox(
-                  width: MediaQuery.of(context).size.width,
-                  child: tileFor(images[index]),
-                ),
-              ),
-            ),
-          );
-        },
-        options: CarouselOptions(
-          aspectRatio: 16 / 9,
-          viewportFraction: 1,
-          enableInfiniteScroll: false,
-          autoPlay: false,
-          enlargeCenterPage: false,
-        ),
+      child: _PostImageCarousel(
+        images: images,
+        borderRadius: borderRadius,
+        tileFor: tileFor,
+        onTapImage: openLightbox,
       ),
     );
   }
@@ -905,6 +886,93 @@ class _VideoBadge extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Multi-photo carousel with a page-dots indicator (UX-audit 3.4 — a
+/// gallery post gave no hint there was more than one photo). Owns its
+/// own page index so the surrounding PostCard doesn't rebuild on swipe.
+class _PostImageCarousel extends StatefulWidget {
+  const _PostImageCarousel({
+    required this.images,
+    required this.borderRadius,
+    required this.tileFor,
+    required this.onTapImage,
+  });
+
+  final List<String> images;
+  final BorderRadius borderRadius;
+  final Widget Function(String url) tileFor;
+  final void Function(int index) onTapImage;
+
+  @override
+  State<_PostImageCarousel> createState() => _PostImageCarouselState();
+}
+
+class _PostImageCarouselState extends State<_PostImageCarousel> {
+  int _index = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      alignment: Alignment.bottomCenter,
+      children: [
+        CarouselSlider.builder(
+          itemCount: widget.images.length,
+          itemBuilder: (context, index, _) {
+            return ClipRRect(
+              borderRadius: widget.borderRadius,
+              child: MouseRegion(
+                cursor: SystemMouseCursors.click,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => widget.onTapImage(index),
+                  child: SizedBox(
+                    width: MediaQuery.of(context).size.width,
+                    child: widget.tileFor(widget.images[index]),
+                  ),
+                ),
+              ),
+            );
+          },
+          options: CarouselOptions(
+            aspectRatio: 16 / 9,
+            viewportFraction: 1,
+            enableInfiniteScroll: false,
+            autoPlay: false,
+            enlargeCenterPage: false,
+            onPageChanged: (index, _) {
+              if (mounted) setState(() => _index = index);
+            },
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Row(
+            key: const Key('post-carousel-dots'),
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (var i = 0; i < widget.images.length; i++)
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  width: i == _index ? 18 : 6,
+                  height: 6,
+                  margin: const EdgeInsets.symmetric(horizontal: 3),
+                  decoration: BoxDecoration(
+                    color: i == _index
+                        ? Colors.white
+                        : Colors.white.withValues(alpha: 0.55),
+                    borderRadius: BorderRadius.circular(3),
+                    boxShadow: const [
+                      BoxShadow(color: Color(0x55000000), blurRadius: 4),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
