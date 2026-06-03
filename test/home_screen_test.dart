@@ -274,7 +274,9 @@ void main() {
       expect(find.widgetWithText(ChoiceChip, 'Семья'), findsNothing);
       expect(find.text('Новый пост'), findsNothing);
       expect(find.text('День рождения'), findsOneWidget);
-      expect(find.byType(FloatingActionButton), findsOneWidget);
+      // CTA hierarchy (P4b): the redundant compose FAB was removed — the
+      // inline «Поделиться с роднёй…» teaser is the single compose CTA.
+      expect(find.byType(FloatingActionButton), findsNothing);
     },
   );
 

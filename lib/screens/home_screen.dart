@@ -599,17 +599,15 @@ class _HomeScreenState extends State<HomeScreen>
         preferredSize: Size.fromHeight(AppTheme.topbarHeight(context)),
         child: _buildHomeTopbar(theme: theme, tokens: tokens),
       ),
-      floatingActionButton: hasSelectedTree
-          ? FloatingActionButton(
-              onPressed: () => context.push('/post/create'),
-              backgroundColor: tokens.accent,
-              foregroundColor: tokens.accentInk,
-              elevation: 4,
-              shape: const CircleBorder(),
-              tooltip: 'Написать пост',
-              child: const Icon(Icons.edit_outlined, size: 22),
-            )
-          : null,
+      // CTA hierarchy (UX-audit 2.2): the feed had three competing
+      // create affordances — this FAB, the inline compose teaser, and
+      // the empty-state «Написать» — all firing /post/create. The warm
+      // inline teaser (avatar + «Поделиться с роднёй…» + photo/video
+      // quick actions) is the single dominant compose CTA now; the FAB
+      // was a bare duplicate and is removed. (If long-feed reachability
+      // ever needs it back, a scroll-aware FAB that appears only once
+      // the teaser scrolls off is the follow-up — not a second
+      // always-on button.)
       body: RefreshIndicator(
         onRefresh: () async {
           await _customNotificationService?.refreshUnreadNotificationsCount();
