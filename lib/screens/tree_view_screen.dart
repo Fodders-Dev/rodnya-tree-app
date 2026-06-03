@@ -57,6 +57,7 @@ import '../theme/app_theme.dart';
 import '../utils/user_facing_error.dart';
 import '../utils/e2e_state_bridge.dart';
 import '../utils/photo_url.dart';
+import '../utils/snackbar.dart';
 
 part 'tree_view_screen_sections.dart';
 
@@ -1860,12 +1861,14 @@ class _TreeViewScreenState extends State<TreeViewScreen>
       final newPersonId =
           await _familyService.addRelative(treeId, personData);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('Карточка добавлена. Соедините её длинным нажатием.'),
-          duration: const Duration(seconds: 3),
-        ),
-      );
+      // Record for undo (this path didn't before) → «Отменить» deletes it.
+      if (GetIt.I.isRegistered<TreeMutationHistory>()) {
+        GetIt.I<TreeMutationHistory>().recordPersonAdded(
+          treeId: treeId,
+          personId: newPersonId,
+          personData: personData,
+        );
+      }
       // Stamp the recenter id BEFORE the reload — when _loadData
       // sets peopleData the InteractiveFamilyTree's didUpdateWidget
       // sees both the new data + the new recenter target in one
@@ -1874,6 +1877,9 @@ class _TreeViewScreenState extends State<TreeViewScreen>
         _recenterOnPersonIdAfterReload = newPersonId;
       });
       await _loadData(treeId);
+      if (mounted) {
+        _showTreeUndoToast('Карточка добавлена. Соедините её длинным нажатием.');
+      }
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1941,20 +1947,45 @@ class _TreeViewScreenState extends State<TreeViewScreen>
         );
       }
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Связь создана'),
-          duration: const Duration(seconds: 2),
-        ),
-      );
       // Reload so the new edge renders + layout engine can rebalance.
       await _loadData(treeId);
+      if (mounted) _showTreeUndoToast('Связь создана');
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Не удалось создать связь: $error')),
       );
     }
+  }
+
+  // Phase B polish B: ~10s «Отменить» toast after an add (mama doesn't
+  // know Ctrl+Z). «Отменить» → TreeMutationHistory.undoForUi() inverts the
+  // most-recent mutation (recordPersonAdded → delete; recordRelationCreated
+  // → disconnect) and reloads.
+  void _showTreeUndoToast(String message) {
+    if (!GetIt.I.isRegistered<TreeMutationHistory>()) {
+      showAppSnackBar(context, message);
+      return;
+    }
+    showAppSnackBar(
+      context,
+      message,
+      duration: const Duration(seconds: 10),
+      action: SnackBarAction(
+        label: 'Отменить',
+        onPressed: _undoLastTreeMutation,
+      ),
+    );
+  }
+
+  Future<void> _undoLastTreeMutation() async {
+    if (!GetIt.I.isRegistered<TreeMutationHistory>()) return;
+    final description =
+        await GetIt.I<TreeMutationHistory>().undoForUi(_familyService);
+    if (!mounted || description == null) return;
+    final treeId = _currentTreeId;
+    if (treeId != null) await _loadData(treeId);
+    if (mounted) showAppSnackBar(context, 'Отменено: $description');
   }
 
   Future<void> _handleAddSelfFromTree(
