@@ -336,7 +336,8 @@ class _PostCardState extends State<PostCard>
             _buildPostHeader(),
             if (widget.post.content.isNotEmpty)
               Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+                padding: EdgeInsets.fromLTRB(
+                    tokens.space16, 0, tokens.space16, tokens.space12),
                 child: Text(
                   widget.post.content,
                   style: theme.textTheme.bodyMedium?.copyWith(
@@ -350,7 +351,8 @@ class _PostCardState extends State<PostCard>
               _buildInvalidPostImageFallback(),
             if (_reactions.isNotEmpty)
               Padding(
-                padding: const EdgeInsets.fromLTRB(14, 4, 14, 4),
+                padding: EdgeInsets.fromLTRB(
+                    tokens.space16, tokens.space4, tokens.space16, tokens.space4),
                 child: ReactionChipStrip(
                   reactions: _reactions,
                   currentUserId: _currentUserId,
@@ -374,7 +376,12 @@ class _PostCardState extends State<PostCard>
     );
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(14, 12, 10, 10),
+      padding: EdgeInsets.fromLTRB(
+        tokens.space16,
+        tokens.space12,
+        tokens.space12,
+        tokens.space12,
+      ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -497,7 +504,8 @@ class _PostCardState extends State<PostCard>
   }
 
   Widget _buildPostImages(List<String> images) {
-    final borderRadius = BorderRadius.circular(18);
+    final tokens = _tokensFor(Theme.of(context));
+    final borderRadius = BorderRadius.circular(tokens.radiusMd);
     final lightboxItems = images
         .map(
           (url) => _isVideoUrl(url)
@@ -556,7 +564,8 @@ class _PostCardState extends State<PostCard>
 
     if (images.length == 1) {
       return Padding(
-        padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+        padding: EdgeInsets.fromLTRB(
+            tokens.space12, 0, tokens.space12, tokens.space12),
         child: AspectRatio(
           aspectRatio: 16 / 9,
           child: ClipRRect(
@@ -579,7 +588,8 @@ class _PostCardState extends State<PostCard>
     }
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+      padding: EdgeInsets.fromLTRB(
+          tokens.space12, 0, tokens.space12, tokens.space12),
       child: CarouselSlider.builder(
         itemCount: images.length,
         itemBuilder: (context, index, _) {
@@ -610,12 +620,14 @@ class _PostCardState extends State<PostCard>
   }
 
   Widget _buildInvalidPostImageFallback() {
+    final tokens = _tokensFor(Theme.of(context));
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+      padding: EdgeInsets.fromLTRB(
+          tokens.space12, 0, tokens.space12, tokens.space12),
       child: AspectRatio(
         aspectRatio: 16 / 9,
         child: ClipRRect(
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(tokens.radiusMd),
           child: _buildPostImageFallback(),
         ),
       ),
@@ -660,7 +672,8 @@ class _PostCardState extends State<PostCard>
       children: [
         if (_likeCount > 0 || _commentCount > 0)
           Padding(
-            padding: const EdgeInsets.fromLTRB(14, 0, 14, 6),
+            padding: EdgeInsets.fromLTRB(
+                tokens.space16, 0, tokens.space16, tokens.space8),
             child: Row(
               children: [
                 if (_likeCount > 0)
@@ -705,7 +718,7 @@ class _PostCardState extends State<PostCard>
           ),
         Container(
           height: 0.7,
-          margin: const EdgeInsets.symmetric(horizontal: 14),
+          margin: EdgeInsets.symmetric(horizontal: tokens.space16),
           color: tokens.surfaceLine,
         ),
         Padding(

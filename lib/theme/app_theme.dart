@@ -139,6 +139,16 @@ class RodnyaDesignTokens extends ThemeExtension<RodnyaDesignTokens> {
   BorderRadius get controlRadius => BorderRadius.circular(radiusMd);
   BorderRadius get chipRadius => BorderRadius.circular(999);
 
+  // 4-pt spacing scale. Fixed (theme-independent) — exposed on the
+  // token object so layouts read spacing from the same place as colours
+  // and radii instead of scattering bare numbers. The common feed/card
+  // rhythm normalizes onto this grid; genuinely compact affordances
+  // (e.g. a tight action-bar inset) may still use literals on purpose.
+  double get space4 => 4;
+  double get space8 => 8;
+  double get space12 => 12;
+  double get space16 => 16;
+
   LinearGradient get accentGradient => LinearGradient(
         begin: Alignment.topCenter,
         end: Alignment.bottomCenter,
