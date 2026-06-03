@@ -66,6 +66,11 @@ class _HomeScreenState extends State<HomeScreen>
   bool _isLoadingPosts = false;
   bool _isLoadingStories = false;
   bool _postsUnavailable = false;
+  // null = unknown / not yet resolved. Drives the state-aware empty feed
+  // CTA: false → tree has nobody but you (guide to add a relative);
+  // true → there's family to post to (guide to write). Loaded lazily,
+  // only when the feed comes back empty.
+  bool? _hasFamilyAudience;
   bool _storiesUnavailable = false;
   bool _identityReviewsUnavailable = false;
   int _pendingIdentityReviewCount = 0;
@@ -507,6 +512,12 @@ class _HomeScreenState extends State<HomeScreen>
         _isLoadingPosts = false;
         _postsUnavailable = false;
       });
+      // Only resolve the audience signal when the feed is actually
+      // empty — that's the only time the state-aware empty CTA shows,
+      // so feeds with content never pay for the extra fetch.
+      if (posts.isEmpty) {
+        unawaited(_refreshFamilyAudienceSignal());
+      }
     } catch (e) {
       debugPrint('Ошибка загрузки постов: $e');
       _appStatusService.reportError(
@@ -523,6 +534,30 @@ class _HomeScreenState extends State<HomeScreen>
           _isLoadingPosts = false;
         });
       }
+    }
+  }
+
+  /// Resolve whether the active tree has anyone besides the current
+  /// user, so the empty feed can guide a brand-new account to add a
+  /// relative rather than write into the void (UX-audit 2.2). Relative
+  /// person-cards carry `userId == null`; the viewer's own card carries
+  /// their id — so "has audience" = any person that isn't the viewer.
+  /// Best-effort: on failure the signal stays unknown and the feed
+  /// falls back to the «Написать» CTA (prior behaviour).
+  Future<void> _refreshFamilyAudienceSignal() async {
+    final treeId = _currentTreeId;
+    if (treeId == null) return;
+    try {
+      final relatives = await _familyTreeService.getRelatives(treeId);
+      if (!mounted) return;
+      final currentUserId = _authService.currentUserId;
+      final hasAudience =
+          relatives.any((person) => person.userId != currentUserId);
+      if (_hasFamilyAudience != hasAudience) {
+        setState(() => _hasFamilyAudience = hasAudience);
+      }
+    } catch (_) {
+      // Non-fatal — leave the signal unknown.
     }
   }
 

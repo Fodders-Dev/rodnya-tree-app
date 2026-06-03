@@ -71,16 +71,23 @@ class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
   _FakeFamilyTreeService({
     this.invitations = const [],
     List<FamilyTree>? trees,
+    this.relativesOverride,
   }) : trees = trees ?? [_buildTree(id: 'tree-1', name: 'Тестовое дерево')];
 
   final List<TreeInvitation> invitations;
   final List<FamilyTree> trees;
 
+  /// When set, `getRelatives` returns this instead of the default
+  /// single relative — lets a test simulate an empty tree (no audience).
+  final List<FamilyPerson>? relativesOverride;
+
   @override
   Future<List<FamilyTree>> getUserTrees() async => trees;
 
   @override
-  Future<List<FamilyPerson>> getRelatives(String treeId) async => [
+  Future<List<FamilyPerson>> getRelatives(String treeId) async =>
+      relativesOverride ??
+      [
         FamilyPerson(
           id: 'person-1',
           treeId: treeId,
@@ -620,6 +627,77 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('notifications'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'HomeScreen пустая лента без родни → CTA «Добавить родственника» (P4)',
+    (tester) async {
+      tester.view.physicalSize = const Size(900, 1600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
+      // Empty feed + a tree with nobody but the viewer (no relatives).
+      await getIt.unregister<FamilyTreeServiceInterface>();
+      getIt.registerSingleton<FamilyTreeServiceInterface>(
+        _FakeFamilyTreeService(relativesOverride: const <FamilyPerson>[]),
+      );
+      await getIt.unregister<PostServiceInterface>();
+      getIt.registerSingleton<PostServiceInterface>(
+        _FakePostService(posts: const <Post>[]),
+      );
+
+      final treeProvider = TreeProvider();
+      await treeProvider.selectTree('tree-1', 'Тестовое дерево');
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider<TreeProvider>.value(
+          value: treeProvider,
+          child: const MaterialApp(home: HomeScreen()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Начните своё дерево'), findsOneWidget);
+      expect(find.text('Добавить родственника'), findsOneWidget);
+      expect(find.text('Написать'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'HomeScreen пустая лента с роднёй → CTA «Написать» (P4)',
+    (tester) async {
+      tester.view.physicalSize = const Size(900, 1600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
+      // Empty feed but the default fake tree HAS a relative → audience
+      // exists → guide to write, not to add a relative.
+      await getIt.unregister<PostServiceInterface>();
+      getIt.registerSingleton<PostServiceInterface>(
+        _FakePostService(posts: const <Post>[]),
+      );
+
+      final treeProvider = TreeProvider();
+      await treeProvider.selectTree('tree-1', 'Тестовое дерево');
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider<TreeProvider>.value(
+          value: treeProvider,
+          child: const MaterialApp(home: HomeScreen()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Пока тихо в ленте'), findsOneWidget);
+      expect(find.text('Написать'), findsOneWidget);
+      expect(find.text('Добавить родственника'), findsNothing);
     },
   );
 }

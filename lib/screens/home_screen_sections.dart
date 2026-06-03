@@ -1,17 +1,22 @@
 part of 'home_screen.dart';
 
+/// What the empty-feed CTA does when tapped.
+enum _FeedEmptyAction { write, refresh, addRelative }
+
 class _HomeFeedEmptyViewState {
   const _HomeFeedEmptyViewState({
     required this.title,
     required this.message,
     required this.icon,
     this.actionLabel,
+    this.action = _FeedEmptyAction.write,
   });
 
   final String title;
   final String message;
   final IconData icon;
   final String? actionLabel;
+  final _FeedEmptyAction action;
 }
 
 extension _HomeScreenSections on _HomeScreenState {
@@ -22,6 +27,20 @@ extension _HomeScreenSections on _HomeScreenState {
         message: 'Обновите позже.',
         icon: Icons.cloud_off_outlined,
         actionLabel: 'Обновить',
+        action: _FeedEmptyAction.refresh,
+      );
+    }
+
+    // State-aware (UX-audit 2.2): a tree with nobody but the viewer
+    // has no audience to post to — guide them to build the family
+    // first instead of writing into the void.
+    if (_hasFamilyAudience == false) {
+      return const _HomeFeedEmptyViewState(
+        title: 'Начните своё дерево',
+        message: 'Добавьте первого родственника — и лента оживёт.',
+        icon: Icons.person_add_alt_1_outlined,
+        actionLabel: 'Добавить родственника',
+        action: _FeedEmptyAction.addRelative,
       );
     }
 
@@ -30,15 +49,23 @@ extension _HomeScreenSections on _HomeScreenState {
       message: 'Поделитесь семейной новостью, фото или короткой историей.',
       icon: Icons.post_add_outlined,
       actionLabel: 'Написать',
+      action: _FeedEmptyAction.write,
     );
   }
 
   Future<void> _handleFeedEmptyAction() async {
-    if (!_postsUnavailable) {
-      await _openCreatePost();
-      return;
+    switch (_feedEmptyViewState.action) {
+      case _FeedEmptyAction.refresh:
+        await _refreshCurrentPosts();
+        return;
+      case _FeedEmptyAction.addRelative:
+        // Tree screen is where relatives are added.
+        if (mounted) context.go('/tree');
+        return;
+      case _FeedEmptyAction.write:
+        await _openCreatePost();
+        return;
     }
-    await _refreshCurrentPosts();
   }
 
   Widget _buildOperationalBanner({required bool hasSelectedTree}) {
@@ -549,7 +576,9 @@ extension _HomeScreenSections on _HomeScreenState {
                     const SizedBox(height: 2),
                     Text(
                       state.message,
-                      maxLines: 2,
+                      // 3 lines so the warm copy isn't clipped to «ко…»
+                      // (was maxLines: 2).
+                      maxLines: 3,
                       overflow: TextOverflow.ellipsis,
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: theme.colorScheme.onSurfaceVariant,
