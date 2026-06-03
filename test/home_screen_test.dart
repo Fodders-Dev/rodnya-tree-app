@@ -21,6 +21,7 @@ import 'package:rodnya/services/browser_notification_bridge.dart';
 import 'package:rodnya/services/custom_api_notification_service.dart';
 import 'package:rodnya/services/local_storage_service.dart';
 import 'package:rodnya/widgets/event_card.dart';
+import 'package:rodnya/widgets/post_card.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -460,6 +461,16 @@ void main() {
   testWidgets(
     'HomeScreen рендерит все посты из аудитории без content-type фильтра',
     (tester) async {
+      // P1: posts render in a virtualized SliverList. Give the test a
+      // tall narrow viewport (width < 1180 → phone layout) so all three
+      // short posts mount in-frame without needing to scroll.
+      tester.view.physicalSize = const Size(900, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
       await getIt.unregister<PostServiceInterface>();
       getIt.registerSingleton<PostServiceInterface>(
         _FakePostService(
@@ -515,6 +526,64 @@ void main() {
       expect(find.text('Семейная новость'), findsOneWidget);
       expect(find.text('Новость круга'), findsOneWidget);
       expect(find.text('Публичная новость'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'HomeScreen виртуализирует ленту — офф-скрин карточки не монтируются (P1)',
+    (tester) async {
+      // Narrow width (phone layout) + modest height. A non-virtualized
+      // Column inside one SliverToBoxAdapter would mount all 30
+      // PostCards regardless of viewport; the P1 SliverList only builds
+      // the cards near the viewport, so the mounted count stays well
+      // below 30.
+      tester.view.physicalSize = const Size(800, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
+      await getIt.unregister<PostServiceInterface>();
+      getIt.registerSingleton<PostServiceInterface>(
+        _FakePostService(
+          posts: List.generate(
+            30,
+            (i) => Post(
+              id: 'post-$i',
+              treeId: 'tree-1',
+              authorId: 'author-$i',
+              authorName: 'Автор $i',
+              content:
+                  'Запись номер $i с достаточным текстом, чтобы карточка '
+                  'занимала заметную высоту в ленте.',
+              createdAt:
+                  DateTime(2026, 4, 13, 10).add(Duration(minutes: i)),
+            ),
+          ),
+        ),
+      );
+
+      final treeProvider = TreeProvider();
+      await treeProvider.selectTree('tree-1', 'Тестовое дерево');
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider<TreeProvider>.value(
+          value: treeProvider,
+          child: const MaterialApp(home: HomeScreen()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final mountedCards = find.byType(PostCard).evaluate().length;
+      expect(mountedCards, greaterThan(0));
+      expect(
+        mountedCards,
+        lessThan(30),
+        reason: 'SliverList must recycle off-screen cards, not mount all 30',
+      );
+      // The top of the feed is rendered (first post visible).
+      expect(find.textContaining('Запись номер 0'), findsOneWidget);
     },
   );
 

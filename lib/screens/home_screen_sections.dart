@@ -151,7 +151,13 @@ extension _HomeScreenSections on _HomeScreenState {
     );
   }
 
-  Widget _buildHomeContentSections({required bool isWideLayout}) {
+  /// Everything above the posts list on the narrow (phone) layout:
+  /// identity-review banner, stories rail, events rail, compose teaser,
+  /// branch chips. The posts themselves are no longer a child here —
+  /// they render as a separate virtualized [SliverList] (see
+  /// [_buildNarrowFeedSliver]) so off-screen cards recycle instead of
+  /// all mounting at once inside one SliverToBoxAdapter.
+  Widget _buildFeedHeaderSections() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -167,7 +173,7 @@ extension _HomeScreenSections on _HomeScreenState {
         // a possible later re-introduction in a different shape.
         _buildStoriesSection(),
         const SizedBox(height: 6),
-        _buildUpcomingEventsSection(isWideLayout: isWideLayout),
+        _buildUpcomingEventsSection(isWideLayout: false),
         const SizedBox(height: 4),
         Padding(
           padding: const EdgeInsets.fromLTRB(18, 6, 18, 12),
@@ -178,11 +184,55 @@ extension _HomeScreenSections on _HomeScreenState {
           child: _buildFeedBranchStrip(),
         ),
         const SizedBox(height: 4),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(14, 0, 14, 0),
-          child: _buildHomeFeedStage(isWideLayout: isWideLayout),
-        ),
       ],
+    );
+  }
+
+  /// Narrow-layout posts as a recycling [SliverList]. Loading / empty
+  /// states stay box-shaped (they're small, fixed-size) in a
+  /// [SliverToBoxAdapter]; only the populated list virtualizes. Keeps
+  /// the same horizontal inset (14) the feed stage used to carry so
+  /// spacing is unchanged. PostCards key on `post.id` so element state
+  /// follows the right post as the list recycles.
+  Widget _buildNarrowFeedSliver() {
+    if (_isLoadingPosts && _posts.isEmpty) {
+      return const SliverToBoxAdapter(
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(14, 0, 14, 0),
+          child: Column(
+            children: [
+              PostCardShimmer(),
+              PostCardShimmer(),
+              PostCardShimmer(),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final visiblePosts = _visiblePosts;
+    if (_posts.isEmpty || visiblePosts.isEmpty) {
+      return SliverToBoxAdapter(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 0, 14, 0),
+          child: _buildFeedEmptyState(wideLayout: false),
+        ),
+      );
+    }
+
+    return SliverPadding(
+      padding: const EdgeInsets.fromLTRB(14, 0, 14, 0),
+      sliver: SliverList.builder(
+        itemCount: visiblePosts.length,
+        itemBuilder: (context, index) {
+          final post = visiblePosts[index];
+          return PostCard(
+            key: ValueKey(post.id),
+            post: post,
+            onDeleted: () => _loadPosts(branchId: _selectedFeedBranchId),
+          );
+        },
+      ),
     );
   }
 

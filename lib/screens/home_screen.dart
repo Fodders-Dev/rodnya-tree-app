@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart'
     show defaultTargetPlatform, kIsWeb, TargetPlatform;
 import 'package:flutter/services.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
 import '../providers/tree_provider.dart';
@@ -823,9 +824,8 @@ class _HomeScreenState extends State<HomeScreen>
                   ),
                 ),
               if (hasSelectedTree) ...[
-                SliverToBoxAdapter(
-                  child: _buildHomeContentSections(isWideLayout: false),
-                ),
+                SliverToBoxAdapter(child: _buildFeedHeaderSections()),
+                _buildNarrowFeedSliver(),
                 const SliverToBoxAdapter(child: SizedBox(height: 80)),
               ] else
                 const SliverToBoxAdapter(child: SizedBox(height: 40)),
@@ -1534,6 +1534,13 @@ class _StoryRing extends StatelessWidget {
                   border: Border.all(color: tokens.surfaceLine, width: 1),
                 ),
                 child: ClipOval(
+                  // CachedNetworkImage (vs Image.network) so the
+                  // story-rail avatars come from the shared image cache
+                  // instead of re-downloading on every home rebuild —
+                  // the rail re-runs build on any home setState. Initials
+                  // stand in both while loading and on error. The parent
+                  // story tile carries the author name as its semantic
+                  // label, so the avatar is decorative for screen readers.
                   child: isAdd
                       ? Center(
                           child: Icon(
@@ -1543,35 +1550,13 @@ class _StoryRing extends StatelessWidget {
                           ),
                         )
                       : (photoUrl != null && photoUrl!.isNotEmpty)
-                          ? Image.network(
-                              photoUrl!,
+                          ? CachedNetworkImage(
+                              imageUrl: photoUrl!,
                               fit: BoxFit.cover,
-                              // Story-strip avatar — the parent
-                              // story tile carries the user's name as
-                              // its semantic label, so the avatar is
-                              // decorative for screen readers.
-                              excludeFromSemantics: true,
-                              errorBuilder: (_, __, ___) => Center(
-                                child: Text(
-                                  initials ?? '?',
-                                  style: AppTheme.sans(
-                                    color: tokens.ink,
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                              ),
+                              placeholder: (_, __) => _initialsLabel(),
+                              errorWidget: (_, __, ___) => _initialsLabel(),
                             )
-                          : Center(
-                              child: Text(
-                                initials ?? '?',
-                                style: AppTheme.sans(
-                                  color: tokens.ink,
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ),
+                          : _initialsLabel(),
                 ),
               ),
             ),
@@ -1595,4 +1580,15 @@ class _StoryRing extends StatelessWidget {
       ),
     );
   }
+
+  Widget _initialsLabel() => Center(
+        child: Text(
+          initials ?? '?',
+          style: AppTheme.sans(
+            color: tokens.ink,
+            fontSize: 13,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      );
 }
