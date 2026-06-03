@@ -147,6 +147,8 @@ class SemyaMembership {
     required this.joinedAt,
     this.invitedByUserId,
     this.hasInviteGrant = false,
+    this.displayName,
+    this.avatarUrl,
   });
 
   final String id;
@@ -157,6 +159,17 @@ class SemyaMembership {
   final String? invitedByUserId;
   final bool hasInviteGrant;
 
+  /// Resolved member name from the backend enrich (null → fall back to
+  /// userId). Avatar likewise optional.
+  final String? displayName;
+  final String? avatarUrl;
+
+  /// Name to show — the resolved displayName, or the raw userId fallback.
+  String get displayLabel {
+    final name = displayName?.trim();
+    return (name != null && name.isNotEmpty) ? name : userId;
+  }
+
   factory SemyaMembership.fromJson(Map<String, dynamic> json) {
     return SemyaMembership(
       id: (json['id'] ?? '').toString(),
@@ -166,6 +179,8 @@ class SemyaMembership {
       joinedAt: (json['joinedAt'] ?? '').toString(),
       invitedByUserId: _nullableString(json['invitedByUserId']),
       hasInviteGrant: json['hasInviteGrant'] == true,
+      displayName: _nullableString(json['displayName']),
+      avatarUrl: _nullableString(json['avatarUrl']),
     );
   }
 
@@ -178,6 +193,8 @@ class SemyaMembership {
       'joinedAt': joinedAt,
       'invitedByUserId': invitedByUserId,
       'hasInviteGrant': hasInviteGrant,
+      if (displayName != null) 'displayName': displayName,
+      if (avatarUrl != null) 'avatarUrl': avatarUrl,
     };
   }
 }

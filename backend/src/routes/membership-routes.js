@@ -19,6 +19,8 @@
 //   * tree binding compat shim — Week 3
 //   * notification dispatch — Week 3
 
+const {composeDisplayNameFromProfile} = require("../store");
+
 function registerMembershipRoutes(
   app,
   {store, requireAuth, requireSemyaAccess},
@@ -34,6 +36,31 @@ function registerMembershipRoutes(
       invitedByUserId: membership.invitedByUserId ?? null,
       hasInviteGrant: membership.hasInviteGrant === true,
     };
+  }
+
+  // Additive enrich: resolve the member's userId → displayName (+ avatarUrl)
+  // via the user profile, so clients show real names, not raw ids. User
+  // not found / no name → displayName omitted (client falls back to userId).
+  async function enrichMembership(membership) {
+    const base = mapMembership(membership);
+    if (!base) return null;
+    let user = null;
+    try {
+      user = await store.findUserById(membership.userId);
+    } catch (_) {
+      user = null;
+    }
+    const profile = user?.profile;
+    const displayName =
+      profile?.displayName || composeDisplayNameFromProfile(profile) || null;
+    if (displayName && String(displayName).trim()) {
+      base.displayName = String(displayName).trim();
+    }
+    const avatarUrl = profile?.photoUrl;
+    if (avatarUrl && String(avatarUrl).trim()) {
+      base.avatarUrl = String(avatarUrl).trim();
+    }
+    return base;
   }
 
   // POST /v1/semya/:id/membership — add existing user as editor/viewer.
@@ -79,9 +106,10 @@ function registerMembershipRoutes(
         invitedByUserId: req.auth.user.id,
         hasInviteGrant,
       });
-      res
-        .status(outcome.created ? 201 : 200)
-        .json({membership: mapMembership(outcome.membership), created: outcome.created});
+      res.status(outcome.created ? 201 : 200).json({
+        membership: await enrichMembership(outcome.membership),
+        created: outcome.created,
+      });
     } catch (error) {
       const code = error?.message;
       if (code === "USER_NOT_FOUND") {
@@ -111,7 +139,7 @@ function registerMembershipRoutes(
     });
     if (!access) return;
     const rows = await store.listMembershipsForSemya(req.params.id);
-    res.json({memberships: rows.map(mapMembership)});
+    res.json({memberships: await Promise.all(rows.map(enrichMembership))});
   });
 
   // PATCH /v1/semya/:id/membership/:userId — role либо invite-grant.
@@ -143,7 +171,7 @@ function registerMembershipRoutes(
 
       try {
         const updated = await store.updateMembership(updates);
-        res.json({membership: mapMembership(updated)});
+        res.json({membership: await enrichMembership(updated)});
       } catch (error) {
         const code = error?.message;
         if (code === "MEMBERSHIP_NOT_FOUND") {
@@ -216,7 +244,7 @@ function registerMembershipRoutes(
           actorUserId: req.auth.user.id,
         });
         res.json({
-          membership: mapMembership(outcome.membership),
+          membership: await enrichMembership(outcome.membership),
           wasSelfLeave: outcome.wasSelfLeave,
         });
       } catch (error) {

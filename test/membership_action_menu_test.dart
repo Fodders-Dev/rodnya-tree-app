@@ -18,6 +18,7 @@ SemyaMembership _membership({
   String userId = 'u-target',
   SemyaRole role = SemyaRole.viewer,
   bool hasInviteGrant = false,
+  String? displayName,
 }) {
   return SemyaMembership(
     id: 'mem-1',
@@ -26,6 +27,7 @@ SemyaMembership _membership({
     role: role,
     joinedAt: '2026-05-26T00:00:00.000Z',
     hasInviteGrant: hasInviteGrant,
+    displayName: displayName,
   );
 }
 
@@ -207,6 +209,35 @@ void main() {
     expect(rec.kickCalls, 1);
   });
 
+  testWidgets('kick dialog shows the resolved member name (Phase B polish A)',
+      (tester) async {
+    final rec = _Recorder();
+    await tester.pumpWidget(_wrap(MembershipActionMenu(
+      membership: _membership(
+        role: SemyaRole.editor,
+        displayName: 'Наталья Кузнецова',
+      ),
+      actions: rec.actions,
+    )));
+    await _openMenu(tester, 'u-target');
+    await tester.tap(find.text('Удалить из семьи'));
+    await tester.pumpAndSettle();
+    expect(find.text('Удалить Наталья Кузнецова из семьи?'), findsOneWidget);
+  });
+
+  testWidgets('kick dialog falls back to userId when no name resolved',
+      (tester) async {
+    final rec = _Recorder();
+    await tester.pumpWidget(_wrap(MembershipActionMenu(
+      membership: _membership(role: SemyaRole.editor, userId: 'u-xyz'),
+      actions: rec.actions,
+    )));
+    await _openMenu(tester, 'u-xyz');
+    await tester.tap(find.text('Удалить из семьи'));
+    await tester.pumpAndSettle();
+    expect(find.text('Удалить u-xyz из семьи?'), findsOneWidget);
+  });
+
   testWidgets('kick cancel preserves state', (tester) async {
     final rec = _Recorder();
     await tester.pumpWidget(_wrap(MembershipActionMenu(
@@ -233,5 +264,34 @@ void main() {
       findsNothing,
     );
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
+  });
+
+  // The member row renders `membership.displayLabel` — name when resolved,
+  // userId otherwise (Phase B polish A).
+  group('SemyaMembership.displayLabel', () {
+    test('uses displayName when present', () {
+      expect(
+        _membership(userId: 'u1', displayName: 'Артём Кузнецов').displayLabel,
+        'Артём Кузнецов',
+      );
+    });
+    test('falls back to userId when name absent / blank', () {
+      expect(_membership(userId: 'u1').displayLabel, 'u1');
+      expect(_membership(userId: 'u1', displayName: '   ').displayLabel, 'u1');
+    });
+    test('fromJson parses displayName + avatarUrl', () {
+      final m = SemyaMembership.fromJson({
+        'id': 'm',
+        'semyaId': 's',
+        'userId': 'u1',
+        'role': 'editor',
+        'joinedAt': 't',
+        'displayName': 'Наталья',
+        'avatarUrl': 'https://a/p.jpg',
+      });
+      expect(m.displayName, 'Наталья');
+      expect(m.avatarUrl, 'https://a/p.jpg');
+      expect(m.displayLabel, 'Наталья');
+    });
   });
 }

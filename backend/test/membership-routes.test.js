@@ -341,6 +341,52 @@ test("GET memberships: list all (200, viewer+)", async () => {
   }
 });
 
+test("GET memberships: enriched with displayName + fallback when user gone", async () => {
+  const ctx = await startTestServer();
+  try {
+    const {owner, semya} = await seedSemyaWithOwner(
+      ctx.store,
+      ctx.baseUrl,
+      "o6e@example.com",
+    );
+    const editor = await makeUser(ctx.store, ctx.baseUrl, "ed6e@example.com");
+    await ctx.store.addMembership({
+      semyaId: semya.id,
+      userId: editor.userId,
+      role: "editor",
+      invitedByUserId: owner.userId,
+    });
+
+    const res1 = await fetch(
+      `${ctx.baseUrl}/v1/semya/${semya.id}/memberships`,
+      {headers: {Authorization: `Bearer ${owner.token}`}},
+    );
+    const body1 = await res1.json();
+    const editorRow = body1.memberships.find((m) => m.userId === editor.userId);
+    // Enriched: the registered displayName (email prefix), not the raw id.
+    assert.equal(editorRow.displayName, "ed6e");
+    assert.notEqual(editorRow.displayName, editor.userId);
+
+    // Fallback: drop the user record (stale membership) → displayName omitted,
+    // userId still present so the client can fall back to it.
+    const db = await ctx.store._read();
+    db.users = db.users.filter((u) => u.id !== editor.userId);
+    await ctx.store._write(db);
+    ctx.store._userCache.delete(editor.userId);
+
+    const res2 = await fetch(
+      `${ctx.baseUrl}/v1/semya/${semya.id}/memberships`,
+      {headers: {Authorization: `Bearer ${owner.token}`}},
+    );
+    const body2 = await res2.json();
+    const staleRow = body2.memberships.find((m) => m.userId === editor.userId);
+    assert.equal(staleRow.displayName, undefined);
+    assert.equal(staleRow.userId, editor.userId);
+  } finally {
+    await shutdown(ctx);
+  }
+});
+
 test("GET memberships: outsider 403", async () => {
   const ctx = await startTestServer();
   try {

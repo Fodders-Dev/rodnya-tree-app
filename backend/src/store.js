@@ -19730,6 +19730,7 @@ class FileStore {
 module.exports = {
   EMPTY_DB,
   FileStore,
+  composeDisplayNameFromProfile,
   buildTreeGraphSnapshot,
   buildGraphWarnings,
   buildBranchVisiblePersonIds,

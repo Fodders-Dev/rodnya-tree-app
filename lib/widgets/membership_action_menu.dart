@@ -233,9 +233,9 @@ class MembershipActionMenu extends StatelessWidget {
   }
 
   String _displayName() {
-    // Backend пока возвращает userId как display — UI surface limited
-    // (FE9 onboarding rewrite добавит display-name resolution).
-    return membership.userId;
+    // Resolved member name from the backend enrich (Phase B polish A);
+    // falls back to userId when the name can't be resolved.
+    return membership.displayLabel;
   }
 }
 

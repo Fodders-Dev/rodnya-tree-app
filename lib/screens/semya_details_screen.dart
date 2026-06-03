@@ -1,9 +1,11 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
 import 'package:provider/provider.dart';
 
 import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/models/semya.dart';
+import '../utils/photo_url.dart';
 import '../providers/semya_details_controller.dart';
 import '../theme/app_theme.dart';
 import '../widgets/browse_tokens_list_section.dart';
@@ -610,25 +612,14 @@ class _MemberRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final initials = _initialsOf(membership.userId);
+    final initials = _initialsOf(membership.displayLabel);
     return ListTile(
-      leading: CircleAvatar(
-        radius: 18,
-        backgroundColor:
-            theme.colorScheme.primary.withValues(alpha: 0.16),
-        child: Text(
-          initials,
-          style: theme.textTheme.labelSmall?.copyWith(
-            color: theme.colorScheme.primary,
-            fontWeight: FontWeight.w800,
-          ),
-        ),
-      ),
+      leading: _buildAvatar(theme, initials),
       title: Row(
         children: [
           Flexible(
             child: Text(
-              membership.userId,
+              membership.displayLabel,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: _isSelf ? const TextStyle(fontWeight: FontWeight.w700) : null,
@@ -685,9 +676,47 @@ class _MemberRow extends StatelessWidget {
     );
   }
 
-  static String _initialsOf(String userId) {
-    if (userId.isEmpty) return '?';
-    return userId.substring(0, userId.length.clamp(0, 2)).toUpperCase();
+  Widget _buildAvatar(ThemeData theme, String initials) {
+    final fallback = CircleAvatar(
+      radius: 18,
+      backgroundColor: theme.colorScheme.primary.withValues(alpha: 0.16),
+      child: Text(
+        initials,
+        style: theme.textTheme.labelSmall?.copyWith(
+          color: theme.colorScheme.primary,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+    );
+    final raw = membership.avatarUrl?.trim();
+    if (raw == null || raw.isEmpty) return fallback;
+    final url = normalizePhotoUrl(raw) ?? raw;
+    return ClipOval(
+      child: SizedBox(
+        width: 36,
+        height: 36,
+        child: CachedNetworkImage(
+          imageUrl: url,
+          fit: BoxFit.cover,
+          placeholder: (_, __) => fallback,
+          errorWidget: (_, __, ___) => fallback,
+        ),
+      ),
+    );
+  }
+
+  static String _initialsOf(String label) {
+    final parts = label
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((p) => p.isNotEmpty)
+        .toList();
+    if (parts.isEmpty) return '?';
+    if (parts.length == 1) {
+      final p = parts.first;
+      return p.substring(0, p.length.clamp(0, 2)).toUpperCase();
+    }
+    return (parts[0].substring(0, 1) + parts[1].substring(0, 1)).toUpperCase();
   }
 
   static String _formatJoinedAt(String iso) {
