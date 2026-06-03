@@ -572,7 +572,7 @@ verified на Galaxy S20 FE для Q1 wizard skip + Q2 Google dialog.
 **Pending: RuStore signing key check** — critical unblocker для real
 users.
 
-### Phase B frontend FE1-FE7 + FE7b + FE10 partial (80% — 8/10)
+### Phase B frontend FE1-FE10 + FE3b + mama-friendly polish (ЗАКРЫТ)
 
 Phase B backend ships 1-10 уже жили с Week 1-3 (см. SHARED-TREE-PROPOSAL.md).
 Frontend этой сессии wrap'нул endpoints без backend touch.
@@ -599,10 +599,10 @@ settings tile linking deferred к polish ship чтобы main FE7
 (action sheet + section) shipped clean без multi-семя picker UX
 скоп creeping.
 
-**Pending FE8/FE9**: explicitly deferred к fresh session per
-«verify ground truth перед destructive ops» discipline. Mutation
-UI (promote/demote/kick member) + onboarding wizard rewrite требуют
-sharp context для permission matrices.
+**FE8/FE9 — DONE** (`7d86bb7` / `3eaa643`): shipped после 2026-05-26 в
+fresh sessions per «verify ground truth перед destructive ops» discipline.
+Mutation UI (promote/demote/kick) + onboarding wizard rewrite. См. таблицу
+«Phase B фронт ЗАКРЫТ» ниже.
 
 ### Тесты на 2026-05-26
 
@@ -628,21 +628,33 @@ sharp context для permission matrices.
 * [PHASE-E-SOCIAL-INTERACTIONS-PROPOSAL.md](PHASE-E-SOCIAL-INTERACTIONS-PROPOSAL.md)
   — Phase E social layer extensions.
 
-### Что осталось
+### Phase B фронт ЗАКРЫТ (FE8/FE9/FE10-full/FE3b + mama-friendly polish)
 
-* **RuStore signing key check** (CRITICAL — unlocks все 18 ships
-  для real users).
-* **FE8 mutation UI** (fresh session — promote/demote/kick).
-* **FE9 onboarding wizard rewrite** (fresh session — interaction
-  с Phase 6 wizard от 2026-05-14).
-* **FE10 full integration coverage** (after FE8/FE9).
+Дошипано после 2026-05-26:
+
+| Ship | Commit | Notes |
+|---|---|---|
+| FE8 — Membership mutation UI | `7d86bb7` | promote/demote/kick + invite-grant + confirm |
+| FE9 — Onboarding wizard rewrite | `3eaa643` | mama-friendly onboarding |
+| FE10 full — Integration coverage | `bb0b3ae` | end-to-end FE1-FE9 |
+| FE3b — Invitation accept deep link | `9b7a3d3` | rodnya-tree.ru/i/<token> universal link |
+| Phase B polish (mama-friendly) | (этот чанк) | имена участников + undo-тосты + «не бойся сломать» баннер + тёплые empty states + история статьи §3.2.4 |
+
+### Что осталось (до запуска федеративной семьи)
+
+* **RuStore signing key check** (CRITICAL — unlocks ships для real users).
+* **Рассылка приглашений email/SMS** — нужен внешний провайдер (SMS/email):
+  приглашения создаются + принимаются по ссылке, авто-доставки нет.
+* **Черновик-режим персон** (draft mode, §6 Week 7) — ОТЛОЖЕНО, кросс-стек
+  (backend visibility + frontend).
+* **Миграция данных Phase B + флип `RODNYA_FEDERATED_SEMYI_ENABLED=true`** на
+  прод (после observation окна).
+* **Coach-marks тур первого запуска** (§6 Week 7) — НЕ сделан в polish-чанке
+  (самый тяжёлый; нужен overlay/пакет + first-run гейтинг).
+* **Kick-участника undo** — нужен FE service.addMembership (POST /membership;
+  во фронте только GET/PATCH/DELETE).
 * **Q4a soft-delete proper design pass** (deferred 2026-05-26 — backend
-  hard-delete vs spec mismatch surfaced, scope не закрыт).
-* **FE3b invitation accept deep link** (per-platform: rodnya-tree.ru/i/<token>
-  universal link wiring к /invite/* route — partially landed в FE3).
-* **Week 7-8 Phase B production migration** (запуск
-  `RODNYA_FEDERATED_SEMYI_ENABLED=true` после observation окна; зависит
-  от FE8 mutation UI completion).
+  hard-delete vs spec mismatch).
 
 ### Что НЕ запланировано но всплыло
 

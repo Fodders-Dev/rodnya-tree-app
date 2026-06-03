@@ -44,6 +44,11 @@
 | FE7 — Hide filter | `cccd4e8` | Action sheet «Скрыть от меня» tile + HiddenPersonsSection |
 | FE7b — Settings tile polish | `152c067` | Settings entry point + семя picker + scrollToHidden |
 | FE10 partial — Integration tests | `1b1dc17` | 29 end-to-end tests FE1-FE7 в test/integration/ |
+| FE8 — Membership mutation UI | `7d86bb7` | promote/demote/kick + invite-grant + confirm dialogs |
+| FE9 — Onboarding wizard rewrite | `3eaa643` | mama-friendly onboarding flow |
+| FE10 full — Integration coverage | `bb0b3ae` | end-to-end FE1-FE9 coverage |
+| FE3b — Invitation accept deep link | `9b7a3d3` | rodnya-tree.ru/i/<token> universal-link wiring |
+| Phase B polish (mama-friendly) | (этот чанк) | имена участников вместо userId + undo-тосты «Отменить» + «Не бойся сломать» баннер + тёплые empty states + article history §3.2.4 |
 
 ### Design docs captured
 
@@ -55,13 +60,29 @@
 
 ### Pending для следующей сессии
 
-* **RuStore signing key check** (CRITICAL — unlocks все 18 ships для real users)
-* **FE8 mutation UI** (membership management — fresh session per worker discipline; mutation UI требует sharp head)
-* **FE9 onboarding wizard rewrite** (fresh session)
-* **FE10 full integration coverage** (after FE8/FE9 shipped)
+Phase B фронт ЗАКРЫТ (FE1-FE10 + FE3b + mama-friendly polish chunk). До
+запуска федеративной семьи на проде осталось:
+
+* **RuStore signing key check** (CRITICAL — unlocks все ships для real users)
+* **Рассылка приглашений email/SMS** — нужен внешний провайдер (SMS-gateway /
+  email): приглашения создаются и принимаются по ссылке, но авто-доставки
+  SMS/email пока нет (Артём шлёт ссылку вручную). Кросс-стек заход.
+* **Черновик-режим персон** (draft mode, §6 Week 7) — ОТЛОЖЕНО, кросс-стек
+  (backend visibility «черновик/опубликовано» + frontend). Снижает страх
+  «сразу всем покажется кривое».
+* **Миграция данных Phase B + флип feature-флага** на прод.
+* **Coach-marks тур первого запуска** (§6 Week 7) — НЕ сделан в polish-чанке
+  (самый тяжёлый, отложен; нужен overlay/пакет + first-run гейтинг).
+* **Kick-участника undo** — нужен FE-метод service.addMembership (POST
+  /membership) — его нет во фронт-сервисе (только GET/PATCH/DELETE).
 * **UX audit Major remaining** (3 items — auth + tree-adjacent)
-* **Q4a soft-delete proper design pass** (deferred 2026-05-26 — backend hard-delete reality vs spec)
-* **FE3b invitation accept deep link** (per-platform: rodnya-tree.ru/i/<token> universal link wiring)
+* **Q4a soft-delete proper design pass** (deferred 2026-05-26 — backend
+  hard-delete reality vs spec)
+
+Сделано в mama-friendly polish-чанке: имена участников вместо userId
+(backend enrich + frontend), undo-тосты «Отменить» для правок дерева,
+баннер «Не бойся сломать», тёплые пустые состояния, экран «История
+изменений» статьи §3.2.4.
 
 ## Shipped к production
 
