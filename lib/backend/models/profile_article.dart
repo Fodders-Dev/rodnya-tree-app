@@ -227,6 +227,42 @@ class ArticleBlock {
   }
 }
 
+/// One entry from the article change log (§3.2.4). The backend filters
+/// `treeChangeRecords` to `article.*` for this person and returns them
+/// newest-first. type ∈ {article.block-added, article.block-updated,
+/// article.block-removed, article.reordered}.
+class ArticleHistoryEntry {
+  const ArticleHistoryEntry({
+    required this.id,
+    this.actorId,
+    required this.type,
+    this.createdAt,
+    this.details = const {},
+  });
+
+  final String id;
+  final String? actorId;
+  final String type;
+  final String? createdAt;
+  final Map<String, dynamic> details;
+
+  /// blockType carried in `details` (paragraph / header / photo / gallery /
+  /// audio / quote / divider), or null (e.g. for `article.reordered`).
+  String? get blockType => details['blockType']?.toString();
+
+  factory ArticleHistoryEntry.fromJson(Map<String, dynamic> json) {
+    return ArticleHistoryEntry(
+      id: (json['id'] ?? '').toString(),
+      actorId: _nullableString(json['actorId']),
+      type: (json['type'] ?? '').toString(),
+      createdAt: _nullableString(json['createdAt']),
+      details: json['details'] is Map
+          ? Map<String, dynamic>.from(json['details'] as Map)
+          : const <String, dynamic>{},
+    );
+  }
+}
+
 /// Result of a block update — carries the multi-author conflict flag
 /// the backend returns (last-write-wins applied; prior author notified).
 class ArticleBlockUpdateResult {

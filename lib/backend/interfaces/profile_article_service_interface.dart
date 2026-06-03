@@ -28,6 +28,9 @@ abstract class ProfileArticleServiceInterface {
     String personId,
     List<String> orderedBlockIds,
   );
+
+  /// §3.2.4 — the article change log, newest-first (read access).
+  Future<List<ArticleHistoryEntry>> getArticleHistory(String personId);
 }
 
 class ProfileArticleException implements Exception {

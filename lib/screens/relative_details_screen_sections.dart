@@ -632,6 +632,14 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
         onTap: _showPrivacySettings,
       ));
     }
+    // §3.2.4 article change log (read-access → any viewer). The ARTICLE
+    // history (/article/history), not the broader inline tree-history.
+    tiles.add(_actionTile(
+      keyValue: 'action-history',
+      icon: Icons.history_rounded,
+      label: 'История изменений',
+      onTap: _openArticleHistory,
+    ));
     tiles.add(_actionTile(
       keyValue: 'action-voice',
       icon: Icons.graphic_eq_rounded,
@@ -715,6 +723,20 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
           personId: person.id,
           personName: person.name,
           authorNames: _authorNamesMap(),
+        ),
+      ),
+    );
+  }
+
+  void _openArticleHistory() {
+    final person = _person;
+    if (person == null) return;
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ProfileArticleHistoryScreen(
+          personId: person.id,
+          personName: person.name,
+          actorNames: _authorNamesMap(),
         ),
       ),
     );

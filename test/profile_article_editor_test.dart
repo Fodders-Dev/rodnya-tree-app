@@ -80,6 +80,12 @@ class _FakeArticleService implements ProfileArticleServiceInterface {
   }
 
   @override
+  Future<List<ArticleHistoryEntry>> getArticleHistory(String personId) async {
+    calls.add('history');
+    return const <ArticleHistoryEntry>[];
+  }
+
+  @override
   Future<ProfileArticle> reorderBlocks(
     String personId,
     List<String> orderedBlockIds,

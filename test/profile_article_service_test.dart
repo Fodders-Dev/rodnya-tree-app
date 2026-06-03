@@ -346,6 +346,43 @@ void main() {
     expect(body['order'], ['b2', 'b1']);
   });
 
+  test('getArticleHistory GETs history endpoint + parses entries', () async {
+    late http.Request captured;
+    final client = MockClient((req) async {
+      captured = req;
+      return http.Response(
+        jsonEncode({
+          'history': [
+            {
+              'id': 'h1',
+              'actorId': 'u1',
+              'type': 'article.block-added',
+              'createdAt': 't1',
+              'details': {'blockId': 'b1', 'blockType': 'photo'},
+            },
+            {
+              'id': 'h2',
+              'actorId': 'u2',
+              'type': 'article.reordered',
+              'createdAt': 't2',
+              'details': {'order': ['b1']},
+            },
+          ],
+        }),
+        200,
+        headers: {'content-type': 'application/json'},
+      );
+    });
+    final history = await (await buildService(client)).getArticleHistory('p1');
+    expect(captured.method, 'GET');
+    expect(captured.url.path, '/v1/persons/p1/article/history');
+    expect(history.length, 2);
+    expect(history.first.type, 'article.block-added');
+    expect(history.first.actorId, 'u1');
+    expect(history.first.blockType, 'photo');
+    expect(history.last.type, 'article.reordered');
+  });
+
   test('non-2xx throws ProfileArticleException with backend message',
       () async {
     final client = MockClient((req) async {

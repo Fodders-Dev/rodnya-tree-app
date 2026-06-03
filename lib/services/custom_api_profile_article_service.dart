@@ -105,6 +105,23 @@ class CustomApiProfileArticleService
     return ProfileArticle(personId: personId, blocks: const <ArticleBlock>[]);
   }
 
+  @override
+  Future<List<ArticleHistoryEntry>> getArticleHistory(String personId) async {
+    final res = await _requestJson(
+      method: 'GET',
+      path: '${_base(personId)}/history',
+    );
+    final raw = res['history'];
+    if (raw is List) {
+      return raw
+          .whereType<Map>()
+          .map((e) =>
+              ArticleHistoryEntry.fromJson(Map<String, dynamic>.from(e)))
+          .toList(growable: false);
+    }
+    return const <ArticleHistoryEntry>[];
+  }
+
   Future<Map<String, dynamic>> _requestJson({
     required String method,
     required String path,

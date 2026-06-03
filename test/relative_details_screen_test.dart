@@ -30,6 +30,7 @@ import 'package:rodnya/models/user_profile.dart';
 import 'package:rodnya/providers/tree_provider.dart';
 import 'package:rodnya/screens/profile_all_photos_screen.dart';
 import 'package:rodnya/screens/profile_article_editor_screen.dart';
+import 'package:rodnya/screens/profile_article_history_screen.dart';
 import 'package:rodnya/screens/profile_basic_info_screen.dart';
 import 'package:rodnya/screens/profile_voice_recordings_screen.dart';
 import 'package:rodnya/screens/relative_details_screen.dart';
@@ -1451,5 +1452,34 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(ProfileBasicInfoScreen), findsOneWidget);
+  });
+
+  // §3.2.4: ⋯ «История изменений» opens the article change-log screen
+  // (read-access — visible to any viewer).
+  testWidgets('⋯ → «История изменений» opens the article history screen',
+      (tester) async {
+    tester.view.physicalSize = const Size(1400, 2600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final treeProvider = TreeProvider();
+    await treeProvider.selectTree('tree-1', 'Семья Кузнецовых');
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<TreeProvider>.value(
+        value: treeProvider,
+        child: const MaterialApp(
+          home: RelativeDetailsScreen(personId: 'grandmother'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('profile-appbar-menu')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('action-history')));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ProfileArticleHistoryScreen), findsOneWidget);
   });
 }

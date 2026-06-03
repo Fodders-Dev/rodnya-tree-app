@@ -9,6 +9,7 @@ import 'package:rodnya/backend/interfaces/family_tree_service_interface.dart';
 import 'package:rodnya/backend/interfaces/profile_article_service_interface.dart';
 import 'package:rodnya/backend/models/profile_article.dart';
 import 'package:rodnya/screens/profile_all_photos_screen.dart';
+import 'package:rodnya/screens/profile_article_history_screen.dart';
 import 'package:rodnya/screens/profile_basic_info_screen.dart';
 import 'package:rodnya/screens/profile_visibility_screen.dart';
 import 'package:rodnya/screens/profile_voice_recordings_screen.dart';
@@ -27,12 +28,17 @@ ArticleBlock _b(String id, String type, Map<String, dynamic> content,
     );
 
 class _StubArticleService implements ProfileArticleServiceInterface {
-  _StubArticleService(this._blocks);
+  _StubArticleService(this._blocks, {this.history = const []});
   final List<ArticleBlock> _blocks;
+  final List<ArticleHistoryEntry> history;
 
   @override
   Future<ProfileArticle> getArticle(String personId) async =>
       ProfileArticle(personId: personId, blocks: _blocks);
+
+  @override
+  Future<List<ArticleHistoryEntry>> getArticleHistory(String personId) async =>
+      history;
 
   @override
   dynamic noSuchMethod(Invocation invocation) =>
@@ -173,6 +179,70 @@ void main() {
     await tester.pump();
     expect(find.text('Иван'), findsOneWidget);
     expect(find.byKey(const Key('basic-info-edit')), findsNothing);
+  });
+
+  testWidgets('История изменений: humanized entries + resolved actors',
+      (tester) async {
+    final svc = _StubArticleService(const [], history: [
+      const ArticleHistoryEntry(
+        id: 'h1',
+        actorId: 'u-artem',
+        type: 'article.block-added',
+        createdAt: '2026-05-28T18:42:00.000Z',
+        details: {'blockType': 'photo'},
+      ),
+      const ArticleHistoryEntry(
+        id: 'h2',
+        actorId: 'u-natasha',
+        type: 'article.block-updated',
+        createdAt: '2026-05-27T21:15:00.000Z',
+        details: {'blockType': 'paragraph'},
+      ),
+      const ArticleHistoryEntry(
+        id: 'h3',
+        actorId: 'unknown-id',
+        type: 'article.reordered',
+        createdAt: '2026-05-26T03:50:00.000Z',
+        details: {},
+      ),
+    ]);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ProfileArticleHistoryScreen(
+          personId: 'p1',
+          personName: 'Лидия',
+          actorNames: const {'u-artem': 'Артём', 'u-natasha': 'Наталья'},
+          serviceOverride: svc,
+        ),
+      ),
+    );
+    for (var i = 0; i < 4; i++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+
+    expect(find.text('Артём добавил(а) фото'), findsOneWidget);
+    expect(find.text('Наталья отредактировал(а) абзац'), findsOneWidget);
+    // Unresolved actor → fallback.
+    expect(find.text('Кто-то из семьи изменил(а) порядок блоков'),
+        findsOneWidget);
+    expect(find.byKey(const Key('history-entry-h1')), findsOneWidget);
+  });
+
+  testWidgets('История изменений: empty → empty state', (tester) async {
+    final svc = _StubArticleService(const [], history: const []);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ProfileArticleHistoryScreen(
+          personId: 'p1',
+          personName: 'Лидия',
+          serviceOverride: svc,
+        ),
+      ),
+    );
+    for (var i = 0; i < 3; i++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+    expect(find.text('Пока нет изменений'), findsOneWidget);
   });
 
   testWidgets('Кто видит карточку: screen wraps the visibility section',
