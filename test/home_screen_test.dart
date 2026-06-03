@@ -702,4 +702,30 @@ void main() {
       expect(find.text('Добавить родственника'), findsNothing);
     },
   );
+
+  testWidgets(
+    'HomeScreen: события-rail помечен тихим заголовком «Ближайшие события» (P4c)',
+    (tester) async {
+      tester.view.physicalSize = const Size(900, 1600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
+      final treeProvider = TreeProvider();
+      await treeProvider.selectTree('tree-1', 'Тестовое дерево');
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider<TreeProvider>.value(
+          value: treeProvider,
+          child: const MaterialApp(home: HomeScreen()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Narrow events rail now carries a quiet secondary-section caption.
+      expect(find.text('Ближайшие события'), findsOneWidget);
+    },
+  );
 }

@@ -1125,11 +1125,38 @@ class _HomeScreenState extends State<HomeScreen>
     final showRailControls = MediaQuery.of(context).size.width >= 760;
     final categories = _eventCategories;
     final hasCategories = categories.isNotEmpty;
+    final theme = Theme.of(context);
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
+        // Quiet caption frames the rail as a secondary strip beneath the
+        // family feed (UX-audit 2.1 — first viewport read as overloaded
+        // because events competed with posts for weight). Mirrors the
+        // «События» header the wide sidebar already carries.
+        Padding(
+          padding: const EdgeInsets.fromLTRB(18, 2, 18, 6),
+          child: Row(
+            children: [
+              Icon(Icons.event_outlined, size: 13, color: tokens.inkMuted),
+              const SizedBox(width: 6),
+              Text(
+                'Ближайшие события',
+                style: AppTheme.sans(
+                  color: tokens.inkMuted,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.2,
+                ),
+              ),
+            ],
+          ),
+        ),
         if (hasCategories)
           SizedBox(
             height: 30,
