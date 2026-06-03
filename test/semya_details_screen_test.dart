@@ -224,7 +224,14 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Пока нет других участников.'), findsOneWidget);
+    // Phase B polish D: warm empty state + «Пригласить» CTA (owner → canInvite).
+    expect(find.byKey(const Key('semya-members-empty')), findsOneWidget);
+    expect(find.text('Пока вы здесь одни.'), findsOneWidget);
+    expect(
+      find.byKey(const Key('semya-members-empty-invite')),
+      findsOneWidget,
+    );
+    expect(find.text('Пригласить'), findsOneWidget);
   });
 
   testWidgets('renders error state с retry button when details null',

@@ -153,9 +153,47 @@ class _SemyaDetailsScreenState extends State<SemyaDetailsScreen> {
           _TreeAccessTile(treeId: details.semya.treeId),
           const _SectionHeader('Участники'),
           if (controller.memberships.isEmpty)
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-              child: Text('Пока нет других участников.'),
+            Padding(
+              key: const Key('semya-members-empty'),
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Пока вы здесь одни.',
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Пригласите близких — вести семейное дерево вместе '
+                    'теплее и проще.',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color:
+                              Theme.of(context).colorScheme.onSurfaceVariant,
+                          height: 1.35,
+                        ),
+                  ),
+                  if (details.canInvite) ...[
+                    const SizedBox(height: 10),
+                    FilledButton.tonalIcon(
+                      key: const Key('semya-members-empty-invite'),
+                      onPressed: () => Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => SemyaInvitationsListScreen(
+                            semyaId: details.semya.id,
+                            canInvite: details.canInvite,
+                          ),
+                        ),
+                      ),
+                      icon: const Icon(Icons.person_add_alt_1_outlined,
+                          size: 18),
+                      label: const Text('Пригласить'),
+                    ),
+                  ],
+                ],
+              ),
             )
           else
             ..._buildMemberRows(
