@@ -64,7 +64,10 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 250));
 
-    expect(find.byIcon(Icons.favorite), findsOneWidget);
+    // Unified «тепло» vocabulary (P3b): the warm Material heart now
+    // appears on BOTH the action button (filled, since liked) and the
+    // like-count pill — two hearts, not one heart + a 🤍 emoji.
+    expect(find.byIcon(Icons.favorite), findsNWidgets(2));
     expect(find.text('2'), findsOneWidget);
   });
 
@@ -202,6 +205,43 @@ void main() {
       expect(postService.deleteCalls, 1);
       expect(postService.lastDeletedId, 'post-to-delete');
       expect(find.text('Публикация удалена'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'PostCard action bar shows «Поделиться» (share), not a fake «Сохранить»',
+    (tester) async {
+      getIt.registerSingleton<PostServiceInterface>(
+        _FakePostService(onToggleLike: (_) async => throw Exception('unused')),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: PostCard(
+              post: Post(
+                id: 'post-share',
+                treeId: 'tree-1',
+                authorId: 'author-1',
+                authorName: 'Анна',
+                content: 'Поделись мной',
+                createdAt: DateTime(2026, 4, 13, 10),
+                likedBy: const [],
+                commentCount: 0,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // The third action is wired to _sharePost — label + glyph now
+      // match that. Previously a bookmark «Сохранить» with no save
+      // feature behind it (PostServiceInterface has no save method).
+      expect(find.text('Поделиться'), findsOneWidget);
+      expect(find.byIcon(Icons.share_outlined), findsOneWidget);
+      expect(find.text('Сохранить'), findsNothing);
+      expect(find.byIcon(Icons.bookmark_outline_rounded), findsNothing);
     },
   );
 

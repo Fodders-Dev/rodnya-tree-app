@@ -370,7 +370,6 @@ class _PostCardState extends State<PostCard>
     final theme = Theme.of(context);
     final tokens = _tokensFor(theme);
     final authorPhotoUrl = widget.post.renderableAuthorPhotoUrl;
-    const String? relativeRel = null;
     final timeText = DateFormat('d MMM • HH:mm', 'ru').format(
       widget.post.createdAt,
     );
@@ -414,15 +413,6 @@ class _PostCardState extends State<PostCard>
                       ),
                       children: [
                         TextSpan(text: widget.post.authorName),
-                        if (relativeRel != null && relativeRel.isNotEmpty)
-                          TextSpan(
-                            text: ' · $relativeRel',
-                            style: AppTheme.sans(
-                              color: tokens.inkMuted,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
                       ],
                     ),
                   ),
@@ -690,7 +680,10 @@ class _PostCardState extends State<PostCard>
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Text('🤍', style: TextStyle(fontSize: 11)),
+                        // Unified «тепло» vocabulary: the same warm
+                        // Material heart the action button uses, not a
+                        // stray white-heart emoji.
+                        Icon(Icons.favorite, size: 11, color: tokens.warm),
                         const SizedBox(width: 4),
                         Text(
                           _likeCount.toString(),
@@ -759,11 +752,14 @@ class _PostCardState extends State<PostCard>
                 child: _PostActionButton(
                   onPressed: _sharePost,
                   icon: Icon(
-                    Icons.bookmark_outline_rounded,
+                    Icons.share_outlined,
                     color: tokens.inkSecondary,
                     size: 18,
                   ),
-                  label: 'Сохранить',
+                  // Was labelled «Сохранить» with a bookmark glyph but
+                  // wired to _sharePost, and there's no save feature in
+                  // PostServiceInterface — relabel to match the action.
+                  label: 'Поделиться',
                 ),
               ),
             ],
