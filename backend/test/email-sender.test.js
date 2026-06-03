@@ -8,6 +8,7 @@ const {
   __test_parseFromAddress,
   __test_buildHttpsApiTransport,
   __test_stripHeaderUnsafeChars,
+  __test_buildSemyaInvitationBody,
 } = require("../src/email-sender");
 
 // ── parseFromAddress ─────────────────────────────────────────────────
@@ -40,6 +41,65 @@ test("stripHeaderUnsafeChars drops CR/LF/tab so a crafted display name can't gra
   );
   assert.equal(__test_stripHeaderUnsafeChars("clean\tname"), "clean name");
   assert.equal(__test_stripHeaderUnsafeChars(null), "");
+});
+
+// ── buildSemyaInvitationBody (FE7) ───────────────────────────────────
+
+test("buildSemyaInvitationBody renders inviter + semya + accept link", () => {
+  const {text, html} = __test_buildSemyaInvitationBody({
+    inviterName: "Артём",
+    semyaName: "Кузнецовы",
+    acceptUrl: "https://rodnya-tree.ru/invite/tok-123",
+    role: "editor",
+  });
+  // Headline mentions inviter, semya, и платформу.
+  assert.match(text, /Артём приглашает вас в семью «Кузнецовы» на Родне/);
+  assert.match(html, /Артём приглашает вас в семью «Кузнецовы» на Родне/);
+  // Accept link present in both text + html (button + fallback).
+  assert.match(text, /https:\/\/rodnya-tree\.ru\/invite\/tok-123/);
+  assert.match(html, /href="https:\/\/rodnya-tree\.ru\/invite\/tok-123"/);
+  assert.match(html, /Принять приглашение/);
+  // Role hint для editor.
+  assert.match(text, /добавлять и редактировать/);
+});
+
+test("buildSemyaInvitationBody degrades gracefully when inviter/semya empty", () => {
+  const {text} = __test_buildSemyaInvitationBody({
+    inviterName: "",
+    semyaName: "",
+    acceptUrl: "https://rodnya-tree.ru/invite/tok-x",
+    role: "viewer",
+  });
+  // Безличный headline + «вашу семью» fallback (без «« »» и без «undefined»).
+  assert.match(text, /Вас приглашают в семью вашу семью на Родне/);
+  assert.doesNotMatch(text, /undefined/);
+  // Role hint для viewer.
+  assert.match(text, /смотреть семейное древо/);
+});
+
+test("buildSemyaInvitationBody escapes html-unsafe semya/inviter names", () => {
+  const {html} = __test_buildSemyaInvitationBody({
+    inviterName: "<b>x</b>",
+    semyaName: "A&B<script>",
+    acceptUrl: "https://rodnya-tree.ru/invite/tok-y",
+    role: "viewer",
+  });
+  // Raw angle brackets / ampersand must be escaped — no injection.
+  assert.doesNotMatch(html, /<b>x<\/b>/);
+  assert.doesNotMatch(html, /<script>/);
+  assert.match(html, /&lt;b&gt;x&lt;\/b&gt;/);
+  assert.match(html, /A&amp;B&lt;script&gt;/);
+});
+
+test("buildSemyaInvitationBody omits role hint for unknown role", () => {
+  const {text} = __test_buildSemyaInvitationBody({
+    inviterName: "Мама",
+    semyaName: "Дом",
+    acceptUrl: "https://rodnya-tree.ru/invite/tok-z",
+    role: "",
+  });
+  assert.doesNotMatch(text, /добавлять и редактировать/);
+  assert.doesNotMatch(text, /смотреть семейное древо/);
 });
 
 // ── HTTPS API transport ──────────────────────────────────────────────

@@ -94,6 +94,81 @@ function buildPasswordResetBody({displayName, resetUrl, ttlHours}) {
   return {text, html};
 }
 
+// Тёплое (mama-friendly) приглашение в семью. Per SHARED-TREE-PROPOSAL
+// §4/§6 — тон «тебя зовут собрать историю семьи вместе», без жаргона.
+// inviterName / semyaName приходят user-controlled → проходят через
+// stripHeaderUnsafeChars (для текста) и escapeHtml (для html). Оба
+// degrade-friendly: пустой inviterName → безличное «Вас приглашают»,
+// пустой semyaName → «вашу семью».
+function buildSemyaInvitationBody({inviterName, semyaName, acceptUrl, role}) {
+  const safeInviter = stripHeaderUnsafeChars(inviterName || "");
+  const safeSemya = stripHeaderUnsafeChars(semyaName || "");
+  const semyaLabel = safeSemya ? `«${safeSemya}»` : "вашу семью";
+  const headline = safeInviter
+    ? `${safeInviter} приглашает вас в семью ${semyaLabel} на Родне`
+    : `Вас приглашают в семью ${semyaLabel} на Родне`;
+
+  // Мягкая подсказка про роль — что человек сможет делать. Неизвестная
+  // роль → строка опускается (без «вы — undefined»).
+  const roleHint =
+    role === "editor"
+      ? "Вы сможете добавлять и редактировать записи семейного древа."
+      : role === "viewer"
+      ? "Вы сможете смотреть семейное древо вашей семьи."
+      : "";
+
+  const textLines = [
+    headline,
+    "",
+    "Родня — это семейное древо, где близкие вместе собирают историю семьи.",
+  ];
+  if (roleHint) textLines.push(roleHint);
+  textLines.push(
+    "",
+    "Чтобы присоединиться, перейдите по ссылке ниже:",
+    "",
+    acceptUrl,
+    "",
+    "Если вы не ждали этого приглашения — просто не переходите по ссылке,",
+    "ничего не произойдёт.",
+    "",
+    "С теплом,",
+    "Команда Родни",
+    "https://rodnya-tree.ru",
+  );
+  const text = textLines.join("\n");
+
+  const safeHeadline = escapeHtml(headline);
+  const roleHintHtml = roleHint ? `  <p>${escapeHtml(roleHint)}</p>\n` : "";
+  const html = `<!DOCTYPE html>
+<html lang="ru">
+<head><meta charset="utf-8"><title>${safeHeadline}</title></head>
+<body style="font-family:Arial,Helvetica,sans-serif;color:#222;line-height:1.5;">
+  <p style="font-size:17px;font-weight:600;">${safeHeadline}</p>
+  <p>Родня — это семейное древо, где близкие вместе собирают историю семьи.</p>
+${roleHintHtml}  <p style="margin:24px 0;">
+    <a href="${escapeHtml(acceptUrl)}"
+       style="display:inline-block;padding:12px 20px;background:#8b5cf6;
+              color:#ffffff;text-decoration:none;border-radius:8px;
+              font-weight:600;">Принять приглашение</a>
+  </p>
+  <p>Если кнопка не работает, скопируйте ссылку в браузер:<br>
+     <a href="${escapeHtml(acceptUrl)}">${escapeHtml(acceptUrl)}</a></p>
+  <p style="color:#666;font-size:13px;">
+    Если вы не ждали этого приглашения — просто не переходите по ссылке,
+    ничего не произойдёт.
+  </p>
+  <hr style="border:none;border-top:1px solid #eee;margin:24px 0;">
+  <p style="color:#888;font-size:12px;">
+    С теплом,<br>Команда Родни<br>
+    <a href="https://rodnya-tree.ru">rodnya-tree.ru</a>
+  </p>
+</body>
+</html>`;
+
+  return {text, html};
+}
+
 // Lazy nodemailer require — keeps the module loadable on dev boxes /
 // CI runners where nodemailer wouldn't be installed yet, and avoids
 // pulling its (modest) dependency tree into hot paths that don't
@@ -355,8 +430,71 @@ function createEmailSender({config = {}, logger = console} = {}) {
     }
   }
 
+  // Семья invitation dispatch. Same envelope contract as
+  // sendPasswordResetEmail: throws on invalid recipient / URL (caller
+  // treats those as programmer errors), returns {ok:false} on a
+  // transport-level send failure so a flaky SMTP path never bubbles a
+  // 500 into the invitation-create route.
+  async function sendSemyaInvitationEmail({
+    to,
+    acceptUrl,
+    semyaName = "",
+    inviterName = "",
+    role = "",
+  }) {
+    const safeTo = stripHeaderUnsafeChars(to);
+    const safeUrl = String(acceptUrl || "").trim();
+    if (!safeTo || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(safeTo)) {
+      throw new Error("INVALID_EMAIL_RECIPIENT");
+    }
+    if (!/^https?:\/\//i.test(safeUrl)) {
+      // Accept URL must be absolute http(s) — otherwise a misconfigured
+      // publicAppUrl could email a relative path that resolves against
+      // the recipient's mail client base.
+      throw new Error("INVALID_INVITE_URL");
+    }
+
+    const safeSemyaName = stripHeaderUnsafeChars(semyaName || "");
+    const subject = safeSemyaName
+      ? `Приглашение в семью «${safeSemyaName}» — Родня`
+      : "Приглашение в семью — Родня";
+
+    const {text, html} = buildSemyaInvitationBody({
+      inviterName,
+      semyaName,
+      acceptUrl: safeUrl,
+      role,
+    });
+
+    try {
+      const info = await transport.sendMail({
+        from: formatFrom(),
+        to: safeTo,
+        subject,
+        text,
+        html,
+      });
+      return {
+        ok: true,
+        messageId: info?.messageId || null,
+        usingLogger: Boolean(transport.isLogger),
+      };
+    } catch (error) {
+      logger.error(
+        "[email-sender] failed to send semya invitation email",
+        JSON.stringify({
+          to: safeTo,
+          host,
+          message: error?.message || String(error),
+        }),
+      );
+      return {ok: false, error: "SEND_FAILED"};
+    }
+  }
+
   return {
     sendPasswordResetEmail,
+    sendSemyaInvitationEmail,
     isUsingLogger: () => Boolean(transport.isLogger),
     /// Diagnostic — which delivery path is in use. Useful in
     /// boot-time logs to make sure ops actually wired what they
@@ -374,6 +512,7 @@ module.exports = {
   // Exported for tests so they can call the body builder directly
   // and assert on the rendered text without spinning up a transport.
   __test_buildPasswordResetBody: buildPasswordResetBody,
+  __test_buildSemyaInvitationBody: buildSemyaInvitationBody,
   __test_stripHeaderUnsafeChars: stripHeaderUnsafeChars,
   __test_parseFromAddress: parseFromAddress,
   __test_buildHttpsApiTransport: buildHttpsApiTransport,

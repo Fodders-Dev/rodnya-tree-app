@@ -11,19 +11,32 @@
 // Expiry: lazy on read (mirror Phase 6.5 kinship-checks).
 //
 // Notification dispatch:
-//   * On create — recipient notified только если recipientUserId matches
-//     registered user (push device available). Email-only invitations
-//     stored без auto-dispatch (Phase B+1 wires email backend).
+//   * On create — recipient notified когда recipientUserId matches
+//     registered user (push device available). Email-addressed
+//     invitations теперь auto-send тёплое accept-link письмо через
+//     emailSender (FE7 2026-06-03 — раньше «Phase B+1 wires email
+//     backend», теперь wired). Best-effort: сбой почты не ломает
+//     создание приглашения.
 //   * On accept — inviter notified.
 //
-// Ship 4 не включает:
-//   * Email/SMS auto-dispatch (Phase B+1)
-//   * Invitation expiry background sweep (lazy на read covers Day 1)
-//   * GET /list invitations endpoint (можно add Phase B+1 если нужно)
+// Ship 4 не включал (статус на 2026-06-03):
+//   * Email auto-dispatch — DONE (FE7, см. POST create ниже).
+//   * SMS auto-dispatch — всё ещё нужен SMS-провайдер.
+//   * Invitation expiry background sweep (lazy на read covers Day 1).
+//   * GET /list invitations endpoint — DONE (FE3).
+
+const {composeDisplayNameFromProfile} = require("../store");
 
 function registerSemyaInvitationRoutes(
   app,
-  {store, requireAuth, requireSemyaAccess, createAndDispatchNotification},
+  {
+    store,
+    config,
+    requireAuth,
+    requireSemyaAccess,
+    createAndDispatchNotification,
+    emailSender,
+  },
 ) {
   function mapInvitation(invitation) {
     if (!invitation) return null;
@@ -161,6 +174,66 @@ function registerSemyaInvitationRoutes(
             role,
           },
         });
+      }
+
+      // FE7 (2026-06-03): email-addressed приглашение → тёплое письмо
+      // со ссылкой-принять. Только на первое создание (не idempotent
+      // re-POST) и только когда есть recipientEmail. Best-effort,
+      // fire-and-forget — email-фейл НЕ должен 500-ить создание
+      // приглашения (mirror password-reset).
+      if (
+        outcome.created &&
+        recipientEmail &&
+        emailSender &&
+        typeof emailSender.sendSemyaInvitationEmail === "function"
+      ) {
+        try {
+          const baseAppUrl = String(
+            config?.publicAppUrl || "https://rodnya-tree.ru",
+          )
+            .trim()
+            .replace(/\/+$/u, "");
+          const acceptUrl = `${baseAppUrl}/invite/${encodeURIComponent(
+            outcome.invitation.token,
+          )}`;
+
+          // Роут сам семью не грузит — резолвим имя по semyaId.
+          let semyaName = "";
+          try {
+            const semya = await store.findSemyaById(req.params.id);
+            semyaName = semya?.name || "";
+          } catch (_) {
+            semyaName = "";
+          }
+
+          // inviterName — displayName (как /v1/auth/session), с
+          // composed-fallback (firstName+lastName) если displayName пуст.
+          let inviterName = "";
+          try {
+            const inviter = await store.findUserById(req.auth.user.id);
+            inviterName =
+              inviter?.profile?.displayName ||
+              composeDisplayNameFromProfile(inviter?.profile) ||
+              "";
+          } catch (_) {
+            inviterName = "";
+          }
+
+          await emailSender.sendSemyaInvitationEmail({
+            to: recipientEmail,
+            acceptUrl,
+            semyaName,
+            inviterName,
+            role,
+          });
+        } catch (emailErr) {
+          // Best-effort — приглашение уже создано; не бабблим.
+          // eslint-disable-next-line no-console
+          console.error(
+            "[semya] invitation email dispatch failed",
+            emailErr,
+          );
+        }
       }
 
       res

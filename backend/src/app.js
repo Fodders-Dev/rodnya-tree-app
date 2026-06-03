@@ -2598,11 +2598,15 @@ function createApp({
   });
 
   // Phase B Week 2 Ship 4: семья invitation flow (3 routes).
+  // FE7 (email dispatch): config + emailSender threaded so a fresh
+  // email-addressed invitation auto-sends a warm accept-link email.
   registerSemyaInvitationRoutes(app, {
     store,
+    config,
     requireAuth,
     requireSemyaAccess,
     createAndDispatchNotification,
+    emailSender: resolvedEmailSender,
   });
 
   // Phase B Week 3 Ship 6: cross-семья pull-selectively endpoint.

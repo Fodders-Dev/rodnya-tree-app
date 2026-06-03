@@ -25,7 +25,7 @@ const {FileStore} = require("../src/store");
 const {RealtimeHub} = require("../src/realtime-hub");
 const {PushGateway} = require("../src/push-gateway");
 
-async function startTestServer() {
+async function startTestServer({emailSender} = {}) {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "rodnya-inv-rt-"));
   const dataPath = path.join(tempDir, "dev-db.json");
   const store = new FileStore(dataPath);
@@ -41,6 +41,10 @@ async function startTestServer() {
     },
     realtimeHub,
     pushGateway,
+    // FE7: when a test wants to assert email dispatch it injects a
+    // recording fake; otherwise createApp falls back to the real
+    // (logger-transport) sender, which is a harmless no-op in tests.
+    ...(emailSender ? {emailSender} : {}),
   });
   const server = await new Promise((resolve) => {
     const instance = app.listen(0, "127.0.0.1", () => resolve(instance));
@@ -479,8 +483,29 @@ test("POST invitation: missing recipient/role/owner-role rejected (400)", async 
   }
 });
 
-test("POST invitation: with recipientEmail stores email без auto-dispatch (201)", async () => {
-  const ctx = await startTestServer();
+// FE7 (2026-06-03): email-addressed invitation теперь AUTO-DISPATCHES
+// тёплое accept-link письмо (раньше «stored без auto-dispatch»). Inject
+// recording fake emailSender и проверяем вызов + acceptUrl + резолв
+// semyaName/inviterName.
+function recordingEmailSender() {
+  const sent = [];
+  return {
+    sent,
+    async sendSemyaInvitationEmail(args) {
+      sent.push(args);
+      return {ok: true, messageId: "test-msg-id", usingLogger: false};
+    },
+    // createApp's password-reset path also touches the sender — keep a
+    // no-op so injecting this fake never breaks an unrelated route.
+    async sendPasswordResetEmail() {
+      return {ok: true, messageId: "test-pwd-id", usingLogger: false};
+    },
+  };
+}
+
+test("POST invitation: with recipientEmail dispatches warm accept-link email (201)", async () => {
+  const fakeEmail = recordingEmailSender();
+  const ctx = await startTestServer({emailSender: fakeEmail});
   try {
     const {owner, semya} = await seedSemyaWithOwner(
       ctx.store,
@@ -505,8 +530,102 @@ test("POST invitation: with recipientEmail stores email без auto-dispatch (20
     const body = await res.json();
     assert.equal(body.invitation.recipientEmail, "newuser@example.com");
     assert.equal(body.invitation.recipientUserId, null);
-    // Token returned для manual share
-    assert.ok(body.invitation.token);
+    assert.ok(body.invitation.token, "token returned для manual share");
+
+    // Exactly one email, к recipientEmail, с deep-link acceptUrl carrying
+    // the invitation token, + resolved semyaName + inviterName.
+    assert.equal(fakeEmail.sent.length, 1);
+    const sent = fakeEmail.sent[0];
+    assert.equal(sent.to, "newuser@example.com");
+    assert.match(sent.acceptUrl, /\/invite\//);
+    assert.ok(
+      sent.acceptUrl.includes(encodeURIComponent(body.invitation.token)),
+      `acceptUrl должен нести token, got ${sent.acceptUrl}`,
+    );
+    assert.equal(sent.semyaName, "Тестовая семья");
+    assert.equal(sent.role, "viewer");
+    // Owner registered с displayName = email local-part ("io7").
+    assert.equal(sent.inviterName, "io7");
+  } finally {
+    await shutdown(ctx);
+  }
+});
+
+test("POST invitation: recipientUserId-only does NOT dispatch email", async () => {
+  const fakeEmail = recordingEmailSender();
+  const ctx = await startTestServer({emailSender: fakeEmail});
+  try {
+    const {owner, semya} = await seedSemyaWithOwner(
+      ctx.store,
+      ctx.baseUrl,
+      "io7b@example.com",
+    );
+    const recipient = await makeUser(ctx.store, ctx.baseUrl, "ir7b@example.com");
+    const res = await fetch(
+      `${ctx.baseUrl}/v1/semya/${semya.id}/invitation`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${owner.token}`,
+        },
+        body: JSON.stringify({
+          recipientUserId: recipient.userId,
+          role: "editor",
+        }),
+      },
+    );
+    assert.equal(res.status, 201);
+    // userId-targeted → push-notified, NOT emailed.
+    assert.equal(fakeEmail.sent.length, 0);
+  } finally {
+    await shutdown(ctx);
+  }
+});
+
+test("POST invitation: idempotent re-POST does NOT re-dispatch email", async () => {
+  const fakeEmail = recordingEmailSender();
+  const ctx = await startTestServer({emailSender: fakeEmail});
+  try {
+    const {owner, semya} = await seedSemyaWithOwner(
+      ctx.store,
+      ctx.baseUrl,
+      "io7c@example.com",
+    );
+    const payload = JSON.stringify({
+      recipientEmail: "idem-rcpt@example.com",
+      role: "viewer",
+    });
+    const first = await fetch(
+      `${ctx.baseUrl}/v1/semya/${semya.id}/invitation`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${owner.token}`,
+        },
+        body: payload,
+      },
+    );
+    assert.equal(first.status, 201);
+
+    const second = await fetch(
+      `${ctx.baseUrl}/v1/semya/${semya.id}/invitation`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${owner.token}`,
+        },
+        body: payload,
+      },
+    );
+    assert.equal(second.status, 200);
+    const secondBody = await second.json();
+    assert.equal(secondBody.created, false);
+
+    // Email shipped only on the first (created) call, not the re-POST.
+    assert.equal(fakeEmail.sent.length, 1);
   } finally {
     await shutdown(ctx);
   }
