@@ -253,10 +253,12 @@ extension _HomeScreenSections on _HomeScreenState {
         itemCount: visiblePosts.length,
         itemBuilder: (context, index) {
           final post = visiblePosts[index];
-          return PostCard(
+          return _PostEntrance(
             key: ValueKey(post.id),
-            post: post,
-            onDeleted: () => _loadPosts(branchId: _selectedFeedBranchId),
+            child: PostCard(
+              post: post,
+              onDeleted: () => _loadPosts(branchId: _selectedFeedBranchId),
+            ),
           );
         },
       ),
@@ -949,4 +951,54 @@ class _FeedBranchChipEntry {
 
   final String? id;
   final String label;
+}
+
+/// One-shot fade + slight slide-up when a feed card first mounts, so the
+/// narrow (virtualized) feed settles in rather than snapping on instantly
+/// (P5). Light + short, in the same easeOutCubic spirit as the reaction
+/// chip micro-animations. The wide layout gets its motion from the
+/// AnimatedSwitcher in [_buildFeedContent] instead, so this is narrow-only.
+class _PostEntrance extends StatefulWidget {
+  const _PostEntrance({super.key, required this.child});
+
+  final Widget child;
+
+  @override
+  State<_PostEntrance> createState() => _PostEntranceState();
+}
+
+class _PostEntranceState extends State<_PostEntrance>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 320),
+  );
+  late final Animation<double> _fade = CurvedAnimation(
+    parent: _controller,
+    curve: Curves.easeOutCubic,
+  );
+  late final Animation<Offset> _slide = Tween<Offset>(
+    begin: const Offset(0, 0.04),
+    end: Offset.zero,
+  ).animate(_fade);
+
+  @override
+  void initState() {
+    super.initState();
+    _controller.forward();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _fade,
+      child: SlideTransition(position: _slide, child: widget.child),
+    );
+  }
 }
