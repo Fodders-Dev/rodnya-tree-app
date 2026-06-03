@@ -31,7 +31,6 @@ import 'package:rodnya/providers/tree_provider.dart';
 import 'package:rodnya/screens/profile_all_photos_screen.dart';
 import 'package:rodnya/screens/profile_article_editor_screen.dart';
 import 'package:rodnya/screens/profile_article_history_screen.dart';
-import 'package:rodnya/screens/profile_basic_info_screen.dart';
 import 'package:rodnya/screens/profile_voice_recordings_screen.dart';
 import 'package:rodnya/screens/relative_details_screen.dart';
 import 'package:rodnya/services/local_storage_service.dart';
@@ -1364,7 +1363,9 @@ void main() {
     await tester.tap(find.byKey(const Key('profile-appbar-menu')));
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('action-basic-info')), findsOneWidget);
+    // «Основная информация» is now an on-card section, not a ⋯ item.
+    expect(find.byKey(const Key('action-basic-info')), findsNothing);
+    expect(find.byKey(const Key('action-history')), findsOneWidget);
     expect(find.byKey(const Key('action-voice')), findsOneWidget);
     expect(find.byKey(const Key('action-photos')), findsOneWidget);
     expect(find.byKey(const Key('action-open-tree')), findsOneWidget);
@@ -1425,9 +1426,11 @@ void main() {
     expect(find.byType(ProfileAllPhotosScreen), findsOneWidget);
   });
 
-  // §3.2.1 (C1): «Основная информация» opens the read-view facts screen
-  // (was a direct jump into the structured editor).
-  testWidgets('⋯ → «Основная информация» opens the facts screen',
+  // §3.2.1 (revised): «Основная информация» is a prominent on-card
+  // section under the header — not a ⋯ screen. Editable person → ✏️;
+  // name not duplicated (header owns it); empty fields hidden; section
+  // sits below the header.
+  testWidgets('«Основная информация» section: on card, edit ✏️, no name dup',
       (tester) async {
     tester.view.physicalSize = const Size(1400, 2600);
     tester.view.devicePixelRatio = 1.0;
@@ -1446,12 +1449,48 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const Key('profile-appbar-menu')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('action-basic-info')));
+    expect(find.byKey(const Key('basic-info-title')), findsOneWidget);
+    expect(find.text('Пол'), findsOneWidget);
+    expect(find.text('Женский'), findsOneWidget);
+    // Editable (anonymous) → edit ✏️ present.
+    expect(find.byKey(const Key('basic-info-edit')), findsOneWidget);
+    // No name duplication; the header owns the name.
+    expect(find.text('Имя'), findsNothing);
+    // Empty fields hidden (grandmother has no birth date / education).
+    expect(find.text('Дата рождения'), findsNothing);
+    expect(find.text('Образование'), findsNothing);
+    // Order: section sits below the header.
+    final headerY =
+        tester.getTopLeft(find.byKey(const Key('profile-name'))).dy;
+    final infoY =
+        tester.getTopLeft(find.byKey(const Key('basic-info-title'))).dy;
+    expect(infoY > headerY, isTrue);
+  });
+
+  testWidgets('«Основная информация»: account person → read-only (no ✏️)',
+      (tester) async {
+    tester.view.physicalSize = const Size(1400, 2600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final treeProvider = TreeProvider();
+    await treeProvider.selectTree('tree-1', 'Семья Кузнецовых');
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<TreeProvider>.value(
+        value: treeProvider,
+        child: const MaterialApp(
+          home: RelativeDetailsScreen(personId: 'father'),
+        ),
+      ),
+    );
     await tester.pumpAndSettle();
 
-    expect(find.byType(ProfileBasicInfoScreen), findsOneWidget);
+    expect(find.byKey(const Key('basic-info-title')), findsOneWidget);
+    // father has an account + is alive → not directly editable → no ✏️.
+    expect(find.byKey(const Key('basic-info-edit')), findsNothing);
+    // …but his filled facts render (he has a birth date).
+    expect(find.text('Дата рождения'), findsOneWidget);
   });
 
   // §3.2.4: ⋯ «История изменений» opens the article change-log screen

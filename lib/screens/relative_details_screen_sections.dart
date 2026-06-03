@@ -215,8 +215,12 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
                 child: headerStatus,
               ),
-              // «Биография» — read-first article, right under the header
-              // (§3.1 order: шапка → биография → остальное). Empty-CTA
+              // «Основная информация» — key structured facts, right under
+              // the header (§3.2.1, revised from C1: these are the card's
+              // skeleton, kept on view). Self-hides if nothing is filled.
+              _buildBasicInfoSection(),
+              // «Биография» — read-first article (§3.1 order: шапка →
+              // Основная информация → биография → … → Семья). Empty-CTA
               // suppressed: the header's primary CTA already offers it.
               if (_person != null)
                 ProfileBiographySection(
@@ -596,14 +600,8 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
     final person = _person;
     if (person == null) return;
     final tiles = <Widget>[];
-    // Read-view of the structured facts (§3.2.1) — open to any viewer;
-    // the [Редактировать] button inside is gated by edit-rights.
-    tiles.add(_actionTile(
-      keyValue: 'action-basic-info',
-      icon: Icons.assignment_outlined,
-      label: 'Основная информация',
-      onTap: _openBasicInfo,
-    ));
+    // «Основная информация» is now a prominent on-card section (revised
+    // from C1) — no longer a ⋯ entry.
     if (_canSuggestProfileEdits()) {
       tiles.add(_actionTile(
         keyValue: 'action-suggest-edits',
@@ -804,64 +802,142 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
     }
   }
 
-  List<BasicInfoField> _buildBasicInfoFields() {
+  // §3.2.1 read-first facts section, on the card under the header. Shows
+  // only filled fields, grouped (паспорт/места → отношение/пол → био-
+  // факты). NO name (the header already shows it) and the birth DATE (not
+  // the header's age). Edit ✏️ (gated) → existing structured editor.
+  // Self-hides when nothing is filled.
+  Widget _buildBasicInfoSection() {
     final person = _person;
-    if (person == null) return const [];
+    if (person == null) return const SizedBox.shrink();
     final d = _resolveDossier();
-    final fullName = d.displayName.isNotEmpty ? d.displayName : person.name;
-    final fields = <BasicInfoField>[
-      BasicInfoField('Имя', fullName),
-    ];
-    if (d.maidenName.trim().isNotEmpty) {
-      fields.add(BasicInfoField('Девичья фамилия', d.maidenName.trim()));
+
+    final passport = <_BasicInfoRow>[];
+    void addPassport(String label, String? value, {bool memorial = false}) {
+      final v = value?.trim() ?? '';
+      if (v.isNotEmpty) {
+        passport.add(_BasicInfoRow(label, v, memorial: memorial));
+      }
     }
+
+    addPassport('Девичья фамилия', d.maidenName);
     if (person.birthDate != null) {
-      fields.add(
-          BasicInfoField('Дата рождения', _formatRussianDate(person.birthDate!)));
+      addPassport('Дата рождения', _formatRussianDate(person.birthDate!));
     }
+    addPassport('Место рождения', d.birthPlace);
+    addPassport('Родом из', d.hometown);
     if (person.deathDate != null) {
-      fields.add(BasicInfoField(
-        'Дата смерти',
-        _formatRussianDate(person.deathDate!),
-        memorial: true,
-      ));
+      addPassport('Дата смерти', _formatRussianDate(person.deathDate!),
+          memorial: true);
     }
+    addPassport('Место смерти', person.deathPlace);
+
+    final who = <_BasicInfoRow>[];
     final relation = _getDirectRelationLabel();
     if (relation != null && relation.trim().isNotEmpty) {
-      fields.add(BasicInfoField('Отношение', relation.trim()));
+      who.add(_BasicInfoRow('Отношение', relation.trim()));
     }
     final gender = _basicGenderLabel(person.gender);
-    if (gender != null) fields.add(BasicInfoField('Пол', gender));
-    if ((d.birthPlace ?? '').trim().isNotEmpty) {
-      fields.add(BasicInfoField('Место рождения', d.birthPlace!.trim()));
+    if (gender != null) who.add(_BasicInfoRow('Пол', gender));
+
+    final about = <_BasicInfoRow>[];
+    void addAbout(String label, String value) {
+      if (value.trim().isNotEmpty) {
+        about.add(_BasicInfoRow(label, value.trim()));
+      }
     }
-    if (d.hometown.trim().isNotEmpty) {
-      fields.add(BasicInfoField('Родом из', d.hometown.trim()));
-    }
-    if (d.education.trim().isNotEmpty) {
-      fields.add(BasicInfoField('Образование', d.education.trim()));
-    }
-    if (d.work.trim().isNotEmpty) {
-      fields.add(BasicInfoField('Работа', d.work.trim()));
-    }
-    if (d.languages.trim().isNotEmpty) {
-      fields.add(BasicInfoField('Языки', d.languages.trim()));
-    }
-    if (d.interests.trim().isNotEmpty) {
-      fields.add(BasicInfoField('Интересы', d.interests.trim()));
-    }
-    return fields;
+
+    addAbout('Образование', d.education);
+    addAbout('Работа', d.work);
+    addAbout('Языки', d.languages);
+    addAbout('Интересы', d.interests);
+
+    final groups =
+        [passport, who, about].where((g) => g.isNotEmpty).toList();
+    if (groups.isEmpty) return const SizedBox.shrink();
+
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 18, 16, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                'Основная информация',
+                key: const Key('basic-info-title'),
+                style: AppTheme.serif(
+                  color: theme.colorScheme.onSurface,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: -0.2,
+                ),
+              ),
+              const Spacer(),
+              if (_canDirectEditProfile())
+                IconButton(
+                  key: const Key('basic-info-edit'),
+                  tooltip: 'Редактировать',
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.edit_outlined, size: 20),
+                  onPressed: _editRelative,
+                ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          for (var gi = 0; gi < groups.length; gi++) ...[
+            if (gi > 0) const SizedBox(height: 10),
+            for (final row in groups[gi]) _basicInfoRow(theme, row),
+          ],
+        ],
+      ),
+    );
   }
 
-  void _openBasicInfo() {
-    if (_person == null) return;
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => ProfileBasicInfoScreen(
-          fields: _buildBasicInfoFields(),
-          canEdit: _canDirectEditProfile(),
-          onEdit: _editRelative,
-        ),
+  Widget _basicInfoRow(ThemeData theme, _BasicInfoRow row) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 132,
+            child: Text(
+              row.label,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              row.value,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                fontFamily: 'Lora',
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          if (row.memorial) ...[
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.primary.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text(
+                '† Память',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.primary,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -2181,6 +2257,15 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
 
     return rows;
   }
+}
+
+/// One labelled fact in the «Основная информация» section. [memorial]
+/// appends a «† Память» badge (death date).
+class _BasicInfoRow {
+  const _BasicInfoRow(this.label, this.value, {this.memorial = false});
+  final String label;
+  final String value;
+  final bool memorial;
 }
 
 /// Bottom-of-card destructive button for «Удалить из дерева». Matches

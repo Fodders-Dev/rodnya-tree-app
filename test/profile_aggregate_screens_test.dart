@@ -10,7 +10,6 @@ import 'package:rodnya/backend/interfaces/profile_article_service_interface.dart
 import 'package:rodnya/backend/models/profile_article.dart';
 import 'package:rodnya/screens/profile_all_photos_screen.dart';
 import 'package:rodnya/screens/profile_article_history_screen.dart';
-import 'package:rodnya/screens/profile_basic_info_screen.dart';
 import 'package:rodnya/screens/profile_visibility_screen.dart';
 import 'package:rodnya/screens/profile_voice_recordings_screen.dart';
 import 'package:rodnya/widgets/article_audio_block.dart';
@@ -135,50 +134,6 @@ void main() {
     expect(find.byKey(const Key('all-photos-thumb-0')), findsOneWidget);
     expect(find.byKey(const Key('all-photos-thumb-1')), findsOneWidget);
     expect(find.byKey(const Key('all-photos-thumb-2')), findsOneWidget);
-  });
-
-  testWidgets('Основная информация: renders fields + ✓ Память + edit',
-      (tester) async {
-    var edited = false;
-    await tester.pumpWidget(
-      MaterialApp(
-        home: ProfileBasicInfoScreen(
-          fields: const [
-            BasicInfoField('Имя', 'Лидия Александровна'),
-            BasicInfoField('Дата смерти', '14 декабря 2022', memorial: true),
-            BasicInfoField('Пол', 'Женский'),
-          ],
-          canEdit: true,
-          onEdit: () => edited = true,
-        ),
-      ),
-    );
-    await tester.pump();
-
-    expect(find.text('Лидия Александровна'), findsOneWidget);
-    expect(find.text('14 декабря 2022'), findsOneWidget);
-    expect(find.text('✓ Память'), findsOneWidget);
-    expect(find.text('Женский'), findsOneWidget);
-
-    expect(find.byKey(const Key('basic-info-edit')), findsOneWidget);
-    await tester.tap(find.byKey(const Key('basic-info-edit')));
-    await tester.pump();
-    expect(edited, true);
-  });
-
-  testWidgets('Основная информация: viewer (no edit) → no edit button',
-      (tester) async {
-    await tester.pumpWidget(
-      const MaterialApp(
-        home: ProfileBasicInfoScreen(
-          fields: [BasicInfoField('Имя', 'Иван')],
-          canEdit: false,
-        ),
-      ),
-    );
-    await tester.pump();
-    expect(find.text('Иван'), findsOneWidget);
-    expect(find.byKey(const Key('basic-info-edit')), findsNothing);
   });
 
   testWidgets('История изменений: humanized entries + resolved actors',
