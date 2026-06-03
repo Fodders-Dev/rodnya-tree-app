@@ -477,26 +477,45 @@ extension _HomeScreenSections on _HomeScreenState {
     );
   }
 
+  /// Box-shaped feed renderer used by the wide (desktop) layout. The
+  /// narrow layout virtualizes via [_buildNarrowFeedSliver] instead.
+  /// Loading → content → empty cross-fade through an AnimatedSwitcher so
+  /// the first posts settle in rather than hard-cutting over the shimmer.
   Widget _buildFeedContent({bool wideLayout = false}) {
+    final Widget child;
     if (_isLoadingPosts && _posts.isEmpty) {
-      return Column(children: List.generate(3, (_) => const PostCardShimmer()));
+      child = Column(
+        key: const ValueKey('feed-loading'),
+        children: List.generate(3, (_) => const PostCardShimmer()),
+      );
+    } else {
+      final visiblePosts = _visiblePosts;
+      if (_posts.isEmpty || visiblePosts.isEmpty) {
+        child = KeyedSubtree(
+          key: const ValueKey('feed-empty'),
+          child: _buildFeedEmptyState(wideLayout: wideLayout),
+        );
+      } else {
+        child = Column(
+          key: const ValueKey('feed-content'),
+          children: visiblePosts
+              .map(
+                (post) => PostCard(
+                  key: ValueKey(post.id),
+                  post: post,
+                  onDeleted: () => _loadPosts(branchId: _selectedFeedBranchId),
+                ),
+              )
+              .toList(),
+        );
+      }
     }
 
-    final visiblePosts = _visiblePosts;
-    if (_posts.isEmpty || visiblePosts.isEmpty) {
-      return _buildFeedEmptyState(wideLayout: wideLayout);
-    }
-
-    return Column(
-      children: visiblePosts
-          .map(
-            (post) => PostCard(
-              post: post,
-              onDeleted: () =>
-                  _loadPosts(branchId: _selectedFeedBranchId),
-            ),
-          )
-          .toList(),
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 280),
+      switchInCurve: Curves.easeOut,
+      switchOutCurve: Curves.easeIn,
+      child: child,
     );
   }
 

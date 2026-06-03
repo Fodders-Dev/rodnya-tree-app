@@ -6,6 +6,7 @@ import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:shimmer/shimmer.dart';
 
 import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/post_service_interface.dart';
@@ -622,12 +623,19 @@ class _PostCardState extends State<PostCard>
   }
 
   Widget _buildPostImagePlaceholder() {
-    return Container(
-      color: Theme.of(context)
-          .colorScheme
-          .surfaceContainerHighest
-          .withValues(alpha: 0.55),
-      child: const Center(child: CircularProgressIndicator()),
+    // On-brand loading: a warm shimmer fill instead of a spinner, so a
+    // post image resolving in-place matches the feed's skeleton language
+    // (PostCardShimmer) rather than a stray Material progress ring.
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    return Shimmer.fromColors(
+      baseColor: isDark
+          ? theme.colorScheme.surfaceContainerHigh
+          : theme.colorScheme.surfaceContainerHighest,
+      highlightColor: isDark
+          ? theme.colorScheme.surfaceContainerHighest
+          : theme.colorScheme.surfaceContainerLowest,
+      child: Container(color: Colors.white),
     );
   }
 
