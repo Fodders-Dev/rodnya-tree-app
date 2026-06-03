@@ -58,6 +58,7 @@ import '../utils/user_facing_error.dart';
 import '../utils/e2e_state_bridge.dart';
 import '../utils/photo_url.dart';
 import '../utils/snackbar.dart';
+import '../widgets/dont_fear_breaking_banner.dart';
 
 part 'tree_view_screen_sections.dart';
 
@@ -965,9 +966,22 @@ class _TreeViewScreenState extends State<TreeViewScreen>
         ),
       ),
       body: SafeArea(
-        child: _wrapWithExtendedNetworkLayout(
-          context,
-          _buildTreeBody(selectedTreeId: selectedTreeId),
+        child: Stack(
+          children: [
+            _wrapWithExtendedNetworkLayout(
+              context,
+              _buildTreeBody(selectedTreeId: selectedTreeId),
+            ),
+            // Phase B polish C: «Не бойся сломать» reassurance, overlaid at
+            // the top (same pattern as the extended empty-state banner).
+            // Dismissible + persisted — disappears once the user closes it.
+            const Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: DontFearBreakingBanner(),
+            ),
+          ],
         ),
       ),
     );
