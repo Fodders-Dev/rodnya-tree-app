@@ -3,6 +3,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'package:rodnya/backend/interfaces/family_tree_service_interface.dart';
@@ -80,6 +81,82 @@ void main() {
 
       expect(find.byType(EventCard), findsOneWidget);
       expect(find.text('День рождения'), findsOneWidget);
+    },
+  );
+
+  // ── CP-a: tap a holiday → info; family event → profile (unchanged) ──
+
+  Widget routerHost(EventService service, {required DateTime initialMonth}) {
+    final router = GoRouter(
+      routes: [
+        GoRoute(
+          path: '/',
+          builder: (_, __) => FamilyCalendarScreen(
+            serviceOverride: service,
+            treeId: 'tree-1',
+            initialMonth: initialMonth,
+          ),
+        ),
+        GoRoute(
+          path: '/relative/details/:id',
+          builder: (_, state) => Scaffold(
+            body: Text('profile-${state.pathParameters['id']}'),
+          ),
+        ),
+      ],
+    );
+    return MaterialApp.router(theme: AppTheme.lightTheme, routerConfig: router);
+  }
+
+  testWidgets('tapping a holiday shows its info bottom-sheet', (tester) async {
+    final service = EventService(
+      familyTreeService: _FakeFamilyTreeService(relatives: const []),
+    );
+    await tester.pumpWidget(
+      routerHost(service, initialMonth: DateTime(2026, 5, 9)),
+    );
+    await tester.pumpAndSettle();
+
+    // May 9 selected → «День Победы» card.
+    expect(find.text('День Победы'), findsOneWidget);
+    await tester.tap(find.text('День Победы'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('holiday-info-sheet')), findsOneWidget);
+    expect(find.textContaining('Великой Отечественной'), findsOneWidget);
+  });
+
+  testWidgets(
+    'tapping a family event opens the profile, not a holiday sheet',
+    (tester) async {
+      final service = EventService(
+        familyTreeService: _FakeFamilyTreeService(
+          relatives: [
+            FamilyPerson(
+              id: 'p1',
+              treeId: 'tree-1',
+              name: 'Иван Петров',
+              gender: Gender.male,
+              birthDate: DateTime(1990, 5, 9), // birthday on May 9
+              isAlive: true,
+              createdAt: DateTime(2024, 1, 1),
+              updatedAt: DateTime(2024, 1, 1),
+            ),
+          ],
+        ),
+      );
+      await tester.pumpWidget(
+        routerHost(service, initialMonth: DateTime(2026, 5, 9)),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('День рождения'), findsOneWidget);
+      await tester.tap(find.text('День рождения'));
+      await tester.pumpAndSettle();
+
+      // Navigated to the profile; no holiday sheet.
+      expect(find.text('profile-p1'), findsOneWidget);
+      expect(find.byKey(const Key('holiday-info-sheet')), findsNothing);
     },
   );
 

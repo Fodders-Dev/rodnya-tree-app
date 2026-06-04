@@ -9,10 +9,16 @@ class EventCard extends StatelessWidget {
   final double? width;
   final bool compact;
 
+  /// Tap handler used only for events NOT linked to a person (e.g. a
+  /// holiday → show its info). Person-linked events always open the
+  /// profile and ignore this.
+  final VoidCallback? onTap;
+
   const EventCard({
     required this.event,
     this.width,
     this.compact = false,
+    this.onTap,
     super.key,
   });
 
@@ -36,7 +42,7 @@ class EventCard extends StatelessWidget {
           borderRadius: radius,
           onTap: canOpenProfile
               ? () => context.push('/relative/details/${event.personId}')
-              : null,
+              : onTap,
           child: Padding(
             padding: compact
                 ? const EdgeInsets.fromLTRB(8, 8, 14, 8)

@@ -6,6 +6,7 @@
 // list of that day's events (shared EventCard).
 
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:table_calendar/table_calendar.dart';
 
@@ -243,7 +244,71 @@ class _FamilyCalendarScreenState extends State<FamilyCalendarScreen> {
       itemBuilder: (_, i) => Padding(
         key: Key('calendar-day-event-$i'),
         padding: const EdgeInsets.only(bottom: 8),
-        child: EventCard(event: events[i], width: double.infinity),
+        child: EventCard(
+          event: events[i],
+          width: double.infinity,
+          // Person-linked events ignore this and open the profile; a
+          // holiday has no person, so the tap shows its info instead.
+          onTap: () => _showHolidayInfo(events[i]),
+        ),
+      ),
+    );
+  }
+
+  /// Bottom-sheet with a short, factual description of a holiday. Only
+  /// shown for events that carry a description (holidays); family events
+  /// never reach here (they open the profile instead).
+  void _showHolidayInfo(AppEvent event) {
+    final description = event.description;
+    if (description == null || description.isEmpty) return;
+    final theme = Theme.of(context);
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+    final dateLabel = DateFormat('d MMMM', 'ru').format(event.date);
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (_) => SafeArea(
+        child: Padding(
+          key: const Key('holiday-info-sheet'),
+          padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(event.icon, color: tokens.accent),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      event.title,
+                      style: theme.textTheme.titleLarge?.copyWith(
+                        fontFamily: 'Lora',
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text(
+                '${event.categoryLabel} · $dateLabel',
+                style: theme.textTheme.labelMedium?.copyWith(
+                  color: tokens.inkMuted,
+                ),
+              ),
+              const SizedBox(height: 14),
+              Text(
+                description,
+                style: theme.textTheme.bodyLarge?.copyWith(height: 1.4),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

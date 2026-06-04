@@ -20,6 +20,7 @@ class AppEvent {
   final String personName;
   final String personId;
   final IconData icon; // Иконка для отображения
+  final String? description; // Краткое описание (для праздников)
 
   AppEvent({
     required this.id,
@@ -29,6 +30,7 @@ class AppEvent {
     required this.personName,
     required this.personId,
     required this.icon,
+    this.description,
   });
 
   // Метод для получения оставшегося времени или статуса

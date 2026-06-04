@@ -225,66 +225,80 @@ class EventService {
       day: 1,
       title: 'Новый год',
       icon: Icons.celebration_outlined,
+      description: 'Главный семейный праздник — встреча нового года в ночь '
+          'с 31 декабря на 1 января.',
     ),
     _AnnualHolidayDefinition(
       month: 2,
       day: 23,
       title: 'День защитника Отечества',
       icon: Icons.shield_outlined,
+      description: 'День чествования защитников Родины и военнослужащих.',
     ),
     _AnnualHolidayDefinition(
       month: 3,
       day: 8,
       title: 'Международный женский день',
       icon: Icons.local_florist_outlined,
+      description: 'Весенний праздник, день поздравления женщин.',
     ),
     _AnnualHolidayDefinition(
       month: 5,
       day: 1,
       title: 'Праздник Весны и Труда',
       icon: Icons.park_outlined,
+      description: 'Первомай — праздник весны и труда.',
     ),
     _AnnualHolidayDefinition(
       month: 5,
       day: 9,
       title: 'День Победы',
       icon: Icons.star_outline,
+      description: 'День Победы в Великой Отечественной войне 1941–1945 годов.',
     ),
     _AnnualHolidayDefinition(
       month: 6,
       day: 12,
       title: 'День России',
       icon: Icons.flag_outlined,
+      description: 'Государственный праздник, посвящённый суверенитету России.',
     ),
     _AnnualHolidayDefinition(
       month: 11,
       day: 4,
       title: 'День народного единства',
       icon: Icons.groups_2_outlined,
+      description: 'Праздник в память о событиях 1612 года и единстве народа.',
     ),
     _AnnualHolidayDefinition(
       month: 1,
       day: 14,
       title: 'Старый Новый год',
       icon: Icons.celebration_outlined,
+      description: 'Новый год по старому, юлианскому календарю.',
     ),
     _AnnualHolidayDefinition(
       month: 7,
       day: 8,
       title: 'День семьи, любви и верности',
       icon: Icons.favorite_outline,
+      description: 'Праздник семьи, связанный с памятью святых Петра '
+          'и Февронии Муромских.',
     ),
     _AnnualHolidayDefinition(
       month: 9,
       day: 1,
       title: 'День знаний',
       icon: Icons.school_outlined,
+      description: 'Начало учебного года в школах, училищах и вузах.',
     ),
     _AnnualHolidayDefinition(
       month: 12,
       day: 12,
       title: 'День Конституции',
       icon: Icons.account_balance_outlined,
+      description:
+          'День принятия Конституции Российской Федерации в 1993 году.',
     ),
   ];
 
@@ -301,6 +315,7 @@ class EventService {
             personName: 'Государственный праздник',
             personId: '',
             icon: holiday.icon,
+            description: holiday.description,
           ),
         )
         .toList();
@@ -322,56 +337,72 @@ class EventService {
         date: DateTime(year, 1, 7),
         title: 'Рождество Христово',
         icon: Icons.auto_awesome_outlined,
+        description: 'Праздник Рождества Господа Иисуса Христа — один из '
+            'главных праздников Церкви.',
       ),
       _DatedHolidayDefinition(
         date: DateTime(year, 1, 19),
         title: 'Крещение Господне',
         icon: Icons.water_drop_outlined,
+        description: 'Богоявление — Крещение Иисуса Христа в реке Иордан. '
+            'Совершается освящение воды.',
       ),
       _DatedHolidayDefinition(
         date: DateTime(year, 4, 7),
         title: 'Благовещение',
         icon: Icons.wb_twilight_outlined,
+        description: 'Благовещение Пресвятой Богородице о рождении Спасителя.',
       ),
       _DatedHolidayDefinition(
         date: easter.subtract(const Duration(days: 7)),
         title: 'Вербное воскресенье',
         icon: Icons.spa_outlined,
+        description: 'Вход Господень в Иерусалим. Празднуется за неделю '
+            'до Пасхи.',
       ),
       _DatedHolidayDefinition(
         date: easter,
         title: 'Пасха',
         icon: Icons.church_outlined,
+        description: 'Светлое Христово Воскресение — главный праздник '
+            'православной Церкви.',
       ),
       _DatedHolidayDefinition(
         date: easter.add(const Duration(days: 39)),
         title: 'Вознесение',
         icon: Icons.flight_takeoff_outlined,
+        description: 'Вознесение Господне — на сороковой день после Пасхи.',
       ),
       _DatedHolidayDefinition(
         date: easter.add(const Duration(days: 49)),
         title: 'Троица',
         icon: Icons.forest_outlined,
+        description: 'День Святой Троицы (Пятидесятница) — сошествие Святого '
+            'Духа на апостолов.',
       ),
       _DatedHolidayDefinition(
         date: DateTime(year, 8, 19),
         title: 'Преображение',
         icon: Icons.wb_sunny_outlined,
+        description: 'Преображение Господне. В народе — Яблочный Спас.',
       ),
       _DatedHolidayDefinition(
         date: DateTime(year, 8, 28),
         title: 'Успение Богородицы',
         icon: Icons.nightlight_outlined,
+        description: 'Успение Пресвятой Богородицы.',
       ),
       _DatedHolidayDefinition(
         date: DateTime(year, 9, 21),
         title: 'Рождество Богородицы',
         icon: Icons.favorite_outline,
+        description: 'Рождество Пресвятой Богородицы.',
       ),
       _DatedHolidayDefinition(
         date: DateTime(year, 9, 27),
         title: 'Воздвижение Креста',
         icon: Icons.add_road_outlined,
+        description: 'Воздвижение Честного и Животворящего Креста Господня.',
       ),
       // Movable (derive from Easter): Масленица — Прощёное воскресенье
       // (easter−49); Радоница — поминальный вторник (easter+9).
@@ -379,21 +410,28 @@ class EventService {
         date: easter.subtract(const Duration(days: 49)),
         title: 'Масленица',
         icon: Icons.local_fire_department_outlined,
+        description: 'Сырная седмица перед Великим постом; завершается '
+            'Прощёным воскресеньем.',
       ),
       _DatedHolidayDefinition(
         date: easter.add(const Duration(days: 9)),
         title: 'Радоница',
         icon: Icons.local_florist_outlined,
+        description: 'День поминовения усопших на второй неделе после Пасхи.',
       ),
       _DatedHolidayDefinition(
         date: DateTime(year, 7, 12),
         title: 'День Петра и Павла',
         icon: Icons.account_balance_outlined,
+        description: 'День памяти первоверховных апостолов Петра и Павла, '
+            'завершение Петрова поста.',
       ),
       _DatedHolidayDefinition(
         date: DateTime(year, 10, 14),
         title: 'Покров Пресвятой Богородицы',
         icon: Icons.shield_moon_outlined,
+        description: 'Покров Пресвятой Богородицы — праздник в честь '
+            'заступничества Богородицы.',
       ),
     ];
 
@@ -407,6 +445,7 @@ class EventService {
             personName: 'Православный календарь',
             personId: '',
             icon: holiday.icon,
+            description: holiday.description,
           ),
         )
         .toList();
@@ -666,12 +705,14 @@ class _AnnualHolidayDefinition {
     required this.day,
     required this.title,
     required this.icon,
+    this.description,
   });
 
   final int month;
   final int day;
   final String title;
   final IconData icon;
+  final String? description;
 }
 
 class _DatedHolidayDefinition {
@@ -679,9 +720,11 @@ class _DatedHolidayDefinition {
     required this.date,
     required this.title,
     required this.icon,
+    this.description,
   });
 
   final DateTime date;
   final String title;
   final IconData icon;
+  final String? description;
 }
