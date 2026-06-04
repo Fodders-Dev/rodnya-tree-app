@@ -237,8 +237,9 @@ extension _HomeScreenSections on _HomeScreenState {
       );
     }
 
-    final visiblePosts = _visiblePosts;
-    if (_posts.isEmpty || visiblePosts.isEmpty) {
+    // Phase E2c: posts + gatherings, merged newest-first.
+    final entries = _feedEntries;
+    if (entries.isEmpty) {
       return SliverToBoxAdapter(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(14, 0, 14, 0),
@@ -250,15 +251,18 @@ extension _HomeScreenSections on _HomeScreenState {
     return SliverPadding(
       padding: const EdgeInsets.fromLTRB(14, 0, 14, 0),
       sliver: SliverList.builder(
-        itemCount: visiblePosts.length,
+        itemCount: entries.length,
         itemBuilder: (context, index) {
-          final post = visiblePosts[index];
+          final entry = entries[index];
           return _PostEntrance(
-            key: ValueKey(post.id),
-            child: PostCard(
-              post: post,
-              onDeleted: () => _loadPosts(branchId: _selectedFeedBranchId),
-            ),
+            key: ValueKey(entry.id),
+            child: entry.isPost
+                ? PostCard(
+                    post: entry.post!,
+                    onDeleted: () =>
+                        _loadPosts(branchId: _selectedFeedBranchId),
+                  )
+                : GatheringCard(gathering: entry.gathering!),
           );
         },
       ),
@@ -518,8 +522,9 @@ extension _HomeScreenSections on _HomeScreenState {
         children: List.generate(3, (_) => const PostCardShimmer()),
       );
     } else {
-      final visiblePosts = _visiblePosts;
-      if (_posts.isEmpty || visiblePosts.isEmpty) {
+      // Phase E2c: posts + gatherings, merged newest-first.
+      final entries = _feedEntries;
+      if (entries.isEmpty) {
         child = KeyedSubtree(
           key: const ValueKey('feed-empty'),
           child: _buildFeedEmptyState(wideLayout: wideLayout),
@@ -527,13 +532,19 @@ extension _HomeScreenSections on _HomeScreenState {
       } else {
         child = Column(
           key: const ValueKey('feed-content'),
-          children: visiblePosts
+          children: entries
               .map(
-                (post) => PostCard(
-                  key: ValueKey(post.id),
-                  post: post,
-                  onDeleted: () => _loadPosts(branchId: _selectedFeedBranchId),
-                ),
+                (entry) => entry.isPost
+                    ? PostCard(
+                        key: ValueKey(entry.id),
+                        post: entry.post!,
+                        onDeleted: () =>
+                            _loadPosts(branchId: _selectedFeedBranchId),
+                      )
+                    : GatheringCard(
+                        key: ValueKey(entry.id),
+                        gathering: entry.gathering!,
+                      ),
               )
               .toList(),
         );
@@ -978,6 +989,20 @@ class _FeedBranchChipEntry {
 /// (P5). Light + short, in the same easeOutCubic spirit as the reaction
 /// chip micro-animations. The wide layout gets its motion from the
 /// AnimatedSwitcher in [_buildFeedContent] instead, so this is narrow-only.
+/// One entry in the mixed home feed — either a [Post] or a [Gathering]
+/// (Phase E2c). Exactly one of the two is non-null.
+class _HomeFeedEntry {
+  const _HomeFeedEntry.post(Post this.post) : gathering = null;
+  const _HomeFeedEntry.gathering(Gathering this.gathering) : post = null;
+
+  final Post? post;
+  final Gathering? gathering;
+
+  bool get isPost => post != null;
+  String get id => post?.id ?? gathering!.id;
+  DateTime get createdAt => post?.createdAt ?? gathering!.createdAt;
+}
+
 class _PostEntrance extends StatefulWidget {
   const _PostEntrance({super.key, required this.child});
 

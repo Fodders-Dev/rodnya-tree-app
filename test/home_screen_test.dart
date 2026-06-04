@@ -6,6 +6,7 @@ import 'package:intl/date_symbol_data_local.dart';
 import 'package:rodnya/backend/interfaces/auth_service_interface.dart';
 import 'package:rodnya/backend/interfaces/family_tree_service_interface.dart';
 import 'package:rodnya/backend/interfaces/post_service_interface.dart';
+import 'package:rodnya/backend/interfaces/gathering_service_interface.dart';
 import 'package:rodnya/backend/interfaces/story_service_interface.dart';
 import 'package:rodnya/backend/backend_runtime_config.dart';
 import 'package:rodnya/backend/models/tree_invitation.dart';
@@ -13,6 +14,7 @@ import 'package:rodnya/models/family_tree.dart';
 import 'package:rodnya/models/family_person.dart';
 import 'package:rodnya/models/family_relation.dart';
 import 'package:rodnya/models/post.dart';
+import 'package:rodnya/models/gathering.dart';
 import 'package:rodnya/models/story.dart';
 import 'package:rodnya/providers/tree_provider.dart';
 import 'package:rodnya/screens/home_screen.dart';
@@ -22,6 +24,7 @@ import 'package:rodnya/services/custom_api_notification_service.dart';
 import 'package:rodnya/services/local_storage_service.dart';
 import 'package:rodnya/widgets/event_card.dart';
 import 'package:rodnya/widgets/post_card.dart';
+import 'package:rodnya/widgets/gathering_card.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -141,6 +144,19 @@ class _FakeStoryService implements StoryServiceInterface {
     bool includeArchive = false,
   }) async =>
       const <Story>[];
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _FakeGatheringService implements GatheringServiceInterface {
+  _FakeGatheringService({this.gatherings = const []});
+
+  final List<Gathering> gatherings;
+
+  @override
+  Future<List<Gathering>> getGatherings({required String treeId}) async =>
+      gatherings;
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -548,6 +564,72 @@ void main() {
   );
 
   testWidgets(
+    'HomeScreen mixes posts and gatherings in the feed, newest-first (E2c)',
+    (tester) async {
+      tester.view.physicalSize = const Size(900, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
+      await getIt.unregister<PostServiceInterface>();
+      getIt.registerSingleton<PostServiceInterface>(
+        _FakePostService(
+          posts: [
+            Post(
+              id: 'post-1',
+              treeId: 'tree-1',
+              authorId: 'a1',
+              authorName: 'Анна',
+              content: 'Семейная новость',
+              createdAt: DateTime(2026, 4, 13, 10), // older
+            ),
+          ],
+        ),
+      );
+      getIt.registerSingleton<GatheringServiceInterface>(
+        _FakeGatheringService(
+          gatherings: [
+            Gathering(
+              id: 'gath-1',
+              treeId: 'tree-1',
+              authorId: 'a2',
+              authorName: 'Иван',
+              title: 'Шашлыки на даче',
+              startAt: DateTime(2026, 7, 1, 15),
+              createdAt: DateTime(2026, 4, 13, 12), // newer
+            ),
+          ],
+        ),
+      );
+
+      final treeProvider = TreeProvider();
+      await treeProvider.selectTree('tree-1', 'Тестовое дерево');
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider<TreeProvider>.value(
+          value: treeProvider,
+          child: const MaterialApp(home: HomeScreen()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Both kinds of content are in the feed.
+      expect(find.byType(PostCard), findsOneWidget);
+      expect(find.byType(GatheringCard), findsOneWidget);
+      expect(find.text('Семейная новость'), findsOneWidget);
+      expect(find.text('Шашлыки на даче'), findsOneWidget);
+
+      // The gathering (createdAt 12:00) is newer than the post (10:00), so
+      // it sits above it in the newest-first feed.
+      final gatheringY = tester.getTopLeft(find.byType(GatheringCard)).dy;
+      final postY = tester.getTopLeft(find.byType(PostCard)).dy;
+      expect(gatheringY, lessThan(postY));
+    },
+  );
+
+  testWidgets(
     'HomeScreen виртуализирует ленту — офф-скрин карточки не монтируются (P1)',
     (tester) async {
       // Narrow width (phone layout) + modest height. A non-virtualized
@@ -572,11 +654,9 @@ void main() {
               treeId: 'tree-1',
               authorId: 'author-$i',
               authorName: 'Автор $i',
-              content:
-                  'Запись номер $i с достаточным текстом, чтобы карточка '
+              content: 'Запись номер $i с достаточным текстом, чтобы карточка '
                   'занимала заметную высоту в ленте.',
-              createdAt:
-                  DateTime(2026, 4, 13, 10).add(Duration(minutes: i)),
+              createdAt: DateTime(2026, 4, 13, 10).add(Duration(minutes: i)),
             ),
           ),
         ),

@@ -24,8 +24,10 @@ import '../backend/interfaces/family_tree_service_interface.dart';
 import '../backend/interfaces/identity_service_interface.dart';
 import '../backend/models/tree_invitation.dart';
 import '../backend/interfaces/post_service_interface.dart';
+import '../backend/interfaces/gathering_service_interface.dart';
 import '../backend/interfaces/story_service_interface.dart';
 import '../models/post.dart';
+import '../models/gathering.dart';
 import '../models/story.dart';
 import '../services/app_status_service.dart';
 import '../services/posts_cache.dart';
@@ -33,6 +35,7 @@ import '../services/posts_refresh_coordinator.dart';
 import '../theme/app_theme.dart';
 import '../widgets/branch_switcher_chip.dart';
 import '../widgets/post_card.dart';
+import '../widgets/gathering_card.dart';
 import '../widgets/post_card_shimmer.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/coach_mark_tour.dart';
@@ -49,18 +52,25 @@ class HomeScreen extends StatefulWidget {
   _HomeScreenState createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen>
-    with WidgetsBindingObserver {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final AuthServiceInterface _authService = GetIt.I<AuthServiceInterface>();
   final FamilyTreeServiceInterface _familyTreeService =
       GetIt.I<FamilyTreeServiceInterface>();
   final PostServiceInterface _postService = GetIt.I<PostServiceInterface>();
+  // Phase E2c: best-effort gathering feed. Nullable so the home screen
+  // still works in tests / setups where the gathering provider isn't
+  // registered — gatherings just don't appear, the post feed is unaffected.
+  final GatheringServiceInterface? _gatheringService =
+      GetIt.I.isRegistered<GatheringServiceInterface>()
+          ? GetIt.I<GatheringServiceInterface>()
+          : null;
   final StoryServiceInterface _storyService = GetIt.I<StoryServiceInterface>();
   final AppStatusService _appStatusService = GetIt.I<AppStatusService>();
   late final EventService _eventService;
 
   List<AppEvent> _upcomingEvents = [];
   List<Post> _posts = [];
+  List<Gathering> _gatherings = const [];
   List<Story> _stories = [];
   String? _selectedEventCategoryFilter;
   bool _isLoadingEvents = true;
@@ -275,12 +285,10 @@ class _HomeScreenState extends State<HomeScreen>
     if (!mounted || event is! KeyDownEvent) return false;
     if (event.logicalKey != LogicalKeyboardKey.slash) return false;
     final focused = FocusManager.instance.primaryFocus;
-    final inEditable =
-        focused?.context?.widget is EditableText ||
-            (focused?.context != null &&
-                focused!.context!.findAncestorWidgetOfExactType<
-                        EditableText>() !=
-                    null);
+    final inEditable = focused?.context?.widget is EditableText ||
+        (focused?.context != null &&
+            focused!.context!.findAncestorWidgetOfExactType<EditableText>() !=
+                null);
     if (inEditable) return false;
     // Don't fire for ?-shortcut or ctrl/cmd combos.
     if (HardwareKeyboard.instance.isShiftPressed ||
@@ -536,9 +544,8 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  PostsCache? get _postsCache => GetIt.I.isRegistered<PostsCache>()
-      ? GetIt.I<PostsCache>()
-      : null;
+  PostsCache? get _postsCache =>
+      GetIt.I.isRegistered<PostsCache>() ? GetIt.I<PostsCache>() : null;
 
   /// Sentinel cache key for the audience-mode feed (no branch
   /// filter). Real branchIds are UUIDs and never collide with this
@@ -554,6 +561,9 @@ class _HomeScreenState extends State<HomeScreen>
       // it'll flicker on every refresh. Only flip back if we actually
       // have no posts to show after the call fails.
     });
+    // Phase E2c: pull gatherings alongside posts (best-effort, isolated —
+    // its own try/catch, never blocks or errors the post path below).
+    unawaited(_loadGatherings(branchId: branchId));
     final cacheKey = branchId ?? _audienceFeedCacheKey;
     // Cache-first hydrate: serve disk-cached posts immediately so the
     // feed paints content even if we're offline / network is slow.
@@ -561,9 +571,7 @@ class _HomeScreenState extends State<HomeScreen>
     if (cache != null && _posts.isEmpty) {
       try {
         final cached = await cache.read(cacheKey);
-        if (cached.isNotEmpty &&
-            mounted &&
-            _selectedFeedBranchId == branchId) {
+        if (cached.isNotEmpty && mounted && _selectedFeedBranchId == branchId) {
           setState(() {
             _posts = cached;
             _postsUnavailable = false;
@@ -610,6 +618,47 @@ class _HomeScreenState extends State<HomeScreen>
         });
       }
     }
+  }
+
+  /// Phase E2c: best-effort gathering load for the mixed feed. Gatherings
+  /// are tree-scoped (no audience-aggregate endpoint), so they load for
+  /// the selected branch or the current tree. A failure simply hides them
+  /// — the post feed degrades independently and is never affected.
+  Future<void> _loadGatherings({String? branchId}) async {
+    final service = _gatheringService;
+    final treeId = branchId ?? _currentTreeId;
+    if (service == null || treeId == null) {
+      if (_gatherings.isNotEmpty && mounted) {
+        setState(() => _gatherings = const []);
+      }
+      return;
+    }
+    try {
+      final gatherings = await service.getGatherings(treeId: treeId);
+      // Same race guard the post load uses — discard if the user switched
+      // branch while this was in flight.
+      if (!mounted || _selectedFeedBranchId != branchId) return;
+      setState(() => _gatherings = gatherings);
+    } catch (_) {
+      // Best-effort — leave whatever we had; never surface an error.
+    }
+  }
+
+  /// Posts + gatherings merged into one newest-first feed (by createdAt).
+  /// When there are no gatherings the post list is returned verbatim —
+  /// the server already orders posts newest-first, so we don't re-sort
+  /// (keeps the post-only feed byte-identical to its pre-E2c behaviour).
+  List<_HomeFeedEntry> get _feedEntries {
+    final postEntries = [
+      for (final post in _visiblePosts) _HomeFeedEntry.post(post),
+    ];
+    if (_gatherings.isEmpty) return postEntries;
+    final entries = <_HomeFeedEntry>[
+      ...postEntries,
+      for (final gathering in _gatherings) _HomeFeedEntry.gathering(gathering),
+    ];
+    entries.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    return entries;
   }
 
   /// Resolve whether the active tree has anyone besides the current
@@ -773,75 +822,75 @@ class _HomeScreenState extends State<HomeScreen>
           child: Padding(
             padding: const EdgeInsets.fromLTRB(18, 8, 12, 8),
             child: Row(
-          children: [
-            Text(
-              'Родня',
-              style: AppTheme.serif(
-                color: tokens.ink,
-                fontSize: 22,
-                fontWeight: FontWeight.w600,
-                letterSpacing: -0.22,
-              ),
+              children: [
+                Text(
+                  'Родня',
+                  style: AppTheme.serif(
+                    color: tokens.ink,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: -0.22,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                // Phase 6.1: branch switcher chip — tap opens a bottom
+                // sheet with all of the user's branches. Hidden when
+                // there's nothing to switch to (fresh account, no trees
+                // yet).
+                const Flexible(child: BranchSwitcherChip()),
+                const Spacer(),
+                _buildTopbarIconButton(
+                  tokens: tokens,
+                  tooltip: 'Календарь',
+                  onTap: () => context.push('/calendar'),
+                  child: Icon(
+                    Icons.calendar_month_outlined,
+                    size: 20,
+                    color: tokens.accent,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                _buildTopbarIconButton(
+                  tokens: tokens,
+                  tooltip: 'Альбом семьи',
+                  onTap: () => context.push('/post/album'),
+                  child: Icon(
+                    Icons.photo_library_outlined,
+                    size: 20,
+                    color: tokens.accent,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                _buildTopbarIconButton(
+                  tokens: tokens,
+                  tooltip: 'Поиск по постам',
+                  onTap: () => context.push('/post/search'),
+                  child: Icon(
+                    Icons.search_rounded,
+                    size: 20,
+                    color: tokens.accent,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                _buildTopbarIconButton(
+                  tokens: tokens,
+                  child: _buildNotificationsAction(tokens: tokens),
+                  tooltip: 'Активность',
+                  onTap: () => context.push('/notifications'),
+                ),
+                const SizedBox(width: 8),
+                _buildTopbarIconButton(
+                  tokens: tokens,
+                  tooltip: 'Выбрать дерево',
+                  onTap: () => context.go('/tree?selector=1'),
+                  child: Icon(
+                    Icons.account_tree_outlined,
+                    size: 19,
+                    color: tokens.accent,
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(width: 12),
-            // Phase 6.1: branch switcher chip — tap opens a bottom
-            // sheet with all of the user's branches. Hidden when
-            // there's nothing to switch to (fresh account, no trees
-            // yet).
-            const Flexible(child: BranchSwitcherChip()),
-            const Spacer(),
-            _buildTopbarIconButton(
-              tokens: tokens,
-              tooltip: 'Календарь',
-              onTap: () => context.push('/calendar'),
-              child: Icon(
-                Icons.calendar_month_outlined,
-                size: 20,
-                color: tokens.accent,
-              ),
-            ),
-            const SizedBox(width: 8),
-            _buildTopbarIconButton(
-              tokens: tokens,
-              tooltip: 'Альбом семьи',
-              onTap: () => context.push('/post/album'),
-              child: Icon(
-                Icons.photo_library_outlined,
-                size: 20,
-                color: tokens.accent,
-              ),
-            ),
-            const SizedBox(width: 8),
-            _buildTopbarIconButton(
-              tokens: tokens,
-              tooltip: 'Поиск по постам',
-              onTap: () => context.push('/post/search'),
-              child: Icon(
-                Icons.search_rounded,
-                size: 20,
-                color: tokens.accent,
-              ),
-            ),
-            const SizedBox(width: 8),
-            _buildTopbarIconButton(
-              tokens: tokens,
-              child: _buildNotificationsAction(tokens: tokens),
-              tooltip: 'Активность',
-              onTap: () => context.push('/notifications'),
-            ),
-            const SizedBox(width: 8),
-            _buildTopbarIconButton(
-              tokens: tokens,
-              tooltip: 'Выбрать дерево',
-              onTap: () => context.go('/tree?selector=1'),
-              child: Icon(
-                Icons.account_tree_outlined,
-                size: 19,
-                color: tokens.accent,
-              ),
-            ),
-          ],
-        ),
           ),
         ),
       ),
