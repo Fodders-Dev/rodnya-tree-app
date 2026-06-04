@@ -140,6 +140,11 @@ void main() {
     expect(find.text('Создайте дерево'), findsOneWidget);
     expect(find.text('Семья'), findsOneWidget);
     expect(find.text('Круг'), findsOneWidget);
+    // C2: one-line helper clarifies «Семья» vs «Круг».
+    expect(
+      find.text('Семья — родственники · Круг — близкие без родства'),
+      findsOneWidget,
+    );
 
     await tester.tap(find.text('Семья'));
     await tester.pumpAndSettle();
@@ -171,6 +176,14 @@ void main() {
     expect(find.text('Семья'), findsOneWidget);
     expect(find.text('Семья Ивановых'), findsOneWidget);
     expect(find.text('Семья Петровых'), findsOneWidget);
+    // C2: kind helper present, and long tree names ellipsize (1 line).
+    expect(
+      find.text('Семья — родственники · Круг — близкие без родства'),
+      findsWidgets,
+    );
+    final nameText = tester.widget<Text>(find.text('Семья Ивановых'));
+    expect(nameText.maxLines, 1);
+    expect(nameText.overflow, TextOverflow.ellipsis);
   });
 
   testWidgets('TreeSelectorScreen группирует активное, свои и чужие деревья',

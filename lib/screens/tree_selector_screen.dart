@@ -282,6 +282,14 @@ class _TreeSelectorScreenState extends State<TreeSelectorScreen> {
                   ),
                 ],
               ),
+              const SizedBox(height: 10),
+              Text(
+                'Семья — родственники · Круг — близкие без родства',
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
             ],
           ),
         ),
@@ -370,6 +378,14 @@ class _TreeSelectorScreenState extends State<TreeSelectorScreen> {
                     ),
                   ],
                 ),
+                const SizedBox(height: 8),
+                // Clarify the two — «Семья» vs «Круг» read alike otherwise.
+                Text(
+                  'Семья — родственники · Круг — близкие без родства',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                ),
               ],
             ),
           ),
@@ -451,6 +467,8 @@ class _TreeSelectorScreenState extends State<TreeSelectorScreen> {
                     children: [
                       Text(
                         tree.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.w800,
@@ -624,6 +642,8 @@ class _TreeSelectorScreenState extends State<TreeSelectorScreen> {
                     children: [
                       Text(
                         treeName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.w800,
