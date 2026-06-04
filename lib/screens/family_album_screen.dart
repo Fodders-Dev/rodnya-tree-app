@@ -367,12 +367,17 @@ class _FamilyAlbumScreenState extends State<FamilyAlbumScreen> {
     List<_AlbumPhoto> memories,
   ) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 12, 0, 4),
+      padding: EdgeInsets.fromLTRB(
+        tokens.space12,
+        tokens.space12,
+        0,
+        tokens.space4,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
-            padding: const EdgeInsets.only(right: 12),
+            padding: EdgeInsets.only(right: tokens.space12),
             child: Row(
               children: [
                 Icon(Icons.auto_awesome_outlined, size: 18, color: tokens.warm),
@@ -397,7 +402,7 @@ class _FamilyAlbumScreenState extends State<FamilyAlbumScreen> {
               itemCount: memories.length,
               separatorBuilder: (_, __) => SizedBox(width: tokens.space8),
               itemBuilder: (_, i) => ClipRRect(
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(tokens.radiusSm),
                 child: SizedBox(
                   width: 104,
                   height: 104,
@@ -490,17 +495,27 @@ class _FamilyAlbumScreenState extends State<FamilyAlbumScreen> {
             ),
           ),
           SliverPadding(
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
+            padding: EdgeInsets.fromLTRB(
+              tokens.space12,
+              tokens.space8,
+              tokens.space12,
+              tokens.space16,
+            ),
             sliver: SliverGrid(
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: 3,
-                crossAxisSpacing: 8,
-                mainAxisSpacing: 8,
+                crossAxisSpacing: tokens.space8,
+                mainAxisSpacing: tokens.space8,
               ),
               delegate: SliverChildBuilderDelegate(
                 (_, i) {
                   final indexed = section.items[i];
-                  return _buildThumb(theme, indexed.photo, indexed.globalIndex);
+                  return _buildThumb(
+                    theme,
+                    tokens,
+                    indexed.photo,
+                    indexed.globalIndex,
+                  );
                 },
                 childCount: section.items.length,
               ),
@@ -512,9 +527,14 @@ class _FamilyAlbumScreenState extends State<FamilyAlbumScreen> {
     );
   }
 
-  Widget _buildThumb(ThemeData theme, _AlbumPhoto photo, int globalIndex) {
+  Widget _buildThumb(
+    ThemeData theme,
+    RodnyaDesignTokens tokens,
+    _AlbumPhoto photo,
+    int globalIndex,
+  ) {
     return ClipRRect(
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(tokens.radiusSm),
       child: Stack(
         fit: StackFit.expand,
         children: [

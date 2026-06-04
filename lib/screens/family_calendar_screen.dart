@@ -299,8 +299,16 @@ class _FamilyCalendarScreenState extends State<FamilyCalendarScreen> {
     final phase = moonPhaseFor(day);
     return Container(
       key: const Key('moon-tip'),
-      margin: const EdgeInsets.fromLTRB(12, 12, 12, 4),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      margin: EdgeInsets.fromLTRB(
+        tokens.space12,
+        tokens.space12,
+        tokens.space12,
+        tokens.space4,
+      ),
+      padding: EdgeInsets.symmetric(
+        horizontal: tokens.space12,
+        vertical: tokens.space8,
+      ),
       decoration: BoxDecoration(
         color: tokens.warmSoft,
         borderRadius: BorderRadius.circular(tokens.radiusMd),
@@ -308,7 +316,7 @@ class _FamilyCalendarScreenState extends State<FamilyCalendarScreen> {
       child: Row(
         children: [
           Text(phase.glyph, style: const TextStyle(fontSize: 18)),
-          const SizedBox(width: 10),
+          SizedBox(width: tokens.space8),
           Expanded(
             child: Text(
               gardeningTip(phase),
