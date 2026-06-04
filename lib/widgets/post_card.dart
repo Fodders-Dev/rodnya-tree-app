@@ -8,6 +8,7 @@ import 'package:intl/intl.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shimmer/shimmer.dart';
 
+import '../backend/backend_runtime_config.dart';
 import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/post_service_interface.dart';
 import '../models/post.dart';
@@ -228,6 +229,20 @@ class _PostCardState extends State<PostCard>
     );
   }
 
+  /// Copy a shareable deep-link to the post. Frontend-only: builds
+  /// `<publicAppUrl>/post/<id>` and drops it on the clipboard.
+  Future<void> _copyPostLink() async {
+    final base = BackendRuntimeConfig.current.publicAppUrl
+        .replaceAll(RegExp(r'/+$'), '');
+    final link = '$base/post/${widget.post.id}';
+    await Clipboard.setData(ClipboardData(text: link));
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Ссылка на пост скопирована')),
+      );
+    }
+  }
+
   String get _audienceLabel {
     if (widget.post.circleId?.trim().isNotEmpty == true) {
       return 'Круг';
@@ -446,22 +461,36 @@ class _PostCardState extends State<PostCard>
               ),
             ),
           ),
-          if (_currentUserId == widget.post.authorId)
-            PopupMenuButton<String>(
-              padding: EdgeInsets.zero,
-              // ≥44dp tap target for the overflow menu (was 32×32).
-              constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
-              icon: Icon(
-                Icons.more_horiz_rounded,
-                color: tokens.inkMuted,
-                size: 18,
+          // Overflow menu shows for everyone now: «Скопировать ссылку» is
+          // available to any viewer; «Удалить» stays author-only.
+          PopupMenuButton<String>(
+            padding: EdgeInsets.zero,
+            // ≥44dp tap target for the overflow menu (was 32×32).
+            constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+            icon: Icon(
+              Icons.more_horiz_rounded,
+              color: tokens.inkMuted,
+              size: 18,
+            ),
+            onSelected: (value) {
+              if (value == 'copy-link') {
+                _copyPostLink();
+              } else if (value == 'delete') {
+                _deletePost();
+              }
+            },
+            itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: 'copy-link',
+                child: Row(
+                  children: [
+                    Icon(Icons.link_rounded, size: 20),
+                    SizedBox(width: 8),
+                    Text('Скопировать ссылку'),
+                  ],
+                ),
               ),
-              onSelected: (value) {
-                if (value == 'delete') {
-                  _deletePost();
-                }
-              },
-              itemBuilder: (context) => [
+              if (_currentUserId == widget.post.authorId)
                 const PopupMenuItem(
                   value: 'delete',
                   child: Row(
@@ -472,8 +501,8 @@ class _PostCardState extends State<PostCard>
                     ],
                   ),
                 ),
-              ],
-            ),
+            ],
+          ),
         ],
       ),
     );

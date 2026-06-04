@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get_it/get_it.dart';
 import 'package:intl/date_symbol_data_local.dart';
@@ -329,6 +330,65 @@ void main() {
       expect(postService.deleteCalls, 0);
       // Post still visible.
       expect(find.text('Не трогай'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'PostCard overflow «Скопировать ссылку» copies a post deep-link (E)',
+    (tester) async {
+      String? clipboardText;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'Clipboard.setData') {
+            clipboardText = (call.arguments as Map)['text'] as String?;
+          }
+          return null;
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger
+            .setMockMethodCallHandler(SystemChannels.platform, null),
+      );
+
+      getIt.registerSingleton<PostServiceInterface>(
+        _FakePostService(onToggleLike: (_) async => throw Exception('unused')),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: PostCard(
+              post: Post(
+                id: 'post-xyz',
+                treeId: 'tree-1',
+                // Non-author — confirms copy-link is offered to everyone
+                // while «Удалить» stays author-only.
+                authorId: 'author-1',
+                authorName: 'Анна',
+                content: 'Текст',
+                createdAt: DateTime(2026, 4, 13, 10),
+                likedBy: const [],
+                commentCount: 0,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.more_horiz_rounded));
+      await tester.pumpAndSettle();
+      expect(find.text('Скопировать ссылку'), findsOneWidget);
+      // Non-author never sees the delete action.
+      expect(find.text('Удалить'), findsNothing);
+
+      await tester.tap(find.text('Скопировать ссылку'));
+      await tester.pumpAndSettle();
+
+      expect(clipboardText, isNotNull);
+      expect(clipboardText, contains('/post/post-xyz'));
+      expect(find.text('Ссылка на пост скопирована'), findsOneWidget);
     },
   );
 }
