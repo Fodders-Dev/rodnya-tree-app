@@ -1,15 +1,17 @@
-// Album v1 (album/v1): «Альбом семьи» — every photo from the family's
-// posts, collected into one browsable grid so moments don't get lost in
-// the feed scroll. Frontend-only: aggregates over the audience scope the
-// home feed already uses (getPosts(treeId: null) = union across ALL the
-// viewer's branches — a ready scope, no per-branch fan needed), dedups by
-// URL, sorts newest-first. Tap → the shared MediaLightbox (swipe between
-// every photo in the album). Optional «по автору» filter (client-side —
-// posts already carry authorName/authorPhotoUrl, no getRelatives call).
+// «Альбом семьи»: every photo from the family's posts, collected so
+// moments don't get lost in the feed scroll. Frontend-only: aggregates
+// over the audience scope the home feed already uses (getPosts(treeId:
+// null) = union across ALL the viewer's branches — a ready scope, no
+// per-branch fan needed), dedups by URL, sorts newest-first. Tap → the
+// shared MediaLightbox. Optional «по автору» filter (client-side — posts
+// already carry authorName/authorPhotoUrl, no getRelatives call).
+//
+// v2: grouped into month sections (A2a) + a «N лет назад» memory strip at
+// the top for photos from this day in past years (A2b).
 //
 // Out of scope (separate arcs): «кто на фото» (needs person-tagging,
 // Phase D — anchorPersonIds is audience-scope, not subjects), Круг
-// (Phase C), memory-resurfacing (Phase E), backend filters.
+// (Phase C), backend filters, videos in the album.
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
@@ -92,11 +94,15 @@ class FamilyAlbumScreen extends StatefulWidget {
     super.key,
     this.serviceOverride,
     this.cacheOverride,
+    this.nowProvider,
   });
 
   /// Test seams — production resolves via GetIt.
   final PostServiceInterface? serviceOverride;
   final PostsCache? cacheOverride;
+
+  /// Injectable «today» for the «N лет назад» memory section (tests).
+  final DateTime Function()? nowProvider;
 
   @override
   State<FamilyAlbumScreen> createState() => _FamilyAlbumScreenState();
@@ -107,9 +113,14 @@ class _FamilyAlbumScreenState extends State<FamilyAlbumScreen> {
   // Reusing it gives the album instant offline-first photos.
   static const String _audienceCacheKey = '__audience__';
 
+  // ±days around today that still counts as «this day» in past years.
+  static const int _memoryWindowDays = 3;
+
   bool _loading = true;
   List<_AlbumPhoto> _photos = const [];
   String? _authorFilter; // null = все авторы
+
+  DateTime get _now => widget.nowProvider?.call() ?? DateTime.now();
 
   @override
   void initState() {
@@ -280,6 +291,122 @@ class _FamilyAlbumScreenState extends State<FamilyAlbumScreen> {
     );
   }
 
+  // ── «N лет назад» — memories resurfacing ──
+
+  /// Photos from past years whose date falls within ±[_memoryWindowDays]
+  /// of today (handling the Dec↔Jan wrap). Keeps the input order
+  /// (newest-first), so the strip leads with the most recent memory.
+  List<_AlbumPhoto> _memoriesFor(List<_AlbumPhoto> photos) {
+    final now = _now;
+    return photos.where((p) => _isOnThisDay(p.createdAt, now)).toList();
+  }
+
+  bool _isOnThisDay(DateTime created, DateTime now) {
+    if (created.year >= now.year) return false; // only past years
+    final today = DateTime(now.year, now.month, now.day);
+    for (final year in [now.year - 1, now.year, now.year + 1]) {
+      final anchor = DateTime(year, created.month, created.day);
+      if (anchor.difference(today).inDays.abs() <= _memoryWindowDays) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /// «Год назад» / «3 года назад» / «5 лет назад» (RU plural rules). When
+  /// the strip spans several past years, a neutral header is used instead.
+  String _memoryHeader(List<_AlbumPhoto> memories) {
+    final nowYear = _now.year;
+    final yearsAgo = memories.map((m) => nowYear - m.createdAt.year).toSet();
+    if (yearsAgo.length != 1) return 'В этот день раньше';
+    final years = yearsAgo.first;
+    if (years == 1) return 'Год назад';
+    final mod10 = years % 10;
+    final mod100 = years % 100;
+    final word = (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14))
+        ? 'года'
+        : 'лет';
+    return '$years $word назад';
+  }
+
+  void _openMemoryLightbox(List<_AlbumPhoto> memories, int index) {
+    if (memories.isEmpty) return;
+    MediaLightbox.show(
+      context,
+      items: [for (final p in memories) MediaLightboxItem(imageUrl: p.url)],
+      initialIndex: index.clamp(0, memories.length - 1),
+    );
+  }
+
+  Widget _buildMemoryStrip(
+    ThemeData theme,
+    RodnyaDesignTokens tokens,
+    List<_AlbumPhoto> memories,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 12, 0, 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: Row(
+              children: [
+                Icon(Icons.auto_awesome_outlined, size: 18, color: tokens.warm),
+                SizedBox(width: tokens.space8),
+                Text(
+                  _memoryHeader(memories),
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontFamily: 'Lora',
+                    fontWeight: FontWeight.w700,
+                    color: tokens.warm,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          SizedBox(height: tokens.space8),
+          SizedBox(
+            height: 104,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.only(right: 12),
+              itemCount: memories.length,
+              separatorBuilder: (_, __) => SizedBox(width: tokens.space8),
+              itemBuilder: (_, i) => GestureDetector(
+                key: Key('album-memory-$i'),
+                onTap: () => _openMemoryLightbox(memories, i),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: CachedNetworkImage(
+                    imageUrl: memories[i].url,
+                    width: 104,
+                    height: 104,
+                    fit: BoxFit.cover,
+                    placeholder: (_, __) => Container(
+                      width: 104,
+                      height: 104,
+                      color: theme.colorScheme.surfaceContainerHighest,
+                    ),
+                    errorWidget: (_, __, ___) => Container(
+                      width: 104,
+                      height: 104,
+                      color: theme.colorScheme.surfaceContainerHighest,
+                      child: Icon(
+                        Icons.broken_image_outlined,
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   /// Group [photos] (already newest-first) into month buckets — because
   /// the list is date-sorted, every month's photos are contiguous, so a
   /// single pass yields newest-month-first sections without a map. Each
@@ -310,11 +437,16 @@ class _FamilyAlbumScreenState extends State<FamilyAlbumScreen> {
     List<_AlbumPhoto> photos,
   ) {
     final sections = _groupByMonth(photos);
+    final memories = _memoriesFor(photos);
     // Full-screen route (pushed on the root navigator like post/search) →
     // no bottom nav, so we only clear the device safe-area inset.
     final bottomInset = MediaQuery.of(context).viewPadding.bottom;
     return CustomScrollView(
       slivers: [
+        if (memories.isNotEmpty)
+          SliverToBoxAdapter(
+            child: _buildMemoryStrip(theme, tokens, memories),
+          ),
         for (final section in sections) ...[
           SliverPersistentHeader(
             pinned: true,

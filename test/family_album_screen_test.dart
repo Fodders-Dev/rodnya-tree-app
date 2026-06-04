@@ -45,9 +45,9 @@ Post _post({
   );
 }
 
-Widget _host(_FakePostService svc) => MaterialApp(
+Widget _host(_FakePostService svc, {DateTime Function()? now}) => MaterialApp(
       theme: AppTheme.lightTheme,
-      home: FamilyAlbumScreen(serviceOverride: svc),
+      home: FamilyAlbumScreen(serviceOverride: svc, nowProvider: now),
     );
 
 void main() {
@@ -178,6 +178,62 @@ void main() {
       expect(find.byKey(const Key('album-thumb-1')), findsNothing);
     },
   );
+
+  testWidgets('surfaces «N лет назад» memories from this day in past years',
+      (tester) async {
+    final svc = _FakePostService(
+      posts: [
+        _post(
+          id: 'today',
+          authorId: 'a1',
+          authorName: 'Анна',
+          imageUrls: const ['https://example.com/today.jpg'],
+          createdAt: DateTime(2026, 6, 4), // this year → not a memory
+        ),
+        _post(
+          id: 'twoyears',
+          authorId: 'a1',
+          authorName: 'Анна',
+          imageUrls: const ['https://example.com/memory.jpg'],
+          createdAt: DateTime(2024, 6, 3), // 2 years ago, within ±3 days
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(_host(svc, now: () => DateTime(2026, 6, 4)));
+    await tester.pumpAndSettle();
+
+    expect(find.text('2 года назад'), findsOneWidget);
+    expect(find.byKey(const Key('album-memory-0')), findsOneWidget);
+  });
+
+  testWidgets('no memory section when nothing matches this day in past years',
+      (tester) async {
+    final svc = _FakePostService(
+      posts: [
+        _post(
+          id: 'thisyear',
+          authorId: 'a1',
+          authorName: 'Анна',
+          imageUrls: const ['https://example.com/a.jpg'],
+          createdAt: DateTime(2026, 1, 15), // this year
+        ),
+        _post(
+          id: 'farday',
+          authorId: 'a1',
+          authorName: 'Анна',
+          imageUrls: const ['https://example.com/b.jpg'],
+          createdAt: DateTime(2024, 3, 1), // past year but far from today
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(_host(svc, now: () => DateTime(2026, 6, 4)));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('album-memory-0')), findsNothing);
+    expect(find.textContaining('назад'), findsNothing);
+  });
 
   testWidgets('tapping a thumb opens the MediaLightbox', (tester) async {
     final svc = _FakePostService(
