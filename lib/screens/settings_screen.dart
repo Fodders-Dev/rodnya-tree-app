@@ -21,6 +21,7 @@ import '../screens/semya_details_screen.dart';
 import '../screens/trash_screen.dart';
 import '../widgets/hidden_semya_picker_sheet.dart';
 import '../services/custom_api_notification_service.dart';
+import '../services/browser_notification_bridge.dart';
 import '../services/app_status_service.dart';
 import '../services/audio_route_service.dart';
 import '../services/call_preferences.dart';
@@ -1085,13 +1086,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _buildThemePicker(themeProvider),
       ]),
       _buildSectionCard('Уведомления и доступ', [
-        _buildSwitchRow(
-          icon: Icons.notifications_outlined,
-          title: 'Уведомления',
-          subtitle: _notificationsEnabled ? 'Включены' : 'Выключены',
-          value: _notificationsEnabled,
-          onChanged: _toggleNotifications,
-        ),
+        _buildNotificationsRow(),
         _buildSwitchRow(
           icon: Icons.lock_outline,
           title: 'Приватный профиль',
@@ -1488,6 +1483,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget _buildThemePicker(ThemeProvider themeProvider) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
     final mode = themeProvider.themeMode;
 
     final options = <_ThemePickerOption>[
@@ -1527,7 +1526,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         borderRadius: BorderRadius.circular(20),
       ),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+        // Tokenized + slightly tighter (was 16,14,16,16).
+        padding: EdgeInsets.fromLTRB(
+            tokens.space16, tokens.space12, tokens.space16, tokens.space12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -1569,6 +1570,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  /// Notifications row, permission-aware. Reads the OS/browser
+  /// permission status (read-only — requesting stays with the toggle,
+  /// per scope) so a user who denied notifications at the OS level sees
+  /// «разрешите в настройках телефона» instead of a misleading
+  /// «Выключены» (Screen 7.5).
+  Widget _buildNotificationsRow() {
+    final permission = _customNotificationService?.browserPermissionStatus;
+    final osDenied =
+        permission == BrowserNotificationPermissionStatus.denied;
+    return _buildSwitchRow(
+      icon: Icons.notifications_outlined,
+      title: 'Уведомления',
+      subtitle: osDenied
+          ? 'Разрешите уведомления в настройках телефона'
+          : (_notificationsEnabled ? 'Включены' : 'Выключены'),
+      value: _notificationsEnabled,
+      onChanged: _toggleNotifications,
     );
   }
 
@@ -1720,7 +1741,6 @@ class _ThemePickerChip extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final activeColor = scheme.primary;
-    final activeOnColor = scheme.onPrimary;
     return Material(
       color: selected
           ? activeColor.withValues(alpha: 0.16)
@@ -1755,7 +1775,9 @@ class _ThemePickerChip extends StatelessWidget {
                   option.label,
                   style: theme.textTheme.labelMedium?.copyWith(
                     fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
-                    color: selected ? activeOnColor : scheme.onSurface,
+                    // Selected: primary-on-tint (matches the icon) — was
+                    // onPrimary (near-white) on a light tint → unreadable.
+                    color: selected ? activeColor : scheme.onSurface,
                     letterSpacing: -0.1,
                   ),
                 ),
