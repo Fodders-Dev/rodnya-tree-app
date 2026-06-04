@@ -13,6 +13,7 @@ import 'package:rodnya/models/family_relation.dart';
 import 'package:rodnya/screens/family_calendar_screen.dart';
 import 'package:rodnya/services/event_service.dart';
 import 'package:rodnya/theme/app_theme.dart';
+import 'package:rodnya/utils/moon_phase.dart';
 import 'package:rodnya/widgets/event_card.dart';
 
 class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
@@ -173,5 +174,9 @@ void main() {
     // Moon-phase legend (C) is present.
     expect(find.text('🌑 Новолуние'), findsOneWidget);
     expect(find.text('🌕 Полнолуние'), findsOneWidget);
+    // Moon gardening tip (CP-b) for the selected day is shown.
+    expect(find.byKey(const Key('moon-tip')), findsOneWidget);
+    final tip = gardeningTip(moonPhaseFor(DateTime(2026, 4, 15)));
+    expect(find.text(tip), findsOneWidget);
   });
 }

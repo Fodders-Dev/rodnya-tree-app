@@ -99,3 +99,30 @@ extension MoonPhasePresentation on MoonPhase {
     }
   }
 }
+
+/// Folk dacha-gardening guidance by phase — a calm restatement of the
+/// traditional «вершки/корешки» rule, NOT esoteric or medical/scientific
+/// claims. Waxing → above-ground crops; waning → roots; new moon → rest
+/// and weeding; full moon → harvest and seeds.
+String gardeningTip(MoonPhase phase) {
+  switch (phase) {
+    case MoonPhase.newMoon:
+      return 'Новолуние — время покоя: прополка и рыхление, сажать не '
+          'советуют.';
+    case MoonPhase.waxingCrescent:
+      return 'Растущая луна — благоприятно для зелени, плодовых и цветов.';
+    case MoonPhase.firstQuarter:
+      return 'Растущая луна — хорошее время для посева надземных культур.';
+    case MoonPhase.waxingGibbous:
+      return 'Растущая луна — для зелени, плодов и всего, что тянется вверх.';
+    case MoonPhase.fullMoon:
+      return 'Полнолуние — пора сбора урожая, плодов и семян.';
+    case MoonPhase.waningGibbous:
+      return 'Убывающая луна — благоприятно для корнеплодов и корней.';
+    case MoonPhase.lastQuarter:
+      return 'Убывающая луна — время для корнеплодов: морковь, свёкла, '
+          'картофель.';
+    case MoonPhase.waningCrescent:
+      return 'Убывающая луна — для корнеплодов; ближе к новолунию — отдых.';
+  }
+}

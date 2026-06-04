@@ -44,4 +44,20 @@ void main() {
       expect(phase.label, isNotEmpty);
     }
   });
+
+  test('gardeningTip follows the вершки/корешки folk rule per phase', () {
+    for (final phase in MoonPhase.values) {
+      expect(gardeningTip(phase), isNotEmpty);
+    }
+    expect(gardeningTip(MoonPhase.newMoon), contains('Новолуние'));
+    expect(gardeningTip(MoonPhase.fullMoon), contains('Полнолуние'));
+    // Waxing → above-ground crops.
+    expect(gardeningTip(MoonPhase.waxingCrescent), contains('Растущая'));
+    expect(gardeningTip(MoonPhase.firstQuarter), contains('Растущая'));
+    expect(gardeningTip(MoonPhase.waxingGibbous), contains('Растущая'));
+    // Waning → roots.
+    expect(gardeningTip(MoonPhase.waningGibbous), contains('Убывающая'));
+    expect(gardeningTip(MoonPhase.lastQuarter), contains('Убывающая'));
+    expect(gardeningTip(MoonPhase.waningCrescent), contains('Убывающая'));
+  });
 }

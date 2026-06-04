@@ -120,12 +120,14 @@ class _FamilyCalendarScreenState extends State<FamilyCalendarScreen> {
               padding: EdgeInsets.all(24),
               child: Center(child: CircularProgressIndicator()),
             )
-          else
+          else ...[
+            _buildMoonTip(theme, tokens, _selectedDay),
             Expanded(
               child: selectedEvents.isEmpty
                   ? _buildDayEmpty(theme, tokens)
                   : _buildDayList(selectedEvents),
             ),
+          ],
         ],
       ),
     );
@@ -231,6 +233,40 @@ class _FamilyCalendarScreenState extends State<FamilyCalendarScreen> {
         alignment: WrapAlignment.center,
         children: [
           for (final p in phases) Text('${p.glyph} ${p.label}', style: style),
+        ],
+      ),
+    );
+  }
+
+  /// Compact warm strip: the selected day's moon phase + a folk gardening
+  /// tip (for the dacha crowd). One line — kept deliberately light.
+  Widget _buildMoonTip(
+    ThemeData theme,
+    RodnyaDesignTokens tokens,
+    DateTime day,
+  ) {
+    final phase = moonPhaseFor(day);
+    return Container(
+      key: const Key('moon-tip'),
+      margin: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: tokens.warmSoft,
+        borderRadius: BorderRadius.circular(tokens.radiusMd),
+      ),
+      child: Row(
+        children: [
+          Text(phase.glyph, style: const TextStyle(fontSize: 18)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              gardeningTip(phase),
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: tokens.ink,
+                height: 1.3,
+              ),
+            ),
+          ),
         ],
       ),
     );
