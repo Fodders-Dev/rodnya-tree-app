@@ -262,6 +262,30 @@ class EventService {
       title: 'День народного единства',
       icon: Icons.groups_2_outlined,
     ),
+    _AnnualHolidayDefinition(
+      month: 1,
+      day: 14,
+      title: 'Старый Новый год',
+      icon: Icons.celebration_outlined,
+    ),
+    _AnnualHolidayDefinition(
+      month: 7,
+      day: 8,
+      title: 'День семьи, любви и верности',
+      icon: Icons.favorite_outline,
+    ),
+    _AnnualHolidayDefinition(
+      month: 9,
+      day: 1,
+      title: 'День знаний',
+      icon: Icons.school_outlined,
+    ),
+    _AnnualHolidayDefinition(
+      month: 12,
+      day: 12,
+      title: 'День Конституции',
+      icon: Icons.account_balance_outlined,
+    ),
   ];
 
   /// All Russian holidays placed in a concrete [year] (no upcoming
@@ -348,6 +372,28 @@ class EventService {
         date: DateTime(year, 9, 27),
         title: 'Воздвижение Креста',
         icon: Icons.add_road_outlined,
+      ),
+      // Movable (derive from Easter): Масленица — Прощёное воскресенье
+      // (easter−49); Радоница — поминальный вторник (easter+9).
+      _DatedHolidayDefinition(
+        date: easter.subtract(const Duration(days: 49)),
+        title: 'Масленица',
+        icon: Icons.local_fire_department_outlined,
+      ),
+      _DatedHolidayDefinition(
+        date: easter.add(const Duration(days: 9)),
+        title: 'Радоница',
+        icon: Icons.local_florist_outlined,
+      ),
+      _DatedHolidayDefinition(
+        date: DateTime(year, 7, 12),
+        title: 'День Петра и Павла',
+        icon: Icons.account_balance_outlined,
+      ),
+      _DatedHolidayDefinition(
+        date: DateTime(year, 10, 14),
+        title: 'Покров Пресвятой Богородицы',
+        icon: Icons.shield_moon_outlined,
       ),
     ];
 

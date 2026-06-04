@@ -293,6 +293,36 @@ void main() {
       isTrue,
     );
   });
+
+  // ── More holidays (B) ──
+
+  test('getEventsForMonth includes the added B holidays on their dates',
+      () async {
+    final service = EventService(
+      familyTreeService: _FakeFamilyTreeService(relatives: const []),
+      nowProvider: () => DateTime(2026, 1, 1),
+    );
+
+    Future<Set<String>> titlesOf(int month) async => (await service
+            .getEventsForMonth('tree-1', 2026, month))
+        .map((e) => e.title)
+        .toSet();
+
+    // Russian additions (fixed dates).
+    expect(await titlesOf(1), contains('Старый Новый год')); // 14/1
+    expect(await titlesOf(7), contains('День семьи, любви и верности')); // 8/7
+    expect(await titlesOf(9), contains('День знаний')); // 1/9
+    expect(await titlesOf(12), contains('День Конституции')); // 12/12
+
+    // Orthodox additions — fixed.
+    expect(await titlesOf(10), contains('Покров Пресвятой Богородицы')); // 14/10
+    expect(await titlesOf(7), contains('День Петра и Павла')); // 12/7
+
+    // Orthodox additions — movable (Orthodox Easter 2026 = 12 Apr →
+    // Радоница 21 Apr, Масленица 22 Feb).
+    expect(await titlesOf(4), contains('Радоница'));
+    expect(await titlesOf(2), contains('Масленица'));
+  });
 }
 
 class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
