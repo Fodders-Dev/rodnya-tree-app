@@ -88,14 +88,21 @@ class _FamilyCalendarScreenState extends State<FamilyCalendarScreen> {
   List<AppEvent> _eventsFor(DateTime day) =>
       _eventsByDay[_dayKey(day)] ?? const <AppEvent>[];
 
-  Color _markerColor(AppEventType type) {
+  Color _markerColor(
+    AppEventType type,
+    ThemeData theme,
+    RodnyaDesignTokens tokens,
+  ) {
+    final isDark = theme.brightness == Brightness.dark;
     switch (type) {
       case AppEventType.russianHoliday:
-        return const Color(0xFFD64545); // flag red
+        // Flag red, lifted for dark backgrounds.
+        return isDark ? const Color(0xFFE57373) : const Color(0xFFD64545);
       case AppEventType.orthodoxHoliday:
-        return const Color(0xFF8E7CC3); // soft violet
+        // Soft violet, lifted for dark backgrounds.
+        return isDark ? const Color(0xFFB39DDB) : const Color(0xFF8E7CC3);
       default:
-        return const Color(0xFF3F8E52); // family — accent green
+        return tokens.accent; // family — on-brand accent
     }
   }
 
@@ -143,13 +150,36 @@ class _FamilyCalendarScreenState extends State<FamilyCalendarScreen> {
       eventLoader: _eventsFor,
       startingDayOfWeek: StartingDayOfWeek.monday,
       availableGestures: AvailableGestures.horizontalSwipe,
-      headerStyle: const HeaderStyle(
+      headerStyle: HeaderStyle(
         formatButtonVisible: false,
         titleCentered: true,
+        titleTextStyle: theme.textTheme.titleMedium?.copyWith(
+              fontFamily: 'Lora',
+              fontWeight: FontWeight.w700,
+              color: tokens.ink,
+            ) ??
+            TextStyle(color: tokens.ink),
+        leftChevronIcon: Icon(Icons.chevron_left, color: tokens.ink),
+        rightChevronIcon: Icon(Icons.chevron_right, color: tokens.ink),
+      ),
+      daysOfWeekStyle: DaysOfWeekStyle(
+        weekdayStyle:
+            TextStyle(color: tokens.inkMuted, fontWeight: FontWeight.w600),
+        weekendStyle:
+            TextStyle(color: tokens.inkMuted, fontWeight: FontWeight.w600),
       ),
       calendarStyle: CalendarStyle(
         outsideDaysVisible: false,
         isTodayHighlighted: true,
+        // Force on-brand, theme-aware day text — Material defaults didn't
+        // track the warm palette and the number on the green selected
+        // circle was low-contrast / unreadable in dark mode.
+        defaultTextStyle: TextStyle(color: tokens.ink),
+        weekendTextStyle: TextStyle(color: tokens.ink),
+        todayTextStyle:
+            TextStyle(color: tokens.ink, fontWeight: FontWeight.w700),
+        selectedTextStyle:
+            TextStyle(color: tokens.accentInk, fontWeight: FontWeight.w700),
         todayDecoration: BoxDecoration(
           color: tokens.accent.withValues(alpha: 0.28),
           shape: BoxShape.circle,
@@ -168,7 +198,10 @@ class _FamilyCalendarScreenState extends State<FamilyCalendarScreen> {
           return Stack(
             alignment: Alignment.center,
             children: [
-              Text('${day.day}', style: theme.textTheme.bodyMedium),
+              Text(
+                '${day.day}',
+                style: theme.textTheme.bodyMedium?.copyWith(color: tokens.ink),
+              ),
               Positioned(
                 top: 1,
                 right: 2,
@@ -194,7 +227,7 @@ class _FamilyCalendarScreenState extends State<FamilyCalendarScreen> {
                     height: 5,
                     margin: const EdgeInsets.symmetric(horizontal: 1),
                     decoration: BoxDecoration(
-                      color: _markerColor(e.type),
+                      color: _markerColor(e.type, theme, tokens),
                       shape: BoxShape.circle,
                     ),
                   ),

@@ -179,4 +179,25 @@ void main() {
     final tip = gardeningTip(moonPhaseFor(DateTime(2026, 4, 15)));
     expect(find.text(tip), findsOneWidget);
   });
+
+  testWidgets('renders in dark theme without error (CP-1 legibility)',
+      (tester) async {
+    final service = EventService(
+      familyTreeService: _FakeFamilyTreeService(relatives: const []),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.darkTheme,
+        home: FamilyCalendarScreen(
+          serviceOverride: service,
+          treeId: 'tree-1',
+          initialMonth: DateTime(2026, 4, 15),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byType(TableCalendar<AppEvent>), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }
