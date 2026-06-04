@@ -91,7 +91,10 @@ class MainNavigationBar extends StatelessWidget {
                       // floor still trips for very narrow tablets in
                       // weird split-screen layouts.
                       final showLabels = constraints.maxWidth >= 280;
-                      final navHeight = showLabels ? 70.0 : 62.0;
+                      // Slimmed (was 70/62). Labelled height matches
+                      // AppTheme.bottomNavContentHeight so the global
+                      // bottom-inset helper reserves exactly the bar.
+                      final navHeight = showLabels ? 62.0 : 56.0;
                       // User-reported: «домик с лентой находятся
                       // правее этой зеленой области». The pill used
                       // `constraints.maxWidth / items.length` for its
@@ -232,24 +235,27 @@ class MainNavigationBar extends StatelessWidget {
                       return DecoratedBox(
                         decoration: BoxDecoration(
                           borderRadius: navRadius,
+                          // Lighter, shallower shadow to match the
+                          // slimmer bar (was 38/-8/22 + 14/-4/8).
                           boxShadow: [
                             BoxShadow(
                               color: Colors.black.withValues(
-                                alpha: isDark ? 0.42 : 0.18,
+                                alpha: isDark ? 0.36 : 0.14,
                               ),
-                              blurRadius: 38,
+                              blurRadius: 28,
                               spreadRadius: -8,
-                              offset: const Offset(0, 22),
+                              offset: const Offset(0, 16),
                             ),
                             BoxShadow(
                               color: Colors.black.withValues(
-                                alpha: isDark ? 0.22 : 0.10,
+                                alpha: isDark ? 0.18 : 0.08,
                               ),
-                              blurRadius: 14,
+                              blurRadius: 10,
                               spreadRadius: -4,
-                              offset: const Offset(0, 8),
+                              offset: const Offset(0, 6),
                             ),
                           ],
+
                         ),
                         child: SizedBox(height: navHeight, child: navInner),
                       );
@@ -361,13 +367,12 @@ class _NavItem extends StatelessWidget {
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 220),
           curve: Curves.easeOutCubic,
-          // Was 8/8 horizontal/vertical when labels showed → ate 16dp
-          // off each slot which truncated "Родные" / "Дерево" to
-          // "Родн..." / "Дере..." on Samsung-mid widths. Trimmed to
-          // 4/6 — labels now fit at any sane phone width.
+          // Horizontal stays tight (space4) so "Родные"/"Дерево" fit on
+          // Samsung-mid widths. Vertical slimmed to space4/space8 (was
+          // 6/10) as part of the bar slimming.
           padding: EdgeInsets.symmetric(
-            horizontal: showLabel ? 4 : 4,
-            vertical: showLabel ? 6 : 10,
+            horizontal: tokens.space4,
+            vertical: showLabel ? tokens.space4 : tokens.space8,
           ),
           decoration: BoxDecoration(borderRadius: BorderRadius.circular(999)),
           child: Column(

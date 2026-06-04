@@ -273,6 +273,23 @@ class AppTheme {
   static double topbarHeight(BuildContext context) =>
       MediaQuery.of(context).padding.top + topbarContentHeight;
 
+  /// Slimmed height of the floating bottom nav pill (MainNavigationBar,
+  /// labelled state). Kept in lockstep with `navHeight` there.
+  static const double bottomNavContentHeight = 62.0;
+
+  /// Vertical space the floating bottom nav occupies, measured from the
+  /// bottom of the screen — the pill height plus its outer margin
+  /// (the nav sits inside `SafeArea(minimum bottom: 14)`, so the gap is
+  /// `max(device inset, 14)`) plus a small breathing gap. Screens under
+  /// `extendBody: true` should reserve this at the END of their scroll
+  /// content so the last items clear the pill. The bottom-edge mirror of
+  /// [topbarHeight].
+  static double bottomNavInset(BuildContext context) {
+    final safeBottom = MediaQuery.of(context).padding.bottom;
+    final outerMargin = safeBottom > 14.0 ? safeBottom : 14.0;
+    return bottomNavContentHeight + outerMargin + 8.0;
+  }
+
   // Warm sage + honey palette — kept in lockstep with the
   // RodnyaDesignTokens.light values above so widgets that pull from
   // either source render the same brand.

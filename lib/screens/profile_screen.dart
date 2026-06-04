@@ -1257,7 +1257,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
         ),
       ),
-      const SliverToBoxAdapter(child: SizedBox(height: 40)),
+      // Reserve the floating bottom-nav footprint so the last row isn't
+      // tucked under the pill (was a fixed SizedBox(height: 40)).
+      SliverToBoxAdapter(
+        child: SizedBox(height: AppTheme.bottomNavInset(context)),
+      ),
     ];
   }
 

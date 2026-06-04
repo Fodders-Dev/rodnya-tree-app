@@ -7,6 +7,7 @@ import 'package:livekit_client/livekit_client.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 import '../providers/theme_provider.dart';
+import '../theme/app_theme.dart';
 import '../services/rustore_service.dart';
 // Импортируем типы для биллинга
 import 'package:flutter_rustore_billing/pigeons/rustore.dart' as billing;
@@ -1017,7 +1018,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     constraints:
                         BoxConstraints(maxWidth: isWide ? 1100 : 980),
                     child: SingleChildScrollView(
-                      padding: const EdgeInsets.all(16),
+                      padding: EdgeInsets.fromLTRB(
+                        16,
+                        16,
+                        16,
+                        AppTheme.bottomNavInset(context),
+                      ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [

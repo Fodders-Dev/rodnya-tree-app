@@ -926,7 +926,7 @@ class _ChatsListScreenState extends State<ChatsListScreen>
     final isFriendsTree =
         context.read<TreeProvider>().selectedTreeKind == TreeKind.friends;
     return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+      padding: EdgeInsets.fromLTRB(16, 16, 16, AppTheme.bottomNavInset(context)),
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 360),
@@ -1202,7 +1202,7 @@ class _ChatsListScreenState extends State<ChatsListScreen>
         await Future<void>.delayed(const Duration(milliseconds: 600));
       },
       child: ListView.builder(
-      padding: const EdgeInsets.fromLTRB(10, 2, 10, 12),
+      padding: EdgeInsets.fromLTRB(10, 2, 10, AppTheme.bottomNavInset(context)),
       itemCount: totalCount,
       // Each tile gets its own RepaintBoundary so repaints triggered by
       // unread-count animation, timestamp ticking, or selection state on
