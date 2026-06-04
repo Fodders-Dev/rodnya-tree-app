@@ -684,8 +684,18 @@ extension _HomeScreenSections on _HomeScreenState {
     // distinct — user feedback was that they were decorative and
     // both led to the same screen. Now: photo icon prefires the
     // gallery picker, video icon prefires the video picker.
-    final path = action == null ? '/post/create' : '/post/create?action=$action';
+    final path =
+        action == null ? '/post/create' : '/post/create?action=$action';
     final result = await context.push(path);
+    if (result == true) {
+      await _loadPosts(branchId: _selectedFeedBranchId);
+    }
+  }
+
+  Future<void> _openCreateGathering() async {
+    // Phase E2: gatherings land in the same feed as posts (E2c), so a
+    // successful create refreshes it just like a post does.
+    final result = await context.push('/gathering/create');
     if (result == true) {
       await _loadPosts(branchId: _selectedFeedBranchId);
     }
@@ -874,6 +884,15 @@ extension _HomeScreenSections on _HomeScreenState {
                 tooltip: 'Добавить видео',
                 onPressed: () => _openCreatePost(action: 'video'),
                 icon: Icon(Icons.videocam_outlined, color: tokens.warm),
+                visualDensity: VisualDensity.compact,
+              ),
+              // Phase E2: «Встреча» — a separate composer entry next to the
+              // post media icons (doesn't touch the post-create flow).
+              IconButton(
+                key: const Key('compose-gathering'),
+                tooltip: 'Создать встречу',
+                onPressed: _openCreateGathering,
+                icon: Icon(Icons.event_outlined, color: tokens.accent),
                 visualDensity: VisualDensity.compact,
               ),
             ],

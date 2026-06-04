@@ -22,6 +22,7 @@ import '../screens/sessions_screen.dart';
 import '../screens/chat_screen.dart';
 import '../screens/chats_list_screen.dart';
 import '../screens/create_post_screen.dart';
+import '../screens/create_gathering_screen.dart';
 import '../screens/find_relative_screen.dart';
 import '../screens/home_screen.dart';
 import '../screens/offline_profiles_screen.dart';
@@ -216,6 +217,17 @@ class AppShellRouteModule {
                     transitionsBuilder: AppRouteTransitions.slideUp,
                   );
                 },
+              ),
+              GoRoute(
+                // Phase E2: «Новая встреча» composer (mirrors post/create).
+                path: 'gathering/create',
+                parentNavigatorKey: rootNavigatorKey,
+                pageBuilder: (context, state) => RodnyaCustomTransitionPage(
+                  key: state.pageKey,
+                  constrainWidth: true,
+                  child: const CreateGatheringScreen(),
+                  transitionsBuilder: AppRouteTransitions.slideUp,
+                ),
               ),
               GoRoute(
                 path: 'user/:userId',
