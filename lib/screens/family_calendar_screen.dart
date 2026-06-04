@@ -39,6 +39,7 @@ class _FamilyCalendarScreenState extends State<FamilyCalendarScreen> {
   late final EventService _service = widget.serviceOverride ?? EventService();
   String? _treeId;
   bool _loading = true;
+  bool _loadFailed = false;
   late DateTime _focusedDay = widget.initialMonth ?? DateTime.now();
   late DateTime _selectedDay = widget.initialMonth ?? DateTime.now();
   Map<DateTime, List<AppEvent>> _eventsByDay = const {};
@@ -61,13 +62,20 @@ class _FamilyCalendarScreenState extends State<FamilyCalendarScreen> {
 
   DateTime _dayKey(DateTime day) => DateTime(day.year, day.month, day.day);
 
+  bool get _hasTree => _treeId != null && _treeId!.trim().isNotEmpty;
+
   Future<void> _loadMonth(DateTime month) async {
     final treeId = _treeId;
     if (treeId == null || treeId.isEmpty) {
       if (mounted) setState(() => _loading = false);
       return;
     }
-    if (mounted) setState(() => _loading = true);
+    if (mounted) {
+      setState(() {
+        _loading = true;
+        _loadFailed = false;
+      });
+    }
     try {
       final events =
           await _service.getEventsForMonth(treeId, month.year, month.month);
@@ -81,7 +89,13 @@ class _FamilyCalendarScreenState extends State<FamilyCalendarScreen> {
         _loading = false;
       });
     } catch (_) {
-      if (mounted) setState(() => _loading = false);
+      // Surface the failure instead of showing an empty month (CP-2).
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _loadFailed = true;
+        });
+      }
     }
   }
 
@@ -127,6 +141,10 @@ class _FamilyCalendarScreenState extends State<FamilyCalendarScreen> {
               padding: EdgeInsets.all(24),
               child: Center(child: CircularProgressIndicator()),
             )
+          else if (!_hasTree)
+            Expanded(child: _buildNoTree(theme, tokens))
+          else if (_loadFailed)
+            Expanded(child: _buildError(theme, tokens))
           else ...[
             _buildMoonTip(theme, tokens, _selectedDay),
             Expanded(
@@ -377,6 +395,91 @@ class _FamilyCalendarScreenState extends State<FamilyCalendarScreen> {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+
+  // Center the placeholder, but scroll it if the remaining area below the
+  // grid is short (small screens / landscape) so it never overflows.
+  Widget _scrollSafeCenter(Widget child) {
+    return LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: constraints.maxHeight),
+          child: Center(child: child),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNoTree(ThemeData theme, RodnyaDesignTokens tokens) {
+    return _scrollSafeCenter(
+      Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.account_tree_outlined, size: 48, color: tokens.inkMuted),
+            const SizedBox(height: 12),
+            Text(
+              'Выберите дерево',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontFamily: 'Lora',
+                fontWeight: FontWeight.w700,
+                color: tokens.ink,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Чтобы увидеть даты семьи, выберите семейное дерево на главной.',
+              textAlign: TextAlign.center,
+              style:
+                  theme.textTheme.bodyMedium?.copyWith(color: tokens.inkMuted),
+            ),
+            const SizedBox(height: 16),
+            FilledButton.tonal(
+              key: const Key('calendar-no-tree-cta'),
+              onPressed: () => Navigator.of(context).maybePop(),
+              child: const Text('На главную'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildError(ThemeData theme, RodnyaDesignTokens tokens) {
+    return _scrollSafeCenter(
+      Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.cloud_off_outlined, size: 48, color: tokens.inkMuted),
+            const SizedBox(height: 12),
+            Text(
+              'Не удалось загрузить',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontFamily: 'Lora',
+                fontWeight: FontWeight.w700,
+                color: tokens.ink,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Проверьте соединение и попробуйте ещё раз.',
+              textAlign: TextAlign.center,
+              style:
+                  theme.textTheme.bodyMedium?.copyWith(color: tokens.inkMuted),
+            ),
+            const SizedBox(height: 16),
+            FilledButton.tonal(
+              key: const Key('calendar-retry'),
+              onPressed: () => _loadMonth(_focusedDay),
+              child: const Text('Повторить'),
+            ),
+          ],
         ),
       ),
     );

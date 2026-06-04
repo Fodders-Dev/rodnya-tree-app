@@ -464,37 +464,35 @@ class EventService {
   /// (birthday / death anniversary / annual custom / wedding) are placed
   /// at their occurrence in [year]; one-time events (memorials, non-
   /// repeating custom) appear only in their actual year.
+  // NB: errors propagate (no swallow-to-[]). The only caller is the
+  // calendar screen, which needs to tell «no events» apart from «load
+  // failed» to show a retry affordance (CP-2) — returning [] on a network
+  // error made a failed fetch look like an empty month.
   Future<List<AppEvent>> getEventsForMonth(
     String treeId,
     int year,
     int month,
   ) async {
-    try {
-      final results = await Future.wait<dynamic>([
-        _familyTreeService.getRelatives(treeId),
-        _familyTreeService.getRelations(treeId),
-      ]);
-      final relatives = results[0] as List<FamilyPerson>;
-      final relations = results[1] as List<FamilyRelation>;
-      final all = _buildEventsForYear(
-        relatives: relatives,
-        relations: relations,
-        year: year,
-      );
-      final inMonth = all
-          .where((e) => e.date.year == year && e.date.month == month)
-          .toList()
-        ..sort((a, b) {
-          final byDate = a.date.compareTo(b.date);
-          return byDate != 0
-              ? byDate
-              : _typePriority(a.type).compareTo(_typePriority(b.type));
-        });
-      return inMonth;
-    } catch (e, s) {
-      debugPrint('[EventService] getEventsForMonth error: $e\n$s');
-      return [];
-    }
+    final results = await Future.wait<dynamic>([
+      _familyTreeService.getRelatives(treeId),
+      _familyTreeService.getRelations(treeId),
+    ]);
+    final relatives = results[0] as List<FamilyPerson>;
+    final relations = results[1] as List<FamilyRelation>;
+    final all = _buildEventsForYear(
+      relatives: relatives,
+      relations: relations,
+      year: year,
+    );
+    return all
+        .where((e) => e.date.year == year && e.date.month == month)
+        .toList()
+      ..sort((a, b) {
+        final byDate = a.date.compareTo(b.date);
+        return byDate != 0
+            ? byDate
+            : _typePriority(a.type).compareTo(_typePriority(b.type));
+      });
   }
 
   /// All events whose occurrence lands in [year]. Mirrors the

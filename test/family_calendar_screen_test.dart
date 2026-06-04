@@ -32,6 +32,18 @@ class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
+/// EventService whose month fetch always throws — drives the CP-2 error
+/// state (the real service now lets errors propagate).
+class _ThrowingEventService extends EventService {
+  _ThrowingEventService()
+      : super(familyTreeService: _FakeFamilyTreeService(relatives: const []));
+
+  @override
+  Future<List<AppEvent>> getEventsForMonth(String t, int y, int m) async {
+    throw Exception('network down');
+  }
+}
+
 void main() {
   setUpAll(() async {
     await initializeDateFormatting('ru');
@@ -178,6 +190,44 @@ void main() {
     expect(find.byKey(const Key('moon-tip')), findsOneWidget);
     final tip = gardeningTip(moonPhaseFor(DateTime(2026, 4, 15)));
     expect(find.text(tip), findsOneWidget);
+  });
+
+  testWidgets('shows error + «Повторить» when the month fails to load (CP-2)',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.lightTheme,
+        home: FamilyCalendarScreen(
+          serviceOverride: _ThrowingEventService(),
+          treeId: 'tree-1',
+          initialMonth: DateTime(2026, 4, 15),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Не удалось загрузить'), findsOneWidget);
+    expect(find.byKey(const Key('calendar-retry')), findsOneWidget);
+  });
+
+  testWidgets('shows «Выберите дерево» when no tree is bound (CP-2)',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.lightTheme,
+        home: FamilyCalendarScreen(
+          serviceOverride: EventService(
+            familyTreeService: _FakeFamilyTreeService(relatives: const []),
+          ),
+          treeId: '', // no tree bound
+          initialMonth: DateTime(2026, 4, 15),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Выберите дерево'), findsOneWidget);
+    expect(find.byKey(const Key('calendar-no-tree-cta')), findsOneWidget);
   });
 
   testWidgets('renders in dark theme without error (CP-1 legibility)',
