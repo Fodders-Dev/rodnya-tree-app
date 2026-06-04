@@ -20,6 +20,7 @@ import '../backend/interfaces/identity_service_interface.dart';
 import '../backend/interfaces/invitation_link_service_interface.dart';
 import '../backend/interfaces/notification_service_interface.dart';
 import '../backend/interfaces/post_service_interface.dart';
+import '../backend/interfaces/gathering_service_interface.dart';
 import '../backend/interfaces/profile_article_service_interface.dart';
 import '../backend/interfaces/profile_service_interface.dart';
 import '../backend/interfaces/safety_service_interface.dart';
@@ -58,6 +59,7 @@ import 'custom_api_family_tree_service.dart';
 import 'custom_api_identity_service.dart';
 import 'custom_api_notification_service.dart';
 import 'custom_api_post_service.dart';
+import 'custom_api_gathering_service.dart';
 import 'custom_api_profile_article_service.dart';
 import 'custom_api_profile_service.dart';
 import 'custom_api_realtime_service.dart';
@@ -306,8 +308,7 @@ class AppStartupService implements AppStartupServiceInterface {
     // We register the prepared instance synchronously after
     // resolving SharedPreferences once, since the advisor itself
     // doesn't take an async constructor.
-    final batteryAdvisorPreferences =
-        await SharedPreferences.getInstance();
+    final batteryAdvisorPreferences = await SharedPreferences.getInstance();
     _registerOrReplaceSingleton<BatteryOptimizationAdvisor>(
       BatteryOptimizationAdvisor(
         preferences: batteryAdvisorPreferences,
@@ -321,6 +322,17 @@ class AppStartupService implements AppStartupServiceInterface {
     );
     _registerOrReplaceSingleton<CustomApiPostService>(customApiPostService);
     _registerOrReplaceSingleton<PostServiceInterface>(customApiPostService);
+
+    final customApiGatheringService = CustomApiGatheringService(
+      authService: customApiAuthService,
+      runtimeConfig: runtimeConfig,
+    );
+    _registerOrReplaceSingleton<CustomApiGatheringService>(
+      customApiGatheringService,
+    );
+    _registerOrReplaceSingleton<GatheringServiceInterface>(
+      customApiGatheringService,
+    );
 
     final customApiCircleService = CustomApiCircleService(
       authService: customApiAuthService,

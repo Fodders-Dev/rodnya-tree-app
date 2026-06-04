@@ -9,6 +9,7 @@ import 'interfaces/family_tree_service_interface.dart';
 import 'interfaces/identity_service_interface.dart';
 import 'interfaces/notification_service_interface.dart';
 import 'interfaces/post_service_interface.dart';
+import 'interfaces/gathering_service_interface.dart';
 import 'interfaces/profile_service_interface.dart';
 import 'interfaces/safety_service_interface.dart';
 import 'interfaces/story_service_interface.dart';
@@ -79,6 +80,12 @@ class BackendProviderRegistry {
     if (!getIt.isRegistered<PostServiceInterface>()) {
       getIt.registerSingleton<PostServiceInterface>(
         const PendingBackendPostService(),
+      );
+    }
+
+    if (!getIt.isRegistered<GatheringServiceInterface>()) {
+      getIt.registerSingleton<GatheringServiceInterface>(
+        const PendingBackendGatheringService(),
       );
     }
 

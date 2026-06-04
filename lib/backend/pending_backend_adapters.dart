@@ -26,6 +26,7 @@ import '../models/relation_request.dart';
 import '../models/user_profile.dart';
 import '../models/audience_preset.dart';
 import '../models/post.dart';
+import '../models/gathering.dart';
 import '../models/comment.dart';
 import '../models/reaction_summary.dart';
 import '../models/story.dart';
@@ -38,6 +39,7 @@ import 'models/google_account_preview.dart';
 import 'interfaces/call_service_interface.dart';
 import 'interfaces/chat_service_interface.dart';
 import 'interfaces/circle_service_interface.dart';
+import 'interfaces/gathering_service_interface.dart';
 import 'interfaces/family_tree_service_interface.dart';
 import 'interfaces/identity_service_interface.dart';
 import 'interfaces/profile_service_interface.dart';
@@ -1032,5 +1034,36 @@ class PendingBackendSafetyService implements SafetyServiceInterface {
   @override
   Future<void> unblockUser(String blockId) {
     throw UnsupportedError(_pendingProviderMessage('safety'));
+  }
+}
+
+class PendingBackendGatheringService implements GatheringServiceInterface {
+  const PendingBackendGatheringService();
+
+  @override
+  Future<List<Gathering>> getGatherings({required String treeId}) async {
+    return const [];
+  }
+
+  @override
+  Future<Gathering> createGathering({
+    required String treeId,
+    required String title,
+    String? description,
+    required DateTime startAt,
+    DateTime? endAt,
+    bool isAllDay = false,
+    String? place,
+    TreeContentScopeType scopeType = TreeContentScopeType.wholeTree,
+    List<String> anchorPersonIds = const [],
+    String? circleId,
+    List<String>? branchIds,
+  }) {
+    throw UnsupportedError(_pendingProviderMessage('gathering'));
+  }
+
+  @override
+  Future<void> deleteGathering(String gatheringId) {
+    throw UnsupportedError(_pendingProviderMessage('gathering'));
   }
 }
