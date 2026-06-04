@@ -282,6 +282,8 @@ void main() {
       // CTA hierarchy (P4b): the redundant compose FAB was removed — the
       // inline «Поделиться с роднёй…» teaser is the single compose CTA.
       expect(find.byType(FloatingActionButton), findsNothing);
+      // Album v1: «Альбом семьи» entry lives in the topbar.
+      expect(find.byIcon(Icons.photo_library_outlined), findsOneWidget);
     },
   );
 

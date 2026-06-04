@@ -112,17 +112,23 @@ class BranchSwitcherChip extends StatelessWidget {
                     ),
                   if (!useColorOnly) ...[
                     const SizedBox(width: 6),
-                    ConstrainedBox(
-                      constraints:
-                          BoxConstraints(maxWidth: effectiveMaxNameWidth),
-                      child: Text(
-                        label,
-                        style: theme.textTheme.labelLarge?.copyWith(
-                          fontWeight: FontWeight.w700,
-                          color: tokens.ink,
+                    // Flexible so the label shrinks + ellipsizes to the
+                    // actual space the chip is given (the topbar can be
+                    // tight on narrow phones) rather than overflowing at
+                    // its max-name width.
+                    Flexible(
+                      child: ConstrainedBox(
+                        constraints:
+                            BoxConstraints(maxWidth: effectiveMaxNameWidth),
+                        child: Text(
+                          label,
+                          style: theme.textTheme.labelLarge?.copyWith(
+                            fontWeight: FontWeight.w700,
+                            color: tokens.ink,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
                       ),
                     ),
                   ],

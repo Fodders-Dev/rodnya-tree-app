@@ -13,6 +13,7 @@ import '../models/family_person.dart';
 import '../providers/tree_provider.dart';
 import '../screens/about_screen.dart';
 import '../screens/access_grants_screen.dart';
+import '../screens/family_album_screen.dart';
 import '../screens/add_relative_screen.dart';
 import '../screens/blocked_users_screen.dart';
 import '../screens/qr_login_scan_screen.dart';
@@ -173,6 +174,18 @@ class AppShellRouteModule {
                   key: state.pageKey,
                   constrainWidth: true,
                   child: const PostSearchScreen(),
+                  transitionsBuilder: AppRouteTransitions.slide,
+                ),
+              ),
+              GoRoute(
+                // Album v1: «Альбом семьи» — all family-post photos in one
+                // grid. Full-screen pushed route (like post/search).
+                path: 'post/album',
+                parentNavigatorKey: rootNavigatorKey,
+                pageBuilder: (context, state) => RodnyaCustomTransitionPage(
+                  key: state.pageKey,
+                  constrainWidth: true,
+                  child: const FamilyAlbumScreen(),
                   transitionsBuilder: AppRouteTransitions.slide,
                 ),
               ),
