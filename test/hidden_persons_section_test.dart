@@ -152,6 +152,15 @@ class _FakeSemyaService implements SemyaCapableFamilyTreeService {
       throw UnimplementedError();
 
   @override
+  Future<SemyaMembership> addMembership({
+    required String semyaId,
+    required String userId,
+    required SemyaRole role,
+    bool hasInviteGrant = false,
+  }) async =>
+      throw UnimplementedError();
+
+  @override
   Future<SemyaMembershipRemoveResult> removeMembership({
     required String semyaId,
     required String userId,

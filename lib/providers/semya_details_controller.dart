@@ -192,6 +192,41 @@ class SemyaDetailsController with ChangeNotifier {
     }
   }
 
+  /// Ship G (kick-undo): re-add a previously-removed member — the inverse
+  /// of [removeMember], invoked from the undo toast. Returns true on
+  /// success. On error sets mutationErrorMessage.
+  Future<bool> addMember({
+    required String userId,
+    required SemyaRole role,
+    bool hasInviteGrant = false,
+  }) async {
+    final service = _resolveService();
+    if (service == null) {
+      _mutationErrorMessage = 'Управление участниками недоступно';
+      notifyListeners();
+      return false;
+    }
+    _pendingMutations.add(userId);
+    _mutationErrorMessage = null;
+    notifyListeners();
+    try {
+      await service.addMembership(
+        semyaId: semyaId,
+        userId: userId,
+        role: role,
+        hasInviteGrant: hasInviteGrant,
+      );
+      _pendingMutations.remove(userId);
+      await load();
+      return true;
+    } catch (error) {
+      _pendingMutations.remove(userId);
+      _mutationErrorMessage = _describeError(error);
+      notifyListeners();
+      return false;
+    }
+  }
+
   String _describeError(Object error) {
     if (error is SemyaError) return error.message;
     return 'Не удалось загрузить данные';

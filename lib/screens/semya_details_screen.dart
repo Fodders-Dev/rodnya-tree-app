@@ -702,8 +702,42 @@ class _MemberRow extends StatelessWidget {
                   hasInviteGrant: enabled,
                 ),
                 onKick: () async {
-                  await controller.removeMember(
+                  // Capture the messenger BEFORE the kick — a successful
+                  // kick reloads the list and disposes this row (and its
+                  // context), so we can't show the undo toast from the
+                  // row's context afterwards.
+                  final messenger = ScaffoldMessenger.of(context);
+                  final removed = await controller.removeMember(
                     userId: membership.userId,
+                  );
+                  if (removed == null || removed.wasSelfLeave) return;
+                  final kicked = removed.membership;
+                  messenger.showSnackBar(
+                    SnackBar(
+                      content: const Text('Участник удалён'),
+                      duration: const Duration(seconds: 10),
+                      action: SnackBarAction(
+                        label: 'Отменить',
+                        onPressed: () async {
+                          // Re-add restores editor/viewer (owners aren't
+                          // kicked). joinedAt is reassigned server-side.
+                          final restored = await controller.addMember(
+                            userId: kicked.userId,
+                            role: kicked.role,
+                            hasInviteGrant: kicked.hasInviteGrant,
+                          );
+                          messenger.showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                restored
+                                    ? 'Участник восстановлен'
+                                    : 'Не удалось восстановить участника',
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
                   );
                 },
               ),

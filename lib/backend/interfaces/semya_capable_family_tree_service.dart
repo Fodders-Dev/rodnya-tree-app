@@ -276,6 +276,26 @@ abstract class SemyaCapableFamilyTreeService {
     required String userId,
   });
 
+  /// Ship G (kick-undo): `POST /v1/semya/:id/membership`. Adds an
+  /// existing user as editor/viewer — a clean direct re-add (the inverse
+  /// of [removeMembership]), used to undo a kick. Idempotent: an existing
+  /// membership returns the current row. Permission: owner либо
+  /// editor-с-grant (backend enforces).
+  ///
+  /// The endpoint accepts only userId/role/hasInviteGrant — joinedAt /
+  /// invitedByUserId are assigned server-side, so a re-add can't perfectly
+  /// restore the original joinedAt. Only editor/viewer roles are accepted
+  /// (owners aren't kicked, so undo never needs to re-add an owner).
+  ///
+  /// Throws [SemyaError] для: USER_NOT_FOUND (404), SEMYA_NOT_FOUND (404),
+  /// FORBIDDEN (403 — caller not owner/grant), INVALID_INPUT (400).
+  Future<SemyaMembership> addMembership({
+    required String semyaId,
+    required String userId,
+    required SemyaRole role,
+    bool hasInviteGrant = false,
+  });
+
   /// Ship Q4a (2026-05-28, Ship 31): list caller's deleted persons
   /// across all семей (cross-семя view). Used by «Корзина» settings
   /// screen. Backend filters rows where caller deleter либо member

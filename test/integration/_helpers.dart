@@ -544,6 +544,34 @@ class IntegrationFakeService implements SemyaCapableFamilyTreeService {
   }
 
   @override
+  Future<SemyaMembership> addMembership({
+    required String semyaId,
+    required String userId,
+    required SemyaRole role,
+    bool hasInviteGrant = false,
+  }) async {
+    final members = _memberships[semyaId];
+    if (members == null) {
+      throw const SemyaError(
+        code: 'SEMYA_NOT_FOUND',
+        message: 'нет семьи',
+      );
+    }
+    final existing = members.indexWhere((m) => m.userId == userId);
+    if (existing >= 0) return members[existing];
+    final created = SemyaMembership(
+      id: 're-$userId',
+      semyaId: semyaId,
+      userId: userId,
+      role: role,
+      joinedAt: '2026-06-04T00:00:00.000Z',
+      hasInviteGrant: hasInviteGrant,
+    );
+    members.add(created);
+    return created;
+  }
+
+  @override
   Future<SemyaMembershipRemoveResult> removeMembership({
     required String semyaId,
     required String userId,

@@ -3109,6 +3109,43 @@ class CustomApiFamilyTreeService
   }
 
   @override
+  Future<SemyaMembership> addMembership({
+    required String semyaId,
+    required String userId,
+    required SemyaRole role,
+    bool hasInviteGrant = false,
+  }) async {
+    final trimmedSemya = semyaId.trim();
+    final trimmedUser = userId.trim();
+    if (trimmedSemya.isEmpty || trimmedUser.isEmpty) {
+      throw const SemyaError(
+        code: 'INVALID_INPUT',
+        message: 'Некорректные параметры',
+      );
+    }
+    try {
+      final response = await _requestJson(
+        method: 'POST',
+        path: '/v1/semya/$trimmedSemya/membership',
+        body: <String, dynamic>{
+          'userId': trimmedUser,
+          'role': role.serverValue,
+          'hasInviteGrant': hasInviteGrant,
+        },
+      );
+      final raw = response['membership'];
+      if (raw is! Map<String, dynamic>) {
+        throw const CustomApiException(
+          'addMembership: backend не вернул membership объект',
+        );
+      }
+      return SemyaMembership.fromJson(raw);
+    } on CustomApiException catch (e) {
+      throw _mapMembershipException(e, isRemove: false);
+    }
+  }
+
+  @override
   Future<SemyaMembershipRemoveResult> removeMembership({
     required String semyaId,
     required String userId,

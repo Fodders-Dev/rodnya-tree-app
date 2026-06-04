@@ -33,10 +33,14 @@ class _FakeService implements SemyaCapableFamilyTreeService {
 
   int updateCalls = 0;
   int removeCalls = 0;
+  int addCalls = 0;
   String? lastUpdateUserId;
   SemyaRole? lastUpdateRole;
   bool? lastUpdateGrant;
   String? lastRemoveUserId;
+  String? lastAddUserId;
+  SemyaRole? lastAddRole;
+  bool? lastAddGrant;
 
   @override
   Future<List<Semya>> listMySemya() async => const <Semya>[];
@@ -145,6 +149,29 @@ class _FakeService implements SemyaCapableFamilyTreeService {
     members = [...members];
     members[idx] = updated;
     return updated;
+  }
+
+  @override
+  Future<SemyaMembership> addMembership({
+    required String semyaId,
+    required String userId,
+    required SemyaRole role,
+    bool hasInviteGrant = false,
+  }) async {
+    addCalls += 1;
+    lastAddUserId = userId;
+    lastAddRole = role;
+    lastAddGrant = hasInviteGrant;
+    final created = SemyaMembership(
+      id: 're-$userId',
+      semyaId: semyaId,
+      userId: userId,
+      role: role,
+      joinedAt: '2026-06-04T00:00:00.000Z',
+      hasInviteGrant: hasInviteGrant,
+    );
+    members = [...members, created];
+    return created;
   }
 
   @override
@@ -403,6 +430,45 @@ void main() {
         controller.mutationErrorMessage,
         contains('последнего владельца'),
       );
+    });
+
+    // Ship G (kick-undo): kick → addMember re-adds the same member,
+    // preserving role + invite-grant (the undo-toast inverse).
+    test('kick → addMember restores the member (undo)', () async {
+      final service = _FakeService(
+        details: _details(),
+        members: [
+          _mem(id: 'mem-self', userId: 'u-owner', role: SemyaRole.owner),
+          _mem(
+            id: 'mem-target',
+            userId: 'u-target',
+            role: SemyaRole.editor,
+            hasInviteGrant: true,
+          ),
+        ],
+      );
+      final controller = SemyaDetailsController(
+        semyaId: 's-1',
+        service: service,
+      );
+      await controller.load();
+
+      final removed = await controller.removeMember(userId: 'u-target');
+      expect(removed, isNotNull);
+      expect(removed!.wasSelfLeave, isFalse);
+      expect(service.members.any((m) => m.userId == 'u-target'), isFalse);
+
+      final restored = await controller.addMember(
+        userId: removed.membership.userId,
+        role: removed.membership.role,
+        hasInviteGrant: removed.membership.hasInviteGrant,
+      );
+      expect(restored, isTrue);
+      expect(service.addCalls, 1);
+      expect(service.lastAddRole, SemyaRole.editor);
+      expect(service.lastAddGrant, isTrue);
+      expect(service.members.any((m) => m.userId == 'u-target'), isTrue);
+      expect(controller.mutationErrorMessage, isNull);
     });
   });
 
