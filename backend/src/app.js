@@ -67,6 +67,7 @@ const {
   registerPendingInvitationRoutes,
 } = require("./routes/pending-invitation-routes");
 const {registerPostRoutes} = require("./routes/post-routes");
+const {registerGatheringRoutes} = require("./routes/gathering-routes");
 const {registerProfileRoutes} = require("./routes/profile-routes");
 const {registerPushRoutes} = require("./routes/push-routes");
 const {
@@ -1385,6 +1386,38 @@ function createApp({
     };
   }
 
+  // Phase E1: serialize a Gathering for the API. Mirrors mapPost (branch
+  // fallback, public-url normalization, Array.isArray guards) plus the
+  // event-specific fields.
+  function mapGathering(gathering) {
+    const branchIds =
+      Array.isArray(gathering.branchIds) && gathering.branchIds.length > 0
+        ? gathering.branchIds
+        : (gathering.treeId ? [gathering.treeId] : []);
+    return {
+      id: gathering.id,
+      treeId: gathering.treeId,
+      branchIds,
+      authorId: gathering.authorId,
+      authorName: gathering.authorName || "Аноним",
+      authorPhotoUrl: normalizePublicUrl(gathering.authorPhotoUrl || null),
+      title: gathering.title || "",
+      description: gathering.description || null,
+      startAt: gathering.startAt || null,
+      endAt: gathering.endAt || null,
+      isAllDay: gathering.isAllDay === true,
+      place: gathering.place || null,
+      scopeType: gathering.scopeType === "branches" ? "branches" : "wholeTree",
+      circleId: gathering.circleId || null,
+      anchorPersonIds: Array.isArray(gathering.anchorPersonIds)
+        ? gathering.anchorPersonIds
+        : [],
+      rsvps: Array.isArray(gathering.rsvps) ? gathering.rsvps : [],
+      createdAt: gathering.createdAt,
+      updatedAt: gathering.updatedAt,
+    };
+  }
+
   function mapStory(story) {
     return {
       id: story.id,
@@ -2537,6 +2570,16 @@ function createApp({
     composeDisplayName,
     mapPost,
     mapComment,
+    createAndDispatchNotification,
+    pushGateway: resolvedPushGateway,
+  });
+
+  registerGatheringRoutes(app, {
+    store,
+    requireAuth,
+    requireTreeAccess,
+    composeDisplayName,
+    mapGathering,
     createAndDispatchNotification,
     pushGateway: resolvedPushGateway,
   });

@@ -166,6 +166,10 @@ const EMPTY_DB = {
   treeChangeRecords: [],
   notifications: [],
   posts: [],
+  // Phase E1: «Встреча» (Gathering) — family event invitations. Mirrors
+  // posts (circle-on-tree audience, multi-branch fan-out). RSVP rows
+  // land here in E3; create+delete only in E1.
+  gatherings: [],
   stories: [],
   comments: [],
   postReactions: [],
@@ -298,6 +302,9 @@ function normalizeDbState(parsed) {
       ? parsed.notifications
       : [],
     posts: Array.isArray(parsed?.posts) ? parsed.posts : [],
+    // Phase E1: backwards-compat — older data files without the
+    // gatherings field load as empty.
+    gatherings: Array.isArray(parsed?.gatherings) ? parsed.gatherings : [],
     stories: Array.isArray(parsed?.stories) ? parsed.stories : [],
     comments: Array.isArray(parsed?.comments) ? parsed.comments : [],
     postReactions: Array.isArray(parsed?.postReactions)
@@ -675,6 +682,63 @@ function createPostRecord({
     scopeType: scopeType === "branches" ? "branches" : "wholeTree",
     anchorPersonIds: normalizeParticipantIds(anchorPersonIds),
     circleId: normalizeNullableString(circleId),
+  };
+}
+
+// Phase E1: a «Встреча» (Gathering) — a family-event invitation. Mirrors
+// createPostRecord field-for-field where they overlap (treeId, branchIds,
+// author*, scopeType, anchorPersonIds, circleId) so the same circle-on-
+// tree audience + multi-branch fan-out machinery applies. Event-specific
+// fields: title, description, startAt/endAt (ISO strings), isAllDay,
+// place (free text). rsvps stays empty until E3.
+function createGatheringRecord({
+  treeId,
+  branchIds = null,
+  authorId,
+  authorName,
+  authorPhotoUrl = null,
+  title,
+  description = null,
+  startAt = null,
+  endAt = null,
+  isAllDay = false,
+  place = null,
+  scopeType = "wholeTree",
+  anchorPersonIds = [],
+  circleId = null,
+}) {
+  const timestamp = nowIso();
+  const normalizedBranchIds = Array.isArray(branchIds)
+    ? Array.from(
+        new Set(
+          branchIds
+            .map((value) => normalizeNullableString(value))
+            .filter(Boolean),
+        ),
+      )
+    : [];
+  if (normalizedBranchIds.length === 0 && treeId) {
+    normalizedBranchIds.push(treeId);
+  }
+  return {
+    id: crypto.randomUUID(),
+    treeId,
+    branchIds: normalizedBranchIds,
+    authorId,
+    authorName: String(authorName || "Аноним").trim() || "Аноним",
+    authorPhotoUrl: normalizeNullableString(authorPhotoUrl),
+    title: String(title || "").trim(),
+    description: normalizeNullableString(description),
+    startAt: normalizeNullableString(startAt),
+    endAt: normalizeNullableString(endAt),
+    isAllDay: isAllDay === true,
+    place: normalizeNullableString(place),
+    scopeType: scopeType === "branches" ? "branches" : "wholeTree",
+    anchorPersonIds: normalizeParticipantIds(anchorPersonIds),
+    circleId: normalizeNullableString(circleId),
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    rsvps: [], // Phase E3.
   };
 }
 
@@ -16145,6 +16209,169 @@ class FileStore {
       }
     }
     return Array.from(audienceUserIds);
+  }
+
+  // ── Phase E1: Gatherings (Встречи) ───────────────────────────────
+  // CRUD mirrors posts: circle-on-tree visibility, multi-branch fan-out
+  // audience. No soft-delete (E1 scope = create + hard delete by author).
+
+  async findGathering(gatheringId) {
+    const db = await this._read();
+    return db.gatherings.find((entry) => entry.id === gatheringId) || null;
+  }
+
+  async listGatherings({treeId = null, viewerUserId = null} = {}) {
+    const db = await this._read();
+    const defaultCirclesChanged = ensureCirclesForAllTrees(db);
+    if (defaultCirclesChanged) {
+      await this._write(db);
+    }
+    return db.gatherings
+      .filter((entry) => {
+        // Same tree/branch match posts use: if a treeId filter is set,
+        // the gathering matches when the requested tree is in its
+        // branchIds OR equals its legacy treeId.
+        if (treeId) {
+          const branchIds = Array.isArray(entry.branchIds)
+            ? entry.branchIds
+            : [];
+          const inBranches = branchIds.includes(treeId);
+          const matchesLegacyTreeId = entry.treeId === treeId;
+          if (!inBranches && !matchesLegacyTreeId) {
+            return false;
+          }
+        }
+        // Circle-on-tree visibility — identical gate to posts.
+        if (!this._canUserViewCirclePost(db, entry, viewerUserId)) {
+          return false;
+        }
+        return true;
+      })
+      .sort((left, right) =>
+        // Soonest gathering first (posts sort newest-first; an event
+        // list is more useful in chronological-upcoming order).
+        String(left.startAt || "").localeCompare(String(right.startAt || "")),
+      );
+  }
+
+  async createGathering({
+    treeId,
+    branchIds = null,
+    authorId,
+    authorName,
+    authorPhotoUrl = null,
+    title,
+    description = null,
+    startAt = null,
+    endAt = null,
+    isAllDay = false,
+    place = null,
+    scopeType = "wholeTree",
+    anchorPersonIds = [],
+    circleId = null,
+  }) {
+    const db = await this._read();
+    const tree = db.trees.find((entry) => entry.id === treeId);
+    const user = db.users.find((entry) => entry.id === authorId);
+    if (!tree || !user) {
+      return null;
+    }
+    const {allTreeCircle} = ensureCirclesForTree(db, tree);
+    const normalizedCircleId =
+      normalizeNullableString(circleId) || allTreeCircle?.id;
+    const targetCircle = db.circles.find(
+      (entry) => entry.treeId === treeId && entry.id === normalizedCircleId,
+    );
+    if (!targetCircle) {
+      return null;
+    }
+
+    // Phase 3.4-style multi-branch: validate every branchId resolves to
+    // a tree the author can access (mirror createPost).
+    let resolvedBranchIds = null;
+    if (Array.isArray(branchIds) && branchIds.length > 0) {
+      const accessibleTreeIds = new Set(
+        db.trees
+          .filter((entry) => this._userCanAccessTreeRecord(entry, authorId))
+          .map((entry) => entry.id),
+      );
+      resolvedBranchIds = Array.from(
+        new Set(
+          branchIds
+            .map((value) => normalizeNullableString(value))
+            .filter((value) => value && accessibleTreeIds.has(value)),
+        ),
+      );
+      if (!resolvedBranchIds.includes(treeId)) {
+        resolvedBranchIds.unshift(treeId);
+      }
+    }
+
+    const gathering = createGatheringRecord({
+      treeId,
+      branchIds: resolvedBranchIds,
+      authorId,
+      authorName,
+      authorPhotoUrl,
+      title,
+      description,
+      startAt,
+      endAt,
+      isAllDay,
+      place,
+      scopeType,
+      anchorPersonIds,
+      circleId: targetCircle.id,
+    });
+    // A gathering needs at least a name and a start time.
+    if (!gathering.title || !gathering.startAt) {
+      return false;
+    }
+
+    db.gatherings.push(gathering);
+    await this._write(db);
+    return gathering;
+  }
+
+  // Audience = union of tree.memberIds across every branch the gathering
+  // was fanned out to, minus the author. Clone of
+  // resolvePostAudienceUserIds so the route layer can dispatch
+  // gathering_created push/realtime/inbox the same way.
+  async resolveGatheringAudienceUserIds(gatheringId) {
+    const db = await this._read();
+    const gathering = db.gatherings.find((entry) => entry.id === gatheringId);
+    if (!gathering) return [];
+    const branchIds = new Set(
+      Array.isArray(gathering.branchIds) && gathering.branchIds.length > 0
+        ? gathering.branchIds
+        : [gathering.treeId].filter(Boolean),
+    );
+    const audienceUserIds = new Set();
+    for (const branchId of branchIds) {
+      const tree = db.trees.find((entry) => entry.id === branchId);
+      if (!tree) continue;
+      const memberIds = Array.isArray(tree.memberIds) ? tree.memberIds : [];
+      for (const memberId of memberIds) {
+        if (!memberId) continue;
+        if (memberId === gathering.authorId) continue;
+        audienceUserIds.add(memberId);
+      }
+    }
+    return Array.from(audienceUserIds);
+  }
+
+  async deleteGathering(gatheringId, actorUserId) {
+    const db = await this._read();
+    const index = db.gatherings.findIndex((entry) => entry.id === gatheringId);
+    if (index < 0) {
+      return null;
+    }
+    if (db.gatherings[index].authorId !== actorUserId) {
+      return false; // Only the author may delete (route maps → 403).
+    }
+    const [removed] = db.gatherings.splice(index, 1);
+    await this._write(db);
+    return removed;
   }
 
   async deletePost(postId, actorUserId) {
