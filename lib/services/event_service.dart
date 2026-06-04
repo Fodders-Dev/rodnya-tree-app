@@ -216,149 +216,316 @@ class EventService {
         .toList();
   }
 
-  List<AppEvent> _buildRussianHolidayEvents(DateTime today) {
-    final years = [today.year, today.year + 1];
-    const definitions = <_AnnualHolidayDefinition>[
-      _AnnualHolidayDefinition(
-        month: 1,
-        day: 1,
-        title: 'Новый год',
-        icon: Icons.celebration_outlined,
-      ),
-      _AnnualHolidayDefinition(
-        month: 2,
-        day: 23,
-        title: 'День защитника Отечества',
-        icon: Icons.shield_outlined,
-      ),
-      _AnnualHolidayDefinition(
-        month: 3,
-        day: 8,
-        title: 'Международный женский день',
-        icon: Icons.local_florist_outlined,
-      ),
-      _AnnualHolidayDefinition(
-        month: 5,
-        day: 1,
-        title: 'Праздник Весны и Труда',
-        icon: Icons.park_outlined,
-      ),
-      _AnnualHolidayDefinition(
-        month: 5,
-        day: 9,
-        title: 'День Победы',
-        icon: Icons.star_outline,
-      ),
-      _AnnualHolidayDefinition(
-        month: 6,
-        day: 12,
-        title: 'День России',
-        icon: Icons.flag_outlined,
-      ),
-      _AnnualHolidayDefinition(
-        month: 11,
-        day: 4,
-        title: 'День народного единства',
-        icon: Icons.groups_2_outlined,
-      ),
-    ];
+  // Fixed-date Russian state/observance holidays. Shared by the
+  // upcoming-feed builder and the calendar grid (per-year builder).
+  static const List<_AnnualHolidayDefinition> _russianHolidayDefs =
+      <_AnnualHolidayDefinition>[
+    _AnnualHolidayDefinition(
+      month: 1,
+      day: 1,
+      title: 'Новый год',
+      icon: Icons.celebration_outlined,
+    ),
+    _AnnualHolidayDefinition(
+      month: 2,
+      day: 23,
+      title: 'День защитника Отечества',
+      icon: Icons.shield_outlined,
+    ),
+    _AnnualHolidayDefinition(
+      month: 3,
+      day: 8,
+      title: 'Международный женский день',
+      icon: Icons.local_florist_outlined,
+    ),
+    _AnnualHolidayDefinition(
+      month: 5,
+      day: 1,
+      title: 'Праздник Весны и Труда',
+      icon: Icons.park_outlined,
+    ),
+    _AnnualHolidayDefinition(
+      month: 5,
+      day: 9,
+      title: 'День Победы',
+      icon: Icons.star_outline,
+    ),
+    _AnnualHolidayDefinition(
+      month: 6,
+      day: 12,
+      title: 'День России',
+      icon: Icons.flag_outlined,
+    ),
+    _AnnualHolidayDefinition(
+      month: 11,
+      day: 4,
+      title: 'День народного единства',
+      icon: Icons.groups_2_outlined,
+    ),
+  ];
 
-    return years
-        .expand(
-          (year) => definitions.map(
-            (holiday) => AppEvent(
-              id: 'rf_${holiday.month}_${holiday.day}_$year',
-              type: AppEventType.russianHoliday,
-              date: DateTime(year, holiday.month, holiday.day),
-              title: holiday.title,
-              personName: 'Государственный праздник',
-              personId: '',
-              icon: holiday.icon,
-            ),
+  /// All Russian holidays placed in a concrete [year] (no upcoming
+  /// filter) — the calendar grid wants every date, past included.
+  List<AppEvent> _russianHolidaysForYear(int year) {
+    return _russianHolidayDefs
+        .map(
+          (holiday) => AppEvent(
+            id: 'rf_${holiday.month}_${holiday.day}_$year',
+            type: AppEventType.russianHoliday,
+            date: DateTime(year, holiday.month, holiday.day),
+            title: holiday.title,
+            personName: 'Государственный праздник',
+            personId: '',
+            icon: holiday.icon,
           ),
         )
+        .toList();
+  }
+
+  List<AppEvent> _buildRussianHolidayEvents(DateTime today) {
+    return [today.year, today.year + 1]
+        .expand(_russianHolidaysForYear)
         .where((event) => _isUpcoming(event.date, today))
         .toList();
   }
 
+  /// All Orthodox holidays placed in a concrete [year] (no upcoming
+  /// filter). Movable feasts derive from [_orthodoxEaster].
+  List<AppEvent> _orthodoxHolidaysForYear(int year) {
+    final easter = _orthodoxEaster(year);
+    final definitions = <_DatedHolidayDefinition>[
+      _DatedHolidayDefinition(
+        date: DateTime(year, 1, 7),
+        title: 'Рождество Христово',
+        icon: Icons.auto_awesome_outlined,
+      ),
+      _DatedHolidayDefinition(
+        date: DateTime(year, 1, 19),
+        title: 'Крещение Господне',
+        icon: Icons.water_drop_outlined,
+      ),
+      _DatedHolidayDefinition(
+        date: DateTime(year, 4, 7),
+        title: 'Благовещение',
+        icon: Icons.wb_twilight_outlined,
+      ),
+      _DatedHolidayDefinition(
+        date: easter.subtract(const Duration(days: 7)),
+        title: 'Вербное воскресенье',
+        icon: Icons.spa_outlined,
+      ),
+      _DatedHolidayDefinition(
+        date: easter,
+        title: 'Пасха',
+        icon: Icons.church_outlined,
+      ),
+      _DatedHolidayDefinition(
+        date: easter.add(const Duration(days: 39)),
+        title: 'Вознесение',
+        icon: Icons.flight_takeoff_outlined,
+      ),
+      _DatedHolidayDefinition(
+        date: easter.add(const Duration(days: 49)),
+        title: 'Троица',
+        icon: Icons.forest_outlined,
+      ),
+      _DatedHolidayDefinition(
+        date: DateTime(year, 8, 19),
+        title: 'Преображение',
+        icon: Icons.wb_sunny_outlined,
+      ),
+      _DatedHolidayDefinition(
+        date: DateTime(year, 8, 28),
+        title: 'Успение Богородицы',
+        icon: Icons.nightlight_outlined,
+      ),
+      _DatedHolidayDefinition(
+        date: DateTime(year, 9, 21),
+        title: 'Рождество Богородицы',
+        icon: Icons.favorite_outline,
+      ),
+      _DatedHolidayDefinition(
+        date: DateTime(year, 9, 27),
+        title: 'Воздвижение Креста',
+        icon: Icons.add_road_outlined,
+      ),
+    ];
+
+    return definitions
+        .map(
+          (holiday) => AppEvent(
+            id: 'orthodox_${holiday.title}_${holiday.date.toIso8601String()}',
+            type: AppEventType.orthodoxHoliday,
+            date: holiday.date,
+            title: holiday.title,
+            personName: 'Православный календарь',
+            personId: '',
+            icon: holiday.icon,
+          ),
+        )
+        .toList();
+  }
+
   List<AppEvent> _buildOrthodoxHolidayEvents(DateTime today) {
-    final years = [today.year, today.year + 1];
-
-    return years
-        .expand((year) {
-          final easter = _orthodoxEaster(year);
-          final definitions = <_DatedHolidayDefinition>[
-            _DatedHolidayDefinition(
-              date: DateTime(year, 1, 7),
-              title: 'Рождество Христово',
-              icon: Icons.auto_awesome_outlined,
-            ),
-            _DatedHolidayDefinition(
-              date: DateTime(year, 1, 19),
-              title: 'Крещение Господне',
-              icon: Icons.water_drop_outlined,
-            ),
-            _DatedHolidayDefinition(
-              date: DateTime(year, 4, 7),
-              title: 'Благовещение',
-              icon: Icons.wb_twilight_outlined,
-            ),
-            _DatedHolidayDefinition(
-              date: easter.subtract(const Duration(days: 7)),
-              title: 'Вербное воскресенье',
-              icon: Icons.spa_outlined,
-            ),
-            _DatedHolidayDefinition(
-              date: easter,
-              title: 'Пасха',
-              icon: Icons.church_outlined,
-            ),
-            _DatedHolidayDefinition(
-              date: easter.add(const Duration(days: 39)),
-              title: 'Вознесение',
-              icon: Icons.flight_takeoff_outlined,
-            ),
-            _DatedHolidayDefinition(
-              date: easter.add(const Duration(days: 49)),
-              title: 'Троица',
-              icon: Icons.forest_outlined,
-            ),
-            _DatedHolidayDefinition(
-              date: DateTime(year, 8, 19),
-              title: 'Преображение',
-              icon: Icons.wb_sunny_outlined,
-            ),
-            _DatedHolidayDefinition(
-              date: DateTime(year, 8, 28),
-              title: 'Успение Богородицы',
-              icon: Icons.nightlight_outlined,
-            ),
-            _DatedHolidayDefinition(
-              date: DateTime(year, 9, 21),
-              title: 'Рождество Богородицы',
-              icon: Icons.favorite_outline,
-            ),
-            _DatedHolidayDefinition(
-              date: DateTime(year, 9, 27),
-              title: 'Воздвижение Креста',
-              icon: Icons.add_road_outlined,
-            ),
-          ];
-
-          return definitions.map(
-            (holiday) => AppEvent(
-              id: 'orthodox_${holiday.title}_${holiday.date.toIso8601String()}',
-              type: AppEventType.orthodoxHoliday,
-              date: holiday.date,
-              title: holiday.title,
-              personName: 'Православный календарь',
-              personId: '',
-              icon: holiday.icon,
-            ),
-          );
-        })
+    return [today.year, today.year + 1]
+        .expand(_orthodoxHolidaysForYear)
         .where((event) => _isUpcoming(event.date, today))
         .toList();
+  }
+
+  /// Calendar-grid scope: every family + holiday event that falls in
+  /// [year], month [month] — past dates included, no upcoming filter, no
+  /// cap (the grid shows the whole month). Recurring family dates
+  /// (birthday / death anniversary / annual custom / wedding) are placed
+  /// at their occurrence in [year]; one-time events (memorials, non-
+  /// repeating custom) appear only in their actual year.
+  Future<List<AppEvent>> getEventsForMonth(
+    String treeId,
+    int year,
+    int month,
+  ) async {
+    try {
+      final results = await Future.wait<dynamic>([
+        _familyTreeService.getRelatives(treeId),
+        _familyTreeService.getRelations(treeId),
+      ]);
+      final relatives = results[0] as List<FamilyPerson>;
+      final relations = results[1] as List<FamilyRelation>;
+      final all = _buildEventsForYear(
+        relatives: relatives,
+        relations: relations,
+        year: year,
+      );
+      final inMonth = all
+          .where((e) => e.date.year == year && e.date.month == month)
+          .toList()
+        ..sort((a, b) {
+          final byDate = a.date.compareTo(b.date);
+          return byDate != 0
+              ? byDate
+              : _typePriority(a.type).compareTo(_typePriority(b.type));
+        });
+      return inMonth;
+    } catch (e, s) {
+      debugPrint('[EventService] getEventsForMonth error: $e\n$s');
+      return [];
+    }
+  }
+
+  /// All events whose occurrence lands in [year]. Mirrors the
+  /// getUpcomingEvents derivation but year-anchored (no upcoming filter)
+  /// — kept separate from getUpcomingEvents so that feed behaviour is
+  /// untouched.
+  List<AppEvent> _buildEventsForYear({
+    required List<FamilyPerson> relatives,
+    required List<FamilyRelation> relations,
+    required int year,
+  }) {
+    final out = <AppEvent>[];
+    final relativesById = <String, FamilyPerson>{
+      for (final person in relatives) person.id: person,
+    };
+
+    for (final person in relatives) {
+      final birth = person.birthDate;
+      if (birth != null) {
+        out.add(AppEvent(
+          id: '${person.id}_birthday_$year',
+          type: AppEventType.birthday,
+          date: DateTime(year, birth.month, birth.day),
+          title: 'День рождения',
+          personName: person.name,
+          personId: person.id,
+          icon: Icons.cake_outlined,
+        ));
+      }
+
+      if (!person.isAlive && person.deathDate != null) {
+        final death = person.deathDate!;
+        out.add(AppEvent(
+          id: '${person.id}_death_anniversary_$year',
+          type: AppEventType.deathAnniversary,
+          date: DateTime(year, death.month, death.day),
+          title: 'Годовщина памяти',
+          personName: person.name,
+          personId: person.id,
+          icon: Icons.auto_awesome_mosaic_outlined,
+        ));
+        final memorial9 = death.add(const Duration(days: 8));
+        if (memorial9.year == year) {
+          out.add(AppEvent(
+            id: '${person.id}_memorial9',
+            type: AppEventType.memorial9days,
+            date: memorial9,
+            title: '9 дней',
+            personName: person.name,
+            personId: person.id,
+            icon: Icons.church_outlined,
+          ));
+        }
+        final memorial40 = death.add(const Duration(days: 39));
+        if (memorial40.year == year) {
+          out.add(AppEvent(
+            id: '${person.id}_memorial40',
+            type: AppEventType.memorial40days,
+            date: memorial40,
+            title: '40 дней',
+            personName: person.name,
+            personId: person.id,
+            icon: Icons.church_outlined,
+          ));
+        }
+      }
+
+      final customEvents = person.details?.importantEvents;
+      if (customEvents != null) {
+        for (final ev in customEvents) {
+          final date = ev.repeatsAnnually
+              ? DateTime(year, ev.date.month, ev.date.day)
+              : DateTime(ev.date.year, ev.date.month, ev.date.day);
+          if (!ev.repeatsAnnually && date.year != year) continue;
+          out.add(AppEvent(
+            id: '${person.id}_custom_${ev.title}_${ev.date.toIso8601String()}_$year',
+            type: AppEventType.customFamilyEvent,
+            date: date,
+            title: ev.title,
+            personName: person.name,
+            personId: person.id,
+            icon: Icons.event_outlined,
+          ));
+        }
+      }
+    }
+
+    for (final relation in relations) {
+      if (relation.relation1to2 != RelationType.spouse &&
+          relation.relation2to1 != RelationType.spouse) {
+        continue;
+      }
+      final marriage = relation.marriageDate;
+      if (marriage == null || marriage.year > year) continue;
+      final divorce = relation.divorceDate;
+      if (divorce != null && year > divorce.year) continue;
+      final p1 = relativesById[relation.person1Id];
+      final p2 = relativesById[relation.person2Id];
+      final names = [p1?.name, p2?.name]
+          .whereType<String>()
+          .where((n) => n.trim().isNotEmpty)
+          .toList();
+      out.add(AppEvent(
+        id: '${relation.id}_wedding_anniversary_$year',
+        type: AppEventType.weddingAnniversary,
+        date: DateTime(year, marriage.month, marriage.day),
+        title: 'Годовщина свадьбы',
+        personName: names.isEmpty ? 'Семейная пара' : names.join(' и '),
+        personId: p1?.id ?? p2?.id ?? '',
+        icon: Icons.favorite_outline,
+      ));
+    }
+
+    out.addAll(_russianHolidaysForYear(year));
+    out.addAll(_orthodoxHolidaysForYear(year));
+    return out;
   }
 
   DateTime _nextAnnualOccurrence(DateTime source, DateTime today) {

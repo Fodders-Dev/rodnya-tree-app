@@ -792,6 +792,17 @@ class _HomeScreenState extends State<HomeScreen>
             const Spacer(),
             _buildTopbarIconButton(
               tokens: tokens,
+              tooltip: 'Календарь',
+              onTap: () => context.push('/calendar'),
+              child: Icon(
+                Icons.calendar_month_outlined,
+                size: 20,
+                color: tokens.accent,
+              ),
+            ),
+            const SizedBox(width: 8),
+            _buildTopbarIconButton(
+              tokens: tokens,
               tooltip: 'Альбом семьи',
               onTap: () => context.push('/post/album'),
               child: Icon(

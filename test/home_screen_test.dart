@@ -284,6 +284,8 @@ void main() {
       expect(find.byType(FloatingActionButton), findsNothing);
       // Album v1: «Альбом семьи» entry lives in the topbar.
       expect(find.byIcon(Icons.photo_library_outlined), findsOneWidget);
+      // Calendar v1: «Календарь» entry in the topbar.
+      expect(find.byIcon(Icons.calendar_month_outlined), findsOneWidget);
     },
   );
 

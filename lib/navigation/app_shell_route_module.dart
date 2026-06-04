@@ -14,6 +14,7 @@ import '../providers/tree_provider.dart';
 import '../screens/about_screen.dart';
 import '../screens/access_grants_screen.dart';
 import '../screens/family_album_screen.dart';
+import '../screens/family_calendar_screen.dart';
 import '../screens/add_relative_screen.dart';
 import '../screens/blocked_users_screen.dart';
 import '../screens/qr_login_scan_screen.dart';
@@ -186,6 +187,18 @@ class AppShellRouteModule {
                   key: state.pageKey,
                   constrainWidth: true,
                   child: const FamilyAlbumScreen(),
+                  transitionsBuilder: AppRouteTransitions.slide,
+                ),
+              ),
+              GoRoute(
+                // Calendar v1: «Календарь» — month grid of family dates +
+                // holidays. Full-screen pushed route.
+                path: 'calendar',
+                parentNavigatorKey: rootNavigatorKey,
+                pageBuilder: (context, state) => RodnyaCustomTransitionPage(
+                  key: state.pageKey,
+                  constrainWidth: true,
+                  child: const FamilyCalendarScreen(),
                   transitionsBuilder: AppRouteTransitions.slide,
                 ),
               ),

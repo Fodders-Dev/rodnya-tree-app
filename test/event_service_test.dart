@@ -220,6 +220,79 @@ void main() {
       );
     },
   );
+
+  // ── Calendar grid (A): getEventsForMonth ──
+
+  test('getEventsForMonth returns past + future dates in the month, no cap',
+      () async {
+    final service = EventService(
+      familyTreeService: _FakeFamilyTreeService(
+        relatives: [
+          FamilyPerson(
+            id: 'p-early',
+            treeId: 'tree-1',
+            name: 'Ранний',
+            gender: Gender.male,
+            birthDate: DateTime(1990, 4, 3), // early April
+            isAlive: true,
+            createdAt: DateTime(2024, 1, 1),
+            updatedAt: DateTime(2024, 1, 1),
+          ),
+          FamilyPerson(
+            id: 'p-late',
+            treeId: 'tree-1',
+            name: 'Поздняя',
+            gender: Gender.female,
+            birthDate: DateTime(1985, 4, 25), // late April
+            isAlive: true,
+            createdAt: DateTime(2024, 1, 1),
+            updatedAt: DateTime(2024, 1, 1),
+          ),
+        ],
+      ),
+      nowProvider: () => DateTime(2026, 4, 15, 10), // mid-April «now»
+    );
+
+    final april = await service.getEventsForMonth('tree-1', 2026, 4);
+
+    // Year-anchored to 2026, no upcoming filter: the Apr-3 birthday
+    // (already past on Apr 15) is present AT 2026-04-03 — getUpcomingEvents
+    // would have pushed it to next year.
+    expect(
+      april.any((e) =>
+          e.type == AppEventType.birthday && e.date == DateTime(2026, 4, 3)),
+      isTrue,
+    );
+    expect(
+      april.any((e) =>
+          e.type == AppEventType.birthday && e.date == DateTime(2026, 4, 25)),
+      isTrue,
+    );
+    // Every event lands in the requested month.
+    expect(
+      april.every((e) => e.date.year == 2026 && e.date.month == 4),
+      isTrue,
+    );
+  });
+
+  test('getEventsForMonth includes fixed holidays of the month', () async {
+    final service = EventService(
+      familyTreeService: _FakeFamilyTreeService(relatives: const []),
+      nowProvider: () => DateTime(2026, 1, 1),
+    );
+
+    final may = await service.getEventsForMonth('tree-1', 2026, 5);
+    final mayTitles = may.map((e) => e.title).toSet();
+    expect(mayTitles, contains('Праздник Весны и Труда')); // 1 мая
+    expect(mayTitles, contains('День Победы')); // 9 мая
+    expect(may.every((e) => e.date.month == 5), isTrue);
+
+    final feb = await service.getEventsForMonth('tree-1', 2026, 2);
+    expect(
+      feb.any((e) => e.title == 'День защитника Отечества'),
+      isTrue,
+    );
+  });
 }
 
 class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
