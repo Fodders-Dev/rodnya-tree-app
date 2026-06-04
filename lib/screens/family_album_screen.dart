@@ -14,6 +14,7 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
+import 'package:intl/intl.dart';
 
 import '../backend/interfaces/post_service_interface.dart';
 import '../models/post.dart';
@@ -33,6 +34,57 @@ class _AlbumPhoto {
   final String authorId;
   final String authorName;
   final DateTime createdAt;
+}
+
+/// A photo plus its position in the full (filtered) album, so a thumb in
+/// any month section can open the lightbox at the right global index.
+class _IndexedPhoto {
+  const _IndexedPhoto({required this.photo, required this.globalIndex});
+
+  final _AlbumPhoto photo;
+  final int globalIndex;
+}
+
+class _MonthSection {
+  _MonthSection({required this.month});
+
+  final DateTime month;
+  final List<_IndexedPhoto> items = [];
+}
+
+class _MonthHeaderDelegate extends SliverPersistentHeaderDelegate {
+  _MonthHeaderDelegate({
+    required this.label,
+    required this.background,
+    required this.textStyle,
+  });
+
+  final String label;
+  final Color background;
+  final TextStyle? textStyle;
+
+  static const double _height = 40;
+
+  @override
+  double get minExtent => _height;
+
+  @override
+  double get maxExtent => _height;
+
+  @override
+  Widget build(BuildContext context, double shrinkOffset, bool overlaps) {
+    return Container(
+      height: _height,
+      color: background,
+      alignment: Alignment.centerLeft,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      child: Text(label, style: textStyle),
+    );
+  }
+
+  @override
+  bool shouldRebuild(_MonthHeaderDelegate old) =>
+      old.label != label || old.background != background;
 }
 
 class FamilyAlbumScreen extends StatefulWidget {
@@ -189,7 +241,7 @@ class _FamilyAlbumScreenState extends State<FamilyAlbumScreen> {
                 Expanded(
                   child: visible.isEmpty
                       ? _buildEmpty(theme, tokens)
-                      : _buildGrid(theme, visible),
+                      : _buildSections(theme, tokens, visible),
                 ),
               ],
             ),
@@ -228,27 +280,81 @@ class _FamilyAlbumScreenState extends State<FamilyAlbumScreen> {
     );
   }
 
-  Widget _buildGrid(ThemeData theme, List<_AlbumPhoto> photos) {
+  /// Group [photos] (already newest-first) into month buckets — because
+  /// the list is date-sorted, every month's photos are contiguous, so a
+  /// single pass yields newest-month-first sections without a map. Each
+  /// thumb keeps its global index so the lightbox still pages the whole
+  /// album in chronology.
+  List<_MonthSection> _groupByMonth(List<_AlbumPhoto> photos) {
+    final sections = <_MonthSection>[];
+    for (var i = 0; i < photos.length; i++) {
+      final photo = photos[i];
+      final month = DateTime(photo.createdAt.year, photo.createdAt.month);
+      if (sections.isEmpty || sections.last.month != month) {
+        sections.add(_MonthSection(month: month));
+      }
+      sections.last.items.add(_IndexedPhoto(photo: photo, globalIndex: i));
+    }
+    return sections;
+  }
+
+  String _monthLabel(DateTime month) {
+    // Standalone (nominative) month name: «Июнь 2026», not «июня».
+    final raw = DateFormat('LLLL yyyy', 'ru').format(month);
+    return raw.isEmpty ? raw : raw[0].toUpperCase() + raw.substring(1);
+  }
+
+  Widget _buildSections(
+    ThemeData theme,
+    RodnyaDesignTokens tokens,
+    List<_AlbumPhoto> photos,
+  ) {
+    final sections = _groupByMonth(photos);
     // Full-screen route (pushed on the root navigator like post/search) →
     // no bottom nav, so we only clear the device safe-area inset.
     final bottomInset = MediaQuery.of(context).viewPadding.bottom;
-    return GridView.builder(
-      padding: EdgeInsets.fromLTRB(12, 12, 12, 12 + bottomInset),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 3,
-        crossAxisSpacing: 8,
-        mainAxisSpacing: 8,
-      ),
-      itemCount: photos.length,
-      itemBuilder: (_, i) => _buildThumb(theme, photos, i),
+    return CustomScrollView(
+      slivers: [
+        for (final section in sections) ...[
+          SliverPersistentHeader(
+            pinned: true,
+            delegate: _MonthHeaderDelegate(
+              label: _monthLabel(section.month),
+              background: theme.scaffoldBackgroundColor,
+              textStyle: theme.textTheme.titleSmall?.copyWith(
+                fontFamily: 'Lora',
+                fontWeight: FontWeight.w700,
+                color: tokens.ink,
+              ),
+            ),
+          ),
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
+            sliver: SliverGrid(
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 3,
+                crossAxisSpacing: 8,
+                mainAxisSpacing: 8,
+              ),
+              delegate: SliverChildBuilderDelegate(
+                (_, i) {
+                  final indexed = section.items[i];
+                  return _buildThumb(theme, indexed.photo, indexed.globalIndex);
+                },
+                childCount: section.items.length,
+              ),
+            ),
+          ),
+        ],
+        SliverToBoxAdapter(child: SizedBox(height: bottomInset)),
+      ],
     );
   }
 
-  Widget _buildThumb(ThemeData theme, List<_AlbumPhoto> photos, int index) {
-    final photo = photos[index];
+  Widget _buildThumb(ThemeData theme, _AlbumPhoto photo, int globalIndex) {
     return GestureDetector(
-      key: Key('album-thumb-$index'),
-      onTap: () => _openLightbox(index),
+      key: Key('album-thumb-$globalIndex'),
+      onTap: () => _openLightbox(globalIndex),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(12),
         child: CachedNetworkImage(

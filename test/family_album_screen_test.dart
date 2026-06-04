@@ -3,6 +3,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:rodnya/backend/interfaces/post_service_interface.dart';
 import 'package:rodnya/models/post.dart';
 import 'package:rodnya/screens/family_album_screen.dart';
@@ -50,6 +51,10 @@ Widget _host(_FakePostService svc) => MaterialApp(
     );
 
 void main() {
+  setUpAll(() async {
+    await initializeDateFormatting('ru');
+  });
+
   testWidgets('renders photos from all posts in a grid (newest-first)',
       (tester) async {
     final svc = _FakePostService(
@@ -125,6 +130,54 @@ void main() {
     expect(find.textContaining('Поделись первым моментом'), findsOneWidget);
     expect(find.byKey(const Key('album-thumb-0')), findsNothing);
   });
+
+  testWidgets(
+    'groups photos into month sections (newest first) and filters within them',
+    (tester) async {
+      final svc = _FakePostService(
+        posts: [
+          _post(
+            id: 'p-jun',
+            authorId: 'a1',
+            authorName: 'Анна',
+            imageUrls: const ['https://example.com/jun.jpg'],
+            createdAt: DateTime(2026, 6, 3),
+          ),
+          _post(
+            id: 'p-may1',
+            authorId: 'a2',
+            authorName: 'Иван',
+            imageUrls: const ['https://example.com/may1.jpg'],
+            createdAt: DateTime(2026, 5, 20),
+          ),
+          _post(
+            id: 'p-may2',
+            authorId: 'a1',
+            authorName: 'Анна',
+            imageUrls: const ['https://example.com/may2.jpg'],
+            createdAt: DateTime(2026, 5, 1),
+          ),
+        ],
+      );
+
+      await tester.pumpWidget(_host(svc));
+      await tester.pumpAndSettle();
+
+      // Two month sections; all three photos placed (global indices 0..2).
+      expect(find.text('Июнь 2026'), findsOneWidget);
+      expect(find.text('Май 2026'), findsOneWidget);
+      expect(find.byKey(const Key('album-thumb-0')), findsOneWidget);
+      expect(find.byKey(const Key('album-thumb-2')), findsOneWidget);
+
+      // Filter to Иван (May only) → June section disappears.
+      await tester.tap(find.text('Иван'));
+      await tester.pumpAndSettle();
+      expect(find.text('Май 2026'), findsOneWidget);
+      expect(find.text('Июнь 2026'), findsNothing);
+      expect(find.byKey(const Key('album-thumb-0')), findsOneWidget);
+      expect(find.byKey(const Key('album-thumb-1')), findsNothing);
+    },
+  );
 
   testWidgets('tapping a thumb opens the MediaLightbox', (tester) async {
     final svc = _FakePostService(
