@@ -86,6 +86,13 @@ class _HomeScreenState extends State<HomeScreen>
   String? _selectedFeedBranchId;
   TreeProvider? _treeProviderInstance;
   final ScrollController _eventRailController = ScrollController();
+  // H (scroll-aware compose FAB): once the inline compose teaser scrolls
+  // off the top of the feed, surface a compact «Написать» FAB so compose
+  // stays reachable on a long feed. One dominant compose path per state
+  // (teaser at top OR FAB below — never both).
+  final ScrollController _feedScrollController = ScrollController();
+  bool _showComposeFab = false;
+  static const double _composeFabScrollThreshold = 200.0;
   final GlobalKey _eventRailRegionKey = GlobalKey();
   CancelWebWheelListener? _cancelWebWheelSubscription;
   int _webWheelEventCount = 0;
@@ -122,6 +129,7 @@ class _HomeScreenState extends State<HomeScreen>
     super.initState();
     _eventService = EventService();
     _eventRailController.addListener(_handleEventRailScrollChanged);
+    _feedScrollController.addListener(_handleFeedScroll);
     if (kIsWeb) {
       _cancelWebWheelSubscription =
           registerWebWheelListener(_handleWebEventRailWheel);
@@ -170,9 +178,22 @@ class _HomeScreenState extends State<HomeScreen>
     HardwareKeyboard.instance.removeHandler(_handleHomeKeyEvent);
     _treeProviderInstance?.removeListener(_handleTreeChange);
     _eventRailController.removeListener(_handleEventRailScrollChanged);
+    _feedScrollController.removeListener(_handleFeedScroll);
     _cancelWebWheelSubscription?.call();
     _eventRailController.dispose();
+    _feedScrollController.dispose();
     super.dispose();
+  }
+
+  /// H: toggle the compose FAB once the feed has scrolled past the inline
+  /// teaser. Only the narrow CustomScrollView attaches this controller,
+  /// so on wide layouts `hasClients` is false and the FAB stays hidden.
+  void _handleFeedScroll() {
+    if (!_feedScrollController.hasClients) return;
+    final show = _feedScrollController.offset > _composeFabScrollThreshold;
+    if (show != _showComposeFab && mounted) {
+      setState(() => _showComposeFab = show);
+    }
   }
 
   @override
@@ -599,15 +620,29 @@ class _HomeScreenState extends State<HomeScreen>
         preferredSize: Size.fromHeight(AppTheme.topbarHeight(context)),
         child: _buildHomeTopbar(theme: theme, tokens: tokens),
       ),
-      // CTA hierarchy (UX-audit 2.2): the feed had three competing
-      // create affordances — this FAB, the inline compose teaser, and
-      // the empty-state «Написать» — all firing /post/create. The warm
-      // inline teaser (avatar + «Поделиться с роднёй…» + photo/video
-      // quick actions) is the single dominant compose CTA now; the FAB
-      // was a bare duplicate and is removed. (If long-feed reachability
-      // ever needs it back, a scroll-aware FAB that appears only once
-      // the teaser scrolls off is the follow-up — not a second
-      // always-on button.)
+      // CTA hierarchy (P4b → H): the inline compose teaser is the
+      // dominant compose CTA at the top of the feed; once it scrolls off
+      // (offset past _composeFabScrollThreshold) this compact «Написать»
+      // FAB takes over so compose stays reachable on a long feed. One
+      // dominant path per state — Scaffold animates the FAB in/out as it
+      // toggles null↔widget. Padded above the floating nav (extendBody).
+      floatingActionButton: (hasSelectedTree && _showComposeFab)
+          ? Padding(
+              padding: EdgeInsets.only(
+                bottom: AppTheme.bottomNavInset(context),
+              ),
+              child: FloatingActionButton(
+                key: const Key('compose-fab'),
+                onPressed: () => context.push('/post/create'),
+                backgroundColor: tokens.accent,
+                foregroundColor: tokens.accentInk,
+                elevation: 4,
+                shape: const CircleBorder(),
+                tooltip: 'Написать пост',
+                child: const Icon(Icons.edit_outlined, size: 22),
+              ),
+            )
+          : null,
       body: RefreshIndicator(
         onRefresh: () async {
           await _customNotificationService?.refreshUnreadNotificationsCount();
@@ -835,6 +870,7 @@ class _HomeScreenState extends State<HomeScreen>
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 720),
           child: CustomScrollView(
+            controller: _feedScrollController,
             slivers: [
               const SliverToBoxAdapter(child: OnboardingResumeBanner()),
               const SliverToBoxAdapter(child: BatteryOptimizationCard()),

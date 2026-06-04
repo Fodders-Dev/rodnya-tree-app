@@ -728,4 +728,54 @@ void main() {
       expect(find.text('Ближайшие события'), findsOneWidget);
     },
   );
+
+  testWidgets(
+    'HomeScreen scroll-aware FAB: скрыт у верха, появляется при скролле (H)',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
+      await getIt.unregister<PostServiceInterface>();
+      getIt.registerSingleton<PostServiceInterface>(
+        _FakePostService(
+          posts: List.generate(
+            30,
+            (i) => Post(
+              id: 'post-$i',
+              treeId: 'tree-1',
+              authorId: 'author-$i',
+              authorName: 'Автор $i',
+              content: 'Запись $i с достаточным текстом для высоты карточки.',
+              createdAt: DateTime(2026, 4, 13, 10).add(Duration(minutes: i)),
+            ),
+          ),
+        ),
+      );
+
+      final treeProvider = TreeProvider();
+      await treeProvider.selectTree('tree-1', 'Тестовое дерево');
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider<TreeProvider>.value(
+          value: treeProvider,
+          child: const MaterialApp(home: HomeScreen()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // At the top the inline compose teaser is the CTA — no FAB.
+      expect(find.byType(FloatingActionButton), findsNothing);
+
+      // Scroll the feed past the teaser → the compose FAB takes over.
+      await tester.drag(find.byType(CustomScrollView), const Offset(0, -400));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('compose-fab')), findsOneWidget);
+      expect(find.byType(FloatingActionButton), findsOneWidget);
+    },
+  );
 }
