@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
+import 'dart:async';
 import 'dart:math'; // <--- Добавляем импорт для функции min
 import 'package:vector_math/vector_math_64.dart' as vector_math;
 import '../backend/models/extended_network_slice.dart';
@@ -373,6 +374,14 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
   bool _hasAppliedViewportFit = false;
   String? _selectedEditPersonId;
   double _currentScale = 1.0;
+  // Transient zoom HUD (audit #16/#20): a brief bottom-center pill that
+  // confirms a zoom/fit/center action then fades, instead of a pill that
+  // sat there persistently. `_zoomHudReady` gates it off during the
+  // initial auto-fit so it doesn't flash on every screen open.
+  String _zoomHudText = '';
+  bool _zoomHudVisible = false;
+  bool _zoomHudReady = false;
+  Timer? _zoomHudTimer;
   String? _draggingPersonId;
   String? _hoveredPersonId;
   // Floating zoom dock starts collapsed on compact viewports so it
@@ -766,6 +775,7 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
 
   @override
   void dispose() {
+    _zoomHudTimer?.cancel();
     _transformationController.removeListener(_handleTransformChanged);
     _transformationController.dispose();
     _connectModeFocusNode.dispose();
@@ -779,6 +789,28 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
     }
     setState(() {
       _currentScale = scale;
+    });
+    // Pinch + the zoom +/- buttons flow through the transform; surface
+    // the live percentage. Fit / center override this with their own
+    // label right after they set the transform (they're called after the
+    // listener fires synchronously).
+    if (_zoomHudReady) {
+      _showZoomHud('${(scale * 100).round()}%');
+    }
+  }
+
+  /// Show a transient zoom HUD label (e.g. «80%», «Вписано»,
+  /// «Центрировано») then fade it after ~1s. Additive overlay only —
+  /// никакой gesture/layout-математики не трогает.
+  void _showZoomHud(String label) {
+    if (!mounted) return;
+    setState(() {
+      _zoomHudText = label;
+      _zoomHudVisible = true;
+    });
+    _zoomHudTimer?.cancel();
+    _zoomHudTimer = Timer(const Duration(milliseconds: 1100), () {
+      if (mounted) setState(() => _zoomHudVisible = false);
     });
   }
 
@@ -2756,6 +2788,9 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
         _focusOnPerson(branchRootPersonId);
       }
       _hasAppliedViewportFit = true;
+      // From now on, zoom/fit/center actions are user-initiated → the
+      // transient HUD may show (it stayed silent through the auto-fit).
+      _zoomHudReady = true;
     });
   }
 
@@ -2793,6 +2828,7 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
     _transformationController.value = vector_math.Matrix4.identity()
       ..translateByDouble(translateX, translateY, 0, 1)
       ..scaleByDouble(safeScale, safeScale, 1, 1);
+    if (_zoomHudReady) _showZoomHud('Вписано');
   }
 
   void _focusOnPerson(String personId) {
@@ -2814,6 +2850,7 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
     _transformationController.value = vector_math.Matrix4.identity()
       ..translateByDouble(translateX, translateY, 0, 1)
       ..scaleByDouble(focusScale, focusScale, 1, 1);
+    if (_zoomHudReady) _showZoomHud('Центрировано');
   }
 
   double _maxViewportFitScale(Size viewport) {

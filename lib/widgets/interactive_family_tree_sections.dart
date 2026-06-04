@@ -330,35 +330,39 @@ extension _InteractiveFamilyTreeSections on _InteractiveFamilyTreeState {
     );
   }
 
-  /// Small "75%" pill at the bottom of the canvas. Replaces the
-  /// previous top-left "Семья / 250%" panel that was bigger than
-  /// the user wanted. Hidden when scale is at the resting 100% to
-  /// keep the canvas clean.
+  /// Transient zoom HUD at the bottom of the canvas (audit #16/#20).
+  /// Shows «80%» on pinch / zoom buttons and «Вписано» / «Центрировано»
+  /// on the fit / center actions, then fades after ~1s — so the user
+  /// gets feedback that a zoom/center happened without a pill sitting
+  /// there permanently. Driven by `_zoomHudVisible` / `_zoomHudText`.
   Widget _buildBottomZoomIndicator() {
-    final zoomPercent = (_currentScale * 100).round();
-    if (zoomPercent == 100) return const SizedBox.shrink();
     final tokens = Theme.of(context).extension<RodnyaDesignTokens>() ??
         (Theme.of(context).brightness == Brightness.dark
             ? RodnyaDesignTokens.dark
             : RodnyaDesignTokens.light);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: tokens.surfaceStrong.withValues(alpha: 0.78),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(
-          color: tokens.surfaceLine.withValues(alpha: 0.6),
-          width: 0.6,
+    return AnimatedOpacity(
+      opacity: _zoomHudVisible ? 1.0 : 0.0,
+      duration: Duration(milliseconds: _zoomHudVisible ? 120 : 260),
+      curve: Curves.easeOut,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        decoration: BoxDecoration(
+          color: tokens.surfaceStrong.withValues(alpha: 0.78),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(
+            color: tokens.surfaceLine.withValues(alpha: 0.6),
+            width: 0.6,
+          ),
         ),
-      ),
-      child: Text(
-        '$zoomPercent%',
-        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: tokens.inkSecondary,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.1,
-              fontSize: 11,
-            ),
+        child: Text(
+          _zoomHudText,
+          style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                color: tokens.inkSecondary,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.1,
+                fontSize: 11,
+              ),
+        ),
       ),
     );
   }

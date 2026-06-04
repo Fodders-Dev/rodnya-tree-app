@@ -1750,8 +1750,7 @@ void main() {
 
     expect(find.text('Старшее поколение'), findsOneWidget);
     expect(find.text('Младшее поколение'), findsOneWidget);
-    expect(zoomIndicatorFinder, findsOneWidget);
-    // Expand the dock to access "Сбросить ветку".
+    // Expand the dock to access zoom + branch controls.
     await tester.tap(find.byTooltip('Настройки вида'));
     await tester.pumpAndSettle();
     expect(find.byTooltip('Сбросить ветку'), findsOneWidget);
@@ -1759,6 +1758,15 @@ void main() {
       tester.getTopLeft(find.text('Старшее поколение')).dx,
       greaterThan(20),
     );
+
+    // Zoom HUD is transient now (C1): a «%» surfaces after a zoom action
+    // then fades, rather than sitting there persistently. Tap «Увеличить»
+    // and confirm it appears.
+    await tester.tap(find.byTooltip('Увеличить'));
+    await tester.pump();
+    expect(zoomIndicatorFinder, findsOneWidget);
+    // Let the ~1.1s auto-hide timer fire so it isn't pending at test end.
+    await tester.pump(const Duration(milliseconds: 1200));
 
     await tester.tap(find.byTooltip('Сбросить ветку'));
     await tester.pumpAndSettle();
