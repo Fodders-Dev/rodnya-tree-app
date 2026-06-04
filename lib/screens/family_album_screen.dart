@@ -251,7 +251,9 @@ class _FamilyAlbumScreenState extends State<FamilyAlbumScreen> {
                 _buildAuthorFilter(theme, tokens),
                 Expanded(
                   child: visible.isEmpty
-                      ? _buildEmpty(theme, tokens)
+                      ? (_authorFilter != null
+                          ? _buildFilterEmpty(theme, tokens)
+                          : _buildEmpty(theme, tokens))
                       : _buildSections(theme, tokens, visible),
                 ),
               ],
@@ -373,30 +375,36 @@ class _FamilyAlbumScreenState extends State<FamilyAlbumScreen> {
               padding: const EdgeInsets.only(right: 12),
               itemCount: memories.length,
               separatorBuilder: (_, __) => SizedBox(width: tokens.space8),
-              itemBuilder: (_, i) => GestureDetector(
-                key: Key('album-memory-$i'),
-                onTap: () => _openMemoryLightbox(memories, i),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: CachedNetworkImage(
-                    imageUrl: memories[i].url,
-                    width: 104,
-                    height: 104,
-                    fit: BoxFit.cover,
-                    placeholder: (_, __) => Container(
-                      width: 104,
-                      height: 104,
-                      color: theme.colorScheme.surfaceContainerHighest,
-                    ),
-                    errorWidget: (_, __, ___) => Container(
-                      width: 104,
-                      height: 104,
-                      color: theme.colorScheme.surfaceContainerHighest,
-                      child: Icon(
-                        Icons.broken_image_outlined,
-                        color: theme.colorScheme.onSurfaceVariant,
+              itemBuilder: (_, i) => ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: SizedBox(
+                  width: 104,
+                  height: 104,
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      CachedNetworkImage(
+                        imageUrl: memories[i].url,
+                        fit: BoxFit.cover,
+                        placeholder: (_, __) => Container(
+                          color: theme.colorScheme.surfaceContainerHighest,
+                        ),
+                        errorWidget: (_, __, ___) => Container(
+                          color: theme.colorScheme.surfaceContainerHighest,
+                          child: Icon(
+                            Icons.broken_image_outlined,
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
                       ),
-                    ),
+                      Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          key: Key('album-memory-$i'),
+                          onTap: () => _openMemoryLightbox(memories, i),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -484,24 +492,70 @@ class _FamilyAlbumScreenState extends State<FamilyAlbumScreen> {
   }
 
   Widget _buildThumb(ThemeData theme, _AlbumPhoto photo, int globalIndex) {
-    return GestureDetector(
-      key: Key('album-thumb-$globalIndex'),
-      onTap: () => _openLightbox(globalIndex),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: CachedNetworkImage(
-          imageUrl: photo.url,
-          fit: BoxFit.cover,
-          placeholder: (_, __) => Container(
-            color: theme.colorScheme.surfaceContainerHighest,
-          ),
-          errorWidget: (_, __, ___) => Container(
-            color: theme.colorScheme.surfaceContainerHighest,
-            child: Icon(
-              Icons.broken_image_outlined,
-              color: theme.colorScheme.onSurfaceVariant,
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(12),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          CachedNetworkImage(
+            imageUrl: photo.url,
+            fit: BoxFit.cover,
+            placeholder: (_, __) => Container(
+              color: theme.colorScheme.surfaceContainerHighest,
+            ),
+            errorWidget: (_, __, ___) => Container(
+              color: theme.colorScheme.surfaceContainerHighest,
+              child: Icon(
+                Icons.broken_image_outlined,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
             ),
           ),
+          // Transparent ink layer over the image → tap ripple feedback.
+          Material(
+            color: Colors.transparent,
+            child: InkWell(
+              key: Key('album-thumb-$globalIndex'),
+              onTap: () => _openLightbox(globalIndex),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Shown when a per-author filter is active but matches no photos —
+  /// honest copy + a one-tap escape back to all photos. (Reachable when
+  /// the filtered author's photos drop out on a refresh while the filter
+  /// is still set.)
+  Widget _buildFilterEmpty(ThemeData theme, RodnyaDesignTokens tokens) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.photo_library_outlined,
+              size: 48,
+              color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+            ),
+            SizedBox(height: tokens.space12),
+            Text(
+              'У этого автора пока нет фото',
+              textAlign: TextAlign.center,
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontFamily: 'Lora',
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+            SizedBox(height: tokens.space8),
+            FilledButton.tonal(
+              key: const Key('album-show-all'),
+              onPressed: () => setState(() => _authorFilter = null),
+              child: const Text('Показать все'),
+            ),
+          ],
         ),
       ),
     );

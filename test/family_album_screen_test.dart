@@ -235,6 +235,26 @@ void main() {
     expect(find.textContaining('назад'), findsNothing);
   });
 
+  testWidgets('thumbnails use an InkWell tap target for ripple (CP-3)',
+      (tester) async {
+    final svc = _FakePostService(
+      posts: [
+        _post(
+          id: 'p1',
+          authorId: 'a1',
+          authorName: 'Анна',
+          imageUrls: const ['https://example.com/1.jpg'],
+          createdAt: DateTime(2026, 4, 2),
+        ),
+      ],
+    );
+    await tester.pumpWidget(_host(svc));
+    await tester.pumpAndSettle();
+
+    expect(
+        tester.widget(find.byKey(const Key('album-thumb-0'))), isA<InkWell>());
+  });
+
   testWidgets('tapping a thumb opens the MediaLightbox', (tester) async {
     final svc = _FakePostService(
       posts: [
