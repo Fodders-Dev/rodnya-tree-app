@@ -207,15 +207,25 @@ class _FakeChatService implements ChatServiceInterface {
 
 class _FakeFamilyTreeService extends Fake
     implements FamilyTreeServiceInterface {
-  _FakeFamilyTreeService({this.getRelativesDelay});
+  _FakeFamilyTreeService({
+    this.getRelativesDelay,
+    this.relativesOverride,
+    this.relationsOverride,
+  });
 
   final Future<void>? getRelativesDelay;
+
+  /// When set, replaces the default 4 relatives — lets a test drive the
+  /// empty participant/branch selectors (B recovery CTAs).
+  final List<FamilyPerson>? relativesOverride;
+  final List<FamilyRelation>? relationsOverride;
   int getRelativesCallCount = 0;
 
   @override
   Future<List<FamilyPerson>> getRelatives(String treeId) async {
     getRelativesCallCount += 1;
     await getRelativesDelay;
+    if (relativesOverride != null) return relativesOverride!;
     return [
       FamilyPerson(
         id: 'person-root-1',
@@ -265,7 +275,9 @@ class _FakeFamilyTreeService extends Fake
   }
 
   @override
-  Future<List<FamilyRelation>> getRelations(String treeId) async => [
+  Future<List<FamilyRelation>> getRelations(String treeId) async =>
+      relationsOverride ??
+      [
         FamilyRelation(
           id: 'rel-1',
           treeId: treeId,
@@ -598,7 +610,7 @@ void main() {
     await tester.tap(find.byTooltip('Новый чат'));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Ветки'));
+    await tester.tap(find.text('Несколько'));
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('Иван Кузнецов'));
@@ -803,4 +815,85 @@ void main() {
     expect(find.text('Иван Кузнецов'), findsOneWidget);
     expect(find.text('Архив (1)'), findsNothing);
   });
+
+  testWidgets(
+    'Пустой селектор участников: CTA «Добавить родственника» ведёт в /relatives',
+    (tester) async {
+      // Tall viewport so the modal sheet's selector panel has room for
+      // the richer empty state (subtitle + CTA) without a tiny-sheet
+      // overflow.
+      tester.view.physicalSize = const Size(800, 1400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await getIt.reset();
+      getIt.registerSingleton<AuthServiceInterface>(_FakeAuthService());
+      getIt.registerSingleton<ChatServiceInterface>(_FakeChatService());
+      getIt.registerSingleton<FamilyTreeServiceInterface>(
+        _FakeFamilyTreeService(
+          relativesOverride: const <FamilyPerson>[],
+          relationsOverride: const <FamilyRelation>[],
+        ),
+      );
+      getIt.registerSingleton<LocalStorageService>(_FakeLocalStorageService());
+      getIt.registerSingleton<AppStatusService>(AppStatusService());
+
+      await tester.pumpWidget(buildApp());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Новый чат'));
+      await tester.pumpAndSettle();
+
+      // «Группа» → participant selector; empty tree → recovery CTA.
+      await tester.tap(find.text('Группа'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Родных пока нет'), findsOneWidget);
+      final cta = find.byKey(const Key('chat-empty-add-relative'));
+      expect(cta, findsOneWidget);
+
+      await tester.tap(cta);
+      await tester.pumpAndSettle();
+
+      expect(find.text('relatives-screen'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'Пустой селектор веток: CTA «Открыть дерево» ведёт в /tree',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 1400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await getIt.reset();
+      getIt.registerSingleton<AuthServiceInterface>(_FakeAuthService());
+      getIt.registerSingleton<ChatServiceInterface>(_FakeChatService());
+      getIt.registerSingleton<FamilyTreeServiceInterface>(
+        _FakeFamilyTreeService(
+          relativesOverride: const <FamilyPerson>[],
+          relationsOverride: const <FamilyRelation>[],
+        ),
+      );
+      getIt.registerSingleton<LocalStorageService>(_FakeLocalStorageService());
+      getIt.registerSingleton<AppStatusService>(AppStatusService());
+
+      await tester.pumpWidget(buildApp());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Новый чат'));
+      await tester.pumpAndSettle();
+
+      // «Одна ветка» → branch selector; no branches → recovery CTA.
+      await tester.tap(find.text('Одна ветка'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Веток пока нет'), findsOneWidget);
+      final cta = find.byKey(const Key('chat-empty-open-tree'));
+      expect(cta, findsOneWidget);
+
+      await tester.tap(cta);
+      await tester.pumpAndSettle();
+
+      expect(find.text('tree-screen'), findsOneWidget);
+    },
+  );
 }

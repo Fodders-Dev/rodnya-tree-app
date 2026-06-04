@@ -408,11 +408,13 @@ class _CreateChatSheetState extends State<_CreateChatSheet> {
                             theme.colorScheme.onSurfaceVariant,
                         labelStyle: const TextStyle(
                             fontWeight: FontWeight.w600, fontSize: 13),
+                        // «Ветка»/«Ветки» were near-indistinguishable —
+                        // relabel to spell out single vs multi.
                         tabs: const [
                           Tab(text: 'Личный'),
                           Tab(text: 'Группа'),
-                          Tab(text: 'Ветка'),
-                          Tab(text: 'Ветки'),
+                          Tab(text: 'Одна ветка'),
+                          Tab(text: 'Несколько'),
                         ],
                       ),
                     ),
@@ -653,6 +655,8 @@ class _CreateChatSheetState extends State<_CreateChatSheet> {
   Widget _buildParticipantSelector(List<_GroupChatParticipant> participants,
       {required bool multi}) {
     if (participants.isEmpty) {
+      final isFriends =
+          context.read<TreeProvider>().selectedTreeKind == TreeKind.friends;
       return Center(
         child: GlassPanel(
           padding: const EdgeInsets.all(22),
@@ -666,10 +670,7 @@ class _CreateChatSheetState extends State<_CreateChatSheet> {
               ),
               const SizedBox(height: 10),
               Text(
-                context.read<TreeProvider>().selectedTreeKind ==
-                        TreeKind.friends
-                    ? 'Людей пока нет'
-                    : 'Родных пока нет',
+                isFriends ? 'Людей пока нет' : 'Родных пока нет',
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.titleMedium?.copyWith(
                       fontWeight: FontWeight.w700,
@@ -677,11 +678,28 @@ class _CreateChatSheetState extends State<_CreateChatSheet> {
               ),
               const SizedBox(height: 4),
               Text(
-                'Нужен аккаунт в дереве.',
+                isFriends
+                    ? 'Добавьте людей в круг, чтобы начать чат.'
+                    : 'Добавьте родственника в дерево, чтобы начать чат.',
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: Theme.of(context).colorScheme.onSurfaceVariant,
                     ),
+              ),
+              const SizedBox(height: 14),
+              // Recovery CTA (audit #12/#13): pop the sheet, jump to the
+              // people screen so the user can fix the empty state.
+              FilledButton.tonalIcon(
+                key: const Key('chat-empty-add-relative'),
+                onPressed: () {
+                  final router = GoRouter.of(context);
+                  Navigator.of(context).pop();
+                  router.go('/relatives');
+                },
+                icon: const Icon(Icons.person_add_alt_1_outlined),
+                label: Text(
+                  isFriends ? 'Добавить человека' : 'Добавить родственника',
+                ),
               ),
             ],
           ),
@@ -781,6 +799,27 @@ class _CreateChatSheetState extends State<_CreateChatSheet> {
                 style: Theme.of(context).textTheme.titleMedium?.copyWith(
                       fontWeight: FontWeight.w700,
                     ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Добавьте родственников в дерево — ветки появятся сами.',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+              ),
+              const SizedBox(height: 14),
+              // Recovery CTA (audit #12/#13): pop the sheet and open the
+              // tree where branches are built.
+              FilledButton.tonalIcon(
+                key: const Key('chat-empty-open-tree'),
+                onPressed: () {
+                  final router = GoRouter.of(context);
+                  Navigator.of(context).pop();
+                  router.go('/tree');
+                },
+                icon: const Icon(Icons.account_tree_outlined),
+                label: const Text('Открыть дерево'),
               ),
             ],
           ),
