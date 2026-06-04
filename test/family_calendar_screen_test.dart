@@ -93,5 +93,8 @@ void main() {
     expect(find.byType(TableCalendar<AppEvent>), findsOneWidget);
     expect(find.text('В этот день событий нет'), findsOneWidget);
     expect(find.byType(EventCard), findsNothing);
+    // Moon-phase legend (C) is present.
+    expect(find.text('🌑 Новолуние'), findsOneWidget);
+    expect(find.text('🌕 Полнолуние'), findsOneWidget);
   });
 }

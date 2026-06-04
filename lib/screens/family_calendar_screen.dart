@@ -13,6 +13,7 @@ import '../models/app_event.dart';
 import '../providers/tree_provider.dart';
 import '../services/event_service.dart';
 import '../theme/app_theme.dart';
+import '../utils/moon_phase.dart';
 import '../widgets/event_card.dart';
 
 class FamilyCalendarScreen extends StatefulWidget {
@@ -111,6 +112,7 @@ class _FamilyCalendarScreenState extends State<FamilyCalendarScreen> {
       body: Column(
         children: [
           _buildCalendar(theme, tokens),
+          _buildMoonLegend(theme, tokens),
           const Divider(height: 1),
           if (_loading)
             const Padding(
@@ -155,6 +157,26 @@ class _FamilyCalendarScreenState extends State<FamilyCalendarScreen> {
         ),
       ),
       calendarBuilders: CalendarBuilders<AppEvent>(
+        // Moon glyph (C): only on the ~4 principal-phase days a month, so
+        // the grid isn't flooded. Returning null on other days falls back
+        // to table_calendar's default cell.
+        defaultBuilder: (context, day, focusedDay) {
+          if (!isPrincipalMoonDay(day)) return null;
+          return Stack(
+            alignment: Alignment.center,
+            children: [
+              Text('${day.day}', style: theme.textTheme.bodyMedium),
+              Positioned(
+                top: 1,
+                right: 2,
+                child: Text(
+                  moonPhaseFor(day).glyph,
+                  style: const TextStyle(fontSize: 9),
+                ),
+              ),
+            ],
+          );
+        },
         markerBuilder: (context, day, events) {
           if (events.isEmpty) return const SizedBox.shrink();
           return Padding(
@@ -188,6 +210,28 @@ class _FamilyCalendarScreenState extends State<FamilyCalendarScreen> {
         _focusedDay = focusedDay;
         _loadMonth(focusedDay);
       },
+    );
+  }
+
+  /// Light legend for the moon glyphs — the four principal phases.
+  Widget _buildMoonLegend(ThemeData theme, RodnyaDesignTokens tokens) {
+    const phases = <MoonPhase>[
+      MoonPhase.newMoon,
+      MoonPhase.firstQuarter,
+      MoonPhase.fullMoon,
+      MoonPhase.lastQuarter,
+    ];
+    final style = theme.textTheme.labelSmall?.copyWith(color: tokens.inkMuted);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+      child: Wrap(
+        spacing: 12,
+        runSpacing: 2,
+        alignment: WrapAlignment.center,
+        children: [
+          for (final p in phases) Text('${p.glyph} ${p.label}', style: style),
+        ],
+      ),
     );
   }
 
