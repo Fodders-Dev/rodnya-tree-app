@@ -230,6 +230,41 @@ void main() {
     expect(find.byKey(const Key('calendar-no-tree-cta')), findsOneWidget);
   });
 
+  testWidgets('day with more than 3 events shows a «+N» marker (CP-6)',
+      (tester) async {
+    // Four people share an April-3 birthday → 4 events that day.
+    final relatives = [
+      for (var i = 0; i < 4; i++)
+        FamilyPerson(
+          id: 'p$i',
+          treeId: 'tree-1',
+          name: 'Человек $i',
+          gender: Gender.male,
+          birthDate: DateTime(1990 - i, 4, 3),
+          isAlive: true,
+          createdAt: DateTime(2024, 1, 1),
+          updatedAt: DateTime(2024, 1, 1),
+        ),
+    ];
+    final service = EventService(
+      familyTreeService: _FakeFamilyTreeService(relatives: relatives),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.lightTheme,
+        home: FamilyCalendarScreen(
+          serviceOverride: service,
+          treeId: 'tree-1',
+          initialMonth: DateTime(2026, 4, 15),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 3 dots + «+1» overflow hint on April 3.
+    expect(find.text('+1'), findsOneWidget);
+  });
+
   testWidgets('renders in dark theme without error (CP-1 legibility)',
       (tester) async {
     final service = EventService(

@@ -17,6 +17,10 @@ import '../theme/app_theme.dart';
 import '../utils/moon_phase.dart';
 import '../widgets/event_card.dart';
 
+/// One consistent moon-glyph size across the grid cell and the legend
+/// (CP-6: the cell glyph used to be 9px — too small and inconsistent).
+const double _kMoonGlyphSize = 12;
+
 class FamilyCalendarScreen extends StatefulWidget {
   const FamilyCalendarScreen({
     super.key,
@@ -225,7 +229,7 @@ class _FamilyCalendarScreenState extends State<FamilyCalendarScreen> {
                 right: 2,
                 child: Text(
                   moonPhaseFor(day).glyph,
-                  style: const TextStyle(fontSize: 9),
+                  style: const TextStyle(fontSize: _kMoonGlyphSize),
                 ),
               ),
             ],
@@ -247,6 +251,20 @@ class _FamilyCalendarScreenState extends State<FamilyCalendarScreen> {
                     decoration: BoxDecoration(
                       color: _markerColor(e.type, theme, tokens),
                       shape: BoxShape.circle,
+                    ),
+                  ),
+                // More than three events that day → «+N» overflow hint.
+                if (events.length > 3)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 2),
+                    child: Text(
+                      '+${events.length - 3}',
+                      style: TextStyle(
+                        fontSize: 8,
+                        height: 1,
+                        fontWeight: FontWeight.w700,
+                        color: tokens.inkMuted,
+                      ),
                     ),
                   ),
               ],
@@ -275,7 +293,8 @@ class _FamilyCalendarScreenState extends State<FamilyCalendarScreen> {
       MoonPhase.fullMoon,
       MoonPhase.lastQuarter,
     ];
-    final style = theme.textTheme.labelSmall?.copyWith(color: tokens.inkMuted);
+    final style = theme.textTheme.labelSmall
+        ?.copyWith(color: tokens.inkMuted, fontSize: _kMoonGlyphSize);
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
       child: Wrap(
