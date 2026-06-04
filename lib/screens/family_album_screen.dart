@@ -86,7 +86,9 @@ class _MonthHeaderDelegate extends SliverPersistentHeaderDelegate {
 
   @override
   bool shouldRebuild(_MonthHeaderDelegate old) =>
-      old.label != label || old.background != background;
+      old.label != label ||
+      old.background != background ||
+      old.textStyle != textStyle;
 }
 
 class FamilyAlbumScreen extends StatefulWidget {
@@ -117,6 +119,7 @@ class _FamilyAlbumScreenState extends State<FamilyAlbumScreen> {
   static const int _memoryWindowDays = 3;
 
   bool _loading = true;
+  bool _loadFailed = false;
   List<_AlbumPhoto> _photos = const [];
   String? _authorFilter; // null = все авторы
 
@@ -169,10 +172,26 @@ class _FamilyAlbumScreenState extends State<FamilyAlbumScreen> {
       setState(() {
         _photos = _collect(posts);
         _loading = false;
+        _loadFailed = false;
       });
     } catch (_) {
-      if (mounted) setState(() => _loading = false);
+      // Offline-first: a network failure is only an error if we have
+      // nothing cached to show. With cached photos we keep them (CP-4).
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _loadFailed = _photos.isEmpty;
+        });
+      }
     }
+  }
+
+  Future<void> _retry() async {
+    setState(() {
+      _loading = true;
+      _loadFailed = false;
+    });
+    await _load();
   }
 
   /// Flatten posts → photos, newest-first, deduped by URL. Videos are
@@ -250,11 +269,13 @@ class _FamilyAlbumScreenState extends State<FamilyAlbumScreen> {
               children: [
                 _buildAuthorFilter(theme, tokens),
                 Expanded(
-                  child: visible.isEmpty
-                      ? (_authorFilter != null
-                          ? _buildFilterEmpty(theme, tokens)
-                          : _buildEmpty(theme, tokens))
-                      : _buildSections(theme, tokens, visible),
+                  child: _loadFailed && _photos.isEmpty
+                      ? _buildError(theme, tokens)
+                      : visible.isEmpty
+                          ? (_authorFilter != null
+                              ? _buildFilterEmpty(theme, tokens)
+                              : _buildEmpty(theme, tokens))
+                          : _buildSections(theme, tokens, visible),
                 ),
               ],
             ),
@@ -460,7 +481,7 @@ class _FamilyAlbumScreenState extends State<FamilyAlbumScreen> {
             pinned: true,
             delegate: _MonthHeaderDelegate(
               label: _monthLabel(section.month),
-              background: theme.scaffoldBackgroundColor,
+              background: tokens.bgBase,
               textStyle: theme.textTheme.titleSmall?.copyWith(
                 fontFamily: 'Lora',
                 fontWeight: FontWeight.w700,
@@ -520,6 +541,49 @@ class _FamilyAlbumScreenState extends State<FamilyAlbumScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// Network load failed and there's nothing cached to fall back on —
+  /// honest error + retry (CP-4), instead of a silently empty grid.
+  Widget _buildError(ThemeData theme, RodnyaDesignTokens tokens) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.cloud_off_outlined,
+              size: 48,
+              color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+            ),
+            SizedBox(height: tokens.space12),
+            Text(
+              'Не удалось загрузить альбом',
+              textAlign: TextAlign.center,
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontFamily: 'Lora',
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+            SizedBox(height: tokens.space8),
+            Text(
+              'Проверьте соединение и попробуйте ещё раз.',
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+            SizedBox(height: tokens.space16),
+            FilledButton.tonal(
+              key: const Key('album-retry'),
+              onPressed: _retry,
+              child: const Text('Повторить'),
+            ),
+          ],
+        ),
       ),
     );
   }

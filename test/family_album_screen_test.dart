@@ -27,6 +27,20 @@ class _FakePostService implements PostServiceInterface {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
+class _ThrowingPostService implements PostServiceInterface {
+  @override
+  Future<List<Post>> getPosts({
+    String? treeId,
+    String? authorId,
+    bool onlyBranches = false,
+  }) async {
+    throw Exception('network down');
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
 Post _post({
   required String id,
   required String authorId,
@@ -45,7 +59,8 @@ Post _post({
   );
 }
 
-Widget _host(_FakePostService svc, {DateTime Function()? now}) => MaterialApp(
+Widget _host(PostServiceInterface svc, {DateTime Function()? now}) =>
+    MaterialApp(
       theme: AppTheme.lightTheme,
       home: FamilyAlbumScreen(serviceOverride: svc, nowProvider: now),
     );
@@ -233,6 +248,16 @@ void main() {
 
     expect(find.byKey(const Key('album-memory-0')), findsNothing);
     expect(find.textContaining('назад'), findsNothing);
+  });
+
+  testWidgets('shows error + «Повторить» when load fails with no cache (CP-4)',
+      (tester) async {
+    await tester.pumpWidget(_host(_ThrowingPostService()));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Не удалось загрузить альбом'), findsOneWidget);
+    expect(find.byKey(const Key('album-retry')), findsOneWidget);
+    expect(find.byKey(const Key('album-thumb-0')), findsNothing);
   });
 
   testWidgets('thumbnails use an InkWell tap target for ripple (CP-3)',
