@@ -35,6 +35,7 @@ import '../widgets/branch_switcher_chip.dart';
 import '../widgets/post_card.dart';
 import '../widgets/post_card_shimmer.dart';
 import '../widgets/glass_panel.dart';
+import '../widgets/coach_mark_tour.dart';
 import '../services/custom_api_notification_service.dart';
 import '../utils/e2e_state_bridge.dart';
 import '../utils/web_wheel_listener.dart';
@@ -93,6 +94,14 @@ class _HomeScreenState extends State<HomeScreen>
   final ScrollController _feedScrollController = ScrollController();
   bool _showComposeFab = false;
   static const double _composeFabScrollThreshold = 200.0;
+
+  // E (Week 7 §6): first-launch coach-mark tour anchored on real home
+  // widgets. GlobalKeys live here so the tour can spotlight them.
+  final GlobalKey _tourStoriesKey = GlobalKey();
+  final GlobalKey _tourTeaserKey = GlobalKey();
+  final GlobalKey _tourEventsKey = GlobalKey();
+  bool _showCoachTour = false;
+  Timer? _coachTourTimer;
   final GlobalKey _eventRailRegionKey = GlobalKey();
   CancelWebWheelListener? _cancelWebWheelSubscription;
   int _webWheelEventCount = 0;
@@ -168,6 +177,7 @@ class _HomeScreenState extends State<HomeScreen>
           _selectedEventCategoryFilter = null;
         });
       }
+      _maybeShowCoachTour();
     });
   }
 
@@ -179,6 +189,7 @@ class _HomeScreenState extends State<HomeScreen>
     _treeProviderInstance?.removeListener(_handleTreeChange);
     _eventRailController.removeListener(_handleEventRailScrollChanged);
     _feedScrollController.removeListener(_handleFeedScroll);
+    _coachTourTimer?.cancel();
     _cancelWebWheelSubscription?.call();
     _eventRailController.dispose();
     _feedScrollController.dispose();
@@ -195,6 +206,49 @@ class _HomeScreenState extends State<HomeScreen>
       setState(() => _showComposeFab = show);
     }
   }
+
+  /// E: show the first-launch coach-mark tour once a tree is open (i.e.
+  /// after onboarding — not conflicting with the FE9 wizard which runs
+  /// before any tree exists). Persisted, so it never repeats. Delayed a
+  /// beat so the async stories/events sections lay out and the anchors
+  /// have rects (missing anchors degrade gracefully to a centred bubble).
+  Future<void> _maybeShowCoachTour() async {
+    if (_currentTreeId == null) return;
+    final should = await CoachMarkTour.shouldShow();
+    if (!should || !mounted) return;
+    // Cancellable timer (not Future.delayed) so dispose can tear it down
+    // — keeps it from lingering as a pending timer in widget tests.
+    _coachTourTimer?.cancel();
+    _coachTourTimer = Timer(const Duration(milliseconds: 900), () {
+      if (!mounted || _showCoachTour || _currentTreeId == null) return;
+      setState(() => _showCoachTour = true);
+    });
+  }
+
+  void _dismissCoachTour() {
+    if (mounted) setState(() => _showCoachTour = false);
+    CoachMarkTour.markShown();
+  }
+
+  List<CoachMarkTarget> _coachMarkTargets() => <CoachMarkTarget>[
+        CoachMarkTarget(
+          key: _tourStoriesKey,
+          title: 'Это твоё дерево',
+          body: 'Здесь живёт твоя семья. Добавляй моменты — фото и '
+              'короткие истории дня.',
+        ),
+        CoachMarkTarget(
+          key: _tourTeaserKey,
+          title: 'Делись с роднёй',
+          body: 'Напиши новость, добавь фото или событие — близкие увидят '
+              'это в ленте.',
+        ),
+        CoachMarkTarget(
+          key: _tourEventsKey,
+          title: 'Важные даты рядом',
+          body: 'Дни рождения и события родных всегда на виду.',
+        ),
+      ];
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
@@ -663,12 +717,25 @@ class _HomeScreenState extends State<HomeScreen>
           builder: (context, snapshot) {
             final pendingInvitations =
                 snapshot.data ?? const <TreeInvitation>[];
-            return _buildHomeBody(
+            final homeBody = _buildHomeBody(
               pendingInvitations: pendingInvitations,
               hasSelectedTree: hasSelectedTree,
               isWideLayout: isWideLayout,
               selectedTreeName: selectedTreeName,
               isFriendsTree: isFriendsTree,
+            );
+            if (!_showCoachTour) return homeBody;
+            // Tour overlay sits over the home body (spotlights the
+            // stories/teaser/events anchors). Below the app-bar + shell
+            // nav, which it doesn't target.
+            return Stack(
+              children: [
+                homeBody,
+                CoachMarkTour(
+                  targets: _coachMarkTargets(),
+                  onDismiss: _dismissCoachTour,
+                ),
+              ],
             );
           },
         ),
@@ -1176,6 +1243,7 @@ class _HomeScreenState extends State<HomeScreen>
         // because events competed with posts for weight). Mirrors the
         // «События» header the wide sidebar already carries.
         Padding(
+          key: _tourEventsKey,
           padding: const EdgeInsets.fromLTRB(18, 2, 18, 6),
           child: Row(
             children: [
@@ -1519,16 +1587,19 @@ class _HomeScreenState extends State<HomeScreen>
         physics: const BouncingScrollPhysics(),
         padding: const EdgeInsets.symmetric(horizontal: 18),
         children: [
-          _StoryRing(
-            tokens: tokens,
-            isAdd: true,
-            label: 'Создать',
-            onTap: () async {
-              final result = await context.push('/stories/create');
-              if (result == true && _currentTreeId != null) {
-                _loadStories(_currentTreeId!);
-              }
-            },
+          KeyedSubtree(
+            key: _tourStoriesKey,
+            child: _StoryRing(
+              tokens: tokens,
+              isAdd: true,
+              label: 'Создать',
+              onTap: () async {
+                final result = await context.push('/stories/create');
+                if (result == true && _currentTreeId != null) {
+                  _loadStories(_currentTreeId!);
+                }
+              },
+            ),
           ),
           for (final story in ordered)
             Padding(

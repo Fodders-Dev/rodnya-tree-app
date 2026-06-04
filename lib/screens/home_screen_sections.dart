@@ -813,6 +813,7 @@ extension _HomeScreenSections on _HomeScreenState {
       button: true,
       label: 'home-compose-teaser',
       child: GlassPanel(
+        key: _tourTeaserKey,
         padding: EdgeInsets.zero,
         borderRadius: BorderRadius.circular(20),
         plain: true,

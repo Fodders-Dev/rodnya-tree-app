@@ -226,7 +226,12 @@ void main() {
   });
 
   setUp(() async {
-    SharedPreferences.setMockInitialValues({});
+    // Coach-mark tour pre-marked as shown by default so unrelated tests
+    // don't schedule its delayed timer (would linger as a pending timer).
+    // The E first-launch test clears this explicitly.
+    SharedPreferences.setMockInitialValues(
+      <String, Object>{'coach_marks_home_tour_shown_v1': true},
+    );
     await getIt.reset();
     getIt.registerSingleton<AuthServiceInterface>(_FakeAuthService());
     getIt.registerSingleton<LocalStorageService>(
@@ -776,6 +781,70 @@ void main() {
 
       expect(find.byKey(const Key('compose-fab')), findsOneWidget);
       expect(find.byType(FloatingActionButton), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'HomeScreen показывает coach-mark тур на первом запуске, скип персистится (E)',
+    (tester) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      tester.view.physicalSize = const Size(900, 1600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
+      final treeProvider = TreeProvider();
+      await treeProvider.selectTree('tree-1', 'Тестовое дерево');
+      await tester.pumpWidget(
+        ChangeNotifierProvider<TreeProvider>.value(
+          value: treeProvider,
+          child: const MaterialApp(home: HomeScreen()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Gated behind a short delay so anchors lay out → not shown yet.
+      expect(find.byKey(const Key('coach-mark-tour')), findsNothing);
+
+      await tester.pump(const Duration(milliseconds: 1000));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('coach-mark-tour')), findsOneWidget);
+
+      // Skip → dismissed (and persisted via markShown).
+      await tester.tap(find.byKey(const Key('coach-mark-skip')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('coach-mark-tour')), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'HomeScreen НЕ показывает тур, если он уже показан (E)',
+    (tester) async {
+      SharedPreferences.setMockInitialValues(
+        <String, Object>{'coach_marks_home_tour_shown_v1': true},
+      );
+      tester.view.physicalSize = const Size(900, 1600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
+      final treeProvider = TreeProvider();
+      await treeProvider.selectTree('tree-1', 'Тестовое дерево');
+      await tester.pumpWidget(
+        ChangeNotifierProvider<TreeProvider>.value(
+          value: treeProvider,
+          child: const MaterialApp(home: HomeScreen()),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 1000));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('coach-mark-tour')), findsNothing);
     },
   );
 }
