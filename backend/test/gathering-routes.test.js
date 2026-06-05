@@ -126,6 +126,31 @@ test("POST /v1/gatherings creates a gathering (201)", async () => {
   }
 });
 
+test("POST /v1/gatherings stores photos (deduped)", async () => {
+  const ctx = await startTestServer();
+  try {
+    const {owner, tree} =
+        await seedTree(ctx.store, ctx.baseUrl, "g-photos@example.com");
+    const res = await createGathering(ctx.baseUrl, owner.token, {
+      treeId: tree.id,
+      title: "Фотовстреча",
+      startAt: "2026-07-01T15:00:00.000Z",
+      imageUrls: [
+        "https://example.com/a.jpg",
+        "https://example.com/a.jpg", // duplicate
+        "https://example.com/b.jpg",
+      ],
+    });
+    assert.equal(res.status, 201);
+    const body = await res.json();
+    assert.equal(body.imageUrls.length, 2);
+    assert.ok(body.imageUrls.includes("https://example.com/a.jpg"));
+    assert.ok(body.imageUrls.includes("https://example.com/b.jpg"));
+  } finally {
+    await shutdown(ctx);
+  }
+});
+
 test("GET /v1/gatherings lists tree gatherings; GET /:id reads one", async () => {
   const ctx = await startTestServer();
   try {

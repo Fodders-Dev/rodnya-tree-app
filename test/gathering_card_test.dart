@@ -8,6 +8,7 @@ import 'package:intl/date_symbol_data_local.dart';
 import 'package:rodnya/backend/interfaces/gathering_service_interface.dart';
 import 'package:rodnya/models/gathering.dart';
 import 'package:rodnya/theme/app_theme.dart';
+import 'package:rodnya/widgets/feed_media_gallery.dart';
 import 'package:rodnya/widgets/gathering_card.dart';
 
 class _FakeGatheringService implements GatheringServiceInterface {
@@ -53,7 +54,10 @@ class _FakeGatheringService implements GatheringServiceInterface {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
-Gathering _gathering({List<Map<String, dynamic>> rsvps = const []}) {
+Gathering _gathering({
+  List<Map<String, dynamic>> rsvps = const [],
+  List<String> imageUrls = const [],
+}) {
   return Gathering(
     id: 'g1',
     treeId: 't',
@@ -62,6 +66,7 @@ Gathering _gathering({List<Map<String, dynamic>> rsvps = const []}) {
     title: 'Встреча',
     startAt: DateTime(2026, 7, 1, 15),
     createdAt: DateTime(2026, 6, 1),
+    imageUrls: imageUrls,
     rsvps: rsvps,
   );
 }
@@ -99,6 +104,28 @@ void main() {
     expect(find.text('Приезжайте всей семьёй'), findsOneWidget);
     expect(find.text('Анна'), findsOneWidget);
     expect(find.text('Встреча'), findsOneWidget); // type badge
+  });
+
+  testWidgets('renders gathering photos via FeedMediaGallery (B)',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.lightTheme,
+        home: Scaffold(
+          // Card lives in a scrolling feed in production; give the test a
+          // scroll view so the 16:9 photo doesn't overflow a fixed height.
+          body: SingleChildScrollView(
+            child: GatheringCard(
+              gathering:
+                  _gathering(imageUrls: const ['https://example.com/1.jpg']),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byType(FeedMediaGallery), findsOneWidget);
   });
 
   testWidgets('tapping «Пойду» optimistically selects and calls setRsvp',

@@ -703,6 +703,7 @@ function createGatheringRecord({
   endAt = null,
   isAllDay = false,
   place = null,
+  imageUrls = [],
   scopeType = "wholeTree",
   anchorPersonIds = [],
   circleId = null,
@@ -733,6 +734,14 @@ function createGatheringRecord({
     endAt: normalizeNullableString(endAt),
     isAllDay: isAllDay === true,
     place: normalizeNullableString(place),
+    // Dedup + trim, same as createPostRecord.
+    imageUrls: Array.from(
+      new Set(
+        (Array.isArray(imageUrls) ? imageUrls : [])
+          .map((value) => String(value || "").trim())
+          .filter(Boolean),
+      ),
+    ),
     scopeType: scopeType === "branches" ? "branches" : "wholeTree",
     anchorPersonIds: normalizeParticipantIds(anchorPersonIds),
     circleId: normalizeNullableString(circleId),
@@ -16266,6 +16275,7 @@ class FileStore {
     endAt = null,
     isAllDay = false,
     place = null,
+    imageUrls = [],
     scopeType = "wholeTree",
     anchorPersonIds = [],
     circleId = null,
@@ -16319,6 +16329,7 @@ class FileStore {
       endAt,
       isAllDay,
       place,
+      imageUrls,
       scopeType,
       anchorPersonIds,
       circleId: targetCircle.id,

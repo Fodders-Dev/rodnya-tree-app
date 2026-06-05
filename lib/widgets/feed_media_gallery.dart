@@ -31,6 +31,7 @@ class FeedMediaGallery extends StatelessWidget {
     required this.onTap,
     this.caption,
     this.captionPrefix = 'Фото',
+    this.padding,
   });
 
   /// Renderable media URLs (photos + videos). Empty → renders nothing.
@@ -46,20 +47,27 @@ class FeedMediaGallery extends StatelessWidget {
   /// a11y label prefix; combined with [caption] as `prefix: caption`.
   final String captionPrefix;
 
+  /// Outer padding around the gallery. Defaults to the post inset
+  /// (space12 sides + bottom); surfaces that already pad their content
+  /// (e.g. the gathering card) pass [EdgeInsets.zero].
+  final EdgeInsets? padding;
+
   @override
   Widget build(BuildContext context) {
     if (imageUrls.isEmpty) return const SizedBox.shrink();
     final tokens = _tokensFor(context);
     final borderRadius = BorderRadius.circular(tokens.radiusMd);
-
-    if (imageUrls.length == 1) {
-      return Padding(
-        padding: EdgeInsets.fromLTRB(
+    final pad = padding ??
+        EdgeInsets.fromLTRB(
           tokens.space12,
           0,
           tokens.space12,
           tokens.space12,
-        ),
+        );
+
+    if (imageUrls.length == 1) {
+      return Padding(
+        padding: pad,
         child: AspectRatio(
           aspectRatio: 16 / 9,
           child: ClipRRect(
@@ -81,12 +89,7 @@ class FeedMediaGallery extends StatelessWidget {
     }
 
     return Padding(
-      padding: EdgeInsets.fromLTRB(
-        tokens.space12,
-        0,
-        tokens.space12,
-        tokens.space12,
-      ),
+      padding: pad,
       child: _MediaImageCarousel(
         images: imageUrls,
         borderRadius: borderRadius,

@@ -174,6 +174,22 @@ function registerGatheringRoutes(
     }
     const anchorPersonIds = anchorsGuard.value;
 
+    // Photo carousel — same cap as posts (30 × 2 KB URLs).
+    const imageUrlsGuard = enforceArrayCap(req.body?.imageUrls, {
+      max: 30,
+      itemValidator: (raw) =>
+          enforceTextLimit(raw, {
+            max: 2048,
+            fieldName: "imageUrl",
+          }),
+      fieldName: "imageUrls",
+    });
+    if (!imageUrlsGuard.ok) {
+      res.status(imageUrlsGuard.status).json({message: imageUrlsGuard.message});
+      return;
+    }
+    const imageUrls = imageUrlsGuard.value;
+
     if (!treeId) {
       res.status(400).json({message: "Нужен treeId"});
       return;
@@ -216,6 +232,7 @@ function registerGatheringRoutes(
       endAt,
       isAllDay,
       place,
+      imageUrls,
       scopeType,
       anchorPersonIds: normalizedAnchorPersonIds,
       circleId,

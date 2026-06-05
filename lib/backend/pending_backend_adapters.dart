@@ -1054,6 +1054,7 @@ class PendingBackendGatheringService implements GatheringServiceInterface {
     DateTime? endAt,
     bool isAllDay = false,
     String? place,
+    List<XFile> images = const [],
     TreeContentScopeType scopeType = TreeContentScopeType.wholeTree,
     List<String> anchorPersonIds = const [],
     String? circleId,

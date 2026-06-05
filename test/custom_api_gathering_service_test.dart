@@ -3,12 +3,29 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:rodnya/backend/backend_runtime_config.dart';
+import 'package:rodnya/backend/interfaces/storage_service_interface.dart';
 import 'package:rodnya/models/post.dart' show TreeContentScopeType;
 import 'package:rodnya/services/custom_api_auth_service.dart';
 import 'package:rodnya/services/custom_api_gathering_service.dart';
 import 'package:rodnya/services/invitation_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+class _FakeStorageService implements StorageServiceInterface {
+  int uploadCalls = 0;
+  String? lastBucket;
+
+  @override
+  Future<String?> uploadImage(XFile file, String bucket) async {
+    uploadCalls++;
+    lastBucket = bucket;
+    return 'https://cdn.example.ru/${file.name}';
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
 
 const _gatheringJson = <String, dynamic>{
   'id': 'g1',
@@ -51,6 +68,7 @@ void main() {
 
     final service = CustomApiGatheringService(
       authService: await _createAuthService(client),
+      storageService: _FakeStorageService(),
       runtimeConfig: const BackendRuntimeConfig(
         apiBaseUrl: 'https://api.example.ru',
       ),
@@ -79,6 +97,7 @@ void main() {
 
     final service = CustomApiGatheringService(
       authService: await _createAuthService(client),
+      storageService: _FakeStorageService(),
       runtimeConfig: const BackendRuntimeConfig(
         apiBaseUrl: 'https://api.example.ru',
       ),
@@ -99,6 +118,42 @@ void main() {
     expect(sentBody?['startAt'], '2026-07-01T15:00:00.000Z');
     expect(sentBody?['place'], 'Дача');
     expect(sentBody?['scopeType'], 'wholeTree');
+  });
+
+  test('createGathering uploads images to the gatherings bucket', () async {
+    Map<String, dynamic>? sentBody;
+    final client = MockClient((request) async {
+      expect(request.method, 'POST');
+      expect(request.url.path, '/v1/gatherings');
+      sentBody = jsonDecode(request.body) as Map<String, dynamic>;
+      return http.Response(
+        jsonEncode(_gatheringJson),
+        201,
+        headers: {'content-type': 'application/json'},
+      );
+    });
+
+    final storage = _FakeStorageService();
+    final service = CustomApiGatheringService(
+      authService: await _createAuthService(client),
+      storageService: storage,
+      runtimeConfig: const BackendRuntimeConfig(
+        apiBaseUrl: 'https://api.example.ru',
+      ),
+      httpClient: client,
+    );
+
+    await service.createGathering(
+      treeId: 'tree-1',
+      title: 'Фотовстреча',
+      startAt: DateTime.parse('2026-07-01T15:00:00.000Z'),
+      images: [XFile('photo.jpg')],
+    );
+
+    expect(storage.uploadCalls, 1);
+    expect(storage.lastBucket, 'gatherings');
+    expect(
+        sentBody?['imageUrls'], contains('https://cdn.example.ru/photo.jpg'));
   });
 }
 

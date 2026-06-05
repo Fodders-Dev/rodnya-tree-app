@@ -1,3 +1,5 @@
+import 'package:image_picker/image_picker.dart';
+
 import '../../models/gathering.dart';
 import '../../models/post.dart' show TreeContentScopeType;
 
@@ -8,7 +10,8 @@ abstract class GatheringServiceInterface {
   /// Gatherings for a tree the viewer can see, soonest-first.
   Future<List<Gathering>> getGatherings({required String treeId});
 
-  /// Create a gathering. [title] and [startAt] are required.
+  /// Create a gathering. [title] and [startAt] are required. [images] are
+  /// uploaded to the media pipeline and stored as the gathering's photos.
   Future<Gathering> createGathering({
     required String treeId,
     required String title,
@@ -17,6 +20,7 @@ abstract class GatheringServiceInterface {
     DateTime? endAt,
     bool isAllDay = false,
     String? place,
+    List<XFile> images = const [],
     TreeContentScopeType scopeType = TreeContentScopeType.wholeTree,
     List<String> anchorPersonIds = const [],
     String? circleId,

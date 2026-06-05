@@ -1407,6 +1407,7 @@ function createApp({
       endAt: gathering.endAt || null,
       isAllDay: gathering.isAllDay === true,
       place: gathering.place || null,
+      imageUrls: normalizePublicUrlList(gathering.imageUrls),
       scopeType: gathering.scopeType === "branches" ? "branches" : "wholeTree",
       circleId: gathering.circleId || null,
       anchorPersonIds: Array.isArray(gathering.anchorPersonIds)

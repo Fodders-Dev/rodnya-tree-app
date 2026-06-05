@@ -325,6 +325,7 @@ class AppStartupService implements AppStartupServiceInterface {
 
     final customApiGatheringService = CustomApiGatheringService(
       authService: customApiAuthService,
+      storageService: customApiStorageService,
       runtimeConfig: runtimeConfig,
     );
     _registerOrReplaceSingleton<CustomApiGatheringService>(

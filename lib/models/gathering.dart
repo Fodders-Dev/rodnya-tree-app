@@ -16,6 +16,7 @@ class Gathering {
   final String authorId;
   final String authorName;
   final String? _authorPhotoUrl;
+  final List<String>? _imageUrls;
   final String title;
   final String? description;
   final DateTime startAt;
@@ -36,6 +37,11 @@ class Gathering {
       UrlUtils.isRenderableNetworkImageUrl(_authorPhotoUrl)
           ? _authorPhotoUrl
           : null;
+
+  List<String>? get imageUrls => _imageUrls;
+  List<String> get renderableImageUrls => (_imageUrls ?? const <String>[])
+      .where(UrlUtils.isRenderableNetworkImageUrl)
+      .toList(growable: false);
 
   // ── RSVP tallies (Phase E3) ──
   // «Going» counts each yes-responder plus the extra people they bring
@@ -75,7 +81,10 @@ class Gathering {
   }
 
   /// Copy with a replaced RSVP list — used for optimistic UI updates.
-  Gathering copyWith({List<Map<String, dynamic>>? rsvps}) {
+  Gathering copyWith({
+    List<Map<String, dynamic>>? rsvps,
+    List<String>? imageUrls,
+  }) {
     return Gathering(
       id: id,
       treeId: treeId,
@@ -89,6 +98,7 @@ class Gathering {
       endAt: endAt,
       isAllDay: isAllDay,
       place: place,
+      imageUrls: imageUrls ?? this.imageUrls,
       scopeType: scopeType,
       anchorPersonIds: anchorPersonIds,
       circleId: circleId,
@@ -110,6 +120,7 @@ class Gathering {
     this.endAt,
     this.isAllDay = false,
     this.place,
+    List<String>? imageUrls,
     this.scopeType = TreeContentScopeType.wholeTree,
     List<String>? anchorPersonIds,
     this.circleId,
@@ -118,6 +129,10 @@ class Gathering {
     List<Map<String, dynamic>>? rsvps,
     List<String>? branchIds,
   })  : _authorPhotoUrl = UrlUtils.normalizeImageUrl(authorPhotoUrl),
+        _imageUrls = imageUrls
+            ?.map((url) => UrlUtils.normalizeImageUrl(url))
+            .whereType<String>()
+            .toList(),
         anchorPersonIds = anchorPersonIds ?? [],
         rsvps = rsvps ?? const <Map<String, dynamic>>[],
         branchIds =
@@ -132,6 +147,9 @@ class Gathering {
         .whereType<Map>()
         .map((e) => Map<String, dynamic>.from(e))
         .toList();
+    final rawImageUrls = (json['imageUrls'] as List<dynamic>? ?? const [])
+        .map((e) => e.toString())
+        .toList();
     return Gathering(
       id: json['id']?.toString() ?? '',
       treeId: json['treeId']?.toString() ?? '',
@@ -139,6 +157,7 @@ class Gathering {
       authorId: json['authorId']?.toString() ?? '',
       authorName: json['authorName']?.toString() ?? 'Аноним',
       authorPhotoUrl: json['authorPhotoUrl'] as String?,
+      imageUrls: rawImageUrls,
       title: json['title']?.toString() ?? '',
       description: json['description']?.toString(),
       startAt: _parseDate(json['startAt']) ?? DateTime.now(),
@@ -170,6 +189,7 @@ class Gathering {
       'endAt': endAt?.toIso8601String(),
       'isAllDay': isAllDay,
       'place': place,
+      'imageUrls': imageUrls,
       'scopeType': _scopeTypeToString(scopeType),
       'anchorPersonIds': anchorPersonIds,
       'circleId': circleId,

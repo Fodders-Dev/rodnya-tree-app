@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:image_picker/image_picker.dart';
 
 import '../backend/backend_runtime_config.dart';
 import '../backend/interfaces/gathering_service_interface.dart';
+import '../backend/interfaces/storage_service_interface.dart';
 import '../models/gathering.dart';
 import '../models/post.dart' show TreeContentScopeType;
 import 'custom_api_auth_service.dart';
@@ -15,13 +17,16 @@ import 'custom_api_auth_service.dart';
 class CustomApiGatheringService implements GatheringServiceInterface {
   CustomApiGatheringService({
     required CustomApiAuthService authService,
+    required StorageServiceInterface storageService,
     required BackendRuntimeConfig runtimeConfig,
     http.Client? httpClient,
   })  : _authService = authService,
+        _storageService = storageService,
         _runtimeConfig = runtimeConfig,
         _httpClient = httpClient ?? http.Client();
 
   final CustomApiAuthService _authService;
+  final StorageServiceInterface _storageService;
   final BackendRuntimeConfig _runtimeConfig;
   final http.Client _httpClient;
   static const _requestTimeout = Duration(seconds: 12);
@@ -52,11 +57,20 @@ class CustomApiGatheringService implements GatheringServiceInterface {
     DateTime? endAt,
     bool isAllDay = false,
     String? place,
+    List<XFile> images = const [],
     TreeContentScopeType scopeType = TreeContentScopeType.wholeTree,
     List<String> anchorPersonIds = const [],
     String? circleId,
     List<String>? branchIds,
   }) async {
+    // Same pipeline as posts: upload each photo to the media service
+    // (its own bucket) → collect the public URLs for the request body.
+    final imageUrls = <String>[];
+    for (final image in images) {
+      final url = await _storageService.uploadImage(image, 'gatherings');
+      if (url != null) imageUrls.add(url);
+    }
+
     final cleanBranchIds = branchIds
         ?.map((b) => b.trim())
         .where((b) => b.isNotEmpty)
@@ -72,6 +86,7 @@ class CustomApiGatheringService implements GatheringServiceInterface {
         'startAt': startAt.toIso8601String(),
         if (endAt != null) 'endAt': endAt.toIso8601String(),
         'isAllDay': isAllDay,
+        'imageUrls': imageUrls,
         'scopeType': scopeType == TreeContentScopeType.branches
             ? 'branches'
             : 'wholeTree',

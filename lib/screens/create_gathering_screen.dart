@@ -8,9 +8,12 @@
 // Event fields: title (required), startAt date+time (required), optional
 // endAt, all-day toggle, place, description.
 
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
@@ -51,6 +54,10 @@ class _CreateGatheringScreenState extends State<CreateGatheringScreen> {
   final _titleController = TextEditingController();
   final _placeController = TextEditingController();
   final _descriptionController = TextEditingController();
+  final ImagePicker _picker = ImagePicker();
+
+  static const int _maxImages = 5;
+  List<XFile> _images = <XFile>[];
 
   late final GatheringServiceInterface _gatheringService =
       widget.serviceOverride ?? GetIt.I<GatheringServiceInterface>();
@@ -236,6 +243,29 @@ class _CreateGatheringScreenState extends State<CreateGatheringScreen> {
         : DateFormat('d MMMM y, HH:mm', 'ru').format(value);
   }
 
+  Future<void> _pickImages() async {
+    try {
+      final picked = await _picker.pickMultiImage(
+        imageQuality: 80,
+        maxWidth: 1080,
+      );
+      if (picked.isEmpty || !mounted) return;
+      final willTrim = _images.length + picked.length > _maxImages;
+      setState(() {
+        _images = <XFile>[..._images, ...picked].take(_maxImages).toList();
+      });
+      if (willTrim) _showMessage('Можно прикрепить не более $_maxImages фото.');
+    } catch (_) {
+      if (mounted) _showMessage('Не удалось выбрать фото.');
+    }
+  }
+
+  void _removeImage(int index) {
+    setState(() {
+      _images = <XFile>[..._images]..removeAt(index);
+    });
+  }
+
   Future<void> _create() async {
     final title = _titleController.text.trim();
     if (title.isEmpty) {
@@ -272,6 +302,7 @@ class _CreateGatheringScreenState extends State<CreateGatheringScreen> {
         endAt: _endAt,
         isAllDay: _isAllDay,
         place: place.isEmpty ? null : place,
+        images: _images,
         scopeType: _scopeType,
         anchorPersonIds: _selectedBranchPersonIds.toList(),
         circleId: _selectedCircleId,
@@ -362,6 +393,8 @@ class _CreateGatheringScreenState extends State<CreateGatheringScreen> {
               ),
             ),
             SizedBox(height: tokens.space16),
+            _buildMediaSection(theme, tokens),
+            SizedBox(height: tokens.space16),
             _buildAudienceSection(theme, tokens),
           ],
         ),
@@ -409,6 +442,92 @@ class _CreateGatheringScreenState extends State<CreateGatheringScreen> {
                   onPressed: () => setState(() => _endAt = null),
                 ),
           onTap: _pickEndAt,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMediaSection(ThemeData theme, RodnyaDesignTokens tokens) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                'Фото (необязательно)',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w800,
+                  color: tokens.ink,
+                ),
+              ),
+            ),
+            TextButton.icon(
+              key: const Key('gathering-add-photo'),
+              onPressed: _images.length >= _maxImages ? null : _pickImages,
+              icon: const Icon(Icons.add_photo_alternate_outlined),
+              label: Text(
+                _images.isEmpty ? 'Добавить' : '${_images.length}/$_maxImages',
+              ),
+            ),
+          ],
+        ),
+        if (_images.isNotEmpty) ...[
+          SizedBox(height: tokens.space8),
+          SizedBox(
+            height: 96,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: _images.length,
+              separatorBuilder: (_, __) => SizedBox(width: tokens.space8),
+              itemBuilder: (_, i) => _buildImageThumb(theme, tokens, i),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildImageThumb(
+    ThemeData theme,
+    RodnyaDesignTokens tokens,
+    int index,
+  ) {
+    return Stack(
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(tokens.radiusSm),
+          child: SizedBox(
+            width: 96,
+            height: 96,
+            child: FutureBuilder<Uint8List>(
+              future: _images[index].readAsBytes(),
+              builder: (_, snapshot) {
+                if (snapshot.hasData) {
+                  return Image.memory(snapshot.data!, fit: BoxFit.cover);
+                }
+                return Container(
+                  color: theme.colorScheme.surfaceContainerHighest,
+                );
+              },
+            ),
+          ),
+        ),
+        Positioned(
+          top: 2,
+          right: 2,
+          child: GestureDetector(
+            key: Key('gathering-remove-photo-$index'),
+            onTap: () => _removeImage(index),
+            child: Container(
+              decoration: const BoxDecoration(
+                color: Colors.black54,
+                shape: BoxShape.circle,
+              ),
+              padding: const EdgeInsets.all(2),
+              child: const Icon(Icons.close, color: Colors.white, size: 16),
+            ),
+          ),
         ),
       ],
     );

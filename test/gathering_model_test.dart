@@ -17,6 +17,7 @@ void main() {
       'endAt': '2026-07-01T20:00:00.000Z',
       'isAllDay': false,
       'place': 'Дача',
+      'imageUrls': ['https://example.com/1.jpg', 'https://example.com/2.jpg'],
       'scopeType': 'branches',
       'anchorPersonIds': ['p1', 'p2'],
       'circleId': 'circle-1',
@@ -37,6 +38,9 @@ void main() {
     expect(g.anchorPersonIds, ['p1', 'p2']);
     expect(g.circleId, 'circle-1');
     expect(g.isAllDay, isFalse);
+    expect(g.imageUrls,
+        ['https://example.com/1.jpg', 'https://example.com/2.jpg']);
+    expect(g.renderableImageUrls.length, 2);
 
     final back = g.toJson();
     expect(back['title'], 'Шашлыки');
@@ -45,6 +49,8 @@ void main() {
     expect(back['scopeType'], 'branches');
     expect(back['branchIds'], ['tree-1', 'tree-2']);
     expect(back['place'], 'Дача');
+    expect(back['imageUrls'],
+        ['https://example.com/1.jpg', 'https://example.com/2.jpg']);
 
     // Re-parsing the serialised form yields the same values.
     final g2 = Gathering.fromJson(back);

@@ -14,6 +14,8 @@ import '../backend/interfaces/gathering_service_interface.dart';
 import '../models/gathering.dart';
 import '../models/post.dart' show TreeContentScopeType;
 import '../theme/app_theme.dart';
+import 'feed_media_gallery.dart';
+import 'media_lightbox.dart';
 
 class GatheringCard extends StatefulWidget {
   const GatheringCard({
@@ -137,6 +139,10 @@ class _GatheringCardState extends State<GatheringCard> {
           _buildHeader(theme, tokens),
           SizedBox(height: tokens.space12),
           _buildBody(theme, tokens),
+          if (_gathering.renderableImageUrls.isNotEmpty) ...[
+            SizedBox(height: tokens.space12),
+            _buildPhotos(tokens),
+          ],
           SizedBox(height: tokens.space12),
           _buildRsvp(theme, tokens),
         ],
@@ -323,6 +329,27 @@ class _GatheringCardState extends State<GatheringCard> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildPhotos(RodnyaDesignTokens tokens) {
+    final images = _gathering.renderableImageUrls;
+    return FeedMediaGallery(
+      imageUrls: images,
+      caption: _gathering.title,
+      captionPrefix: 'Фото встречи',
+      // The card already pads its content (space16) — render edge-to-edge
+      // within it instead of double-insetting.
+      padding: EdgeInsets.zero,
+      onTap: (index) {
+        MediaLightbox.show(
+          context,
+          items: [
+            for (final url in images) MediaLightboxItem(imageUrl: url),
+          ],
+          initialIndex: index,
+        );
+      },
     );
   }
 

@@ -4,6 +4,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:rodnya/backend/interfaces/gathering_service_interface.dart';
 import 'package:rodnya/models/gathering.dart';
@@ -22,6 +23,8 @@ class _FakeGatheringService implements GatheringServiceInterface {
   Future<List<Gathering>> getGatherings({required String treeId}) async =>
       const [];
 
+  int lastImageCount = 0;
+
   @override
   Future<Gathering> createGathering({
     required String treeId,
@@ -31,6 +34,7 @@ class _FakeGatheringService implements GatheringServiceInterface {
     DateTime? endAt,
     bool isAllDay = false,
     String? place,
+    List<XFile> images = const [],
     TreeContentScopeType scopeType = TreeContentScopeType.wholeTree,
     List<String> anchorPersonIds = const [],
     String? circleId,
@@ -41,6 +45,7 @@ class _FakeGatheringService implements GatheringServiceInterface {
     lastStartAt = startAt;
     lastTreeId = treeId;
     lastPlace = place;
+    lastImageCount = images.length;
     return Gathering(
       id: 'g-new',
       treeId: treeId,
