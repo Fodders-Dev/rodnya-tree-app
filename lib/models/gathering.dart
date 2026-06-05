@@ -37,6 +37,67 @@ class Gathering {
           ? _authorPhotoUrl
           : null;
 
+  // ── RSVP tallies (Phase E3) ──
+  // «Going» counts each yes-responder plus the extra people they bring
+  // (headcount); maybe / no are responder counts only.
+  int get goingCount =>
+      _rsvpsWithStatus('yes').fold(0, (sum, r) => sum + 1 + _headcountOf(r));
+  int get maybeCount => _rsvpsWithStatus('maybe').length;
+  int get notGoingCount => _rsvpsWithStatus('no').length;
+
+  /// The given user's RSVP status ('yes' | 'maybe' | 'no'), or null.
+  String? myRsvpStatus(String? userId) {
+    if (userId == null || userId.isEmpty) return null;
+    for (final r in rsvps) {
+      if (r['userId']?.toString() == userId) {
+        return r['status']?.toString();
+      }
+    }
+    return null;
+  }
+
+  /// The given user's extra-headcount (people besides themselves), or 0.
+  int headcountFor(String? userId) {
+    if (userId == null || userId.isEmpty) return 0;
+    for (final r in rsvps) {
+      if (r['userId']?.toString() == userId) return _headcountOf(r);
+    }
+    return 0;
+  }
+
+  Iterable<Map<String, dynamic>> _rsvpsWithStatus(String status) =>
+      rsvps.where((r) => r['status']?.toString() == status);
+
+  static int _headcountOf(Map<String, dynamic> r) {
+    final raw = r['headcount'];
+    final value = raw is num ? raw.toInt() : int.tryParse('$raw') ?? 0;
+    return value > 0 ? value : 0;
+  }
+
+  /// Copy with a replaced RSVP list — used for optimistic UI updates.
+  Gathering copyWith({List<Map<String, dynamic>>? rsvps}) {
+    return Gathering(
+      id: id,
+      treeId: treeId,
+      branchIds: branchIds,
+      authorId: authorId,
+      authorName: authorName,
+      authorPhotoUrl: authorPhotoUrl,
+      title: title,
+      description: description,
+      startAt: startAt,
+      endAt: endAt,
+      isAllDay: isAllDay,
+      place: place,
+      scopeType: scopeType,
+      anchorPersonIds: anchorPersonIds,
+      circleId: circleId,
+      createdAt: createdAt,
+      updatedAt: updatedAt,
+      rsvps: rsvps ?? this.rsvps,
+    );
+  }
+
   Gathering({
     required this.id,
     required this.treeId,

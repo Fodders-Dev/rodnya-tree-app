@@ -1,20 +1,118 @@
-// Phase E2c: feed card for a «Встреча» (Gathering). Mirrors PostCard's
-// visual language (author header, audience chip, body) but is
-// self-contained — no likes / comments / reactions / media. RSVP controls
-// are intentionally absent until Phase E3 wires the logic.
+// Phase E2c/E3b: feed card for a «Встреча» (Gathering). Mirrors PostCard's
+// visual language (author header, audience chip, body) — no likes /
+// comments / media. Phase E3b lights up the RSVP row (Да / Может / Нет)
+// with an optimistic update, an optional headcount stepper, and a public
+// tally, mirroring the post like/reaction toggle pattern.
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:get_it/get_it.dart';
 import 'package:intl/intl.dart';
 
+import '../backend/interfaces/auth_service_interface.dart';
+import '../backend/interfaces/gathering_service_interface.dart';
 import '../models/gathering.dart';
 import '../models/post.dart' show TreeContentScopeType;
 import '../theme/app_theme.dart';
 
-class GatheringCard extends StatelessWidget {
-  const GatheringCard({super.key, required this.gathering});
+class GatheringCard extends StatefulWidget {
+  const GatheringCard({
+    super.key,
+    required this.gathering,
+    this.serviceOverride,
+    this.currentUserId,
+  });
 
   final Gathering gathering;
+
+  /// Test seams — production resolves these via GetIt.
+  final GatheringServiceInterface? serviceOverride;
+  final String? currentUserId;
+
+  @override
+  State<GatheringCard> createState() => _GatheringCardState();
+}
+
+class _GatheringCardState extends State<GatheringCard> {
+  late Gathering _gathering = widget.gathering;
+  late int _myHeadcount;
+  bool _submitting = false;
+
+  GatheringServiceInterface? get _service =>
+      widget.serviceOverride ??
+      (GetIt.I.isRegistered<GatheringServiceInterface>()
+          ? GetIt.I<GatheringServiceInterface>()
+          : null);
+
+  String? get _currentUserId =>
+      widget.currentUserId ??
+      (GetIt.I.isRegistered<AuthServiceInterface>()
+          ? GetIt.I<AuthServiceInterface>().currentUserId
+          : null);
+
+  @override
+  void initState() {
+    super.initState();
+    _myHeadcount = _gathering.headcountFor(_currentUserId);
+  }
+
+  // Optimistic local upsert of my RSVP row (mirrors the post like toggle:
+  // mutate now, reconcile/revert when the server answers).
+  Gathering _withMyRsvp(
+      Gathering g, String myId, String status, int headcount) {
+    final next = <Map<String, dynamic>>[
+      for (final r in g.rsvps)
+        if (r['userId']?.toString() != myId) Map<String, dynamic>.from(r),
+      {
+        'userId': myId,
+        'status': status,
+        'headcount': status == 'yes' ? headcount : 0,
+        'note': null,
+        'respondedAt': null,
+      },
+    ];
+    return g.copyWith(rsvps: next);
+  }
+
+  Future<void> _respond(String status) async {
+    final service = _service;
+    final myId = _currentUserId;
+    if (service == null || myId == null || _submitting) return;
+
+    final previous = _gathering;
+    final headcount = status == 'yes' ? _myHeadcount : 0;
+    setState(() {
+      _gathering = _withMyRsvp(previous, myId, status, headcount);
+      _submitting = true;
+    });
+    try {
+      final updated =
+          await service.setRsvp(previous.id, status, headcount: headcount);
+      if (!mounted) return;
+      setState(() {
+        _gathering = updated;
+        _myHeadcount = updated.headcountFor(myId);
+        _submitting = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _gathering = previous; // revert
+        _myHeadcount = previous.headcountFor(myId);
+        _submitting = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Не удалось сохранить ответ')),
+      );
+    }
+  }
+
+  void _changeHeadcount(int delta) {
+    final next = (_myHeadcount + delta).clamp(0, 99);
+    if (next == _myHeadcount) return;
+    setState(() => _myHeadcount = next);
+    _respond('yes'); // persist the new headcount
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -25,7 +123,7 @@ class GatheringCard extends StatelessWidget {
             : RodnyaDesignTokens.light);
 
     return Container(
-      key: Key('gathering-card-${gathering.id}'),
+      key: Key('gathering-card-${_gathering.id}'),
       margin: EdgeInsets.only(bottom: tokens.space12),
       padding: EdgeInsets.all(tokens.space16),
       decoration: BoxDecoration(
@@ -39,6 +137,8 @@ class GatheringCard extends StatelessWidget {
           _buildHeader(theme, tokens),
           SizedBox(height: tokens.space12),
           _buildBody(theme, tokens),
+          SizedBox(height: tokens.space12),
+          _buildRsvp(theme, tokens),
         ],
       ),
     );
@@ -55,7 +155,7 @@ class GatheringCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                gathering.authorName,
+                _gathering.authorName,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: theme.textTheme.titleSmall?.copyWith(
@@ -65,7 +165,7 @@ class GatheringCard extends StatelessWidget {
               ),
               const SizedBox(height: 2),
               Text(
-                _formatPosted(gathering.createdAt),
+                _formatPosted(_gathering.createdAt),
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: tokens.inkMuted,
                 ),
@@ -80,7 +180,7 @@ class GatheringCard extends StatelessWidget {
   }
 
   Widget _buildAvatar(ThemeData theme, RodnyaDesignTokens tokens) {
-    final photo = gathering.renderableAuthorPhotoUrl;
+    final photo = _gathering.renderableAuthorPhotoUrl;
     return Container(
       width: 40,
       height: 40,
@@ -101,7 +201,7 @@ class GatheringCard extends StatelessWidget {
   }
 
   Widget _buildInitials(ThemeData theme, RodnyaDesignTokens tokens) {
-    final name = gathering.authorName.trim();
+    final name = _gathering.authorName.trim();
     final initial = name.isEmpty ? 'Р' : String.fromCharCode(name.runes.first);
     return Center(
       child: Text(
@@ -139,13 +239,13 @@ class GatheringCard extends StatelessWidget {
   }
 
   Widget _buildBody(ThemeData theme, RodnyaDesignTokens tokens) {
-    final description = gathering.description?.trim() ?? '';
-    final place = gathering.place?.trim() ?? '';
+    final description = _gathering.description?.trim() ?? '';
+    final place = _gathering.place?.trim() ?? '';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          gathering.title,
+          _gathering.title,
           style: theme.textTheme.titleLarge?.copyWith(
             fontFamily: 'Lora',
             fontWeight: FontWeight.w700,
@@ -154,17 +254,11 @@ class GatheringCard extends StatelessWidget {
           ),
         ),
         SizedBox(height: tokens.space8),
-        _buildInfoRow(
-          theme,
-          tokens,
-          Icons.schedule_outlined,
-          _formatWhen(),
-        ),
+        _buildInfoRow(theme, tokens, Icons.schedule_outlined, _formatWhen()),
         if (place.isNotEmpty) ...[
           SizedBox(height: tokens.space4),
           _buildInfoRow(theme, tokens, Icons.place_outlined, place),
         ],
-        // Audience hint chip (mirrors the post card's audience affordance).
         SizedBox(height: tokens.space8),
         _buildAudienceChip(theme, tokens),
         if (description.isNotEmpty) ...[
@@ -177,7 +271,6 @@ class GatheringCard extends StatelessWidget {
             ),
           ),
         ],
-        // RSVP controls intentionally hidden until Phase E3.
       ],
     );
   }
@@ -207,7 +300,7 @@ class GatheringCard extends StatelessWidget {
   }
 
   Widget _buildAudienceChip(ThemeData theme, RodnyaDesignTokens tokens) {
-    final label = gathering.scopeType == TreeContentScopeType.branches
+    final label = _gathering.scopeType == TreeContentScopeType.branches
         ? 'Отдельные ветки'
         : 'Вся семья';
     return Container(
@@ -233,16 +326,127 @@ class GatheringCard extends StatelessWidget {
     );
   }
 
+  // ── RSVP (Phase E3b) ──
+
+  Widget _buildRsvp(ThemeData theme, RodnyaDesignTokens tokens) {
+    final myStatus = _gathering.myRsvpStatus(_currentUserId);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            _buildRsvpButton(theme, tokens, 'yes', 'Пойду', myStatus),
+            SizedBox(width: tokens.space8),
+            _buildRsvpButton(theme, tokens, 'maybe', 'Может', myStatus),
+            SizedBox(width: tokens.space8),
+            _buildRsvpButton(theme, tokens, 'no', 'Не пойду', myStatus),
+          ],
+        ),
+        if (myStatus == 'yes') ...[
+          SizedBox(height: tokens.space8),
+          _buildHeadcountStepper(theme, tokens),
+        ],
+        SizedBox(height: tokens.space8),
+        Text(
+          key: const Key('gathering-rsvp-tally'),
+          'Пойдут: ${_gathering.goingCount} · '
+          'Может: ${_gathering.maybeCount} · '
+          'Нет: ${_gathering.notGoingCount}',
+          style: theme.textTheme.bodySmall?.copyWith(color: tokens.inkMuted),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildRsvpButton(
+    ThemeData theme,
+    RodnyaDesignTokens tokens,
+    String status,
+    String label,
+    String? myStatus,
+  ) {
+    final selected = myStatus == status;
+    return Expanded(
+      child: Material(
+        color: selected ? tokens.accent : tokens.surface,
+        borderRadius: BorderRadius.circular(tokens.radiusSm),
+        child: InkWell(
+          key: Key('gathering-rsvp-$status'),
+          borderRadius: BorderRadius.circular(tokens.radiusSm),
+          onTap: _submitting ? null : () => _respond(status),
+          child: Container(
+            alignment: Alignment.center,
+            padding: const EdgeInsets.symmetric(vertical: 9),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(tokens.radiusSm),
+              border: Border.all(
+                color: selected ? tokens.accent : tokens.surfaceLine,
+              ),
+            ),
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.labelLarge?.copyWith(
+                color: selected ? tokens.accentInk : tokens.ink,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeadcountStepper(ThemeData theme, RodnyaDesignTokens tokens) {
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            _myHeadcount == 0
+                ? 'Приду один'
+                : '+$_myHeadcount ${_peopleWord(_myHeadcount)} со мной',
+            style: theme.textTheme.bodySmall?.copyWith(color: tokens.ink),
+          ),
+        ),
+        IconButton(
+          key: const Key('gathering-headcount-dec'),
+          visualDensity: VisualDensity.compact,
+          onPressed: _submitting || _myHeadcount == 0
+              ? null
+              : () => _changeHeadcount(-1),
+          icon: const Icon(Icons.remove_circle_outline, size: 20),
+        ),
+        Text('$_myHeadcount', style: theme.textTheme.titleSmall),
+        IconButton(
+          key: const Key('gathering-headcount-inc'),
+          visualDensity: VisualDensity.compact,
+          onPressed: _submitting ? null : () => _changeHeadcount(1),
+          icon: const Icon(Icons.add_circle_outline, size: 20),
+        ),
+      ],
+    );
+  }
+
+  String _peopleWord(int count) {
+    final mod10 = count % 10;
+    final mod100 = count % 100;
+    if (mod10 == 1 && mod100 != 11) return 'человек';
+    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) {
+      return 'человека';
+    }
+    return 'человек';
+  }
+
   String _formatWhen() {
-    final pattern = gathering.isAllDay ? 'd MMMM y' : 'd MMMM y, HH:mm';
-    final start = DateFormat(pattern, 'ru').format(gathering.startAt);
-    final end = gathering.endAt;
+    final pattern = _gathering.isAllDay ? 'd MMMM y' : 'd MMMM y, HH:mm';
+    final start = DateFormat(pattern, 'ru').format(_gathering.startAt);
+    final end = _gathering.endAt;
     if (end == null) return start;
-    // Same-day end → show just the end time; otherwise the full date.
-    final sameDay = end.year == gathering.startAt.year &&
-        end.month == gathering.startAt.month &&
-        end.day == gathering.startAt.day;
-    final endLabel = gathering.isAllDay
+    final sameDay = end.year == _gathering.startAt.year &&
+        end.month == _gathering.startAt.month &&
+        end.day == _gathering.startAt.day;
+    final endLabel = _gathering.isAllDay
         ? DateFormat('d MMMM y', 'ru').format(end)
         : sameDay
             ? DateFormat('HH:mm', 'ru').format(end)

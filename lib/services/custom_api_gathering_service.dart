@@ -97,6 +97,25 @@ class CustomApiGatheringService implements GatheringServiceInterface {
     );
   }
 
+  @override
+  Future<Gathering> setRsvp(
+    String gatheringId,
+    String status, {
+    int? headcount,
+    String? note,
+  }) async {
+    final response = await _requestJson(
+      method: 'POST',
+      path: '/v1/gatherings/$gatheringId/rsvp',
+      body: {
+        'status': status,
+        if (headcount != null) 'headcount': headcount,
+        if (note != null && note.trim().isNotEmpty) 'note': note.trim(),
+      },
+    );
+    return Gathering.fromJson(response);
+  }
+
   // Helper Methods (cloned from CustomApiPostService)
 
   Future<Map<String, dynamic>> _requestJson({

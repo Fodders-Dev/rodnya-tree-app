@@ -54,6 +54,16 @@ class _FakeGatheringService implements GatheringServiceInterface {
 
   @override
   Future<void> deleteGathering(String gatheringId) async {}
+
+  @override
+  Future<Gathering> setRsvp(
+    String gatheringId,
+    String status, {
+    int? headcount,
+    String? note,
+  }) async {
+    throw UnimplementedError();
+  }
 }
 
 Widget _plainHost(_FakeGatheringService svc, {DateTime? initialStartAt}) {

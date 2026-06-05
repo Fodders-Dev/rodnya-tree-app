@@ -1066,4 +1066,14 @@ class PendingBackendGatheringService implements GatheringServiceInterface {
   Future<void> deleteGathering(String gatheringId) {
     throw UnsupportedError(_pendingProviderMessage('gathering'));
   }
+
+  @override
+  Future<Gathering> setRsvp(
+    String gatheringId,
+    String status, {
+    int? headcount,
+    String? note,
+  }) {
+    throw UnsupportedError(_pendingProviderMessage('gathering'));
+  }
 }

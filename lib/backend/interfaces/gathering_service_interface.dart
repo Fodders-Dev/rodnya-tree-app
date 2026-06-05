@@ -25,4 +25,14 @@ abstract class GatheringServiceInterface {
 
   /// Delete a gathering (server enforces author-only).
   Future<void> deleteGathering(String gatheringId);
+
+  /// Set the current user's RSVP. [status] ∈ {'yes','maybe','no'};
+  /// [headcount] = extra people brought (besides the responder). Returns
+  /// the updated gathering with refreshed public rsvps. (Phase E3.)
+  Future<Gathering> setRsvp(
+    String gatheringId,
+    String status, {
+    int? headcount,
+    String? note,
+  });
 }
