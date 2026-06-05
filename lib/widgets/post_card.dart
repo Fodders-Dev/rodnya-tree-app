@@ -1,12 +1,9 @@
-import 'package:cached_network_image/cached_network_image.dart';
-import 'package:carousel_slider/carousel_slider.dart';
-import 'package:flutter/material.dart' hide CarouselController;
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:share_plus/share_plus.dart';
-import 'package:shimmer/shimmer.dart';
 
 import '../backend/backend_runtime_config.dart';
 import '../backend/interfaces/auth_service_interface.dart';
@@ -15,6 +12,7 @@ import '../models/post.dart';
 import '../models/reaction_summary.dart';
 import '../theme/app_theme.dart';
 import 'comment_sheet.dart';
+import 'feed_media_gallery.dart';
 import 'glass_panel.dart';
 import 'media_lightbox.dart';
 import 'reaction_chip_strip.dart';
@@ -300,8 +298,7 @@ class _PostCardState extends State<PostCard>
     final confirmed = await showSafeDeleteConfirmation(
       context,
       title: 'Удалить публикацию?',
-      body:
-          'Пост исчезнет у всех родственников и переедет в корзину. '
+      body: 'Пост исчезнет у всех родственников и переедет в корзину. '
           'Восстановить можно в течение 30 дней в Настройки → Корзина.',
     );
     if (!confirmed || !mounted) return;
@@ -366,8 +363,8 @@ class _PostCardState extends State<PostCard>
               _buildInvalidPostImageFallback(),
             if (_reactions.isNotEmpty)
               Padding(
-                padding: EdgeInsets.fromLTRB(
-                    tokens.space16, tokens.space4, tokens.space16, tokens.space4),
+                padding: EdgeInsets.fromLTRB(tokens.space16, tokens.space4,
+                    tokens.space16, tokens.space4),
                 child: ReactionChipStrip(
                   reactions: _reactions,
                   currentUserId: _currentUserId,
@@ -508,27 +505,10 @@ class _PostCardState extends State<PostCard>
     );
   }
 
-  /// Sniff a server URL for video — same pattern composer uses to tag
-  /// uploads. Posts store everything inside `imageUrls` (no schema
-  /// change needed for videos), so the feed has to detect the kind by
-  /// extension before deciding which tile / lightbox-item to render.
-  bool _isVideoUrl(String url) {
-    final lower = url.toLowerCase();
-    final qIndex = lower.indexOf('?');
-    final pathOnly = qIndex >= 0 ? lower.substring(0, qIndex) : lower;
-    return pathOnly.endsWith('.mp4') ||
-        pathOnly.endsWith('.mov') ||
-        pathOnly.endsWith('.webm') ||
-        pathOnly.endsWith('.m4v') ||
-        pathOnly.endsWith('.avi');
-  }
-
   Widget _buildPostImages(List<String> images) {
-    final tokens = _tokensFor(Theme.of(context));
-    final borderRadius = BorderRadius.circular(tokens.radiusMd);
     final lightboxItems = images
         .map(
-          (url) => _isVideoUrl(url)
+          (url) => isFeedVideoUrl(url)
               ? MediaLightboxItem(videoUrl: url)
               : MediaLightboxItem(imageUrl: url),
         )
@@ -558,64 +538,14 @@ class _PostCardState extends State<PostCard>
       );
     }
 
-    Widget tileFor(String url) {
-      if (_isVideoUrl(url)) {
-        return _PostVideoTile(url: url);
-      }
-      // a11y: a photo without an alt-text label reads as "Image" in
-      // TalkBack which is useless. Use the post body as the closest
-      // approximation of caption — TG and IG do exactly this. Falls
-      // back to a generic "Фото к посту" when content is empty.
-      final caption = widget.post.content.trim();
-      return Semantics(
-        label: caption.isEmpty
-            ? 'Фото к посту'
-            : 'Фото к посту: $caption',
-        image: true,
-        excludeSemantics: true,
-        child: CachedNetworkImage(
-          imageUrl: url,
-          fit: BoxFit.cover,
-          placeholder: (_, __) => _buildPostImagePlaceholder(),
-          errorWidget: (_, __, ___) => _buildPostImageFallback(),
-        ),
-      );
-    }
-
-    if (images.length == 1) {
-      return Padding(
-        padding: EdgeInsets.fromLTRB(
-            tokens.space12, 0, tokens.space12, tokens.space12),
-        child: AspectRatio(
-          aspectRatio: 16 / 9,
-          child: ClipRRect(
-            borderRadius: borderRadius,
-            // MouseRegion adds a "click" cursor on web/desktop so the
-            // image reads as interactive on hover. We keep
-            // GestureDetector (vs InkWell) because an ink ripple on a
-            // full-bleed photo looks like a glitch.
-            child: MouseRegion(
-              cursor: SystemMouseCursors.click,
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: () => openLightbox(0),
-                child: tileFor(images.first),
-              ),
-            ),
-          ),
-        ),
-      );
-    }
-
-    return Padding(
-      padding: EdgeInsets.fromLTRB(
-          tokens.space12, 0, tokens.space12, tokens.space12),
-      child: _PostImageCarousel(
-        images: images,
-        borderRadius: borderRadius,
-        tileFor: tileFor,
-        onTapImage: openLightbox,
-      ),
+    // Rendering (single tile / carousel + page-dots / video tiles /
+    // shimmer / fallback / video-sniffing) lives in the shared
+    // FeedMediaGallery; this card just owns the post-level lightbox.
+    return FeedMediaGallery(
+      imageUrls: images,
+      onTap: openLightbox,
+      caption: widget.post.content,
+      captionPrefix: 'Фото к посту',
     );
   }
 
@@ -628,37 +558,7 @@ class _PostCardState extends State<PostCard>
         aspectRatio: 16 / 9,
         child: ClipRRect(
           borderRadius: BorderRadius.circular(tokens.radiusMd),
-          child: _buildPostImageFallback(),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPostImagePlaceholder() {
-    // On-brand loading: a warm shimmer fill instead of a spinner, so a
-    // post image resolving in-place matches the feed's skeleton language
-    // (PostCardShimmer) rather than a stray Material progress ring.
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-    return Shimmer.fromColors(
-      baseColor: isDark
-          ? theme.colorScheme.surfaceContainerHigh
-          : theme.colorScheme.surfaceContainerHighest,
-      highlightColor: isDark
-          ? theme.colorScheme.surfaceContainerHighest
-          : theme.colorScheme.surfaceContainerLowest,
-      child: Container(color: Colors.white),
-    );
-  }
-
-  Widget _buildPostImageFallback() {
-    final theme = Theme.of(context);
-    return Container(
-      color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.55),
-      child: Center(
-        child: Icon(
-          Icons.broken_image_outlined,
-          color: theme.colorScheme.onSurfaceVariant,
+          child: const FeedMediaFallback(),
         ),
       ),
     );
@@ -828,180 +728,6 @@ class _PostActionButton extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-}
-
-/// Feed-side video tile. The backend doesn't generate poster frames, so
-/// we render a dark gradient + a centered play affordance — tapping
-/// opens [MediaLightbox] which spins up a real video_player and streams
-/// the file. Same shape post_card uses for invalid-image fallback, just
-/// with the play badge on top.
-class _PostVideoTile extends StatelessWidget {
-  const _PostVideoTile({required this.url});
-
-  final String url;
-
-  @override
-  Widget build(BuildContext context) {
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        const DecoratedBox(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [Color(0xFF332B45), Color(0xFF181522)],
-            ),
-          ),
-        ),
-        Center(
-          child: Container(
-            width: 64,
-            height: 64,
-            decoration: BoxDecoration(
-              color: Colors.black.withValues(alpha: 0.45),
-              shape: BoxShape.circle,
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.32),
-                  blurRadius: 16,
-                  spreadRadius: -2,
-                  offset: const Offset(0, 4),
-                ),
-              ],
-            ),
-            child: const Icon(
-              Icons.play_arrow_rounded,
-              color: Colors.white,
-              size: 36,
-            ),
-          ),
-        ),
-        const Positioned(
-          top: 12,
-          right: 12,
-          child: _VideoBadge(),
-        ),
-      ],
-    );
-  }
-}
-
-class _VideoBadge extends StatelessWidget {
-  const _VideoBadge();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.55),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: const Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.videocam_rounded, color: Colors.white, size: 14),
-          SizedBox(width: 4),
-          Text(
-            'Видео',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Multi-photo carousel with a page-dots indicator (UX-audit 3.4 — a
-/// gallery post gave no hint there was more than one photo). Owns its
-/// own page index so the surrounding PostCard doesn't rebuild on swipe.
-class _PostImageCarousel extends StatefulWidget {
-  const _PostImageCarousel({
-    required this.images,
-    required this.borderRadius,
-    required this.tileFor,
-    required this.onTapImage,
-  });
-
-  final List<String> images;
-  final BorderRadius borderRadius;
-  final Widget Function(String url) tileFor;
-  final void Function(int index) onTapImage;
-
-  @override
-  State<_PostImageCarousel> createState() => _PostImageCarouselState();
-}
-
-class _PostImageCarouselState extends State<_PostImageCarousel> {
-  int _index = 0;
-
-  @override
-  Widget build(BuildContext context) {
-    return Stack(
-      alignment: Alignment.bottomCenter,
-      children: [
-        CarouselSlider.builder(
-          itemCount: widget.images.length,
-          itemBuilder: (context, index, _) {
-            return ClipRRect(
-              borderRadius: widget.borderRadius,
-              child: MouseRegion(
-                cursor: SystemMouseCursors.click,
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: () => widget.onTapImage(index),
-                  child: SizedBox(
-                    width: MediaQuery.of(context).size.width,
-                    child: widget.tileFor(widget.images[index]),
-                  ),
-                ),
-              ),
-            );
-          },
-          options: CarouselOptions(
-            aspectRatio: 16 / 9,
-            viewportFraction: 1,
-            enableInfiniteScroll: false,
-            autoPlay: false,
-            enlargeCenterPage: false,
-            onPageChanged: (index, _) {
-              if (mounted) setState(() => _index = index);
-            },
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: Row(
-            key: const Key('post-carousel-dots'),
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              for (var i = 0; i < widget.images.length; i++)
-                AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  width: i == _index ? 18 : 6,
-                  height: 6,
-                  margin: const EdgeInsets.symmetric(horizontal: 3),
-                  decoration: BoxDecoration(
-                    color: i == _index
-                        ? Colors.white
-                        : Colors.white.withValues(alpha: 0.55),
-                    borderRadius: BorderRadius.circular(3),
-                    boxShadow: const [
-                      BoxShadow(color: Color(0x55000000), blurRadius: 4),
-                    ],
-                  ),
-                ),
-            ],
-          ),
-        ),
-      ],
     );
   }
 }
