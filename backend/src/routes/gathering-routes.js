@@ -7,6 +7,7 @@
 const {
   enforceTextLimit,
   enforceArrayCap,
+  enforceNonNegativeInt,
 } = require("../input-guards");
 
 function registerGatheringRoutes(
@@ -262,6 +263,105 @@ function registerGatheringRoutes(
 
     res.status(201).json(mapGathering(gathering));
   });
+
+  app.post(
+    "/v1/gatherings/:gatheringId/rsvp",
+    requireAuth,
+    async (req, res) => {
+      const gathering = await store.findGathering(req.params.gatheringId);
+      if (!gathering) {
+        res.status(404).json({message: "Встреча не найдена"});
+        return;
+      }
+
+      const tree = await requireTreeAccess(req, res, gathering.treeId);
+      if (!tree) {
+        return;
+      }
+
+      const status = String(req.body?.status || "").trim();
+      if (status !== "yes" && status !== "maybe" && status !== "no") {
+        res.status(400).json({message: "Некорректный статус ответа"});
+        return;
+      }
+
+      // headcount: optional extra people the responder brings (besides
+      // themselves). Non-negative, capped so a typo can't claim a stadium.
+      let headcount = 0;
+      if (req.body?.headcount != null) {
+        const guard = enforceNonNegativeInt(req.body.headcount, {
+          max: 100,
+          fieldName: "headcount",
+        });
+        if (!guard.ok) {
+          res.status(guard.status).json({message: guard.message});
+          return;
+        }
+        headcount = guard.value;
+      }
+
+      // note: optional short free text ("приедем после обеда").
+      let note = null;
+      if (req.body?.note != null) {
+        const noteGuard = enforceTextLimit(req.body.note, {
+          max: 280,
+          allowEmpty: true,
+          fieldName: "note",
+        });
+        if (!noteGuard.ok) {
+          res.status(noteGuard.status).json({message: noteGuard.message});
+          return;
+        }
+        note = noteGuard.value === "" ? null : noteGuard.value;
+      }
+
+      const updated = await store.setGatheringRsvp({
+        gatheringId: req.params.gatheringId,
+        userId: req.auth.user.id,
+        status,
+        headcount,
+        note,
+      });
+      if (!updated) {
+        res.status(404).json({message: "Встреча не найдена"});
+        return;
+      }
+
+      // Notify the organizer on every change (skip self-RSVP), mirroring
+      // the post-reaction fan-out.
+      if (typeof createAndDispatchNotification === "function" &&
+          updated.authorId &&
+          updated.authorId !== req.auth.user.id) {
+        try {
+          const responderName =
+            req.auth.user.profile?.displayName ||
+            composeDisplayName(req.auth.user.profile) ||
+            req.auth.user.email ||
+            "Кто-то";
+          const statusLabel = status === "yes"
+              ? "идёт"
+              : status === "maybe"
+                  ? "под вопросом"
+                  : "не идёт";
+          await createAndDispatchNotification({
+            userId: updated.authorId,
+            type: "gathering_rsvp",
+            title: `${responderName}: ${statusLabel}`,
+            body: updated.title,
+            data: {
+              gatheringId: updated.id,
+              fromUserId: req.auth.user.id,
+              status,
+            },
+          });
+        } catch (error) {
+          console.warn("gathering rsvp notification failed", error);
+        }
+      }
+
+      res.json(mapGathering(updated));
+    },
+  );
 
   app.delete("/v1/gatherings/:gatheringId", requireAuth, async (req, res) => {
     const gathering = await store.findGathering(req.params.gatheringId);

@@ -16374,6 +16374,49 @@ class FileStore {
     return removed;
   }
 
+  // Phase E3: UPSERT a viewer's RSVP on a gathering (last-write-wins per
+  // userId), mirroring togglePostLike's read → mutate → write → return
+  // pattern. Public tallies — the row carries userId (not anonymous).
+  // headcount = extra people the responder brings (besides themselves).
+  async setGatheringRsvp({
+    gatheringId,
+    userId,
+    status,
+    headcount = 0,
+    note = null,
+  }) {
+    const db = await this._read();
+    const gathering = db.gatherings.find((entry) => entry.id === gatheringId);
+    if (!gathering) {
+      return null;
+    }
+    gathering.rsvps = Array.isArray(gathering.rsvps) ? gathering.rsvps : [];
+    const numericHeadcount = Number(headcount);
+    const normalizedHeadcount =
+        Number.isFinite(numericHeadcount) && numericHeadcount > 0
+            ? Math.floor(numericHeadcount)
+            : 0;
+    const timestamp = nowIso();
+    const existing = gathering.rsvps.find((entry) => entry.userId === userId);
+    if (existing) {
+      existing.status = status;
+      existing.headcount = normalizedHeadcount;
+      existing.note = normalizeNullableString(note);
+      existing.respondedAt = timestamp;
+    } else {
+      gathering.rsvps.push({
+        userId,
+        status,
+        headcount: normalizedHeadcount,
+        note: normalizeNullableString(note),
+        respondedAt: timestamp,
+      });
+    }
+    gathering.updatedAt = timestamp;
+    await this._write(db);
+    return gathering;
+  }
+
   async deletePost(postId, actorUserId) {
     // Ship Q4a (2026-05-28, Ship 30b): soft-delete semantics для
     // posts. Mirror persons pattern (Ship 30) — move snapshot к

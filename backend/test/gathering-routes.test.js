@@ -88,6 +88,17 @@ function createGathering(baseUrl, token, body) {
   });
 }
 
+function rsvp(baseUrl, token, gatheringId, body) {
+  return fetch(`${baseUrl}/v1/gatherings/${gatheringId}/rsvp`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(body),
+  });
+}
+
 test("POST /v1/gatherings creates a gathering (201)", async () => {
   const ctx = await startTestServer();
   try {
@@ -197,6 +208,90 @@ test("GET /v1/gatherings is gated by tree access (non-member → 403)", async ()
       {headers: {Authorization: `Bearer ${stranger.token}`}},
     );
     assert.equal(strangerList.status, 403);
+  } finally {
+    await shutdown(ctx);
+  }
+});
+
+test("POST rsvp upserts the responder's row (last-write-wins)", async () => {
+  const ctx = await startTestServer();
+  try {
+    const {owner, tree} =
+        await seedTree(ctx.store, ctx.baseUrl, "g-rsvp@example.com");
+    const created = await (
+      await createGathering(ctx.baseUrl, owner.token, {
+        treeId: tree.id,
+        title: "Семейный сбор",
+        startAt: "2026-07-01T15:00:00.000Z",
+      })
+    ).json();
+
+    // First response: yes + brings 2 extra people.
+    const first = await rsvp(ctx.baseUrl, owner.token, created.id, {
+      status: "yes",
+      headcount: 2,
+    });
+    assert.equal(first.status, 200);
+    let body = await first.json();
+    assert.equal(body.rsvps.length, 1);
+    assert.equal(body.rsvps[0].status, "yes");
+    assert.equal(body.rsvps[0].headcount, 2);
+    assert.equal(body.rsvps[0].userId, owner.userId);
+
+    // Change of mind → same row updated, not a duplicate.
+    const second = await rsvp(ctx.baseUrl, owner.token, created.id, {
+      status: "no",
+    });
+    assert.equal(second.status, 200);
+    body = await second.json();
+    assert.equal(body.rsvps.length, 1);
+    assert.equal(body.rsvps[0].status, "no");
+    assert.equal(body.rsvps[0].headcount, 0);
+  } finally {
+    await shutdown(ctx);
+  }
+});
+
+test("POST rsvp rejects an invalid status (400)", async () => {
+  const ctx = await startTestServer();
+  try {
+    const {owner, tree} =
+        await seedTree(ctx.store, ctx.baseUrl, "g-rsvp-bad@example.com");
+    const created = await (
+      await createGathering(ctx.baseUrl, owner.token, {
+        treeId: tree.id,
+        title: "Встреча",
+        startAt: "2026-07-01T15:00:00.000Z",
+      })
+    ).json();
+
+    const res = await rsvp(ctx.baseUrl, owner.token, created.id, {
+      status: "banana",
+    });
+    assert.equal(res.status, 400);
+  } finally {
+    await shutdown(ctx);
+  }
+});
+
+test("POST rsvp is gated by tree access (non-member → 403)", async () => {
+  const ctx = await startTestServer();
+  try {
+    const {owner, tree} =
+        await seedTree(ctx.store, ctx.baseUrl, "g-rsvp-owner@example.com");
+    const created = await (
+      await createGathering(ctx.baseUrl, owner.token, {
+        treeId: tree.id,
+        title: "Встреча",
+        startAt: "2026-07-01T15:00:00.000Z",
+      })
+    ).json();
+
+    const stranger = await makeUser(ctx.baseUrl, "g-rsvp-stranger@example.com");
+    const res = await rsvp(ctx.baseUrl, stranger.token, created.id, {
+      status: "yes",
+    });
+    assert.equal(res.status, 403);
   } finally {
     await shutdown(ctx);
   }
