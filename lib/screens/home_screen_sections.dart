@@ -202,6 +202,9 @@ extension _HomeScreenSections on _HomeScreenState {
         const SizedBox(height: 6),
         _buildUpcomingEventsSection(isWideLayout: false),
         const SizedBox(height: 4),
+        // S3: explicit, labelled entry to the family album — the topbar
+        // only had a tiny icon, so most people never found it.
+        _buildAlbumEntry(),
         Padding(
           padding: const EdgeInsets.fromLTRB(18, 6, 18, 12),
           child: _buildComposeTeaser(),
@@ -946,6 +949,85 @@ extension _HomeScreenSections on _HomeScreenState {
                 Icon(
                   Icons.chevron_right_rounded,
                   size: 16,
+                  color: tokens.inkMuted,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// S3: a labelled «Альбом семьи» link-card in the feed. The album was
+  /// previously reachable only through a tiny topbar icon; this gives it a
+  /// named, discoverable entry. Distinct icon (photo_album vs the topbar's
+  /// photo_library) keeps icon-based widget finders unambiguous.
+  Widget _buildAlbumEntry() {
+    final theme = Theme.of(context);
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(18, 2, 18, 6),
+      child: Material(
+        color: tokens.surfaceStrong,
+        borderRadius: BorderRadius.circular(16),
+        child: InkWell(
+          key: const Key('home-album-entry'),
+          onTap: () => context.push('/post/album'),
+          borderRadius: BorderRadius.circular(16),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            child: Row(
+              children: [
+                Container(
+                  width: 36,
+                  height: 36,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: tokens.accentSoft,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(
+                    Icons.photo_album_outlined,
+                    size: 20,
+                    color: tokens.accent,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'Альбом семьи',
+                        style: AppTheme.sans(
+                          color: tokens.ink,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 1),
+                      Text(
+                        'Все фото и видео семьи в одном месте',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppTheme.sans(
+                          color: tokens.inkMuted,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Icon(
+                  Icons.chevron_right_rounded,
+                  size: 18,
                   color: tokens.inkMuted,
                 ),
               ],

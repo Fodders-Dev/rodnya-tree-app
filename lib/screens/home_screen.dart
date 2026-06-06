@@ -1357,23 +1357,51 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         // family feed (UX-audit 2.1 — first viewport read as overloaded
         // because events competed with posts for weight). Mirrors the
         // «События» header the wide sidebar already carries.
+        // S3: the rail caption doubles as the explicit, labelled entry to
+        // the full calendar — «Все события →» on the right routes to
+        // /calendar, so the screen isn't only discoverable via the tiny
+        // topbar icon. Whole row is tappable for a generous target.
         Padding(
           key: _tourEventsKey,
           padding: const EdgeInsets.fromLTRB(18, 2, 18, 6),
-          child: Row(
-            children: [
-              Icon(Icons.event_outlined, size: 13, color: tokens.inkMuted),
-              const SizedBox(width: 6),
-              Text(
-                'Ближайшие события',
-                style: AppTheme.sans(
-                  color: tokens.inkMuted,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 0.2,
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: () => context.push('/calendar'),
+              borderRadius: BorderRadius.circular(8),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Row(
+                  children: [
+                    Icon(Icons.event_outlined,
+                        size: 13, color: tokens.inkMuted),
+                    const SizedBox(width: 6),
+                    Text(
+                      'Ближайшие события',
+                      style: AppTheme.sans(
+                        color: tokens.inkMuted,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.2,
+                      ),
+                    ),
+                    const Spacer(),
+                    Text(
+                      'Все события',
+                      style: AppTheme.sans(
+                        color: tokens.accent,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.2,
+                      ),
+                    ),
+                    const SizedBox(width: 2),
+                    Icon(Icons.chevron_right_rounded,
+                        size: 14, color: tokens.accent),
+                  ],
                 ),
               ),
-            ],
+            ),
           ),
         ),
         if (hasCategories)

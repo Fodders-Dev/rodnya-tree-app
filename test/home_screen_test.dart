@@ -966,6 +966,48 @@ void main() {
   );
 
   testWidgets(
+    'S3: feed exposes labelled Calendar and Album entries',
+    (tester) async {
+      tester.view.physicalSize = const Size(900, 1600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
+      final treeProvider = TreeProvider();
+      await treeProvider.selectTree('tree-1', 'Тестовое дерево');
+      await tester.pumpWidget(
+        ChangeNotifierProvider<TreeProvider>.value(
+          value: treeProvider,
+          child: const MaterialApp(home: HomeScreen()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Calendar: the events-rail caption carries a labelled «Все события»
+      // link with a real tap handler (routes to /calendar in production).
+      expect(find.text('Все события'), findsOneWidget);
+      final calendarLink = tester.widget<InkWell>(
+        find
+            .ancestor(
+              of: find.text('Все события'),
+              matching: find.byType(InkWell),
+            )
+            .first,
+      );
+      expect(calendarLink.onTap, isNotNull);
+
+      // Album: a named link-card with its own tap target (→ /post/album).
+      expect(find.byKey(const Key('home-album-entry')), findsOneWidget);
+      expect(find.text('Альбом семьи'), findsOneWidget);
+      final albumLink =
+          tester.widget<InkWell>(find.byKey(const Key('home-album-entry')));
+      expect(albumLink.onTap, isNotNull);
+    },
+  );
+
+  testWidgets(
     'HomeScreen scroll-aware FAB: скрыт у верха, появляется при скролле (H)',
     (tester) async {
       tester.view.physicalSize = const Size(800, 900);
