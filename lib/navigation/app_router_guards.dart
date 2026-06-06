@@ -3,7 +3,6 @@ import 'package:go_router/go_router.dart';
 
 import '../backend/backend_runtime_config.dart';
 import '../backend/interfaces/auth_service_interface.dart';
-import '../providers/tree_provider.dart';
 import '../services/invitation_service.dart';
 import '../services/semya_invitation_deep_link_service.dart';
 
@@ -73,24 +72,50 @@ class AppRouterGuards {
   static bool hasSocialAuthPayload(Uri uri) =>
       hasTelegramAuthPayload(uri) || hasVkAuthPayload(uri);
 
-  static String? resolveTreeRootRedirect({
-    required Uri uri,
-    required TreeProvider treeProvider,
+  /// The unified «Семья» tab locations the legacy `/relatives` and
+  /// `/tree` roots now fold into (Список ⇄ Дерево toggle inside one tab).
+  static const String familyListLocation = '/family?view=list';
+  static const String familyTreeLocation = '/family?view=tree';
+
+  /// Gated redirect for the legacy `/relatives` root → «Семья» Список.
+  /// Only the bare root folds in; the add/edit/find/requests/
+  /// send_request/chat sub-routes keep rendering their own pushed pages.
+  static String? resolveRelativesRootRedirect({required Uri uri}) {
+    if (uri.path != '/relatives') {
+      return null;
+    }
+    return familyListLocation;
+  }
+
+  /// Gated redirect for the legacy `/tree` root → «Семья» Дерево.
+  /// `?selector=1` keeps the standalone TreeSelectorScreen, and the
+  /// `/tree/view/:id` canvas deep-link is carried across by its own
+  /// sub-route redirect ([familyTreeViewRedirect]).
+  static String? resolveTreeRootRedirect({required Uri uri}) {
+    if (uri.queryParameters['selector'] == '1') {
+      return null;
+    }
+    if (uri.path.startsWith('/tree/view')) {
+      return null;
+    }
+    return familyTreeLocation;
+  }
+
+  /// Redirect for the `/tree/view/:id` canvas deep-link → «Семья» Дерево,
+  /// carrying the tree id (+ name) so the merged canvas opens that branch
+  /// instead of whatever was last selected.
+  static String familyTreeViewRedirect({
+    required String treeId,
+    String? treeName,
   }) {
-    final forceSelector = uri.queryParameters['selector'] == '1';
-    if (forceSelector || uri.path.startsWith('/tree/view')) {
-      return null;
+    final params = <String>['view=tree'];
+    if (treeId.isNotEmpty) {
+      params.add('tree=${Uri.encodeQueryComponent(treeId)}');
     }
-
-    final selectedTreeId = treeProvider.selectedTreeId;
-    if (selectedTreeId == null) {
-      return null;
+    if (treeName != null && treeName.isNotEmpty) {
+      params.add('name=${Uri.encodeQueryComponent(treeName)}');
     }
-
-    final nameParam = treeProvider.selectedTreeName != null
-        ? '?name=${Uri.encodeComponent(treeProvider.selectedTreeName!)}'
-        : '';
-    return '/tree/view/$selectedTreeId$nameParam';
+    return '/family?${params.join('&')}';
   }
 
   Future<String?> redirect(BuildContext context, GoRouterState state) async {

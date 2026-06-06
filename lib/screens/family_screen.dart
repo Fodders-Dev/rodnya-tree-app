@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
+import '../providers/tree_provider.dart';
 import '../theme/app_theme.dart';
 import 'relatives_screen.dart';
 import 'tree_view_screen.dart';
@@ -21,6 +23,8 @@ class FamilyScreen extends StatefulWidget {
   const FamilyScreen({
     super.key,
     this.initialView = FamilyView.list,
+    this.treeId,
+    this.treeName,
     this.listBuilder,
     this.treeBuilder,
   });
@@ -28,6 +32,14 @@ class FamilyScreen extends StatefulWidget {
   /// Which view to open on first build (driven by the `?view=` deep-link
   /// param: `list` ⇒ Список, `tree` ⇒ Дерево).
   final FamilyView initialView;
+
+  /// Optional branch to open, carried by the `?tree=` deep-link param —
+  /// e.g. the redirect from the former `/tree/view/:id` canvas route.
+  /// When set, the shared [TreeProvider] selection is switched to it so
+  /// the canvas (mounted fresh or kept alive in the IndexedStack) shows
+  /// that branch.
+  final String? treeId;
+  final String? treeName;
 
   /// Test seams — production falls back to the real screens.
   final WidgetBuilder? listBuilder;
@@ -48,6 +60,44 @@ class _FamilyScreenState extends State<FamilyScreen> {
   // the user first opens the Дерево view. Once visited it stays mounted inside
   // the IndexedStack, preserving its zoom/scroll state across toggles.
   bool _treeVisited = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _maybeSelectTree();
+  }
+
+  @override
+  void didUpdateWidget(FamilyScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Re-navigating to /family with a new ?view= (e.g. /relatives ⇒ list,
+    // /tree ⇒ tree) must flip the toggle even though the page stays mounted
+    // (keep-alive). Only react to an actual change so a manual toggle isn't
+    // clobbered by an unrelated rebuild.
+    if (widget.initialView != oldWidget.initialView) {
+      setState(() => _view = widget.initialView);
+    }
+    if (widget.treeId != oldWidget.treeId) {
+      _maybeSelectTree();
+    }
+  }
+
+  // A `?tree=` deep-link names the branch to open. Switch the shared
+  // TreeProvider selection to it (idempotent) so the canvas reloads off the
+  // provider whether it's mounted fresh or already kept alive.
+  void _maybeSelectTree() {
+    final treeId = widget.treeId;
+    if (treeId == null || treeId.isEmpty) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      try {
+        context.read<TreeProvider>().selectTree(treeId, widget.treeName);
+      } catch (_) {
+        // No TreeProvider in scope (e.g. widget tests using the builder
+        // seams) — the deep-link branch just isn't pre-selected.
+      }
+    });
+  }
 
   void _select(FamilyView view) {
     if (_view == view) return;

@@ -1,103 +1,105 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
-import 'package:rodnya/models/family_tree.dart';
 import 'package:rodnya/navigation/app_router.dart';
-import 'package:rodnya/providers/tree_provider.dart';
-import 'package:rodnya/services/local_storage_service.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-
-class _FakeLocalStorageService implements LocalStorageService {
-  final Map<String, FamilyTree> _treesById;
-
-  _FakeLocalStorageService(List<FamilyTree> trees)
-      : _treesById = {for (final tree in trees) tree.id: tree};
-
-  @override
-  Future<List<FamilyTree>> getAllTrees() async => _treesById.values.toList();
-
-  @override
-  Future<FamilyTree?> getTree(String treeId) async => _treesById[treeId];
-
-  @override
-  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
-}
-
-FamilyTree _buildTree({
-  required String id,
-  required String name,
-}) {
-  final now = DateTime(2024, 1, 1);
-  return FamilyTree(
-    id: id,
-    name: name,
-    description: '',
-    creatorId: 'user-1',
-    memberIds: const ['user-1'],
-    createdAt: now,
-    updatedAt: now,
-    isPrivate: true,
-    members: const ['user-1'],
-  );
-}
+import 'package:rodnya/navigation/app_router_shared.dart';
+import 'package:rodnya/navigation/app_shell_route_module.dart';
 
 void main() {
-  final getIt = GetIt.instance;
+  // ── the merged route tree is structurally valid ──
 
-  setUp(() async {
-    SharedPreferences.setMockInitialValues({});
-    await getIt.reset();
-    getIt.registerSingleton<LocalStorageService>(
-      _FakeLocalStorageService([
-        _buildTree(id: 'tree-1', name: 'Первое дерево'),
-        _buildTree(id: 'tree-2', name: 'Второе дерево'),
-      ]),
+  test('production shell + legacy redirect routes build a valid GoRouter', () {
+    // Constructing a GoRouter runs go_router's RouteConfiguration
+    // validation over the whole tree (unique paths, every route has a
+    // builder/pageBuilder or redirect, parentNavigatorKey resolves). This
+    // is the production wiring — the StatefulShellRoute branches plus the
+    // top-level /relatives and /tree redirect routes — so reaching the
+    // expect means the «Семья» merge didn't produce a broken route table.
+    const shell = AppShellRouteModule();
+    final router = GoRouter(
+      navigatorKey: rootNavigatorKey,
+      initialLocation: '/family',
+      routes: <RouteBase>[
+        shell.build(),
+        ...shell.buildLegacyFamilyRedirectRoutes(),
+      ],
+    );
+    addTearDown(router.dispose);
+
+    final topLevelPaths = router.configuration.routes
+        .whereType<GoRoute>()
+        .map((route) => route.path)
+        .toList();
+    expect(topLevelPaths, containsAll(<String>['/relatives', '/tree']));
+  });
+
+  // ── /tree and /relatives now fold into the unified «Семья» tab ──
+
+  test('держит selector открытым на /tree?selector=1', () {
+    expect(
+      AppRouter.resolveTreeRootRedirect(uri: Uri.parse('/tree?selector=1')),
+      isNull,
     );
   });
 
-  tearDown(() async {
-    await getIt.reset();
-  });
-
-  test('разрешает принудительно открыть selector через /tree?selector=1',
-      () async {
-    final provider = TreeProvider();
-    await provider.selectTree('tree-1', 'Первое дерево');
-
-    final redirect = AppRouter.resolveTreeRootRedirect(
-      uri: Uri.parse('/tree?selector=1'),
-      treeProvider: provider,
+  test('голый /tree редиректит в «Семья» на вид дерева', () {
+    expect(
+      AppRouter.resolveTreeRootRedirect(uri: Uri.parse('/tree')),
+      '/family?view=tree',
     );
-
-    expect(redirect, isNull);
   });
 
-  test('не перебивает явное открытие /tree/view/:treeId старым выбором',
-      () async {
-    final provider = TreeProvider();
-    await provider.selectTree('tree-1', 'Первое дерево');
-
-    final redirect = AppRouter.resolveTreeRootRedirect(
-      uri: Uri.parse(
-          '/tree/view/tree-2?name=%D0%92%D1%82%D0%BE%D1%80%D0%BE%D0%B5'),
-      treeProvider: provider,
+  test('корневой редирект /tree уступает саб-роуту /tree/view/:id', () {
+    // The /tree root defers to the view sub-route's own redirect so the
+    // tree id isn't lost.
+    expect(
+      AppRouter.resolveTreeRootRedirect(
+        uri: Uri.parse('/tree/view/tree-2?name=%D0%92%D1%82%D0%BE%D1%80%D0%BE%D0%B5'),
+      ),
+      isNull,
     );
-
-    expect(redirect, isNull);
   });
 
-  test('редиректит /tree на выбранное дерево, если оно уже есть', () async {
-    final provider = TreeProvider();
-    await provider.selectTree('tree-2', 'Второе дерево');
-
-    final redirect = AppRouter.resolveTreeRootRedirect(
-      uri: Uri.parse('/tree'),
-      treeProvider: provider,
+  test('/tree/view/:id уносит дерево и имя в «Семья»', () {
+    expect(
+      AppRouter.familyTreeViewRedirect(
+        treeId: 'tree-2',
+        treeName: 'Второе дерево',
+      ),
+      '/family?view=tree&tree=tree-2'
+          '&name=${Uri.encodeQueryComponent('Второе дерево')}',
     );
-
-    expect(redirect,
-        '/tree/view/tree-2?name=%D0%92%D1%82%D0%BE%D1%80%D0%BE%D0%B5%20%D0%B4%D0%B5%D1%80%D0%B5%D0%B2%D0%BE');
   });
+
+  test('/tree/view/:id без имени уносит только дерево', () {
+    expect(
+      AppRouter.familyTreeViewRedirect(treeId: 'tree-2'),
+      '/family?view=tree&tree=tree-2',
+    );
+  });
+
+  test('голый /relatives редиректит в «Семья» на список', () {
+    expect(
+      AppRouter.resolveRelativesRootRedirect(uri: Uri.parse('/relatives')),
+      '/family?view=list',
+    );
+  });
+
+  test('саб-роуты /relatives сохраняют свои страницы (нет редиректа)', () {
+    expect(
+      AppRouter.resolveRelativesRootRedirect(
+        uri: Uri.parse('/relatives/add/tree-1'),
+      ),
+      isNull,
+    );
+    expect(
+      AppRouter.resolveRelativesRootRedirect(
+        uri: Uri.parse('/relatives/find/tree-1?profileCode=abc'),
+      ),
+      isNull,
+    );
+  });
+
+  // ── auth / deep-link guards (unchanged) ──
 
   test(
       'сохраняет deep link при переходе на login и восстанавливает его после входа',

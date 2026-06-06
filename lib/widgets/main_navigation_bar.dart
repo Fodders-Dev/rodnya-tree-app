@@ -47,16 +47,19 @@ class MainNavigationBar extends StatelessWidget {
                     filledIcon: Icons.home_rounded,
                     count: unreadNotificationsCount,
                   ),
-                  const _NavItemData(
-                    label: 'Родные',
-                    outlinedIcon: Icons.people_outline_rounded,
-                    filledIcon: Icons.people_rounded,
-                  ),
                   _NavItemData(
-                    label: 'Дерево',
-                    outlinedIcon: Icons.account_tree_outlined,
-                    filledIcon: Icons.account_tree_rounded,
+                    label: 'Семья',
+                    outlinedIcon: Icons.groups_outlined,
+                    filledIcon: Icons.groups_rounded,
+                    // The tree (and its invitations) now lives inside the
+                    // «Семья» tab, so the pending-invitations badge rides
+                    // here instead of on a separate «Дерево» tab.
                     count: pendingInvitationsCount,
+                  ),
+                  const _NavItemData(
+                    label: 'Календарь',
+                    outlinedIcon: Icons.calendar_month_outlined,
+                    filledIcon: Icons.calendar_month_rounded,
                   ),
                   _NavItemData(
                     label: 'Чаты',
@@ -86,8 +89,8 @@ class MainNavigationBar extends StatelessWidget {
                       // S20 / mid-range phones the SafeArea + outer
                       // 14dp padding pulled effective width to ~330dp
                       // and labels disappeared. The five short labels
-                      // (Лента / Родные / Дерево / Чаты / Я) fit even
-                      // at 280dp so we lower the threshold; a 240dp
+                      // (Лента / Семья / Календарь / Чаты / Профиль) fit
+                      // even at 280dp so we lower the threshold; a 240dp
                       // floor still trips for very narrow tablets in
                       // weird split-screen layouts.
                       final showLabels = constraints.maxWidth >= 280;

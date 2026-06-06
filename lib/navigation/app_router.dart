@@ -6,7 +6,6 @@ import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
 
 import '../backend/interfaces/auth_service_interface.dart';
-import '../providers/tree_provider.dart';
 import '../services/invitation_service.dart';
 import 'app_overlay_route_module.dart';
 import 'app_router_guards.dart';
@@ -76,15 +75,20 @@ class AppRouter {
   static bool hasSocialAuthPayload(Uri uri) =>
       AppRouterGuards.hasSocialAuthPayload(uri);
 
-  static String? resolveTreeRootRedirect({
-    required Uri uri,
-    required TreeProvider treeProvider,
-  }) {
-    return AppRouterGuards.resolveTreeRootRedirect(
-      uri: uri,
-      treeProvider: treeProvider,
-    );
-  }
+  static String? resolveTreeRootRedirect({required Uri uri}) =>
+      AppRouterGuards.resolveTreeRootRedirect(uri: uri);
+
+  static String? resolveRelativesRootRedirect({required Uri uri}) =>
+      AppRouterGuards.resolveRelativesRootRedirect(uri: uri);
+
+  static String familyTreeViewRedirect({
+    required String treeId,
+    String? treeName,
+  }) =>
+      AppRouterGuards.familyTreeViewRedirect(
+        treeId: treeId,
+        treeName: treeName,
+      );
 
   late final GoRouter router = GoRouter(
     navigatorKey: rootNavigatorKey,
@@ -94,6 +98,10 @@ class AppRouter {
     redirect: _guards.redirect,
     routes: <RouteBase>[
       _shellRoutes.build(),
+      // Legacy /relatives and /tree are no longer tabs; they live at the
+      // top level and gated-redirect into the unified «Семья» tab, while
+      // keeping their deep-linkable sub-routes (add/edit/find/… , view).
+      ..._shellRoutes.buildLegacyFamilyRedirectRoutes(),
       ..._overlayRoutes.build(),
     ],
     errorPageBuilder: _overlayRoutes.buildErrorPage,

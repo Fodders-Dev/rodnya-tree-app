@@ -4,17 +4,16 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
-import 'package:provider/provider.dart';
 
 import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/chat_service_interface.dart';
 import '../backend/interfaces/family_tree_service_interface.dart';
 import '../models/family_person.dart';
-import '../providers/tree_provider.dart';
 import '../screens/about_screen.dart';
 import '../screens/access_grants_screen.dart';
 import '../screens/family_album_screen.dart';
 import '../screens/family_calendar_screen.dart';
+import '../screens/family_screen.dart';
 import '../screens/add_relative_screen.dart';
 import '../screens/blocked_users_screen.dart';
 import '../screens/qr_login_scan_screen.dart';
@@ -30,12 +29,10 @@ import '../screens/offline_profiles_screen.dart';
 import '../screens/post_search_screen.dart';
 import '../screens/profile_screen.dart';
 import '../screens/story_archive_screen.dart';
-import '../screens/relatives_screen.dart';
 import '../screens/relation_requests_screen.dart';
 import '../screens/send_relation_request_screen.dart';
 import '../screens/settings_screen.dart';
 import '../screens/tree_selector_screen.dart';
-import '../screens/tree_view_screen.dart';
 import '../screens/user_profile_entry_screen.dart';
 import '../services/custom_api_notification_service.dart';
 import '../theme/app_theme.dart';
@@ -78,7 +75,12 @@ class AppShellRouteModule {
             // tablet / desktop shell at 900+ — sidebar nav rail
             // replaces the bottom dock, content centered at 1400 max.
             final bool isDesktop = constraints.maxWidth >= 900;
-            final isTreeBranch = navigationShell.currentIndex == 2;
+            // The «Семья» tab (index 1) hosts the tree canvas behind its
+            // Список⇄Дерево toggle, so it takes the full-width desktop
+            // treatment the old standalone tree tab used. Its list body
+            // (RelativesScreen) self-constrains to ~1420, so letting the
+            // tab run full width is safe for both views.
+            final isFamilyBranch = navigationShell.currentIndex == 1;
 
             Widget bodyContent = Column(
               children: <Widget>[
@@ -91,7 +93,7 @@ class AppShellRouteModule {
               bodyContent = Center(
                 child: ConstrainedBox(
                   constraints: BoxConstraints(
-                    maxWidth: isTreeBranch ? double.infinity : 1400,
+                    maxWidth: isFamilyBranch ? double.infinity : 1400,
                   ),
                   child: bodyContent,
                 ),
@@ -193,18 +195,6 @@ class AppShellRouteModule {
                 ),
               ),
               GoRoute(
-                // Calendar v1: «Календарь» — month grid of family dates +
-                // holidays. Full-screen pushed route.
-                path: 'calendar',
-                parentNavigatorKey: rootNavigatorKey,
-                pageBuilder: (context, state) => RodnyaCustomTransitionPage(
-                  key: state.pageKey,
-                  constrainWidth: true,
-                  child: const FamilyCalendarScreen(),
-                  transitionsBuilder: AppRouteTransitions.slide,
-                ),
-              ),
-              GoRoute(
                 path: 'post/create',
                 parentNavigatorKey: rootNavigatorKey,
                 pageBuilder: (context, state) {
@@ -258,199 +248,43 @@ class AppShellRouteModule {
           ),
         ],
       ),
+      // UX-core: «Семья» — the unified tab merging the former «Родные»
+      // (people list) and «Дерево» (canvas) tabs behind one Список⇄Дерево
+      // toggle. `?view=` opens a specific body; `?tree=` deep-links a
+      // branch (the redirect target of the old `/tree/view/:id`).
       StatefulShellBranch(
         routes: [
           GoRoute(
-            path: '/relatives',
-            pageBuilder: (context, state) => RodnyaNoTransitionPage(
-              key: state.pageKey,
-              child: RelativesScreen(),
-            ),
-            routes: [
-              GoRoute(
-                path: 'add/:treeId',
-                parentNavigatorKey: rootNavigatorKey,
-                pageBuilder: (context, state) {
-                  final treeId = state.pathParameters['treeId'] ?? '';
-                  final extra = state.extra;
-                  final quickAddMode = extra is Map<String, dynamic> &&
-                      extra['quickAddMode'] == true;
-                  return RodnyaCustomTransitionPage(
-                    key: state.pageKey,
-                    constrainWidth: true,
-                    child: AddRelativeScreen(
-                      treeId: treeId,
-                      quickAddMode: quickAddMode,
-                      routeExtra: extra is Map<String, dynamic> ? extra : null,
-                      routeQueryParameters: state.uri.queryParameters,
-                    ),
-                    transitionsBuilder: AppRouteTransitions.slide,
-                  );
-                },
-              ),
-              GoRoute(
-                path: 'edit/:treeId/:personId',
-                parentNavigatorKey: rootNavigatorKey,
-                pageBuilder: (context, state) {
-                  final treeId = state.pathParameters['treeId'] ?? '';
-                  final personId = state.pathParameters['personId'] ?? '';
-                  final personToEdit = state.extra as FamilyPerson?;
-
-                  if (treeId.isEmpty || personId.isEmpty) {
-                    return MaterialPage<void>(
-                      child: Scaffold(
-                        body: Center(
-                          child: Text(
-                            'Ошибка: Не указан ID дерева или родственника для редактирования.',
-                          ),
-                        ),
-                      ),
-                    );
-                  }
-
-                  return RodnyaCustomTransitionPage(
-                    key: ValueKey<String>('edit_relative_$personId'),
-                    constrainWidth: true,
-                    child: AddRelativeScreen(
-                      treeId: treeId,
-                      person: personToEdit,
-                      isEditing: true,
-                    ),
-                    transitionsBuilder: AppRouteTransitions.slide,
-                  );
-                },
-              ),
-              GoRoute(
-                path: 'requests/:treeId',
-                parentNavigatorKey: rootNavigatorKey,
-                pageBuilder: (context, state) {
-                  final treeId = state.pathParameters['treeId'] ?? '';
-                  return RodnyaCustomTransitionPage(
-                    key: state.pageKey,
-                    constrainWidth: true,
-                    child: RelationRequestsScreen(treeId: treeId),
-                    transitionsBuilder: AppRouteTransitions.slide,
-                  );
-                },
-              ),
-              GoRoute(
-                path: 'find/:treeId',
-                parentNavigatorKey: rootNavigatorKey,
-                pageBuilder: (context, state) {
-                  final treeId = state.pathParameters['treeId'] ?? '';
-                  return RodnyaCustomTransitionPage(
-                    key: state.pageKey,
-                    constrainWidth: true,
-                    child: FindRelativeScreen(
-                      treeId: treeId,
-                      initialProfileCode:
-                          state.uri.queryParameters['profileCode'],
-                    ),
-                    transitionsBuilder: AppRouteTransitions.slide,
-                  );
-                },
-              ),
-              GoRoute(
-                path: 'send_request/:treeId',
-                parentNavigatorKey: rootNavigatorKey,
-                pageBuilder: (context, state) {
-                  final treeId = state.pathParameters['treeId'] ?? '';
-                  return RodnyaCustomTransitionPage(
-                    key: state.pageKey,
-                    constrainWidth: true,
-                    child: SendRelationRequestScreen(treeId: treeId),
-                    transitionsBuilder: AppRouteTransitions.slide,
-                  );
-                },
-              ),
-              GoRoute(
-                path: 'chat/:userId',
-                parentNavigatorKey: rootNavigatorKey,
-                pageBuilder: (context, state) {
-                  final userId = state.pathParameters['userId'] ?? '';
-                  final name =
-                      state.uri.queryParameters['name'] ?? 'Пользователь';
-                  final photoUrl = state.uri.queryParameters['photo'];
-                  final relativeId =
-                      state.uri.queryParameters['relativeId'] ?? '';
-
-                  if (relativeId.isEmpty) {
-                    debugPrint('Error: Missing relativeId for chat route');
-                    return MaterialPage<void>(
-                      key: state.pageKey,
-                      child: Scaffold(
-                        appBar: AppBar(title: const Text('Ошибка')),
-                        body: const Center(
-                          child: Text('Не найден ID родственника для чата.'),
-                        ),
-                      ),
-                    );
-                  }
-
-                  return RodnyaCustomTransitionPage(
-                    key: state.pageKey,
-                    constrainWidth: true,
-                    child: ChatScreen(
-                      otherUserId: userId,
-                      title: name,
-                      photoUrl: UrlUtils.normalizeImageUrl(photoUrl),
-                      relativeId: relativeId,
-                      chatType: 'direct',
-                    ),
-                    transitionsBuilder: AppRouteTransitions.slide,
-                  );
-                },
-              ),
-            ],
+            path: '/family',
+            pageBuilder: (context, state) {
+              final view =
+                  FamilyScreen.viewFromQuery(state.uri.queryParameters['view']);
+              final treeId = state.uri.queryParameters['tree'];
+              final treeName = state.uri.queryParameters['name'];
+              return RodnyaNoTransitionPage(
+                key: state.pageKey,
+                child: FamilyScreen(
+                  initialView: view,
+                  treeId: (treeId != null && treeId.isNotEmpty) ? treeId : null,
+                  treeName:
+                      (treeName != null && treeName.isNotEmpty) ? treeName : null,
+                ),
+              );
+            },
           ),
         ],
       ),
+      // «Календарь» — promoted from a home-screen pushed page to its own
+      // tab. FamilyCalendarScreen reads the active branch from the
+      // TreeProvider when no treeId is passed.
       StatefulShellBranch(
         routes: [
           GoRoute(
-            path: '/tree',
-            redirect: (context, state) {
-              final treeProvider = context.read<TreeProvider>();
-              final redirectPath = AppRouterGuards.resolveTreeRootRedirect(
-                uri: state.uri,
-                treeProvider: treeProvider,
-              );
-              if (redirectPath != null) {
-                debugPrint(
-                  '[GoRouter Redirect] Redirecting tree root to $redirectPath',
-                );
-              }
-              return redirectPath;
-            },
-            pageBuilder: (context, state) {
-              // `?tab=invitations` deep-links from the home-feed
-              // banner — pass it through so the selector scrolls
-              // straight to the invitations section instead of the
-              // user having to hunt for it in the list.
-              final initialFocus = state.uri.queryParameters['tab'];
-              return RodnyaNoTransitionPage(
-                key: state.pageKey,
-                child: TreeSelectorScreen(initialFocus: initialFocus),
-              );
-            },
-            routes: [
-              GoRoute(
-                path: 'view/:treeId',
-                pageBuilder: (context, state) {
-                  final treeId = state.pathParameters['treeId'] ?? '';
-                  final treeName =
-                      state.uri.queryParameters['name'] ?? 'Семейное дерево';
-                  return RodnyaCustomTransitionPage(
-                    key: state.pageKey,
-                    child: TreeViewScreen(
-                      routeTreeId: treeId,
-                      routeTreeName: treeName,
-                    ),
-                    transitionsBuilder: AppRouteTransitions.slide,
-                  );
-                },
-              ),
-            ],
+            path: '/calendar',
+            pageBuilder: (context, state) => RodnyaNoTransitionPage(
+              key: state.pageKey,
+              child: const FamilyCalendarScreen(),
+            ),
           ),
         ],
       ),
@@ -588,6 +422,191 @@ class AppShellRouteModule {
       ),
     ];
   }
+
+  /// Top-level routes for the legacy `/relatives` and `/tree` locations.
+  /// They are no longer tabs (folded into «Семья»), so they live outside
+  /// the shell and gated-redirect into it — while keeping every
+  /// deep-linkable sub-route path intact (`/relatives/add/:treeId`, …,
+  /// `/tree?selector=1` selector, `/tree/view/:id` canvas link).
+  List<RouteBase> buildLegacyFamilyRedirectRoutes() {
+    return <RouteBase>[
+      GoRoute(
+        path: '/relatives',
+        // Bare /relatives → «Семья» Список. The sub-routes below keep
+        // rendering their own pushed pages (gated in the redirect).
+        redirect: (context, state) =>
+            AppRouterGuards.resolveRelativesRootRedirect(uri: state.uri),
+        routes: [
+          GoRoute(
+            path: 'add/:treeId',
+            parentNavigatorKey: rootNavigatorKey,
+            pageBuilder: (context, state) {
+              final treeId = state.pathParameters['treeId'] ?? '';
+              final extra = state.extra;
+              final quickAddMode = extra is Map<String, dynamic> &&
+                  extra['quickAddMode'] == true;
+              return RodnyaCustomTransitionPage(
+                key: state.pageKey,
+                constrainWidth: true,
+                child: AddRelativeScreen(
+                  treeId: treeId,
+                  quickAddMode: quickAddMode,
+                  routeExtra: extra is Map<String, dynamic> ? extra : null,
+                  routeQueryParameters: state.uri.queryParameters,
+                ),
+                transitionsBuilder: AppRouteTransitions.slide,
+              );
+            },
+          ),
+          GoRoute(
+            path: 'edit/:treeId/:personId',
+            parentNavigatorKey: rootNavigatorKey,
+            pageBuilder: (context, state) {
+              final treeId = state.pathParameters['treeId'] ?? '';
+              final personId = state.pathParameters['personId'] ?? '';
+              final personToEdit = state.extra as FamilyPerson?;
+
+              if (treeId.isEmpty || personId.isEmpty) {
+                return MaterialPage<void>(
+                  child: Scaffold(
+                    body: Center(
+                      child: Text(
+                        'Ошибка: Не указан ID дерева или родственника для редактирования.',
+                      ),
+                    ),
+                  ),
+                );
+              }
+
+              return RodnyaCustomTransitionPage(
+                key: ValueKey<String>('edit_relative_$personId'),
+                constrainWidth: true,
+                child: AddRelativeScreen(
+                  treeId: treeId,
+                  person: personToEdit,
+                  isEditing: true,
+                ),
+                transitionsBuilder: AppRouteTransitions.slide,
+              );
+            },
+          ),
+          GoRoute(
+            path: 'requests/:treeId',
+            parentNavigatorKey: rootNavigatorKey,
+            pageBuilder: (context, state) {
+              final treeId = state.pathParameters['treeId'] ?? '';
+              return RodnyaCustomTransitionPage(
+                key: state.pageKey,
+                constrainWidth: true,
+                child: RelationRequestsScreen(treeId: treeId),
+                transitionsBuilder: AppRouteTransitions.slide,
+              );
+            },
+          ),
+          GoRoute(
+            path: 'find/:treeId',
+            parentNavigatorKey: rootNavigatorKey,
+            pageBuilder: (context, state) {
+              final treeId = state.pathParameters['treeId'] ?? '';
+              return RodnyaCustomTransitionPage(
+                key: state.pageKey,
+                constrainWidth: true,
+                child: FindRelativeScreen(
+                  treeId: treeId,
+                  initialProfileCode: state.uri.queryParameters['profileCode'],
+                ),
+                transitionsBuilder: AppRouteTransitions.slide,
+              );
+            },
+          ),
+          GoRoute(
+            path: 'send_request/:treeId',
+            parentNavigatorKey: rootNavigatorKey,
+            pageBuilder: (context, state) {
+              final treeId = state.pathParameters['treeId'] ?? '';
+              return RodnyaCustomTransitionPage(
+                key: state.pageKey,
+                constrainWidth: true,
+                child: SendRelationRequestScreen(treeId: treeId),
+                transitionsBuilder: AppRouteTransitions.slide,
+              );
+            },
+          ),
+          GoRoute(
+            path: 'chat/:userId',
+            parentNavigatorKey: rootNavigatorKey,
+            pageBuilder: (context, state) {
+              final userId = state.pathParameters['userId'] ?? '';
+              final name = state.uri.queryParameters['name'] ?? 'Пользователь';
+              final photoUrl = state.uri.queryParameters['photo'];
+              final relativeId = state.uri.queryParameters['relativeId'] ?? '';
+
+              if (relativeId.isEmpty) {
+                debugPrint('Error: Missing relativeId for chat route');
+                return MaterialPage<void>(
+                  key: state.pageKey,
+                  child: Scaffold(
+                    appBar: AppBar(title: const Text('Ошибка')),
+                    body: const Center(
+                      child: Text('Не найден ID родственника для чата.'),
+                    ),
+                  ),
+                );
+              }
+
+              return RodnyaCustomTransitionPage(
+                key: state.pageKey,
+                constrainWidth: true,
+                child: ChatScreen(
+                  otherUserId: userId,
+                  title: name,
+                  photoUrl: UrlUtils.normalizeImageUrl(photoUrl),
+                  relativeId: relativeId,
+                  chatType: 'direct',
+                ),
+                transitionsBuilder: AppRouteTransitions.slide,
+              );
+            },
+          ),
+        ],
+      ),
+      GoRoute(
+        path: '/tree',
+        // Bare /tree → «Семья» Дерево; `?selector=1` keeps the standalone
+        // TreeSelectorScreen below; `/tree/view/:id` carries the branch
+        // across via its own redirect.
+        redirect: (context, state) {
+          final redirectPath =
+              AppRouterGuards.resolveTreeRootRedirect(uri: state.uri);
+          if (redirectPath != null) {
+            debugPrint('[GoRouter Redirect] /tree → $redirectPath');
+          }
+          return redirectPath;
+        },
+        pageBuilder: (context, state) {
+          // `?tab=invitations` deep-links from the home-feed banner — pass
+          // it through so the selector scrolls straight to the invitations
+          // section instead of the user having to hunt for it in the list.
+          final initialFocus = state.uri.queryParameters['tab'];
+          return RodnyaNoTransitionPage(
+            key: state.pageKey,
+            child: TreeSelectorScreen(initialFocus: initialFocus),
+          );
+        },
+        routes: [
+          GoRoute(
+            path: 'view/:treeId',
+            // The canvas now lives inside «Семья»; carry the tree id (+
+            // name) so the merged Дерево view opens that branch.
+            redirect: (context, state) => AppRouterGuards.familyTreeViewRedirect(
+              treeId: state.pathParameters['treeId'] ?? '',
+              treeName: state.uri.queryParameters['name'],
+            ),
+          ),
+        ],
+      ),
+    ];
+  }
 }
 
 class AdaptiveNavigationRail extends StatelessWidget {
@@ -628,16 +647,18 @@ class AdaptiveNavigationRail extends StatelessWidget {
                     filledIcon: Icons.home_rounded,
                     count: notificationsCount,
                   ),
-                  const _RailDestinationData(
-                    label: 'Родные',
-                    outlinedIcon: Icons.people_outline_rounded,
-                    filledIcon: Icons.people_rounded,
-                  ),
                   _RailDestinationData(
-                    label: 'Дерево',
-                    outlinedIcon: Icons.account_tree_outlined,
-                    filledIcon: Icons.account_tree_rounded,
+                    label: 'Семья',
+                    outlinedIcon: Icons.groups_outlined,
+                    filledIcon: Icons.groups_rounded,
+                    // Tree invitations now surface on «Семья» (the tree
+                    // lives inside this tab).
                     count: invitationsCount,
+                  ),
+                  const _RailDestinationData(
+                    label: 'Календарь',
+                    outlinedIcon: Icons.calendar_month_outlined,
+                    filledIcon: Icons.calendar_month_rounded,
                   ),
                   _RailDestinationData(
                     label: 'Чаты',

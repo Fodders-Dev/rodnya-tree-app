@@ -47,21 +47,46 @@ class _FamilyCalendarScreenState extends State<FamilyCalendarScreen> {
   late DateTime _focusedDay = widget.initialMonth ?? DateTime.now();
   late DateTime _selectedDay = widget.initialMonth ?? DateTime.now();
   Map<DateTime, List<AppEvent>> _eventsByDay = const {};
+  TreeProvider? _treeProvider;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       _treeId = widget.treeId;
-      if (_treeId == null && mounted) {
+      // Now a kept-alive nav tab (was a one-off pushed page): bind to the
+      // TreeProvider when no explicit treeId is injected, so switching the
+      // active branch elsewhere reloads this tab's events instead of
+      // showing the previously-loaded tree.
+      if (widget.treeId == null) {
         try {
-          _treeId = context.read<TreeProvider>().selectedTreeId;
+          _treeProvider = context.read<TreeProvider>()
+            ..addListener(_handleTreeChange);
+          _treeId = _treeProvider!.selectedTreeId;
         } catch (_) {
           _treeId = null;
         }
       }
       _loadMonth(_focusedDay);
     });
+  }
+
+  void _handleTreeChange() {
+    if (!mounted) return;
+    final newTreeId = _treeProvider?.selectedTreeId;
+    if (newTreeId == _treeId) return;
+    setState(() {
+      _treeId = newTreeId;
+      _eventsByDay = const {};
+    });
+    _loadMonth(_focusedDay);
+  }
+
+  @override
+  void dispose() {
+    _treeProvider?.removeListener(_handleTreeChange);
+    super.dispose();
   }
 
   DateTime _dayKey(DateTime day) => DateTime(day.year, day.month, day.day);

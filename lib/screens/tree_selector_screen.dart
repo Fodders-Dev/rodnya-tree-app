@@ -148,6 +148,22 @@ class _TreeSelectorScreenState extends State<TreeSelectorScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Деревья'),
+        // The selector is a top-level surface now (no longer a tab). When
+        // it's pushed (e.g. the BranchSwitcher chip) the back button pops;
+        // when it's reached via `go` (compose / banner shortcuts) there's
+        // nothing to pop, so fall back to the «Семья» tab rather than
+        // stranding the user with no way out.
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          tooltip: 'Назад',
+          onPressed: () {
+            if (Navigator.of(context).canPop()) {
+              Navigator.of(context).pop();
+            } else {
+              context.go('/family?view=tree');
+            }
+          },
+        ),
       ),
       body: Container(
         decoration: BoxDecoration(

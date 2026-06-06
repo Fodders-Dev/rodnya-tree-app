@@ -44,13 +44,19 @@ void main() {
     await tester.pump();
 
     expect(find.text('Лента'), findsOneWidget);
+    // UX-core: «Родные»+«Дерево» merged into one «Семья» tab; «Календарь»
+    // promoted from a topbar icon to its own tab.
+    expect(find.text('Семья'), findsOneWidget);
+    expect(find.text('Календарь'), findsOneWidget);
     expect(find.text('Чаты'), findsOneWidget);
-    expect(find.text('Дерево'), findsOneWidget);
     // Q5: the profile tab reads «Профиль», not the terse «Я».
     expect(find.text('Профиль'), findsOneWidget);
     expect(find.text('Я'), findsNothing);
+    expect(find.text('Родные'), findsNothing);
+    expect(find.text('Дерево'), findsNothing);
     expect(find.text('3'), findsOneWidget);
     expect(find.text('4'), findsOneWidget);
+    // Pending-invitations badge rides on «Семья» now.
     expect(find.text('2'), findsOneWidget);
   });
 
@@ -76,9 +82,17 @@ void main() {
     invitationsController.add(0);
     await tester.pump();
 
+    // Tab order: 0 Лента · 1 Семья · 2 Календарь · 3 Чаты · 4 Профиль.
+    await tester.tap(find.text('Семья'));
+    await tester.pump();
+    expect(tappedIndex, 1);
+
+    await tester.tap(find.text('Календарь'));
+    await tester.pump();
+    expect(tappedIndex, 2);
+
     await tester.tap(find.text('Чаты'));
     await tester.pump();
-
     expect(tappedIndex, 3);
   });
 
@@ -111,8 +125,8 @@ void main() {
     await tester.pump();
 
     expect(find.text('Лента'), findsNothing);
-    expect(find.text('Родные'), findsNothing);
-    expect(find.text('Дерево'), findsNothing);
+    expect(find.text('Семья'), findsNothing);
+    expect(find.text('Календарь'), findsNothing);
     expect(find.text('Чаты'), findsNothing);
     expect(find.text('Профиль'), findsNothing);
   });

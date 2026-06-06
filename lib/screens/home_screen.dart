@@ -878,7 +878,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 _buildTopbarIconButton(
                   tokens: tokens,
                   tooltip: 'Календарь',
-                  onTap: () => context.push('/calendar'),
+                  onTap: () => context.go('/calendar'),
                   child: Icon(
                     Icons.calendar_month_outlined,
                     size: 20,
@@ -1367,7 +1367,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           child: Material(
             color: Colors.transparent,
             child: InkWell(
-              onTap: () => context.push('/calendar'),
+              onTap: () => context.go('/calendar'),
               borderRadius: BorderRadius.circular(8),
               child: Padding(
                 padding: const EdgeInsets.symmetric(vertical: 4),
