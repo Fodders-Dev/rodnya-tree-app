@@ -722,6 +722,137 @@ extension _HomeScreenSections on _HomeScreenState {
     }
   }
 
+  /// Bottom-sheet create menu: a single entry point that gathers every
+  /// «create» flow (post · photo · video · gathering · poll) behind one
+  /// «+» button. Consolidating these keeps the composer teaser text on one
+  /// line and lets new create types be added without crowding the row.
+  /// Each item reuses its existing flow verbatim — the sheet only routes.
+  Future<void> _openComposeMenu() async {
+    final theme = Theme.of(context);
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        Widget tile({
+          required Key key,
+          required IconData icon,
+          required Color color,
+          required String label,
+          required String subtitle,
+          required VoidCallback onSelected,
+        }) {
+          return ListTile(
+            key: key,
+            leading: Container(
+              width: 42,
+              height: 42,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.14),
+                borderRadius: BorderRadius.circular(13),
+              ),
+              child: Icon(icon, color: color, size: 22),
+            ),
+            title: Text(
+              label,
+              style: AppTheme.sans(
+                color: tokens.ink,
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            subtitle: Text(
+              subtitle,
+              style: AppTheme.sans(
+                color: tokens.inkMuted,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            onTap: () {
+              // Close the sheet first, then run the existing flow on the
+              // home screen's own context (still mounted behind the sheet).
+              Navigator.of(sheetContext).pop();
+              onSelected();
+            },
+          );
+        }
+
+        return SafeArea(
+          top: false,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 6),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'Создать',
+                      style: AppTheme.sans(
+                        color: tokens.ink,
+                        fontSize: 17,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ),
+                tile(
+                  key: const Key('compose-post'),
+                  icon: Icons.edit_note_rounded,
+                  color: tokens.accent,
+                  label: 'Пост',
+                  subtitle: 'Текст или история для ленты',
+                  onSelected: () => _openCreatePost(),
+                ),
+                tile(
+                  key: const Key('compose-photo'),
+                  icon: Icons.photo_outlined,
+                  color: tokens.accent,
+                  label: 'Фото',
+                  subtitle: 'Снимки из галереи',
+                  onSelected: () => _openCreatePost(action: 'photo'),
+                ),
+                tile(
+                  key: const Key('compose-video'),
+                  icon: Icons.videocam_outlined,
+                  color: tokens.warm,
+                  label: 'Видео',
+                  subtitle: 'Короткое семейное видео',
+                  onSelected: () => _openCreatePost(action: 'video'),
+                ),
+                tile(
+                  key: const Key('compose-gathering'),
+                  icon: Icons.event_outlined,
+                  color: tokens.accent,
+                  label: 'Встреча',
+                  subtitle: 'Соберите родных вместе',
+                  onSelected: _openCreateGathering,
+                ),
+                tile(
+                  key: const Key('compose-poll'),
+                  icon: Icons.bar_chart_rounded,
+                  color: tokens.accent,
+                  label: 'Опрос',
+                  subtitle: 'Спросите мнение семьи',
+                  onSelected: _openCreatePoll,
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildIdentityReviewBanner() {
     final theme = Theme.of(context);
     final tokens = theme.extension<RodnyaDesignTokens>() ??
@@ -836,10 +967,10 @@ extension _HomeScreenSections on _HomeScreenState {
         ? 'Я'
         : String.fromCharCode(name.runes.first).toUpperCase();
 
-    // The whole row tap opens the composer for plain text. The two
-    // icons on the right are now real CTAs — photo opens the gallery
-    // picker on mount, videocam opens the video picker — wrapped in
-    // separate InkWells so the teaser tap area doesn't intercept them.
+    // The teaser text opens the plain-text post composer. A single «+»
+    // button on the right opens a bottom-sheet menu with every create
+    // entry (post · photo · video · gathering · poll), so the teaser text
+    // stays on one line no matter how many create types we add.
     return Semantics(
       button: true,
       label: 'home-compose-teaser',
@@ -883,6 +1014,8 @@ extension _HomeScreenSections on _HomeScreenState {
                                     TreeKind.friends
                                 ? 'Поделиться с кругом...'
                                 : 'Поделиться с роднёй...',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                             style: theme.textTheme.bodyMedium?.copyWith(
                               color: theme.colorScheme.onSurfaceVariant,
                               fontWeight: FontWeight.w600,
@@ -894,35 +1027,20 @@ extension _HomeScreenSections on _HomeScreenState {
                   ),
                 ),
               ),
-              const SizedBox(width: 4),
-              IconButton(
-                tooltip: 'Добавить фото',
-                onPressed: () => _openCreatePost(action: 'photo'),
-                icon: Icon(Icons.photo_outlined, color: tokens.accent),
-                visualDensity: VisualDensity.compact,
-              ),
-              IconButton(
-                tooltip: 'Добавить видео',
-                onPressed: () => _openCreatePost(action: 'video'),
-                icon: Icon(Icons.videocam_outlined, color: tokens.warm),
-                visualDensity: VisualDensity.compact,
-              ),
-              // Phase E2: «Встреча» — a separate composer entry next to the
-              // post media icons (doesn't touch the post-create flow).
-              IconButton(
-                key: const Key('compose-gathering'),
-                tooltip: 'Создать встречу',
-                onPressed: _openCreateGathering,
-                icon: Icon(Icons.event_outlined, color: tokens.accent),
-                visualDensity: VisualDensity.compact,
-              ),
-              // Phase E5d: «Опрос» composer entry.
-              IconButton(
-                key: const Key('compose-poll'),
-                tooltip: 'Создать опрос',
-                onPressed: _openCreatePoll,
-                icon: Icon(Icons.bar_chart_rounded, color: tokens.accent),
-                visualDensity: VisualDensity.compact,
+              const SizedBox(width: 8),
+              // One consolidated «+» entry → bottom-sheet create menu.
+              // Replaces the old row of inline icons (photo · video ·
+              // gathering · poll) that squeezed the teaser text once Phase E
+              // added a fourth icon.
+              IconButton.filledTonal(
+                key: const Key('compose-open'),
+                tooltip: 'Создать',
+                onPressed: _openComposeMenu,
+                icon: const Icon(Icons.add_rounded),
+                style: IconButton.styleFrom(
+                  backgroundColor: tokens.accentSoft,
+                  foregroundColor: tokens.accent,
+                ),
               ),
             ],
           ),

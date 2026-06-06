@@ -663,8 +663,82 @@ void main() {
       expect(pollY, lessThan(gatheringY));
       expect(gatheringY, lessThan(postY));
 
-      // The composer teaser surfaces the poll entry.
+      // The composer consolidates every create entry into one «+» menu;
+      // open it and confirm the poll entry is surfaced there.
+      await tester.tap(find.byKey(const Key('compose-open')));
+      await tester.pumpAndSettle();
       expect(find.byKey(const Key('compose-poll')), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'composer teaser keeps text single-line and hides inline create icons',
+    (tester) async {
+      // Narrow phone width: before consolidation, four inline create icons
+      // squeezed «Поделиться с роднёй…» into a cramped wrap. Now the text is
+      // single-line + ellipsis and only one «+» entry sits beside it.
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
+      final treeProvider = TreeProvider();
+      await treeProvider.selectTree('tree-1', 'Тестовое дерево');
+      await tester.pumpWidget(
+        ChangeNotifierProvider<TreeProvider>.value(
+          value: treeProvider,
+          child: const MaterialApp(home: HomeScreen()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final teaser = tester.widget<Text>(find.text('Поделиться с роднёй...'));
+      expect(teaser.maxLines, 1);
+      expect(teaser.overflow, TextOverflow.ellipsis);
+
+      // A single consolidated «+» entry; the old inline icons are gone from
+      // the row (they now live inside the menu, mounted only when opened).
+      expect(find.byKey(const Key('compose-open')), findsOneWidget);
+      expect(find.byKey(const Key('compose-gathering')), findsNothing);
+      expect(find.byKey(const Key('compose-poll')), findsNothing);
+
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'compose «+» opens a menu with all five create entries',
+    (tester) async {
+      tester.view.physicalSize = const Size(900, 1400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
+      final treeProvider = TreeProvider();
+      await treeProvider.selectTree('tree-1', 'Тестовое дерево');
+      await tester.pumpWidget(
+        ChangeNotifierProvider<TreeProvider>.value(
+          value: treeProvider,
+          child: const MaterialApp(home: HomeScreen()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('compose-open')));
+      await tester.pumpAndSettle();
+
+      // All five create flows are reachable from the one menu.
+      expect(find.byKey(const Key('compose-post')), findsOneWidget);
+      expect(find.byKey(const Key('compose-photo')), findsOneWidget);
+      expect(find.byKey(const Key('compose-video')), findsOneWidget);
+      expect(find.byKey(const Key('compose-gathering')), findsOneWidget);
+      expect(find.byKey(const Key('compose-poll')), findsOneWidget);
+      expect(find.text('Пост'), findsOneWidget);
+      expect(find.text('Опрос'), findsOneWidget);
     },
   );
 
