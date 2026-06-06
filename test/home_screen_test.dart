@@ -315,8 +315,9 @@ void main() {
       expect(find.byType(FloatingActionButton), findsNothing);
       // Album v1: «Альбом семьи» entry lives in the topbar.
       expect(find.byIcon(Icons.photo_library_outlined), findsOneWidget);
-      // Calendar v1: «Календарь» entry in the topbar.
-      expect(find.byIcon(Icons.calendar_month_outlined), findsOneWidget);
+      // UX-core SC4: «Календарь» is a nav tab now — its topbar icon was
+      // removed as a duplicate (the events-rail «Все события» link stays).
+      expect(find.byIcon(Icons.calendar_month_outlined), findsNothing);
     },
   );
 
@@ -763,7 +764,6 @@ void main() {
       await tester.pumpAndSettle();
 
       for (final tip in const [
-        'Календарь',
         'Альбом семьи',
         'Поиск по постам',
         'Активность',

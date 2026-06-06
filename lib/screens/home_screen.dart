@@ -892,16 +892,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 // the visible gap, so no SizedBox separators are needed.
                 _buildTopbarIconButton(
                   tokens: tokens,
-                  tooltip: 'Календарь',
-                  onTap: () => context.go('/calendar'),
-                  child: Icon(
-                    Icons.calendar_month_outlined,
-                    size: 20,
-                    color: tokens.accent,
-                  ),
-                ),
-                _buildTopbarIconButton(
-                  tokens: tokens,
                   tooltip: 'Альбом семьи',
                   onTap: () => context.push('/post/album'),
                   child: Icon(
