@@ -68,6 +68,7 @@ const {
 } = require("./routes/pending-invitation-routes");
 const {registerPostRoutes} = require("./routes/post-routes");
 const {registerGatheringRoutes} = require("./routes/gathering-routes");
+const {registerPollRoutes} = require("./routes/poll-routes");
 const {registerProfileRoutes} = require("./routes/profile-routes");
 const {registerPushRoutes} = require("./routes/push-routes");
 const {
@@ -1419,6 +1420,37 @@ function createApp({
     };
   }
 
+  // Phase E4: serialize a Poll. Mirrors mapGathering (branch fallback,
+  // public-url normalization) plus poll-specific fields. options +
+  // responses are returned as-is (public tallies, not anonymous).
+  function mapPoll(poll) {
+    const branchIds =
+      Array.isArray(poll.branchIds) && poll.branchIds.length > 0
+        ? poll.branchIds
+        : (poll.treeId ? [poll.treeId] : []);
+    return {
+      id: poll.id,
+      treeId: poll.treeId,
+      branchIds,
+      authorId: poll.authorId,
+      authorName: poll.authorName || "Аноним",
+      authorPhotoUrl: normalizePublicUrl(poll.authorPhotoUrl || null),
+      question: poll.question || "",
+      options: Array.isArray(poll.options) ? poll.options : [],
+      allowMultiple: poll.allowMultiple === true,
+      closesAt: poll.closesAt || null,
+      imageUrls: normalizePublicUrlList(poll.imageUrls),
+      scopeType: poll.scopeType === "branches" ? "branches" : "wholeTree",
+      circleId: poll.circleId || null,
+      anchorPersonIds: Array.isArray(poll.anchorPersonIds)
+        ? poll.anchorPersonIds
+        : [],
+      responses: Array.isArray(poll.responses) ? poll.responses : [],
+      createdAt: poll.createdAt,
+      updatedAt: poll.updatedAt,
+    };
+  }
+
   function mapStory(story) {
     return {
       id: story.id,
@@ -2581,6 +2613,16 @@ function createApp({
     requireTreeAccess,
     composeDisplayName,
     mapGathering,
+    createAndDispatchNotification,
+    pushGateway: resolvedPushGateway,
+  });
+
+  registerPollRoutes(app, {
+    store,
+    requireAuth,
+    requireTreeAccess,
+    composeDisplayName,
+    mapPoll,
     createAndDispatchNotification,
     pushGateway: resolvedPushGateway,
   });

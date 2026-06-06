@@ -170,6 +170,9 @@ const EMPTY_DB = {
   // posts (circle-on-tree audience, multi-branch fan-out). RSVP rows
   // land here in E3; create+delete only in E1.
   gatherings: [],
+  // Phase E4: «Опрос» (Poll) — mirrors gatherings (same audience model);
+  // carries options + per-user responses (votes).
+  polls: [],
   stories: [],
   comments: [],
   postReactions: [],
@@ -305,6 +308,8 @@ function normalizeDbState(parsed) {
     // Phase E1: backwards-compat — older data files without the
     // gatherings field load as empty.
     gatherings: Array.isArray(parsed?.gatherings) ? parsed.gatherings : [],
+    // Phase E4: same backwards-compat for polls.
+    polls: Array.isArray(parsed?.polls) ? parsed.polls : [],
     stories: Array.isArray(parsed?.stories) ? parsed.stories : [],
     comments: Array.isArray(parsed?.comments) ? parsed.comments : [],
     postReactions: Array.isArray(parsed?.postReactions)
@@ -748,6 +753,78 @@ function createGatheringRecord({
     createdAt: timestamp,
     updatedAt: timestamp,
     rsvps: [], // Phase E3.
+  };
+}
+
+// Phase E4: «Опрос» (Poll). Mirrors createGatheringRecord for the shared
+// audience fields (treeId/branchIds/author*/scopeType/anchorPersonIds/
+// circleId) + imageUrls (dedup-trim like posts). Poll-specific: question,
+// options (each normalised to {id, text}, empties dropped), allowMultiple,
+// closesAt. responses (votes) stay empty until someone votes.
+function createPollRecord({
+  treeId,
+  branchIds = null,
+  authorId,
+  authorName,
+  authorPhotoUrl = null,
+  question,
+  options = [],
+  allowMultiple = false,
+  closesAt = null,
+  imageUrls = [],
+  scopeType = "wholeTree",
+  anchorPersonIds = [],
+  circleId = null,
+}) {
+  const timestamp = nowIso();
+  const normalizedBranchIds = Array.isArray(branchIds)
+    ? Array.from(
+        new Set(
+          branchIds
+            .map((value) => normalizeNullableString(value))
+            .filter(Boolean),
+        ),
+      )
+    : [];
+  if (normalizedBranchIds.length === 0 && treeId) {
+    normalizedBranchIds.push(treeId);
+  }
+  const normalizedOptions = (Array.isArray(options) ? options : [])
+    .map((option) => {
+      // Accept a bare string or {text} — keep any existing id.
+      const text =
+        typeof option === "string" ? option : String(option?.text || "");
+      return {id: option?.id, text: text.trim()};
+    })
+    .filter((option) => option.text.length > 0)
+    .map((option) => ({
+      id: normalizeNullableString(option.id) || crypto.randomUUID(),
+      text: option.text,
+    }));
+  return {
+    id: crypto.randomUUID(),
+    treeId,
+    branchIds: normalizedBranchIds,
+    authorId,
+    authorName: String(authorName || "Аноним").trim() || "Аноним",
+    authorPhotoUrl: normalizeNullableString(authorPhotoUrl),
+    question: String(question || "").trim(),
+    options: normalizedOptions,
+    allowMultiple: allowMultiple === true,
+    closesAt: normalizeNullableString(closesAt),
+    imageUrls: Array.from(
+      new Set(
+        (Array.isArray(imageUrls) ? imageUrls : [])
+          .map((value) => String(value || "").trim())
+          .filter(Boolean),
+      ),
+    ),
+    scopeType: scopeType === "branches" ? "branches" : "wholeTree",
+    anchorPersonIds: normalizeParticipantIds(anchorPersonIds),
+    circleId: normalizeNullableString(circleId),
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    responses: [], // Phase E4 votes.
   };
 }
 
@@ -16426,6 +16503,203 @@ class FileStore {
     gathering.updatedAt = timestamp;
     await this._write(db);
     return gathering;
+  }
+
+  // ── Phase E4: Polls (Опросы) ──────────────────────────────────────
+  // Mirrors the gathering methods: circle-on-tree visibility, multi-branch
+  // fan-out audience, author-only delete. Voting (submitPollResponse) is a
+  // per-user UPSERT cloned from setGatheringRsvp.
+
+  async findPoll(pollId) {
+    const db = await this._read();
+    return db.polls.find((entry) => entry.id === pollId) || null;
+  }
+
+  async listPolls({treeId = null, viewerUserId = null} = {}) {
+    const db = await this._read();
+    const defaultCirclesChanged = ensureCirclesForAllTrees(db);
+    if (defaultCirclesChanged) {
+      await this._write(db);
+    }
+    return db.polls
+      .filter((entry) => {
+        if (treeId) {
+          const branchIds = Array.isArray(entry.branchIds)
+            ? entry.branchIds
+            : [];
+          const inBranches = branchIds.includes(treeId);
+          const matchesLegacyTreeId = entry.treeId === treeId;
+          if (!inBranches && !matchesLegacyTreeId) {
+            return false;
+          }
+        }
+        if (!this._canUserViewCirclePost(db, entry, viewerUserId)) {
+          return false;
+        }
+        return true;
+      })
+      .sort((left, right) =>
+        // Newest poll first (no startAt to order by, unlike gatherings).
+        String(right.createdAt || "").localeCompare(
+          String(left.createdAt || ""),
+        ),
+      );
+  }
+
+  async createPoll({
+    treeId,
+    branchIds = null,
+    authorId,
+    authorName,
+    authorPhotoUrl = null,
+    question,
+    options = [],
+    allowMultiple = false,
+    closesAt = null,
+    imageUrls = [],
+    scopeType = "wholeTree",
+    anchorPersonIds = [],
+    circleId = null,
+  }) {
+    const db = await this._read();
+    const tree = db.trees.find((entry) => entry.id === treeId);
+    const user = db.users.find((entry) => entry.id === authorId);
+    if (!tree || !user) {
+      return null;
+    }
+    const {allTreeCircle} = ensureCirclesForTree(db, tree);
+    const normalizedCircleId =
+      normalizeNullableString(circleId) || allTreeCircle?.id;
+    const targetCircle = db.circles.find(
+      (entry) => entry.treeId === treeId && entry.id === normalizedCircleId,
+    );
+    if (!targetCircle) {
+      return null;
+    }
+
+    let resolvedBranchIds = null;
+    if (Array.isArray(branchIds) && branchIds.length > 0) {
+      const accessibleTreeIds = new Set(
+        db.trees
+          .filter((entry) => this._userCanAccessTreeRecord(entry, authorId))
+          .map((entry) => entry.id),
+      );
+      resolvedBranchIds = Array.from(
+        new Set(
+          branchIds
+            .map((value) => normalizeNullableString(value))
+            .filter((value) => value && accessibleTreeIds.has(value)),
+        ),
+      );
+      if (!resolvedBranchIds.includes(treeId)) {
+        resolvedBranchIds.unshift(treeId);
+      }
+    }
+
+    const poll = createPollRecord({
+      treeId,
+      branchIds: resolvedBranchIds,
+      authorId,
+      authorName,
+      authorPhotoUrl,
+      question,
+      options,
+      allowMultiple,
+      closesAt,
+      imageUrls,
+      scopeType,
+      anchorPersonIds,
+      circleId: targetCircle.id,
+    });
+    // A poll needs a question and at least two options.
+    if (!poll.question || poll.options.length < 2) {
+      return false;
+    }
+
+    db.polls.push(poll);
+    await this._write(db);
+    return poll;
+  }
+
+  async resolvePollAudienceUserIds(pollId) {
+    const db = await this._read();
+    const poll = db.polls.find((entry) => entry.id === pollId);
+    if (!poll) return [];
+    const branchIds = new Set(
+      Array.isArray(poll.branchIds) && poll.branchIds.length > 0
+        ? poll.branchIds
+        : [poll.treeId].filter(Boolean),
+    );
+    const audienceUserIds = new Set();
+    for (const branchId of branchIds) {
+      const tree = db.trees.find((entry) => entry.id === branchId);
+      if (!tree) continue;
+      const memberIds = Array.isArray(tree.memberIds) ? tree.memberIds : [];
+      for (const memberId of memberIds) {
+        if (!memberId) continue;
+        if (memberId === poll.authorId) continue;
+        audienceUserIds.add(memberId);
+      }
+    }
+    return Array.from(audienceUserIds);
+  }
+
+  async deletePoll(pollId, actorUserId) {
+    const db = await this._read();
+    const index = db.polls.findIndex((entry) => entry.id === pollId);
+    if (index < 0) {
+      return null;
+    }
+    if (db.polls[index].authorId !== actorUserId) {
+      return false; // Only the author may delete (route maps → 403).
+    }
+    const [removed] = db.polls.splice(index, 1);
+    await this._write(db);
+    return removed;
+  }
+
+  // UPSERT a viewer's vote (last-write-wins per userId), cloned from
+  // setGatheringRsvp. Filters optionIds to existing option ids and, for a
+  // single-choice poll, truncates to one.
+  async submitPollResponse({pollId, userId, optionIds = []}) {
+    const db = await this._read();
+    const poll = db.polls.find((entry) => entry.id === pollId);
+    if (!poll) {
+      return null;
+    }
+    poll.responses = Array.isArray(poll.responses) ? poll.responses : [];
+    const validOptionIds = new Set(
+      (Array.isArray(poll.options) ? poll.options : []).map((o) => o.id),
+    );
+    let cleaned = Array.from(
+      new Set(
+        (Array.isArray(optionIds) ? optionIds : [])
+          .map((id) => String(id || "").trim())
+          .filter((id) => validOptionIds.has(id)),
+      ),
+    );
+    if (cleaned.length === 0) {
+      return false; // nothing valid chosen (route maps → 400)
+    }
+    // Single-choice → the server keeps only the first pick.
+    if (poll.allowMultiple !== true) {
+      cleaned = cleaned.slice(0, 1);
+    }
+    const timestamp = nowIso();
+    const existing = poll.responses.find((entry) => entry.userId === userId);
+    if (existing) {
+      existing.optionIds = cleaned;
+      existing.respondedAt = timestamp;
+    } else {
+      poll.responses.push({
+        userId,
+        optionIds: cleaned,
+        respondedAt: timestamp,
+      });
+    }
+    poll.updatedAt = timestamp;
+    await this._write(db);
+    return poll;
   }
 
   async deletePost(postId, actorUserId) {

@@ -182,11 +182,16 @@ class S3MediaStorage {
   }
 
   isLegacyPublicBucket(value) {
-    // Phase E: gatherings carry public photos like posts — without this,
-    // S3-served gathering image URLs throw UNSUPPORTED_MEDIA_URL in prod.
-    return ["avatars", "posts", "stories", "chat", "gatherings"].includes(
-      value,
-    );
+    // Phase E: gatherings + polls carry public photos like posts — without
+    // this, S3-served image URLs throw UNSUPPORTED_MEDIA_URL in prod.
+    return [
+      "avatars",
+      "posts",
+      "stories",
+      "chat",
+      "gatherings",
+      "polls",
+    ].includes(value);
   }
 
   buildPublicUrl(bucket, relativePath) {
