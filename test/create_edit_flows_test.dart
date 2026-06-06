@@ -342,6 +342,35 @@ void main() {
     expect(find.text('Всё дерево'), findsWidgets);
   });
 
+  testWidgets('Q1: publish stays disabled until there is text or media',
+      (tester) async {
+    await tester.pumpWidget(_withTree(const CreatePostScreen()));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    InkWell publishButton() => tester.widget<InkWell>(
+          find
+              .ancestor(
+                of: find.text('Опубликовать'),
+                matching: find.byType(InkWell),
+              )
+              .first,
+        );
+
+    // Empty composer → the publish button has no tap handler (disabled).
+    expect(publishButton().onTap, isNull);
+
+    // Typing real content enables it.
+    await tester.enterText(find.byType(TextField).first, 'Привет, родня!');
+    await tester.pump();
+    expect(publishButton().onTap, isNotNull);
+
+    // Whitespace-only collapses back to empty → disabled again (trim check).
+    await tester.enterText(find.byType(TextField).first, '   ');
+    await tester.pump();
+    expect(publishButton().onTap, isNull);
+  });
+
   testWidgets('CreatePostScreen opens audience sheet and selects a circle',
       (tester) async {
     await tester.pumpWidget(_withTree(const CreatePostScreen()));

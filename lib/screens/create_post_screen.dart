@@ -229,6 +229,10 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
   @override
   void initState() {
     super.initState();
+    // Q1: the publish button enables only when there's something to post,
+    // so rebuild the topbar as the text field gains/loses content. Media
+    // changes already flow through setState.
+    _contentController.addListener(_handleComposerChanged);
     _currentTreeId = Provider.of<TreeProvider>(
       context,
       listen: false,
@@ -252,6 +256,12 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
         }
       });
     }
+  }
+
+  /// Rebuilds the composer when the text content changes so the publish
+  /// button's enabled state (Q1) tracks the field live.
+  void _handleComposerChanged() {
+    if (mounted) setState(() {});
   }
 
   Future<void> _loadCurrentTreeMeta() async {
@@ -1975,7 +1985,10 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     required ThemeData theme,
     required RodnyaDesignTokens tokens,
   }) {
-    final canPublish = !_isLoading && _currentTreeId != null;
+    // Q1: nothing to publish until there's text or at least one media item.
+    final hasContent = _contentController.text.trim().isNotEmpty ||
+        _selectedMedia.isNotEmpty;
+    final canPublish = !_isLoading && _currentTreeId != null && hasContent;
     // Same Android perf bypass as other topbars.
     final useBlur = defaultTargetPlatform != TargetPlatform.android;
     final body = Container(
