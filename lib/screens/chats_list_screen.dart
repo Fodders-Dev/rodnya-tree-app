@@ -754,7 +754,8 @@ class _ChatsListScreenState extends State<ChatsListScreen>
         child: SizedBox(
           height: AppTheme.topbarContentHeight,
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(18, 8, 12, 8),
+            // Q3: 6pt vertical (was 8) so the 48pt touch targets fit.
+            padding: const EdgeInsets.fromLTRB(18, 6, 12, 6),
             child: Row(
           children: [
             Text(
@@ -777,7 +778,7 @@ class _ChatsListScreenState extends State<ChatsListScreen>
                 color: tokens.ink,
               ),
             ),
-            const SizedBox(width: 8),
+            // Q3: no SizedBox — the 48pt targets carry their own spacing.
             _buildTopbarPillButton(
               tokens: tokens,
               tooltip: 'Новый чат',
@@ -809,21 +810,32 @@ class _ChatsListScreenState extends State<ChatsListScreen>
     required String tooltip,
     required VoidCallback onTap,
   }) {
+    // Q3: 38pt visual chip inside a Material-spec 48×48 touch target. The
+    // 5pt transparent ring is the inter-icon spacing, so the buttons need
+    // no SizedBox separators.
     return Tooltip(
       message: tooltip,
-      child: Material(
-        color: tokens.surfaceStrong,
-        shape: RoundedRectangleBorder(
-          side: BorderSide(color: tokens.surfaceLine),
-          borderRadius: BorderRadius.circular(14),
-        ),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(14),
-          child: SizedBox(
-            width: 38,
-            height: 38,
-            child: Center(child: child),
+      child: SizedBox(
+        width: 48,
+        height: 48,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(14),
+            child: Center(
+              child: Container(
+                width: 38,
+                height: 38,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: tokens.surfaceStrong,
+                  border: Border.all(color: tokens.surfaceLine),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: child,
+              ),
+            ),
           ),
         ),
       ),

@@ -743,6 +743,40 @@ void main() {
   );
 
   testWidgets(
+    'Q3: topbar icon buttons have ≥48dp touch targets',
+    (tester) async {
+      tester.view.physicalSize = const Size(900, 1400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
+      final treeProvider = TreeProvider();
+      await treeProvider.selectTree('tree-1', 'Тестовое дерево');
+      await tester.pumpWidget(
+        ChangeNotifierProvider<TreeProvider>.value(
+          value: treeProvider,
+          child: const MaterialApp(home: HomeScreen()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      for (final tip in const [
+        'Календарь',
+        'Альбом семьи',
+        'Поиск по постам',
+        'Активность',
+        'Выбрать дерево',
+      ]) {
+        final size = tester.getSize(find.byTooltip(tip));
+        expect(size.width, greaterThanOrEqualTo(48.0), reason: tip);
+        expect(size.height, greaterThanOrEqualTo(48.0), reason: tip);
+      }
+    },
+  );
+
+  testWidgets(
     'HomeScreen виртуализирует ленту — офф-скрин карточки не монтируются (P1)',
     (tester) async {
       // Narrow width (phone layout) + modest height. A non-virtualized

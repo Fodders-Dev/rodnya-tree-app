@@ -850,7 +850,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         child: SizedBox(
           height: AppTheme.topbarContentHeight,
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(18, 8, 12, 8),
+            // Q3: 6pt vertical (was 8) gives the 48pt touch targets room
+            // inside the fixed-height bar; tighter horizontal insets
+            // (14/8 was 18/12) reclaim the width the larger targets need.
+            padding: const EdgeInsets.fromLTRB(14, 6, 8, 6),
             child: Row(
               children: [
                 Text(
@@ -862,13 +865,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     letterSpacing: -0.22,
                   ),
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: 8),
                 // Phase 6.1: branch switcher chip — tap opens a bottom
                 // sheet with all of the user's branches. Hidden when
                 // there's nothing to switch to (fresh account, no trees
                 // yet).
                 const Flexible(child: BranchSwitcherChip()),
                 const Spacer(),
+                // Q3: icons sit flush — each button carries its own 5pt
+                // transparent ring inside the 48pt touch target, which is
+                // the visible gap, so no SizedBox separators are needed.
                 _buildTopbarIconButton(
                   tokens: tokens,
                   tooltip: 'Календарь',
@@ -879,7 +885,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     color: tokens.accent,
                   ),
                 ),
-                const SizedBox(width: 8),
                 _buildTopbarIconButton(
                   tokens: tokens,
                   tooltip: 'Альбом семьи',
@@ -890,7 +895,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     color: tokens.accent,
                   ),
                 ),
-                const SizedBox(width: 8),
                 _buildTopbarIconButton(
                   tokens: tokens,
                   tooltip: 'Поиск по постам',
@@ -901,14 +905,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     color: tokens.accent,
                   ),
                 ),
-                const SizedBox(width: 8),
                 _buildTopbarIconButton(
                   tokens: tokens,
                   child: _buildNotificationsAction(tokens: tokens),
                   tooltip: 'Активность',
                   onTap: () => context.push('/notifications'),
                 ),
-                const SizedBox(width: 8),
                 _buildTopbarIconButton(
                   tokens: tokens,
                   tooltip: 'Выбрать дерево',
@@ -940,21 +942,33 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     required String tooltip,
     required VoidCallback onTap,
   }) {
+    // Q3: keep the 38pt visual chip but grow the touch target to the
+    // Material-spec 48×48. The 5pt transparent ring around the chip is
+    // also the inter-icon spacing, so the icons sit directly next to each
+    // other (no extra SizedBox) and the cluster barely grows in width.
     return Tooltip(
       message: tooltip,
-      child: Material(
-        color: tokens.surfaceStrong,
-        shape: RoundedRectangleBorder(
-          side: BorderSide(color: tokens.surfaceLine),
-          borderRadius: BorderRadius.circular(14),
-        ),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(14),
-          child: SizedBox(
-            width: 38,
-            height: 38,
-            child: Center(child: child),
+      child: SizedBox(
+        width: 48,
+        height: 48,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(14),
+            child: Center(
+              child: Container(
+                width: 38,
+                height: 38,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: tokens.surfaceStrong,
+                  border: Border.all(color: tokens.surfaceLine),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: child,
+              ),
+            ),
           ),
         ),
       ),

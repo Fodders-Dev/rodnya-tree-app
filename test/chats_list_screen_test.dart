@@ -499,6 +499,18 @@ void main() {
     expect(find.text('Дерево'), findsOneWidget);
   });
 
+  testWidgets('Q3: topbar pill buttons have ≥48dp touch targets',
+      (tester) async {
+    await tester.pumpWidget(buildApp());
+    await tester.pumpAndSettle();
+
+    for (final tip in const ['Поиск', 'Новый чат']) {
+      final size = tester.getSize(find.byTooltip(tip));
+      expect(size.width, greaterThanOrEqualTo(48.0), reason: tip);
+      expect(size.height, greaterThanOrEqualTo(48.0), reason: tip);
+    }
+  });
+
   testWidgets(
     'ChatsListScreen предлагает войти снова после истечения сессии',
     (tester) async {
