@@ -183,49 +183,6 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     return null;
   }
 
-  List<FamilyCircle> get _quickAudienceCircles {
-    if (_audienceCircles.isEmpty) {
-      return const <FamilyCircle>[];
-    }
-
-    final selected = _selectedCircle;
-    final result = <FamilyCircle>[];
-    void addIfMissing(FamilyCircle? circle) {
-      if (circle == null) {
-        return;
-      }
-      if (result.any((entry) => entry.id == circle.id)) {
-        return;
-      }
-      result.add(circle);
-    }
-
-    addIfMissing(_firstCircleWhere((circle) => circle.isAllTree));
-    addIfMissing(
-      _firstCircleWhere((circle) => circle.isFavorites),
-    );
-    addIfMissing(
-      _firstCircleWhere((circle) => circle.isAuto),
-    );
-    addIfMissing(selected);
-    for (final circle in _audienceCircles) {
-      if (result.length >= 4) {
-        break;
-      }
-      addIfMissing(circle);
-    }
-    return result.take(4).toList(growable: false);
-  }
-
-  FamilyCircle? _firstCircleWhere(bool Function(FamilyCircle) test) {
-    for (final circle in _audienceCircles) {
-      if (test(circle)) {
-        return circle;
-      }
-    }
-    return null;
-  }
-
   @override
   void initState() {
     super.initState();
@@ -1455,8 +1412,13 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
         children: [
           _buildAuthorRow(compact: compact),
           const SizedBox(height: 14),
-          _buildAudienceStrip(),
-          const SizedBox(height: 18),
+          // Q6: the compact (mobile) editor shows just the audience summary
+          // + «Изменить»; the wide layout already has the full audience
+          // panel in the side column, so the summary would be redundant.
+          if (compact) ...[
+            _buildAudienceSummaryRow(),
+            const SizedBox(height: 18),
+          ],
           // Reference compose textarea is transparent — no border, no bg, just
           // text inside the outer card. Drop the inner DecoratedBox so the
           // input reads like the jsx prototype (placeholder font 17px, fluid
@@ -1622,116 +1584,104 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     return initials.isEmpty ? 'Р' : initials;
   }
 
-  Widget _buildAudienceStrip() {
+  /// Q6: a compact audience summary shown by default. Rather than laying
+  /// out the whole circle/branch taxonomy as a chip strip up front (which
+  /// read as noisy and pushed people to overthink reach), we show the
+  /// current audience — defaulting to «Всё дерево» — with an «Изменить»
+  /// action that opens the full picker sheet. The taxonomy still lives
+  /// behind that one tap.
+  Widget _buildAudienceSummaryRow() {
     final theme = Theme.of(context);
     final tokens = theme.extension<RodnyaDesignTokens>() ??
         (theme.brightness == Brightness.dark
             ? RodnyaDesignTokens.dark
             : RodnyaDesignTokens.light);
-    final circles = _quickAudienceCircles;
 
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: [
-          for (final circle in circles) ...[
-            _buildAudienceQuickChip(
-              label: circle.name,
-              icon: _circleIcon(circle),
-              accent: _circleAccent(circle, tokens),
-              active: _scopeType == TreeContentScopeType.wholeTree &&
-                  _selectedCircleId == circle.id,
-              onTap: () {
-                setState(() {
-                  _selectedCircleId = circle.id;
-                  _scopeType = TreeContentScopeType.wholeTree;
-                  _selectedBranchPersonIds.clear();
-                });
-              },
-            ),
-            const SizedBox(width: 8),
-          ],
-          _buildAudienceQuickChip(
-            label: _isFriendsTree ? 'Круг' : 'Ветка',
-            icon: Icons.alt_route_outlined,
-            accent: tokens.warm,
-            active: _scopeType == TreeContentScopeType.branches,
-            onTap: () {
-              setState(() {
-                _scopeType = TreeContentScopeType.branches;
-              });
-              _showAudienceSheet();
-            },
-          ),
-          const SizedBox(width: 8),
-          _buildAudienceQuickChip(
-            label: 'ещё',
-            icon: Icons.tune,
-            accent: tokens.inkSecondary,
-            active: false,
-            onTap: _showAudienceSheet,
-          ),
-          if (_isLoadingCircles) ...[
-            const SizedBox(width: 10),
-            SizedBox(
-              width: 18,
-              height: 18,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                color: theme.colorScheme.primary,
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _buildAudienceQuickChip({
-    required String label,
-    required IconData icon,
-    required Color accent,
-    required bool active,
-    required VoidCallback onTap,
-  }) {
-    final theme = Theme.of(context);
-    final tokens = theme.extension<RodnyaDesignTokens>() ??
-        (theme.brightness == Brightness.dark
-            ? RodnyaDesignTokens.dark
-            : RodnyaDesignTokens.light);
+    final circle = _selectedCircle;
+    final inBranches = _scopeType == TreeContentScopeType.branches;
+    final icon = inBranches
+        ? Icons.alt_route_outlined
+        : (circle != null ? _circleIcon(circle) : Icons.groups_outlined);
+    final accent = (!inBranches && circle != null)
+        ? _circleAccent(circle, tokens)
+        : tokens.accent;
 
     return Material(
-      color: active ? accent.withValues(alpha: 0.13) : tokens.surface,
-      borderRadius: BorderRadius.circular(999),
+      color: tokens.surface,
+      borderRadius: BorderRadius.circular(14),
       child: InkWell(
-        borderRadius: BorderRadius.circular(999),
-        onTap: onTap,
+        key: const Key('compose-audience-summary'),
+        borderRadius: BorderRadius.circular(14),
+        onTap: _showAudienceSheet,
         child: Container(
-          constraints: const BoxConstraints(maxWidth: 150),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(999),
-            border: Border.all(
-              color:
-                  active ? accent.withValues(alpha: 0.55) : tokens.surfaceLine,
-            ),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: tokens.surfaceLine),
           ),
           child: Row(
-            mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: 16, color: active ? accent : tokens.inkMuted),
-              const SizedBox(width: 6),
-              Flexible(
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.labelMedium?.copyWith(
-                    color: active ? accent : tokens.inkSecondary,
-                    fontWeight: FontWeight.w900,
-                  ),
+              Container(
+                width: 30,
+                height: 30,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: accent.withValues(alpha: 0.13),
+                  borderRadius: BorderRadius.circular(9),
+                ),
+                child: Icon(icon, size: 17, color: accent),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Кто увидит',
+                      style: AppTheme.sans(
+                        color: tokens.inkMuted,
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.2,
+                      ),
+                    ),
+                    Text(
+                      _selectedAudienceLabel,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTheme.sans(
+                        color: tokens.ink,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
                 ),
               ),
+              const SizedBox(width: 8),
+              if (_isLoadingCircles)
+                SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: theme.colorScheme.primary,
+                  ),
+                )
+              else ...[
+                Text(
+                  'Изменить',
+                  style: AppTheme.sans(
+                    color: tokens.accent,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(width: 2),
+                Icon(Icons.expand_more_rounded,
+                    size: 18, color: tokens.accent),
+              ],
             ],
           ),
         ),

@@ -371,6 +371,29 @@ void main() {
     expect(publishButton().onTap, isNull);
   });
 
+  testWidgets(
+      'Q6: composer shows a compact audience summary, taxonomy behind «Изменить»',
+      (tester) async {
+    await tester.pumpWidget(_withTree(const CreatePostScreen()));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    // Default: a compact summary with «Изменить» + the current audience —
+    // not the old chip strip.
+    expect(find.byKey(const Key('compose-audience-summary')), findsOneWidget);
+    expect(find.text('Изменить'), findsOneWidget);
+    expect(find.text('Всё дерево'), findsWidgets);
+    // The taxonomy is collapsed — the «Близкие» circle only appears once
+    // the picker is opened.
+    expect(find.text('Близкие'), findsNothing);
+
+    // Tapping the summary opens the full picker sheet.
+    await tester.tap(find.byKey(const Key('compose-audience-summary')));
+    await tester.pumpAndSettle();
+    expect(find.text('Кто увидит пост?'), findsOneWidget);
+    expect(find.text('Близкие'), findsWidgets);
+  });
+
   testWidgets('CreatePostScreen opens audience sheet and selects a circle',
       (tester) async {
     await tester.pumpWidget(_withTree(const CreatePostScreen()));
