@@ -46,6 +46,9 @@ void main() {
     expect(find.text('Лента'), findsOneWidget);
     expect(find.text('Чаты'), findsOneWidget);
     expect(find.text('Дерево'), findsOneWidget);
+    // Q5: the profile tab reads «Профиль», not the terse «Я».
+    expect(find.text('Профиль'), findsOneWidget);
+    expect(find.text('Я'), findsNothing);
     expect(find.text('3'), findsOneWidget);
     expect(find.text('4'), findsOneWidget);
     expect(find.text('2'), findsOneWidget);
@@ -111,6 +114,6 @@ void main() {
     expect(find.text('Родные'), findsNothing);
     expect(find.text('Дерево'), findsNothing);
     expect(find.text('Чаты'), findsNothing);
-    expect(find.text('Я'), findsNothing);
+    expect(find.text('Профиль'), findsNothing);
   });
 }

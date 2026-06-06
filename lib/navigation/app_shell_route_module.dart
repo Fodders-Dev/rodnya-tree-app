@@ -646,7 +646,7 @@ class AdaptiveNavigationRail extends StatelessWidget {
                     count: chatsCount,
                   ),
                   const _RailDestinationData(
-                    label: 'Я',
+                    label: 'Профиль',
                     outlinedIcon: Icons.person_outline_rounded,
                     filledIcon: Icons.person_rounded,
                   ),

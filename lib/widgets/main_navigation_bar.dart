@@ -65,7 +65,7 @@ class MainNavigationBar extends StatelessWidget {
                     count: unreadCount,
                   ),
                   const _NavItemData(
-                    label: 'Я',
+                    label: 'Профиль',
                     outlinedIcon: Icons.person_outline_rounded,
                     filledIcon: Icons.person_rounded,
                   ),
