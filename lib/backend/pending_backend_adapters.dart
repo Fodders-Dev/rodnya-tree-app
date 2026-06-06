@@ -27,6 +27,7 @@ import '../models/user_profile.dart';
 import '../models/audience_preset.dart';
 import '../models/post.dart';
 import '../models/gathering.dart';
+import '../models/poll.dart';
 import '../models/comment.dart';
 import '../models/reaction_summary.dart';
 import '../models/story.dart';
@@ -40,6 +41,7 @@ import 'interfaces/call_service_interface.dart';
 import 'interfaces/chat_service_interface.dart';
 import 'interfaces/circle_service_interface.dart';
 import 'interfaces/gathering_service_interface.dart';
+import 'interfaces/poll_service_interface.dart';
 import 'interfaces/family_tree_service_interface.dart';
 import 'interfaces/identity_service_interface.dart';
 import 'interfaces/profile_service_interface.dart';
@@ -1076,5 +1078,40 @@ class PendingBackendGatheringService implements GatheringServiceInterface {
     String? note,
   }) {
     throw UnsupportedError(_pendingProviderMessage('gathering'));
+  }
+}
+
+class PendingBackendPollService implements PollServiceInterface {
+  const PendingBackendPollService();
+
+  @override
+  Future<List<Poll>> getPolls({required String treeId}) async {
+    return const [];
+  }
+
+  @override
+  Future<Poll> createPoll({
+    required String treeId,
+    required String question,
+    required List<String> options,
+    bool allowMultiple = false,
+    DateTime? closesAt,
+    List<XFile> images = const [],
+    TreeContentScopeType scopeType = TreeContentScopeType.wholeTree,
+    List<String> anchorPersonIds = const [],
+    String? circleId,
+    List<String>? branchIds,
+  }) {
+    throw UnsupportedError(_pendingProviderMessage('poll'));
+  }
+
+  @override
+  Future<Poll> vote(String pollId, List<String> optionIds) {
+    throw UnsupportedError(_pendingProviderMessage('poll'));
+  }
+
+  @override
+  Future<void> deletePoll(String pollId) {
+    throw UnsupportedError(_pendingProviderMessage('poll'));
   }
 }
