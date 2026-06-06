@@ -408,11 +408,6 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
             onPressed: () => _navigateToAddRelative(selectedTreeId),
             emphasized: true,
           ),
-          _buildTreeToolbarIconButton(
-            icon: Icons.search_rounded,
-            tooltip: _isFriendsTree ? 'Найти связь' : 'Найти родственника',
-            onPressed: () => context.go('/relatives'),
-          ),
           // Selection mode toggle — top-level visible icon instead
           // of buried in the «...» overflow. This is the user's
           // primary tool for slicing the tree («выделить мамину
@@ -2259,11 +2254,6 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
         value: _TreeToolbarAction.openHistory,
         icon: Icons.history_outlined,
         label: 'История изменений',
-      ),
-      _buildTreeToolbarMenuItem(
-        value: _TreeToolbarAction.openRelatives,
-        icon: Icons.people_outline,
-        label: _isFriendsTree ? 'Открыть связи' : 'Открыть родных',
       ),
       _buildTreeToolbarMenuItem(
         value: _TreeToolbarAction.openChats,

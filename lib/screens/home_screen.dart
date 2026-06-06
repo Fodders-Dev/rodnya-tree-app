@@ -856,22 +856,37 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             padding: const EdgeInsets.fromLTRB(14, 6, 8, 6),
             child: Row(
               children: [
-                Text(
-                  'Родня',
-                  style: AppTheme.serif(
-                    color: tokens.ink,
-                    fontSize: 22,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: -0.22,
+                // Brand + branch chip own all the space left of the icon
+                // cluster. The Expanded (replacing the old Spacer) keeps the
+                // icons right-aligned and lets the chip ellipsize cleanly no
+                // matter how many icons sit beside it — a plain Flexible+Spacer
+                // pair only handed the chip half the free space, which tipped
+                // into an overflow once the topbar dropped to four icons.
+                Expanded(
+                  child: Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          'Родня',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: AppTheme.serif(
+                            color: tokens.ink,
+                            fontSize: 22,
+                            fontWeight: FontWeight.w600,
+                            letterSpacing: -0.22,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      // Phase 6.1: branch switcher chip — tap opens a bottom
+                      // sheet with all of the user's branches. Hidden when
+                      // there's nothing to switch to (fresh account, no trees
+                      // yet).
+                      const Flexible(child: BranchSwitcherChip()),
+                    ],
                   ),
                 ),
-                const SizedBox(width: 8),
-                // Phase 6.1: branch switcher chip — tap opens a bottom
-                // sheet with all of the user's branches. Hidden when
-                // there's nothing to switch to (fresh account, no trees
-                // yet).
-                const Flexible(child: BranchSwitcherChip()),
-                const Spacer(),
                 // Q3: icons sit flush — each button carries its own 5pt
                 // transparent ring inside the 48pt touch target, which is
                 // the visible gap, so no SizedBox separators are needed.
@@ -910,16 +925,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   child: _buildNotificationsAction(tokens: tokens),
                   tooltip: 'Активность',
                   onTap: () => context.push('/notifications'),
-                ),
-                _buildTopbarIconButton(
-                  tokens: tokens,
-                  tooltip: 'Выбрать дерево',
-                  onTap: () => context.go('/tree?selector=1'),
-                  child: Icon(
-                    Icons.account_tree_outlined,
-                    size: 19,
-                    color: tokens.accent,
-                  ),
                 ),
               ],
             ),

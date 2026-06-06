@@ -65,7 +65,6 @@ part 'tree_view_screen_sections.dart';
 enum _TreeToolbarAction {
   refresh,
   openHistory,
-  openRelatives,
   openChats,
   createPost,
   toggleEditMode,
@@ -1301,9 +1300,6 @@ class _TreeViewScreenState extends State<TreeViewScreen>
         return;
       case _TreeToolbarAction.openHistory:
         await _showTreeHistorySheet();
-        return;
-      case _TreeToolbarAction.openRelatives:
-        context.go('/relatives');
         return;
       case _TreeToolbarAction.openChats:
         context.go('/chats');

@@ -938,11 +938,6 @@ class _RelativesScreenState extends State<RelativesScreen> {
                 label: const Text('Добавить'),
               ),
               OutlinedButton.icon(
-                onPressed: () => context.go('/tree'),
-                icon: const Icon(Icons.account_tree_outlined),
-                label: const Text('Дерево'),
-              ),
-              OutlinedButton.icon(
                 onPressed: _currentTreeId == null
                     ? null
                     : () => context.push('/relatives/find/${_currentTreeId!}'),
@@ -1144,42 +1139,6 @@ class _RelativesScreenState extends State<RelativesScreen> {
                   ),
                 ),
               ],
-            ),
-          ),
-          const SizedBox(width: 10),
-          Material(
-            color: tokens.accent,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(999),
-            ),
-            child: InkWell(
-              onTap: () => context.go('/tree'),
-              borderRadius: BorderRadius.circular(999),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 9,
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      'Дерево',
-                      style: AppTheme.sans(
-                        color: tokens.accentInk,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-                    Icon(
-                      Icons.chevron_right_rounded,
-                      size: 16,
-                      color: tokens.accentInk,
-                    ),
-                  ],
-                ),
-              ),
             ),
           ),
         ],

@@ -32,7 +32,6 @@ extension _RelativesScreenSections on _RelativesScreenState {
       PopupMenuButton<String>(
         onSelected: (value) => _handleRelativesMenuSelection(
           value,
-          treeProvider: treeProvider,
           selectedTreeId: selectedTreeId,
         ),
         itemBuilder: (context) => _buildRelativesMenuItems(
@@ -46,7 +45,6 @@ extension _RelativesScreenSections on _RelativesScreenState {
 
   void _handleRelativesMenuSelection(
     String value, {
-    required TreeProvider treeProvider,
     required String? selectedTreeId,
   }) {
     if (selectedTreeId == null) {
@@ -63,14 +61,6 @@ extension _RelativesScreenSections on _RelativesScreenState {
       );
     } else if (value == 'find') {
       context.push('/relatives/find/$selectedTreeId');
-    } else if (value == 'tree_view') {
-      final nameParam = Uri.encodeComponent(
-        treeProvider.selectedTreeName ??
-            (_isFriendsTree(treeProvider)
-                ? 'Дерево друзей'
-                : 'Семейное дерево'),
-      );
-      context.push('/tree/view/$selectedTreeId?name=$nameParam');
     } else if (value == 'create_tree') {
       context.push('/trees/create').then((result) {
         // Можно опционально перейти на новый экран дерева после создания.
@@ -102,15 +92,6 @@ extension _RelativesScreenSections on _RelativesScreenState {
           title: Text(
             isFriendsTree ? 'Создать новый круг' : 'Создать новое дерево',
           ),
-          contentPadding: EdgeInsets.zero,
-        ),
-      ),
-      PopupMenuItem<String>(
-        value: 'tree_view',
-        enabled: selectedTreeId != null,
-        child: const ListTile(
-          leading: Icon(Icons.account_tree),
-          title: Text('Просмотр дерева'),
           contentPadding: EdgeInsets.zero,
         ),
       ),

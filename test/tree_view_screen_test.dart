@@ -912,7 +912,7 @@ void main() {
     expect(find.textContaining('chat:chat-branch-1'), findsOneWidget);
   });
 
-  testWidgets('быстрые действия из tree view открывают родных и чаты',
+  testWidgets('быстрые действия из tree view открывают чаты (без дубля «родных»)',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(1440, 1024));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -922,53 +922,37 @@ void main() {
     final treeProvider = TreeProvider();
     await treeProvider.selectTree('tree-1', 'Тест');
 
-    GoRouter buildRouter() => GoRouter(
-          initialLocation: '/tree/view/tree-1?name=%D0%A2%D0%B5%D1%81%D1%82',
-          routes: [
-            GoRoute(
-              path: '/tree/view/:treeId',
-              builder: (context, state) => TreeViewScreen(
-                routeTreeId: state.pathParameters['treeId'],
-                routeTreeName: state.uri.queryParameters['name'],
-              ),
-            ),
-            GoRoute(
-              path: '/relatives',
-              builder: (context, state) => const Text('relatives-screen'),
-            ),
-            GoRoute(
-              path: '/chats',
-              builder: (context, state) => const Text('chats-screen'),
-            ),
-          ],
-        );
-
-    await tester.pumpWidget(
-      ChangeNotifierProvider<TreeProvider>.value(
-        value: treeProvider,
-        child: MaterialApp.router(routerConfig: buildRouter()),
-      ),
+    final router = GoRouter(
+      initialLocation: '/tree/view/tree-1?name=%D0%A2%D0%B5%D1%81%D1%82',
+      routes: [
+        GoRoute(
+          path: '/tree/view/:treeId',
+          builder: (context, state) => TreeViewScreen(
+            routeTreeId: state.pathParameters['treeId'],
+            routeTreeName: state.uri.queryParameters['name'],
+          ),
+        ),
+        GoRoute(
+          path: '/chats',
+          builder: (context, state) => const Text('chats-screen'),
+        ),
+      ],
     );
 
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.byTooltip('Действия дерева'));
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('Открыть родных').last);
-    await tester.tap(find.text('Открыть родных').last, warnIfMissed: false);
-    await tester.pumpAndSettle();
-    expect(find.text('relatives-screen'), findsOneWidget);
-
     await tester.pumpWidget(
       ChangeNotifierProvider<TreeProvider>.value(
         value: treeProvider,
-        child: MaterialApp.router(routerConfig: buildRouter()),
+        child: MaterialApp.router(routerConfig: router),
       ),
     );
     await tester.pumpAndSettle();
 
     await tester.tap(find.byTooltip('Действия дерева'));
     await tester.pumpAndSettle();
+    // SC3: the tree→relatives cross-entry is gone — Список лежит за тем же
+    // toggle'ом в «Семье». «Открыть чаты» остаётся (чаты — отдельный таб).
+    expect(find.text('Открыть родных'), findsNothing);
+    expect(find.text('Открыть связи'), findsNothing);
     await tester.ensureVisible(find.text('Открыть чаты').last);
     await tester.tap(find.text('Открыть чаты').last, warnIfMissed: false);
     await tester.pumpAndSettle();

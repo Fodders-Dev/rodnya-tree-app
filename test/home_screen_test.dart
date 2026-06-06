@@ -767,7 +767,6 @@ void main() {
         'Альбом семьи',
         'Поиск по постам',
         'Активность',
-        'Выбрать дерево',
       ]) {
         final size = tester.getSize(find.byTooltip(tip));
         expect(size.width, greaterThanOrEqualTo(48.0), reason: tip);
