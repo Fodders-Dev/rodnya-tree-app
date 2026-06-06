@@ -7,6 +7,7 @@ import 'package:rodnya/backend/interfaces/auth_service_interface.dart';
 import 'package:rodnya/backend/interfaces/family_tree_service_interface.dart';
 import 'package:rodnya/backend/interfaces/post_service_interface.dart';
 import 'package:rodnya/backend/interfaces/gathering_service_interface.dart';
+import 'package:rodnya/backend/interfaces/poll_service_interface.dart';
 import 'package:rodnya/backend/interfaces/story_service_interface.dart';
 import 'package:rodnya/backend/backend_runtime_config.dart';
 import 'package:rodnya/backend/models/tree_invitation.dart';
@@ -15,6 +16,7 @@ import 'package:rodnya/models/family_person.dart';
 import 'package:rodnya/models/family_relation.dart';
 import 'package:rodnya/models/post.dart';
 import 'package:rodnya/models/gathering.dart';
+import 'package:rodnya/models/poll.dart';
 import 'package:rodnya/models/story.dart';
 import 'package:rodnya/providers/tree_provider.dart';
 import 'package:rodnya/screens/home_screen.dart';
@@ -25,6 +27,7 @@ import 'package:rodnya/services/local_storage_service.dart';
 import 'package:rodnya/widgets/event_card.dart';
 import 'package:rodnya/widgets/post_card.dart';
 import 'package:rodnya/widgets/gathering_card.dart';
+import 'package:rodnya/widgets/poll_card.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -157,6 +160,18 @@ class _FakeGatheringService implements GatheringServiceInterface {
   @override
   Future<List<Gathering>> getGatherings({required String treeId}) async =>
       gatherings;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _FakePollService implements PollServiceInterface {
+  _FakePollService({this.polls = const []});
+
+  final List<Poll> polls;
+
+  @override
+  Future<List<Poll>> getPolls({required String treeId}) async => polls;
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -564,7 +579,7 @@ void main() {
   );
 
   testWidgets(
-    'HomeScreen mixes posts and gatherings in the feed, newest-first (E2c)',
+    'HomeScreen mixes posts, gatherings and polls, newest-first (E5d)',
     (tester) async {
       tester.view.physicalSize = const Size(900, 2400);
       tester.view.devicePixelRatio = 1.0;
@@ -583,7 +598,7 @@ void main() {
               authorId: 'a1',
               authorName: 'Анна',
               content: 'Семейная новость',
-              createdAt: DateTime(2026, 4, 13, 10), // older
+              createdAt: DateTime(2026, 4, 13, 10), // oldest
             ),
           ],
         ),
@@ -598,7 +613,25 @@ void main() {
               authorName: 'Иван',
               title: 'Шашлыки на даче',
               startAt: DateTime(2026, 7, 1, 15),
-              createdAt: DateTime(2026, 4, 13, 12), // newer
+              createdAt: DateTime(2026, 4, 13, 12), // middle
+            ),
+          ],
+        ),
+      );
+      getIt.registerSingleton<PollServiceInterface>(
+        _FakePollService(
+          polls: [
+            Poll(
+              id: 'poll-1',
+              treeId: 'tree-1',
+              authorId: 'a3',
+              authorName: 'Оля',
+              question: 'Когда удобнее?',
+              options: const [
+                PollOption(id: 'o1', text: 'Суббота'),
+                PollOption(id: 'o2', text: 'Воскресенье'),
+              ],
+              createdAt: DateTime(2026, 4, 13, 14), // newest
             ),
           ],
         ),
@@ -615,17 +648,23 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      // Both kinds of content are in the feed.
+      // All three kinds of content are in the feed.
       expect(find.byType(PostCard), findsOneWidget);
       expect(find.byType(GatheringCard), findsOneWidget);
+      expect(find.byType(PollCard), findsOneWidget);
       expect(find.text('Семейная новость'), findsOneWidget);
       expect(find.text('Шашлыки на даче'), findsOneWidget);
+      expect(find.text('Когда удобнее?'), findsOneWidget);
 
-      // The gathering (createdAt 12:00) is newer than the post (10:00), so
-      // it sits above it in the newest-first feed.
+      // Newest-first: poll (14:00) above gathering (12:00) above post (10:00).
+      final pollY = tester.getTopLeft(find.byType(PollCard)).dy;
       final gatheringY = tester.getTopLeft(find.byType(GatheringCard)).dy;
       final postY = tester.getTopLeft(find.byType(PostCard)).dy;
+      expect(pollY, lessThan(gatheringY));
       expect(gatheringY, lessThan(postY));
+
+      // The composer teaser surfaces the poll entry.
+      expect(find.byKey(const Key('compose-poll')), findsOneWidget);
     },
   );
 

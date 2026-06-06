@@ -23,6 +23,7 @@ import '../screens/chat_screen.dart';
 import '../screens/chats_list_screen.dart';
 import '../screens/create_post_screen.dart';
 import '../screens/create_gathering_screen.dart';
+import '../screens/create_poll_screen.dart';
 import '../screens/find_relative_screen.dart';
 import '../screens/home_screen.dart';
 import '../screens/offline_profiles_screen.dart';
@@ -226,6 +227,17 @@ class AppShellRouteModule {
                   key: state.pageKey,
                   constrainWidth: true,
                   child: const CreateGatheringScreen(),
+                  transitionsBuilder: AppRouteTransitions.slideUp,
+                ),
+              ),
+              GoRoute(
+                // Phase E5: «Новый опрос» composer (mirrors gathering/create).
+                path: 'poll/create',
+                parentNavigatorKey: rootNavigatorKey,
+                pageBuilder: (context, state) => RodnyaCustomTransitionPage(
+                  key: state.pageKey,
+                  constrainWidth: true,
+                  child: const CreatePollScreen(),
                   transitionsBuilder: AppRouteTransitions.slideUp,
                 ),
               ),

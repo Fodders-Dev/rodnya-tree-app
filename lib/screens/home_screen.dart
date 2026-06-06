@@ -25,9 +25,11 @@ import '../backend/interfaces/identity_service_interface.dart';
 import '../backend/models/tree_invitation.dart';
 import '../backend/interfaces/post_service_interface.dart';
 import '../backend/interfaces/gathering_service_interface.dart';
+import '../backend/interfaces/poll_service_interface.dart';
 import '../backend/interfaces/story_service_interface.dart';
 import '../models/post.dart';
 import '../models/gathering.dart';
+import '../models/poll.dart';
 import '../models/story.dart';
 import '../services/app_status_service.dart';
 import '../services/posts_cache.dart';
@@ -36,6 +38,7 @@ import '../theme/app_theme.dart';
 import '../widgets/branch_switcher_chip.dart';
 import '../widgets/post_card.dart';
 import '../widgets/gathering_card.dart';
+import '../widgets/poll_card.dart';
 import '../widgets/post_card_shimmer.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/coach_mark_tour.dart';
@@ -64,6 +67,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       GetIt.I.isRegistered<GatheringServiceInterface>()
           ? GetIt.I<GatheringServiceInterface>()
           : null;
+  // Phase E5d: best-effort poll feed (same nullable pattern as gatherings).
+  final PollServiceInterface? _pollService =
+      GetIt.I.isRegistered<PollServiceInterface>()
+          ? GetIt.I<PollServiceInterface>()
+          : null;
   final StoryServiceInterface _storyService = GetIt.I<StoryServiceInterface>();
   final AppStatusService _appStatusService = GetIt.I<AppStatusService>();
   late final EventService _eventService;
@@ -71,6 +79,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   List<AppEvent> _upcomingEvents = [];
   List<Post> _posts = [];
   List<Gathering> _gatherings = const [];
+  List<Poll> _polls = const [];
   List<Story> _stories = [];
   String? _selectedEventCategoryFilter;
   bool _isLoadingEvents = true;
@@ -561,9 +570,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       // it'll flicker on every refresh. Only flip back if we actually
       // have no posts to show after the call fails.
     });
-    // Phase E2c: pull gatherings alongside posts (best-effort, isolated —
-    // its own try/catch, never blocks or errors the post path below).
+    // Phase E2c/E5d: pull gatherings + polls alongside posts (best-effort,
+    // isolated — own try/catch, never block or error the post path below).
     unawaited(_loadGatherings(branchId: branchId));
+    unawaited(_loadPolls(branchId: branchId));
     final cacheKey = branchId ?? _audienceFeedCacheKey;
     // Cache-first hydrate: serve disk-cached posts immediately so the
     // feed paints content even if we're offline / network is slow.
@@ -644,18 +654,38 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
-  /// Posts + gatherings merged into one newest-first feed (by createdAt).
-  /// When there are no gatherings the post list is returned verbatim —
-  /// the server already orders posts newest-first, so we don't re-sort
-  /// (keeps the post-only feed byte-identical to its pre-E2c behaviour).
+  /// Phase E5d: best-effort poll load (mirrors _loadGatherings).
+  Future<void> _loadPolls({String? branchId}) async {
+    final service = _pollService;
+    final treeId = branchId ?? _currentTreeId;
+    if (service == null || treeId == null) {
+      if (_polls.isNotEmpty && mounted) {
+        setState(() => _polls = const []);
+      }
+      return;
+    }
+    try {
+      final polls = await service.getPolls(treeId: treeId);
+      if (!mounted || _selectedFeedBranchId != branchId) return;
+      setState(() => _polls = polls);
+    } catch (_) {
+      // Best-effort — leave whatever we had; never surface an error.
+    }
+  }
+
+  /// Posts + gatherings + polls merged into one newest-first feed (by
+  /// createdAt). When there are no gatherings AND no polls the post list
+  /// is returned verbatim — the server already orders posts newest-first,
+  /// so we don't re-sort (keeps the post-only feed byte-identical).
   List<_HomeFeedEntry> get _feedEntries {
     final postEntries = [
       for (final post in _visiblePosts) _HomeFeedEntry.post(post),
     ];
-    if (_gatherings.isEmpty) return postEntries;
+    if (_gatherings.isEmpty && _polls.isEmpty) return postEntries;
     final entries = <_HomeFeedEntry>[
       ...postEntries,
       for (final gathering in _gatherings) _HomeFeedEntry.gathering(gathering),
+      for (final poll in _polls) _HomeFeedEntry.poll(poll),
     ];
     entries.sort((a, b) => b.createdAt.compareTo(a.createdAt));
     return entries;

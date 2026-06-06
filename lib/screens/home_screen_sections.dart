@@ -221,6 +221,21 @@ extension _HomeScreenSections on _HomeScreenState {
   /// the same horizontal inset (14) the feed stage used to carry so
   /// spacing is unchanged. PostCards key on `post.id` so element state
   /// follows the right post as the list recycles.
+  /// Builds the right card for a mixed feed entry (Phase E5d: post |
+  /// gathering | poll).
+  Widget _buildFeedEntryCard(_HomeFeedEntry entry) {
+    if (entry.isPost) {
+      return PostCard(
+        post: entry.post!,
+        onDeleted: () => _loadPosts(branchId: _selectedFeedBranchId),
+      );
+    }
+    if (entry.isGathering) {
+      return GatheringCard(gathering: entry.gathering!);
+    }
+    return PollCard(poll: entry.poll!);
+  }
+
   Widget _buildNarrowFeedSliver() {
     if (_isLoadingPosts && _posts.isEmpty) {
       return const SliverToBoxAdapter(
@@ -256,13 +271,7 @@ extension _HomeScreenSections on _HomeScreenState {
           final entry = entries[index];
           return _PostEntrance(
             key: ValueKey(entry.id),
-            child: entry.isPost
-                ? PostCard(
-                    post: entry.post!,
-                    onDeleted: () =>
-                        _loadPosts(branchId: _selectedFeedBranchId),
-                  )
-                : GatheringCard(gathering: entry.gathering!),
+            child: _buildFeedEntryCard(entry),
           );
         },
       ),
@@ -534,17 +543,10 @@ extension _HomeScreenSections on _HomeScreenState {
           key: const ValueKey('feed-content'),
           children: entries
               .map(
-                (entry) => entry.isPost
-                    ? PostCard(
-                        key: ValueKey(entry.id),
-                        post: entry.post!,
-                        onDeleted: () =>
-                            _loadPosts(branchId: _selectedFeedBranchId),
-                      )
-                    : GatheringCard(
-                        key: ValueKey(entry.id),
-                        gathering: entry.gathering!,
-                      ),
+                (entry) => KeyedSubtree(
+                  key: ValueKey(entry.id),
+                  child: _buildFeedEntryCard(entry),
+                ),
               )
               .toList(),
         );
@@ -707,6 +709,14 @@ extension _HomeScreenSections on _HomeScreenState {
     // Phase E2: gatherings land in the same feed as posts (E2c), so a
     // successful create refreshes it just like a post does.
     final result = await context.push('/gathering/create');
+    if (result == true) {
+      await _loadPosts(branchId: _selectedFeedBranchId);
+    }
+  }
+
+  Future<void> _openCreatePoll() async {
+    // Phase E5d: polls share the feed too; refresh on a successful create.
+    final result = await context.push('/poll/create');
     if (result == true) {
       await _loadPosts(branchId: _selectedFeedBranchId);
     }
@@ -906,6 +916,14 @@ extension _HomeScreenSections on _HomeScreenState {
                 icon: Icon(Icons.event_outlined, color: tokens.accent),
                 visualDensity: VisualDensity.compact,
               ),
+              // Phase E5d: «Опрос» composer entry.
+              IconButton(
+                key: const Key('compose-poll'),
+                tooltip: 'Создать опрос',
+                onPressed: _openCreatePoll,
+                icon: Icon(Icons.bar_chart_rounded, color: tokens.accent),
+                visualDensity: VisualDensity.compact,
+              ),
             ],
           ),
         ),
@@ -992,15 +1010,26 @@ class _FeedBranchChipEntry {
 /// One entry in the mixed home feed — either a [Post] or a [Gathering]
 /// (Phase E2c). Exactly one of the two is non-null.
 class _HomeFeedEntry {
-  const _HomeFeedEntry.post(Post this.post) : gathering = null;
-  const _HomeFeedEntry.gathering(Gathering this.gathering) : post = null;
+  const _HomeFeedEntry.post(Post this.post)
+      : gathering = null,
+        poll = null;
+  const _HomeFeedEntry.gathering(Gathering this.gathering)
+      : post = null,
+        poll = null;
+  const _HomeFeedEntry.poll(Poll this.poll)
+      : post = null,
+        gathering = null;
 
   final Post? post;
   final Gathering? gathering;
+  final Poll? poll;
 
   bool get isPost => post != null;
-  String get id => post?.id ?? gathering!.id;
-  DateTime get createdAt => post?.createdAt ?? gathering!.createdAt;
+  bool get isGathering => gathering != null;
+  bool get isPoll => poll != null;
+  String get id => post?.id ?? gathering?.id ?? poll!.id;
+  DateTime get createdAt =>
+      post?.createdAt ?? gathering?.createdAt ?? poll!.createdAt;
 }
 
 class _PostEntrance extends StatefulWidget {
