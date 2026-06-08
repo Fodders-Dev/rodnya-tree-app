@@ -1157,7 +1157,10 @@ async function main() {
           path: "/relatives",
           verify: async () => {
             await page.waitForFunction(
-              () => window.location.hash.startsWith("#/relatives"),
+              // SC2 merge: /relatives redirects → #/family?view=list
+              () =>
+                window.location.hash.startsWith("#/family") &&
+                window.location.hash.includes("view=list"),
               undefined,
               {timeout: 15_000},
             );
@@ -1278,7 +1281,10 @@ async function main() {
           }`,
           verify: async () => {
             await page.waitForFunction(
-              () => window.location.hash.startsWith("#/tree/view/"),
+              // SC2 merge: /tree/view/:id redirects → #/family?view=tree
+              () =>
+                window.location.hash.startsWith("#/family") &&
+                window.location.hash.includes("view=tree"),
               undefined,
               {timeout: 15_000},
             );
