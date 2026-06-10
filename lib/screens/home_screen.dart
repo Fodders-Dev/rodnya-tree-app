@@ -4,7 +4,7 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart'
-    show defaultTargetPlatform, kIsWeb, TargetPlatform;
+    show defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/services.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:provider/provider.dart';
@@ -44,7 +44,6 @@ import '../widgets/coach_mark_tour.dart';
 import '../services/custom_api_notification_service.dart';
 import '../utils/e2e_state_bridge.dart';
 import '../utils/image_decode.dart';
-import '../utils/web_wheel_listener.dart';
 
 part 'home_screen_sections.dart';
 
@@ -105,7 +104,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   // потеря" bug).
   String? _selectedFeedBranchId;
   TreeProvider? _treeProviderInstance;
-  final ScrollController _eventRailController = ScrollController();
   // H (scroll-aware compose FAB): once the inline compose teaser scrolls
   // off the top of the feed, surface a compact «Написать» FAB so compose
   // stays reachable on a long feed. One dominant compose path per state
@@ -121,9 +119,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final GlobalKey _tourEventsKey = GlobalKey();
   bool _showCoachTour = false;
   Timer? _coachTourTimer;
-  final GlobalKey _eventRailRegionKey = GlobalKey();
-  CancelWebWheelListener? _cancelWebWheelSubscription;
-  int _webWheelEventCount = 0;
 
   CustomApiNotificationService? get _customNotificationService =>
       GetIt.I.isRegistered<CustomApiNotificationService>()
@@ -155,12 +150,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     _eventService = EventService();
-    _eventRailController.addListener(_handleEventRailScrollChanged);
     _feedScrollController.addListener(_handleFeedScroll);
-    if (kIsWeb) {
-      _cancelWebWheelSubscription =
-          registerWebWheelListener(_handleWebEventRailWheel);
-    }
     // Twitter / GitHub-style "/" shortcut to focus search. Only on
     // desktop where physical keyboard is the primary input.
     HardwareKeyboard.instance.addHandler(_handleHomeKeyEvent);
@@ -205,11 +195,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     HardwareKeyboard.instance.removeHandler(_handleHomeKeyEvent);
     _treeProviderInstance?.removeListener(_handleTreeChange);
-    _eventRailController.removeListener(_handleEventRailScrollChanged);
     _feedScrollController.removeListener(_handleFeedScroll);
     _coachTourTimer?.cancel();
-    _cancelWebWheelSubscription?.call();
-    _eventRailController.dispose();
     _feedScrollController.dispose();
     super.dispose();
   }
@@ -248,25 +235,32 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     CoachMarkTour.markShown();
   }
 
-  List<CoachMarkTarget> _coachMarkTargets() => <CoachMarkTarget>[
-        CoachMarkTarget(
-          key: _tourStoriesKey,
-          title: 'Это твоё дерево',
-          body: 'Здесь живёт твоя семья. Добавляй моменты — фото и '
-              'короткие истории дня.',
-        ),
-        CoachMarkTarget(
-          key: _tourTeaserKey,
-          title: 'Делись с роднёй',
-          body: 'Напиши новость, добавь фото или событие — близкие увидят '
-              'это в ленте.',
-        ),
+  List<CoachMarkTarget> _coachMarkTargets() {
+    // Чанк B: тайл ближайшего события не рендерится без событий —
+    // спотлайтить отсутствующий виджет нельзя (новый юзер часто без
+    // событий). Нет тайла → шаг пропускаем целиком.
+    final hasEventsTile = !_isLoadingEvents && _upcomingEvents.isNotEmpty;
+    return <CoachMarkTarget>[
+      CoachMarkTarget(
+        key: _tourStoriesKey,
+        title: 'Это твоё дерево',
+        body: 'Здесь живёт твоя семья. Добавляй моменты — фото и '
+            'короткие истории дня.',
+      ),
+      CoachMarkTarget(
+        key: _tourTeaserKey,
+        title: 'Делись с роднёй',
+        body: 'Напиши новость, добавь фото или событие — близкие увидят '
+            'это в ленте.',
+      ),
+      if (hasEventsTile)
         CoachMarkTarget(
           key: _tourEventsKey,
           title: 'Важные даты рядом',
           body: 'Дни рождения и события родных всегда на виду.',
         ),
-      ];
+    ];
+  }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
@@ -494,7 +488,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       if (!mounted) {
         return;
       }
-      final eventRailBounds = _currentEventRailBounds();
+      // Чанк B: ключи eventRailOffset/eventRailMaxOffset/eventRailBounds/
+      // webWheelEventCount удалены вместе с узким рельсом (Phase 2) —
+      // grep по test/ tool/ e2e/ подтвердил: их никто не читает.
       E2EStateBridge.publish(
         screen: 'home',
         state: <String, dynamic>{
@@ -510,20 +506,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           'selectedFeedBranchId': _selectedFeedBranchId,
           'selectedEventFilter': _selectedEventCategoryFilter,
           'availableEventFilters': <String>['Все', ..._eventCategories],
-          'eventRailOffset':
-              _eventRailController.hasClients ? _eventRailController.offset : 0,
-          'eventRailMaxOffset': _eventRailController.hasClients
-              ? _eventRailController.position.maxScrollExtent
-              : 0,
-          'webWheelEventCount': _webWheelEventCount,
-          'eventRailBounds': eventRailBounds == null
-              ? null
-              : <String, double>{
-                  'left': eventRailBounds.left,
-                  'top': eventRailBounds.top,
-                  'width': eventRailBounds.width,
-                  'height': eventRailBounds.height,
-                },
           'visibleEvents': visibleEvents
               .map(
                 (event) => <String, dynamic>{
@@ -538,18 +520,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         },
       );
     });
-  }
-
-  void _handleEventRailScrollChanged() {
-    final treeProvider = _treeProviderInstance;
-    if (!mounted || treeProvider == null) {
-      return;
-    }
-    _publishHomeE2EState(
-      selectedTreeName: treeProvider.selectedTreeName,
-      hasSelectedTree:
-          _currentTreeId != null && treeProvider.selectedTreeName != null,
-    );
   }
 
   PostsCache? get _postsCache =>
@@ -1446,70 +1416,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         ],
       ],
     );
-  }
-
-  bool _handleWebEventRailWheel(
-    double deltaX,
-    double deltaY,
-    double clientX,
-    double clientY,
-  ) {
-    _webWheelEventCount += 1;
-    if (!_eventRailController.hasClients ||
-        !_isPointInsideEventRail(clientX, clientY)) {
-      _handleEventRailScrollChanged();
-      return false;
-    }
-
-    final scrolled = _scrollEventRailBy(deltaX, deltaY);
-    if (!scrolled) {
-      _handleEventRailScrollChanged();
-    }
-    return scrolled;
-  }
-
-  bool _isPointInsideEventRail(double clientX, double clientY) {
-    final rect = _currentEventRailBounds();
-    if (rect == null) {
-      return false;
-    }
-    return rect.contains(Offset(clientX, clientY));
-  }
-
-  Rect? _currentEventRailBounds() {
-    final context = _eventRailRegionKey.currentContext;
-    if (context == null) {
-      return null;
-    }
-
-    final renderObject = context.findRenderObject();
-    if (renderObject is! RenderBox || !renderObject.hasSize) {
-      return null;
-    }
-
-    final topLeft = renderObject.localToGlobal(Offset.zero);
-    return topLeft & renderObject.size;
-  }
-
-  bool _scrollEventRailBy(double deltaX, double deltaY) {
-    final maxScrollExtent = _eventRailController.position.maxScrollExtent;
-    if (maxScrollExtent <= 0) {
-      return false;
-    }
-
-    final delta = deltaY.abs() >= deltaX.abs() ? deltaY : deltaX;
-    final normalizedDelta =
-        delta == 0 ? 0.0 : delta.sign * (delta.abs() < 72 ? 72 : delta.abs());
-    final nextOffset = (_eventRailController.offset + normalizedDelta).clamp(
-      0.0,
-      maxScrollExtent,
-    );
-    if ((nextOffset - _eventRailController.offset).abs() < 0.1) {
-      return false;
-    }
-    _eventRailController.jumpTo(nextOffset);
-    _handleEventRailScrollChanged();
-    return true;
   }
 
   Widget _buildStoriesSection() {
