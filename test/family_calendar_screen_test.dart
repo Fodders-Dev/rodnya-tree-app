@@ -183,13 +183,50 @@ void main() {
     expect(find.byType(TableCalendar<AppEvent>), findsOneWidget);
     expect(find.text('В этот день событий нет'), findsOneWidget);
     expect(find.byType(EventCard), findsNothing);
-    // Moon-phase legend (C) is present.
-    expect(find.text('🌑 Новолуние'), findsOneWidget);
-    expect(find.text('🌕 Полнолуние'), findsOneWidget);
+    // M1: постоянная легенда фаз убрана — фаза дня живёт в tip-полосе.
+    expect(find.text('🌑 Новолуние'), findsNothing);
+    expect(find.text('🌕 Полнолуние'), findsNothing);
     // Moon gardening tip (CP-b) for the selected day is shown.
     expect(find.byKey(const Key('moon-tip')), findsOneWidget);
     final tip = gardeningTip(moonPhaseFor(DateTime(2026, 4, 15)));
     expect(find.text(tip), findsOneWidget);
+  });
+
+  testWidgets(
+      'M1: число дня на принципиальный лунный день читаемо, эмодзи в сетке нет',
+      (tester) async {
+    // Дни месяца считаем той же чистой функцией, что и прод — тест
+    // детерминирован без зашитых эфемерид.
+    final days = List.generate(30, (i) => DateTime(2026, 4, i + 1));
+    final lunarDay = days.firstWhere(isPrincipalMoonDay);
+    // Выбранный день — обычный (не лунный) и с ДРУГОЙ фазой, чтобы глиф
+    // лунного дня не мог прийти из tip-полосы.
+    final plainDay = days.firstWhere(
+      (d) =>
+          !isPrincipalMoonDay(d) && moonPhaseFor(d) != moonPhaseFor(lunarDay),
+    );
+
+    final service = EventService(
+      familyTreeService: _FakeFamilyTreeService(relatives: const []),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.lightTheme,
+        home: FamilyCalendarScreen(
+          serviceOverride: service,
+          treeId: 'tree-1',
+          initialMonth: plainDay,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Число лунного дня в сетке — одно и читаемое (раньше эмодзи-глиф на
+    // Samsung закрашивал его).
+    expect(find.text('${lunarDay.day}'), findsOneWidget);
+    // Эмодзи-глифа лунной фазы в ячейках больше нет (tip показывает фазу
+    // plainDay — другую по построению).
+    expect(find.text(moonPhaseFor(lunarDay).glyph), findsNothing);
   });
 
   testWidgets('shows error + «Повторить» when the month fails to load (CP-2)',

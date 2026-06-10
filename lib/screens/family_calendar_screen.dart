@@ -17,9 +17,9 @@ import '../theme/app_theme.dart';
 import '../utils/moon_phase.dart';
 import '../widgets/event_card.dart';
 
-/// One consistent moon-glyph size across the grid cell and the legend
-/// (CP-6: the cell glyph used to be 9px — too small and inconsistent).
-const double _kMoonGlyphSize = 12;
+// M1: эмодзи-глиф из ячеек сетки и постоянная легенда убраны (вендорные
+// эмодзи-шрифты Samsung закрашивали числа). Полный глиф фазы остаётся в
+// tip-полосе (_buildMoonTip, fontSize 18) и текстах дня.
 
 class FamilyCalendarScreen extends StatefulWidget {
   const FamilyCalendarScreen({
@@ -163,7 +163,8 @@ class _FamilyCalendarScreenState extends State<FamilyCalendarScreen> {
       body: Column(
         children: [
           _buildCalendar(theme, tokens),
-          _buildMoonLegend(theme, tokens),
+          // M1: постоянная легенда фаз убрана — фаза выбранного дня и так
+          // в tip-полосе под сеткой; две строки экрана вернулись сетке.
           const Divider(height: 1),
           if (_loading)
             const Padding(
@@ -197,6 +198,10 @@ class _FamilyCalendarScreenState extends State<FamilyCalendarScreen> {
       eventLoader: _eventsFor,
       startingDayOfWeek: StartingDayOfWeek.monday,
       availableGestures: AvailableGestures.horizontalSwipe,
+      // M1: укрупнение под старших и 720-экраны — выше строка, крупнее
+      // числа; последняя строка месяца рендерится целиком (виджет
+      // shrink-wrap'ится в Column, высота строки задана явно).
+      rowHeight: 54,
       headerStyle: HeaderStyle(
         formatButtonVisible: false,
         titleCentered: true,
@@ -221,12 +226,19 @@ class _FamilyCalendarScreenState extends State<FamilyCalendarScreen> {
         // Force on-brand, theme-aware day text — Material defaults didn't
         // track the warm palette and the number on the green selected
         // circle was low-contrast / unreadable in dark mode.
-        defaultTextStyle: TextStyle(color: tokens.ink),
-        weekendTextStyle: TextStyle(color: tokens.ink),
-        todayTextStyle:
-            TextStyle(color: tokens.ink, fontWeight: FontWeight.w700),
-        selectedTextStyle:
-            TextStyle(color: tokens.accentInk, fontWeight: FontWeight.w700),
+        // M1: числа дней — bodyLarge-масштаб (16), читаемо на 720×1560.
+        defaultTextStyle: TextStyle(color: tokens.ink, fontSize: 16),
+        weekendTextStyle: TextStyle(color: tokens.ink, fontSize: 16),
+        todayTextStyle: TextStyle(
+          color: tokens.ink,
+          fontSize: 16,
+          fontWeight: FontWeight.w700,
+        ),
+        selectedTextStyle: TextStyle(
+          color: tokens.accentInk,
+          fontSize: 16,
+          fontWeight: FontWeight.w700,
+        ),
         todayDecoration: BoxDecoration(
           color: tokens.accent.withValues(alpha: 0.28),
           shape: BoxShape.circle,
@@ -237,27 +249,31 @@ class _FamilyCalendarScreenState extends State<FamilyCalendarScreen> {
         ),
       ),
       calendarBuilders: CalendarBuilders<AppEvent>(
-        // Moon glyph (C): only on the ~4 principal-phase days a month, so
-        // the grid isn't flooded. Returning null on other days falls back
-        // to table_calendar's default cell.
+        // Moon marker (M1): только ~4 принципиальных дня в месяц. Раньше в
+        // ячейке рисовался эмодзи-глиф (Positioned, fontSize 12) — на
+        // Samsung вендорный эмодзи-шрифт рендерится крупнее и ЗАКРАШИВАЛ
+        // число дня. Теперь число всегда доминирует, а фазу отмечает
+        // тонкое кольцо вокруг ячейки; полный глиф + название фазы живут
+        // в tip-полосе под сеткой и в списке дня.
         defaultBuilder: (context, day, focusedDay) {
           if (!isPrincipalMoonDay(day)) return null;
-          return Stack(
-            alignment: Alignment.center,
-            children: [
-              Text(
-                '${day.day}',
-                style: theme.textTheme.bodyMedium?.copyWith(color: tokens.ink),
-              ),
-              Positioned(
-                top: 1,
-                right: 2,
-                child: Text(
-                  moonPhaseFor(day).glyph,
-                  style: const TextStyle(fontSize: _kMoonGlyphSize),
+          return Center(
+            child: Container(
+              width: 40,
+              height: 40,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: tokens.inkMuted.withValues(alpha: 0.55),
+                  width: 1.4,
                 ),
               ),
-            ],
+              child: Text(
+                '${day.day}',
+                style: TextStyle(color: tokens.ink, fontSize: 16),
+              ),
+            ),
           );
         },
         markerBuilder: (context, day, events) {
@@ -268,10 +284,11 @@ class _FamilyCalendarScreenState extends State<FamilyCalendarScreen> {
               mainAxisAlignment: MainAxisAlignment.center,
               mainAxisSize: MainAxisSize.min,
               children: [
+                // M1: 7px вместо 5 — маркеры различимы на 720-экране.
                 for (final e in events.take(3))
                   Container(
-                    width: 5,
-                    height: 5,
+                    width: 7,
+                    height: 7,
                     margin: const EdgeInsets.symmetric(horizontal: 1),
                     decoration: BoxDecoration(
                       color: _markerColor(e.type, theme, tokens),
@@ -285,7 +302,7 @@ class _FamilyCalendarScreenState extends State<FamilyCalendarScreen> {
                     child: Text(
                       '+${events.length - 3}',
                       style: TextStyle(
-                        fontSize: 8,
+                        fontSize: 11,
                         height: 1,
                         fontWeight: FontWeight.w700,
                         color: tokens.inkMuted,
@@ -307,29 +324,6 @@ class _FamilyCalendarScreenState extends State<FamilyCalendarScreen> {
         _focusedDay = focusedDay;
         _loadMonth(focusedDay);
       },
-    );
-  }
-
-  /// Light legend for the moon glyphs — the four principal phases.
-  Widget _buildMoonLegend(ThemeData theme, RodnyaDesignTokens tokens) {
-    const phases = <MoonPhase>[
-      MoonPhase.newMoon,
-      MoonPhase.firstQuarter,
-      MoonPhase.fullMoon,
-      MoonPhase.lastQuarter,
-    ];
-    final style = theme.textTheme.labelSmall
-        ?.copyWith(color: tokens.inkMuted, fontSize: _kMoonGlyphSize);
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-      child: Wrap(
-        spacing: 12,
-        runSpacing: 2,
-        alignment: WrapAlignment.center,
-        children: [
-          for (final p in phases) Text('${p.glyph} ${p.label}', style: style),
-        ],
-      ),
     );
   }
 
