@@ -29,6 +29,12 @@ class OnboardingResumeBanner extends StatefulWidget {
 }
 
 class _OnboardingResumeBannerState extends State<OnboardingResumeBanner> {
+  /// 2b: «Скрыть» приглушает баннер до конца сессии (static переживает
+  /// пересоздание экрана, сбрасывается перезапуском приложения). Состояние
+  /// onboarding'а на бэке не трогаем — баннер вернётся в новой сессии,
+  /// если мастер так и не завершён.
+  static bool _sessionDismissed = false;
+
   bool _resolved = false;
   OnboardingState? _state;
   StreamSubscription<String?>? _authSubscription;
@@ -78,9 +84,13 @@ class _OnboardingResumeBannerState extends State<OnboardingResumeBanner> {
     }
   }
 
+  void _dismissForSession() {
+    setState(() => _sessionDismissed = true);
+  }
+
   @override
   Widget build(BuildContext context) {
-    if (!_resolved) return const SizedBox.shrink();
+    if (!_resolved || _sessionDismissed) return const SizedBox.shrink();
     final state = _state;
     if (state == null || !state.shouldShowResumeBanner) {
       return const SizedBox.shrink();
@@ -90,6 +100,8 @@ class _OnboardingResumeBannerState extends State<OnboardingResumeBanner> {
     final tokens = theme.extension<RodnyaDesignTokens>() ??
         (isDark ? RodnyaDesignTokens.dark : RodnyaDesignTokens.light);
 
+    // 2b: компактная одно-двухстрочная плашка вместо высокой карточки —
+    // условные баннеры не должны конкурировать с лентой за первый экран.
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 8, 14, 0),
       child: Material(
@@ -105,47 +117,53 @@ class _OnboardingResumeBannerState extends State<OnboardingResumeBanner> {
           borderRadius: BorderRadius.circular(tokens.radiusMd),
           onTap: () => context.go('/setup'),
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
+            padding: const EdgeInsets.fromLTRB(12, 6, 4, 6),
             child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Padding(
-                  padding: const EdgeInsets.only(top: 2),
-                  child: Icon(
-                    Icons.account_tree_rounded,
-                    size: 20,
-                    color: theme.colorScheme.primary,
-                  ),
+                Icon(
+                  Icons.account_tree_rounded,
+                  size: 18,
+                  color: theme.colorScheme.primary,
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: 10),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(
                         'Закончите настройку дерева',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: theme.textTheme.titleSmall?.copyWith(
                           fontWeight: FontWeight.w800,
                           color: tokens.ink,
                         ),
                       ),
-                      const SizedBox(height: 4),
+                      const SizedBox(height: 1),
                       Text(
-                        'Вы пропустили мастер. Добавьте свою карточку '
-                        'и близких — это поможет быстрее найти родню.',
+                        'Добавьте свою карточку и близких',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: tokens.inkSecondary,
-                          height: 1.35,
                         ),
                       ),
                     ],
                   ),
                 ),
-                const SizedBox(width: 4),
-                Icon(
-                  Icons.chevron_right_rounded,
-                  size: 22,
+                // Закрытие — IconButton с полным ≥44dp тап-таргетом, чтобы
+                // старшим не приходилось целиться (2c-ритм).
+                IconButton(
+                  icon: const Icon(Icons.close_rounded, size: 18),
+                  tooltip: 'Скрыть',
                   color: tokens.inkSecondary,
+                  constraints: const BoxConstraints(
+                    minWidth: 44,
+                    minHeight: 44,
+                  ),
+                  padding: EdgeInsets.zero,
+                  onPressed: _dismissForSession,
                 ),
               ],
             ),

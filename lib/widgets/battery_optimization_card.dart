@@ -69,6 +69,9 @@ class _BatteryOptimizationCardState extends State<BatteryOptimizationCard> {
     final tokens = theme.extension<RodnyaDesignTokens>() ??
         (isDark ? RodnyaDesignTokens.dark : RodnyaDesignTokens.light);
 
+    // 2b: компактнее (плотнее паддинги, короче текст) — советная карточка
+    // не должна спорить с лентой за первый экран. Инструкция сохранена
+    // целиком, дисмисс по-прежнему персистится через advisor.
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 8, 14, 0),
       child: Material(
@@ -78,7 +81,7 @@ class _BatteryOptimizationCardState extends State<BatteryOptimizationCard> {
           side: BorderSide(color: tokens.warm.withValues(alpha: 0.45)),
         ),
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
+          padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -86,11 +89,11 @@ class _BatteryOptimizationCardState extends State<BatteryOptimizationCard> {
                 padding: const EdgeInsets.only(top: 2),
                 child: Icon(
                   Icons.battery_alert_rounded,
-                  size: 20,
+                  size: 18,
                   color: tokens.warm,
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 10),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -102,28 +105,31 @@ class _BatteryOptimizationCardState extends State<BatteryOptimizationCard> {
                         color: tokens.ink,
                       ),
                     ),
-                    const SizedBox(height: 4),
+                    const SizedBox(height: 2),
                     Text(
-                      'Ваш производитель агрессивно усыпляет приложения. '
-                      'Откройте настройки → Батарея и включите автозапуск '
-                      'Родни и снимите ограничения фоновой активности — '
-                      'иначе входящие звонки и сообщения не приходят при '
-                      'выключенном экране.',
+                      'Производитель усыпляет приложения в фоне. В '
+                      'настройках батареи включите автозапуск Родни и '
+                      'снимите ограничения — иначе звонки и сообщения '
+                      'не дойдут при выключенном экране.',
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: tokens.inkSecondary,
-                        height: 1.35,
+                        height: 1.3,
                       ),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(width: 4),
+              // ≥44dp тап-таргет закрытия (2c-ритм).
               IconButton(
                 icon: const Icon(Icons.close_rounded, size: 18),
                 tooltip: 'Скрыть',
                 color: tokens.inkSecondary,
+                constraints: const BoxConstraints(
+                  minWidth: 44,
+                  minHeight: 44,
+                ),
+                padding: EdgeInsets.zero,
                 onPressed: _dismiss,
-                visualDensity: VisualDensity.compact,
               ),
             ],
           ),

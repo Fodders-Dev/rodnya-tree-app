@@ -1249,8 +1249,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
+  /// 2b: слим-строка приглашений (~56dp вместо двухэтажной карточки).
+  /// Вся строка — один тап в селектор приглашений; трейлинг «Открыть»
+  /// сохранён как явная подпись действия (и точка тапа в тестах).
   Widget _buildPendingInvitationsBanner(List<TreeInvitation> invitations) {
     final theme = Theme.of(context);
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
     final count = invitations.length;
     final firstTreeName = invitations.first.tree.name.trim();
     final title = count == 1
@@ -1258,60 +1265,82 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         : '$count приглашения';
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-      child: GlassPanel(
-        padding: const EdgeInsets.all(14),
-        color: theme.colorScheme.tertiary.withValues(alpha: 0.45),
-        borderRadius: BorderRadius.circular(26),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+      padding: const EdgeInsets.fromLTRB(14, 8, 14, 0),
+      child: Material(
+        color: theme.colorScheme.tertiaryContainer.withValues(alpha: 0.55),
+        borderRadius: BorderRadius.circular(16),
+        child: InkWell(
+          key: const Key('home-invitations-banner'),
+          onTap: () => context.go('/tree?selector=1&tab=invitations'),
+          borderRadius: BorderRadius.circular(16),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            child: Row(
               children: [
                 Container(
-                  width: 44,
-                  height: 44,
+                  width: 32,
+                  height: 32,
+                  alignment: Alignment.center,
                   decoration: BoxDecoration(
-                    color: theme.colorScheme.onTertiaryContainer.withValues(
-                      alpha: 0.08,
-                    ),
-                    borderRadius: BorderRadius.circular(14),
+                    color: theme.colorScheme.onTertiaryContainer
+                        .withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(10),
                   ),
                   child: Icon(
                     Icons.mark_email_unread_outlined,
+                    size: 18,
                     color: theme.colorScheme.primary,
                   ),
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: 10),
                 Expanded(
-                    child: Text(title, style: theme.textTheme.titleMedium)),
-                _buildHeaderChip(
-                  icon: Icons.mark_email_unread_outlined,
-                  label: count == 1 ? '1' : '$count',
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    count == 1 ? 'Откройте и примите.' : 'Проверьте список.',
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppTheme.sans(
+                          color: tokens.ink,
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 1),
+                      Text(
+                        count == 1
+                            ? 'Приглашение в семью — откройте и примите'
+                            : 'Откройте список приглашений',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppTheme.sans(
+                          color: tokens.inkMuted,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                const SizedBox(width: 12),
-                FilledButton.tonalIcon(
-                  onPressed: () =>
-                      context.go('/tree?selector=1&tab=invitations'),
-                  icon: const Icon(Icons.arrow_forward_rounded),
-                  label: const Text('Открыть'),
+                const SizedBox(width: 8),
+                Text(
+                  'Открыть',
+                  style: AppTheme.sans(
+                    color: tokens.accent,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                Icon(
+                  Icons.chevron_right_rounded,
+                  size: 18,
+                  color: tokens.accent,
                 ),
               ],
             ),
-          ],
+          ),
         ),
       ),
     );
