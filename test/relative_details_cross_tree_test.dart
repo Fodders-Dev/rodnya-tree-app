@@ -118,6 +118,10 @@ class _CrossTreeFamilyService implements FamilyTreeServiceInterface {
   final FamilyPerson aunt;
   final List<String> personRequests = <String>[];
 
+  /// Чанк C: режим «доступ закрыт везде» — каждый GET человека отвечает
+  /// 403 (карточка существует, но владелец ограничил доступ).
+  bool denyAllPersonReads = false;
+
   @override
   Future<List<FamilyTree>> getUserTrees() async =>
       [_tree('tree-a', 'Семья А'), _tree('tree-b', 'Семья Б')];
@@ -125,6 +129,9 @@ class _CrossTreeFamilyService implements FamilyTreeServiceInterface {
   @override
   Future<FamilyPerson> getPersonById(String treeId, String personId) async {
     personRequests.add('$treeId/$personId');
+    if (denyAllPersonReads) {
+      throw CustomApiException('нет доступа', statusCode: 403);
+    }
     if (treeId == 'tree-b' && personId == aunt.id) {
       return aunt;
     }
@@ -263,5 +270,33 @@ void main() {
     expect(find.text('Назад'), findsOneWidget);
     // Без кнопки «Повторить» — повтор не вернёт удалённого человека.
     expect(find.text('Повторить'), findsNothing);
+  });
+
+  testWidgets(
+      'Чанк C: протухший явный ?treeId= проваливается в резолв, а не сдаётся',
+      (tester) async {
+    // Старая ссылка несёт удалённое дерево — explicit-miss не терминален:
+    // цепочка (кэш → выбранное → обход) обязана найти человека.
+    await pumpCard(tester, personId: 'aunt-1', routeTreeId: 'tree-dead');
+
+    expect(find.textContaining('Ольга'), findsWidgets);
+    expect(find.text('Карточка не нашлась'), findsNothing);
+    // Явное дерево честно попробовали первым, затем дошли до tree-b.
+    expect(familyService.personRequests.first, 'tree-dead/aunt-1');
+    expect(familyService.personRequests, contains('tree-b/aunt-1'));
+  });
+
+  testWidgets(
+      'Чанк C: 403 во всех деревьях → «Карточка закрыта», не «не нашлась»',
+      (tester) async {
+    familyService.denyAllPersonReads = true;
+
+    await pumpCard(tester, personId: 'aunt-1');
+
+    expect(find.text('Карточка закрыта'), findsOneWidget);
+    expect(find.text('Карточка не нашлась'), findsNothing);
+    // Закрытую карточку «Повторить» не откроет — только «Назад».
+    expect(find.text('Повторить'), findsNothing);
+    expect(find.text('Назад'), findsOneWidget);
   });
 }

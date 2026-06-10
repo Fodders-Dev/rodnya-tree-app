@@ -273,6 +273,17 @@ class AppTheme {
   static double topbarHeight(BuildContext context) =>
       MediaQuery.of(context).padding.top + topbarContentHeight;
 
+  /// Токены бренда с фоллбеком по яркости — один шорткат вместо
+  /// повторяющегося `theme.extension<RodnyaDesignTokens>() ?? (...)`
+  /// boilerplate'а в каждом билдере (чанк C).
+  static RodnyaDesignTokens tokensOf(BuildContext context) {
+    final theme = Theme.of(context);
+    return theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+  }
+
   /// Slimmed height of the floating bottom nav pill (MainNavigationBar,
   /// labelled state). Kept in lockstep with `navHeight` there.
   static const double bottomNavContentHeight = 62.0;

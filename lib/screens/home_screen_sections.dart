@@ -1042,11 +1042,7 @@ extension _HomeScreenSections on _HomeScreenState {
     required String subtitle,
     required VoidCallback onTap,
   }) {
-    final theme = Theme.of(context);
-    final tokens = theme.extension<RodnyaDesignTokens>() ??
-        (theme.brightness == Brightness.dark
-            ? RodnyaDesignTokens.dark
-            : RodnyaDesignTokens.light);
+    final tokens = AppTheme.tokensOf(context);
     return Material(
       color: tokens.surfaceStrong,
       borderRadius: BorderRadius.circular(16),

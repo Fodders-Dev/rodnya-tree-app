@@ -99,12 +99,19 @@ class _EditableRelationLink {
 
 /// Результат резолва «в каком дереве живёт человек» (P0). Если по пути
 /// человек уже был загружен — несём его с собой, чтобы не дёргать GET
-/// второй раз.
+/// второй раз. [sawAccessDenied] — по пути встречался 403/401: если
+/// цепочка кончилась ничем, честная заглушка — «Карточка закрыта», а не
+/// «не нашлась» (чанк C).
 class _PersonTreeResolution {
-  const _PersonTreeResolution({this.treeId, this.person});
+  const _PersonTreeResolution({
+    this.treeId,
+    this.person,
+    this.sawAccessDenied = false,
+  });
 
   final String? treeId;
   final FamilyPerson? person;
+  final bool sawAccessDenied;
 }
 
 class RelativeDetailsScreen extends StatefulWidget {
@@ -213,11 +220,13 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
   }
 
   /// P0: определяем дерево человека. Порядок: явный treeId из роута →
-  /// кэш person→tree сервиса → выбранное дерево (с проверкой, что человек
-  /// там есть) → полный обход деревьев пользователя. Если по пути человек
-  /// уже загрузился — возвращаем и его, чтобы не дёргать GET повторно.
-  /// Сетевые ошибки пробрасываются (их различает _loadData), «не в этом
-  /// дереве» (404/403/410) — гасятся и ведут к следующему шагу.
+  /// кэш person→tree сервиса → выбранное дерево → полный обход деревьев
+  /// пользователя. КАЖДЫЙ шаг (включая явный — чанк C: протухшая ссылка
+  /// с мёртвым treeId не терминальна) проверяется GET'ом; «не в этом
+  /// дереве» (404/410) и «нет доступа» (403/401) ведут к следующему шагу,
+  /// 403 при этом запоминается для честной заглушки. Сетевые ошибки
+  /// пробрасываются (их различает _loadData). Найденный по пути человек
+  /// переиспользуется без повторного GET.
   Future<_PersonTreeResolution> _resolvePersonContext() async {
     final personId = widget.personId;
     final service = _familyService;
@@ -231,43 +240,65 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
       providerTrees = const <FamilyTree>[];
     }
 
+    var sawAccessDenied = false;
+
+    bool isAccessDenied(Object error) =>
+        error is CustomApiException &&
+        (error.statusCode == 403 || error.statusCode == 401);
+
     bool isMissingOnTree(Object error) =>
         error is CustomApiException &&
-        (error.statusCode == 404 ||
-            error.statusCode == 403 ||
-            error.statusCode == 410);
+        (error.statusCode == 404 || error.statusCode == 410);
 
-    // 1. Явный контекст из точки входа.
+    // true → шаг «промахнулся», идём дальше; иначе пробрасываем (сеть).
+    bool fallthroughOrRethrow(Object error) {
+      if (isAccessDenied(error)) {
+        sawAccessDenied = true;
+        return true;
+      }
+      if (isMissingOnTree(error)) {
+        return true;
+      }
+      return false;
+    }
+
+    final tried = <String>{};
+
+    Future<_PersonTreeResolution?> tryTree(String treeId) async {
+      if (treeId.isEmpty || !tried.add(treeId)) return null;
+      try {
+        final person = await service.getPersonById(treeId, personId);
+        return _PersonTreeResolution(treeId: treeId, person: person);
+      } catch (error) {
+        if (!fallthroughOrRethrow(error)) rethrow;
+        return null;
+      }
+    }
+
+    // 1. Явный контекст из точки входа — проверяем, НЕ доверяем слепо:
+    // старая ссылка может нести удалённое дерево.
     final explicit = widget.treeId?.trim();
     if (explicit != null && explicit.isNotEmpty) {
-      return _PersonTreeResolution(treeId: explicit);
+      final hit = await tryTree(explicit);
+      if (hit != null) return hit;
     }
 
     final resolution = service is PersonTreeResolutionCapableFamilyTreeService
         ? service as PersonTreeResolutionCapableFamilyTreeService
         : null;
 
-    // 2. Кэш сервиса. Проверяем GET'ом: кэш может протухнуть (человека
-    // удалили) — тогда честно идём дальше по цепочке.
+    // 2. Кэш сервиса (может протухнуть — GET-проверка самоисцеляет).
     final cached = resolution?.cachedTreeIdForPerson(personId);
     if (cached != null && cached.isNotEmpty) {
-      try {
-        final person = await service.getPersonById(cached, personId);
-        return _PersonTreeResolution(treeId: cached, person: person);
-      } catch (error) {
-        if (!isMissingOnTree(error)) rethrow;
-      }
+      final hit = await tryTree(cached);
+      if (hit != null) return hit;
     }
 
     // 3. Выбранное дерево.
     final selected = _selectedTreeIdAtOpen;
-    if (selected != null && selected.isNotEmpty && selected != cached) {
-      try {
-        final person = await service.getPersonById(selected, personId);
-        return _PersonTreeResolution(treeId: selected, person: person);
-      } catch (error) {
-        if (!isMissingOnTree(error)) rethrow;
-      }
+    if (selected != null && selected.isNotEmpty) {
+      final hit = await tryTree(selected);
+      if (hit != null) return hit;
     }
 
     // 4. Полный обход. Предпочитаем сервисный резолв (кэш + локальное
@@ -276,9 +307,12 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
     if (resolution != null) {
       final resolved = await resolution.resolveTreeIdForPerson(personId);
       if (resolved != null && resolved.isNotEmpty) {
-        return _PersonTreeResolution(treeId: resolved);
+        return _PersonTreeResolution(
+          treeId: resolved,
+          sawAccessDenied: sawAccessDenied,
+        );
       }
-      return const _PersonTreeResolution();
+      return _PersonTreeResolution(sawAccessDenied: sawAccessDenied);
     }
 
     var trees = providerTrees;
@@ -290,15 +324,10 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
       }
     }
     for (final tree in trees) {
-      if (tree.id == selected || tree.id == cached) continue;
-      try {
-        final person = await service.getPersonById(tree.id, personId);
-        return _PersonTreeResolution(treeId: tree.id, person: person);
-      } catch (error) {
-        if (!isMissingOnTree(error)) rethrow;
-      }
+      final hit = await tryTree(tree.id);
+      if (hit != null) return hit;
     }
-    return const _PersonTreeResolution();
+    return _PersonTreeResolution(sawAccessDenied: sawAccessDenied);
   }
 
   Future<void> _loadData() async {
@@ -337,7 +366,13 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
     }
     _currentTreeId = resolved.treeId;
     if (_currentTreeId == null) {
-      _failLoad(_CardErrorKind.notFound);
+      // Чанк C: если по пути цепочки встречался 403/401 — карточка
+      // существует, но закрыта; «не нашлась» было бы неправдой.
+      _failLoad(
+        resolved.sawAccessDenied
+            ? _CardErrorKind.accessDenied
+            : _CardErrorKind.notFound,
+      );
       return;
     }
 

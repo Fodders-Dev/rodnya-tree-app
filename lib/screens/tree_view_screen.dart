@@ -1001,12 +1001,7 @@ class _TreeViewScreenState extends State<TreeViewScreen>
               ),
               child: FloatingActionButton.extended(
                 heroTag: 'tree_add_relative_fab',
-                onPressed: () {
-                  showRelationPickerAndNavigateAdd(
-                    context,
-                    treeId: selectedTreeId,
-                  );
-                },
+                onPressed: () => _startAddRelativeFlow(selectedTreeId),
                 tooltip: _isFriendsTree
                     ? 'Добавить человека'
                     : 'Добавить родственника',
@@ -2188,6 +2183,27 @@ class _TreeViewScreenState extends State<TreeViewScreen>
 
   Future<void> _navigateToAddRelative(String treeId) async {
     final result = await context.push('/relatives/add/$treeId');
+    if ((result == true ||
+            (result is Map<String, dynamic> && result['updated'] == true)) &&
+        mounted) {
+      await _loadData(treeId);
+    }
+  }
+
+  /// Чанк C: единый вход generic-добавления с канваса — раньше FAB вёл в
+  /// пикер «Кем приходится?», а toolbar-кнопка в прямую форму (два разных
+  /// флоу на одно действие путали). Семья → пикер; Круг → сразу форма
+  /// (ролей родства в круге нет — как в empty-state). После успешного
+  /// добавления канвас перечитывается.
+  Future<void> _startAddRelativeFlow(String treeId) async {
+    if (_isFriendsTree) {
+      await _navigateToAddRelative(treeId);
+      return;
+    }
+    final result = await showRelationPickerAndNavigateAdd(
+      context,
+      treeId: treeId,
+    );
     if ((result == true ||
             (result is Map<String, dynamic> && result['updated'] == true)) &&
         mounted) {

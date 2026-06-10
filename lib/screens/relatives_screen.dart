@@ -1047,9 +1047,8 @@ class _RelativesScreenState extends State<RelativesScreen> {
             // MouseRegion + GestureDetector reads as a clickable icon on
             // desktop; an InkWell ripple inside a tight search row looks
             // out of place, so we just light up the cursor. Wrapped in
-            // a 36dp SizedBox so the tap area satisfies Android's
-            // recommended 36-48dp minimum (we sit on the smaller end
-            // to keep the search row compact).
+            // a 44dp SizedBox — гайдлайновый минимум тап-таргета (2c;
+            // раньше 36dp «компактный край» — старшим мало).
             MouseRegion(
               cursor: SystemMouseCursors.click,
               child: Semantics(
@@ -1060,7 +1059,6 @@ class _RelativesScreenState extends State<RelativesScreen> {
                   onTap: () {
                     _searchController.clear();
                   },
-                  // 2c: 44dp вместо 36 — гайдлайновый минимум тап-таргета.
                   child: SizedBox(
                     width: 44,
                     height: 44,

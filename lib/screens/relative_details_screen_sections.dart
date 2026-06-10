@@ -1049,11 +1049,7 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
       onTap = _editRelative;
     }
 
-    final theme = Theme.of(context);
-    final tokens = theme.extension<RodnyaDesignTokens>() ??
-        (theme.brightness == Brightness.dark
-            ? RodnyaDesignTokens.dark
-            : RodnyaDesignTokens.light);
+    final tokens = AppTheme.tokensOf(context);
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),

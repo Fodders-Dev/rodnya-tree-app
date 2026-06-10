@@ -1225,10 +1225,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   /// сохранён как явная подпись действия (и точка тапа в тестах).
   Widget _buildPendingInvitationsBanner(List<TreeInvitation> invitations) {
     final theme = Theme.of(context);
-    final tokens = theme.extension<RodnyaDesignTokens>() ??
-        (theme.brightness == Brightness.dark
-            ? RodnyaDesignTokens.dark
-            : RodnyaDesignTokens.light);
+    final tokens = AppTheme.tokensOf(context);
     final count = invitations.length;
     final firstTreeName = invitations.first.tree.name.trim();
     final title = count == 1

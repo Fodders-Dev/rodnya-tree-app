@@ -405,7 +405,10 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
             tooltip: _isFriendsTree
                 ? 'Добавить из панели круга'
                 : 'Добавить из панели дерева',
-            onPressed: () => _navigateToAddRelative(selectedTreeId),
+            // Чанк C: тот же флоу, что у FAB (семья → пикер «Кем
+            // приходится?», круг → форма) — два верхних входа больше не
+            // расходятся.
+            onPressed: () => _startAddRelativeFlow(selectedTreeId),
             emphasized: true,
           ),
           // Selection mode toggle — top-level visible icon instead
