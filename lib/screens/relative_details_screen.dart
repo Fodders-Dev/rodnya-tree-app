@@ -39,6 +39,7 @@ import '../widgets/profile_redesign.dart';
 import '../widgets/sensitive_contacts_section.dart';
 import '../widgets/tree_history_sheet.dart';
 import '../theme/app_theme.dart';
+import '../utils/image_decode.dart';
 import '../utils/photo_url.dart';
 import '../utils/relative_details_route.dart';
 import '../utils/user_facing_error.dart';

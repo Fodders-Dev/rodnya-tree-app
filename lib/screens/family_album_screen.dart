@@ -22,6 +22,7 @@ import '../backend/interfaces/post_service_interface.dart';
 import '../models/post.dart';
 import '../services/posts_cache.dart';
 import '../theme/app_theme.dart';
+import '../utils/image_decode.dart';
 import '../widgets/media_lightbox.dart';
 
 class _AlbumPhoto {
@@ -412,6 +413,8 @@ class _FamilyAlbumScreenState extends State<FamilyAlbumScreen> {
                       CachedNetworkImage(
                         imageUrl: memories[i].url,
                         fit: BoxFit.cover,
+                        // M2: декод под фиксированный 104dp-тайл.
+                        memCacheWidth: decodeCacheWidth(context, 104),
                         placeholder: (_, __) => Container(
                           color: theme.colorScheme.surfaceContainerHighest,
                         ),
@@ -541,6 +544,11 @@ class _FamilyAlbumScreenState extends State<FamilyAlbumScreen> {
           CachedNetworkImage(
             imageUrl: photo.url,
             fit: BoxFit.cover,
+            // M2: грид 3 колонки во всю ширину → тайл ≈ треть экрана.
+            memCacheWidth: decodeCacheWidth(
+              context,
+              MediaQuery.of(context).size.width / 3,
+            ),
             placeholder: (_, __) => Container(
               color: theme.colorScheme.surfaceContainerHighest,
             ),

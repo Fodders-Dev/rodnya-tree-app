@@ -4,6 +4,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../models/story.dart';
+import '../utils/image_decode.dart';
 import '../utils/photo_url.dart';
 
 @immutable
@@ -375,6 +376,9 @@ class _StoryPosterImage extends StatelessWidget {
         CachedNetworkImage(
           imageUrl: imageUrl,
           fit: BoxFit.cover,
+          // M2: полноэкранный фон сторис — ограничиваем шириной экрана
+          // (фоновый постер размывается/затемняется, больше не нужно).
+          memCacheWidth: decodeCacheWidthForScreen(context),
           errorWidget: (_, __, ___) => const SizedBox.shrink(),
         ),
         DecoratedBox(

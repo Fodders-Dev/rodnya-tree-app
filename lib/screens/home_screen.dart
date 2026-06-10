@@ -43,6 +43,7 @@ import '../widgets/glass_panel.dart';
 import '../widgets/coach_mark_tour.dart';
 import '../services/custom_api_notification_service.dart';
 import '../utils/e2e_state_bridge.dart';
+import '../utils/image_decode.dart';
 import '../utils/web_wheel_listener.dart';
 
 part 'home_screen_sections.dart';
@@ -1672,6 +1673,8 @@ class _StoryRing extends StatelessWidget {
                           ? CachedNetworkImage(
                               imageUrl: photoUrl!,
                               fit: BoxFit.cover,
+                              // M2: сторис-кружок ленты — 64dp.
+                              memCacheWidth: decodeCacheWidth(context, 64),
                               placeholder: (_, __) => _initialsLabel(),
                               errorWidget: (_, __, ___) => _initialsLabel(),
                             )

@@ -11,6 +11,7 @@ import 'package:flutter/material.dart' hide CarouselController;
 import 'package:shimmer/shimmer.dart';
 
 import '../theme/app_theme.dart';
+import '../utils/image_decode.dart';
 
 /// True when [url] points at a video by extension (query string ignored).
 bool isFeedVideoUrl(String url) {
@@ -111,6 +112,9 @@ class FeedMediaGallery extends StatelessWidget {
       child: CachedNetworkImage(
         imageUrl: url,
         fit: BoxFit.cover,
+        // M2: декод под ширину экрана (слот фида не шире) — без этого
+        // оригиналы 3-4К с телефонов декодятся целиком (jank/OOM на A50).
+        memCacheWidth: decodeCacheWidthForScreen(context),
         placeholder: (_, __) => const FeedMediaPlaceholder(),
         errorWidget: (_, __, ___) => const FeedMediaFallback(),
       ),

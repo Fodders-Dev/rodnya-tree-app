@@ -11,6 +11,7 @@ import '../backend/backend_runtime_config.dart';
 import '../models/reaction_summary.dart';
 import '../models/story.dart';
 import '../utils/e2e_state_bridge.dart';
+import '../utils/image_decode.dart';
 import '../utils/photo_url.dart';
 import '../widgets/reaction_chip_strip.dart';
 import '../widgets/reaction_picker.dart';
@@ -879,6 +880,9 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
           child: CachedNetworkImage(
             imageUrl: mediaUrl,
             fit: BoxFit.cover,
+            // M2: полноэкранная сторис — декод по ширине экрана (брифинг:
+            // полноэкранный просмотр ограничиваем maxWidth экрана).
+            memCacheWidth: decodeCacheWidthForScreen(context),
             placeholder: (context, url) =>
                 const Center(child: CircularProgressIndicator()),
             errorWidget: (_, __, ___) => _buildUnavailableStory(),

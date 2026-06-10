@@ -535,6 +535,8 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
                 width: 120,
                 height: 120,
                 fit: BoxFit.cover,
+                // M2: декод под 120dp-аватар.
+                memCacheWidth: decodeCacheWidth(context, 120),
                 placeholder: (_, __) => _avatarFallback(initials),
                 errorWidget: (_, __, ___) => _avatarFallback(initials),
               )
@@ -1554,6 +1556,9 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
                                       imageUrl: normalizedMediaUrl,
                                       fit: BoxFit.cover,
                                       width: double.infinity,
+                                      // M2: тайл галереи карточки — 116dp.
+                                      memCacheWidth:
+                                          decodeCacheWidth(context, 116),
                                       errorWidget: (context, url, error) =>
                                           Center(
                                         child: Icon(

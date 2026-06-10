@@ -7,6 +7,7 @@ import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/story_service_interface.dart';
 import '../models/story.dart';
 import '../theme/app_theme.dart';
+import '../utils/image_decode.dart';
 import '../widgets/media_lightbox.dart';
 
 /// Archive of the current user's expired stories — Instagram / Telegram
@@ -258,7 +259,7 @@ class _ArchivedStoryTile extends StatelessWidget {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              _buildPoster(tokens),
+              _buildPoster(context, tokens),
               Positioned(
                 left: 6,
                 right: 6,
@@ -300,7 +301,7 @@ class _ArchivedStoryTile extends StatelessWidget {
     );
   }
 
-  Widget _buildPoster(RodnyaDesignTokens tokens) {
+  Widget _buildPoster(BuildContext context, RodnyaDesignTokens tokens) {
     final url = story.thumbnailUrl ?? story.mediaUrl;
     if (story.type == StoryType.text || (url ?? '').isEmpty) {
       return Container(
@@ -332,6 +333,11 @@ class _ArchivedStoryTile extends StatelessWidget {
     return CachedNetworkImage(
       imageUrl: url!,
       fit: BoxFit.cover,
+      // M2: плитка архива — не шире половины экрана (грид-превью).
+      memCacheWidth: decodeCacheWidth(
+        context,
+        MediaQuery.of(context).size.width / 2,
+      ),
       placeholder: (_, __) => ColoredBox(
         color: tokens.surfaceStrong,
         child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
