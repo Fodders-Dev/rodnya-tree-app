@@ -576,11 +576,20 @@ class FamilyPerson extends HiveObject {
   }
 }
 
-// Создаем класс для хранения детальной информации
+// Создаем класс для хранения детальной информации.
+// Hotfix-1: класс сериализуется FamilyPersonAdapter'ом (поле details),
+// но не имел своего Hive-адаптера — запись заполненной анкеты валила
+// кэш у всех зрителей дерева (HiveError: Cannot write, unknown type).
+// Свободные typeId: 102 (details), 103 (Career), 104 (Event).
+@HiveType(typeId: 102)
 class FamilyPersonDetails {
+  @HiveField(0)
   final String? education; // Образование
+  @HiveField(1)
   final List<Career>? career; // Карьера
+  @HiveField(2)
   final List<Event>? importantEvents; // Важные события
+  @HiveField(3)
   final Map<String, dynamic>? customData; // Произвольные данные
 
   FamilyPersonDetails({
@@ -616,11 +625,17 @@ class FamilyPersonDetails {
 }
 
 // Класс для хранения информации о карьере
+@HiveType(typeId: 103)
 class Career {
+  @HiveField(0)
   final String? company;
+  @HiveField(1)
   final String? position;
+  @HiveField(2)
   final DateTime? startDate;
+  @HiveField(3)
   final DateTime? endDate;
+  @HiveField(4)
   final bool isCurrent;
 
   Career({
@@ -657,11 +672,17 @@ class Career {
 }
 
 // Класс для хранения важных событий
+@HiveType(typeId: 104)
 class Event {
+  @HiveField(0)
   final String title;
+  @HiveField(1)
   final String? description;
+  @HiveField(2)
   final DateTime date;
+  @HiveField(3)
   final String? location;
+  @HiveField(4)
   final bool repeatsAnnually;
 
   Event({

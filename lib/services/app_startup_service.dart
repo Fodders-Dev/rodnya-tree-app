@@ -481,6 +481,20 @@ class AppStartupService implements AppStartupServiceInterface {
     if (!Hive.isAdapterRegistered(rodnya_models.GenderAdapter().typeId)) {
       Hive.registerAdapter(rodnya_models.GenderAdapter());
     }
+    // Hotfix-1: адаптеры расширенной анкеты (details/career/events).
+    // Без них FamilyPersonAdapter.write падал на non-null details и
+    // валил кэш-запись у всех зрителей дерева.
+    if (!Hive.isAdapterRegistered(
+      rodnya_models.FamilyPersonDetailsAdapter().typeId,
+    )) {
+      Hive.registerAdapter(rodnya_models.FamilyPersonDetailsAdapter());
+    }
+    if (!Hive.isAdapterRegistered(rodnya_models.CareerAdapter().typeId)) {
+      Hive.registerAdapter(rodnya_models.CareerAdapter());
+    }
+    if (!Hive.isAdapterRegistered(rodnya_models.EventAdapter().typeId)) {
+      Hive.registerAdapter(rodnya_models.EventAdapter());
+    }
     if (!Hive.isAdapterRegistered(RelationTypeAdapter().typeId)) {
       Hive.registerAdapter(RelationTypeAdapter());
     }

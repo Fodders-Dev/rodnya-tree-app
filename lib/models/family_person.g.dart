@@ -23,14 +23,15 @@ class FamilyPersonAdapter extends TypeAdapter<FamilyPerson> {
       identityId: fields[25] as String?,
       name: fields[3] as String,
       maidenName: fields[4] as String?,
-      photoUrl: fields[5] as String?,
       gender: fields[6] as Gender,
       birthDate: fields[7] as DateTime?,
       birthPlace: fields[8] as String?,
       deathDate: fields[9] as DateTime?,
       deathPlace: fields[10] as String?,
       bio: fields[11] as String?,
+      familySummary: fields[26] as String?,
       isAlive: fields[13] as bool,
+      visibility: fields[27] as String,
       creatorId: fields[14] as String?,
       createdAt: fields[15] as DateTime,
       updatedAt: fields[16] as DateTime,
@@ -41,12 +42,6 @@ class FamilyPersonAdapter extends TypeAdapter<FamilyPerson> {
       spouseId: fields[21] as String?,
       siblingIds: (fields[22] as List?)?.cast<String>(),
       details: fields[23] as FamilyPersonDetails?,
-      photoGallery: (fields[24] as List?)
-          ?.whereType<Map>()
-          .map((entry) => Map<String, dynamic>.from(entry))
-          .toList(),
-      familySummary: fields[26] as String?,
-      visibility: fields[27] as String? ?? 'private',
     );
   }
 
@@ -67,7 +62,7 @@ class FamilyPersonAdapter extends TypeAdapter<FamilyPerson> {
       ..writeByte(4)
       ..write(obj.maidenName)
       ..writeByte(5)
-      ..write(obj.photoUrl)
+      ..write(obj._photoUrl)
       ..writeByte(6)
       ..write(obj.gender)
       ..writeByte(7)
@@ -103,7 +98,7 @@ class FamilyPersonAdapter extends TypeAdapter<FamilyPerson> {
       ..writeByte(23)
       ..write(obj.details)
       ..writeByte(24)
-      ..write(obj.photoGallery)
+      ..write(obj._photoGallery)
       ..writeByte(26)
       ..write(obj.familySummary)
       ..writeByte(27)
@@ -117,6 +112,141 @@ class FamilyPersonAdapter extends TypeAdapter<FamilyPerson> {
   bool operator ==(Object other) =>
       identical(this, other) ||
       other is FamilyPersonAdapter &&
+          runtimeType == other.runtimeType &&
+          typeId == other.typeId;
+}
+
+class FamilyPersonDetailsAdapter extends TypeAdapter<FamilyPersonDetails> {
+  @override
+  final int typeId = 102;
+
+  @override
+  FamilyPersonDetails read(BinaryReader reader) {
+    final numOfFields = reader.readByte();
+    final fields = <int, dynamic>{
+      for (int i = 0; i < numOfFields; i++) reader.readByte(): reader.read(),
+    };
+    return FamilyPersonDetails(
+      education: fields[0] as String?,
+      career: (fields[1] as List?)?.cast<Career>(),
+      importantEvents: (fields[2] as List?)?.cast<Event>(),
+      customData: (fields[3] as Map?)?.cast<String, dynamic>(),
+    );
+  }
+
+  @override
+  void write(BinaryWriter writer, FamilyPersonDetails obj) {
+    writer
+      ..writeByte(4)
+      ..writeByte(0)
+      ..write(obj.education)
+      ..writeByte(1)
+      ..write(obj.career)
+      ..writeByte(2)
+      ..write(obj.importantEvents)
+      ..writeByte(3)
+      ..write(obj.customData);
+  }
+
+  @override
+  int get hashCode => typeId.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is FamilyPersonDetailsAdapter &&
+          runtimeType == other.runtimeType &&
+          typeId == other.typeId;
+}
+
+class CareerAdapter extends TypeAdapter<Career> {
+  @override
+  final int typeId = 103;
+
+  @override
+  Career read(BinaryReader reader) {
+    final numOfFields = reader.readByte();
+    final fields = <int, dynamic>{
+      for (int i = 0; i < numOfFields; i++) reader.readByte(): reader.read(),
+    };
+    return Career(
+      company: fields[0] as String?,
+      position: fields[1] as String?,
+      startDate: fields[2] as DateTime?,
+      endDate: fields[3] as DateTime?,
+      isCurrent: fields[4] as bool,
+    );
+  }
+
+  @override
+  void write(BinaryWriter writer, Career obj) {
+    writer
+      ..writeByte(5)
+      ..writeByte(0)
+      ..write(obj.company)
+      ..writeByte(1)
+      ..write(obj.position)
+      ..writeByte(2)
+      ..write(obj.startDate)
+      ..writeByte(3)
+      ..write(obj.endDate)
+      ..writeByte(4)
+      ..write(obj.isCurrent);
+  }
+
+  @override
+  int get hashCode => typeId.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CareerAdapter &&
+          runtimeType == other.runtimeType &&
+          typeId == other.typeId;
+}
+
+class EventAdapter extends TypeAdapter<Event> {
+  @override
+  final int typeId = 104;
+
+  @override
+  Event read(BinaryReader reader) {
+    final numOfFields = reader.readByte();
+    final fields = <int, dynamic>{
+      for (int i = 0; i < numOfFields; i++) reader.readByte(): reader.read(),
+    };
+    return Event(
+      title: fields[0] as String,
+      description: fields[1] as String?,
+      date: fields[2] as DateTime,
+      location: fields[3] as String?,
+      repeatsAnnually: fields[4] as bool,
+    );
+  }
+
+  @override
+  void write(BinaryWriter writer, Event obj) {
+    writer
+      ..writeByte(5)
+      ..writeByte(0)
+      ..write(obj.title)
+      ..writeByte(1)
+      ..write(obj.description)
+      ..writeByte(2)
+      ..write(obj.date)
+      ..writeByte(3)
+      ..write(obj.location)
+      ..writeByte(4)
+      ..write(obj.repeatsAnnually);
+  }
+
+  @override
+  int get hashCode => typeId.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is EventAdapter &&
           runtimeType == other.runtimeType &&
           typeId == other.typeId;
 }
