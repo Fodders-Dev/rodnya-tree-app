@@ -1245,7 +1245,9 @@ extension _HomeScreenSections on _HomeScreenState {
     return Padding(
       padding: const EdgeInsets.fromLTRB(18, 0, 18, 10),
       child: SizedBox(
-          height: 36,
+          // 2c: 44dp — полный тап-таргет для чипов веток (было 36 +
+          // shrinkWrap, т.е. реальный хит ~32dp).
+          height: 44,
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
             itemCount: entries.length,
@@ -1260,8 +1262,6 @@ extension _HomeScreenSections on _HomeScreenState {
                 child: ChoiceChip(
                   label: Text(entry.label),
                   selected: selected,
-                  visualDensity: VisualDensity.compact,
-                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   avatar: entry.id == null
                       ? Icon(
                           Icons.all_inclusive,

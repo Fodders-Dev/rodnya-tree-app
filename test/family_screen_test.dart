@@ -30,6 +30,15 @@ void main() {
     // Both toggle segments are present.
     expect(find.byKey(const Key('family-view-list')), findsOneWidget);
     expect(find.byKey(const Key('family-view-tree')), findsOneWidget);
+    // 2c: сегменты toggle — тап-таргет ≥44dp (мобильная эргономика).
+    expect(
+      tester.getSize(find.byKey(const Key('family-view-list'))).height,
+      greaterThanOrEqualTo(44.0),
+    );
+    expect(
+      tester.getSize(find.byKey(const Key('family-view-tree'))).height,
+      greaterThanOrEqualTo(44.0),
+    );
   });
 
   testWidgets('tapping «Дерево» switches to the tree body', (tester) async {

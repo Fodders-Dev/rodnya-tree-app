@@ -1358,6 +1358,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     required bool selected,
     required VoidCallback onTap,
   }) {
+    // 2c: дефолтные density + padded tap-target вместо compact/shrinkWrap —
+    // чип остаётся визуально лёгким, но хит-зона дотягивает до ≥44dp
+    // (старшим не приходится целиться).
     return Semantics(
       label: semanticLabel,
       button: true,
@@ -1365,8 +1368,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       child: ChoiceChip(
         label: Text(label),
         selected: selected,
-        visualDensity: VisualDensity.compact,
-        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
         onSelected: (_) => onTap(),
       ),
     );
@@ -1393,7 +1394,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       children: [
         if (hasCategories) ...[
           SizedBox(
-            height: 30,
+            // 2c: 44dp — полный тап-таргет для чипов-фильтров (было 30).
+            height: 44,
             child: ListView(
               scrollDirection: Axis.horizontal,
               children: [
@@ -1420,7 +1422,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ],
             ),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 8),
         ],
         for (var i = 0; i < displayed.length; i++) ...[
           if (i > 0) const SizedBox(height: 8),

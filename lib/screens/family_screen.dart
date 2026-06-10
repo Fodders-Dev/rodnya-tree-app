@@ -208,7 +208,10 @@ class _FamilyViewToggle extends StatelessWidget {
           borderRadius: BorderRadius.circular(11),
           onTap: onTap,
           child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 9),
+            // 2c: vertical 13 (было 9) — сегмент-таргет ≥44dp; toggle —
+            // главный переключатель вкладки «Семья», старшим нужен
+            // уверенный тап.
+            padding: const EdgeInsets.symmetric(vertical: 13),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [

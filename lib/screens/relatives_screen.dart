@@ -1045,12 +1045,13 @@ class _RelativesScreenState extends State<RelativesScreen> {
                   onTap: () {
                     _searchController.clear();
                   },
+                  // 2c: 44dp вместо 36 — гайдлайновый минимум тап-таргета.
                   child: SizedBox(
-                    width: 36,
-                    height: 36,
+                    width: 44,
+                    height: 44,
                     child: Icon(
                       Icons.close_rounded,
-                      size: 18,
+                      size: 20,
                       color: tokens.inkMuted,
                     ),
                   ),
