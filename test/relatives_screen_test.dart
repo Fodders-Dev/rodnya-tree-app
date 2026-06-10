@@ -17,8 +17,10 @@ import 'package:rodnya/models/family_relation.dart';
 import 'package:rodnya/models/family_tree.dart';
 import 'package:rodnya/models/relation_request.dart';
 import 'package:rodnya/providers/tree_provider.dart';
+import 'package:rodnya/screens/family_screen.dart';
 import 'package:rodnya/screens/relatives_screen.dart';
 import 'package:rodnya/services/app_status_service.dart';
+import 'package:rodnya/widgets/main_navigation_bar.dart';
 import 'package:rodnya/services/local_storage_service.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -459,6 +461,13 @@ void main() {
 
   testWidgets('Быстрый чат из списка родных открывает маршрут чата',
       (tester) async {
+    // Телефонная высота: на дефолтных 600dp поднятый над нав-баром FAB
+    // (чанк A) перекрывал чат-иконку последней строки — на реальных
+    // экранах (≥800dp) список и FAB не конфликтуют.
+    tester.view.physicalSize = const Size(800, 1200);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
     await pumpRelativesScreen(tester);
 
     await tester.tap(
@@ -488,5 +497,68 @@ void main() {
     expect(find.text('Найти'), findsOneWidget);
     expect(find.text('3 чата'), findsOneWidget);
     expect(find.text('Пригласить 1'), findsOneWidget);
+  });
+
+  testWidgets(
+      'Чанк A (P0): FAB «Добавить» плавает НАД плавающим нав-баром, не под ним',
+      (tester) async {
+    // Регресс с Samsung: после слияния в «Семью» экраны перестали быть
+    // топ-уровневыми бранчами и потеряли bottom-inset — FAB рендерился В
+    // полосе пилюли и тап уходил во вкладку «Профиль». Пампим прод-сэндвич:
+    // Scaffold(extendBody) + FamilyScreen (внутри — реальный
+    // RelativesScreen) + MainNavigationBar. Ширина — как у A50 (412dp).
+    tester.view.physicalSize = const Size(412, 892);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final treeProvider = TreeProvider();
+    await treeProvider.selectTree(
+      'tree-1',
+      'Семья Кузнецовых',
+      treeKind: TreeKind.family,
+    );
+
+    final router = GoRouter(
+      initialLocation: '/family',
+      routes: [
+        GoRoute(
+          path: '/family',
+          builder: (context, state) => Scaffold(
+            extendBody: true,
+            body: const FamilyScreen(),
+            bottomNavigationBar: MainNavigationBar(
+              currentIndex: 1,
+              onTap: (_) {},
+              unreadNotificationsStream: Stream<int>.value(0),
+              unreadChatsStream: Stream<int>.value(0),
+              pendingInvitationsCountStream: Stream<int>.value(0),
+            ),
+          ),
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<TreeProvider>.value(
+        value: treeProvider,
+        child: MaterialApp.router(routerConfig: router),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final fabFinder = find.widgetWithText(FloatingActionButton, 'Добавить');
+    expect(fabFinder, findsOneWidget);
+    final fabRect = tester.getRect(fabFinder);
+    final navRect = tester.getRect(find.byType(MainNavigationBar));
+
+    // FAB целиком НАД баром: низ FAB выше верха пилюли и rect'ы не
+    // пересекаются (раньше FAB лежал ровно в полосе вкладок).
+    expect(
+      fabRect.bottom <= navRect.top,
+      isTrue,
+      reason: 'FAB (низ ${fabRect.bottom}) должен быть выше нав-бара '
+          '(верх ${navRect.top})',
+    );
+    expect(fabRect.overlaps(navRect), isFalse);
   });
 }

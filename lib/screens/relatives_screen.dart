@@ -635,9 +635,18 @@ class _RelativesScreenState extends State<RelativesScreen> {
                         ),
                       ),
                     ),
+      // Чанк A (P0): экран живёт внутри «Семьи» (IndexedStack), а не
+      // топ-уровневым бранчем — глобальный inset плавающего нав-бара сюда
+      // не доезжает, и FAB рендерился ПОД пилюлей (тап уходил во вкладку).
+      // Тот же механизм, что у home compose-FAB: единый источник правды
+      // AppTheme.bottomNavInset.
       floatingActionButton: selectedTreeId == null
           ? null
-          : Column(
+          : Padding(
+              padding: EdgeInsets.only(
+                bottom: AppTheme.bottomNavInset(context),
+              ),
+              child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
@@ -667,6 +676,7 @@ class _RelativesScreenState extends State<RelativesScreen> {
                   label: const Text('Добавить'),
                 ),
               ],
+              ),
             ),
     );
   }
@@ -1664,12 +1674,19 @@ class _RelativesScreenState extends State<RelativesScreen> {
         children: [
           Icon(icon, size: iconSize, color: color),
           const SizedBox(width: 6),
-          Text(
-            label,
-            style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                  color: color,
-                  fontWeight: FontWeight.w700,
-                ),
+          // Flexible+ellipsis: на узких строках (A50, 412dp) чип
+          // «Можно написать» переполнял слот на 3px — текст обязан
+          // сжиматься, а не рисовать striped-полосу.
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    color: color,
+                    fontWeight: FontWeight.w700,
+                  ),
+            ),
           ),
         ],
       ),

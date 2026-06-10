@@ -990,21 +990,29 @@ class _TreeViewScreenState extends State<TreeViewScreen>
       // и FAB Списка. Скрыт в режимах выбора/перемещения карточек — там
       // свои тулбары и жесты. heroTag отличен от relatives-FAB: оба тела
       // живут в одном IndexedStack вкладки «Семья».
+      // Чанк A (P0): как и Список, канвас живёт внутри «Семьи» — inset
+      // плавающего нав-бара восстанавливаем тем же единым хелпером, что
+      // у home compose-FAB (FAB обязан плавать НАД пилюлей).
       floatingActionButton: (_isSelectionMode || _isEditMode)
           ? null
-          : FloatingActionButton.extended(
-              heroTag: 'tree_add_relative_fab',
-              onPressed: () {
-                showRelationPickerAndNavigateAdd(
-                  context,
-                  treeId: selectedTreeId,
-                );
-              },
-              tooltip: _isFriendsTree
-                  ? 'Добавить человека'
-                  : 'Добавить родственника',
-              icon: const Icon(Icons.add),
-              label: const Text('Добавить'),
+          : Padding(
+              padding: EdgeInsets.only(
+                bottom: AppTheme.bottomNavInset(context),
+              ),
+              child: FloatingActionButton.extended(
+                heroTag: 'tree_add_relative_fab',
+                onPressed: () {
+                  showRelationPickerAndNavigateAdd(
+                    context,
+                    treeId: selectedTreeId,
+                  );
+                },
+                tooltip: _isFriendsTree
+                    ? 'Добавить человека'
+                    : 'Добавить родственника',
+                icon: const Icon(Icons.add),
+                label: const Text('Добавить'),
+              ),
             ),
     );
   }
