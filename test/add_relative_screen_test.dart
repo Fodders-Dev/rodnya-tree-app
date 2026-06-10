@@ -47,9 +47,22 @@ class _FakeAuthService implements AuthServiceInterface {
 
 class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
   bool failOnAdd = false;
+  bool failOnUpdate = false;
+  int updateCalls = 0;
   RelationType relationToUser = RelationType.sibling;
   List<TreeChangeRecord> historyRecords = const [];
   FamilyPerson? personById;
+
+  @override
+  Future<void> updateRelative(
+    String personId,
+    Map<String, dynamic> personData,
+  ) async {
+    updateCalls += 1;
+    if (failOnUpdate) {
+      throw Exception('update failed');
+    }
+  }
 
   @override
   Future<List<FamilyPerson>> getRelatives(String treeId) async => const [];
@@ -724,6 +737,99 @@ void main() {
         expect(find.text('Из моих других деревьев'), findsOneWidget);
       },
     );
+  });
+
+  // ── P1a: единый фидбек сохранения анкеты ──
+
+  FamilyPerson buildEditablePerson() => FamilyPerson(
+        id: 'person-edit-1',
+        treeId: 'tree-1',
+        name: 'Петров Иван',
+        gender: Gender.male,
+        isAlive: true,
+        createdAt: DateTime(2024, 1, 1),
+        updatedAt: DateTime(2024, 1, 1),
+      );
+
+  Future<void> pumpEditHost(
+    WidgetTester tester, {
+    required _FakeFamilyTreeService familyService,
+  }) async {
+    await getIt.reset();
+    getIt.registerSingleton<AuthServiceInterface>(_FakeAuthService());
+    getIt.registerSingleton<FamilyTreeServiceInterface>(familyService);
+    getIt.registerSingleton<ProfileServiceInterface>(_FakeProfileService());
+    getIt.registerSingleton<StorageServiceInterface>(_FakeStorageService());
+
+    final person = buildEditablePerson();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: Center(
+              child: ElevatedButton(
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute<void>(
+                    builder: (_) => AddRelativeScreen(
+                      treeId: 'tree-1',
+                      person: person,
+                      isEditing: true,
+                    ),
+                  ),
+                ),
+                child: const Text('host-open'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('host-open'));
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('P1a: успешное сохранение анкеты показывает «Сохранено ✓»',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(900, 1400));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final familyService = _FakeFamilyTreeService();
+    await pumpEditHost(tester, familyService: familyService);
+
+    // P1b: «Сохранить» в закреплённом нижнем баре — виден без скролла.
+    expect(find.byKey(const Key('add-relative-submit')), findsOneWidget);
+    await tester.tap(find.text('Сохранить изменения'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(familyService.updateCalls, 1);
+    expect(find.text('Сохранено ✓'), findsOneWidget);
+    // Экран закрылся (вернулись на хост) — снэкбар пережил pop.
+    expect(find.text('host-open'), findsOneWidget);
+  });
+
+  testWidgets(
+      'P1a: ошибка сохранения — «Не сохранилось…», форма не теряет данные',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(900, 1400));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final familyService = _FakeFamilyTreeService()..failOnUpdate = true;
+    await pumpEditHost(tester, familyService: familyService);
+
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Фамилия'),
+      'Сидоров',
+    );
+    await tester.tap(find.text('Сохранить изменения'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('Не сохранилось, попробуйте ещё раз.'), findsOneWidget);
+    // Экран НЕ закрыт, введённое на месте — повтор без перезаполнения.
+    expect(find.text('host-open'), findsNothing);
+    expect(find.text('Сидоров'), findsOneWidget);
   });
 }
 

@@ -1041,6 +1041,8 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
             ),
         ],
       ),
+      // P1b: «Сохранить» закреплён снизу — всегда видим, не за скроллом.
+      bottomNavigationBar: _isBusy ? null : _buildPinnedSubmitBar(),
       body: _isBusy
           ? Center(child: CircularProgressIndicator())
           : Form(
@@ -1077,10 +1079,15 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
                     SizedBox(height: 24),
 
                     // Фамилия
+                    // P1b: label всегда над полем (не исчезающий
+                    // плейсхолдер) + имена с заглавной — меньше возни со
+                    // шифтом для старших.
                     TextFormField(
                       controller: _lastNameController,
+                      textCapitalization: TextCapitalization.words,
                       decoration: InputDecoration(
                         labelText: 'Фамилия',
+                        floatingLabelBehavior: FloatingLabelBehavior.always,
                         border: OutlineInputBorder(),
                         prefixIcon: Icon(Icons.person),
                       ),
@@ -1097,8 +1104,10 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
                     TextFormField(
                       controller: _firstNameController,
                       autofocus: !widget.isEditing,
+                      textCapitalization: TextCapitalization.words,
                       decoration: InputDecoration(
                         labelText: 'Имя',
+                        floatingLabelBehavior: FloatingLabelBehavior.always,
                         border: OutlineInputBorder(),
                         prefixIcon: Icon(Icons.person_outline),
                       ),
@@ -1114,8 +1123,10 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
                     // Отчество
                     TextFormField(
                       controller: _middleNameController,
+                      textCapitalization: TextCapitalization.words,
                       decoration: InputDecoration(
                         labelText: 'Отчество',
+                        floatingLabelBehavior: FloatingLabelBehavior.always,
                         border: OutlineInputBorder(),
                         prefixIcon: Icon(Icons.person_outline),
                       ),

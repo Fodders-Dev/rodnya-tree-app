@@ -1225,22 +1225,13 @@ extension _AddRelativeScreenSections on _AddRelativeScreenState {
     );
   }
 
+  /// P1b: главный «Сохранить» переехал в закреплённый нижний бар
+  /// ([_buildPinnedSubmitBar]) — виден всегда, а не за скроллом. Здесь
+  /// остаются альтернативные quick-add действия + подсказка.
   Widget _buildSubmitSection() {
     return Column(
       children: [
-        SizedBox(
-          width: double.infinity,
-          height: 50,
-          child: ElevatedButton(
-            onPressed: _isBusy ? null : () => _savePerson(),
-            child: Text(
-              _buildPrimaryActionLabel(),
-              style: const TextStyle(fontSize: 16),
-            ),
-          ),
-        ),
-        if (_canUseQuickAddLoop) ...[
-          const SizedBox(height: 12),
+        if (_canUseQuickAddLoop)
           Wrap(
             spacing: 10,
             runSpacing: 10,
@@ -1262,7 +1253,6 @@ extension _AddRelativeScreenSections on _AddRelativeScreenState {
               ),
             ],
           ),
-        ],
         const SizedBox(height: 12),
         Text(
           _buildPrimaryActionHint(),
@@ -1272,6 +1262,33 @@ extension _AddRelativeScreenSections on _AddRelativeScreenState {
           textAlign: TextAlign.center,
         ),
       ],
+    );
+  }
+
+  /// P1b: закреплённый бар с главным действием — «Сохранить» всегда на
+  /// экране (старшим не нужно догадываться проскроллить вниз). Кнопка
+  /// 52dp (≥44dp таргет), текст крупный.
+  Widget _buildPinnedSubmitBar() {
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+        child: SizedBox(
+          width: double.infinity,
+          height: 52,
+          child: FilledButton(
+            key: const Key('add-relative-submit'),
+            onPressed: _isBusy ? null : () => _savePerson(),
+            child: Text(
+              _buildPrimaryActionLabel(),
+              style: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 
