@@ -48,6 +48,7 @@ class EventService {
               title: 'День рождения',
               personName: person.name,
               personId: person.id,
+              treeId: person.treeId,
               icon: Icons.cake_outlined,
             ),
           );
@@ -65,6 +66,7 @@ class EventService {
                 title: '9 дней',
                 personName: person.name,
                 personId: person.id,
+                treeId: person.treeId,
                 icon: Icons.church_outlined,
               ),
             );
@@ -80,6 +82,7 @@ class EventService {
                 title: '40 дней',
                 personName: person.name,
                 personId: person.id,
+                treeId: person.treeId,
                 icon: Icons.church_outlined,
               ),
             );
@@ -94,6 +97,7 @@ class EventService {
               title: 'Годовщина памяти',
               personName: person.name,
               personId: person.id,
+              treeId: person.treeId,
               icon: Icons.auto_awesome_mosaic_outlined,
             ),
           );
@@ -178,6 +182,7 @@ class EventService {
         personName:
             partnerNames.isEmpty ? 'Семейная пара' : partnerNames.join(' и '),
         personId: partner1?.id ?? partner2?.id ?? '',
+        treeId: partner1?.treeId ?? partner2?.treeId,
         icon: Icons.favorite_outline,
       );
     }).toList();
@@ -209,6 +214,7 @@ class EventService {
             title: event.title,
             personName: person.name,
             personId: person.id,
+            treeId: person.treeId,
             icon: Icons.event_outlined,
           );
         })
@@ -519,6 +525,7 @@ class EventService {
           title: 'День рождения',
           personName: person.name,
           personId: person.id,
+          treeId: person.treeId,
           icon: Icons.cake_outlined,
         ));
       }
@@ -532,6 +539,7 @@ class EventService {
           title: 'Годовщина памяти',
           personName: person.name,
           personId: person.id,
+          treeId: person.treeId,
           icon: Icons.auto_awesome_mosaic_outlined,
         ));
         final memorial9 = death.add(const Duration(days: 8));
@@ -543,6 +551,7 @@ class EventService {
             title: '9 дней',
             personName: person.name,
             personId: person.id,
+            treeId: person.treeId,
             icon: Icons.church_outlined,
           ));
         }
@@ -555,6 +564,7 @@ class EventService {
             title: '40 дней',
             personName: person.name,
             personId: person.id,
+            treeId: person.treeId,
             icon: Icons.church_outlined,
           ));
         }
@@ -574,6 +584,7 @@ class EventService {
             title: ev.title,
             personName: person.name,
             personId: person.id,
+            treeId: person.treeId,
             icon: Icons.event_outlined,
           ));
         }
@@ -602,6 +613,7 @@ class EventService {
         title: 'Годовщина свадьбы',
         personName: names.isEmpty ? 'Семейная пара' : names.join(' и '),
         personId: p1?.id ?? p2?.id ?? '',
+        treeId: p1?.treeId ?? p2?.treeId,
         icon: Icons.favorite_outline,
       ));
     }

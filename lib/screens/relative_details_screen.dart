@@ -7,10 +7,12 @@ import 'package:provider/provider.dart';
 import 'package:rodnya/models/family_person.dart';
 import '../models/family_relation.dart'; // Добавляем импорт
 
+import '../models/family_tree.dart';
 import '../models/person_dossier.dart';
 import '../models/person_duplicate_suggestion.dart';
 import '../models/user_profile.dart';
 import '../providers/tree_provider.dart'; // Для treeId
+import '../services/custom_api_auth_service.dart' show CustomApiException;
 import '../services/tree_mutation_history.dart';
 import 'package:go_router/go_router.dart';
 import '../utils/invitation_share.dart';
@@ -20,6 +22,7 @@ import '../backend/interfaces/family_tree_service_interface.dart';
 import '../backend/interfaces/identity_conflicts_capable_family_tree_service.dart';
 import '../backend/interfaces/identity_service_interface.dart';
 import '../backend/interfaces/identity_duplicate_capable_family_tree_service.dart';
+import '../backend/interfaces/person_tree_resolution_capable_family_tree_service.dart';
 import '../backend/models/identity_field_conflict.dart';
 import '../backend/interfaces/invitation_link_service_interface.dart';
 import '../backend/interfaces/profile_service_interface.dart';
@@ -37,6 +40,7 @@ import '../widgets/sensitive_contacts_section.dart';
 import '../widgets/tree_history_sheet.dart';
 import '../theme/app_theme.dart';
 import '../utils/photo_url.dart';
+import '../utils/relative_details_route.dart';
 import '../utils/user_facing_error.dart';
 import '../widgets/profile_biography_section.dart';
 import 'profile_all_photos_screen.dart';
@@ -78,12 +82,29 @@ class _EditableRelationLink {
   final RelationType relationFromRelatedPerson;
 }
 
+/// Результат резолва «в каком дереве живёт человек» (P0). Если по пути
+/// человек уже был загружен — несём его с собой, чтобы не дёргать GET
+/// второй раз.
+class _PersonTreeResolution {
+  const _PersonTreeResolution({this.treeId, this.person});
+
+  final String? treeId;
+  final FamilyPerson? person;
+}
+
 class RelativeDetailsScreen extends StatefulWidget {
   final String personId;
+
+  /// P0 (мамин баг): дерево, из которого пришли на карточку. Когда задан —
+  /// все загрузки идут по нему. Когда нет (старые ссылки, уведомления без
+  /// контекста) — экран резолвит дерево сам: кэш person→tree → выбранное
+  /// дерево → обход деревьев пользователя.
+  final String? treeId;
   final String? initialAction;
 
   const RelativeDetailsScreen({
     required this.personId,
+    this.treeId,
     this.initialAction,
     super.key,
   });
@@ -129,7 +150,11 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
   String? _viewerRelationLabel;
   bool _isLoading = true;
   String _errorMessage = '';
+  // Дерево, по которому реально грузится карточка (результат резолва) —
+  // НЕ обязательно выбранное в приложении.
   String? _currentTreeId;
+  // Выбранное дерево на момент открытия — один из шагов резолва.
+  String? _selectedTreeIdAtOpen;
   String? _currentUserPersonId;
   bool _initialActionHandled = false;
 
@@ -157,14 +182,108 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
   @override
   void initState() {
     super.initState();
-    // Получаем treeId из провайдера ПОСЛЕ построения виджета
+    // Запоминаем выбранное дерево ПОСЛЕ построения виджета — это один из
+    // шагов резолва (явный treeId роута имеет приоритет).
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _currentTreeId = Provider.of<TreeProvider>(
-        context,
-        listen: false,
-      ).selectedTreeId;
+      try {
+        _selectedTreeIdAtOpen = Provider.of<TreeProvider>(
+          context,
+          listen: false,
+        ).selectedTreeId;
+      } catch (_) {
+        _selectedTreeIdAtOpen = null;
+      }
       _loadData();
     });
+  }
+
+  /// P0: определяем дерево человека. Порядок: явный treeId из роута →
+  /// кэш person→tree сервиса → выбранное дерево (с проверкой, что человек
+  /// там есть) → полный обход деревьев пользователя. Если по пути человек
+  /// уже загрузился — возвращаем и его, чтобы не дёргать GET повторно.
+  /// Сетевые ошибки пробрасываются (их различает _loadData), «не в этом
+  /// дереве» (404/403/410) — гасятся и ведут к следующему шагу.
+  Future<_PersonTreeResolution> _resolvePersonContext() async {
+    final personId = widget.personId;
+    final service = _familyService;
+    // Деревья провайдера читаем синхронно, до await'ов (контекст через
+    // async-gap не трогаем).
+    var providerTrees = const <FamilyTree>[];
+    try {
+      providerTrees =
+          Provider.of<TreeProvider>(context, listen: false).availableTrees;
+    } catch (_) {
+      providerTrees = const <FamilyTree>[];
+    }
+
+    bool isMissingOnTree(Object error) =>
+        error is CustomApiException &&
+        (error.statusCode == 404 ||
+            error.statusCode == 403 ||
+            error.statusCode == 410);
+
+    // 1. Явный контекст из точки входа.
+    final explicit = widget.treeId?.trim();
+    if (explicit != null && explicit.isNotEmpty) {
+      return _PersonTreeResolution(treeId: explicit);
+    }
+
+    final resolution = service is PersonTreeResolutionCapableFamilyTreeService
+        ? service as PersonTreeResolutionCapableFamilyTreeService
+        : null;
+
+    // 2. Кэш сервиса. Проверяем GET'ом: кэш может протухнуть (человека
+    // удалили) — тогда честно идём дальше по цепочке.
+    final cached = resolution?.cachedTreeIdForPerson(personId);
+    if (cached != null && cached.isNotEmpty) {
+      try {
+        final person = await service.getPersonById(cached, personId);
+        return _PersonTreeResolution(treeId: cached, person: person);
+      } catch (error) {
+        if (!isMissingOnTree(error)) rethrow;
+      }
+    }
+
+    // 3. Выбранное дерево.
+    final selected = _selectedTreeIdAtOpen;
+    if (selected != null && selected.isNotEmpty && selected != cached) {
+      try {
+        final person = await service.getPersonById(selected, personId);
+        return _PersonTreeResolution(treeId: selected, person: person);
+      } catch (error) {
+        if (!isMissingOnTree(error)) rethrow;
+      }
+    }
+
+    // 4. Полный обход. Предпочитаем сервисный резолв (кэш + локальное
+    // хранилище + деревья); без capability — обходим деревья провайдера
+    // вручную.
+    if (resolution != null) {
+      final resolved = await resolution.resolveTreeIdForPerson(personId);
+      if (resolved != null && resolved.isNotEmpty) {
+        return _PersonTreeResolution(treeId: resolved);
+      }
+      return const _PersonTreeResolution();
+    }
+
+    var trees = providerTrees;
+    if (trees.isEmpty) {
+      try {
+        trees = await service.getUserTrees();
+      } catch (_) {
+        trees = const <FamilyTree>[];
+      }
+    }
+    for (final tree in trees) {
+      if (tree.id == selected || tree.id == cached) continue;
+      try {
+        final person = await service.getPersonById(tree.id, personId);
+        return _PersonTreeResolution(treeId: tree.id, person: person);
+      } catch (error) {
+        if (!isMissingOnTree(error)) rethrow;
+      }
+    }
+    return const _PersonTreeResolution();
   }
 
   Future<void> _loadData() async {
@@ -188,16 +307,24 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
       _personConflicts = const <IdentityFieldConflict>[];
     });
 
-    if (_currentTreeId == null) {
-      setState(() {
-        _isLoading = false;
-        _errorMessage =
-            'Не удалось определить активное дерево. Откройте карточку ещё раз из дерева или списка родственников.';
-      });
-      return;
-    }
-
     try {
+      // P0 (мамин баг): сперва определяем дерево ЧЕЛОВЕКА, а не берём
+      // слепо выбранное — карточка из другого дерева раньше падала в 404
+      // и показывала заглушку.
+      final resolved = await _resolvePersonContext();
+      _currentTreeId = resolved.treeId;
+      if (_currentTreeId == null) {
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+            _isLoadingHistory = false;
+            _errorMessage =
+                'Мы не нашли этого человека в ваших деревьях. Возможно, карточку удалили.';
+          });
+        }
+        return;
+      }
+
       // 0. Загружаем профиль ТЕКУЩЕГО пользователя (нужен для getReciprocalType)
       final currentUserId = _authService.currentUserId;
       if (currentUserId != null) {
@@ -219,7 +346,7 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
       _currentUserPersonId =
           currentUserPerson.isNotEmpty ? currentUserPerson.first.id : null;
 
-      _person =
+      _person = resolved.person ??
           await _familyService.getPersonById(_currentTreeId!, widget.personId);
 
       try {
@@ -2064,7 +2191,9 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
             if (!mounted || personId == _person!.id) {
               return;
             }
-            context.push('/relative/details/$personId');
+            context.push(
+              relativeDetailsRoute(personId, treeId: _currentTreeId),
+            );
           },
         );
       },

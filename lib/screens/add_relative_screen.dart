@@ -14,6 +14,7 @@ import '../services/tree_mutation_history.dart';
 import '../backend/interfaces/profile_service_interface.dart';
 import '../backend/interfaces/storage_service_interface.dart';
 import '../backend/models/cross_tree_person_suggestion.dart';
+import '../utils/relative_details_route.dart';
 import '../utils/user_facing_error.dart';
 import '../widgets/custom_relation_label_dialog.dart';
 import '../widgets/tree_history_sheet.dart';
@@ -1186,7 +1187,7 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
     if (person == null) {
       return;
     }
-    context.push('/relative/details/${person.id}');
+    context.push(relativeDetailsRoute(person.id, treeId: widget.treeId));
   }
 
   Future<void> _showEditingPersonHistorySheet() async {
@@ -1220,7 +1221,9 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
             if (!mounted) {
               return;
             }
-            context.push('/relative/details/$personId');
+            context.push(
+              relativeDetailsRoute(personId, treeId: widget.treeId),
+            );
           },
         );
       },

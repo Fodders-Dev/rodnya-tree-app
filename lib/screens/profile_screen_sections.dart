@@ -515,7 +515,9 @@ extension _ProfileScreenSections on _ProfileScreenState {
               visualDensity: VisualDensity.compact,
               tooltip: 'Открыть карточку',
               icon: const Icon(Icons.open_in_new_rounded, size: 19),
-              onPressed: () => context.push('/relative/details/${person.id}'),
+              onPressed: () => context.push(
+                relativeDetailsRoute(person.id, treeId: person.treeId),
+              ),
             ),
           ],
         ),

@@ -25,6 +25,7 @@ import '../backend/interfaces/invitation_link_service_interface.dart';
 import '../backend/models/identity_field_conflict.dart';
 import '../services/app_status_service.dart';
 import '../utils/photo_url.dart';
+import '../utils/relative_details_route.dart';
 import '../utils/snackbar.dart';
 import '../utils/user_facing_error.dart';
 import '../widgets/branch_switcher_chip.dart';
@@ -1355,7 +1356,12 @@ class _RelativesScreenState extends State<RelativesScreen> {
                       debugPrint(
                         'Avatar tapped for ${relative.displayName}, navigating to details...',
                       );
-                      context.push('/relative/details/${relative.id}');
+                      context.push(
+                        relativeDetailsRoute(
+                          relative.id,
+                          treeId: relative.treeId,
+                        ),
+                      );
                     },
                     child: CircleAvatar(
                       radius: 25,
@@ -1553,13 +1559,23 @@ class _RelativesScreenState extends State<RelativesScreen> {
                       debugPrint(
                         'Cannot chat with self or invalid user, navigating to details for ${relative.displayName}',
                       );
-                      context.push('/relative/details/${relative.id}');
+                      context.push(
+                        relativeDetailsRoute(
+                          relative.id,
+                          treeId: relative.treeId,
+                        ),
+                      );
                     }
                   } else {
                     debugPrint(
                       'Offline tab, navigating to details for ${relative.displayName}',
                     );
-                    context.push('/relative/details/${relative.id}');
+                    context.push(
+                      relativeDetailsRoute(
+                        relative.id,
+                        treeId: relative.treeId,
+                      ),
+                    );
                   }
                 },
                 contentPadding: const EdgeInsets.symmetric(

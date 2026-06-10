@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 
 import '../models/app_event.dart';
 import '../theme/app_theme.dart';
+import '../utils/relative_details_route.dart';
 
 class EventCard extends StatelessWidget {
   final AppEvent event;
@@ -41,7 +42,14 @@ class EventCard extends StatelessWidget {
         child: InkWell(
           borderRadius: radius,
           onTap: canOpenProfile
-              ? () => context.push('/relative/details/${event.personId}')
+              // P0: событие знает своё дерево — карточка открывается сразу
+              // в нём, а не в выбранном.
+              ? () => context.push(
+                    relativeDetailsRoute(
+                      event.personId,
+                      treeId: event.treeId,
+                    ),
+                  )
               : onTap,
           child: Padding(
             padding: compact

@@ -16,6 +16,7 @@ import '../models/app_notification_item.dart';
 import '../models/family_person.dart' as rodnya_models;
 import '../navigation/app_router_shared.dart';
 import '../providers/tree_provider.dart';
+import '../utils/relative_details_route.dart';
 import 'active_chat_tracker.dart';
 import 'android_incoming_call_service.dart';
 import 'call_coordinator_service.dart';
@@ -1591,8 +1592,15 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     if (type == 'birthday') {
       final personId =
           rootPayload['personId']?.toString() ?? data['personId']?.toString();
+      // P0: если пуш несёт treeId — прокидываем, чтобы карточка открылась
+      // сразу в правильном дереве; без него экран резолвит сам.
+      final treeId =
+          rootPayload['treeId']?.toString() ?? data['treeId']?.toString();
       if (personId != null && personId.isNotEmpty) {
-        _navigateOverHome(router, '/relative/details/$personId');
+        _navigateOverHome(
+          router,
+          relativeDetailsRoute(personId, treeId: treeId),
+        );
       }
       return;
     }

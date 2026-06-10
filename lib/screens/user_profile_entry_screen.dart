@@ -20,6 +20,7 @@ import '../models/family_tree.dart';
 import '../models/person_dossier.dart';
 import '../models/user_profile.dart';
 import '../theme/app_theme.dart';
+import '../utils/relative_details_route.dart';
 import '../widgets/profile_redesign.dart';
 
 class UserProfileEntryScreen extends StatefulWidget {
@@ -257,8 +258,12 @@ class _UserProfileEntryScreenState extends State<UserProfileEntryScreen> {
                       label: 'Карточка в дереве',
                       icon: Icons.badge_outlined,
                       variant: PillButtonVariant.outlined,
-                      onPressed: () =>
-                          context.push('/relative/details/$_relativeId'),
+                      onPressed: () => context.push(
+                        relativeDetailsRoute(
+                          _relativeId!,
+                          treeId: _matchingTree?.id,
+                        ),
+                      ),
                     ),
                 ],
               ),
@@ -317,8 +322,12 @@ class _UserProfileEntryScreenState extends State<UserProfileEntryScreen> {
                       label: 'Карточка в дереве',
                       icon: Icons.badge_outlined,
                       variant: PillButtonVariant.outlined,
-                      onPressed: () =>
-                          context.push('/relative/details/$_relativeId'),
+                      onPressed: () => context.push(
+                        relativeDetailsRoute(
+                          _relativeId!,
+                          treeId: _matchingTree?.id,
+                        ),
+                      ),
                     ),
                 ],
               ),

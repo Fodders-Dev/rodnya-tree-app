@@ -496,6 +496,11 @@ class AppOverlayRouteModule {
         pageBuilder: (context, state) {
           final personId = state.pathParameters['personId'] ?? '';
           final initialAction = state.uri.queryParameters['action'];
+          // P0 (мамин баг): опциональный ?treeId= — точки входа, знающие
+          // дерево, прокидывают его, и карточка грузится из него, а не из
+          // выбранного. Старые ссылки без параметра работают через
+          // резолв на самом экране (кэш → выбранное → обход деревьев).
+          final treeId = state.uri.queryParameters['treeId'];
           if (personId.isEmpty) {
             return MaterialPage<void>(
               key: state.pageKey,
@@ -510,6 +515,9 @@ class AppOverlayRouteModule {
             key: ValueKey<String>('relative_details_$personId'),
             child: RelativeDetailsScreen(
               personId: personId,
+              treeId: (treeId != null && treeId.trim().isNotEmpty)
+                  ? treeId.trim()
+                  : null,
               initialAction: initialAction,
             ),
             transitionsBuilder: AppRouteTransitions.slide,

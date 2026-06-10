@@ -9,6 +9,7 @@ import '../providers/tree_provider.dart';
 import '../models/family_person.dart';
 import '../backend/interfaces/auth_service_interface.dart';
 import '../utils/photo_url.dart';
+import '../utils/relative_details_route.dart';
 
 class OfflineProfilesScreen extends StatefulWidget {
   const OfflineProfilesScreen({super.key});
@@ -148,7 +149,9 @@ class _OfflineProfilesScreenState extends State<OfflineProfilesScreen> {
             'Оффлайн-профиль${person.birthDate != null ? ', Род: ${person.birthDate!.year}' : ''}',
           ),
           onTap: () {
-            context.push('/relative/details/${person.id}');
+            context.push(
+              relativeDetailsRoute(person.id, treeId: person.treeId),
+            );
           },
         );
       },

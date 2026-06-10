@@ -19,6 +19,11 @@ class AppEvent {
   final String title; // Например, "День рождения" или "9 дней"
   final String personName;
   final String personId;
+
+  /// P0: дерево, из которого собрано событие. Карточка человека по тапу
+  /// открывается сразу в правильном дереве (а не в выбранном). Опционально:
+  /// у праздников дерева нет, старые конструкторы продолжают работать.
+  final String? treeId;
   final IconData icon; // Иконка для отображения
   final String? description; // Краткое описание (для праздников)
 
@@ -29,6 +34,7 @@ class AppEvent {
     required this.title,
     required this.personName,
     required this.personId,
+    this.treeId,
     required this.icon,
     this.description,
   });

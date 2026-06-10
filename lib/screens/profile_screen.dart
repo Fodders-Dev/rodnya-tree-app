@@ -38,6 +38,7 @@ import '../services/custom_api_post_service.dart';
 import '../services/user_profile_cache.dart';
 import '../services/posts_cache.dart';
 import '../utils/photo_url.dart';
+import '../utils/relative_details_route.dart';
 import '../utils/user_facing_error.dart';
 
 part 'profile_screen_sections.dart';
@@ -672,7 +673,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             if (!mounted) {
               return;
             }
-            context.push('/relative/details/$personId');
+            context.push(relativeDetailsRoute(personId, treeId: treeId));
           },
         );
       },

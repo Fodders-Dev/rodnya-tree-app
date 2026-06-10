@@ -15,6 +15,7 @@ import '../backend/interfaces/identity_conflicts_capable_family_tree_service.dar
 import '../backend/interfaces/identity_duplicate_capable_family_tree_service.dart';
 import '../backend/interfaces/identity_suggestions_capable_family_tree_service.dart';
 import '../backend/interfaces/kinship_check_capable_family_tree_service.dart';
+import '../backend/interfaces/person_tree_resolution_capable_family_tree_service.dart';
 import '../backend/interfaces/semya_capable_family_tree_service.dart';
 import '../backend/interfaces/onboarding_capable_family_tree_service.dart';
 import '../backend/interfaces/profile_service_interface.dart';
@@ -66,6 +67,7 @@ class CustomApiFamilyTreeService
         ExtendedNetworkCapableFamilyTreeService,
         OnboardingCapableFamilyTreeService,
         KinshipCheckCapableFamilyTreeService,
+        PersonTreeResolutionCapableFamilyTreeService,
         SemyaCapableFamilyTreeService {
   CustomApiFamilyTreeService({
     required CustomApiAuthService authService,
@@ -632,7 +634,7 @@ class CustomApiFamilyTreeService
   @override
   Future<void> updateRelative(
       String personId, Map<String, dynamic> personData) async {
-    final treeId = await _resolveTreeIdForPerson(personId);
+    final treeId = await resolveTreeIdForPerson(personId);
     if (treeId == null) {
       throw const CustomApiException(
         'Не удалось определить дерево для редактируемого родственника',
@@ -2107,7 +2109,15 @@ class CustomApiFamilyTreeService
     }
   }
 
-  Future<String?> _resolveTreeIdForPerson(String personId) async {
+  // P0 (мамин баг): резолв person→tree опубликован через
+  // PersonTreeResolutionCapableFamilyTreeService, чтобы карточка
+  // родственника могла открыться из любого контекста (уведомление,
+  // событие, чат), а не только из выбранного дерева.
+  @override
+  String? cachedTreeIdForPerson(String personId) => _personTreeIds[personId];
+
+  @override
+  Future<String?> resolveTreeIdForPerson(String personId) async {
     if (_personTreeIds.containsKey(personId)) {
       return _personTreeIds[personId];
     }

@@ -57,6 +57,7 @@ import '../theme/app_theme.dart';
 import '../utils/user_facing_error.dart';
 import '../utils/e2e_state_bridge.dart';
 import '../utils/photo_url.dart';
+import '../utils/relative_details_route.dart';
 import '../utils/snackbar.dart';
 import '../widgets/dont_fear_breaking_banner.dart';
 
@@ -1531,11 +1532,12 @@ class _TreeViewScreenState extends State<TreeViewScreen>
     FamilyPerson person, {
     String? action,
   }) async {
-    final normalizedAction = action?.trim();
-    final route = (normalizedAction == null || normalizedAction.isEmpty)
-        ? '/relative/details/${person.id}'
-        : '/relative/details/${person.id}'
-            '?action=${Uri.encodeQueryComponent(normalizedAction)}';
+    // P0: канвас знает дерево человека — прокидываем его в карточку.
+    final route = relativeDetailsRoute(
+      person.id,
+      treeId: person.treeId.isNotEmpty ? person.treeId : _currentTreeId,
+      action: action,
+    );
     // Awaiting the push lets us refresh the tree once the user
     // navigates back. The detail screen edits person fields /
     // photos in place — without this refresh the tree keeps
@@ -2155,7 +2157,9 @@ class _TreeViewScreenState extends State<TreeViewScreen>
           onOpenPerson: (personId) async {
             Navigator.of(sheetContext).pop();
             if (!mounted) return;
-            await context.push<dynamic>('/relative/details/$personId');
+            await context.push<dynamic>(
+              relativeDetailsRoute(personId, treeId: _currentTreeId),
+            );
             if (!mounted) return;
             // Refresh tree on return so edits made on the detail
             // screen (photo, name parts, dates) show up immediately
@@ -2550,7 +2554,14 @@ class _TreeViewScreenState extends State<TreeViewScreen>
       bloodRelationService: blood,
       onOpenCard: () {
         if (!mounted) return;
-        context.push('/relative/details/${person.id}');
+        // P0: foreign-узел живёт в чужом дереве — person.treeId указывает
+        // именно его; read-доступ гейтится бэком (Phase 3.2).
+        context.push(
+          relativeDetailsRoute(
+            person.id,
+            treeId: person.treeId.isNotEmpty ? person.treeId : null,
+          ),
+        );
       },
       onWriteToOwner: (ownerUserId) async {
         if (!mounted) return;

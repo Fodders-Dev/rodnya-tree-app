@@ -2224,7 +2224,9 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
 
       rows.add(
         InkWell(
-          onTap: () => context.push('/relative/details/${relatedPerson.id}'),
+          onTap: () => context.push(
+            relativeDetailsRoute(relatedPerson.id, treeId: _currentTreeId),
+          ),
           child: Padding(
             padding: const EdgeInsets.only(bottom: 10),
             child: Row(
