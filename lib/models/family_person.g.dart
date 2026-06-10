@@ -1,4 +1,14 @@
 // GENERATED CODE - DO NOT MODIFY BY HAND
+//
+// ⚠️ ВНИМАНИЕ (hotfix-1b): файл содержит РУЧНЫЕ правки read'а поверх
+// генерата — build_runner их сносит (генератор не сопоставляет приватные
+// _photoUrl/_photoGallery с параметрами конструктора и не знает legacy-
+// дефолт visibility). После любой регенерации верни в read:
+//   • photoUrl: fields[5] as String?
+//   • photoGallery: (fields[24] as List?)…
+//   • visibility: fields[27] as String? ?? 'private'  (старые записи без
+//     поля 27 обязаны читаться)
+// Вынос этих дефолтов из генерённого файла — отдельная задача, не hotfix.
 
 part of 'family_person.dart';
 
@@ -23,6 +33,7 @@ class FamilyPersonAdapter extends TypeAdapter<FamilyPerson> {
       identityId: fields[25] as String?,
       name: fields[3] as String,
       maidenName: fields[4] as String?,
+      photoUrl: fields[5] as String?,
       gender: fields[6] as Gender,
       birthDate: fields[7] as DateTime?,
       birthPlace: fields[8] as String?,
@@ -31,7 +42,7 @@ class FamilyPersonAdapter extends TypeAdapter<FamilyPerson> {
       bio: fields[11] as String?,
       familySummary: fields[26] as String?,
       isAlive: fields[13] as bool,
-      visibility: fields[27] as String,
+      visibility: fields[27] as String? ?? 'private',
       creatorId: fields[14] as String?,
       createdAt: fields[15] as DateTime,
       updatedAt: fields[16] as DateTime,
@@ -42,6 +53,10 @@ class FamilyPersonAdapter extends TypeAdapter<FamilyPerson> {
       spouseId: fields[21] as String?,
       siblingIds: (fields[22] as List?)?.cast<String>(),
       details: fields[23] as FamilyPersonDetails?,
+      photoGallery: (fields[24] as List?)
+          ?.whereType<Map>()
+          .map((entry) => Map<String, dynamic>.from(entry))
+          .toList(),
     );
   }
 
