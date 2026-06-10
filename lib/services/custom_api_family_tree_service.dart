@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:http/http.dart' as http;
 
 import '../backend/backend_runtime_config.dart';
@@ -2081,17 +2082,35 @@ class CustomApiFamilyTreeService
     }
   }
 
+  // Hotfix-2: кэш — best-effort. Сетевые данные уже на руках; отказ
+  // локальной записи (как HiveError инцидента) не имеет права валить
+  // загрузку экрана. Все 9 call-site'ов — хвостовые `await _cachePerson*`
+  // перед return, ни один не зависит от успеха кэша.
   Future<void> _cachePerson(FamilyPerson person) async {
     final localStorageService = _localStorageService;
-    if (localStorageService != null) {
+    if (localStorageService == null) {
+      return;
+    }
+    try {
       await localStorageService.savePerson(person);
+    } catch (error) {
+      debugPrint(
+        'Кэш-запись person ${person.id} не удалась (продолжаем без кэша): $error',
+      );
     }
   }
 
   Future<void> _cachePersons(List<FamilyPerson> persons) async {
     final localStorageService = _localStorageService;
-    if (localStorageService != null) {
+    if (localStorageService == null) {
+      return;
+    }
+    try {
       await localStorageService.savePersons(persons);
+    } catch (error) {
+      debugPrint(
+        'Кэш-запись ${persons.length} persons не удалась (продолжаем без кэша): $error',
+      );
     }
   }
 
