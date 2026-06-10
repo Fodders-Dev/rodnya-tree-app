@@ -15,6 +15,7 @@ import '../backend/interfaces/profile_service_interface.dart';
 import '../backend/interfaces/storage_service_interface.dart';
 import '../backend/models/cross_tree_person_suggestion.dart';
 import '../utils/relative_details_route.dart';
+import '../utils/snackbar.dart';
 import '../utils/user_facing_error.dart';
 import '../widgets/custom_relation_label_dialog.dart';
 import '../widgets/tree_history_sheet.dart';
@@ -700,8 +701,16 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
               } catch (e) {
                 debugPrint('Ошибка при обновлении связи: $e');
                 if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Не удалось обновить связь: $e')),
+                  // P1a: без сырого «$e» в тексте — тёплая фраза + детали
+                  // бэка, если они человеческие.
+                  showAppSnackBar(
+                    context,
+                    _describeActionError(
+                      e,
+                      fallbackMessage:
+                          'Связь не сохранилась, попробуйте ещё раз.',
+                    ),
+                    isError: true,
                   );
                 }
                 // Не выходим из функции, так как данные человека могли обновиться
@@ -715,9 +724,8 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
             }
 
             if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('Информация о родственнике обновлена')),
-              );
+              // P1a: единый фидбек сохранения анкеты.
+              showAppSnackBar(context, 'Сохранено ✓');
             }
           } else {
             if (mounted) {
@@ -821,16 +829,14 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
             } catch (e) {
               debugPrint('Ошибка создания связи: $e');
               if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      _describeActionError(
-                        e,
-                        fallbackMessage:
-                            'Не удалось сохранить связь. Попробуйте ещё раз.',
-                      ),
-                    ),
+                showAppSnackBar(
+                  context,
+                  _describeActionError(
+                    e,
+                    fallbackMessage:
+                        'Связь не сохранилась, попробуйте ещё раз.',
                   ),
+                  isError: true,
                 );
               }
             }
@@ -850,14 +856,18 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
             action == _PostSaveAction.stayInQuickAdd &&
             _canUseQuickAddLoop) {
           _prepareForNextQuickAddCycle();
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                'Человек добавлен. Можно сразу заполнить следующую карточку.',
-              ),
-            ),
+          showAppSnackBar(
+            context,
+            'Сохранено ✓ Можно сразу заполнить следующую карточку.',
           );
           return;
+        }
+
+        // P1a: явный «Сохранено ✓» и при создании (для редактирования он
+        // показан выше). Снэкбар живёт на root-мессенджере, поэтому
+        // переживает pop и виден на предыдущем экране.
+        if (!widget.isEditing) {
+          showAppSnackBar(context, 'Сохранено ✓');
         }
 
         if (!widget.isEditing &&
@@ -879,17 +889,16 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
       } catch (e) {
         debugPrint('Ошибка при сохранении: $e');
         if (mounted) {
-          // Проверяем mounted перед показом SnackBar
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                _describeActionError(
-                  e,
-                  fallbackMessage:
-                      'Не удалось сохранить карточку. Проверьте данные и попробуйте ещё раз.',
-                ),
-              ),
+          // P1a: ошибка — тёплый текст, форма остаётся заполненной
+          // (экран не закрывается, finally лишь снимает спиннер) —
+          // повторное сохранение без перезаполнения.
+          showAppSnackBar(
+            context,
+            _describeActionError(
+              e,
+              fallbackMessage: 'Не сохранилось, попробуйте ещё раз.',
             ),
+            isError: true,
           );
         }
       } finally {

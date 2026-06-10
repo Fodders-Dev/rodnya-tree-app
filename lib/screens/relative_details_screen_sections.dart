@@ -293,6 +293,10 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
                   padding: const EdgeInsets.fromLTRB(16, 18, 16, 0),
                   child: _buildFamilySection(),
                 ),
+              // P1a: мягкое приглашение дозаполнить анкету (только на
+              // редактируемой карточке; исчезает при полной анкете).
+              // Паддинг внутри builder'а — скрытая плашка стоит 0dp.
+              _buildCompletenessNudge(dossier, galleryEntries),
               if (_kinshipSectionHasContent())
                 _buildKinshipSection(),
               // «О человеке» (structured facts) moved to the «Основная
@@ -997,6 +1001,101 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
   }
 
   // ── Profile Redesign helpers (relative card flavour) ───────────────────────
+
+  /// P1a: мягкий индикатор полноты анкеты + одна подсказка. Это
+  /// приглашение, не задача: без красноты и процентов-укоров. Считаем 4
+  /// базовых пункта (фото · дата рождения · место · биография); подсказка
+  /// предлагает первый незаполненный по приоритету и по тапу открывает
+  /// нужную форму. Полностью заполненная анкета — плашки нет.
+  Widget _buildCompletenessNudge(
+    PersonDossier dossier,
+    List<Map<String, dynamic>> galleryEntries,
+  ) {
+    final person = _person;
+    if (person == null || !_canDirectEditProfile()) {
+      return const SizedBox.shrink();
+    }
+
+    final hasPhoto = (person.photoUrl?.trim().isNotEmpty ?? false) ||
+        galleryEntries.isNotEmpty;
+    final hasBirthDate = person.birthDate != null;
+    final hasPlace = _composeRelativeLocation(dossier) != null;
+    final hasBio = person.bio?.trim().isNotEmpty ?? false;
+
+    final filled = [hasPhoto, hasBirthDate, hasPlace, hasBio]
+        .where((value) => value)
+        .length;
+    const total = 4;
+    if (filled >= total) {
+      return const SizedBox.shrink();
+    }
+
+    // Приоритет подсказки: фото → даты → места → биография.
+    final String hint;
+    final VoidCallback onTap;
+    if (!hasPhoto) {
+      hint = 'Добавьте фото';
+      onTap = _pickAndUploadGalleryImage;
+    } else if (!hasBirthDate) {
+      hint = 'Добавьте дату рождения';
+      onTap = _editRelative;
+    } else if (!hasPlace) {
+      hint = 'Укажите место';
+      onTap = _editRelative;
+    } else {
+      hint = 'Расскажите о человеке';
+      onTap = _editRelative;
+    }
+
+    final theme = Theme.of(context);
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+      child: Material(
+        color: tokens.accentSoft.withValues(alpha: 0.55),
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          key: const Key('relative-completeness-nudge'),
+          borderRadius: BorderRadius.circular(14),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.auto_awesome_outlined,
+                  size: 18,
+                  color: tokens.accent,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Заполнено $filled из $total · $hint',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTheme.sans(
+                      color: tokens.ink,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                Icon(
+                  Icons.chevron_right_rounded,
+                  size: 18,
+                  color: tokens.inkMuted,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 
   String? _composeRelativeLocation(PersonDossier d) {
     final city = d.city?.trim() ?? '';
