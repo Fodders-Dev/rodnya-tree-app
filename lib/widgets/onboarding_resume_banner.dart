@@ -23,6 +23,13 @@ import '../theme/app_theme.dart';
 class OnboardingResumeBanner extends StatefulWidget {
   const OnboardingResumeBanner({super.key});
 
+  /// Сброс session-dismiss между тестами (static переживает пересоздание
+  /// виджета — этим и ценен в проде, но тестам нужен чистый старт).
+  @visibleForTesting
+  static void debugResetSessionDismissal() {
+    _OnboardingResumeBannerState._sessionDismissed = false;
+  }
+
   @override
   State<OnboardingResumeBanner> createState() =>
       _OnboardingResumeBannerState();

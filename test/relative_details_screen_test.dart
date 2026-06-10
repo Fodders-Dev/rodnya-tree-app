@@ -211,6 +211,12 @@ class _FakeFamilyTreeService
         FamilyTreeServiceInterface,
         TreeGraphCapableFamilyTreeService,
         IdentityDuplicateCapableFamilyTreeService {
+  _FakeFamilyTreeService({this.extraPeople = const <FamilyPerson>[]});
+
+  /// Чанк D: дополнительные люди для точечных тестов (например, полная
+  /// анкета для плашки полноты) — базовые фикстуры не трогаются.
+  final List<FamilyPerson> extraPeople;
+
   List<PersonDuplicateSuggestion> duplicateSuggestions =
       const <PersonDuplicateSuggestion>[];
 
@@ -319,6 +325,7 @@ class _FakeFamilyTreeService
     _grandmother,
     _guardian,
     _greatGrandfather,
+    ...extraPeople,
   ];
   late final List<FamilyRelation> _relations = [
     FamilyRelation(
@@ -1520,5 +1527,72 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(ProfileArticleHistoryScreen), findsOneWidget);
+  });
+
+  // ── Чанк D: плашка полноты анкеты «Заполнено N из 4» (P1a) ──
+
+  Future<void> pumpDetails(WidgetTester tester, String personId) async {
+    tester.view.physicalSize = const Size(1200, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    final treeProvider = TreeProvider();
+    await treeProvider.selectTree('tree-1', 'Семья Кузнецовых');
+    await tester.pumpWidget(
+      ChangeNotifierProvider<TreeProvider>.value(
+        value: treeProvider,
+        child: MaterialApp(home: RelativeDetailsScreen(personId: personId)),
+      ),
+    );
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets(
+      'плашка полноты: неполная редактируемая анкета → правильный N и подсказка',
+      (tester) async {
+    // Прадед: аноним (редактируемый), есть только дата рождения →
+    // 1 из 4; первый незаполненный по приоритету — фото.
+    await pumpDetails(tester, 'great-grandfather');
+
+    expect(
+      find.byKey(const Key('relative-completeness-nudge')),
+      findsOneWidget,
+    );
+    expect(find.text('Заполнено 1 из 4 · Добавьте фото'), findsOneWidget);
+  });
+
+  testWidgets('плашка полноты: нет прав прямого редактирования → плашки нет',
+      (tester) async {
+    // Отец привязан к аккаунту (userId) и жив → не direct-editable.
+    await pumpDetails(tester, 'father');
+
+    expect(find.byKey(const Key('relative-completeness-nudge')), findsNothing);
+  });
+
+  testWidgets('плашка полноты: полная анкета → плашки нет', (tester) async {
+    await getIt.unregister<FamilyTreeServiceInterface>();
+    getIt.registerSingleton<FamilyTreeServiceInterface>(
+      _FakeFamilyTreeService(
+        extraPeople: [
+          FamilyPerson(
+            id: 'filled-anon',
+            treeId: 'tree-1',
+            name: 'Кузнецова Анна Петровна',
+            gender: Gender.female,
+            isAlive: true,
+            photoUrl: 'https://cdn.example.com/anna.jpg',
+            birthDate: DateTime(1950, 3, 8),
+            birthPlace: 'Самара',
+            bio: 'Любит огород и внуков.',
+            createdAt: DateTime(2024, 1, 1),
+            updatedAt: DateTime(2024, 1, 1),
+          ),
+        ],
+      ),
+    );
+
+    await pumpDetails(tester, 'filled-anon');
+
+    expect(find.textContaining('Анна'), findsWidgets);
+    expect(find.byKey(const Key('relative-completeness-nudge')), findsNothing);
   });
 }
