@@ -313,8 +313,10 @@ void main() {
       // CTA hierarchy (P4b): the redundant compose FAB was removed — the
       // inline «Поделиться с роднёй…» teaser is the single compose CTA.
       expect(find.byType(FloatingActionButton), findsNothing);
-      // Album v1: «Альбом семьи» entry lives in the topbar.
-      expect(find.byIcon(Icons.photo_library_outlined), findsOneWidget);
+      // 2a: альбом-иконка из топбара убрана (дедуп) — единственный вход
+      // теперь подписанный тайл «Альбом семьи» в строке хабов.
+      expect(find.byIcon(Icons.photo_library_outlined), findsNothing);
+      expect(find.byIcon(Icons.photo_album_outlined), findsOneWidget);
       // UX-core SC4: «Календарь» is a nav tab now — its topbar icon was
       // removed as a duplicate (the events-rail «Все события» link stays).
       expect(find.byIcon(Icons.calendar_month_outlined), findsNothing);
@@ -764,7 +766,6 @@ void main() {
       await tester.pumpAndSettle();
 
       for (final tip in const [
-        'Альбом семьи',
         'Поиск по постам',
         'Активность',
       ]) {
@@ -939,7 +940,7 @@ void main() {
   );
 
   testWidgets(
-    'HomeScreen: события-rail помечен тихим заголовком «Ближайшие события» (P4c)',
+    'HomeScreen: на узкой раскладке вместо рельса — компактный тайл ближайшего события (2a)',
     (tester) async {
       tester.view.physicalSize = const Size(900, 1600);
       tester.view.devicePixelRatio = 1.0;
@@ -959,8 +960,13 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      // Narrow events rail now carries a quiet secondary-section caption.
-      expect(find.text('Ближайшие события'), findsOneWidget);
+      // 2a: тяжёлый рельс (шапка + чипы + горизонтальный скролл) на узкой
+      // раскладке заменён одним слим-тайлом «<когда> — <кто>» → /calendar.
+      expect(find.byKey(const Key('home-calendar-entry')), findsOneWidget);
+      expect(find.text('Ближайшие события'), findsNothing);
+      expect(find.bySemanticsLabel('home-event-filter-all'), findsNothing);
+      // Тайл подписан «Все события» — вход в календарь остаётся именованным.
+      expect(find.text('Все события'), findsOneWidget);
     },
   );
 

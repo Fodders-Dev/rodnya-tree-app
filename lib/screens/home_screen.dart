@@ -2,7 +2,6 @@
 import 'dart:async';
 import 'dart:ui';
 
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart'
     show defaultTargetPlatform, kIsWeb, TargetPlatform;
@@ -124,7 +123,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final GlobalKey _eventRailRegionKey = GlobalKey();
   CancelWebWheelListener? _cancelWebWheelSubscription;
   int _webWheelEventCount = 0;
-  bool _isEventRailHovered = false;
 
   CustomApiNotificationService? get _customNotificationService =>
       GetIt.I.isRegistered<CustomApiNotificationService>()
@@ -890,16 +888,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 // Q3: icons sit flush — each button carries its own 5pt
                 // transparent ring inside the 48pt touch target, which is
                 // the visible gap, so no SizedBox separators are needed.
-                _buildTopbarIconButton(
-                  tokens: tokens,
-                  tooltip: 'Альбом семьи',
-                  onTap: () => context.push('/post/album'),
-                  child: Icon(
-                    Icons.photo_library_outlined,
-                    size: 20,
-                    color: tokens.accent,
-                  ),
-                ),
+                // 2a: иконка альбома из топбара убрана — вход один,
+                // подписанный тайл «Альбом семьи» в строке хабов (icon-only
+                // входы старшие не находят).
                 _buildTopbarIconButton(
                   tokens: tokens,
                   tooltip: 'Поиск по постам',
@@ -1326,169 +1317,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
-  Widget _buildUpcomingEventsSection({required bool isWideLayout}) {
-    if (_isLoadingEvents) {
-      return const SizedBox(height: 0);
-    }
-    if (_upcomingEvents.isEmpty) {
-      return const SizedBox(height: 0);
-    }
-
-    final visibleEvents = _visibleUpcomingEvents;
-    final showRailControls = MediaQuery.of(context).size.width >= 760;
-    final categories = _eventCategories;
-    final hasCategories = categories.isNotEmpty;
-    final theme = Theme.of(context);
-    final tokens = theme.extension<RodnyaDesignTokens>() ??
-        (theme.brightness == Brightness.dark
-            ? RodnyaDesignTokens.dark
-            : RodnyaDesignTokens.light);
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        // Quiet caption frames the rail as a secondary strip beneath the
-        // family feed (UX-audit 2.1 — first viewport read as overloaded
-        // because events competed with posts for weight). Mirrors the
-        // «События» header the wide sidebar already carries.
-        // S3: the rail caption doubles as the explicit, labelled entry to
-        // the full calendar — «Все события →» on the right routes to
-        // /calendar, so the screen isn't only discoverable via the tiny
-        // topbar icon. Whole row is tappable for a generous target.
-        Padding(
-          key: _tourEventsKey,
-          padding: const EdgeInsets.fromLTRB(18, 2, 18, 6),
-          child: Material(
-            color: Colors.transparent,
-            child: InkWell(
-              onTap: () => context.go('/calendar'),
-              borderRadius: BorderRadius.circular(8),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Row(
-                  children: [
-                    Icon(Icons.event_outlined,
-                        size: 13, color: tokens.inkMuted),
-                    const SizedBox(width: 6),
-                    Text(
-                      'Ближайшие события',
-                      style: AppTheme.sans(
-                        color: tokens.inkMuted,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.2,
-                      ),
-                    ),
-                    const Spacer(),
-                    Text(
-                      'Все события',
-                      style: AppTheme.sans(
-                        color: tokens.accent,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.2,
-                      ),
-                    ),
-                    const SizedBox(width: 2),
-                    Icon(Icons.chevron_right_rounded,
-                        size: 14, color: tokens.accent),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-        if (hasCategories)
-          SizedBox(
-            height: 30,
-            child: ListView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 18),
-              children: [
-                _buildEventFilterChip(
-                  label: 'Все',
-                  semanticLabel: 'home-event-filter-all',
-                  selected: _selectedEventCategoryFilter == null,
-                  onTap: () {
-                    setState(() {
-                      _selectedEventCategoryFilter = null;
-                    });
-                  },
-                ),
-                for (final category in categories) ...[
-                  const SizedBox(width: 6),
-                  _buildEventFilterChip(
-                    label: category,
-                    semanticLabel:
-                        'home-event-filter-${_eventCategoryKey(category)}',
-                    selected: _selectedEventCategoryFilter == category,
-                    onTap: () {
-                      setState(() {
-                        _selectedEventCategoryFilter = category;
-                      });
-                    },
-                  ),
-                ],
-              ],
-            ),
-          ),
-        if (hasCategories) const SizedBox(height: 8),
-        if (visibleEvents.isEmpty)
-          const SizedBox(height: 0)
-        else
-          SizedBox(
-            height: 56,
-            child: MouseRegion(
-              onEnter: (_) => _setEventRailHovered(true),
-              onExit: (_) => _setEventRailHovered(false),
-              child: Listener(
-                behavior: HitTestBehavior.translucent,
-                onPointerSignal:
-                    showRailControls ? _handleEventRailPointerSignal : null,
-                child: ListView.separated(
-                  key: _eventRailRegionKey,
-                  controller: _eventRailController,
-                  scrollDirection: Axis.horizontal,
-                  padding: const EdgeInsets.symmetric(horizontal: 18),
-                  itemCount: visibleEvents.length,
-                  separatorBuilder: (_, __) => const SizedBox(width: 8),
-                  itemBuilder: (context, index) {
-                    return EventCard(
-                      event: visibleEvents[index],
-                      compact: true,
-                    );
-                  },
-                ),
-              ),
-            ),
-          ),
-        if (showRailControls && visibleEvents.length > 1) ...[
-          const SizedBox(height: 6),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 18),
-            child: Row(
-              children: [
-                _buildEventRailArrowButton(
-                  icon: Icons.chevron_left_rounded,
-                  tooltip: 'Прокрутить события влево',
-                  semanticLabel: 'home-event-scroll-left',
-                  onTap: () => _nudgeEventRail(-220),
-                ),
-                const SizedBox(width: 6),
-                _buildEventRailArrowButton(
-                  icon: Icons.chevron_right_rounded,
-                  tooltip: 'Прокрутить события вправо',
-                  semanticLabel: 'home-event-scroll-right',
-                  onTap: () => _nudgeEventRail(220),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ],
-    );
-  }
+  // 2a: тяжёлый горизонтальный рельс «Ближайшие события» (шапка + чипы +
+  // рельс + стрелки, ~100-130dp) на узкой раскладке заменён компактным
+  // тайлом ближайшего события в строке хабов (_buildHomeHubTiles).
+  // Полные фильтры + стек событий остаются на широкой раскладке — в
+  // сайдбаре (_buildSidebarUpcomingEvents).
 
   Widget _buildEventFilterChip({
     required String label,
@@ -1583,18 +1416,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
-  void _handleEventRailPointerSignal(PointerSignalEvent event) {
-    if (event is! PointerScrollEvent || !_eventRailController.hasClients) {
-      return;
-    }
-
-    GestureBinding.instance.pointerSignalResolver.register(event, (resolved) {
-      if (resolved is PointerScrollEvent) {
-        _scrollEventRailBy(resolved.scrollDelta.dx, resolved.scrollDelta.dy);
-      }
-    });
-  }
-
   bool _handleWebEventRailWheel(
     double deltaX,
     double deltaY,
@@ -1603,7 +1424,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   ) {
     _webWheelEventCount += 1;
     if (!_eventRailController.hasClients ||
-        !(_isEventRailHovered || _isPointInsideEventRail(clientX, clientY))) {
+        !_isPointInsideEventRail(clientX, clientY)) {
       _handleEventRailScrollChanged();
       return false;
     }
@@ -1636,44 +1457,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     final topLeft = renderObject.localToGlobal(Offset.zero);
     return topLeft & renderObject.size;
-  }
-
-  void _setEventRailHovered(bool hovered) {
-    if (_isEventRailHovered == hovered) {
-      return;
-    }
-    _isEventRailHovered = hovered;
-    _handleEventRailScrollChanged();
-  }
-
-  void _nudgeEventRail(double delta) {
-    _scrollEventRailBy(delta, 0);
-  }
-
-  Widget _buildEventRailArrowButton({
-    required IconData icon,
-    required String tooltip,
-    required String semanticLabel,
-    required VoidCallback onTap,
-  }) {
-    final theme = Theme.of(context);
-    return Semantics(
-      button: true,
-      label: semanticLabel,
-      child: IconButton(
-        visualDensity: VisualDensity.compact,
-        style: IconButton.styleFrom(
-          backgroundColor: theme.colorScheme.surface.withValues(alpha: 0.82),
-          foregroundColor: theme.colorScheme.onSurfaceVariant,
-          side: BorderSide(
-            color: theme.colorScheme.outlineVariant.withValues(alpha: 0.9),
-          ),
-        ),
-        tooltip: tooltip,
-        onPressed: onTap,
-        icon: Icon(icon, size: 18),
-      ),
-    );
   }
 
   bool _scrollEventRailBy(double deltaX, double deltaY) {
