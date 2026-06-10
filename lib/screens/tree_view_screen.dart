@@ -983,6 +983,28 @@ class _TreeViewScreenState extends State<TreeViewScreen>
           ],
         ),
       ),
+      // 2d (Q4): подписанный вход «Добавить» и в виде Дерева — раньше
+      // добавление здесь жило только icon-only кнопкой тулбара, которую
+      // старшие не находили. Ведёт в тот же пикер «Кем приходится?», что
+      // и FAB Списка. Скрыт в режимах выбора/перемещения карточек — там
+      // свои тулбары и жесты. heroTag отличен от relatives-FAB: оба тела
+      // живут в одном IndexedStack вкладки «Семья».
+      floatingActionButton: (_isSelectionMode || _isEditMode)
+          ? null
+          : FloatingActionButton.extended(
+              heroTag: 'tree_add_relative_fab',
+              onPressed: () {
+                showRelationPickerAndNavigateAdd(
+                  context,
+                  treeId: selectedTreeId,
+                );
+              },
+              tooltip: _isFriendsTree
+                  ? 'Добавить человека'
+                  : 'Добавить родственника',
+              icon: const Icon(Icons.add),
+              label: const Text('Добавить'),
+            ),
     );
   }
 

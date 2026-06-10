@@ -748,6 +748,12 @@ void main() {
     expect(tester.takeException(), isNull);
     // The add-person action (in the body toolbar) stays reachable.
     expect(find.byTooltip('Добавить из панели дерева'), findsOneWidget);
+    // 2d (Q4): и подписанный extended-FAB «Добавить» виден в виде Дерева —
+    // вход в добавление больше не прячется за icon-only кнопкой.
+    expect(
+      find.widgetWithText(FloatingActionButton, 'Добавить'),
+      findsOneWidget,
+    );
   });
 
   testWidgets(

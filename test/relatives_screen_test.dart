@@ -478,7 +478,13 @@ void main() {
 
     await pumpRelativesScreen(tester);
 
-    expect(find.text('Добавить'), findsOneWidget);
+    // 2d: «Добавить» встречается дважды — кнопка side-panel и подписанный
+    // extended-FAB (раньше FAB был голым «+»).
+    expect(find.text('Добавить'), findsNWidgets(2));
+    expect(
+      find.widgetWithText(FloatingActionButton, 'Добавить'),
+      findsOneWidget,
+    );
     expect(find.text('Найти'), findsOneWidget);
     expect(find.text('3 чата'), findsOneWidget);
     expect(find.text('Пригласить 1'), findsOneWidget);

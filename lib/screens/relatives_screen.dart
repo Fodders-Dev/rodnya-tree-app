@@ -650,7 +650,10 @@ class _RelativesScreenState extends State<RelativesScreen> {
                   child: const Icon(Icons.travel_explore_rounded),
                 ),
                 const SizedBox(height: 12),
-                FloatingActionButton(
+                // 2d (Q4): подписанный вход вместо голого «+» — главный
+                // сценарий вкладки должен читаться без догадок. Ведёт в
+                // пикер «Кем приходится?» как и раньше.
+                FloatingActionButton.extended(
                   heroTag: 'add_relative_fab',
                   onPressed: () {
                     showRelationPickerAndNavigateAdd(
@@ -659,7 +662,8 @@ class _RelativesScreenState extends State<RelativesScreen> {
                     );
                   },
                   tooltip: _graphAddLabel(treeProvider),
-                  child: Icon(Icons.add),
+                  icon: const Icon(Icons.add),
+                  label: const Text('Добавить'),
                 ),
               ],
             ),
