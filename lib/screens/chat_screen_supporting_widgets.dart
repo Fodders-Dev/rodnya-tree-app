@@ -869,11 +869,11 @@ class _HighlightedMessageTextState extends State<_HighlightedMessageText> {
     if (normalizedQuery.isEmpty) {
       textWidget = Text(
         body,
-        // Reference `.msg`: 14.5/1.35 — slightly tighter than Material's
-        // bodyLarge (16/1.5) so chat reads as conversational not formal.
+        // M3 (50+): 16/1.35 — раньше 14.5 по веб-референсу, но на
+        // 720×1560 старшим читать тяжело; 16 — минимум для сообщений.
         style: TextStyle(
           color: color,
-          fontSize: 14.5,
+          fontSize: 16,
           height: 1.35,
         ),
       );
@@ -918,7 +918,8 @@ class _HighlightedMessageTextState extends State<_HighlightedMessageText> {
 
       textWidget = RichText(
         text: TextSpan(
-          style: const TextStyle(fontSize: 14.5, height: 1.35),
+          // M3: тот же 16, что и обычный текст сообщения.
+          style: const TextStyle(fontSize: 16, height: 1.35),
           children: spans,
         ),
       );

@@ -4307,13 +4307,14 @@ class _ChatScreenState extends State<ChatScreen> {
                                 .colorScheme
                                 .onSurfaceVariant
                                 .withValues(alpha: 0.78),
-                            fontSize: 15,
+                            // M3 (50+): ≥16 и для подсказки.
+                            fontSize: 16,
                           ),
                         ),
-                        // Slightly bigger font + larger line-height so
-                        // descenders (д / р / у / щ) don't visually
-                        // butt against the next line on Cyrillic text.
-                        style: const TextStyle(fontSize: 15, height: 1.4),
+                        // M3 (50+): 16/1.4 — крупный ввод; line-height
+                        // оставляем, чтобы выносные элементы (д/р/у/щ)
+                        // не липли к следующей строке.
+                        style: const TextStyle(fontSize: 16, height: 1.4),
                         textCapitalization: TextCapitalization.sentences,
                         keyboardType: TextInputType.multiline,
                         minLines: 1,
@@ -8396,6 +8397,9 @@ class _ChatBubble extends StatelessWidget {
                             timeLabel,
                             style: theme.textTheme.labelSmall?.copyWith(
                               color: metaColor,
+                              // M3 (50+): labelSmall (11) мелковат для
+                              // времени — 12.5 читаемо, баббл не распухает.
+                              fontSize: 12.5,
                               fontWeight: FontWeight.w500,
                             ),
                           ),
@@ -8828,8 +8832,9 @@ class _ComposerIconButton extends StatelessWidget {
           customBorder: const CircleBorder(),
           onTap: onPressed,
           child: Container(
-            width: 38,
-            height: 38,
+            // M3 (50+): 44dp вместо 38 — тач-таргет вложений по гайдлайну.
+            width: 44,
+            height: 44,
             decoration: BoxDecoration(
               color: scheme.surface.withValues(alpha: 0.92),
               shape: BoxShape.circle,
@@ -8841,7 +8846,7 @@ class _ComposerIconButton extends StatelessWidget {
             alignment: Alignment.center,
             child: Icon(
               icon,
-              size: 19,
+              size: 20,
               color: isEnabled
                   ? scheme.onSurface.withValues(alpha: 0.78)
                   : scheme.onSurface.withValues(alpha: 0.32),
@@ -8879,8 +8884,10 @@ class _ComposerSendButton extends StatelessWidget {
           customBorder: const CircleBorder(),
           onTap: onPressed,
           child: Container(
-            width: 42,
-            height: 42,
+            // M3 (50+): 48dp вместо 42 — send-кнопка по гайдлайну, как
+            // mic-кнопка рядом.
+            width: 48,
+            height: 48,
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.topCenter,
@@ -8904,7 +8911,7 @@ class _ComposerSendButton extends StatelessWidget {
               ],
             ),
             alignment: Alignment.center,
-            child: Icon(icon, size: 19, color: scheme.onPrimary),
+            child: Icon(icon, size: 21, color: scheme.onPrimary),
           ),
         ),
       ),
