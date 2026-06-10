@@ -78,31 +78,66 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
 
   Widget _buildBody() {
     if (_isLoading) {
+      // P0b: без жаргона «досье» — тёплый и короткий лоадер.
       return _buildRelativeStateCard(
         icon: Icons.family_restroom_outlined,
-        title: 'Открываем карточку',
-        message: 'Подтягиваем досье, связи и семейный контекст.',
+        title: 'Открываем карточку…',
+        message: 'Один момент.',
         showProgress: true,
       );
     }
-    if (_errorMessage.isNotEmpty) {
-      return _buildRelativeStateCard(
-        icon: Icons.person_search_outlined,
-        title: 'Карточка сейчас недоступна',
-        message: _errorMessage,
-        actions: [
-          FilledButton.icon(
-            onPressed: _loadData,
-            icon: const Icon(Icons.refresh),
-            label: const Text('Повторить'),
-          ),
-          OutlinedButton.icon(
-            onPressed: () => context.pop(),
-            icon: const Icon(Icons.arrow_back),
-            label: const Text('Назад'),
-          ),
-        ],
-      );
+    final errorKind = _errorKind;
+    if (errorKind != null) {
+      // P0b: честные заглушки — различаем «нет связи» / «не нашли» /
+      // «нет доступа», тексты тёплые и без техслов.
+      switch (errorKind) {
+        case _CardErrorKind.network:
+          return _buildRelativeStateCard(
+            icon: Icons.cloud_off_outlined,
+            title: 'Не получилось загрузить',
+            message: 'Проверьте интернет и попробуйте ещё раз.',
+            actions: [
+              FilledButton.icon(
+                onPressed: _loadData,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Повторить'),
+              ),
+              OutlinedButton.icon(
+                onPressed: () => context.pop(),
+                icon: const Icon(Icons.arrow_back),
+                label: const Text('Назад'),
+              ),
+            ],
+          );
+        case _CardErrorKind.notFound:
+          return _buildRelativeStateCard(
+            icon: Icons.person_search_outlined,
+            title: 'Карточка не нашлась',
+            message: 'Мы поискали во всех ваших деревьях. '
+                'Возможно, эту карточку удалили.',
+            actions: [
+              OutlinedButton.icon(
+                onPressed: () => context.pop(),
+                icon: const Icon(Icons.arrow_back),
+                label: const Text('Назад'),
+              ),
+            ],
+          );
+        case _CardErrorKind.accessDenied:
+          return _buildRelativeStateCard(
+            icon: Icons.lock_outline,
+            title: 'Карточка закрыта',
+            message: 'Её владелец ограничил доступ. '
+                'Загляните позже или напишите ему.',
+            actions: [
+              OutlinedButton.icon(
+                onPressed: () => context.pop(),
+                icon: const Icon(Icons.arrow_back),
+                label: const Text('Назад'),
+              ),
+            ],
+          );
+      }
     }
     if (_person == null) {
       return _buildRelativeStateCard(

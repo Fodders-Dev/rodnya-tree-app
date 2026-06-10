@@ -70,6 +70,20 @@ enum _RelativeGalleryAction {
   delete,
 }
 
+/// P0b: честная классификация отказа загрузки КРИТИЧЕСКОЙ части карточки
+/// (резолв дерева / сам человек). Второстепенные данные деградируют
+/// секциями и сюда не попадают.
+enum _CardErrorKind {
+  /// Сеть/сервер не ответили — лечится повтором.
+  network,
+
+  /// Человека нет ни в одном доступном дереве (удалён или ссылка устарела).
+  notFound,
+
+  /// Бэк ответил «нельзя» — карточка закрыта настройками доступа.
+  accessDenied,
+}
+
 class _EditableRelationLink {
   const _EditableRelationLink({
     required this.relation,
@@ -149,7 +163,7 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
   TreeGraphViewerDescriptor? _viewerDescriptor;
   String? _viewerRelationLabel;
   bool _isLoading = true;
-  String _errorMessage = '';
+  _CardErrorKind? _errorKind;
   // Дерево, по которому реально грузится карточка (результат резолва) —
   // НЕ обязательно выбранное в приложении.
   String? _currentTreeId;
@@ -290,7 +304,7 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
     if (!mounted) return;
     setState(() {
       _isLoading = true;
-      _errorMessage = '';
+      _errorKind = null;
       _person = null;
       _treePeople = [];
       _relations = [];
@@ -307,37 +321,53 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
       _personConflicts = const <IdentityFieldConflict>[];
     });
 
+    // ── Критическая часть: дерево + сам человек. Только её отказ даёт
+    // полноэкранную заглушку; всё остальное деградирует секциями. ──
+    final _PersonTreeResolution resolved;
     try {
       // P0 (мамин баг): сперва определяем дерево ЧЕЛОВЕКА, а не берём
       // слепо выбранное — карточка из другого дерева раньше падала в 404
       // и показывала заглушку.
-      final resolved = await _resolvePersonContext();
-      _currentTreeId = resolved.treeId;
-      if (_currentTreeId == null) {
-        if (mounted) {
-          setState(() {
-            _isLoading = false;
-            _isLoadingHistory = false;
-            _errorMessage =
-                'Мы не нашли этого человека в ваших деревьях. Возможно, карточку удалили.';
-          });
-        }
-        return;
-      }
+      resolved = await _resolvePersonContext();
+    } catch (e) {
+      debugPrint('Не удалось определить дерево для ${widget.personId}: $e');
+      _failLoad(_classifyCriticalError(e));
+      return;
+    }
+    _currentTreeId = resolved.treeId;
+    if (_currentTreeId == null) {
+      _failLoad(_CardErrorKind.notFound);
+      return;
+    }
 
-      // 0. Загружаем профиль ТЕКУЩЕГО пользователя (нужен для getReciprocalType)
-      final currentUserId = _authService.currentUserId;
-      if (currentUserId != null) {
-        try {
-          await _profileService.getUserProfile(currentUserId);
-        } catch (profileError) {
-          debugPrint(
-            'Не удалось загрузить профиль текущего пользователя: $profileError',
-          );
-          // Не считаем критичной ошибкой для отображения деталей родственника
-        }
-      }
+    try {
+      _person = resolved.person ??
+          await _familyService.getPersonById(_currentTreeId!, widget.personId);
+    } catch (e) {
+      debugPrint('Ошибка загрузки данных родственника ${widget.personId}: $e');
+      _failLoad(_classifyCriticalError(e));
+      return;
+    }
 
+    // ── Второстепенное: каждый блок в своём try — отказ гасит секцию
+    // (подписи связей, биографию, историю…), но карточка живёт. ──
+
+    // 0. Профиль ТЕКУЩЕГО пользователя (нужен для getReciprocalType).
+    final currentUserId = _authService.currentUserId;
+    if (currentUserId != null) {
+      try {
+        await _profileService.getUserProfile(currentUserId);
+      } catch (profileError) {
+        debugPrint(
+          'Не удалось загрузить профиль текущего пользователя: $profileError',
+        );
+        // Не считаем критичной ошибкой для отображения деталей родственника
+      }
+    }
+
+    // 1. Люди и связи дерева — без них карточка остаётся без подписей
+    // родства, но открывается.
+    try {
       final relatives = await _familyService.getRelatives(_currentTreeId!);
       _relations = await _familyService.getRelations(_currentTreeId!);
       _treePeople = relatives;
@@ -345,31 +375,44 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
           relatives.where((p) => p.userId == currentUserId);
       _currentUserPersonId =
           currentUserPerson.isNotEmpty ? currentUserPerson.first.id : null;
+    } catch (relativesError) {
+      debugPrint(
+        'Не удалось загрузить родственников/связи дерева $_currentTreeId: $relativesError',
+      );
+      _treePeople = [];
+      _relations = [];
+      _currentUserPersonId = null;
+    }
 
-      _person = resolved.person ??
-          await _familyService.getPersonById(_currentTreeId!, widget.personId);
+    try {
+      _dossier = await _familyService.getPersonDossier(
+        _currentTreeId!,
+        widget.personId,
+      );
+      _person = _dossier!.person;
+      _userProfile = _dossier!.linkedProfile;
+    } catch (_) {
+      _dossier = null;
+    }
 
+    // 2. Если есть userId, пытаемся загрузить UserProfile
+    if (_userProfile == null &&
+        _person!.userId != null &&
+        _person!.userId!.isNotEmpty) {
       try {
-        _dossier = await _familyService.getPersonDossier(
-          _currentTreeId!,
-          widget.personId,
-        );
-        _person = _dossier!.person;
-        _userProfile = _dossier!.linkedProfile;
-      } catch (_) {
-        _dossier = null;
-      }
-
-      // 2. Если есть userId, пытаемся загрузить UserProfile
-      if (_userProfile == null &&
-          _person!.userId != null &&
-          _person!.userId!.isNotEmpty) {
         _userProfile = await _profileService.getUserProfile(_person!.userId!);
-        // Ошибку загрузки профиля пока не считаем критичной
+      } catch (profileError) {
+        // Не критично: карточка живёт без привязанного профиля.
+        debugPrint(
+          'Не удалось загрузить профиль ${_person!.userId}: $profileError',
+        );
+        _userProfile = null;
       }
+    }
 
-      // 3. Определяем родственную связь с текущим пользователем
-      if (_currentUserPersonId != null && _person != null) {
+    // 3. Определяем родственную связь с текущим пользователем
+    if (_currentUserPersonId != null && _person != null) {
+      try {
         _relationToCurrentUser = await _familyService.getRelationBetween(
           _currentTreeId!,
           _currentUserPersonId!,
@@ -378,17 +421,31 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
         debugPrint(
           'Связь ${widget.personId} с текущим пользователем ($_currentUserPersonId): $_relationToCurrentUser',
         );
-        debugPrint('Пол родственника ${_person!.id}: ${_person!.gender}');
+      } catch (relationError) {
+        debugPrint(
+          'Не удалось определить связь с ${widget.personId}: $relationError',
+        );
+        _relationToCurrentUser = null;
       }
-      if (_graphTreeService != null && _person != null) {
+    }
+    if (_graphTreeService != null && _person != null) {
+      try {
         final snapshot =
             await _graphTreeService!.getTreeGraphSnapshot(_currentTreeId!);
         _graphSnapshot = snapshot;
         _viewerDescriptor = snapshot.findViewerDescriptor(_person!.id);
         _viewerRelationLabel = _viewerDescriptor?.primaryRelationLabel?.trim();
+      } catch (snapshotError) {
+        debugPrint(
+          'Не удалось загрузить graph snapshot для $_currentTreeId: $snapshotError',
+        );
+        _graphSnapshot = null;
+        _viewerDescriptor = null;
+        _viewerRelationLabel = null;
       }
+    }
 
-      if (_identityDuplicateService != null && _person != null) {
+    if (_identityDuplicateService != null && _person != null) {
         try {
           final suggestions = await _identityDuplicateService!
               .getDuplicateSuggestions(_currentTreeId!);
@@ -425,37 +482,52 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
         }
       }
 
-      try {
-        if (_person != null) {
-          _historyRecords = await _familyService.getTreeHistory(
-            treeId: _currentTreeId!,
-            personId: _person!.id,
-          );
-        }
-      } catch (historyError) {
-        debugPrint(
-          'Не удалось загрузить историю изменений для ${widget.personId}: $historyError',
+    try {
+      if (_person != null) {
+        _historyRecords = await _familyService.getTreeHistory(
+          treeId: _currentTreeId!,
+          personId: _person!.id,
         );
-        _historyRecords = [];
       }
+    } catch (historyError) {
+      debugPrint(
+        'Не удалось загрузить историю изменений для ${widget.personId}: $historyError',
+      );
+      _historyRecords = [];
+    }
 
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-          _isLoadingHistory = false;
-        });
-        _maybeHandleInitialAction();
+    if (mounted) {
+      setState(() {
+        _isLoading = false;
+        _isLoadingHistory = false;
+      });
+      _maybeHandleInitialAction();
+    }
+  }
+
+  void _failLoad(_CardErrorKind kind) {
+    if (!mounted) return;
+    setState(() {
+      _isLoading = false;
+      _isLoadingHistory = false;
+      _errorKind = kind;
+    });
+  }
+
+  /// Классификация отказа критической части. HTTP-статусы различаем по
+  /// [CustomApiException]; всё остальное (socket, timeout, 5xx) считаем
+  /// «не дозвонились» — это лечится повтором.
+  _CardErrorKind _classifyCriticalError(Object error) {
+    if (error is CustomApiException) {
+      final status = error.statusCode;
+      if (status == 404 || status == 410) {
+        return _CardErrorKind.notFound;
       }
-    } catch (e) {
-      debugPrint('Ошибка загрузки данных родственника ${widget.personId}: $e');
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-          _isLoadingHistory = false;
-          _errorMessage = 'Не удалось загрузить данные родственника.';
-        });
+      if (status == 403 || status == 401) {
+        return _CardErrorKind.accessDenied;
       }
     }
+    return _CardErrorKind.network;
   }
 
   void _maybeHandleInitialAction() {
