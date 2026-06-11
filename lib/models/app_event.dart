@@ -24,6 +24,10 @@ class AppEvent {
   /// открывается сразу в правильном дереве (а не в выбранном). Опционально:
   /// у праздников дерева нет, старые конструкторы продолжают работать.
   final String? treeId;
+
+  /// K2: год рождения человека (для дней рождения) — agenda-список
+  /// показывает «исполнится N лет». Опционально, только у birthday.
+  final int? personBirthYear;
   final IconData icon; // Иконка для отображения
   final String? description; // Краткое описание (для праздников)
 
@@ -35,9 +39,14 @@ class AppEvent {
     required this.personName,
     required this.personId,
     this.treeId,
+    this.personBirthYear,
     required this.icon,
     this.description,
   });
+
+  /// K2: возраст, который исполняется в дату события (для birthday).
+  int? get ageAtEvent =>
+      personBirthYear == null ? null : date.year - personBirthYear!;
 
   // Метод для получения оставшегося времени или статуса
   String get status {

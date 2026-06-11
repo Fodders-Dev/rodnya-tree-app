@@ -192,6 +192,149 @@ void main() {
     expect(find.text(tip), findsOneWidget);
   });
 
+  // ── K2: тумблер Месяц|Список, agenda, «Сегодня», создание встречи ──
+
+  testWidgets('K2: тумблер переключает на agenda-список с группировкой',
+      (tester) async {
+    final now = DateTime.now();
+    // День рождения через ~5 дней — гарантированно в окне 90 дней.
+    final birthday = now.add(const Duration(days: 5));
+    final service = EventService(
+      familyTreeService: _FakeFamilyTreeService(
+        relatives: [
+          FamilyPerson(
+            id: 'p1',
+            treeId: 'tree-1',
+            name: 'Иван Петров',
+            gender: Gender.male,
+            birthDate: DateTime(1955, birthday.month, birthday.day),
+            isAlive: true,
+            createdAt: DateTime(2024, 1, 1),
+            updatedAt: DateTime(2024, 1, 1),
+          ),
+        ],
+      ),
+    );
+
+    await tester.pumpWidget(host(service));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('calendar-view-month')), findsOneWidget);
+    expect(find.byKey(const Key('calendar-view-list')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('calendar-view-list')));
+    await tester.pumpAndSettle();
+
+    // Agenda на месте: сетки нет, список с днём рождения и бейджем
+    // категории; «исполнится N» — возраст.
+    expect(find.byType(TableCalendar<AppEvent>), findsNothing);
+    expect(find.byKey(const Key('calendar-agenda-list')), findsOneWidget);
+    expect(find.text('Иван Петров'), findsOneWidget);
+    expect(find.textContaining('исполнится'), findsOneWidget);
+    expect(find.text('Родня'), findsWidgets);
+
+    // Назад в месяц.
+    await tester.tap(find.byKey(const Key('calendar-view-month')));
+    await tester.pumpAndSettle();
+    expect(find.byType(TableCalendar<AppEvent>), findsOneWidget);
+  });
+
+  testWidgets('K2: кнопка «Сегодня» возвращает из чужого месяца к текущему',
+      (tester) async {
+    final now = DateTime.now();
+    final farMonth = DateTime(now.year, now.month - 2, 15);
+    final service = EventService(
+      familyTreeService: _FakeFamilyTreeService(relatives: const []),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.lightTheme,
+        home: FamilyCalendarScreen(
+          serviceOverride: service,
+          treeId: 'tree-1',
+          initialMonth: farMonth,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Юзер «ушёл» от текущего месяца → кнопка видна.
+    final todayButton = find.byKey(const Key('calendar-today'));
+    expect(todayButton, findsOneWidget);
+
+    await tester.tap(todayButton);
+    await tester.pumpAndSettle();
+
+    // Вернулись к текущему месяцу: кнопка исчезла (фокус снова «сегодня»).
+    expect(find.byKey(const Key('calendar-today')), findsNothing);
+  });
+
+  testWidgets(
+      'K2: «Создать встречу» из дня (включая пустой) открывает композер с датой',
+      (tester) async {
+    tester.view.physicalSize = const Size(800, 1400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    String? pushedLocation;
+    final service = EventService(
+      familyTreeService: _FakeFamilyTreeService(relatives: const []),
+    );
+    final router = GoRouter(
+      initialLocation: '/',
+      routes: [
+        GoRoute(
+          path: '/',
+          builder: (_, __) => FamilyCalendarScreen(
+            serviceOverride: service,
+            treeId: 'tree-1',
+            initialMonth: DateTime(2026, 4, 15),
+          ),
+        ),
+        GoRoute(
+          path: '/gathering/create',
+          builder: (_, state) {
+            pushedLocation = state.uri.toString();
+            return const Scaffold(body: Text('composer-stub'));
+          },
+        ),
+      ],
+    );
+    await tester.pumpWidget(
+      MaterialApp.router(theme: AppTheme.lightTheme, routerConfig: router),
+    );
+    await tester.pumpAndSettle();
+
+    // Пустой день: вход в создание есть и здесь.
+    expect(find.text('В этот день событий нет'), findsOneWidget);
+    final createButton = find.byKey(const Key('calendar-create-gathering'));
+    expect(createButton, findsOneWidget);
+
+    await tester.ensureVisible(createButton);
+    await tester.pumpAndSettle();
+    await tester.tap(createButton);
+    await tester.pumpAndSettle();
+
+    expect(find.text('composer-stub'), findsOneWidget);
+    expect(pushedLocation, '/gathering/create?date=2026-04-15');
+  });
+
+  testWidgets('K2: FAB «Встреча» присутствует и поднят над нав-баром',
+      (tester) async {
+    final service = EventService(
+      familyTreeService: _FakeFamilyTreeService(relatives: const []),
+    );
+    await tester.pumpWidget(host(service));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('calendar-create-fab')), findsOneWidget);
+    expect(
+      find.widgetWithText(FloatingActionButton, 'Встреча'),
+      findsOneWidget,
+    );
+  });
+
   testWidgets(
       'M1: число дня на принципиальный лунный день читаемо, эмодзи в сетке нет',
       (tester) async {

@@ -213,12 +213,30 @@ class AppShellRouteModule {
                 // Phase E2: «Новая встреча» composer (mirrors post/create).
                 path: 'gathering/create',
                 parentNavigatorKey: rootNavigatorKey,
-                pageBuilder: (context, state) => RodnyaCustomTransitionPage(
-                  key: state.pageKey,
-                  constrainWidth: true,
-                  child: const CreateGatheringScreen(),
-                  transitionsBuilder: AppRouteTransitions.slideUp,
-                ),
+                pageBuilder: (context, state) {
+                  // K2: ?date=YYYY-MM-DD — календарь открывает композер с
+                  // предзаполненной датой выбранного дня (путь/структура
+                  // роута не меняются). Время — тёплый полдень, чтобы
+                  // пикеру времени было от чего оттолкнуться.
+                  final rawDate = state.uri.queryParameters['date'];
+                  final parsedDate =
+                      rawDate == null ? null : DateTime.tryParse(rawDate);
+                  return RodnyaCustomTransitionPage(
+                    key: state.pageKey,
+                    constrainWidth: true,
+                    child: CreateGatheringScreen(
+                      initialStartAt: parsedDate == null
+                          ? null
+                          : DateTime(
+                              parsedDate.year,
+                              parsedDate.month,
+                              parsedDate.day,
+                              12,
+                            ),
+                    ),
+                    transitionsBuilder: AppRouteTransitions.slideUp,
+                  );
+                },
               ),
               GoRoute(
                 // Phase E5: «Новый опрос» composer (mirrors gathering/create).

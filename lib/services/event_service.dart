@@ -49,6 +49,7 @@ class EventService {
               personName: person.name,
               personId: person.id,
               treeId: person.treeId,
+              personBirthYear: person.birthDate!.year,
               icon: Icons.cake_outlined,
             ),
           );
@@ -526,6 +527,7 @@ class EventService {
           personName: person.name,
           personId: person.id,
           treeId: person.treeId,
+          personBirthYear: birth.year,
           icon: Icons.cake_outlined,
         ));
       }

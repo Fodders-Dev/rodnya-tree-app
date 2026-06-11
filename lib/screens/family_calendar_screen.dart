@@ -6,6 +6,7 @@
 // list of that day's events (shared EventCard).
 
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:table_calendar/table_calendar.dart';
@@ -15,6 +16,7 @@ import '../providers/tree_provider.dart';
 import '../services/event_service.dart';
 import '../theme/app_theme.dart';
 import '../utils/moon_phase.dart';
+import '../utils/relative_details_route.dart';
 import '../widgets/event_card.dart';
 
 // M1: эмодзи-глиф из ячеек сетки и постоянная легенда убраны (вендорные
@@ -39,6 +41,9 @@ class FamilyCalendarScreen extends StatefulWidget {
   State<FamilyCalendarScreen> createState() => _FamilyCalendarScreenState();
 }
 
+/// K2: вид календаря — месячная сетка или agenda-список на 90 дней.
+enum _CalendarViewMode { month, list }
+
 class _FamilyCalendarScreenState extends State<FamilyCalendarScreen> {
   late final EventService _service = widget.serviceOverride ?? EventService();
   String? _treeId;
@@ -49,9 +54,19 @@ class _FamilyCalendarScreenState extends State<FamilyCalendarScreen> {
   Map<DateTime, List<AppEvent>> _eventsByDay = const {};
   TreeProvider? _treeProvider;
 
+  // K2: agenda-список (90 дней вперёд). Грузится лениво при первом
+  // переключении, сбрасывается при смене дерева/создании встречи.
+  _CalendarViewMode _viewMode = _CalendarViewMode.month;
+  List<AppEvent>? _agendaEvents;
+  bool _agendaLoading = false;
+  bool _agendaFailed = false;
+  final ScrollController _agendaController = ScrollController();
+  bool _agendaScrolledAway = false;
+
   @override
   void initState() {
     super.initState();
+    _agendaController.addListener(_handleAgendaScroll);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _treeId = widget.treeId;
@@ -79,13 +94,27 @@ class _FamilyCalendarScreenState extends State<FamilyCalendarScreen> {
     setState(() {
       _treeId = newTreeId;
       _eventsByDay = const {};
+      _agendaEvents = null;
     });
     _loadMonth(_focusedDay);
+    if (_viewMode == _CalendarViewMode.list) {
+      _loadAgenda();
+    }
+  }
+
+  void _handleAgendaScroll() {
+    if (!_agendaController.hasClients) return;
+    final scrolledAway = _agendaController.offset > 240;
+    if (scrolledAway != _agendaScrolledAway && mounted) {
+      setState(() => _agendaScrolledAway = scrolledAway);
+    }
   }
 
   @override
   void dispose() {
     _treeProvider?.removeListener(_handleTreeChange);
+    _agendaController.removeListener(_handleAgendaScroll);
+    _agendaController.dispose();
     super.dispose();
   }
 
@@ -128,8 +157,123 @@ class _FamilyCalendarScreenState extends State<FamilyCalendarScreen> {
     }
   }
 
-  List<AppEvent> _eventsFor(DateTime day) =>
-      _eventsByDay[_dayKey(day)] ?? const <AppEvent>[];
+  List<AppEvent> _eventsFor(DateTime day) {
+    final events = _eventsByDay[_dayKey(day)];
+    if (events == null) return const <AppEvent>[];
+    return List<AppEvent>.of(events)..sort(_compareWithinDay);
+  }
+
+  /// K3: внутри одного дня семейные даты (дни рождения, годовщины — всё,
+  /// что привязано к человеку) всегда выше праздников.
+  int _compareWithinDay(AppEvent a, AppEvent b) {
+    final aFamily = a.isLinkedToPerson ? 0 : 1;
+    final bFamily = b.isLinkedToPerson ? 0 : 1;
+    if (aFamily != bFamily) return aFamily - bFamily;
+    return a.title.compareTo(b.title);
+  }
+
+  /// K2: agenda — ближайшие 90 дней одной прокруткой. Собираем из
+  /// помесячного источника (текущий + 3 следующих месяца покрывают
+  /// диапазон), фильтруем окно и сортируем: день → семейные выше
+  /// праздников.
+  Future<void> _loadAgenda() async {
+    final treeId = _treeId;
+    if (treeId == null || treeId.isEmpty) return;
+    if (mounted) {
+      setState(() {
+        _agendaLoading = true;
+        _agendaFailed = false;
+      });
+    }
+    try {
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      final horizon = today.add(const Duration(days: 90));
+      final monthFutures = <Future<List<AppEvent>>>[];
+      for (var i = 0; i < 4; i++) {
+        final month = DateTime(today.year, today.month + i, 1);
+        monthFutures.add(
+          _service.getEventsForMonth(treeId, month.year, month.month),
+        );
+      }
+      final monthly = await Future.wait(monthFutures);
+      if (!mounted) return;
+      final events = monthly
+          .expand((events) => events)
+          .where((event) {
+            final day = _dayKey(event.date);
+            return !day.isBefore(today) && !day.isAfter(horizon);
+          })
+          .toList()
+        ..sort((a, b) {
+          final byDay = _dayKey(a.date).compareTo(_dayKey(b.date));
+          if (byDay != 0) return byDay;
+          return _compareWithinDay(a, b);
+        });
+      setState(() {
+        _agendaEvents = events;
+        _agendaLoading = false;
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _agendaLoading = false;
+          _agendaFailed = true;
+        });
+      }
+    }
+  }
+
+  void _switchView(_CalendarViewMode mode) {
+    if (_viewMode == mode) return;
+    setState(() => _viewMode = mode);
+    if (mode == _CalendarViewMode.list && _agendaEvents == null) {
+      _loadAgenda();
+    }
+  }
+
+  /// K2: GCal-фишка «Сегодня» — в месяце прыжок к текущему месяцу с
+  /// выделением дня, в списке — скролл к началу («Сегодня» всегда сверху).
+  bool get _showTodayButton {
+    if (_viewMode == _CalendarViewMode.list) {
+      return _agendaScrolledAway;
+    }
+    final now = DateTime.now();
+    return _focusedDay.year != now.year || _focusedDay.month != now.month;
+  }
+
+  void _jumpToToday() {
+    final now = DateTime.now();
+    if (_viewMode == _CalendarViewMode.list) {
+      if (_agendaController.hasClients) {
+        _agendaController.animateTo(
+          0,
+          duration: const Duration(milliseconds: 350),
+          curve: Curves.easeOutCubic,
+        );
+      }
+      return;
+    }
+    setState(() {
+      _focusedDay = now;
+      _selectedDay = now;
+    });
+    _loadMonth(now);
+  }
+
+  /// K2: создание встречи с предзаполненной датой (выбранный день).
+  /// По возврату перечитываем месяц и agenda — свежая встреча сразу
+  /// видна в календаре.
+  Future<void> _createGatheringFor(DateTime day) async {
+    final dateParam = DateFormat('yyyy-MM-dd').format(day);
+    await context.push('/gathering/create?date=$dateParam');
+    if (!mounted) return;
+    await _loadMonth(_focusedDay);
+    if (!mounted) return;
+    if (_agendaEvents != null || _viewMode == _CalendarViewMode.list) {
+      await _loadAgenda();
+    }
+  }
 
   Color _markerColor(
     AppEventType type,
@@ -152,40 +296,384 @@ class _FamilyCalendarScreenState extends State<FamilyCalendarScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final tokens = theme.extension<RodnyaDesignTokens>() ??
-        (theme.brightness == Brightness.dark
-            ? RodnyaDesignTokens.dark
-            : RodnyaDesignTokens.light);
+    final tokens = AppTheme.tokensOf(context);
     final selectedEvents = _eventsFor(_selectedDay);
+    final isListView = _viewMode == _CalendarViewMode.list;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Календарь')),
+      appBar: AppBar(
+        title: const Text('Календарь'),
+        actions: [
+          // K2 (GCal): «Сегодня» — в месяце прыжок к текущему месяцу,
+          // в списке скролл к началу. Видна, когда юзер «ушёл».
+          if (_showTodayButton)
+            Padding(
+              padding: const EdgeInsets.only(right: 6),
+              child: TextButton.icon(
+                key: const Key('calendar-today'),
+                onPressed: _jumpToToday,
+                icon: const Icon(Icons.today_outlined, size: 20),
+                label: const Text(
+                  'Сегодня',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+      // K2: создание встречи прямо из календаря — дата = выбранный день.
+      // Календарь живёт внутри шелла с плавающим нав-баром: отступ из
+      // единого источника правды, как у FAB'ов «Семьи».
+      floatingActionButton: !_hasTree
+          ? null
+          : Padding(
+              padding: EdgeInsets.only(
+                bottom: AppTheme.bottomNavInset(context),
+              ),
+              child: FloatingActionButton.extended(
+                key: const Key('calendar-create-fab'),
+                heroTag: 'calendar_create_gathering_fab',
+                onPressed: () => _createGatheringFor(_selectedDay),
+                tooltip: 'Создать встречу',
+                icon: const Icon(Icons.add),
+                label: const Text('Встреча'),
+              ),
+            ),
       body: Column(
         children: [
-          _buildCalendar(theme, tokens),
-          // M1: постоянная легенда фаз убрана — фаза выбранного дня и так
-          // в tip-полосе под сеткой; две строки экрана вернулись сетке.
-          const Divider(height: 1),
-          if (_loading)
-            const Padding(
-              padding: EdgeInsets.all(24),
-              child: Center(child: CircularProgressIndicator()),
-            )
-          else if (!_hasTree)
-            Expanded(child: _buildNoTree(theme, tokens))
-          else if (_loadFailed)
-            Expanded(child: _buildError(theme, tokens))
+          _buildViewToggle(theme, tokens),
+          if (isListView)
+            Expanded(child: _buildAgendaBody(theme, tokens))
           else ...[
-            _buildMoonTip(theme, tokens, _selectedDay),
-            Expanded(
-              child: selectedEvents.isEmpty
-                  ? _buildDayEmpty(theme, tokens)
-                  : _buildDayList(selectedEvents),
-            ),
+            _buildCalendar(theme, tokens),
+            // M1: постоянная легенда фаз убрана — фаза выбранного дня и
+            // так в tip-полосе под сеткой.
+            const Divider(height: 1),
+            if (_loading)
+              const Padding(
+                padding: EdgeInsets.all(24),
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else if (!_hasTree)
+              Expanded(child: _buildNoTree(theme, tokens))
+            else if (_loadFailed)
+              Expanded(child: _buildError(theme, tokens))
+            else ...[
+              _buildMoonTip(theme, tokens, _selectedDay),
+              Expanded(
+                child: selectedEvents.isEmpty
+                    ? _buildDayEmpty(theme, tokens)
+                    : _buildDayList(selectedEvents),
+              ),
+            ],
           ],
         ],
       ),
     );
+  }
+
+  /// K2: тумблер [Месяц | Список] — тот же визуальный паттерн, что
+  /// Список⇄Дерево в «Семье» (сегменты ≥44dp).
+  Widget _buildViewToggle(ThemeData theme, RodnyaDesignTokens tokens) {
+    Widget segment({
+      required Key key,
+      required IconData icon,
+      required String label,
+      required bool selected,
+      required VoidCallback onTap,
+    }) {
+      return Expanded(
+        child: Material(
+          color: selected ? tokens.accent : Colors.transparent,
+          borderRadius: BorderRadius.circular(11),
+          child: InkWell(
+            key: key,
+            borderRadius: BorderRadius.circular(11),
+            onTap: onTap,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 13),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    icon,
+                    size: 17,
+                    color: selected ? tokens.accentInk : tokens.inkMuted,
+                  ),
+                  const SizedBox(width: 7),
+                  Text(
+                    label,
+                    style: AppTheme.sans(
+                      color: selected ? tokens.accentInk : tokens.inkMuted,
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 8, 14, 4),
+      child: Container(
+        padding: const EdgeInsets.all(3),
+        decoration: BoxDecoration(
+          color: tokens.surfaceStrong,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: tokens.surfaceLine),
+        ),
+        child: Row(
+          children: [
+            segment(
+              key: const Key('calendar-view-month'),
+              icon: Icons.calendar_month_outlined,
+              label: 'Месяц',
+              selected: _viewMode == _CalendarViewMode.month,
+              onTap: () => _switchView(_CalendarViewMode.month),
+            ),
+            segment(
+              key: const Key('calendar-view-list'),
+              icon: Icons.view_agenda_outlined,
+              label: 'Список',
+              selected: _viewMode == _CalendarViewMode.list,
+              onTap: () => _switchView(_CalendarViewMode.list),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// K2: agenda в стиле Google Calendar — ближайшие 90 дней одной
+  /// прокруткой, сгруппированы по дням, бейдж категории на каждом.
+  Widget _buildAgendaBody(ThemeData theme, RodnyaDesignTokens tokens) {
+    if (!_hasTree) return _buildNoTree(theme, tokens);
+    if (_agendaLoading || (_agendaEvents == null && !_agendaFailed)) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_agendaFailed) {
+      return _scrollSafeCenter(
+        Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.cloud_off_outlined, size: 48, color: tokens.inkMuted),
+              const SizedBox(height: 12),
+              Text(
+                'Не удалось загрузить',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontFamily: 'Lora',
+                  fontWeight: FontWeight.w700,
+                  color: tokens.ink,
+                ),
+              ),
+              const SizedBox(height: 16),
+              FilledButton.tonal(
+                key: const Key('calendar-agenda-retry'),
+                onPressed: _loadAgenda,
+                child: const Text('Повторить'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final events = _agendaEvents!;
+    if (events.isEmpty) {
+      return _scrollSafeCenter(
+        Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.event_available_outlined,
+                size: 48,
+                color: tokens.inkMuted,
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'Ближайшие 90 дней спокойные',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontFamily: 'Lora',
+                  fontWeight: FontWeight.w700,
+                  color: tokens.ink,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Добавьте родным даты рождения — и календарь напомнит о каждом празднике.',
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodyMedium
+                    ?.copyWith(color: tokens.inkMuted),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // Группировка по дням, заголовки «Сегодня · …» / «Завтра · …» / дата.
+    final items = <Widget>[];
+    DateTime? currentDay;
+    for (final event in events) {
+      final day = _dayKey(event.date);
+      if (currentDay == null || day != currentDay) {
+        currentDay = day;
+        items.add(_buildAgendaDayHeader(theme, tokens, day));
+      }
+      items.add(_buildAgendaTile(theme, tokens, event));
+    }
+
+    final bottomInset =
+        AppTheme.bottomNavInset(context) + 72; // + место под FAB
+    return ListView(
+      key: const Key('calendar-agenda-list'),
+      controller: _agendaController,
+      padding: EdgeInsets.fromLTRB(14, 6, 14, bottomInset),
+      children: items,
+    );
+  }
+
+  Widget _buildAgendaDayHeader(
+    ThemeData theme,
+    RodnyaDesignTokens tokens,
+    DateTime day,
+  ) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final diff = day.difference(today).inDays;
+    final dateLabel = DateFormat('EEEE, d MMMM', 'ru').format(day);
+    final label = diff == 0
+        ? 'Сегодня · $dateLabel'
+        : diff == 1
+            ? 'Завтра · $dateLabel'
+            : dateLabel;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 16, 4, 8),
+      child: Text(
+        diff == 0 ? label : label[0].toUpperCase() + label.substring(1),
+        key: diff == 0 ? const Key('calendar-agenda-today') : null,
+        style: theme.textTheme.titleSmall?.copyWith(
+          fontFamily: 'Lora',
+          fontWeight: FontWeight.w700,
+          color: diff == 0 ? tokens.accentStrong : tokens.ink,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAgendaTile(
+    ThemeData theme,
+    RodnyaDesignTokens tokens,
+    AppEvent event,
+  ) {
+    final color = _markerColor(event.type, theme, tokens);
+    final age = event.ageAtEvent;
+    final title = event.isLinkedToPerson ? event.personName : event.title;
+    final subtitleParts = <String>[
+      if (event.isLinkedToPerson) event.title,
+      if (age != null) 'исполнится $age',
+      event.status,
+    ];
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: tokens.surfaceStrong,
+        borderRadius: BorderRadius.circular(16),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: () => _openAgendaEvent(event),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            child: Row(
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: color.withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(event.icon, size: 20, color: color),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppTheme.sans(
+                          color: tokens.ink,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        subtitleParts.join(' · '),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppTheme.sans(
+                          color: tokens.inkMuted,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                // K3: бейдж категории — различимость без чтения подписи.
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: color.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    event.categoryLabel,
+                    style: AppTheme.sans(
+                      color: color,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _openAgendaEvent(AppEvent event) {
+    if (event.isLinkedToPerson) {
+      context.push(
+        relativeDetailsRoute(event.personId, treeId: event.treeId),
+      );
+      return;
+    }
+    _showHolidayInfo(event);
   }
 
   Widget _buildCalendar(ThemeData theme, RodnyaDesignTokens tokens) {
@@ -321,9 +809,31 @@ class _FamilyCalendarScreenState extends State<FamilyCalendarScreen> {
         });
       },
       onPageChanged: (focusedDay) {
-        _focusedDay = focusedDay;
+        // K2: setState — кнопка «Сегодня» в AppBar реагирует на листание.
+        setState(() => _focusedDay = focusedDay);
         _loadMonth(focusedDay);
       },
+    );
+  }
+
+  /// K2: вход создания встречи из день-листа — дата уже выбрана тапом
+  /// по сетке, форма откроется с ней.
+  Widget _buildCreateGatheringButton() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+      child: SizedBox(
+        height: 48,
+        child: OutlinedButton.icon(
+          key: const Key('calendar-create-gathering'),
+          onPressed: () => _createGatheringFor(_selectedDay),
+          icon: const Icon(Icons.add),
+          label: Text(
+            'Создать встречу · ${DateFormat('d MMMM', 'ru').format(_selectedDay)}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ),
     );
   }
 
@@ -370,21 +880,28 @@ class _FamilyCalendarScreenState extends State<FamilyCalendarScreen> {
   }
 
   Widget _buildDayList(List<AppEvent> events) {
-    final bottomInset = MediaQuery.of(context).viewPadding.bottom;
+    // K2: низ резервирует нав-бар + FAB (экран — kept-alive таб шелла).
+    final bottomInset = AppTheme.bottomNavInset(context) + 64;
     return ListView.builder(
       padding: EdgeInsets.fromLTRB(12, 12, 12, 12 + bottomInset),
-      itemCount: events.length,
-      itemBuilder: (_, i) => Padding(
-        key: Key('calendar-day-event-$i'),
-        padding: const EdgeInsets.only(bottom: 8),
-        child: EventCard(
-          event: events[i],
-          width: double.infinity,
-          // Person-linked events ignore this and open the profile; a
-          // holiday has no person, so the tap shows its info instead.
-          onTap: () => _showHolidayInfo(events[i]),
-        ),
-      ),
+      // K2: последний элемент — кнопка «Создать встречу» с датой дня.
+      itemCount: events.length + 1,
+      itemBuilder: (_, i) {
+        if (i == events.length) {
+          return _buildCreateGatheringButton();
+        }
+        return Padding(
+          key: Key('calendar-day-event-$i'),
+          padding: const EdgeInsets.only(bottom: 8),
+          child: EventCard(
+            event: events[i],
+            width: double.infinity,
+            // Person-linked events ignore this and open the profile; a
+            // holiday has no person, so the tap shows its info instead.
+            onTap: () => _showHolidayInfo(events[i]),
+          ),
+        );
+      },
     );
   }
 
@@ -532,15 +1049,23 @@ class _FamilyCalendarScreenState extends State<FamilyCalendarScreen> {
   }
 
   Widget _buildDayEmpty(ThemeData theme, RodnyaDesignTokens tokens) {
-    return Center(
-      child: Padding(
+    // K2: пустой день — тоже вход в создание встречи на эту дату.
+    return _scrollSafeCenter(
+      Padding(
         padding: const EdgeInsets.all(24),
-        child: Text(
-          'В этот день событий нет',
-          textAlign: TextAlign.center,
-          style: theme.textTheme.bodyMedium?.copyWith(
-            color: tokens.inkMuted,
-          ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'В этот день событий нет',
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: tokens.inkMuted,
+              ),
+            ),
+            const SizedBox(height: 12),
+            _buildCreateGatheringButton(),
+          ],
         ),
       ),
     );
