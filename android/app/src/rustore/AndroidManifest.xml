@@ -9,6 +9,17 @@
             android:name="ru.rustore.sdk.pushclient.project_id"
             android:value="${rustorePushProjectId}" />
 
+        <!-- Дефолтные пуши, которые рисует сам VKPNS SDK (тестовые из
+             консоли, notification-type без нашего сервиса), без этих мет
+             берут launcher-иконку — серый невзрачный значок. Фирменный
+             силуэт-дерево + бренд-зелёный, как у наших чат-пушей. -->
+        <meta-data
+            android:name="ru.rustore.sdk.pushclient.default_notification_icon"
+            android:resource="@drawable/ic_stat_notification" />
+        <meta-data
+            android:name="ru.rustore.sdk.pushclient.default_notification_color"
+            android:resource="@color/colorAccent" />
+
         <service
             android:name="ru.rustore.flutter_rustore_push.service.RuStoreMessagingService"
             android:exported="false">
