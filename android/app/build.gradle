@@ -44,12 +44,16 @@ def resolveSigningFile = { String path ->
 def hasReleaseSigning = [releaseStoreFile, releaseStorePassword, releaseKeyAlias, releaseKeyPassword]
         .every { it != null && !it.trim().isEmpty() }
 def releaseSigningFileResolved = hasReleaseSigning ? resolveSigningFile(releaseStoreFile) : null
+// Дефолты = боевое приложение «Родня» (console app id 2063713495) и его
+// push-проект «Prod» (Инструменты RuStore → Push-уведомления). Старые
+// значения принадлежали ДРУГОМУ приложению — пуш-токен падал с
+// «package_id ... doesn't exist». Env/property-переопределения сохранены.
 def rustoreApplicationId = (readEnv("RODNYA_RUSTORE_APPLICATION_ID")
         ?: findProperty("rodnyaRustoreApplicationId")
-        ?: "ru.rustore.app.2063621085").toString()
+        ?: "ru.rustore.app.2063713495").toString()
 def rustorePushProjectId = (readEnv("RODNYA_RUSTORE_PUSH_PROJECT_ID")
         ?: findProperty("rodnyaRustorePushProjectId")
-        ?: "q9oXlaEo25nBYnMe2cn3BtGpaBVWH0Mb").toString()
+        ?: "8cjwBTk253tF4Kq-Ubaii0KLhPWfhawe").toString()
 
 gradle.taskGraph.whenReady { taskGraph ->
     def releaseTaskRequested = taskGraph.allTasks.any { task ->
