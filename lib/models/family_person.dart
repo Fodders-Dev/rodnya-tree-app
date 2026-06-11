@@ -217,6 +217,16 @@ class FamilyPerson extends HiveObject {
   @HiveField(27)
   final String visibility;
 
+  /// F5: точность дат — `exact` (дефолт) | `yearOnly` («знаю только
+  /// год»: дата хранится как 01.01.года, а правда живёт в этом флаге).
+  @HiveField(28)
+  final String birthDatePrecision;
+  @HiveField(29)
+  final String deathDatePrecision;
+
+  bool get birthDateIsYearOnly => birthDatePrecision == 'yearOnly';
+  bool get deathDateIsYearOnly => deathDatePrecision == 'yearOnly';
+
   String? get photoUrl => _photoUrl;
   String? get primaryPhotoUrl => _photoUrl;
   List<Map<String, dynamic>> get photoGallery => List.unmodifiable(
@@ -252,6 +262,8 @@ class FamilyPerson extends HiveObject {
     this.familySummary,
     required this.isAlive,
     this.visibility = 'private',
+    this.birthDatePrecision = 'exact',
+    this.deathDatePrecision = 'exact',
     this.creatorId,
     required this.createdAt,
     required this.updatedAt,
@@ -455,8 +467,14 @@ class FamilyPerson extends HiveObject {
           data['primaryPhotoUrl']?.toString() ?? data['photoUrl']?.toString(),
       gender: genderFromString(data['gender']?.toString()),
       birthDate: parseDateTime(data['birthDate']),
+      birthDatePrecision: datePrecisionFromString(
+        data['birthDatePrecision']?.toString(),
+      ),
       birthPlace: data['birthPlace']?.toString(),
       deathDate: parseDateTime(data['deathDate']),
+      deathDatePrecision: datePrecisionFromString(
+        data['deathDatePrecision']?.toString(),
+      ),
       deathPlace: data['deathPlace']?.toString(),
       familySummary: data['familySummary']?.toString() ??
           data['notes']?.toString() ??
@@ -496,8 +514,10 @@ class FamilyPerson extends HiveObject {
       'photoGallery': photoGallery,
       'gender': gender.toString().split('.').last,
       'birthDate': birthDate?.toIso8601String(),
+      'birthDatePrecision': birthDatePrecision,
       'birthPlace': birthPlace,
       'deathDate': deathDate?.toIso8601String(),
+      'deathDatePrecision': deathDatePrecision,
       'deathPlace': deathPlace,
       'familySummary': familySummary,
       'bio': bio,
@@ -573,6 +593,12 @@ class FamilyPerson extends HiveObject {
       default:
         return Gender.unknown;
     }
+  }
+
+  /// F5: всё, кроме «yearOnly», схлопываем в «exact» — третьих
+  /// состояний не существует (зеркало бэкового normalizeDatePrecision).
+  static String datePrecisionFromString(String? value) {
+    return value?.trim() == 'yearOnly' ? 'yearOnly' : 'exact';
   }
 }
 

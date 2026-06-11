@@ -275,6 +275,68 @@ void main() {
     );
   });
 
+  test(
+      'F5: birthDatePrecision == yearOnly не создаёт день рождения 1 января',
+      () async {
+    final service = EventService(
+      familyTreeService: _FakeFamilyTreeService(
+        relatives: [
+          // Предок «знаю только год»: дата хранится как 01.01.1888.
+          FamilyPerson(
+            id: 'p-year-only',
+            treeId: 'tree-1',
+            name: 'Пётр Степанович',
+            gender: Gender.male,
+            birthDate: DateTime(1888, 1, 1),
+            birthDatePrecision: 'yearOnly',
+            deathDate: DateTime(1959, 1, 1),
+            deathDatePrecision: 'yearOnly',
+            isAlive: false,
+            createdAt: DateTime(2024, 1, 1),
+            updatedAt: DateTime(2024, 1, 1),
+          ),
+          // Контроль: настоящий январский ДР генерится как раньше.
+          FamilyPerson(
+            id: 'p-real-january',
+            treeId: 'tree-1',
+            name: 'Январская',
+            gender: Gender.female,
+            birthDate: DateTime(1960, 1, 1),
+            isAlive: true,
+            createdAt: DateTime(2024, 1, 1),
+            updatedAt: DateTime(2024, 1, 1),
+          ),
+        ],
+      ),
+      nowProvider: () => DateTime(2026, 1, 10),
+    );
+
+    // Месячная сетка (и agenda — она собирается из того же билдера).
+    final january = await service.getEventsForMonth('tree-1', 2026, 1);
+    expect(
+      january.any((e) => e.personId == 'p-year-only'),
+      isFalse,
+      reason: 'yearOnly не должен шуметь ни ДР, ни годовщиной памяти',
+    );
+    expect(
+      january.any(
+        (e) => e.personId == 'p-real-january' && e.type == AppEventType.birthday,
+      ),
+      isTrue,
+      reason: 'настоящее 1 января остаётся',
+    );
+
+    // Лента ближайших событий.
+    final upcoming = await service.getUpcomingEvents('tree-1');
+    expect(upcoming.any((e) => e.personId == 'p-year-only'), isFalse);
+    expect(
+      upcoming.any(
+        (e) => e.personId == 'p-real-january' && e.type == AppEventType.birthday,
+      ),
+      isTrue,
+    );
+  });
+
   test('getEventsForMonth includes fixed holidays of the month', () async {
     final service = EventService(
       familyTreeService: _FakeFamilyTreeService(relatives: const []),

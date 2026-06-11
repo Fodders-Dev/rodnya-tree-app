@@ -1719,8 +1719,15 @@ class CustomApiFamilyTreeService
       photoGallery: _photoGalleryFromJson(json['photoGallery']),
       gender: FamilyPerson.genderFromString(json['gender']?.toString()),
       birthDate: birthDate,
+      // F5: «знаю только год» — точность дат с бэка.
+      birthDatePrecision: FamilyPerson.datePrecisionFromString(
+        json['birthDatePrecision']?.toString(),
+      ),
       birthPlace: json['birthPlace']?.toString(),
       deathDate: deathDate,
+      deathDatePrecision: FamilyPerson.datePrecisionFromString(
+        json['deathDatePrecision']?.toString(),
+      ),
       deathPlace: json['deathPlace']?.toString(),
       familySummary: json['familySummary']?.toString() ??
           json['notes']?.toString() ??

@@ -39,7 +39,9 @@ class EventService {
       debugPrint('[EventService] Найдено ${relatives.length} родственников.');
 
       for (final person in relatives) {
-        if (person.birthDate != null) {
+        // F5: «знаю только год» — день/месяц фейковые (01.01), создавать
+        // от них день рождения 1 января нельзя: календарь начинает врать.
+        if (person.birthDate != null && !person.birthDateIsYearOnly) {
           final nextBirthday = _nextAnnualOccurrence(person.birthDate!, today);
           allEvents.add(
             AppEvent(
@@ -56,7 +58,11 @@ class EventService {
           );
         }
 
-        if (!person.isAlive && person.deathDate != null) {
+        // F5: то же для годовщин смерти — yearOnly не генерит ни 9/40
+        // дней, ни годовщину.
+        if (!person.isAlive &&
+            person.deathDate != null &&
+            !person.deathDateIsYearOnly) {
           final deathDate = person.deathDate!;
           final memorial9 = deathDate.add(const Duration(days: 8));
           if (_isUpcoming(memorial9, today)) {
@@ -672,7 +678,9 @@ class EventService {
 
     for (final person in relatives) {
       final birth = person.birthDate;
-      if (birth != null) {
+      // F5: «знаю только год» — не рисуем фейковый ДР 1 января ни в
+      // месячной сетке, ни в agenda (оба идут через этот билдер).
+      if (birth != null && !person.birthDateIsYearOnly) {
         out.add(AppEvent(
           id: '${person.id}_birthday_$year',
           type: AppEventType.birthday,
@@ -686,7 +694,9 @@ class EventService {
         ));
       }
 
-      if (!person.isAlive && person.deathDate != null) {
+      if (!person.isAlive &&
+          person.deathDate != null &&
+          !person.deathDateIsYearOnly) {
         final death = person.deathDate!;
         out.add(AppEvent(
           id: '${person.id}_death_anniversary_$year',

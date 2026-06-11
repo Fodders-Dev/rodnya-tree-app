@@ -215,41 +215,158 @@ extension _AddRelativeScreenSections on _AddRelativeScreenState {
   /// F1: дата смерти — в основном потоке рядом с датой рождения (раньше
   /// пряталась в «Расширенно», и владельцу приходилось её искать).
   Widget _buildDeathDateField() {
-    return InkWell(
-      onTap: () => _pickDate(false),
-      child: InputDecorator(
-        decoration: const InputDecoration(
-          labelText: 'Дата смерти',
-          border: OutlineInputBorder(),
-          prefixIcon: Icon(Icons.event_outlined),
-          helperText: 'Если человек жив — оставьте пустым',
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (_deathDateYearOnly)
+          TextFormField(
+            key: const Key('death-year-field'),
+            controller: _deathYearController,
+            keyboardType: TextInputType.number,
+            maxLength: 4,
+            decoration: const InputDecoration(
+              labelText: 'Год смерти',
+              border: OutlineInputBorder(),
+              prefixIcon: Icon(Icons.event_outlined),
+              counterText: '',
+              helperText: 'Если человек жив — оставьте пустым',
+            ),
+            validator: (value) => _validateYearInput(value, required: false),
+          )
+        else
+          InkWell(
+            onTap: () => _pickDate(false),
+            child: InputDecorator(
+              decoration: const InputDecoration(
+                labelText: 'Дата смерти',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.event_outlined),
+                helperText: 'Если человек жив — оставьте пустым',
+              ),
+              child: Text(
+                _deathDate != null
+                    ? DateFormat('dd.MM.yyyy').format(_deathDate!)
+                    : 'Не указано',
+              ),
+            ),
+          ),
+        _buildYearOnlyToggle(
+          key: const Key('death-year-only-toggle'),
+          value: _deathDateYearOnly,
+          onChanged: (checked) {
+            _updateSectionState(() {
+              _deathDateYearOnly = checked;
+              if (checked && _deathDate != null) {
+                _deathYearController.text = _deathDate!.year.toString();
+              }
+            });
+          },
         ),
-        child: Text(
-          _deathDate != null
-              ? DateFormat('dd.MM.yyyy').format(_deathDate!)
-              : 'Не указано',
+      ],
+    );
+  }
+
+  Widget _buildBirthDateField() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (_birthDateYearOnly)
+          TextFormField(
+            key: const Key('birth-year-field'),
+            controller: _birthYearController,
+            keyboardType: TextInputType.number,
+            maxLength: 4,
+            decoration: const InputDecoration(
+              labelText: 'Год рождения',
+              border: OutlineInputBorder(),
+              prefixIcon: Icon(Icons.cake_outlined),
+              counterText: '',
+              helperText: 'Точный день неизвестен — достаточно года',
+            ),
+            validator: (value) => _validateYearInput(value, required: false),
+          )
+        else
+          InkWell(
+            onTap: () => _pickDate(true),
+            child: InputDecorator(
+              decoration: const InputDecoration(
+                labelText: 'Дата рождения',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.cake_outlined),
+                helperText: 'Нужна для дней рождения на главной',
+              ),
+              child: Text(
+                _birthDate != null
+                    ? DateFormat('dd.MM.yyyy').format(_birthDate!)
+                    : 'Выберите дату',
+              ),
+            ),
+          ),
+        _buildYearOnlyToggle(
+          key: const Key('birth-year-only-toggle'),
+          value: _birthDateYearOnly,
+          onChanged: (checked) {
+            _updateSectionState(() {
+              _birthDateYearOnly = checked;
+              if (checked && _birthDate != null) {
+                _birthYearController.text = _birthDate!.year.toString();
+              }
+            });
+          },
+        ),
+      ],
+    );
+  }
+
+  /// F5: компактный тумблер «Знаю только год» — у части предков известен
+  /// только год, и заставлять выбирать фейковое 1 января нельзя (от него
+  /// шумят календарь и карточки).
+  Widget _buildYearOnlyToggle({
+    required Key key,
+    required bool value,
+    required ValueChanged<bool> onChanged,
+  }) {
+    final theme = Theme.of(context);
+    return InkWell(
+      key: key,
+      borderRadius: BorderRadius.circular(10),
+      onTap: () => onChanged(!value),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 28,
+              height: 28,
+              child: Checkbox(
+                value: value,
+                onChanged: (checked) => onChanged(checked ?? false),
+                visualDensity: VisualDensity.compact,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              'Знаю только год',
+              style: theme.textTheme.bodyMedium,
+            ),
+          ],
         ),
       ),
     );
   }
 
-  Widget _buildBirthDateField() {
-    return InkWell(
-      onTap: () => _pickDate(true),
-      child: InputDecorator(
-        decoration: const InputDecoration(
-          labelText: 'Дата рождения',
-          border: OutlineInputBorder(),
-          prefixIcon: Icon(Icons.cake_outlined),
-          helperText: 'Нужна для дней рождения на главной',
-        ),
-        child: Text(
-          _birthDate != null
-              ? DateFormat('dd.MM.yyyy').format(_birthDate!)
-              : 'Выберите дату',
-        ),
-      ),
-    );
+  /// F5: валидация года (4 цифры, 1000..текущий).
+  String? _validateYearInput(String? value, {required bool required}) {
+    final trimmed = value?.trim() ?? '';
+    if (trimmed.isEmpty) {
+      return required ? 'Укажите год' : null;
+    }
+    final year = int.tryParse(trimmed);
+    if (year == null || year < 1000 || year > DateTime.now().year) {
+      return 'Год от 1000 до ${DateTime.now().year}';
+    }
+    return null;
   }
 
   Widget _buildMediaSection() {
@@ -846,6 +963,8 @@ extension _AddRelativeScreenSections on _AddRelativeScreenState {
     _educationController.dispose();
     _bioController.dispose();
     _notesController.dispose();
+    _birthYearController.dispose();
+    _deathYearController.dispose();
     _otherTreesSearchController.dispose();
     _otherTreesSearchDebounce?.cancel();
     for (final draft in _importantEventDrafts) {

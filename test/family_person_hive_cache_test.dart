@@ -191,6 +191,45 @@ void main() {
     expect(details.customData!['внуков'], 3);
   });
 
+  test('F5: birthDatePrecision/deathDatePrecision переживают round-trip',
+      () async {
+    final yearOnlyPerson = FamilyPerson(
+      id: 'person-year-only',
+      treeId: 'tree-1',
+      name: 'Кузнецов Пётр Степанович',
+      gender: Gender.male,
+      // «Знаю только год»: дата хранится как 01.01.года + флаг.
+      birthDate: DateTime(1888, 1, 1),
+      birthDatePrecision: 'yearOnly',
+      deathDate: DateTime(1959, 1, 1),
+      deathDatePrecision: 'yearOnly',
+      isAlive: false,
+      createdAt: DateTime(2024, 1, 1),
+      updatedAt: DateTime(2024, 1, 1),
+    );
+
+    final box = await Hive.openBox<FamilyPerson>('persons_precision');
+    await box.put(yearOnlyPerson.id, yearOnlyPerson);
+    await box.close();
+
+    final reopened = await Hive.openBox<FamilyPerson>('persons_precision');
+    final restored = reopened.get(yearOnlyPerson.id);
+
+    expect(restored, isNotNull);
+    expect(restored!.birthDatePrecision, 'yearOnly');
+    expect(restored.deathDatePrecision, 'yearOnly');
+    expect(restored.birthDateIsYearOnly, isTrue);
+    expect(restored.deathDateIsYearOnly, isTrue);
+    expect(restored.birthDate, DateTime(1888, 1, 1));
+
+    // Дефолт: персона без явной точности читается как exact.
+    final exactPerson = buildFilledPerson();
+    await reopened.put(exactPerson.id, exactPerson);
+    final restoredExact = reopened.get(exactPerson.id);
+    expect(restoredExact!.birthDatePrecision, 'exact');
+    expect(restoredExact.birthDateIsYearOnly, isFalse);
+  });
+
   test('старый формат записи (details == null) читается как есть', () async {
     // До хотфикса записи с non-null details никогда не ложились на диск
     // (write падал до коммита фрейма) — в проде лежат только null.

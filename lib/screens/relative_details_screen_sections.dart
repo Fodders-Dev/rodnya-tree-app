@@ -595,6 +595,13 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
     final birth = person.birthDate;
     if (birth == null) return null;
     final now = DateTime.now();
+    // F5: «знаю только год» — день/месяц фейковые (01.01), точный возраст
+    // не посчитать. Считаем по годам и честно показываем «~78 лет».
+    if (person.birthDateIsYearOnly) {
+      final age = now.year - birth.year;
+      if (age < 0 || age > 130) return null;
+      return '~$age ${_pluralYears(age)}';
+    }
     var age = now.year - birth.year;
     if (now.month < birth.month ||
         (now.month == birth.month && now.day < birth.day)) {
@@ -863,13 +870,24 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
 
     addPassport('Девичья фамилия', d.maidenName);
     if (person.birthDate != null) {
-      addPassport('Дата рождения', _formatRussianDate(person.birthDate!));
+      // F5: «знаю только год» → «1888 год» вместо фейкового «1 января 1888».
+      addPassport(
+        person.birthDateIsYearOnly ? 'Год рождения' : 'Дата рождения',
+        person.birthDateIsYearOnly
+            ? '${person.birthDate!.year}'
+            : _formatRussianDate(person.birthDate!),
+      );
     }
     addPassport('Место рождения', d.birthPlace);
     addPassport('Родом из', d.hometown);
     if (person.deathDate != null) {
-      addPassport('Дата смерти', _formatRussianDate(person.deathDate!),
-          memorial: true);
+      addPassport(
+        person.deathDateIsYearOnly ? 'Год смерти' : 'Дата смерти',
+        person.deathDateIsYearOnly
+            ? '${person.deathDate!.year}'
+            : _formatRussianDate(person.deathDate!),
+        memorial: true,
+      );
     }
     addPassport('Место смерти', person.deathPlace);
 
@@ -1403,7 +1421,10 @@ extension _RelativeDetailsScreenSections on _RelativeDetailsScreenState {
     final facts = <String>[
       _formatDuplicateGender(person.gender),
       person.birthDate != null
-          ? DateFormat('dd.MM.yyyy').format(person.birthDate!)
+          // F5: для yearOnly — «р. 1888» вместо фейкового 01.01.1888.
+          ? (person.birthDateIsYearOnly
+              ? 'р. ${person.birthDate!.year}'
+              : DateFormat('dd.MM.yyyy').format(person.birthDate!))
           : 'Дата рождения не указана',
     ];
     final birthPlace = person.birthPlace?.trim();

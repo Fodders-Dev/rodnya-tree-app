@@ -123,6 +123,11 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
   // Состояние формы
   DateTime? _birthDate;
   DateTime? _deathDate;
+  // F5: «знаю только год» — дата хранится как 01.01.года + флаг точности.
+  bool _birthDateYearOnly = false;
+  bool _deathDateYearOnly = false;
+  final _birthYearController = TextEditingController();
+  final _deathYearController = TextEditingController();
   DateTime? _marriageDate;
   // F2: сложные семьи — дата развода для бывших союзов.
   DateTime? _divorceDate;
@@ -202,6 +207,16 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
       _selectedGender = widget.person!.gender;
       _birthDate = widget.person!.birthDate;
       _deathDate = widget.person!.deathDate;
+      // F5: владелец вручную помечает «только год»-предков в этой же
+      // форме — подхватываем сохранённую точность.
+      _birthDateYearOnly = widget.person!.birthDateIsYearOnly;
+      _deathDateYearOnly = widget.person!.deathDateIsYearOnly;
+      if (_birthDateYearOnly && _birthDate != null) {
+        _birthYearController.text = _birthDate!.year.toString();
+      }
+      if (_deathDateYearOnly && _deathDate != null) {
+        _deathYearController.text = _deathDate!.year.toString();
+      }
       _seedImportantEventDrafts(widget.person!.details?.importantEvents);
 
       // Загружаем текущий тип отношения (правильно)
@@ -381,6 +396,10 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
         return person.birthDate?.toIso8601String();
       case 'deathDate':
         return person.deathDate?.toIso8601String();
+      case 'birthDatePrecision':
+        return person.birthDatePrecision;
+      case 'deathDatePrecision':
+        return person.deathDatePrecision;
       case 'birthPlace':
         return person.birthPlace;
       case 'deathPlace':
@@ -416,6 +435,15 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
   void _updateRelationshipWidget() {
     // Перерисовываем виджет связи, чтобы обновить имя "Новый родственник"
     setState(() {});
+  }
+
+  /// F5: год из текстового поля → 01.01.года (валидация — на самом поле).
+  DateTime? _yearOnlyDate(String rawYear) {
+    final year = int.tryParse(rawYear.trim());
+    if (year == null || year < 1000 || year > DateTime.now().year) {
+      return null;
+    }
+    return DateTime(year, 1, 1);
   }
 
   Future<void> _pickDate(bool isBirthDate) async {
@@ -622,14 +650,31 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
             'sourcePersonId': _sourcePersonId,
         };
 
-        // Добавляем даты, если они указаны
-        if (_birthDate != null) {
-          personData['birthDate'] = _birthDate;
+        // Добавляем даты, если они указаны.
+        // F5: «знаю только год» — дата собирается как 01.01.года, правда
+        // живёт во флаге точности. Точность шлём всегда (редактирование
+        // может переключить yearOnly → exact, и бэк обязан это увидеть).
+        final DateTime? birthDateForSave = _birthDateYearOnly
+            ? _yearOnlyDate(_birthYearController.text)
+            : _birthDate;
+        final DateTime? deathDateForSave = _deathDateYearOnly
+            ? _yearOnlyDate(_deathYearController.text)
+            : _deathDate;
+        if (birthDateForSave != null) {
+          personData['birthDate'] = birthDateForSave;
         }
+        personData['birthDatePrecision'] =
+            _birthDateYearOnly && birthDateForSave != null
+                ? 'yearOnly'
+                : 'exact';
 
-        if (_deathDate != null) {
-          personData['deathDate'] = _deathDate;
+        if (deathDateForSave != null) {
+          personData['deathDate'] = deathDateForSave;
         }
+        personData['deathDatePrecision'] =
+            _deathDateYearOnly && deathDateForSave != null
+                ? 'yearOnly'
+                : 'exact';
 
         // Добавляем девичью фамилию для женщин
         if (_selectedGender == Gender.female &&
@@ -959,6 +1004,10 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
     _notesController.clear();
     _birthDate = null;
     _deathDate = null;
+    _birthDateYearOnly = false;
+    _deathDateYearOnly = false;
+    _birthYearController.clear();
+    _deathYearController.clear();
     _marriageDate = null;
     _divorceDate = null;
     _showDivorceDateField = false;

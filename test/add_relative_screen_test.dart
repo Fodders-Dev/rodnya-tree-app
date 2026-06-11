@@ -76,11 +76,14 @@ class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
     throw StateError('Unknown person $personId');
   }
 
+  Map<String, dynamic>? lastAddedPersonData;
+
   @override
   Future<String> addRelative(String treeId, Map<String, dynamic> personData) {
     if (failOnAdd) {
       throw Exception('save failed');
     }
+    lastAddedPersonData = personData;
     return Future.value('person-1');
   }
 
@@ -195,6 +198,92 @@ void main() {
       find.textContaining('Связать себя с деревом можно позже'),
       findsOneWidget,
     );
+  });
+
+  testWidgets(
+      'F5: «Знаю только год» — поле года, сохранение шлёт 01.01.года + precision',
+      (tester) async {
+    tester.view.physicalSize = const Size(800, 1500);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final familyService = _FakeFamilyTreeService();
+    await getIt.unregister<FamilyTreeServiceInterface>();
+    getIt.registerSingleton<FamilyTreeServiceInterface>(familyService);
+
+    // Успешный create заканчивается Navigator.pop — нужен роут под низом.
+    final router = GoRouter(
+      routes: [
+        GoRoute(
+          path: '/',
+          builder: (context, state) => const Scaffold(body: Text('домик')),
+        ),
+        GoRoute(
+          path: '/add',
+          builder: (context, state) => AddRelativeScreen(
+            treeId: 'tree-1',
+            routeExtra: state.extra as Map<String, dynamic>?,
+            routeQueryParameters: state.uri.queryParameters,
+          ),
+        ),
+      ],
+      initialLocation: '/',
+    );
+
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.pumpAndSettle();
+    router.push('/add');
+    await tester.pumpAndSettle();
+
+    // Пока тумблер выключен — обычное поле даты, года-инпута нет.
+    expect(find.byKey(const Key('birth-year-field')), findsNothing);
+    expect(find.text('Дата рождения'), findsOneWidget);
+
+    // Включаем «Знаю только год» у даты рождения.
+    await tester.ensureVisible(
+      find.byKey(const Key('birth-year-only-toggle')),
+    );
+    await tester.tap(find.byKey(const Key('birth-year-only-toggle')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('birth-year-field')), findsOneWidget);
+    expect(find.text('Дата рождения'), findsNothing);
+
+    await tester.enterText(
+      find.byKey(const Key('birth-year-field')),
+      '1888',
+    );
+
+    // Заполняем обязательные поля и сохраняем.
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Фамилия'),
+      'Кузнецов',
+    );
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Имя'),
+      'Пётр',
+    );
+    await tester.ensureVisible(find.widgetWithText(ChoiceChip, 'Мужской'));
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Мужской'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('add-relative-submit')));
+    // Не pumpAndSettle: пост-сохранение крутит снекбар/навигацию, а цель
+    // теста — данные, ушедшие в сервис. Пара кадров, чтобы _savePerson
+    // дошёл до addRelative.
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    final saved = familyService.lastAddedPersonData;
+    expect(saved, isNotNull);
+    expect(saved!['birthDatePrecision'], 'yearOnly');
+    expect((saved['birthDate'] as DateTime).year, 1888);
+    expect((saved['birthDate'] as DateTime).month, 1);
+    expect((saved['birthDate'] as DateTime).day, 1);
+    // Смерть не трогали — точность exact по умолчанию.
+    expect(saved['deathDatePrecision'], 'exact');
+
+    // Дотикиваем снекбар-таймеры, чтобы тест не оставил pending timers.
+    await tester.pump(const Duration(seconds: 5));
   });
 
   testWidgets(

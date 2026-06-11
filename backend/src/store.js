@@ -4938,6 +4938,13 @@ function normalizeIsoDate(value) {
   return parsed.toISOString();
 }
 
+// F5: точность даты — «знаю только год». Хранение остаётся ISO-датой
+// (01.01.года), правда живёт во флаге; всё, кроме «yearOnly», схлопываем
+// в дефолт «exact», чтобы мусор с клиента не плодил третьи состояния.
+function normalizeDatePrecision(value) {
+  return String(value || "").trim() === "yearOnly" ? "yearOnly" : "exact";
+}
+
 function createTreeInvitationRecord({
   treeId,
   userId,
@@ -5278,8 +5285,12 @@ function buildPersonRecord({
     photoGallery: photoState.photoGallery,
     gender: String(personData.gender || "unknown"),
     birthDate,
+    // F5: «знаю только год» — дата хранится как 01.01.года, точность
+    // отдельным флагом.
+    birthDatePrecision: normalizeDatePrecision(personData.birthDatePrecision),
     birthPlace: normalizeNullableString(personData.birthPlace),
     deathDate,
+    deathDatePrecision: normalizeDatePrecision(personData.deathDatePrecision),
     deathPlace: normalizeNullableString(personData.deathPlace),
     familySummary,
     bio: normalizeNullableString(personData.bio),
@@ -5335,8 +5346,15 @@ function mergePersonDataFromSource(personData, sourcePerson) {
   fillIfBlank("maidenName");
   fillIfBlank("gender");
   fillIfBlank("birthDate");
+  // F5: точность даты едет вместе с датой из карточки-источника.
+  if (merged.birthDate === sourcePerson.birthDate) {
+    fillIfBlank("birthDatePrecision");
+  }
   fillIfBlank("birthPlace");
   fillIfBlank("deathDate");
+  if (merged.deathDate === sourcePerson.deathDate) {
+    fillIfBlank("deathDatePrecision");
+  }
   fillIfBlank("deathPlace");
   fillIfBlank("photoUrl");
   fillIfBlank("primaryPhotoUrl");
@@ -11288,6 +11306,14 @@ class FileStore {
     nextPerson.notes = normalizeNullableString(nextPerson.notes);
     nextPerson.birthDate = normalizeIsoDate(nextPerson.birthDate);
     nextPerson.deathDate = normalizeIsoDate(nextPerson.deathDate);
+    // F5: точность дат («знаю только год») нормализуется тем же путём,
+    // что и сами даты; без даты точность не имеет смысла — exact.
+    nextPerson.birthDatePrecision = nextPerson.birthDate
+      ? normalizeDatePrecision(nextPerson.birthDatePrecision)
+      : "exact";
+    nextPerson.deathDatePrecision = nextPerson.deathDate
+      ? normalizeDatePrecision(nextPerson.deathDatePrecision)
+      : "exact";
     nextPerson.isAlive = nextPerson.deathDate === null;
     nextPerson.visibility = normalizePersonVisibility(
       nextPerson.visibility,
@@ -11381,7 +11407,11 @@ class FileStore {
       "maidenName",
       "gender",
       "birthDate",
+      // F5: точность дат описывает человека так же, как сама дата —
+      // путешествует между карточками одной identity вместе с ней.
+      "birthDatePrecision",
       "deathDate",
+      "deathDatePrecision",
       "isAlive",
       "birthPlace",
       "deathPlace",

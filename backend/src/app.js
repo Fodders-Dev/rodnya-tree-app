@@ -953,8 +953,11 @@ function createApp({
         : [],
       gender: person.gender,
       birthDate: person.birthDate,
+      // F5: «знаю только год» — клиент по флагу прячет фейковое 1 января.
+      birthDatePrecision: person.birthDatePrecision || "exact",
       birthPlace: person.birthPlace,
       deathDate: person.deathDate,
+      deathDatePrecision: person.deathDatePrecision || "exact",
       deathPlace: person.deathPlace,
       familySummary,
       bio: familySummary,

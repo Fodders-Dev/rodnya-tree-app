@@ -55,8 +55,13 @@ class PersonDossierView extends StatelessWidget {
       if (dossier.birthDate != null)
         _FieldData(
           Icons.cake_outlined,
-          'Дата рождения',
-          _formatDate(dossier.birthDate!),
+          // F5: «знаю только год» → «1888 год», не фейковое 1 января.
+          dossier.person.birthDateIsYearOnly
+              ? 'Год рождения'
+              : 'Дата рождения',
+          dossier.person.birthDateIsYearOnly
+              ? '${dossier.birthDate!.year}'
+              : _formatDate(dossier.birthDate!),
         ),
       if ((dossier.birthPlace ?? '').isNotEmpty)
         _FieldData(
@@ -79,8 +84,10 @@ class PersonDossierView extends StatelessWidget {
       if (dossier.person.isAlive == false && dossier.person.deathDate != null)
         _FieldData(
           Icons.history_toggle_off_outlined,
-          'Дата смерти',
-          _formatDate(dossier.person.deathDate!),
+          dossier.person.deathDateIsYearOnly ? 'Год смерти' : 'Дата смерти',
+          dossier.person.deathDateIsYearOnly
+              ? '${dossier.person.deathDate!.year}'
+              : _formatDate(dossier.person.deathDate!),
         ),
       if ((dossier.person.deathPlace ?? '').isNotEmpty)
         _FieldData(

@@ -8,6 +8,9 @@
 //   • photoGallery: (fields[24] as List?)…
 //   • visibility: fields[27] as String? ?? 'private'  (старые записи без
 //     поля 27 обязаны читаться)
+//   • F5: birthDatePrecision: fields[28] as String? ?? 'exact' и
+//     deathDatePrecision: fields[29] as String? ?? 'exact' (старые записи
+//     без полей 28/29 обязаны читаться) + write 28/29, счётчик 29.
 // Вынос этих дефолтов из генерённого файла — отдельная задача, не hotfix.
 
 part of 'family_person.dart';
@@ -43,6 +46,8 @@ class FamilyPersonAdapter extends TypeAdapter<FamilyPerson> {
       familySummary: fields[26] as String?,
       isAlive: fields[13] as bool,
       visibility: fields[27] as String? ?? 'private',
+      birthDatePrecision: fields[28] as String? ?? 'exact',
+      deathDatePrecision: fields[29] as String? ?? 'exact',
       creatorId: fields[14] as String?,
       createdAt: fields[15] as DateTime,
       updatedAt: fields[16] as DateTime,
@@ -63,7 +68,7 @@ class FamilyPersonAdapter extends TypeAdapter<FamilyPerson> {
   @override
   void write(BinaryWriter writer, FamilyPerson obj) {
     writer
-      ..writeByte(27)
+      ..writeByte(29)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -117,7 +122,11 @@ class FamilyPersonAdapter extends TypeAdapter<FamilyPerson> {
       ..writeByte(26)
       ..write(obj.familySummary)
       ..writeByte(27)
-      ..write(obj.visibility);
+      ..write(obj.visibility)
+      ..writeByte(28)
+      ..write(obj.birthDatePrecision)
+      ..writeByte(29)
+      ..write(obj.deathDatePrecision);
   }
 
   @override
