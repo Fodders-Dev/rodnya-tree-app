@@ -143,6 +143,75 @@ extension _AddRelativeScreenSections on _AddRelativeScreenState {
     );
   }
 
+  /// F2: даты союза — «Дата свадьбы» для всех союзных типов, «Дата
+  /// развода» сразу для бывших (ex_spouse/ex_partner) или по «+ Дата
+  /// развода» для текущих (брак был — закончился, тип менять не надо).
+  List<Widget> _buildUnionDateFields() {
+    final type = _resolvedRelationType;
+    final bool isUnion = type == RelationType.spouse ||
+        type == RelationType.partner ||
+        type == RelationType.ex_spouse ||
+        type == RelationType.ex_partner;
+    if (!isUnion) return const [];
+
+    final bool isPastUnion =
+        type == RelationType.ex_spouse || type == RelationType.ex_partner;
+    final bool showDivorceField =
+        isPastUnion || _showDivorceDateField || _divorceDate != null;
+
+    return [
+      const SizedBox(height: 16),
+      InkWell(
+        onTap: _pickMarriageDate,
+        child: InputDecorator(
+          decoration: const InputDecoration(
+            labelText: 'Дата свадьбы',
+            border: OutlineInputBorder(),
+            prefixIcon: Icon(Icons.favorite_outline),
+            helperText: 'Попадёт в семейный календарь',
+          ),
+          child: Text(
+            _marriageDate != null
+                ? DateFormat('dd.MM.yyyy').format(_marriageDate!)
+                : 'Не указано',
+          ),
+        ),
+      ),
+      const SizedBox(height: 16),
+      if (showDivorceField)
+        InkWell(
+          key: const Key('divorce-date-field'),
+          onTap: _pickDivorceDate,
+          child: InputDecorator(
+            decoration: const InputDecoration(
+              labelText: 'Дата развода',
+              border: OutlineInputBorder(),
+              prefixIcon: Icon(Icons.heart_broken_outlined),
+            ),
+            child: Text(
+              _divorceDate != null
+                  ? DateFormat('dd.MM.yyyy').format(_divorceDate!)
+                  : 'Не указано',
+            ),
+          ),
+        )
+      else
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            key: const Key('divorce-date-add'),
+            onPressed: () {
+              _updateSectionState(() {
+                _showDivorceDateField = true;
+              });
+            },
+            icon: const Icon(Icons.add, size: 18),
+            label: const Text('Дата развода'),
+          ),
+        ),
+    ];
+  }
+
   /// F1: дата смерти — в основном потоке рядом с датой рождения (раньше
   /// пряталась в «Расширенно», и владельцу приходилось её искать).
   Widget _buildDeathDateField() {
@@ -437,25 +506,7 @@ extension _AddRelativeScreenSections on _AddRelativeScreenState {
           ),
           const SizedBox(height: 16),
         ],
-        if (_resolvedRelationType == RelationType.spouse) ...[
-          const SizedBox(height: 16),
-          InkWell(
-            onTap: _pickMarriageDate,
-            child: InputDecorator(
-              decoration: const InputDecoration(
-                labelText: 'Дата свадьбы',
-                border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.favorite_outline),
-                helperText: 'Попадёт в семейный календарь',
-              ),
-              child: Text(
-                _marriageDate != null
-                    ? DateFormat('dd.MM.yyyy').format(_marriageDate!)
-                    : 'Не указано',
-              ),
-            ),
-          ),
-        ],
+        ..._buildUnionDateFields(),
         const SizedBox(height: 16),
         TextFormField(
           controller: _birthPlaceController,

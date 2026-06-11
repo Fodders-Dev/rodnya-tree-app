@@ -5,11 +5,15 @@ class FamilyConnection {
     required this.fromId,
     required this.toId,
     required this.type,
+    this.isPastUnion = false,
   });
 
   final String fromId;
   final String toId;
   final RelationType type;
+
+  /// F2: бывший союз (развод/ex-партнёрство) — рисуется пунктиром.
+  final bool isPastUnion;
 }
 
 class _TreeLayoutComputation {

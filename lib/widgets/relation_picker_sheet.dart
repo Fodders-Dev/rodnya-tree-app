@@ -214,6 +214,22 @@ class _RelationPickerSheetState extends State<_RelationPickerSheet> {
                   label: 'Деверь / Золовка / Шурин',
                   onTap: () => _pick(context, RelationType.siblingInLaw, null),
                 ),
+                // F2: сложные семьи — бывшие союзы и сводные дети.
+                _SecondaryTile(
+                  keyName: 'ex-spouse',
+                  label: 'Бывший муж / жена',
+                  onTap: () => _pick(context, RelationType.ex_spouse, null),
+                ),
+                _SecondaryTile(
+                  keyName: 'unmarried-partner',
+                  label: 'Партнёр (без брака)',
+                  onTap: () => _pick(context, RelationType.partner, null),
+                ),
+                _SecondaryTile(
+                  keyName: 'stepchild',
+                  label: 'Сводный ребёнок',
+                  onTap: () => _pick(context, RelationType.stepchild, null),
+                ),
                 _SecondaryTile(
                   keyName: 'other',
                   label: 'Другое родство — заполню сам',

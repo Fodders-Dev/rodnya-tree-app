@@ -415,6 +415,58 @@ void main() {
 
     expect(find.text('Дата свадьбы'), findsOneWidget);
     expect(find.text('Попадёт в семейный календарь'), findsOneWidget);
+
+    // F2: для текущего брака дата развода спрятана за «+ Дата развода».
+    expect(find.byKey(const Key('divorce-date-field')), findsNothing);
+    await tester.ensureVisible(find.byKey(const Key('divorce-date-add')));
+    await tester.tap(find.byKey(const Key('divorce-date-add')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('divorce-date-field')), findsOneWidget);
+  });
+
+  testWidgets(
+      'F2: для бывшего супруга поле «Дата развода» видно сразу в расширенном',
+      (tester) async {
+    final relatedPerson = FamilyPerson(
+      id: 'person-1',
+      treeId: 'tree-1',
+      name: 'Петрова Анна',
+      gender: Gender.female,
+      isAlive: true,
+      createdAt: DateTime(2024, 1, 1),
+      updatedAt: DateTime(2024, 1, 1),
+    );
+
+    final router = GoRouter(
+      routes: [
+        GoRoute(
+          path: '/add',
+          builder: (context, state) => AddRelativeScreen(
+            treeId: 'tree-1',
+            relatedTo: relatedPerson,
+            predefinedRelation: RelationType.ex_spouse,
+            routeExtra: state.extra as Map<String, dynamic>?,
+            routeQueryParameters: state.uri.queryParameters,
+          ),
+        ),
+      ],
+      initialLocation: '/add',
+    );
+
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.pumpAndSettle();
+
+    await tester.scrollUntilVisible(
+      find.text('Показать'),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(find.text('Показать'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Дата свадьбы'), findsOneWidget);
+    expect(find.byKey(const Key('divorce-date-field')), findsOneWidget);
+    expect(find.byKey(const Key('divorce-date-add')), findsNothing);
   });
 
   testWidgets(

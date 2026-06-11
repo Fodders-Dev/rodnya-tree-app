@@ -74,7 +74,34 @@ void main() {
     expect(find.text('Прадед / Прабабка'), findsOneWidget);
     expect(find.text('Тесть / Тёща / Свёкр / Свекровь'), findsOneWidget);
     expect(find.text('Деверь / Золовка / Шурин'), findsOneWidget);
+    // F2: сложные семьи.
+    expect(find.text('Бывший муж / жена'), findsOneWidget);
+    expect(find.text('Партнёр (без брака)'), findsOneWidget);
+    expect(find.text('Сводный ребёнок'), findsOneWidget);
     expect(find.text('Другое родство — заполню сам'), findsOneWidget);
+  });
+
+  testWidgets('F2: tap «Бывший муж / жена» pops с ex_spouse', (tester) async {
+    await _openSheet(tester);
+    await tester.tap(find.byKey(const Key('relation-picker-other-expand')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Бывший муж / жена'));
+    await tester.tap(find.text('Бывший муж / жена'));
+    await tester.pumpAndSettle();
+    expect(capturedResult, isNotNull);
+    expect(capturedResult!.relationType, RelationType.ex_spouse);
+    expect(capturedResult!.gender, isNull);
+  });
+
+  testWidgets('F2: tap «Сводный ребёнок» pops с stepchild', (tester) async {
+    await _openSheet(tester);
+    await tester.tap(find.byKey(const Key('relation-picker-other-expand')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Сводный ребёнок'));
+    await tester.tap(find.text('Сводный ребёнок'));
+    await tester.pumpAndSettle();
+    expect(capturedResult, isNotNull);
+    expect(capturedResult!.relationType, RelationType.stepchild);
   });
 
   testWidgets('tap «Мама» pops sheet с parent + female', (tester) async {

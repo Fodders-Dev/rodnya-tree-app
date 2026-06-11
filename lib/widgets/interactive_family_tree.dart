@@ -2620,6 +2620,37 @@ class _InteractiveFamilyTreeState extends State<InteractiveFamilyTree> {
                       onTap: () =>
                           _showAddSelfRelationTypeDialog(context, person),
                     ),
+                  // F2: о connect-жесте никто не знал — однострочная
+                  // подсказка там, где пользователь уже думает о связях.
+                  if (widget.onConnectExistingPersons != null) ...[
+                    const SizedBox(height: 10),
+                    Row(
+                      key: const Key('tree-sheet-connect-hint'),
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(
+                          Icons.touch_app_outlined,
+                          size: 18,
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Связать с человеком, который уже есть на дереве, — нажмите на карточку и подержите.',
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodySmall
+                                ?.copyWith(
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurfaceVariant,
+                                  height: 1.3,
+                                ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -4431,6 +4462,7 @@ class _TreeLayoutEngine {
               fromId: pair.first,
               toId: pair.last,
               type: RelationType.spouse,
+              isPastUnion: _isPastUnionRelation(relation),
             ),
           );
         }
@@ -4466,6 +4498,7 @@ class _TreeLayoutEngine {
                   fromId: pair.first,
                   toId: pair.last,
                   type: RelationType.spouse,
+                  isPastUnion: unit.unionStatus == 'past',
                 ),
               );
             }
@@ -4495,7 +4528,18 @@ class _TreeLayoutEngine {
     return relation.relation1to2 == RelationType.spouse ||
         relation.relation2to1 == RelationType.spouse ||
         relation.relation1to2 == RelationType.partner ||
-        relation.relation2to1 == RelationType.partner;
+        relation.relation2to1 == RelationType.partner ||
+        _isPastUnionRelation(relation);
+  }
+
+  /// F2: бывший союз — ex-тип связи либо проставленная дата развода.
+  /// Та же логика, что у бэкового normalizeUnionStatus.
+  bool _isPastUnionRelation(FamilyRelation relation) {
+    return relation.relation1to2 == RelationType.ex_spouse ||
+        relation.relation2to1 == RelationType.ex_spouse ||
+        relation.relation1to2 == RelationType.ex_partner ||
+        relation.relation2to1 == RelationType.ex_partner ||
+        relation.divorceDate != null;
   }
 
   bool _isSiblingRelation(FamilyRelation relation) {
@@ -4747,10 +4791,19 @@ class FamilyTreePainter extends CustomPainter {
 
       if (connection.type == RelationType.spouse) {
         // Phase 4 chunk 3c: cross-tree spouse → foreign tint.
+        // F2: бывший союз — приглушённый пунктир, читается как «было».
         final isCrossTree =
             _isCrossTreeEdge(connection.fromId, connection.toId);
-        final paint = isCrossTree ? foreignSpouseLinePaint : spouseLinePaint;
-        _drawSpouseLine(canvas, startNodePos, endNodePos, paint);
+        final paint = isCrossTree
+            ? foreignSpouseLinePaint
+            : (connection.isPastUnion ? spousePastLinePaint : spouseLinePaint);
+        _drawSpouseLine(
+          canvas,
+          startNodePos,
+          endNodePos,
+          paint,
+          dashed: connection.isPastUnion && !isCrossTree,
+        );
       } else if (connection.type == RelationType.parent) {
         final key = connection.toId;
         final unit = familyUnits.putIfAbsent(
@@ -4833,12 +4886,19 @@ class FamilyTreePainter extends CustomPainter {
           // ownership > status).
           final isCrossTree =
               _isCrossTreeEdge(pairIds.first, pairIds.last);
+          final isPast = unit.unionStatus == 'past';
           final linePaint = isCrossTree
               ? foreignSpouseLinePaint
-              : (unit.unionStatus == 'past'
-                  ? spousePastLinePaint
-                  : spouseLinePaint);
-          _drawSpouseLine(canvas, firstPosition, secondPosition, linePaint);
+              : (isPast ? spousePastLinePaint : spouseLinePaint);
+          // F2: бывший союз — пунктир (бледности мало: для 50+ она
+          // читается как «дальний», а не «бывший»).
+          _drawSpouseLine(
+            canvas,
+            firstPosition,
+            secondPosition,
+            linePaint,
+            dashed: isPast && !isCrossTree,
+          );
           paintedAnything = true;
         }
       }
@@ -4885,8 +4945,9 @@ class FamilyTreePainter extends CustomPainter {
     Canvas canvas,
     Offset pos1,
     Offset pos2,
-    Paint linePaint,
-  ) {
+    Paint linePaint, {
+    bool dashed = false,
+  }) {
     // Просто рисуем горизонтальную линию между боковыми центрами
     final y = pos1.dy; // Супруги на одном уровне
     final x1 = pos1.dx +
@@ -4897,7 +4958,36 @@ class FamilyTreePainter extends CustomPainter {
         (pos1.dx < pos2.dx
             ? -InteractiveFamilyTree.nodeWidth / 2
             : InteractiveFamilyTree.nodeWidth / 2);
+    if (dashed) {
+      // F2: бывший союз — пунктир тем же приёмом, что adoptive-коннекторы.
+      _drawDashedSegment(canvas, Offset(x1, y), Offset(x2, y), linePaint);
+      return;
+    }
     canvas.drawLine(Offset(x1, y), Offset(x2, y), linePaint);
+  }
+
+  /// F2: пунктирный отрезок (6/4) — союз, который был, но закончился.
+  void _drawDashedSegment(
+    Canvas canvas,
+    Offset start,
+    Offset end,
+    Paint linePaint,
+  ) {
+    const dashLength = 6.0;
+    const gapLength = 4.0;
+    final delta = end - start;
+    final distance = delta.distance;
+    if (distance <= 0.1) {
+      return;
+    }
+    final direction = Offset(delta.dx / distance, delta.dy / distance);
+    double offset = 0;
+    while (offset < distance) {
+      final segmentStart = start + direction * offset;
+      final segmentEnd = start + direction * min(offset + dashLength, distance);
+      canvas.drawLine(segmentStart, segmentEnd, linePaint);
+      offset += dashLength + gapLength;
+    }
   }
 
   void _drawFamilyUnit(

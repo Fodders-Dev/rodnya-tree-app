@@ -124,6 +124,9 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
   DateTime? _birthDate;
   DateTime? _deathDate;
   DateTime? _marriageDate;
+  // F2: сложные семьи — дата развода для бывших союзов.
+  DateTime? _divorceDate;
+  bool _showDivorceDateField = false;
   Gender? _selectedGender;
   RelationType? _selectedRelationType;
   RelationType? _initialRelationType;
@@ -453,6 +456,23 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
     }
   }
 
+  /// F2: дата развода — для бывших союзов и «брак был, но закончился».
+  Future<void> _pickDivorceDate() async {
+    final DateTime? picked = await showDatePicker(
+      context: context,
+      initialDate: _divorceDate ?? _marriageDate ?? DateTime.now(),
+      firstDate: _marriageDate ?? kGenealogyFirstDate,
+      lastDate: DateTime.now(),
+      locale: const Locale('ru', 'RU'),
+    );
+
+    if (picked != null) {
+      setState(() {
+        _divorceDate = picked;
+      });
+    }
+  }
+
   Future<void> _pickImportantEventDate(
       _RelativeImportantEventDraft draft) async {
     final picked = await showDatePicker(
@@ -681,12 +701,21 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
                     return;
                   }
                 }
+                // F2: даты союза при смене связи на союзную (включая
+                // бывшую) тоже сохраняем.
+                final isUnionRelation =
+                    _selectedRelationType == RelationType.spouse ||
+                        _selectedRelationType == RelationType.partner ||
+                        _selectedRelationType == RelationType.ex_spouse ||
+                        _selectedRelationType == RelationType.ex_partner;
                 final updatedRelation = await _familyService.createRelation(
                   treeId: widget.treeId,
                   person1Id: widget.person!.id,
                   person2Id: userId,
                   relation1to2: _selectedRelationType!,
                   isConfirmed: true,
+                  marriageDate: isUnionRelation ? _marriageDate : null,
+                  divorceDate: isUnionRelation ? _divorceDate : null,
                   customRelationLabel1to2: customLabels?.relation1to2,
                   customRelationLabel2to1: customLabels?.relation2to1,
                 );
@@ -807,14 +836,21 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
                 }
               }
 
+              // F2: даты союза уходят для всех союзных типов, включая
+              // бывшие (бэк по ex-типу/дате развода сам выставит
+              // unionStatus = past).
+              final isUnionRelation = relationType == RelationType.spouse ||
+                  relationType == RelationType.partner ||
+                  relationType == RelationType.ex_spouse ||
+                  relationType == RelationType.ex_partner;
               final mainRelation = await _familyService.createRelation(
                 treeId: widget.treeId,
                 person1Id: newPersonId,
                 person2Id: person2Id,
                 relation1to2: relationType,
                 isConfirmed: true,
-                marriageDate:
-                    relationType == RelationType.spouse ? _marriageDate : null,
+                marriageDate: isUnionRelation ? _marriageDate : null,
+                divorceDate: isUnionRelation ? _divorceDate : null,
                 customRelationLabel1to2: customLabels?.relation1to2,
                 customRelationLabel2to1: customLabels?.relation2to1,
               );
@@ -924,6 +960,8 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
     _birthDate = null;
     _deathDate = null;
     _marriageDate = null;
+    _divorceDate = null;
+    _showDivorceDateField = false;
     _selectedGender = null;
     for (final draft in _importantEventDrafts) {
       draft.dispose();
