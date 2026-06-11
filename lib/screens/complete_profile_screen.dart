@@ -7,6 +7,7 @@
 // профиль» later. Form-validation and persistence semantics are
 // unchanged from the previous version.
 
+import '../utils/genealogy_dates.dart';
 import 'package:country_picker/country_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
@@ -677,7 +678,7 @@ class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
     final DateTime? picked = await showRodnyaDatePicker(
       context: context,
       initialDate: _birthDate ?? DateTime.now(),
-      firstDate: DateTime(1900),
+      firstDate: kGenealogyFirstDate,
       lastDate: DateTime.now(),
     );
 

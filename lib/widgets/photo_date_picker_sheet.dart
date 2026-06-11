@@ -5,6 +5,7 @@
 // год / десятилетие / «не знаю». Пишет dateTaken (ISO) + accuracy
 // ('exact' | 'year' | 'decade' | null) в photo-блок.
 
+import '../utils/genealogy_dates.dart';
 import 'package:flutter/material.dart';
 
 class PhotoDateResult {
@@ -52,7 +53,7 @@ class _PhotoDateSheetState extends State<_PhotoDateSheet> {
     final picked = await showDatePicker(
       context: context,
       initialDate: now,
-      firstDate: DateTime(1900),
+      firstDate: kGenealogyFirstDate,
       lastDate: DateTime(widget.currentYear, 12, 31),
       helpText: 'Когда сделано фото',
     );

@@ -14,6 +14,7 @@ import '../services/tree_mutation_history.dart';
 import '../backend/interfaces/profile_service_interface.dart';
 import '../backend/interfaces/storage_service_interface.dart';
 import '../backend/models/cross_tree_person_suggestion.dart';
+import '../utils/genealogy_dates.dart';
 import '../utils/relative_details_route.dart';
 import '../utils/snackbar.dart';
 import '../utils/user_facing_error.dart';
@@ -420,7 +421,7 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
       initialDate: isBirthDate
           ? (_birthDate ?? DateTime.now())
           : (_deathDate ?? DateTime.now()),
-      firstDate: DateTime(1900),
+      firstDate: kGenealogyFirstDate,
       lastDate: DateTime.now(),
       locale: const Locale('ru', 'RU'),
     );
@@ -440,7 +441,7 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
     final DateTime? picked = await showDatePicker(
       context: context,
       initialDate: _marriageDate ?? DateTime.now(),
-      firstDate: DateTime(1900),
+      firstDate: kGenealogyFirstDate,
       lastDate: DateTime.now(),
       locale: const Locale('ru', 'RU'),
     );
@@ -457,7 +458,7 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
     final picked = await showDatePicker(
       context: context,
       initialDate: draft.date ?? _birthDate ?? DateTime.now(),
-      firstDate: DateTime(1900),
+      firstDate: kGenealogyFirstDate,
       lastDate: DateTime(2100),
       locale: const Locale('ru', 'RU'),
     );

@@ -15,6 +15,7 @@
 // snapshot and an `onSave` callback that gets the next draft. The
 // host owns persistence (UserProfile vs FamilyPerson) and validation.
 
+import '../utils/genealogy_dates.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
@@ -288,7 +289,7 @@ class _ProfileEditSheetState extends State<_ProfileEditSheet> {
     final picked = await showDatePicker(
       context: context,
       initialDate: _draft.birthDate ?? DateTime(1990, 1, 1),
-      firstDate: DateTime(1900),
+      firstDate: kGenealogyFirstDate,
       lastDate: DateTime.now(),
       helpText: 'Дата рождения',
     );
@@ -301,7 +302,7 @@ class _ProfileEditSheetState extends State<_ProfileEditSheet> {
     final picked = await showDatePicker(
       context: context,
       initialDate: _draft.deathDate ?? DateTime.now(),
-      firstDate: _draft.birthDate ?? DateTime(1900),
+      firstDate: _draft.birthDate ?? kGenealogyFirstDate,
       lastDate: DateTime.now(),
       helpText: 'Дата смерти',
     );
