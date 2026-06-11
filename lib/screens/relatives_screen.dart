@@ -65,6 +65,13 @@ String _countLabel(
 class RelativesScreen extends StatefulWidget {
   const RelativesScreen({super.key});
 
+  /// F3: сброс session-состояния свёртки «Нужно пригласить» между
+  /// тестами (паттерн session-dismiss баннеров).
+  @visibleForTesting
+  static void debugResetPendingSectionState() {
+    _RelativesScreenState._pendingSectionExpandedThisSession = false;
+  }
+
   @override
   State<RelativesScreen> createState() => _RelativesScreenState();
 }
@@ -97,6 +104,10 @@ class _RelativesScreenState extends State<RelativesScreen> {
   bool _isPendingRequestsLoading = true;
   String _searchQuery = '';
   late final TextEditingController _searchController;
+
+  // F3: «Нужно пригласить» свёрнута по умолчанию; решение пользователя
+  // живёт сессию (static — переживает переключение вкладок/экранов).
+  static bool _pendingSectionExpandedThisSession = false;
   // Phase 3.4 chunk 5: per-row + header conflict badges.
   // `_conflictCounts` keyed by personId → unresolved count.
   // `_treeConflictsCache` — flat list для sheet'а (filtered by
@@ -1248,19 +1259,42 @@ class _RelativesScreenState extends State<RelativesScreen> {
     pendingPeople.sort(byName);
     joinedPeople.sort(byName);
 
+    // F3: живые пользователи — первыми («с ними взаимодействуют»),
+    // «Нужно пригласить» — ниже и свёрнута по умолчанию. Поиск ищет по
+    // всем: при непустом запросе секция раскрывается, чтобы совпадения
+    // не пропали за свёрткой.
+    final bool searchActive = _searchQuery.trim().isNotEmpty;
+    final bool pendingExpanded =
+        _pendingSectionExpandedThisSession || searchActive;
+
     final List<dynamic> flatList = [];
-    if (!isOnlineTab && pendingPeople.isNotEmpty) {
-      flatList.add(_RelativesSectionHeader(
-        title: 'Нужно пригласить',
-        count: pendingPeople.length,
-      ));
-      flatList.addAll(pendingPeople);
-    }
     if (joinedPeople.isNotEmpty) {
       flatList.add(_RelativesSectionHeader(
         title: isOnlineTab ? 'Чаты' : 'В приложении',
       ));
       flatList.addAll(joinedPeople);
+    }
+    if (!isOnlineTab && pendingPeople.isNotEmpty) {
+      // Если зарегистрированных нет вовсе, сворачивать нечего — список
+      // приглашений и есть весь экран.
+      final bool collapsible = joinedPeople.isNotEmpty;
+      final bool expanded = !collapsible || pendingExpanded;
+      flatList.add(_RelativesSectionHeader(
+        title: 'Нужно пригласить',
+        count: pendingPeople.length,
+        collapsible: collapsible,
+        expanded: expanded,
+        onToggle: collapsible
+            ? () {
+                setState(() {
+                  _pendingSectionExpandedThisSession = !pendingExpanded;
+                });
+              }
+            : null,
+      ));
+      if (expanded) {
+        flatList.addAll(pendingPeople);
+      }
     }
     if (!isOnlineTab && pendingPeople.isEmpty && joinedPeople.isEmpty) {
       flatList.addAll(relativesForTab);
@@ -1279,42 +1313,65 @@ class _RelativesScreenState extends State<RelativesScreen> {
               (theme.brightness == Brightness.dark
                   ? RodnyaDesignTokens.dark
                   : RodnyaDesignTokens.light);
-          return Padding(
-            padding: const EdgeInsets.fromLTRB(4, 18, 4, 8),
-            child: Row(
-              children: [
-                Expanded(
+          final headerRow = Row(
+            children: [
+              Expanded(
+                child: Text(
+                  item.title,
+                  style: AppTheme.serif(
+                    color: tokens.ink,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: -0.18,
+                  ),
+                ),
+              ),
+              if (item.count != null && item.count! > 0)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 9,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: tokens.warmSoft,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
                   child: Text(
-                    item.title,
-                    style: AppTheme.serif(
-                      color: tokens.ink,
-                      fontSize: 18,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: -0.18,
+                    '${item.count}',
+                    style: AppTheme.sans(
+                      color: tokens.warm,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
                     ),
                   ),
                 ),
-                if (item.count != null && item.count! > 0)
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 9,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: tokens.warmSoft,
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                    child: Text(
-                      '${item.count}',
-                      style: AppTheme.sans(
-                        color: tokens.warm,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ),
+              // F3: шеврон у сворачиваемой секции — видно, что строка
+              // нажимается и что внутри ещё есть люди.
+              if (item.collapsible) ...[
+                const SizedBox(width: 6),
+                Icon(
+                  item.expanded ? Icons.expand_less : Icons.expand_more,
+                  size: 22,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
               ],
-            ),
+            ],
+          );
+          if (item.collapsible && item.onToggle != null) {
+            return InkWell(
+              key: const Key('relatives-pending-section-toggle'),
+              borderRadius: BorderRadius.circular(12),
+              onTap: item.onToggle,
+              child: Padding(
+                // ≥44dp тап-цель: 18+8 вертикальных отступов + строка.
+                padding: const EdgeInsets.fromLTRB(4, 18, 4, 8),
+                child: headerRow,
+              ),
+            );
+          }
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(4, 18, 4, 8),
+            child: headerRow,
           );
         } else if (item is FamilyPerson) {
           final relative = item;
@@ -1905,8 +1962,20 @@ class _RelativesScreenState extends State<RelativesScreen> {
 }
 
 class _RelativesSectionHeader {
-  const _RelativesSectionHeader({required this.title, this.count});
+  const _RelativesSectionHeader({
+    required this.title,
+    this.count,
+    this.collapsible = false,
+    this.expanded = true,
+    this.onToggle,
+  });
 
   final String title;
   final int? count;
+
+  /// F3: секция «Нужно пригласить» сворачивается — заголовок-строка с
+  /// количеством и шевроном, чтобы живые пользователи были сверху.
+  final bool collapsible;
+  final bool expanded;
+  final VoidCallback? onToggle;
 }

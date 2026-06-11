@@ -379,6 +379,8 @@ void main() {
     SharedPreferences.setMockInitialValues({
       'discover_fab_tooltip_shown_v1': true,
     });
+    // F3: session-свёртка «Нужно пригласить» не должна течь между тестами.
+    RelativesScreen.debugResetPendingSectionState();
     await getIt.reset();
     getIt.registerSingleton<AuthServiceInterface>(_FakeAuthService());
     getIt.registerSingleton<ChatServiceInterface>(_FakeChatService());
@@ -441,7 +443,6 @@ void main() {
     expect(find.text('Отец'), findsOneWidget);
     expect(find.text('Сестра'), findsOneWidget);
     expect(find.text('Можно написать'), findsAtLeastNWidgets(1));
-    expect(find.text('Нужно пригласить'), findsOneWidget);
     await tester.scrollUntilVisible(
       find.text('Шуфляк Анастасия Эдуардовна'),
       200,
@@ -457,6 +458,75 @@ void main() {
       find.byTooltip('Написать Кузнецов Андрей Анатольевич'),
       findsOneWidget,
     );
+    // F3: «Нужно пригласить» теперь НИЖЕ живых пользователей.
+    await tester.scrollUntilVisible(
+      find.text('Нужно пригласить'),
+      200,
+      scrollable: find.descendant(
+        of: find.byType(ListView),
+        matching: find.byType(Scrollable),
+      ).first,
+    );
+    expect(find.text('Нужно пригласить'), findsOneWidget);
+  });
+
+  testWidgets(
+      'F3: «В приложении» первой, «Нужно пригласить» свёрнута и раскрывается тапом',
+      (tester) async {
+    tester.view.physicalSize = const Size(800, 1400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await pumpRelativesScreen(tester);
+
+    // Порядок секций: живые пользователи — сверху.
+    final joinedY = tester.getTopLeft(find.text('В приложении')).dy;
+    await tester.scrollUntilVisible(
+      find.text('Нужно пригласить'),
+      200,
+      scrollable: find
+          .descendant(
+            of: find.byType(ListView),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+    final pendingY = tester.getTopLeft(find.text('Нужно пригласить')).dy;
+    expect(joinedY, lessThan(pendingY));
+
+    // Свёрнута по умолчанию: незарегистрированный дед спрятан, шеврон вниз.
+    expect(find.text('Кузнецов Анатолий Степанович'), findsNothing);
+    expect(find.byIcon(Icons.expand_more), findsOneWidget);
+    expect(find.text('1'), findsOneWidget); // бейдж количества
+
+    // Тап по заголовку раскрывает секцию.
+    await tester.tap(find.byKey(const Key('relatives-pending-section-toggle')));
+    await tester.pumpAndSettle();
+    expect(find.text('Кузнецов Анатолий Степанович'), findsOneWidget);
+    expect(find.byIcon(Icons.expand_less), findsOneWidget);
+
+    // Повторный тап сворачивает обратно.
+    await tester.tap(find.byKey(const Key('relatives-pending-section-toggle')));
+    await tester.pumpAndSettle();
+    expect(find.text('Кузнецов Анатолий Степанович'), findsNothing);
+  });
+
+  testWidgets('F3: поиск находит людей в свёрнутой секции и раскрывает её',
+      (tester) async {
+    tester.view.physicalSize = const Size(800, 1400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await pumpRelativesScreen(tester);
+    expect(find.text('Кузнецов Анатолий Степанович'), findsNothing);
+
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Поиск среди родных'),
+      'Анатолий Степанович',
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Кузнецов Анатолий Степанович'), findsOneWidget);
   });
 
   testWidgets('Быстрый чат из списка родных открывает маршрут чата',
