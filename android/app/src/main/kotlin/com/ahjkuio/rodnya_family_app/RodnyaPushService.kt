@@ -202,6 +202,9 @@ class RodnyaPushService : RuStoreMessagingService() {
             RodnyaNotificationChannels.CALLS_ID,
         )
             .setSmallIcon(iconResId)
+            // Бренд-зелёный: без явного setColor Samsung красит кружок
+            // иконки в шторке системным цветом, а не фирменным.
+            .setColor(context.getColor(R.color.colorAccent))
             .setContentTitle(callerName)
             .setContentText(body)
             .setPriority(NotificationCompat.PRIORITY_MAX)

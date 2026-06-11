@@ -222,7 +222,10 @@ class RodnyaCallForegroundService : Service() {
             applicationContext,
             RodnyaNotificationChannels.ACTIVE_CALL_ID,
         )
-            .setSmallIcon(android.R.drawable.stat_sys_phone_call)
+            // Фирменная «Р» вместо системной телефонной трубки + бренд-цвет
+            // (без setColor Samsung красит кружок в шторке системным).
+            .setSmallIcon(R.drawable.ic_stat_notification)
+            .setColor(applicationContext.getColor(R.color.colorAccent))
             .setContentTitle(title)
             .setContentIntent(tapPending)
             .setOngoing(true)
