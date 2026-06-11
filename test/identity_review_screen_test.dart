@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get_it/get_it.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:rodnya/backend/interfaces/auth_service_interface.dart';
 import 'package:rodnya/backend/interfaces/identity_service_interface.dart';
 import 'package:rodnya/models/identity_claim.dart';
@@ -37,14 +38,17 @@ class _FakeIdentityService implements IdentityServiceInterface {
   _FakeIdentityService({
     this.proposals = const <MergeProposal>[],
     this.claims = const <IdentityClaim>[],
+    this.mergedProposals = const <MergeProposal>[],
   });
 
   List<MergeProposal> proposals;
   List<IdentityClaim> claims;
+  List<MergeProposal> mergedProposals;
   String? reviewedProposalId;
   bool? reviewedProposalAccepted;
   String? reviewedClaimId;
   bool? reviewedClaimApproved;
+  String? unmergedProposalId;
   bool discoverability = false;
 
   @override
@@ -52,6 +56,32 @@ class _FakeIdentityService implements IdentityServiceInterface {
 
   @override
   Future<List<IdentityClaim>> getPendingIdentityClaims() async => claims;
+
+  @override
+  Future<List<MergeProposal>> getMergedProposals() async => mergedProposals;
+
+  @override
+  Future<MergeProposal> unmergeMergeProposal(String proposalId) async {
+    unmergedProposalId = proposalId;
+    final source =
+        mergedProposals.firstWhere((proposal) => proposal.id == proposalId);
+    mergedProposals = mergedProposals
+        .where((proposal) => proposal.id != proposalId)
+        .toList(growable: false);
+    return MergeProposal(
+      id: source.id,
+      status: 'unmerged',
+      matchScore: source.matchScore,
+      confidence: source.confidence,
+      reasons: source.reasons,
+      personA: source.personA,
+      personB: source.personB,
+      requiredReviewCount: source.requiredReviewCount,
+      reviewCount: source.reviewCount,
+      createdAt: source.createdAt,
+      resolvedAt: source.resolvedAt,
+    );
+  }
 
   @override
   Future<MergeProposal> reviewMergeProposal(
@@ -102,6 +132,11 @@ class _FakeIdentityService implements IdentityServiceInterface {
 void main() {
   final getIt = GetIt.instance;
 
+  setUpAll(() async {
+    // D1: карточка «Объединённые ранее» форматирует дату по-русски.
+    await initializeDateFormatting('ru');
+  });
+
   setUp(() async {
     await getIt.reset();
     getIt.registerSingleton<AuthServiceInterface>(_FakeAuthService());
@@ -109,6 +144,51 @@ void main() {
 
   tearDown(() async {
     await getIt.reset();
+  });
+
+  testWidgets(
+      'D1: «Объединённые ранее» — кнопка «Разъединить» с confirm-диалогом',
+      (tester) async {
+    final identityService = _FakeIdentityService(
+      mergedProposals: [_mergedProposal()],
+    );
+    getIt.registerSingleton<IdentityServiceInterface>(identityService);
+
+    await tester.pumpWidget(
+      const MaterialApp(home: IdentityReviewScreen()),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('Объединённые ранее'), findsOneWidget);
+    expect(find.text('Иван Петров ↔ Пётр Иванович'), findsOneWidget);
+    expect(find.textContaining('Объединены 2 июня 2026'), findsOneWidget);
+
+    // Тап «Разъединить» → confirm с тёплым объяснением.
+    await tester.ensureVisible(find.byKey(const Key('unmerge-merged-1')));
+    await tester.tap(find.byKey(const Key('unmerge-merged-1')));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('Карточки в деревьях не изменятся'),
+      findsOneWidget,
+    );
+
+    // «Отмена» — ничего не зовётся.
+    await tester.tap(find.text('Отмена'));
+    await tester.pumpAndSettle();
+    expect(identityService.unmergedProposalId, isNull);
+    expect(find.text('Объединённые ранее'), findsOneWidget);
+
+    // Подтверждение — unmerge ушёл, секция перегрузилась пустой.
+    await tester.tap(find.byKey(const Key('unmerge-merged-1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('unmerge-confirm')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(identityService.unmergedProposalId, 'merged-1');
+    expect(find.text('Объединённые ранее'), findsNothing);
+    await tester.pump(const Duration(seconds: 4));
   });
 
   testWidgets('IdentityReviewScreen shows safe A/B merge comparison',
@@ -314,5 +394,29 @@ IdentityClaim _claim() {
     claimantUserId: 'reviewer-secret',
     status: 'pending',
     createdAt: DateTime(2026, 5, 1),
+  );
+}
+
+MergeProposal _mergedProposal() {
+  return MergeProposal(
+    id: 'merged-1',
+    status: 'accepted',
+    matchScore: 0.92,
+    confidence: 'high',
+    reasons: const ['Совпадает имя'],
+    personA: const MergePersonPreview(
+      name: 'Иван Петров',
+      birthYear: '1950',
+      contextLabel: 'Доступное семейное дерево',
+    ),
+    personB: const MergePersonPreview(
+      name: 'Пётр Иванович',
+      birthYear: '1950',
+      contextLabel: 'Контекст скрыт настройками',
+    ),
+    requiredReviewCount: 2,
+    reviewCount: 2,
+    createdAt: DateTime(2026, 5, 1),
+    resolvedAt: DateTime(2026, 6, 2),
   );
 }

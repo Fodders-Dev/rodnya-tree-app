@@ -779,6 +779,16 @@ class PendingBackendIdentityService implements IdentityServiceInterface {
   }
 
   @override
+  Future<List<MergeProposal>> getMergedProposals() async {
+    return const <MergeProposal>[];
+  }
+
+  @override
+  Future<MergeProposal> unmergeMergeProposal(String proposalId) {
+    throw UnsupportedError(_pendingProviderMessage('identity'));
+  }
+
+  @override
   Future<List<PersonAttribute>> getPersonAttributes({
     required String treeId,
     required String personId,

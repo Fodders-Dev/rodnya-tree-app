@@ -10487,11 +10487,24 @@ class FileStore {
     return changed;
   }
 
+  // D1: вместо boolean возвращает ЖУРНАЛ слияния — что именно переехало
+  // и что поглотилось. По нему unmerge восстанавливает source-identity.
+  // Чтение старого `mergeApplied: true` остаётся совместимым (unmerge на
+  // легаси-boolean отвечает 409 — применённых слияний в проде ещё нет).
   _mergeIdentitiesForProposal(db, proposal) {
     const targetIdentityId = normalizeNullableString(proposal.toIdentityId);
     const sourceIdentityId = normalizeNullableString(proposal.candidateIdentityId);
     if (!targetIdentityId || !sourceIdentityId || targetIdentityId === sourceIdentityId) {
-      return true;
+      // No-op слияние (одна identity) — журнал пустой, но валидный.
+      return {
+        movedPersonIds: [],
+        movedAttributeIds: [],
+        sourceIdentityId: sourceIdentityId || targetIdentityId || null,
+        targetIdentityId: targetIdentityId || null,
+        userIdAbsorbed: false,
+        claimedByAbsorbed: false,
+        appliedAt: nowIso(),
+      };
     }
 
     const targetIdentity = db.personIdentities.find(
@@ -10511,18 +10524,28 @@ class FileStore {
       return false;
     }
 
+    const movedPersonIds = [];
     for (const person of db.persons) {
       if (person.identityId === sourceIdentityId) {
         person.identityId = targetIdentityId;
         person.updatedAt = nowIso();
+        movedPersonIds.push(person.id);
       }
     }
+    const movedAttributeIds = [];
     for (const attribute of db.personAttributes || []) {
       if (attribute.identityId === sourceIdentityId) {
         attribute.identityId = targetIdentityId;
         attribute.updatedAt = nowIso();
+        movedAttributeIds.push(attribute.id);
       }
     }
+
+    const userIdAbsorbed =
+      !targetIdentity.userId && Boolean(sourceIdentity.userId);
+    const claimedByAbsorbed =
+      !targetIdentity.claimedByUserId &&
+      Boolean(sourceIdentity.claimedByUserId);
 
     targetIdentity.userId = targetIdentity.userId || sourceIdentity.userId || null;
     targetIdentity.claimedByUserId =
@@ -10547,7 +10570,15 @@ class FileStore {
     sourceIdentity.updatedAt = nowIso();
 
     this._reconcilePersonIdentities(db);
-    return true;
+    return {
+      movedPersonIds,
+      movedAttributeIds,
+      sourceIdentityId,
+      targetIdentityId,
+      userIdAbsorbed,
+      claimedByAbsorbed,
+      appliedAt: nowIso(),
+    };
   }
 
   async listPendingMergeProposalsForUser(userId, {limit = 50} = {}) {
@@ -10636,6 +10667,127 @@ class FileStore {
     await this._write(db);
     return structuredClone(
       this._mergeProposalView(db, proposal, reviewerUserId),
+    );
+  }
+
+  // D1: применённые слияния, видимые зрителю — секция «Объединённые
+  // ранее» на экране «Один человек?». Только те, где зритель был
+  // ответственным.
+  async listMergedProposalsForUser(userId, {limit = 50} = {}) {
+    const normalizedUserId = normalizeNullableString(userId);
+    const db = await this._read();
+    return (db.mergeProposals || [])
+      .filter(
+        (proposal) =>
+          proposal.status === "accepted" &&
+          Boolean(proposal.mergeApplied) &&
+          normalizeParticipantIds(proposal.reviewerUserIds).includes(
+            normalizedUserId,
+          ),
+      )
+      .sort((left, right) =>
+        String(right.resolvedAt || right.createdAt || "").localeCompare(
+          String(left.resolvedAt || left.createdAt || ""),
+        ),
+      )
+      .slice(0, Math.max(0, Math.min(Number(limit) || 50, 100)))
+      .map((proposal) =>
+        structuredClone(this._mergeProposalView(db, proposal, normalizedUserId)),
+      );
+  }
+
+  // D1: разъединение применённого слияния по журналу. Карточки в
+  // деревьях не меняются — распадается только связка «это один человек».
+  // Возвраты: null — нет предложения; false — актор не ответственный;
+  // {error: 'legacy'} — слияние применено до журнала (легаси boolean);
+  // {error: 'not_applied'} — нечего разъединять; иначе — view.
+  async unmergeMergeProposal({proposalId, actorUserId}) {
+    const db = await this._read();
+    const proposal = (db.mergeProposals || []).find(
+      (entry) => entry.id === proposalId,
+    );
+    if (!proposal) {
+      return null;
+    }
+    if (
+      !normalizeParticipantIds(proposal.reviewerUserIds).includes(
+        normalizeNullableString(actorUserId),
+      )
+    ) {
+      return false;
+    }
+    if (proposal.status !== "accepted" || !proposal.mergeApplied) {
+      return {error: "not_applied"};
+    }
+    const journal = proposal.mergeApplied;
+    if (journal === true || typeof journal !== "object") {
+      // Слияние времён boolean-флага — журнала нет, честно отказываем.
+      return {error: "legacy"};
+    }
+
+    const sourceIdentityId = normalizeNullableString(journal.sourceIdentityId);
+    const targetIdentityId = normalizeNullableString(journal.targetIdentityId);
+    const sourceIdentity = sourceIdentityId
+      ? db.personIdentities.find((entry) => entry.id === sourceIdentityId)
+      : null;
+    const targetIdentity = targetIdentityId
+      ? db.personIdentities.find((entry) => entry.id === targetIdentityId)
+      : null;
+
+    // Persons, удалённые с момента слияния, пропускаем молча.
+    const survivingPersonIds = normalizeParticipantIds(
+      journal.movedPersonIds,
+    ).filter((personId) =>
+      db.persons.some((person) => person.id === personId),
+    );
+    for (const person of db.persons) {
+      if (survivingPersonIds.includes(person.id)) {
+        person.identityId = sourceIdentityId;
+        person.updatedAt = nowIso();
+      }
+    }
+    const movedAttributeIds = new Set(
+      Array.isArray(journal.movedAttributeIds) ? journal.movedAttributeIds : [],
+    );
+    for (const attribute of db.personAttributes || []) {
+      if (movedAttributeIds.has(attribute.id)) {
+        attribute.identityId = sourceIdentityId;
+        attribute.updatedAt = nowIso();
+      }
+    }
+
+    if (sourceIdentity) {
+      sourceIdentity.mergedInto = null;
+      sourceIdentity.personIds = survivingPersonIds;
+      // Осознанный дефолт: в публичный поиск не возвращаем — пусть
+      // включают сами.
+      sourceIdentity.isPublicDiscoverable = false;
+      sourceIdentity.updatedAt = nowIso();
+    }
+    if (targetIdentity) {
+      targetIdentity.personIds = normalizeParticipantIds(
+        (targetIdentity.personIds || []).filter(
+          (personId) => !survivingPersonIds.includes(personId),
+        ),
+      );
+      if (journal.userIdAbsorbed === true) {
+        targetIdentity.userId = null;
+      }
+      if (journal.claimedByAbsorbed === true) {
+        targetIdentity.claimedByUserId = null;
+      }
+      targetIdentity.updatedAt = nowIso();
+    }
+
+    // История сохраняется: повторный матч сможет предложить заново.
+    proposal.status = "unmerged";
+    proposal.unmergedAt = nowIso();
+    proposal.unmergedByUserId = normalizeNullableString(actorUserId);
+
+    this._reconcilePersonIdentities(db);
+    await this._write(db);
+    return structuredClone(
+      this._mergeProposalView(db, proposal, actorUserId),
     );
   }
 

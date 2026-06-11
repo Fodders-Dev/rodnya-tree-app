@@ -4,6 +4,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
+import 'package:intl/intl.dart';
 
 import '../backend/interfaces/auth_service_interface.dart';
 import '../backend/interfaces/identity_service_interface.dart';
@@ -34,6 +35,8 @@ class _IdentityReviewScreenState extends State<IdentityReviewScreen> {
   Object? _loadError;
   List<MergeProposal> _mergeProposals = const <MergeProposal>[];
   List<IdentityClaim> _identityClaims = const <IdentityClaim>[];
+  // D1: применённые слияния — секция «Объединённые ранее» с «Разъединить».
+  List<MergeProposal> _mergedProposals = const <MergeProposal>[];
 
   // K1: актив (ждёт МОЕГО решения) и «Ждём других» (я уже проголосовал,
   // консенсус не собран) — разные секции, не один список.
@@ -73,6 +76,7 @@ class _IdentityReviewScreenState extends State<IdentityReviewScreen> {
       final results = await Future.wait([
         service.getPendingMergeProposals(),
         service.getPendingIdentityClaims(),
+        service.getMergedProposals(),
       ]);
       if (!mounted) {
         return;
@@ -80,6 +84,7 @@ class _IdentityReviewScreenState extends State<IdentityReviewScreen> {
       setState(() {
         _mergeProposals = results[0] as List<MergeProposal>;
         _identityClaims = results[1] as List<IdentityClaim>;
+        _mergedProposals = results[2] as List<MergeProposal>;
         _isLoading = false;
       });
     } catch (error) {
@@ -90,6 +95,61 @@ class _IdentityReviewScreenState extends State<IdentityReviewScreen> {
         _loadError = error;
         _isLoading = false;
       });
+    }
+  }
+
+  /// D1: разъединить применённое слияние. Confirm объясняет, что
+  /// карточки в деревьях не изменятся — распадётся только связка.
+  Future<void> _unmergeProposal(MergeProposal proposal) async {
+    final service = _identityService;
+    if (service == null) {
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Разъединить?'),
+        content: const Text(
+          'Карточки в деревьях не изменятся — распадётся только связка '
+          '«это один человек». Совпадение можно будет подтвердить заново.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            key: const Key('unmerge-confirm'),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Разъединить'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) {
+      return;
+    }
+
+    setState(() => _isMutating = true);
+    try {
+      await service.unmergeMergeProposal(proposal.id);
+      if (!mounted) {
+        return;
+      }
+      _showMessage('Связка распалась. Карточки в деревьях не изменились.');
+      await _load();
+    } catch (error) {
+      _showMessage(
+        describeUserFacingError(
+          authService: _authService,
+          error: error,
+          fallbackMessage: 'Не удалось разъединить. Попробуйте ещё раз.',
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isMutating = false);
+      }
     }
   }
 
@@ -464,6 +524,23 @@ class _IdentityReviewScreenState extends State<IdentityReviewScreen> {
                         (proposal) => Padding(
                           padding: const EdgeInsets.only(bottom: 10),
                           child: _WaitingOthersCard(proposal: proposal),
+                        ),
+                      ),
+                    ],
+                    // D1: применённые слияния — можно разъединить, если
+                    // объединили по ошибке. Карточки не трогаются.
+                    if (_mergedProposals.isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      const _SectionTitle(title: 'Объединённые ранее'),
+                      const SizedBox(height: 8),
+                      ..._mergedProposals.map(
+                        (proposal) => Padding(
+                          padding: const EdgeInsets.only(bottom: 10),
+                          child: _MergedEarlierCard(
+                            proposal: proposal,
+                            isMutating: _isMutating,
+                            onUnmerge: () => _unmergeProposal(proposal),
+                          ),
                         ),
                       ),
                     ],
@@ -1607,6 +1684,80 @@ class _WaitingOthersCard extends StatelessWidget {
             const SizedBox(height: 10),
             _ReviewersLine(reviewers: proposal.reviewers),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+/// D1: применённое слияние — пара имён, дата и «Разъединить».
+class _MergedEarlierCard extends StatelessWidget {
+  const _MergedEarlierCard({
+    required this.proposal,
+    required this.isMutating,
+    required this.onUnmerge,
+  });
+
+  final MergeProposal proposal;
+  final bool isMutating;
+  final VoidCallback onUnmerge;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final tokens = _tokens(context);
+    final mergedAt = proposal.resolvedAt;
+    return GlassPanel(
+      padding: const EdgeInsets.all(14),
+      borderRadius: BorderRadius.circular(tokens.radiusMd),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.join_full_rounded,
+                size: 18,
+                color: tokens.inkSecondary,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '${proposal.personA.name} ↔ ${proposal.personB.name}',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    color: tokens.ink,
+                    fontWeight: FontWeight.w800,
+                    height: 1.2,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            mergedAt != null
+                ? 'Объединены ${DateFormat('d MMMM y', 'ru').format(mergedAt)} — считаются одним человеком.'
+                : 'Объединены — считаются одним человеком.',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: tokens.inkSecondary,
+              height: 1.3,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              key: Key('unmerge-${proposal.id}'),
+              onPressed: isMutating ? null : onUnmerge,
+              style: OutlinedButton.styleFrom(
+                minimumSize: const Size(0, 44),
+              ),
+              icon: const Icon(Icons.call_split_rounded, size: 18),
+              label: const Text('Разъединить'),
+            ),
+          ),
         ],
       ),
     );

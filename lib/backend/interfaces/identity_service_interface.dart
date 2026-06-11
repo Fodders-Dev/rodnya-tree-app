@@ -12,6 +12,12 @@ abstract class IdentityServiceInterface {
     String? reason,
   });
 
+  /// D1: применённые слияния зрителя — секция «Объединённые ранее».
+  Future<List<MergeProposal>> getMergedProposals();
+
+  /// D1: разъединить применённое слияние (право — любой ответственный).
+  Future<MergeProposal> unmergeMergeProposal(String proposalId);
+
   Future<List<PersonAttribute>> getPersonAttributes({
     required String treeId,
     required String personId,

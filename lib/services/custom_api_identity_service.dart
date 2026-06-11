@@ -63,6 +63,34 @@ class CustomApiIdentityService implements IdentityServiceInterface {
   }
 
   @override
+  Future<List<MergeProposal>> getMergedProposals() async {
+    final response = await _requestJson(
+      method: 'GET',
+      path: '/v1/merge-proposals/merged',
+    );
+    final rawProposals = response['proposals'];
+    if (rawProposals is! List<dynamic>) {
+      return const <MergeProposal>[];
+    }
+    return rawProposals
+        .whereType<Map<String, dynamic>>()
+        .map(MergeProposal.fromJson)
+        .where((proposal) => proposal.id.isNotEmpty)
+        .toList(growable: false);
+  }
+
+  @override
+  Future<MergeProposal> unmergeMergeProposal(String proposalId) async {
+    final response = await _requestJson(
+      method: 'POST',
+      path: '/v1/merge-proposals/$proposalId/unmerge',
+    );
+    return MergeProposal.fromJson(
+      Map<String, dynamic>.from(response['proposal'] as Map? ?? const {}),
+    );
+  }
+
+  @override
   Future<List<PersonAttribute>> getPersonAttributes({
     required String treeId,
     required String personId,
