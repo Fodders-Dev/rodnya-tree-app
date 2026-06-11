@@ -35,6 +35,18 @@ class _IdentityReviewScreenState extends State<IdentityReviewScreen> {
   List<MergeProposal> _mergeProposals = const <MergeProposal>[];
   List<IdentityClaim> _identityClaims = const <IdentityClaim>[];
 
+  // K1: актив (ждёт МОЕГО решения) и «Ждём других» (я уже проголосовал,
+  // консенсус не собран) — разные секции, не один список.
+  List<MergeProposal> get _awaitingProposals => _mergeProposals
+      .where((proposal) => proposal.awaitingMyDecision)
+      .toList(growable: false);
+
+  List<MergeProposal> get _votedPendingProposals => _mergeProposals
+      .where(
+        (proposal) => proposal.isPending && !proposal.awaitingMyDecision,
+      )
+      .toList(growable: false);
+
   @override
   void initState() {
     super.initState();
@@ -239,7 +251,8 @@ class _IdentityReviewScreenState extends State<IdentityReviewScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final totalPending = _mergeProposals.length + _identityClaims.length;
+    // K1: чип в шапке считает только то, что ждёт решения зрителя.
+    final totalPending = _awaitingProposals.length + _identityClaims.length;
 
     final theme = Theme.of(context);
     final tokens = theme.extension<RodnyaDesignTokens>() ??
@@ -278,23 +291,29 @@ class _IdentityReviewScreenState extends State<IdentityReviewScreen> {
                       tooltip: 'Назад',
                     ),
                     const SizedBox(width: 4),
-                    Text(
-                      'Один человек?',
-                      style: AppTheme.serif(
-                        color: tokens.ink,
-                        fontSize: 22,
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: -0.22,
+                    // K1: заголовок сжимается (Expanded+ellipsis) — на узких
+                    // Samsung (360dp) пара «заголовок + чип» давала
+                    // RenderFlex-полосу.
+                    Expanded(
+                      child: Text(
+                        'Один человек?',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppTheme.serif(
+                          color: tokens.ink,
+                          fontSize: 22,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: -0.22,
+                        ),
                       ),
                     ),
-                    const Spacer(),
                     if (totalPending > 0)
                       Container(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 9,
                           vertical: 5,
                         ),
-                        margin: const EdgeInsets.only(right: 8),
+                        margin: const EdgeInsets.only(left: 6, right: 8),
                         decoration: BoxDecoration(
                           color: tokens.warmSoft,
                           borderRadius: BorderRadius.circular(999),
@@ -379,7 +398,10 @@ class _IdentityReviewScreenState extends State<IdentityReviewScreen> {
       );
     }
 
-    final hasReviews = _mergeProposals.isNotEmpty || _identityClaims.isNotEmpty;
+    final awaitingProposals = _awaitingProposals;
+    final votedProposals = _votedPendingProposals;
+    final hasReviews =
+        awaitingProposals.isNotEmpty || _identityClaims.isNotEmpty;
     return LayoutBuilder(
       builder: (context, constraints) {
         final isWide = constraints.maxWidth >= 900;
@@ -399,20 +421,22 @@ class _IdentityReviewScreenState extends State<IdentityReviewScreen> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     _ReviewSummaryCard(
-                      mergeCount: _mergeProposals.length,
+                      mergeCount: awaitingProposals.length,
                       claimCount: _identityClaims.length,
                     ),
                     const SizedBox(height: 14),
-                    if (_mergeProposals.isEmpty)
+                    if (awaitingProposals.isEmpty)
                       _ReviewStateCard(
                         icon: Icons.merge_type_outlined,
                         title: 'Нет совпадений на проверку',
                         message: hasReviews
                             ? 'Сейчас остались только запросы личности.'
-                            : 'Когда система найдёт похожие карточки в разных деревьях, они появятся здесь.',
+                            : votedProposals.isNotEmpty
+                                ? 'Вы уже ответили — ждём решения остальных ответственных (ниже).'
+                                : 'Когда система найдёт похожие карточки в разных деревьях, они появятся здесь.',
                       )
                     else
-                      ..._mergeProposals.map(
+                      ...awaitingProposals.map(
                         (proposal) => Padding(
                           padding: const EdgeInsets.only(bottom: 14),
                           child: _MergeProposalComparisonCard(
@@ -430,6 +454,19 @@ class _IdentityReviewScreenState extends State<IdentityReviewScreen> {
                           ),
                         ),
                       ),
+                    // K1: проголосованное — отдельной секцией со статусом,
+                    // не как актив. Видно, чьего решения ждём.
+                    if (votedProposals.isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      const _SectionTitle(title: 'Ждём других'),
+                      const SizedBox(height: 8),
+                      ...votedProposals.map(
+                        (proposal) => Padding(
+                          padding: const EdgeInsets.only(bottom: 10),
+                          child: _WaitingOthersCard(proposal: proposal),
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 4),
                     _PublicDiscoveryCard(
                       value: _publicDiscoverability,
@@ -759,26 +796,28 @@ class _ConfidenceHeader extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 8),
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                _confidenceText(proposal),
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: tokens.inkSecondary,
-                  height: 1.3,
-                ),
-              ),
-            ),
-            if (proposal.requiredReviewCount > 0) ...[
-              const SizedBox(width: 10),
-              _MetaPill(
-                label:
-                    '${proposal.reviewCount}/${proposal.requiredReviewCount} согласовано',
-              ),
-            ],
-          ],
+        Text(
+          _confidenceText(proposal),
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: tokens.inkSecondary,
+            height: 1.3,
+          ),
         ),
+        // K1: вместо безликого «0/2 согласовано» — кто именно решает и
+        // на ком сейчас дело: «Вы — ждём · Наталья — ждём».
+        if (proposal.reviewers.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          _ReviewersLine(reviewers: proposal.reviewers),
+        ] else if (proposal.requiredReviewCount > 0) ...[
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: _MetaPill(
+              label:
+                  '${proposal.reviewCount}/${proposal.requiredReviewCount} согласовано',
+            ),
+          ),
+        ],
       ],
     );
   }
@@ -808,28 +847,32 @@ class _PersonPairPreview extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tokens = _tokens(context);
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Expanded(
-          child: _PersonCompareCard(
-            person: proposal.personA,
-            accent: tokens.accent,
+    // K1: IntrinsicHeight + stretch — карточки одинаковой высоты, и
+    // длинное ФИО, перенесённое на 2-3 строки, не ломает выравнивание.
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(
+            child: _PersonCompareCard(
+              person: proposal.personA,
+              accent: tokens.accent,
+            ),
           ),
-        ),
-        SizedBox(
-          width: 42,
-          child: Center(
-            child: Icon(Icons.merge_type, color: tokens.inkMuted),
+          SizedBox(
+            width: 42,
+            child: Center(
+              child: Icon(Icons.merge_type, color: tokens.inkMuted),
+            ),
           ),
-        ),
-        Expanded(
-          child: _PersonCompareCard(
-            person: proposal.personB,
-            accent: tokens.warm,
+          Expanded(
+            child: _PersonCompareCard(
+              person: proposal.personB,
+              accent: tokens.warm,
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }
@@ -877,9 +920,11 @@ class _PersonCompareCard extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 10),
+            // K1: ФИО переносится до 3 строк («Кузнецова Наталья Ген…»
+            // обрезалось на узких карточках сравнения).
             Text(
               person.name,
-              maxLines: 2,
+              maxLines: 3,
               overflow: TextOverflow.ellipsis,
               style: theme.textTheme.titleSmall?.copyWith(
                 color: tokens.ink,
@@ -1442,6 +1487,127 @@ class _MetaPill extends StatelessWidget {
             fontWeight: FontWeight.w900,
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// K1: поимённая строка ответственных — «Вы ✓ · Наталья — ждём». Чипы
+/// переносятся Wrap'ом, на 360dp без overflow.
+class _ReviewersLine extends StatelessWidget {
+  const _ReviewersLine({required this.reviewers});
+
+  final List<MergeReviewer> reviewers;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final tokens = _tokens(context);
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      children: [
+        for (final reviewer in reviewers)
+          DecoratedBox(
+            decoration: BoxDecoration(
+              color: reviewer.accepted
+                  ? tokens.accentSoft
+                  : tokens.surfaceStrong,
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(color: tokens.surfaceLine),
+            ),
+            child: Padding(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    reviewer.accepted
+                        ? Icons.check_circle_rounded
+                        : reviewer.hasDecided
+                            ? Icons.cancel_rounded
+                            : Icons.hourglass_empty_rounded,
+                    size: 14,
+                    color: reviewer.accepted
+                        ? tokens.accentStrong
+                        : tokens.inkMuted,
+                  ),
+                  const SizedBox(width: 5),
+                  Text(
+                    reviewer.hasDecided
+                        ? reviewer.label
+                        : '${reviewer.label} — ждём',
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      color: reviewer.accepted
+                          ? tokens.accentStrong
+                          : tokens.inkSecondary,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// K1: компактная карточка проголосованного предложения — «Ждём других».
+/// Без кнопок: голос уже учтён, видно пару и на ком сейчас дело.
+class _WaitingOthersCard extends StatelessWidget {
+  const _WaitingOthersCard({required this.proposal});
+
+  final MergeProposal proposal;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final tokens = _tokens(context);
+    return GlassPanel(
+      padding: const EdgeInsets.all(14),
+      borderRadius: BorderRadius.circular(tokens.radiusMd),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.hourglass_top_rounded,
+                size: 18,
+                color: tokens.warm,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '${proposal.personA.name} ↔ ${proposal.personB.name}',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    color: tokens.ink,
+                    fontWeight: FontWeight.w800,
+                    height: 1.2,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            proposal.myDecision == 'accepted'
+                ? 'Ваш голос «объединить» учтён. Объединение применится, когда согласятся все ответственные.'
+                : 'Ваш голос учтён. Ждём решения остальных ответственных.',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: tokens.inkSecondary,
+              height: 1.3,
+            ),
+          ),
+          if (proposal.reviewers.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            _ReviewersLine(reviewers: proposal.reviewers),
+          ],
+        ],
       ),
     );
   }

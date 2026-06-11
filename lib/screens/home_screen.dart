@@ -346,7 +346,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         return;
       }
       setState(() {
-        _pendingIdentityReviewCount = proposals.length + claims.length;
+        // K1: баннер считает только предложения, ждущие решения ИМЕННО
+        // зрителя — проголосовал → баннер погас, даже если консенсус
+        // других ответственных ещё не собран.
+        _pendingIdentityReviewCount =
+            proposals.where((p) => p.awaitingMyDecision).length +
+                claims.length;
         _identityReviewsUnavailable = false;
       });
     } catch (error) {

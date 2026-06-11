@@ -164,6 +164,123 @@ void main() {
     expect(find.text('Нет запросов личности'), findsOneWidget);
     expect(find.text('Вернуться назад'), findsOneWidget);
   });
+
+  testWidgets('K1: шапка не переполняется на 360dp (заголовок + чип)',
+      (tester) async {
+    tester.view.physicalSize = const Size(360, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    getIt.registerSingleton<IdentityServiceInterface>(
+      _FakeIdentityService(proposals: [_proposal()], claims: [_claim()]),
+    );
+
+    await tester.pumpWidget(
+      const MaterialApp(home: IdentityReviewScreen()),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    // Раньше Text + Spacer + чип давали RenderFlex-полосу на Samsung.
+    expect(tester.takeException(), isNull);
+    expect(find.text('2 на проверку'), findsOneWidget);
+  });
+
+  testWidgets(
+      'K1: проголосованное уходит в «Ждём других» со статусами, не как актив',
+      (tester) async {
+    getIt.registerSingleton<IdentityServiceInterface>(
+      _FakeIdentityService(proposals: [_votedProposal()]),
+    );
+
+    await tester.pumpWidget(
+      const MaterialApp(home: IdentityReviewScreen()),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    // Не актив: кнопок решения нет, чип шапки не считает проголосованное.
+    expect(find.text('Это один человек — объединить'), findsNothing);
+    expect(find.text('1 на проверку'), findsNothing);
+    // Отдельная секция со статусом по именам.
+    expect(find.text('Ждём других'), findsOneWidget);
+    expect(find.text('Вы'), findsOneWidget);
+    expect(find.text('Наталья — ждём'), findsOneWidget);
+    expect(
+      find.textContaining('Ваш голос «объединить» учтён'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('K1: активная карточка показывает, чьего решения ждём',
+      (tester) async {
+    getIt.registerSingleton<IdentityServiceInterface>(
+      _FakeIdentityService(proposals: [_awaitingProposalWithReviewers()]),
+    );
+
+    await tester.pumpWidget(
+      const MaterialApp(home: IdentityReviewScreen()),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('Вы — ждём'), findsOneWidget);
+    expect(find.text('Наталья — ждём'), findsOneWidget);
+    // Безликий «X/Y согласовано» больше не показывается при именах.
+    expect(find.textContaining('согласовано'), findsNothing);
+  });
+}
+
+MergeProposal _votedProposal() {
+  return MergeProposal(
+    id: 'proposal-voted',
+    status: 'pending',
+    matchScore: 0.82,
+    confidence: 'high',
+    reasons: const ['Совпадает имя'],
+    personA: const MergePersonPreview(name: 'Иван Петров', birthYear: '1950'),
+    personB: const MergePersonPreview(
+      name: 'Пётр Иванович',
+      birthYear: '1950',
+    ),
+    requiredReviewCount: 2,
+    reviewCount: 1,
+    myDecision: 'accepted',
+    awaitingMyDecision: false,
+    reviewers: const [
+      MergeReviewer(
+        userId: 'user-1',
+        displayName: 'Артём',
+        decision: 'accepted',
+        isViewer: true,
+      ),
+      MergeReviewer(userId: 'user-2', displayName: 'Наталья'),
+    ],
+    createdAt: DateTime(2026, 5, 1),
+  );
+}
+
+MergeProposal _awaitingProposalWithReviewers() {
+  return MergeProposal(
+    id: 'proposal-awaiting',
+    status: 'pending',
+    matchScore: 0.82,
+    confidence: 'high',
+    reasons: const ['Совпадает имя'],
+    personA: const MergePersonPreview(name: 'Иван Петров', birthYear: '1950'),
+    personB: const MergePersonPreview(
+      name: 'Пётр Иванович',
+      birthYear: '1950',
+    ),
+    requiredReviewCount: 2,
+    reviewCount: 0,
+    awaitingMyDecision: true,
+    reviewers: const [
+      MergeReviewer(userId: 'user-1', displayName: 'Артём', isViewer: true),
+      MergeReviewer(userId: 'user-2', displayName: 'Наталья'),
+    ],
+    createdAt: DateTime(2026, 5, 1),
+  );
 }
 
 MergeProposal _proposal() {

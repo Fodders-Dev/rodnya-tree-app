@@ -10256,9 +10256,35 @@ class FileStore {
     const candidatePerson = db.persons.find(
       (person) => person.id === proposal.candidatePersonId,
     );
+    // K1: зритель должен видеть СВОЙ статус (баннер на home обязан гаснуть
+    // после голоса, хотя предложение остаётся pending до консенсуса) и
+    // ПОИМЁННЫЙ статус остальных ответственных («Вы ✓ · Наталья — ждём»).
+    // Имена резолвим как в Phase B (c49676f): userId → profile.displayName,
+    // нет имени → displayName опускаем (клиент фолбэчит сам).
+    const reviewerIds = normalizeParticipantIds(proposal.reviewerUserIds);
+    const reviews = Array.isArray(proposal.reviews) ? proposal.reviews : [];
+    const status = proposal.status || "pending";
+    const myReview = viewerUserId
+      ? reviews.find((entry) => entry.userId === viewerUserId)
+      : null;
+    const reviewers = reviewerIds.map((reviewerUserId) => {
+      const user = db.users.find((entry) => entry.id === reviewerUserId);
+      const profile = user?.profile || {};
+      const displayName =
+        normalizeNullableString(profile.displayName) ||
+        composeDisplayNameFromProfile(profile) ||
+        null;
+      const review = reviews.find((entry) => entry.userId === reviewerUserId);
+      return {
+        userId: reviewerUserId,
+        ...(displayName ? {displayName} : {}),
+        decision: review ? review.decision : null,
+        isViewer: Boolean(viewerUserId) && reviewerUserId === viewerUserId,
+      };
+    });
     return {
       id: proposal.id,
-      status: proposal.status || "pending",
+      status,
       matchScore: Number(proposal.matchScore || 0),
       confidence: proposal.matchScore >= 0.9 ? "high" : "medium",
       matchSignals:
@@ -10280,10 +10306,16 @@ class FileStore {
           viewerUserId,
         ),
       }),
-      requiredReviewCount: normalizeParticipantIds(proposal.reviewerUserIds).length,
-      reviewCount: Array.isArray(proposal.reviews)
-        ? proposal.reviews.filter((entry) => entry.decision === "accepted").length
-        : 0,
+      requiredReviewCount: reviewerIds.length,
+      reviewCount: reviews.filter((entry) => entry.decision === "accepted")
+        .length,
+      myDecision: myReview ? myReview.decision : null,
+      awaitingMyDecision:
+        status === "pending" &&
+        Boolean(viewerUserId) &&
+        reviewerIds.includes(viewerUserId) &&
+        !myReview,
+      reviewers,
       createdAt: proposal.createdAt,
       resolvedAt: proposal.resolvedAt || null,
     };
