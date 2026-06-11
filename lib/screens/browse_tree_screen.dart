@@ -190,7 +190,13 @@ class _BrowseTreeScreenState extends State<BrowseTreeScreen> {
       maidenName: p.maidenName,
       gender: _genderFromString(p.gender),
       birthDate: _parseDate(p.birthDate),
+      // D3: точность дат едет в FamilyPerson — всё, что ниже по течению
+      // (карточки, шиты), остаётся честным для «знаю только год».
+      birthDatePrecision:
+          FamilyPerson.datePrecisionFromString(p.birthDatePrecision),
       deathDate: _parseDate(p.deathDate),
+      deathDatePrecision:
+          FamilyPerson.datePrecisionFromString(p.deathDatePrecision),
       isAlive: p.deathDate == null,
       createdAt: DateTime.fromMillisecondsSinceEpoch(0),
       updatedAt: DateTime.fromMillisecondsSinceEpoch(0),

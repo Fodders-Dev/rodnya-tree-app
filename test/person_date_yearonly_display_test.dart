@@ -4,6 +4,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:intl/date_symbol_data_local.dart';
+import 'package:rodnya/backend/models/semya_browse_token.dart';
 import 'package:rodnya/models/family_person.dart';
 import 'package:rodnya/models/person_dossier.dart';
 import 'package:rodnya/utils/person_date_format.dart';
@@ -44,6 +45,34 @@ void main() {
         '1888 год',
       );
     });
+  });
+
+  test('D3: BrowsedPerson.fromJson читает precision (и переживает null)', () {
+    final withPrecision = BrowsedPerson.fromJson(const {
+      'id': 'p-1',
+      'treeId': 'tree-1',
+      'name': 'Пётр',
+      'birthDate': '1888-01-01T00:00:00.000Z',
+      'birthDatePrecision': 'yearOnly',
+    });
+    expect(withPrecision.birthDatePrecision, 'yearOnly');
+    expect(
+      FamilyPerson.datePrecisionFromString(withPrecision.birthDatePrecision),
+      'yearOnly',
+    );
+
+    // Старый бэк без поля — дефолт exact.
+    final legacy = BrowsedPerson.fromJson(const {
+      'id': 'p-2',
+      'treeId': 'tree-1',
+      'name': 'Анна',
+      'birthDate': '1980-06-21T00:00:00.000Z',
+    });
+    expect(legacy.birthDatePrecision, isNull);
+    expect(
+      FamilyPerson.datePrecisionFromString(legacy.birthDatePrecision),
+      'exact',
+    );
   });
 
   testWidgets('досье: yearOnly показывает «Год рождения: 1888», не 1 января',

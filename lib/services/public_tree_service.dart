@@ -145,8 +145,16 @@ class PublicTreeService implements PublicTreeServiceInterface {
       photoUrl: json['photoUrl']?.toString(),
       gender: gender,
       birthDate: _dateFromJson(json['birthDate']),
+      // D3: точность дат («знаю только год») — публичный просмотрщик
+      // обязан быть так же честен, как свои экраны.
+      birthDatePrecision: FamilyPerson.datePrecisionFromString(
+        json['birthDatePrecision']?.toString(),
+      ),
       birthPlace: json['birthPlace']?.toString(),
       deathDate: _dateFromJson(json['deathDate']),
+      deathDatePrecision: FamilyPerson.datePrecisionFromString(
+        json['deathDatePrecision']?.toString(),
+      ),
       deathPlace: json['deathPlace']?.toString(),
       bio: json['bio']?.toString(),
       isAlive: json['isAlive'] != false,

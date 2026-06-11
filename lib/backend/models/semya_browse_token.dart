@@ -185,7 +185,9 @@ class BrowsedPerson {
     this.maidenName,
     this.gender,
     this.birthDate,
+    this.birthDatePrecision,
     this.deathDate,
+    this.deathDatePrecision,
     this.identityId,
   });
 
@@ -195,7 +197,10 @@ class BrowsedPerson {
   final String? maidenName;
   final String? gender; // 'male' | 'female' | 'unknown' либо null
   final String? birthDate;
+  // D3: 'exact' | 'yearOnly' («знаю только год») либо null со старого бэка.
+  final String? birthDatePrecision;
   final String? deathDate;
+  final String? deathDatePrecision;
   final String? identityId;
 
   factory BrowsedPerson.fromJson(Map<String, dynamic> json) {
@@ -206,7 +211,9 @@ class BrowsedPerson {
       maidenName: _nullableString(json['maidenName']),
       gender: _nullableString(json['gender']),
       birthDate: _nullableString(json['birthDate']),
+      birthDatePrecision: _nullableString(json['birthDatePrecision']),
       deathDate: _nullableString(json['deathDate']),
+      deathDatePrecision: _nullableString(json['deathDatePrecision']),
       identityId: _nullableString(json['identityId']),
     );
   }

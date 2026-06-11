@@ -229,7 +229,11 @@ function registerSemyaBrowseRoutes(
         maidenName: p.maidenName ?? null,
         gender: p.gender ?? null,
         birthDate: p.birthDate ?? null,
+        // D3: точность дат («знаю только год») — иначе гость увидит
+        // фейковую полную дату там, где известен только год.
+        birthDatePrecision: p.birthDatePrecision || "exact",
         deathDate: p.deathDate ?? null,
+        deathDatePrecision: p.deathDatePrecision || "exact",
         identityId: p.identityId ?? null,
         // Photo URLs + bio + notes + sensitive attributes
         // intentionally omitted (privacy boundary).

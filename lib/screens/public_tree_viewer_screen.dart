@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../models/family_person.dart';
 import '../services/public_tree_link_service.dart';
 import '../services/public_tree_service.dart';
+import '../utils/person_date_format.dart';
 import '../widgets/interactive_family_tree.dart';
 
 class PublicTreeViewerScreen extends StatefulWidget {
@@ -105,15 +106,23 @@ class _PublicTreeViewerScreenState extends State<PublicTreeViewerScreen> {
                       icon: Icons.person_outline,
                       label: _genderLabel(person.gender),
                     ),
+                    // D3: общий форматтер — для «знаю только год»
+                    // показывает «1888», а не фейковое 01.01.1888.
                     if (person.birthDate != null)
                       _ViewerChip(
                         icon: Icons.cake_outlined,
-                        label: 'Родился: ${_formatDate(person.birthDate!)}',
+                        label: 'Родился: ${formatPersonDate(
+                          person.birthDate!,
+                          person.birthDatePrecision,
+                        )}',
                       ),
                     if (person.deathDate != null)
                       _ViewerChip(
                         icon: Icons.history_toggle_off_outlined,
-                        label: 'Умер: ${_formatDate(person.deathDate!)}',
+                        label: 'Умер: ${formatPersonDate(
+                          person.deathDate!,
+                          person.deathDatePrecision,
+                        )}',
                       ),
                   ],
                 ),
@@ -153,12 +162,6 @@ class _PublicTreeViewerScreenState extends State<PublicTreeViewerScreen> {
         );
       },
     );
-  }
-
-  String _formatDate(DateTime date) {
-    final day = date.day.toString().padLeft(2, '0');
-    final month = date.month.toString().padLeft(2, '0');
-    return '$day.$month.${date.year}';
   }
 
   String _genderLabel(Gender gender) {
