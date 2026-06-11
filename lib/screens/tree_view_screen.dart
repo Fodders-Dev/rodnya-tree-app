@@ -999,8 +999,13 @@ class _TreeViewScreenState extends State<TreeViewScreen>
               padding: EdgeInsets.only(
                 bottom: AppTheme.bottomNavInset(context),
               ),
+              // F4: явная пилюля — CircleBorder из FAB-темы клипал
+              // extended-FAB в круг с обрезанным «Добави…» (скрины
+              // владельца с web). У дерева подписанной альтернативы на
+              // wide нет, поэтому FAB остаётся, но теперь читается.
               child: FloatingActionButton.extended(
                 heroTag: 'tree_add_relative_fab',
+                shape: const StadiumBorder(),
                 onPressed: () => _startAddRelativeFlow(selectedTreeId),
                 tooltip: _isFriendsTree
                     ? 'Добавить человека'

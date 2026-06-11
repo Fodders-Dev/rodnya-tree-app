@@ -70,6 +70,18 @@ class CoachMarkTour extends StatefulWidget {
 class _CoachMarkTourState extends State<CoachMarkTour> {
   int _index = 0;
 
+  @override
+  void initState() {
+    super.initState();
+    // F4: _resolveRect на ПЕРВОМ build идёт до layout — анкеры ещё без
+    // размеров, и первый кадр рисовался с центрированным бубблом без
+    // спотлайта (в проде это маскировали случайные rebuilds). Один
+    // пост-фреймовый rebuild — и первый же видимый кадр целится точно.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) setState(() {});
+    });
+  }
+
   void _next() {
     if (_index >= widget.targets.length - 1) {
       widget.onDismiss();
@@ -81,6 +93,7 @@ class _CoachMarkTourState extends State<CoachMarkTour> {
   Rect? _resolveRect(GlobalKey key) {
     final ctx = key.currentContext;
     if (ctx == null) return null;
+    final Rect globalRect;
     try {
       // findRenderObject throws if the element is inactive (e.g. a
       // GlobalKey mid-reparent, or a recycled ListView child) — treat
@@ -88,10 +101,27 @@ class _CoachMarkTourState extends State<CoachMarkTour> {
       final box = ctx.findRenderObject();
       if (box is! RenderBox || !box.attached || !box.hasSize) return null;
       final topLeft = box.localToGlobal(Offset.zero);
-      return topLeft & box.size;
+      globalRect = topLeft & box.size;
     } catch (_) {
       return null;
     }
+    // F4: оверлей тура живёт в Stack ПОД топбаром, а спотлайт-дырка и
+    // буббл позиционируются в ЛОКАЛЬНЫХ координатах оверлея. Раньше
+    // rect оставался глобальным — дырка «указывала мимо» блока на
+    // высоту топбара (на wide-вёрстке web особенно заметно).
+    // Переводим глобальный rect в систему координат оверлея; если сам
+    // оверлей ещё не лэйаучен — честный fallback на глобальный rect.
+    try {
+      final overlayBox = context.findRenderObject();
+      if (overlayBox is RenderBox &&
+          overlayBox.attached &&
+          overlayBox.hasSize) {
+        return globalRect.shift(-overlayBox.localToGlobal(Offset.zero));
+      }
+    } catch (_) {
+      // Падать нельзя — лучше глобальный rect, чем пустой кадр.
+    }
+    return globalRect;
   }
 
   @override
@@ -104,44 +134,56 @@ class _CoachMarkTourState extends State<CoachMarkTour> {
     final target = widget.targets[_index];
     final rect = _resolveRect(target.key);
     final isLast = _index == widget.targets.length - 1;
-    final screen = MediaQuery.of(context).size;
-
-    // Bubble sits below the spotlight when the target is in the top half,
-    // above it otherwise — so it never runs off-screen.
-    final below = rect == null || rect.center.dy < screen.height / 2;
 
     return Positioned.fill(
       child: Material(
         type: MaterialType.transparency,
-        child: Stack(
-          key: const Key('coach-mark-tour'),
-          children: [
-            // Dim + spotlight. Tapping the scrim advances (or finishes).
-            Positioned.fill(
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: _next,
-                child: CustomPaint(
-                  painter: _SpotlightPainter(rect: rect),
+        // F4: позиционируем буббл от размера ОВЕРЛЕЯ, не экрана — оверлей
+        // живёт под топбаром, и экранная высота давала сдвиг.
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final overlayHeight = constraints.maxHeight;
+            // Bubble sits below the spotlight when the target is in the
+            // top half, above it otherwise — so it never runs off-screen.
+            final below =
+                rect == null || rect.center.dy < overlayHeight / 2;
+            return Stack(
+              key: const Key('coach-mark-tour'),
+              children: [
+                // Dim + spotlight. Tapping the scrim advances (or
+                // finishes).
+                Positioned.fill(
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: _next,
+                    child: CustomPaint(
+                      painter: _SpotlightPainter(rect: rect),
+                    ),
+                  ),
                 ),
-              ),
-            ),
-            Positioned(
-              left: 16,
-              right: 16,
-              top: below ? (rect == null ? screen.height * 0.5 : rect.bottom + 14) : null,
-              bottom: below ? null : (screen.height - rect.top + 14),
-              child: _CoachBubble(
-                tokens: tokens,
-                title: target.title,
-                body: target.body,
-                stepLabel: '${_index + 1} / ${widget.targets.length}',
-                isLast: isLast,
-                onNext: _next,
-                onSkip: widget.onDismiss,
-              ),
-            ),
-          ],
+                Positioned(
+                  left: 16,
+                  right: 16,
+                  top: below
+                      ? (rect == null
+                          ? overlayHeight * 0.5
+                          : rect.bottom + 14)
+                      : null,
+                  bottom: below ? null : (overlayHeight - rect.top + 14),
+                  child: _CoachBubble(
+                    key: const Key('coach-mark-bubble'),
+                    tokens: tokens,
+                    title: target.title,
+                    body: target.body,
+                    stepLabel: '${_index + 1} / ${widget.targets.length}',
+                    isLast: isLast,
+                    onNext: _next,
+                    onSkip: widget.onDismiss,
+                  ),
+                ),
+              ],
+            );
+          },
         ),
       ),
     );
@@ -185,6 +227,7 @@ class _SpotlightPainter extends CustomPainter {
 
 class _CoachBubble extends StatelessWidget {
   const _CoachBubble({
+    super.key,
     required this.tokens,
     required this.title,
     required this.body,

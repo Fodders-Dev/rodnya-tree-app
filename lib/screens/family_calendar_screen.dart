@@ -337,9 +337,12 @@ class _FamilyCalendarScreenState extends State<FamilyCalendarScreen> {
               padding: EdgeInsets.only(
                 bottom: AppTheme.bottomNavInset(context),
               ),
+              // F4: явная пилюля — CircleBorder из FAB-темы клипал
+              // extended-FAB в круг с обрезанным текстом.
               child: FloatingActionButton.extended(
                 key: const Key('calendar-create-fab'),
                 heroTag: 'calendar_create_gathering_fab',
+                shape: const StadiumBorder(),
                 onPressed: () => _createGatheringFor(_selectedDay),
                 tooltip: 'Создать встречу',
                 icon: const Icon(Icons.add),

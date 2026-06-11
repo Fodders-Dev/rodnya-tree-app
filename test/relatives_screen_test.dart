@@ -557,16 +557,36 @@ void main() {
 
     await pumpRelativesScreen(tester);
 
-    // 2d: «Добавить» встречается дважды — кнопка side-panel и подписанный
-    // extended-FAB (раньше FAB был голым «+»).
-    expect(find.text('Добавить'), findsNWidgets(2));
-    expect(
-      find.widgetWithText(FloatingActionButton, 'Добавить'),
-      findsOneWidget,
-    );
+    // F4: на wide FAB спрятан целиком — «Добавить» только в side-panel
+    // (раньше их было два, и FAB-дубль сжимался в круг с «Добави…»).
+    expect(find.text('Добавить'), findsOneWidget);
+    expect(find.byType(FloatingActionButton), findsNothing);
     expect(find.text('Найти'), findsOneWidget);
+    // F4: discover-вход переехал с FAB в панель.
+    expect(find.text('Проверить связь'), findsOneWidget);
     expect(find.text('3 чата'), findsOneWidget);
     expect(find.text('Пригласить 1'), findsOneWidget);
+  });
+
+  testWidgets(
+      'F4: на узком лэйауте FAB extended с полным текстом «Добавить»',
+      (tester) async {
+    tester.view.physicalSize = const Size(412, 892);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await pumpRelativesScreen(tester);
+
+    final fab = find.widgetWithText(FloatingActionButton, 'Добавить');
+    expect(fab, findsOneWidget);
+    // Пилюля (StadiumBorder) вместо CircleBorder темы — текст не клипается.
+    expect(
+      tester.widget<FloatingActionButton>(fab).shape,
+      const StadiumBorder(),
+    );
+    // Ширина заметно больше высоты — кнопка реально extended, не круг.
+    final size = tester.getSize(fab);
+    expect(size.width, greaterThan(size.height + 20));
   });
 
   testWidgets(

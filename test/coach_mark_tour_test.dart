@@ -80,4 +80,48 @@ void main() {
     await CoachMarkTour.markShown();
     expect(await CoachMarkTour.shouldShow(), isFalse);
   });
+
+  testWidgets(
+      'F4: оверлей под топбаром — буббл целится в блок, а не мимо',
+      (tester) async {
+    // Прод-структура home: Scaffold с appBar, тур — в Stack ВНУТРИ body.
+    // До фикса rect таргета оставался глобальным, и спотлайт с бубблом
+    // съезжали вниз на высоту топбара (заметно на wide web).
+    final targetKey = GlobalKey();
+    final targets = [
+      CoachMarkTarget(key: targetKey, title: 'Шаг', body: 'Тело'),
+    ];
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.lightTheme,
+        home: Scaffold(
+          appBar: PreferredSize(
+            preferredSize: const Size.fromHeight(120),
+            child: Container(color: Colors.green),
+          ),
+          body: Stack(
+            children: [
+              Positioned.fill(
+                child: Column(
+                  children: [
+                    SizedBox(key: targetKey, width: 200, height: 48),
+                  ],
+                ),
+              ),
+              CoachMarkTour(targets: targets, onDismiss: () {}),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Буббл (заголовок шага) должен сидеть на 14px ниже НИЗА таргета —
+    // в глобальных координатах, независимо от смещения оверлея.
+    final targetBottom = tester.getBottomLeft(find.byKey(targetKey)).dy;
+    final bubbleTop = tester
+        .getTopLeft(find.byKey(const Key('coach-mark-bubble')))
+        .dy;
+    expect((bubbleTop - targetBottom - 14).abs(), lessThan(1.0));
+  });
 }

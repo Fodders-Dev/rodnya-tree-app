@@ -651,7 +651,10 @@ class _RelativesScreenState extends State<RelativesScreen> {
       // не доезжает, и FAB рендерился ПОД пилюлей (тап уходил во вкладку).
       // Тот же механизм, что у home compose-FAB: единый источник правды
       // AppTheme.bottomNavInset.
-      floatingActionButton: selectedTreeId == null
+      // F4: на wide-лэйауте FAB прячем целиком — в сайд-панели уже есть
+      // подписанные «Добавить» / «Найти» / «Проверить связь», а второй
+      // «Добавить» только путал (ревью-замечание о дубле на десктопе).
+      floatingActionButton: selectedTreeId == null || _isWideLayout(context)
           ? null
           : Padding(
               padding: EdgeInsets.only(
@@ -674,8 +677,11 @@ class _RelativesScreenState extends State<RelativesScreen> {
                 // 2d (Q4): подписанный вход вместо голого «+» — главный
                 // сценарий вкладки должен читаться без догадок. Ведёт в
                 // пикер «Кем приходится?» как и раньше.
+                // F4: явная пилюля — CircleBorder из FAB-темы клипал
+                // extended-FAB в круг («Добави…»).
                 FloatingActionButton.extended(
                   heroTag: 'add_relative_fab',
+                  shape: const StadiumBorder(),
                   onPressed: () {
                     showRelationPickerAndNavigateAdd(
                       context,
@@ -969,6 +975,13 @@ class _RelativesScreenState extends State<RelativesScreen> {
                     : () => context.push('/relatives/find/${_currentTreeId!}'),
                 icon: const Icon(Icons.search),
                 label: const Text('Найти'),
+              ),
+              // F4: FAB на wide спрятан — discover-вход переезжает в
+              // панель, чтобы «мы родственники?» не пропал с десктопа.
+              OutlinedButton.icon(
+                onPressed: () => context.push('/discover/relatives'),
+                icon: const Icon(Icons.travel_explore_rounded),
+                label: const Text('Проверить связь'),
               ),
               if (_pendingRequestsCount > 0)
                 OutlinedButton.icon(
