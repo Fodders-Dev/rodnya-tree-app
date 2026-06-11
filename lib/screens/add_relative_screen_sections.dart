@@ -99,135 +99,42 @@ extension _AddRelativeScreenSections on _AddRelativeScreenState {
     return 'Добавление родственника';
   }
 
-  Widget _buildIntroCard() {
+  /// F1: одна компактная строка контекста вместо трёх карточек-простыней
+  /// (intro + «Что нужно сейчас» + «Режим заполнения»). Показывается
+  /// только когда несёт смысл; обычное добавление обходится без неё —
+  /// заголовок экрана уже всё говорит.
+  Widget _buildContextLine() {
     final theme = Theme.of(context);
-    final bool isContextAdd = _isContextualAdd;
-
-    final String title = _isCreatingFirstPerson
-        ? 'Начните дерево с одного человека'
-        : _canUseQuickAddLoop
-            ? 'Быстрое добавление в ветку'
-            : isContextAdd
-                ? 'Вы добавляете родственника к ${_anchorPerson!.name}'
-                : 'Вы добавляете нового родственника в своё дерево';
-
-    final String description = _isCreatingFirstPerson
-        ? 'Сначала достаточно имени и пола. Родственную связь можно указать позже, когда в дереве появится опорный человек.'
-        : _canUseQuickAddLoop
-            ? 'Форма упрощена под серию добавлений. После сохранения можно сразу заполнить следующую карточку или вернуться на дерево к новому человеку.'
-            : isContextAdd
-                ? 'Заполните данные и проверьте связь. После сохранения человек сразу появится в схеме.'
-                : 'Заполните карточку и укажите, кем этот человек является для вас.';
-
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: Colors.blue.shade100),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(
-                  _isCreatingFirstPerson
-                      ? Icons.account_tree
-                      : Icons.info_outline,
-                  color: Colors.blue,
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    title,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 16,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text(
-              description,
-              style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildRequiredNowCard() {
-    final theme = Theme.of(context);
-    final relationType = _resolvedRelationType;
     final anchorPerson = _anchorPerson;
-    final helperItems = [
-      if (_isCreatingFirstPerson) 'Достаточно заполнить имя, фамилию и пол',
-      if (anchorPerson != null && relationType != null)
-        'Связь с ${anchorPerson.name} уже выбрана: ${_relationTypeToActionObject(relationType)}',
-      if (_canUseQuickAddLoop)
-        'После добавления можно сразу создать ещё одного родственника в этой же ветке',
-      if (anchorPerson == null && !_isCreatingFirstPerson)
-        'Связь можно указать после заполнения основной информации',
-      _canUseQuickAddLoop
-          ? 'Когда нужно вернуться к схеме, используйте кнопку "Добавить и открыть на дереве"'
-          : 'После сохранения вы вернётесь обратно в дерево',
-    ];
+    final relationType = _resolvedRelationType;
 
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color:
-            theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: theme.colorScheme.outlineVariant),
-      ),
-      child: Column(
+    final String? line = _isCreatingFirstPerson
+        ? 'Сначала достаточно имени и пола — остальное можно добавить позже.'
+        : (anchorPerson != null && relationType != null)
+            ? 'Связь с ${anchorPerson.name} уже выбрана: '
+                '${_relationTypeToActionObject(relationType)}.'
+            : _canUseQuickAddLoop
+                ? 'Серия добавлений: после сохранения можно сразу внести следующего.'
+                : null;
+    if (line == null) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Что нужно сейчас',
-            style: theme.textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w700,
-            ),
+          Icon(
+            Icons.info_outline,
+            size: 18,
+            color: theme.colorScheme.primary,
           ),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: const [
-              _RequiredChip(label: 'Фамилия'),
-              _RequiredChip(label: 'Имя'),
-              _RequiredChip(label: 'Пол'),
-            ],
-          ),
-          const SizedBox(height: 12),
-          ...helperItems.map(
-            (item) => Padding(
-              padding: const EdgeInsets.only(bottom: 6),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(
-                    Icons.arrow_right_alt,
-                    size: 18,
-                    color: theme.colorScheme.primary,
-                  ),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      item,
-                      style: TextStyle(
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ),
-                ],
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              line,
+              style: TextStyle(
+                color: theme.colorScheme.onSurfaceVariant,
+                height: 1.3,
               ),
             ),
           ),
@@ -236,56 +143,23 @@ extension _AddRelativeScreenSections on _AddRelativeScreenState {
     );
   }
 
-  Widget _buildEditorModeCard() {
-    final theme = Theme.of(context);
-    final isEditing = widget.isEditing;
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color:
-            theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.38),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: theme.colorScheme.outlineVariant),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            isEditing ? 'Режим редактирования' : 'Режим заполнения',
-            style: theme.textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: [
-              ChoiceChip(
-                label: const Text('Основное'),
-                avatar: const Icon(Icons.bolt_outlined, size: 18),
-                selected: _editorMode == _RelativeEditorMode.basic,
-                onSelected: (_) {
-                  _updateSectionState(() {
-                    _editorMode = _RelativeEditorMode.basic;
-                  });
-                },
-              ),
-              ChoiceChip(
-                label: const Text('Расширенно'),
-                avatar: const Icon(Icons.library_books_outlined, size: 18),
-                selected: _editorMode == _RelativeEditorMode.advanced,
-                onSelected: (_) {
-                  _updateSectionState(() {
-                    _editorMode = _RelativeEditorMode.advanced;
-                  });
-                },
-              ),
-            ],
-          ),
-        ],
+  /// F1: дата смерти — в основном потоке рядом с датой рождения (раньше
+  /// пряталась в «Расширенно», и владельцу приходилось её искать).
+  Widget _buildDeathDateField() {
+    return InkWell(
+      onTap: () => _pickDate(false),
+      child: InputDecorator(
+        decoration: const InputDecoration(
+          labelText: 'Дата смерти',
+          border: OutlineInputBorder(),
+          prefixIcon: Icon(Icons.event_outlined),
+          helperText: 'Если человек жив — оставьте пустым',
+        ),
+        child: Text(
+          _deathDate != null
+              ? DateFormat('dd.MM.yyyy').format(_deathDate!)
+              : 'Не указано',
+        ),
       ),
     );
   }
@@ -444,7 +318,8 @@ extension _AddRelativeScreenSections on _AddRelativeScreenState {
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              'В расширенном режиме можно заполнить биографию, события, дополнительные даты и заметки.',
+              // F1: один короткий тизер вместо перечисления.
+              'Биография, места и события',
               style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
             ),
           ),
@@ -550,12 +425,6 @@ extension _AddRelativeScreenSections on _AddRelativeScreenState {
           'Расширенные сведения',
           style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
         ),
-        const SizedBox(height: 8),
-        Text(
-          'Дополнительные даты, биография и семейные события.',
-          style:
-              TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
-        ),
         const SizedBox(height: 16),
         if (_selectedGender == Gender.female) ...[
           TextFormField(
@@ -568,22 +437,6 @@ extension _AddRelativeScreenSections on _AddRelativeScreenState {
           ),
           const SizedBox(height: 16),
         ],
-        InkWell(
-          onTap: () => _pickDate(false),
-          child: InputDecorator(
-            decoration: const InputDecoration(
-              labelText: 'Дата смерти',
-              border: OutlineInputBorder(),
-              prefixIcon: Icon(Icons.event_outlined),
-              helperText: 'Оставьте пустым, если человек жив',
-            ),
-            child: Text(
-              _deathDate != null
-                  ? DateFormat('dd.MM.yyyy').format(_deathDate!)
-                  : 'Не указано',
-            ),
-          ),
-        ),
         if (_resolvedRelationType == RelationType.spouse) ...[
           const SizedBox(height: 16),
           InkWell(
@@ -846,25 +699,21 @@ extension _AddRelativeScreenSections on _AddRelativeScreenState {
                     color: scheme.primary,
                   ),
                   const SizedBox(width: 10),
+                  // F1: компактная строка-ссылка — второстепенный сценарий
+                  // не встречает пользователя простынёй.
                   Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Из моих других деревьев',
-                          style: theme.textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          'Найти человека, которого вы уже добавили в другое дерево',
-                          style: TextStyle(
-                            color: scheme.onSurfaceVariant,
-                            fontSize: 12.5,
-                          ),
-                        ),
-                      ],
+                    child: Text(
+                      'Уже есть в другом дереве?',
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    'Найти',
+                    style: TextStyle(
+                      color: scheme.primary,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
                   Icon(
@@ -1159,71 +1008,9 @@ extension _AddRelativeScreenSections on _AddRelativeScreenState {
     );
   }
 
-  Widget _buildQuickAddToolbar() {
-    if (!_canUseQuickAddLoop) {
-      return const SizedBox.shrink();
-    }
-
-    final theme = Theme.of(context);
-    final anchorPerson = _anchorPerson;
-    final relationType = _resolvedRelationType;
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.secondaryContainer.withValues(alpha: 0.35),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-            color: theme.colorScheme.secondary.withValues(alpha: 0.3)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.bolt, color: theme.colorScheme.secondary),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  'Режим быстрого ввода',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              if (anchorPerson != null)
-                _QuickInfoChip(
-                  icon: Icons.person_pin_circle_outlined,
-                  label: anchorPerson.name,
-                ),
-              if (relationType != null)
-                _QuickInfoChip(
-                  icon: Icons.family_restroom,
-                  label: _relationTypeToActionObject(relationType),
-                ),
-              const _QuickInfoChip(
-                icon: Icons.restart_alt,
-                label: 'Серия добавлений',
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Text(
-            'Подходит для сценария, когда вы по очереди вносите детей, братьев, родителей или всю ветку одной семьи.',
-            style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
-          ),
-        ],
-      ),
-    );
-  }
+  // F1: «Режим быстрого ввода»-карточка удалена — её смысл (серия
+  // добавлений + якорь + связь) ужат в одну контекст-строку сверху, а
+  // кнопки серии и так живут в submit-блоке.
 
   /// P1b: главный «Сохранить» переехал в закреплённый нижний бар
   /// ([_buildPinnedSubmitBar]) — виден всегда, а не за скроллом. Здесь

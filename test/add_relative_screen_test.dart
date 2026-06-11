@@ -188,12 +188,69 @@ void main() {
       find.textContaining('Сначала достаточно имени и пола'),
       findsOneWidget,
     );
-    expect(find.text('Что нужно сейчас'), findsOneWidget);
+    // F1: карточка «Что нужно сейчас» ужата в одну контекст-строку.
+    expect(find.text('Что нужно сейчас'), findsNothing);
     expect(find.text('Добавить первого человека'), findsOneWidget);
     expect(
       find.textContaining('Связать себя с деревом можно позже'),
       findsOneWidget,
     );
+  });
+
+  testWidgets(
+      'F1: порядок секций — ФИО → пол → даты, «другие деревья» свёрнуты ниже',
+      (tester) async {
+    // Пикер «другие деревья» появляется только у search-capable сервиса.
+    await getIt.unregister<FamilyTreeServiceInterface>();
+    getIt.registerSingleton<FamilyTreeServiceInterface>(
+      _SearchCapableFakeFamilyTreeService(results: const []),
+    );
+
+    final router = GoRouter(
+      routes: [
+        GoRoute(
+          path: '/add',
+          builder: (context, state) => AddRelativeScreen(
+            treeId: 'tree-1',
+            routeExtra: state.extra as Map<String, dynamic>?,
+            routeQueryParameters: state.uri.queryParameters,
+          ),
+        ),
+      ],
+      initialLocation: '/add',
+    );
+
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.pumpAndSettle();
+
+    double topY(String text) => tester.getTopLeft(find.text(text).first).dy;
+
+    // Старые карточки-простыни не вернулись, форма начинается с полей.
+    expect(find.text('Режим заполнения'), findsNothing);
+    expect(find.text('Что нужно сейчас'), findsNothing);
+    expect(find.text('Режим быстрого ввода'), findsNothing);
+
+    expect(topY('Фамилия'), lessThan(topY('Пол')));
+    expect(topY('Пол'), lessThan(topY('Дата рождения')));
+
+    // F1: дата смерти — в основном потоке сразу после даты рождения.
+    await tester.scrollUntilVisible(
+      find.text('Дата смерти'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(topY('Дата рождения'), lessThan(topY('Дата смерти')));
+
+    // Cross-tree пикер — компактная строка ниже основных полей,
+    // свёрнут по умолчанию: поля поиска нет, пока не развернёшь.
+    await tester.scrollUntilVisible(
+      find.text('Уже есть в другом дереве?'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(topY('Дата смерти'), lessThan(topY('Уже есть в другом дереве?')));
+    expect(find.text('Найти'), findsOneWidget);
+    expect(find.widgetWithText(TextField, 'Имя или фамилия'), findsNothing);
   });
 
   testWidgets('показывает конкретную CTA для добавления из контекста дерева',
@@ -241,7 +298,8 @@ void main() {
       find.textContaining('Связь будет создана автоматически'),
       findsOneWidget,
     );
-    expect(find.text('Режим быстрого ввода'), findsOneWidget);
+    // F1: карточка «Режим быстрого ввода» ужата в контекст-строку.
+    expect(find.text('Режим быстрого ввода'), findsNothing);
     expect(find.text('Добавить ещё одного'), findsOneWidget);
     expect(find.text('Добавить и открыть на дереве'), findsOneWidget);
   });
@@ -346,8 +404,13 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.ensureVisible(find.widgetWithText(ChoiceChip, 'Расширенно'));
-    await tester.tap(find.widgetWithText(ChoiceChip, 'Расширенно'));
+    // F1: расширенный режим открывается hint-кнопкой «Показать».
+    await tester.scrollUntilVisible(
+      find.text('Показать'),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(find.text('Показать'));
     await tester.pumpAndSettle();
 
     expect(find.text('Дата свадьбы'), findsOneWidget);
@@ -399,12 +462,16 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Режим быстрого ввода'), findsOneWidget);
     expect(
         find.textContaining('Связь с Петров Иван уже выбрана'), findsOneWidget);
 
-    await tester.ensureVisible(find.widgetWithText(ChoiceChip, 'Расширенно'));
-    await tester.tap(find.widgetWithText(ChoiceChip, 'Расширенно'));
+    // F1: расширенный режим открывается кнопкой «Показать» hint-карточки.
+    await tester.scrollUntilVisible(
+      find.text('Показать'),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(find.text('Показать'));
     await tester.pumpAndSettle();
 
     expect(find.text('Дата свадьбы'), findsOneWidget);
@@ -480,9 +547,10 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Режим редактирования'), findsOneWidget);
-    expect(find.widgetWithText(ChoiceChip, 'Основное'), findsOneWidget);
-    expect(find.widgetWithText(ChoiceChip, 'Расширенно'), findsOneWidget);
+    // F1: карточки «Режим редактирования» больше нет — расширенный режим
+    // открывается hint-кнопкой «Показать».
+    expect(find.text('Режим редактирования'), findsNothing);
+    expect(find.text('Показать'), findsOneWidget);
     expect(find.text('Фото и видео'), findsOneWidget);
     expect(find.text('2 в карточке'), findsAtLeastNWidgets(1));
     expect(find.text('Основное медиа выбрано'), findsOneWidget);
@@ -611,7 +679,7 @@ void main() {
         await tester.pumpWidget(MaterialApp.router(routerConfig: router));
         await tester.pumpAndSettle();
 
-        expect(find.text('Из моих других деревьев'), findsNothing);
+        expect(find.text('Уже есть в другом дереве?'), findsNothing);
       },
     );
 
@@ -649,10 +717,16 @@ void main() {
 
         // Picker header is visible but collapsed by default — the
         // form below stays the primary path for users with one tree.
-        expect(find.text('Из моих других деревьев'), findsOneWidget);
+        // F1: компактная строка живёт ПОД основными полями.
+        await tester.scrollUntilVisible(
+          find.text('Уже есть в другом дереве?'),
+          300,
+          scrollable: find.byType(Scrollable).first,
+        );
+        expect(find.text('Уже есть в другом дереве?'), findsOneWidget);
         expect(find.byIcon(Icons.expand_more), findsOneWidget);
 
-        await tester.tap(find.text('Из моих других деревьев'));
+        await tester.tap(find.text('Уже есть в другом дереве?'));
         await tester.pump(); // expansion animation tick
         await tester.pump(const Duration(milliseconds: 260)); // debounce
         await tester.pumpAndSettle();
@@ -712,10 +786,16 @@ void main() {
         await tester.pumpWidget(MaterialApp.router(routerConfig: router));
         await tester.pumpAndSettle();
 
-        await tester.tap(find.text('Из моих других деревьев'));
+        await tester.scrollUntilVisible(
+          find.text('Уже есть в другом дереве?'),
+          300,
+          scrollable: find.byType(Scrollable).first,
+        );
+        await tester.tap(find.text('Уже есть в другом дереве?'));
         await tester.pump(const Duration(milliseconds: 260));
         await tester.pumpAndSettle();
 
+        await tester.ensureVisible(find.text('Иванов Иван'));
         await tester.tap(find.text('Иванов Иван'));
         await tester.pumpAndSettle();
 
@@ -725,6 +805,7 @@ void main() {
         );
 
         // Click "Отвязать" — the IconButton with tooltip.
+        await tester.ensureVisible(find.byTooltip('Отвязать'));
         await tester.tap(find.byTooltip('Отвязать'));
         await tester.pumpAndSettle();
 
@@ -734,7 +815,7 @@ void main() {
         );
         // Picker is back, form fields are NOT cleared (we only
         // strip the link, not the data — user might still want it).
-        expect(find.text('Из моих других деревьев'), findsOneWidget);
+        expect(find.text('Уже есть в другом дереве?'), findsOneWidget);
       },
     );
   });

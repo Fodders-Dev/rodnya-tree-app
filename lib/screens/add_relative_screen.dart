@@ -1053,31 +1053,12 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    if (!widget.isEditing) _buildIntroCard(),
-
-                    if (!widget.isEditing) SizedBox(height: 16),
-
-                    if (!widget.isEditing) _buildRequiredNowCard(),
-
-                    SizedBox(height: 24),
-
-                    if (!widget.isEditing && _canUseQuickAddLoop) ...[
-                      _buildQuickAddToolbar(),
-                      SizedBox(height: 24),
-                    ],
-
-                    // Phase 0: cross-tree picker — surfaces relatives
-                    // the user already entered on any of their other
-                    // trees. Hidden in edit mode (handled inside the
-                    // builder) so the section doesn't crowd the
-                    // editing UI.
-                    if (!widget.isEditing) ...[
-                      _buildOtherTreesPickerCard(),
-                      SizedBox(height: 16),
-                    ],
-
-                    _buildEditorModeCard(),
-                    SizedBox(height: 24),
+                    // F1: вместо трёх карточек-простыней (intro, «Что нужно
+                    // сейчас», «Режим заполнения») — одна компактная строка
+                    // контекста, и сразу поля. Порядок = как человек думает:
+                    // ФИО → Пол → Связь → Даты → Фото; остальное в
+                    // «Расширенно».
+                    if (!widget.isEditing) _buildContextLine(),
 
                     // Фамилия
                     // P1b: label всегда над полем (не исчезающий
@@ -1178,6 +1159,11 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
                     SizedBox(height: 24),
 
                     _buildBirthDateField(),
+                    SizedBox(height: 16),
+
+                    // F1: дата смерти — в основном потоке рядом с датой
+                    // рождения (была закопана в «Расширенно»).
+                    _buildDeathDateField(),
                     SizedBox(height: 24),
 
                     _buildMediaSection(),
@@ -1186,6 +1172,14 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
                     if (widget.isEditing && widget.person != null) ...[
                       _buildEditMediaAndHistoryCard(),
                       SizedBox(height: 24),
+                    ],
+
+                    // F1: «Из моих других деревьев» — второстепенный
+                    // сценарий: компактная строка-ссылка ПОД основными
+                    // полями, свёрнута по умолчанию.
+                    if (!widget.isEditing) ...[
+                      _buildOtherTreesPickerCard(),
+                      SizedBox(height: 16),
                     ],
 
                     if (_isAdvancedMode)
@@ -1584,20 +1578,6 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
       );
       _selectedGender = prefilledGender;
     }
-  }
-}
-
-class _RequiredChip extends StatelessWidget {
-  final String label;
-
-  const _RequiredChip({required this.label});
-
-  @override
-  Widget build(BuildContext context) {
-    return Chip(
-      avatar: const Icon(Icons.check_circle_outline, size: 18),
-      label: Text(label),
-    );
   }
 }
 
