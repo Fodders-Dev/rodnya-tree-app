@@ -1,17 +1,4 @@
 // GENERATED CODE - DO NOT MODIFY BY HAND
-//
-// ⚠️ ВНИМАНИЕ (hotfix-1b): файл содержит РУЧНЫЕ правки read'а поверх
-// генерата — build_runner их сносит (генератор не сопоставляет приватные
-// _photoUrl/_photoGallery с параметрами конструктора и не знает legacy-
-// дефолт visibility). После любой регенерации верни в read:
-//   • photoUrl: fields[5] as String?
-//   • photoGallery: (fields[24] as List?)…
-//   • visibility: fields[27] as String? ?? 'private'  (старые записи без
-//     поля 27 обязаны читаться)
-//   • F5: birthDatePrecision: fields[28] as String? ?? 'exact' и
-//     deathDatePrecision: fields[29] as String? ?? 'exact' (старые записи
-//     без полей 28/29 обязаны читаться) + write 28/29, счётчик 29.
-// Вынос этих дефолтов из генерённого файла — отдельная задача, не hotfix.
 
 part of 'family_person.dart';
 
@@ -45,9 +32,9 @@ class FamilyPersonAdapter extends TypeAdapter<FamilyPerson> {
       bio: fields[11] as String?,
       familySummary: fields[26] as String?,
       isAlive: fields[13] as bool,
-      visibility: fields[27] as String? ?? 'private',
-      birthDatePrecision: fields[28] as String? ?? 'exact',
-      deathDatePrecision: fields[29] as String? ?? 'exact',
+      visibility: fields[27] as String?,
+      birthDatePrecision: fields[28] as String?,
+      deathDatePrecision: fields[29] as String?,
       creatorId: fields[14] as String?,
       createdAt: fields[15] as DateTime,
       updatedAt: fields[16] as DateTime,
@@ -58,10 +45,7 @@ class FamilyPersonAdapter extends TypeAdapter<FamilyPerson> {
       spouseId: fields[21] as String?,
       siblingIds: (fields[22] as List?)?.cast<String>(),
       details: fields[23] as FamilyPersonDetails?,
-      photoGallery: (fields[24] as List?)
-          ?.whereType<Map>()
-          .map((entry) => Map<String, dynamic>.from(entry))
-          .toList(),
+      photoGallery: (fields[24] as List?)?.cast<dynamic>(),
     );
   }
 
@@ -82,7 +66,7 @@ class FamilyPersonAdapter extends TypeAdapter<FamilyPerson> {
       ..writeByte(4)
       ..write(obj.maidenName)
       ..writeByte(5)
-      ..write(obj._photoUrl)
+      ..write(obj.photoUrl)
       ..writeByte(6)
       ..write(obj.gender)
       ..writeByte(7)
@@ -118,7 +102,7 @@ class FamilyPersonAdapter extends TypeAdapter<FamilyPerson> {
       ..writeByte(23)
       ..write(obj.details)
       ..writeByte(24)
-      ..write(obj._photoGallery)
+      ..write(obj.photoGallery)
       ..writeByte(26)
       ..write(obj.familySummary)
       ..writeByte(27)

@@ -27,7 +27,7 @@ import '../backend/interfaces/profile_service_interface.dart';
 import '../backend/interfaces/safety_service_interface.dart';
 import '../backend/interfaces/story_service_interface.dart';
 import '../backend/interfaces/storage_service_interface.dart';
-import '../models/chat_message.dart';
+import '../models/chat_message_adapter.dart';
 import '../models/family_person.dart' as rodnya_models;
 import '../models/family_relation.dart';
 import '../models/family_tree.dart';

@@ -29,8 +29,6 @@ class UserProfileAdapter extends TypeAdapter<UserProfile> {
       phoneNumber: fields[8] as String,
       gender: fields[10] as Gender?,
       birthDate: fields[11] as DateTime?,
-      maidenName: fields[38] as String? ?? '',
-      birthPlace: fields[36] as String?,
       country: fields[12] as String?,
       city: fields[13] as String?,
       createdAt: fields[14] as DateTime,
@@ -40,37 +38,25 @@ class UserProfileAdapter extends TypeAdapter<UserProfile> {
       creatorOfTreeIds: (fields[18] as List?)?.cast<String>(),
       accessibleTreeIds: (fields[19] as List?)?.cast<String>(),
       fcmTokens: (fields[20] as List?)?.cast<String>(),
-      bio: fields[21] as String? ?? '',
-      familyStatus: fields[22] as String? ?? '',
-      education: fields[23] as String? ?? '',
-      work: fields[24] as String? ?? '',
-      values: fields[25] as String? ?? '',
-      religion: fields[26] as String? ?? '',
+      bio: fields[21] as String?,
+      familyStatus: fields[22] as String?,
+      aboutFamily: fields[34] as String?,
+      education: fields[23] as String?,
+      work: fields[24] as String?,
+      hometown: fields[31] as String?,
+      languages: fields[32] as String?,
+      values: fields[25] as String?,
+      religion: fields[26] as String?,
+      interests: fields[33] as String?,
       profileVisibilityScopes: (fields[27] as Map?)?.cast<String, String>(),
       hiddenProfileSections: (fields[28] as List?)?.cast<String>(),
-      profileVisibilityTreeIds: (fields[29] as Map?)?.map(
-        (key, value) => MapEntry(
-          key.toString(),
-          (value as List?)?.cast<String>() ?? const <String>[],
-        ),
-      ),
-      profileVisibilityUserIds: (fields[30] as Map?)?.map(
-        (key, value) => MapEntry(
-          key.toString(),
-          (value as List?)?.cast<String>() ?? const <String>[],
-        ),
-      ),
-      hometown: fields[31] as String? ?? '',
-      languages: fields[32] as String? ?? '',
-      interests: fields[33] as String? ?? '',
-      aboutFamily: fields[34] as String? ?? '',
-      profileVisibilityBranchRootIds: (fields[35] as Map?)?.map(
-        (key, value) => MapEntry(
-          key.toString(),
-          (value as List?)?.cast<String>() ?? const <String>[],
-        ),
-      ),
-      profileContributionPolicy: fields[37] as String? ?? 'suggestions',
+      profileVisibilityTreeIds: (fields[29] as Map?)?.cast<dynamic, dynamic>(),
+      profileVisibilityUserIds: (fields[30] as Map?)?.cast<dynamic, dynamic>(),
+      profileVisibilityBranchRootIds:
+          (fields[35] as Map?)?.cast<dynamic, dynamic>(),
+      birthPlace: fields[36] as String?,
+      profileContributionPolicy: fields[37] as String?,
+      maidenName: fields[38] as String?,
     );
   }
 

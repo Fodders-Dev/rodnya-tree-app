@@ -27,9 +27,9 @@ class FamilyTreeAdapter extends TypeAdapter<FamilyTree> {
       isPrivate: fields[7] as bool,
       members: (fields[8] as List).cast<String>(),
       publicSlug: fields[9] as String?,
-      isCertified: fields[10] as bool? ?? false,
+      isCertified: fields[10] as bool?,
       certificationNote: fields[11] as String?,
-      kind: fields[12] as TreeKind? ?? TreeKind.family,
+      kind: fields[12] as TreeKind?,
     );
   }
 
@@ -83,9 +83,10 @@ class TreeKindAdapter extends TypeAdapter<TreeKind> {
   @override
   TreeKind read(BinaryReader reader) {
     switch (reader.readByte()) {
+      case 0:
+        return TreeKind.family;
       case 1:
         return TreeKind.friends;
-      case 0:
       default:
         return TreeKind.family;
     }
@@ -96,10 +97,10 @@ class TreeKindAdapter extends TypeAdapter<TreeKind> {
     switch (obj) {
       case TreeKind.family:
         writer.writeByte(0);
-        return;
+        break;
       case TreeKind.friends:
         writer.writeByte(1);
-        return;
+        break;
     }
   }
 

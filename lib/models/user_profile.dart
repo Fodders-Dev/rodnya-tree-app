@@ -22,7 +22,10 @@ class UserProfile extends HiveObject {
   @HiveField(6)
   final String username;
   @HiveField(7)
-  final String? _photoURL;
+  // D2: поле названо как параметр конструктора — hive_generator матчит
+  // их по имени; приватное `_photoURL` он молча выкидывал из read.
+  // Значение нормализовано конструктором (см. initializer-list).
+  final String? photoURL;
   @HiveField(8)
   final String phoneNumber;
   @HiveField(10)
@@ -83,12 +86,15 @@ class UserProfile extends HiveObject {
   final String profileContributionPolicy;
   @HiveField(38)
   final String maidenName;
+  // D2: см. photoURL — имя поля = имя параметра ради генератора.
   @HiveField(39)
-  final String? _coverPhotoURL;
+  final String? coverPhotoURL;
 
-  String? get photoURL => _photoURL;
-  String? get coverPhotoURL => _coverPhotoURL;
-
+  // D2: анкетные строки и политика — nullable-параметры с дефолтом в
+  // initializer-list: генератор выдаёт nullable-каст, и legacy-записи
+  // без поздних полей читаются без ручных `??` в .g.dart. Visibility-
+  // карты принимаются сырыми (Hive отдаёт Map<dynamic, dynamic> с
+  // возможными null-значениями) и нормализуются здесь же.
   UserProfile({
     required this.id,
     required this.email,
@@ -111,26 +117,58 @@ class UserProfile extends HiveObject {
     this.creatorOfTreeIds,
     this.accessibleTreeIds,
     this.fcmTokens,
-    this.bio = '',
-    this.familyStatus = '',
-    this.aboutFamily = '',
-    this.education = '',
-    this.work = '',
-    this.hometown = '',
-    this.languages = '',
-    this.values = '',
-    this.religion = '',
-    this.interests = '',
+    String? bio,
+    String? familyStatus,
+    String? aboutFamily,
+    String? education,
+    String? work,
+    String? hometown,
+    String? languages,
+    String? values,
+    String? religion,
+    String? interests,
     this.profileVisibilityScopes,
     this.hiddenProfileSections,
-    this.profileVisibilityTreeIds,
-    this.profileVisibilityUserIds,
-    this.profileVisibilityBranchRootIds,
+    Map<dynamic, dynamic>? profileVisibilityTreeIds,
+    Map<dynamic, dynamic>? profileVisibilityUserIds,
+    Map<dynamic, dynamic>? profileVisibilityBranchRootIds,
     this.birthPlace,
-    this.profileContributionPolicy = 'suggestions',
-    this.maidenName = '',
-  })  : _photoURL = UrlUtils.normalizeImageUrl(photoURL),
-        _coverPhotoURL = UrlUtils.normalizeImageUrl(coverPhotoURL);
+    String? profileContributionPolicy,
+    String? maidenName,
+  })  : photoURL = UrlUtils.normalizeImageUrl(photoURL),
+        coverPhotoURL = UrlUtils.normalizeImageUrl(coverPhotoURL),
+        bio = bio ?? '',
+        familyStatus = familyStatus ?? '',
+        aboutFamily = aboutFamily ?? '',
+        education = education ?? '',
+        work = work ?? '',
+        hometown = hometown ?? '',
+        languages = languages ?? '',
+        values = values ?? '',
+        religion = religion ?? '',
+        interests = interests ?? '',
+        profileContributionPolicy = profileContributionPolicy ?? 'suggestions',
+        maidenName = maidenName ?? '',
+        profileVisibilityTreeIds =
+            _normalizeVisibilityIdMap(profileVisibilityTreeIds),
+        profileVisibilityUserIds =
+            _normalizeVisibilityIdMap(profileVisibilityUserIds),
+        profileVisibilityBranchRootIds =
+            _normalizeVisibilityIdMap(profileVisibilityBranchRootIds);
+
+  /// D2: ключи к строкам, значения-списки к `List<String>`; null-значение
+  /// легаси-записи превращается в пустой список, а не в краш.
+  static Map<String, List<String>>? _normalizeVisibilityIdMap(
+    Map<dynamic, dynamic>? raw,
+  ) {
+    if (raw == null) return null;
+    return raw.map(
+      (key, value) => MapEntry(
+        key.toString(),
+        (value as List?)?.cast<String>() ?? const <String>[],
+      ),
+    );
+  }
 
   factory UserProfile.fromFirestore(dynamic doc) {
     final data =

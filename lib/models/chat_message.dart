@@ -5,7 +5,10 @@ import '../utils/date_parser.dart';
 import 'chat_attachment.dart';
 import '../utils/url_utils.dart';
 
-part 'chat_message.g.dart';
+// D2: у ChatMessage НЕТ .g.dart — адаптер рукописный
+// (chat_message_adapter.dart): сериализация вложений/реакций примитивами
+// и legacy-фолбэк на imageUrl/mediaUrls генератору не по зубам, а ручные
+// правки в генерённом файле сносились любым build_runner.
 
 class ChatMessageCall {
   const ChatMessageCall({
@@ -159,31 +162,18 @@ class ChatMessageReactionSummary {
   }
 }
 
-@HiveType(typeId: 4)
 class ChatMessage extends HiveObject {
-  @HiveField(0)
   final String id;
-  @HiveField(1)
   final String chatId;
-  @HiveField(2)
   final String senderId;
-  @HiveField(3)
   final String text;
-  @HiveField(4)
   final DateTime timestamp;
-  @HiveField(5)
   final bool isRead;
-  @HiveField(8)
   final List<String> participants;
-  @HiveField(9)
   final String? senderName;
-  @HiveField(10)
   final List<ChatAttachment> attachments;
-  @HiveField(11)
   final List<ChatMessageReactionSummary> reactions;
-  @HiveField(12)
   final List<String> deliveredTo;
-  @HiveField(13)
   final List<String> readBy;
   final ChatReplyReference? replyTo;
   final String? clientMessageId;

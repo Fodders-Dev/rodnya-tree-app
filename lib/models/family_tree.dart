@@ -56,10 +56,14 @@ class FamilyTree extends HiveObject {
     required this.isPrivate,
     required this.members,
     this.publicSlug,
-    this.isCertified = false,
+    // D2: nullable + дефолт в initializer-list — генератор выдаёт
+    // nullable-каст, и legacy-записи без полей 10/12 читаются без
+    // ручных `??` в .g.dart.
+    bool? isCertified,
     this.certificationNote,
-    this.kind = TreeKind.family,
-  });
+    TreeKind? kind,
+  })  : isCertified = isCertified ?? false,
+        kind = kind ?? TreeKind.family;
 
   bool get isPublic => !isPrivate;
   bool get isFriendsTree => kind == TreeKind.friends;

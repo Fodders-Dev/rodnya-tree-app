@@ -173,8 +173,11 @@ class FamilyPerson extends HiveObject {
   final String name;
   @HiveField(4)
   final String? maidenName; // Девичья фамилия (если применимо)
+  // D2: поле названо как параметр конструктора — hive_generator матчит
+  // их по имени; приватное `_photoUrl` он молча выкидывал из read.
+  // Значение нормализовано конструктором (см. initializer-list).
   @HiveField(5)
-  final String? _photoUrl;
+  final String? photoUrl;
   @HiveField(6)
   final Gender gender;
   @HiveField(7)
@@ -210,8 +213,10 @@ class FamilyPerson extends HiveObject {
   @HiveField(23)
   final FamilyPersonDetails?
       details; // Подробная информация (образование, карьера и т.д.)
+  // D2: см. photoUrl — имя поля = имя параметра ради генератора. Список
+  // нормализован и unmodifiable (раньше это давала копия в геттере).
   @HiveField(24)
-  final List<Map<String, dynamic>> _photoGallery;
+  final List<Map<String, dynamic>> photoGallery;
   @HiveField(26)
   final String? familySummary;
   @HiveField(27)
@@ -227,13 +232,7 @@ class FamilyPerson extends HiveObject {
   bool get birthDateIsYearOnly => birthDatePrecision == 'yearOnly';
   bool get deathDateIsYearOnly => deathDatePrecision == 'yearOnly';
 
-  String? get photoUrl => _photoUrl;
-  String? get primaryPhotoUrl => _photoUrl;
-  List<Map<String, dynamic>> get photoGallery => List.unmodifiable(
-        _photoGallery.map(
-          (entry) => Map<String, dynamic>.from(entry),
-        ),
-      );
+  String? get primaryPhotoUrl => photoUrl;
 
   // Добавляем необходимые геттеры для работы с древовидной структурой
   List<String> get spouseIds =>
@@ -261,9 +260,12 @@ class FamilyPerson extends HiveObject {
     this.bio,
     this.familySummary,
     required this.isAlive,
-    this.visibility = 'private',
-    this.birthDatePrecision = 'exact',
-    this.deathDatePrecision = 'exact',
+    // D2: nullable + дефолт в initializer-list — генератор выдаёт
+    // nullable-каст, и legacy-записи без поля читаются без ручных `??`
+    // в .g.dart.
+    String? visibility,
+    String? birthDatePrecision,
+    String? deathDatePrecision,
     this.creatorId,
     required this.createdAt,
     required this.updatedAt,
@@ -274,12 +276,18 @@ class FamilyPerson extends HiveObject {
     this.spouseId,
     this.siblingIds,
     this.details,
-    List<Map<String, dynamic>>? photoGallery,
-  })  : _photoGallery = _normalizePhotoGallery(
+    // D2: dynamic — Hive отдаёт элементы как Map<dynamic, dynamic>;
+    // строгий List<Map<String, dynamic>> ронял ленивый cast генерата.
+    // Нормализатор приводит каждый элемент сам.
+    List<dynamic>? photoGallery,
+  })  : visibility = visibility ?? 'private',
+        birthDatePrecision = birthDatePrecision ?? 'exact',
+        deathDatePrecision = deathDatePrecision ?? 'exact',
+        photoGallery = _normalizePhotoGallery(
           photoGallery,
           fallbackPrimaryPhotoUrl: photoUrl,
         ),
-        _photoUrl = _resolvePrimaryPhotoUrl(
+        photoUrl = _resolvePrimaryPhotoUrl(
           _normalizePhotoGallery(
             photoGallery,
             fallbackPrimaryPhotoUrl: photoUrl,
@@ -288,7 +296,7 @@ class FamilyPerson extends HiveObject {
         );
 
   static List<Map<String, dynamic>> _normalizePhotoGallery(
-    List<Map<String, dynamic>>? rawGallery, {
+    List<dynamic>? rawGallery, {
     String? fallbackPrimaryPhotoUrl,
   }) {
     final normalizedPrimaryPhotoUrl =
@@ -326,6 +334,9 @@ class FamilyPerson extends HiveObject {
 
     if (rawGallery != null) {
       for (final entry in rawGallery) {
+        // D2: элементы с диска приходят как Map<dynamic, dynamic> —
+        // приводим каждый сами, не доверяя ленивому cast.
+        if (entry is! Map) continue;
         addEntry(Map<String, dynamic>.from(entry));
       }
     }
@@ -368,7 +379,9 @@ class FamilyPerson extends HiveObject {
       entry['isPrimary'] = entry['url'] == resolvedPrimaryPhotoUrl;
     }
 
-    return normalizedEntries;
+    // D2: поле публичное — фиксируем неизменяемость, которую раньше
+    // обеспечивала копия в геттере.
+    return List.unmodifiable(normalizedEntries);
   }
 
   static String? _resolvePrimaryPhotoUrl(

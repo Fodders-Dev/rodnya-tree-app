@@ -1,10 +1,17 @@
-// GENERATED CODE - DO NOT MODIFY BY HAND
+// D2: РУКОПИСНЫЙ Hive-адаптер ChatMessage — намеренно вне build_runner.
+//
+// Сериализация сложнее, чем умеет hive_generator: вложения и реакции
+// пишутся примитивами (toMap-списками, без собственных typeId), а read
+// поддерживает legacy-кадры эпохи imageUrl/mediaUrls (поля 6/7) —
+// восстанавливает из них вложения через ChatMessage.create. Раньше это
+// жило ручными правками в chat_message.g.dart, и любой build_runner
+// молча их сносил. typeId = 4 и индексы полей — дисковый формат,
+// менять нельзя.
 
-part of 'chat_message.dart';
+import 'package:hive/hive.dart';
 
-// **************************************************************************
-// TypeAdapterGenerator
-// **************************************************************************
+import 'chat_attachment.dart';
+import 'chat_message.dart';
 
 class ChatMessageAdapter extends TypeAdapter<ChatMessage> {
   @override
@@ -61,6 +68,8 @@ class ChatMessageAdapter extends TypeAdapter<ChatMessage> {
       ..write(obj.timestamp)
       ..writeByte(5)
       ..write(obj.isRead)
+      // Поля 6/7 — legacy imageUrl/mediaUrls: пишем, чтобы старые
+      // версии приложения могли читать новые записи.
       ..writeByte(6)
       ..write(obj.imageUrl)
       ..writeByte(7)
