@@ -323,6 +323,44 @@ void main() {
     expect(await titlesOf(4), contains('Радоница'));
     expect(await titlesOf(2), contains('Масленица'));
   });
+
+  test('K3: народные праздники с плавающими датами попадают в свой месяц',
+      () async {
+    final service = EventService(
+      familyTreeService: _FakeFamilyTreeService(relatives: const []),
+    );
+
+    // Проверки владельца: медработник 2026 = 21 июня (3-е вс),
+    // шахтёр 2026 = 30 августа (последнее вс).
+    final june = await service.getEventsForMonth('tree-1', 2026, 6);
+    final medic = june.firstWhere(
+      (event) => event.title == 'День медицинского работника',
+    );
+    expect(medic.date, DateTime(2026, 6, 21));
+    expect(medic.type, AppEventType.folkHoliday);
+    expect(medic.categoryLabel, 'Народный');
+    expect(medic.description, isNotEmpty);
+
+    final august = await service.getEventsForMonth('tree-1', 2026, 8);
+    final miner = august.firstWhere(
+      (event) => event.title == 'День шахтёра',
+    );
+    expect(miner.date, DateTime(2026, 8, 30));
+
+    // Фиксированные народные: Татьянин день; «последнее вс» — День матери.
+    final january = await service.getEventsForMonth('tree-1', 2026, 1);
+    expect(
+      january.any((event) =>
+          event.title == 'Татьянин день' &&
+          event.date == DateTime(2026, 1, 25)),
+      isTrue,
+    );
+    final november = await service.getEventsForMonth('tree-1', 2026, 11);
+    final mothersDay = november.firstWhere(
+      (event) => event.title == 'День матери',
+    );
+    expect(mothersDay.date, DateTime(2026, 11, 29));
+  });
 }
 
 class _FakeFamilyTreeService implements FamilyTreeServiceInterface {

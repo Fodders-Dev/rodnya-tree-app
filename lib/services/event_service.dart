@@ -4,6 +4,7 @@ import '../backend/interfaces/family_tree_service_interface.dart';
 import '../models/app_event.dart';
 import '../models/family_person.dart';
 import '../models/family_relation.dart';
+import '../utils/holiday_date_rules.dart';
 
 class EventService {
   EventService({
@@ -116,6 +117,7 @@ class EventService {
       );
       allEvents.addAll(_buildRussianHolidayEvents(today));
       allEvents.addAll(_buildOrthodoxHolidayEvents(today));
+      allEvents.addAll(_buildFolkHolidayEvents(today));
 
       debugPrint('[EventService] Всего вычислено ${allEvents.length} событий.');
 
@@ -338,7 +340,7 @@ class EventService {
   /// All Orthodox holidays placed in a concrete [year] (no upcoming
   /// filter). Movable feasts derive from [_orthodoxEaster].
   List<AppEvent> _orthodoxHolidaysForYear(int year) {
-    final easter = _orthodoxEaster(year);
+    final easter = orthodoxEaster(year);
     final definitions = <_DatedHolidayDefinition>[
       _DatedHolidayDefinition(
         date: DateTime(year, 1, 7),
@@ -461,6 +463,158 @@ class EventService {
   List<AppEvent> _buildOrthodoxHolidayEvents(DateTime today) {
     return [today.year, today.year + 1]
         .expand(_orthodoxHolidaysForYear)
+        .where((event) => _isUpcoming(event.date, today))
+        .toList();
+  }
+
+  /// K3: народные и профессиональные праздники — «близкое к народу».
+  /// Даты считаются движком правил (utils/holiday_date_rules.dart):
+  /// фиксированные, «N-е воскресенье месяца», «последнее воскресенье»;
+  /// владелец явно просил уметь «последний четверг месяца», а не только
+  /// числа. У каждого — короткое тёплое описание для инфо-шита.
+  static final List<_FolkHolidayDefinition> _folkHolidayDefs =
+      <_FolkHolidayDefinition>[
+    _FolkHolidayDefinition(
+      id: 'tatyana',
+      title: 'Татьянин день',
+      resolveDate: (year) => fixedDate(year, 1, 25),
+      icon: Icons.school_outlined,
+      description: 'День российского студенчества и именины всех Татьян — '
+          'повод позвонить и поздравить.',
+    ),
+    _FolkHolidayDefinition(
+      id: 'fools_day',
+      title: 'День смеха',
+      resolveDate: (year) => fixedDate(year, 4, 1),
+      icon: Icons.sentiment_very_satisfied_outlined,
+      description: 'Первое апреля — день добрых шуток и розыгрышей.',
+    ),
+    _FolkHolidayDefinition(
+      id: 'cosmonautics',
+      title: 'День космонавтики',
+      resolveDate: (year) => fixedDate(year, 4, 12),
+      icon: Icons.rocket_launch_outlined,
+      description: 'День первого полёта человека в космос — 12 апреля 1961 '
+          'года Юрий Гагарин облетел Землю.',
+    ),
+    _FolkHolidayDefinition(
+      id: 'medic',
+      title: 'День медицинского работника',
+      resolveDate: (year) => nthWeekdayOfMonth(year, 6, DateTime.sunday, 3),
+      icon: Icons.medical_services_outlined,
+      description: 'Третье воскресенье июня — день врачей, медсестёр и всех, '
+          'кто заботится о нашем здоровье.',
+    ),
+    _FolkHolidayDefinition(
+      id: 'fisherman',
+      title: 'День рыбака',
+      resolveDate: (year) => nthWeekdayOfMonth(year, 7, DateTime.sunday, 2),
+      icon: Icons.phishing_outlined,
+      description: 'Второе воскресенье июля — праздник всех, кто любит '
+          'рыбалку и живёт ею.',
+    ),
+    _FolkHolidayDefinition(
+      id: 'navy',
+      title: 'День Военно-морского флота',
+      resolveDate: (year) => lastWeekdayOfMonth(year, 7, DateTime.sunday),
+      icon: Icons.anchor_outlined,
+      description: 'Последнее воскресенье июля — день моряков и всех, кто '
+          'служил на флоте.',
+    ),
+    _FolkHolidayDefinition(
+      id: 'railway',
+      title: 'День железнодорожника',
+      resolveDate: (year) => nthWeekdayOfMonth(year, 8, DateTime.sunday, 1),
+      icon: Icons.train_outlined,
+      description: 'Первое воскресенье августа — праздник железнодорожников '
+          'и их семей.',
+    ),
+    _FolkHolidayDefinition(
+      id: 'builder',
+      title: 'День строителя',
+      resolveDate: (year) => nthWeekdayOfMonth(year, 8, DateTime.sunday, 2),
+      icon: Icons.construction_outlined,
+      description: 'Второе воскресенье августа — день тех, кто строит дома '
+          'и города.',
+    ),
+    _FolkHolidayDefinition(
+      id: 'miner',
+      title: 'День шахтёра',
+      resolveDate: (year) => lastWeekdayOfMonth(year, 8, DateTime.sunday),
+      icon: Icons.terrain_outlined,
+      description: 'Последнее воскресенье августа — праздник горняков и '
+          'шахтёрских семей.',
+    ),
+    _FolkHolidayDefinition(
+      id: 'kindergarten',
+      title: 'День воспитателя',
+      resolveDate: (year) => fixedDate(year, 9, 27),
+      icon: Icons.child_care_outlined,
+      description: 'День воспитателей и работников детских садов — тех, кто '
+          'растит самых маленьких.',
+    ),
+    _FolkHolidayDefinition(
+      id: 'elderly',
+      title: 'День пожилого человека',
+      resolveDate: (year) => fixedDate(year, 10, 1),
+      icon: Icons.volunteer_activism_outlined,
+      description: 'Международный день заботы о старших — позвоните бабушке '
+          'и дедушке.',
+    ),
+    _FolkHolidayDefinition(
+      id: 'teacher',
+      title: 'День учителя',
+      resolveDate: (year) => fixedDate(year, 10, 5),
+      icon: Icons.menu_book_outlined,
+      description: 'День учителя — поздравьте тех, кто вас учил.',
+    ),
+    _FolkHolidayDefinition(
+      id: 'father',
+      title: 'День отца',
+      resolveDate: (year) => nthWeekdayOfMonth(year, 10, DateTime.sunday, 3),
+      icon: Icons.face_outlined,
+      description: 'Третье воскресенье октября — день пап. Тёплый повод '
+          'сказать спасибо отцу.',
+    ),
+    _FolkHolidayDefinition(
+      id: 'grandparents',
+      title: 'День бабушек и дедушек',
+      resolveDate: (year) => fixedDate(year, 10, 28),
+      icon: Icons.elderly_outlined,
+      description: 'День бабушек и дедушек в России — навестите или '
+          'позвоните старшим.',
+    ),
+    _FolkHolidayDefinition(
+      id: 'mother',
+      title: 'День матери',
+      resolveDate: (year) => lastWeekdayOfMonth(year, 11, DateTime.sunday),
+      icon: Icons.favorite_outline,
+      description: 'Последнее воскресенье ноября — день мам. Самый тёплый '
+          'семейный повод.',
+    ),
+  ];
+
+  /// Народные праздники конкретного года (для месячной сетки и agenda).
+  List<AppEvent> _folkHolidaysForYear(int year) {
+    return _folkHolidayDefs
+        .map(
+          (holiday) => AppEvent(
+            id: 'folk_${holiday.id}_$year',
+            type: AppEventType.folkHoliday,
+            date: holiday.resolveDate(year),
+            title: holiday.title,
+            personName: 'Народный календарь',
+            personId: '',
+            icon: holiday.icon,
+            description: holiday.description,
+          ),
+        )
+        .toList();
+  }
+
+  List<AppEvent> _buildFolkHolidayEvents(DateTime today) {
+    return [today.year, today.year + 1]
+        .expand(_folkHolidaysForYear)
         .where((event) => _isUpcoming(event.date, today))
         .toList();
   }
@@ -622,6 +776,7 @@ class EventService {
 
     out.addAll(_russianHolidaysForYear(year));
     out.addAll(_orthodoxHolidaysForYear(year));
+    out.addAll(_folkHolidaysForYear(year));
     return out;
   }
 
@@ -677,8 +832,10 @@ class EventService {
         return 5;
       case AppEventType.orthodoxHoliday:
         return 6;
-      case AppEventType.other:
+      case AppEventType.folkHoliday:
         return 7;
+      case AppEventType.other:
+        return 8;
     }
   }
 
@@ -693,22 +850,32 @@ class EventService {
         return true;
       case AppEventType.russianHoliday:
       case AppEventType.orthodoxHoliday:
+      case AppEventType.folkHoliday:
       case AppEventType.other:
         return false;
     }
   }
 
-  DateTime _orthodoxEaster(int year) {
-    final a = year % 4;
-    final b = year % 7;
-    final c = year % 19;
-    final d = (19 * c + 15) % 30;
-    final e = (2 * a + 4 * b - d + 34) % 7;
-    final month = (d + e + 114) ~/ 31;
-    final day = ((d + e + 114) % 31) + 1;
-    final julianDate = DateTime(year, month, day);
-    return julianDate.add(const Duration(days: 13));
-  }
+  // K3: пасхалия переехала в utils/holiday_date_rules.dart (orthodoxEaster)
+  // — там же живёт весь движок плавающих дат; вторую копию не держим.
+}
+
+/// K3: декларация народного праздника — дата считается правилом движка
+/// (fixed / nthWeekdayOfMonth / lastWeekdayOfMonth / easterOffset).
+class _FolkHolidayDefinition {
+  const _FolkHolidayDefinition({
+    required this.id,
+    required this.title,
+    required this.resolveDate,
+    required this.icon,
+    required this.description,
+  });
+
+  final String id;
+  final String title;
+  final DateTime Function(int year) resolveDate;
+  final IconData icon;
+  final String description;
 }
 
 class _AnnualHolidayDefinition {

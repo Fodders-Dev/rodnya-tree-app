@@ -288,6 +288,10 @@ class _FamilyCalendarScreenState extends State<FamilyCalendarScreen> {
       case AppEventType.orthodoxHoliday:
         // Soft violet, lifted for dark backgrounds.
         return isDark ? const Color(0xFFB39DDB) : const Color(0xFF8E7CC3);
+      case AppEventType.folkHoliday:
+        // K3: тёплый янтарь — народные различимы от красного (гос) и
+        // фиолетового (православные) даже точкой 7px.
+        return isDark ? const Color(0xFFE0BC4C) : const Color(0xFFB8860B);
       default:
         return tokens.accent; // family — on-brand accent
     }

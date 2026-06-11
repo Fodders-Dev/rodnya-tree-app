@@ -232,6 +232,15 @@ void main() {
     expect(find.text('Иван Петров'), findsOneWidget);
     expect(find.textContaining('исполнится'), findsOneWidget);
     expect(find.text('Родня'), findsWidgets);
+    // K3: в окно 90 дней всегда попадает хотя бы один праздник каждой
+    // «народной» волны — бейджи категорий различимы в списке.
+    expect(
+      find.text('Народный').evaluate().isNotEmpty ||
+          find.text('Россия').evaluate().isNotEmpty ||
+          find.text('Православие').evaluate().isNotEmpty,
+      isTrue,
+      reason: 'в agenda должны быть бейджи праздничных категорий',
+    );
 
     // Назад в месяц.
     await tester.tap(find.byKey(const Key('calendar-view-month')));

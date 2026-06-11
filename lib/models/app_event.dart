@@ -9,6 +9,11 @@ enum AppEventType {
   customFamilyEvent,
   russianHoliday,
   orthodoxHoliday,
+
+  /// K3: народные и профессиональные праздники (Татьянин день, День
+  /// медработника, День шахтёра…) — «близкое к народу», отдельная
+  /// категория, чтобы не смешивать с государственными.
+  folkHoliday,
   other,
 }
 
@@ -86,6 +91,8 @@ class AppEvent {
         return 'Россия';
       case AppEventType.orthodoxHoliday:
         return 'Православие';
+      case AppEventType.folkHoliday:
+        return 'Народный';
       case AppEventType.other:
         return 'Календарь';
     }
