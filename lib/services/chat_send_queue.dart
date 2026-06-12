@@ -10,6 +10,7 @@ import '../models/chat_attachment.dart';
 import '../models/chat_message.dart';
 import '../models/chat_send_progress.dart';
 import 'app_status_service.dart';
+import '../utils/perf_log.dart';
 import 'custom_api_auth_service.dart';
 
 enum ChatPendingMessageStatus { pending, sent, failed }
@@ -423,25 +424,40 @@ class ChatSendQueue extends ChangeNotifier {
     _notify();
   }
 
+  /// S4: явный потолок ожидания ACK — дольше держать «отправляется»
+  /// нечестно: переводим в failed с ретраем по тапу. С вложениями
+  /// аплоад легитимно дольше — потолок мягче.
+  static const Duration _sendTimeout = Duration(seconds: 10);
+  static const Duration _sendTimeoutWithAttachments = Duration(seconds: 45);
+
   Future<void> _send(ChatPendingMessage message) async {
     if (!_messageExists(message.chatId, message.localId) ||
         !_inFlightMessageIds.add(message.localId)) {
       return;
     }
 
+    // S1: отправка до ACK сервера.
+    final sendTrace = PerfTrace('chat.send-to-ack');
     try {
-      await _chatService.sendMessageToChat(
-        chatId: message.chatId,
-        text: message.text,
-        attachments: message.attachments,
-        forwardedAttachments: message.forwardedAttachments,
-        replyTo: message.replyTo,
-        clientMessageId: message.localId,
-        expiresInSeconds: message.expiresInSeconds,
-        onProgress: (progress) {
-          _updateProgress(message.chatId, message.localId, progress);
-        },
-      );
+      await _chatService
+          .sendMessageToChat(
+            chatId: message.chatId,
+            text: message.text,
+            attachments: message.attachments,
+            forwardedAttachments: message.forwardedAttachments,
+            replyTo: message.replyTo,
+            clientMessageId: message.localId,
+            expiresInSeconds: message.expiresInSeconds,
+            onProgress: (progress) {
+              _updateProgress(message.chatId, message.localId, progress);
+            },
+          )
+          .timeout(
+            message.attachments.isEmpty
+                ? _sendTimeout
+                : _sendTimeoutWithAttachments,
+          );
+      sendTrace.finish();
       if (!_messageExists(message.chatId, message.localId)) {
         return;
       }
@@ -454,13 +470,16 @@ class ChatSendQueue extends ChangeNotifier {
       await _persistChat(message.chatId);
       _notify();
     } catch (error) {
+      sendTrace.cancel();
       if (!_messageExists(message.chatId, message.localId)) {
         return;
       }
       _upsert(
         message.copyWith(
           status: ChatPendingMessageStatus.failed,
-          errorText: _messageErrorText(error),
+          errorText: error is TimeoutException
+              ? 'Не дождались ответа сервера. Нажмите, чтобы повторить.'
+              : _messageErrorText(error),
         ),
       );
       await _persistChat(message.chatId);

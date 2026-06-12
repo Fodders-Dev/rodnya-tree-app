@@ -581,26 +581,31 @@ function createApp({
     const startedAt = Date.now();
     res.on("finish", () => {
       const durationMs = Date.now() - startedAt;
+      // S1: медленные ответы (>500ms) — warning с маршрутом, чтобы
+      // «быстро» было числом, а не мнением.
+      const isSlow = durationMs >= 500;
       const shouldLog =
         res.statusCode >= 400 ||
         req.method !== "GET" ||
-        durationMs >= 1000 ||
+        isSlow ||
         pathName.startsWith("/v1/admin/");
       if (!shouldLog) {
         return;
       }
 
-      console.log(
-        "[backend] request",
-        JSON.stringify({
-          requestId: req.requestId,
-          method: req.method,
-          path: pathName,
-          statusCode: res.statusCode,
-          durationMs,
-          ip: req.ip,
-        }),
-      );
+      const payload = JSON.stringify({
+        requestId: req.requestId,
+        method: req.method,
+        path: pathName,
+        statusCode: res.statusCode,
+        durationMs,
+        ip: req.ip,
+      });
+      if (isSlow) {
+        console.warn("[backend] slow-request", payload);
+        return;
+      }
+      console.log("[backend] request", payload);
     });
     next();
   });

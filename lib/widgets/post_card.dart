@@ -714,15 +714,22 @@ class _PostActionButton extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
           children: [
             icon,
             const SizedBox(width: 6),
-            Text(
-              label,
-              style: AppTheme.sans(
-                color: active ? tokens.warm : tokens.inkSecondary,
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
+            // S1 (попутный прод-баг): на ширине A50 длинный лейбл
+            // переполнял Row на 15–41px — обрезаем честно.
+            Flexible(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: AppTheme.sans(
+                  color: active ? tokens.warm : tokens.inkSecondary,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ),
           ],

@@ -1319,6 +1319,9 @@ void main() {
     expect(chatService.lastReplyTo?.messageId, 'm-1');
     expect(find.text('Собеседник'), findsWidgets);
     expect(find.text('Подтверждаю'), findsOneWidget);
+    // S4: завершаем отправку — иначе send-timeout остаётся pending Timer.
+    chatService.sendCompleter.complete();
+    await tester.pump();
   });
 
   testWidgets('ChatScreen forwards message attachments through composer',
@@ -1373,6 +1376,9 @@ void main() {
       chatService.lastForwardedAttachments.first.url,
       'https://example.com/photo.jpg',
     );
+    // S4: завершаем отправку — иначе send-timeout остаётся pending Timer.
+    chatService.sendCompleter.complete();
+    await tester.pump();
   });
 
   testWidgets('ChatScreen edits own remote message through composer',

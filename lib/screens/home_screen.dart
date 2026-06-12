@@ -44,6 +44,7 @@ import '../widgets/coach_mark_tour.dart';
 import '../services/custom_api_notification_service.dart';
 import '../utils/e2e_state_bridge.dart';
 import '../utils/image_decode.dart';
+import '../utils/perf_log.dart';
 
 part 'home_screen_sections.dart';
 
@@ -110,6 +111,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   // (teaser at top OR FAB below — never both).
   final ScrollController _feedScrollController = ScrollController();
   bool _showComposeFab = false;
+  // S1: холодная лента замеряется один раз за жизнь экрана.
+  bool _coldFeedTraced = false;
   static const double _composeFabScrollThreshold = 200.0;
 
   // E (Week 7 §6): first-launch coach-mark tour anchored on real home
@@ -538,6 +541,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Future<void> _loadPosts({String? branchId}) async {
     if (!mounted) return;
+    // S1: холодная загрузка ленты — от первого _loadPosts до кадра с
+    // данными. Только первый заход (рефреши не считаем холодными).
+    final PerfTrace? coldTrace =
+        _coldFeedTraced ? null : PerfTrace('feed.cold-load');
+    _coldFeedTraced = true;
     setState(() {
       _isLoadingPosts = true;
       // Don't surface "feed unavailable" the moment we start loading —
@@ -571,6 +579,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       // network call was in flight (user tapped a different chip).
       // Only commit if we're still the latest load for this branch.
       if (!mounted || _selectedFeedBranchId != branchId) {
+        coldTrace?.cancel();
         return;
       }
       unawaited(cache?.write(cacheKey, posts));
@@ -579,6 +588,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _isLoadingPosts = false;
         _postsUnavailable = false;
       });
+      if (coldTrace != null) {
+        WidgetsBinding.instance.addPostFrameCallback(
+          (_) => coldTrace.finish('${posts.length} posts'),
+        );
+      }
       // Only resolve the audience signal when the feed is actually
       // empty — that's the only time the state-aware empty CTA shows,
       // so feeds with content never pay for the extra fetch.
@@ -586,6 +600,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         unawaited(_refreshFamilyAudienceSignal());
       }
     } catch (e) {
+      coldTrace?.cancel();
       debugPrint('Ошибка загрузки постов: $e');
       _appStatusService.reportError(
         e,

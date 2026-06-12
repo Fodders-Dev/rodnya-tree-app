@@ -57,6 +57,7 @@ import '../widgets/kruzhok_recorder_screen.dart';
 import '../widgets/swipe_to_reply.dart';
 import '../utils/chat_attachment_download.dart';
 import '../utils/photo_url.dart';
+import '../utils/perf_log.dart';
 import '../utils/snackbar.dart';
 import '../utils/url_utils.dart';
 import '../widgets/glass_panel.dart';
@@ -154,6 +155,8 @@ class _ChatScreenState extends State<ChatScreen> {
       ChatAttachmentsController(maxAttachments: _maxAttachments);
   late final ChatSendQueue _sendQueue;
   bool _ownsSendQueue = false;
+  // S1: открытие чата до первого кадра с сообщениями.
+  PerfTrace? _chatOpenTrace;
   final Set<String> _reportedSendFailureIds = <String>{};
   final Set<String> _handledVoiceSendIds = <String>{};
   Timer? _draftSaveTimer;
@@ -256,6 +259,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
+    _chatOpenTrace = PerfTrace('chat.open-to-messages');
     _ownsSendQueue = !GetIt.I.isRegistered<ChatSendQueue>();
     _sendQueue = _ownsSendQueue
         ? ChatSendQueue.memory(chatService: _chatService)
@@ -3491,6 +3495,16 @@ class _ChatScreenState extends State<ChatScreen> {
           return const Center(child: CircularProgressIndicator());
         }
 
+        // S1: первый кадр с сообщениями — конец замера открытия чата.
+        final openTrace = _chatOpenTrace;
+        if (openTrace != null && snapshot.hasData) {
+          _chatOpenTrace = null;
+          final count = snapshot.data?.length ?? 0;
+          WidgetsBinding.instance.addPostFrameCallback(
+            (_) => openTrace.finish('$count messages'),
+          );
+        }
+
         // Stream errors fire on every API failure — including a
         // simple offline state where we already have cached messages
         // hydrated. If we have data, prefer to keep showing it and
@@ -5235,16 +5249,26 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
                 ),
                 const SizedBox(width: 4),
-                AnimatedDefaultTextStyle(
-                  duration: const Duration(milliseconds: 220),
-                  curve: Curves.easeOutCubic,
-                  style: theme.textTheme.bodySmall!.copyWith(
-                    color: statusMeta.color,
-                    fontWeight: message.status == _OutgoingMessageStatus.failed
-                        ? FontWeight.w700
-                        : FontWeight.w500,
+                // S4: failed-строка («Не отправлено» + «Повторить»)
+                // переполняла узкий баббл — лейбл сжимаем, кнопка
+                // остаётся целой тап-целью.
+                Flexible(
+                  child: AnimatedDefaultTextStyle(
+                    duration: const Duration(milliseconds: 220),
+                    curve: Curves.easeOutCubic,
+                    style: theme.textTheme.bodySmall!.copyWith(
+                      color: statusMeta.color,
+                      fontWeight:
+                          message.status == _OutgoingMessageStatus.failed
+                              ? FontWeight.w700
+                              : FontWeight.w500,
+                    ),
+                    child: Text(
+                      statusMeta.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
-                  child: Text(statusMeta.label),
                 ),
                 if (message.status == _OutgoingMessageStatus.failed) ...[
                   const SizedBox(width: 6),
