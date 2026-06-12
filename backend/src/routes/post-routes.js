@@ -79,14 +79,64 @@ function registerPostRoutes(
       const branchIds = Array.isArray(post.branchIds) ? post.branchIds : [];
       return branchIds.some((branchId) => accessibleTreeIds.has(branchId));
     });
-    const payload = await Promise.all(
-      visiblePosts.map(async (post) => {
+
+    // S2: курсорная пагинация — строго аддитивно. Без `limit` старые
+    // клиенты получают прежний формат (массив всех постов). С `limit`
+    // ответ — {posts, nextCursor}; cursor = "createdAt|id" последнего
+    // поста страницы. Вставка новых постов курсор не ломает: он
+    // указывает в прошлое, а сортировка createdAt+id стабильна.
+    const limitRaw = String(req.query.limit || "").trim();
+    const parsedLimit = Number(limitRaw);
+    const limit =
+      limitRaw && Number.isFinite(parsedLimit) && parsedLimit > 0
+        ? Math.min(Math.floor(parsedLimit), 100)
+        : null;
+
+    if (limit === null) {
+      const payload = await Promise.all(
+        visiblePosts.map(async (post) => {
+          const comments = await store.listPostComments(post.id);
+          return mapPost(post, comments.length);
+        }),
+      );
+      res.json(payload);
+      return;
+    }
+
+    let pageSource = visiblePosts;
+    const before = String(req.query.before || "").trim();
+    if (before) {
+      // "|" не встречается ни в ISO-датах, ни в uuid — безопасный
+      // разделитель; курсор без "|" трактуем как голый createdAt.
+      const separatorIndex = before.lastIndexOf("|");
+      const beforeCreatedAt =
+        separatorIndex === -1 ? before : before.slice(0, separatorIndex);
+      const beforeId =
+        separatorIndex === -1 ? "" : before.slice(separatorIndex + 1);
+      pageSource = visiblePosts.filter((post) => {
+        const createdAt = String(post.createdAt || "");
+        const byCreatedAt = createdAt.localeCompare(beforeCreatedAt);
+        if (byCreatedAt !== 0) {
+          return byCreatedAt < 0; // строго старее курсора
+        }
+        return String(post.id || "").localeCompare(beforeId) < 0;
+      });
+    }
+
+    const page = pageSource.slice(0, limit);
+    const lastPost = page[page.length - 1] || null;
+    const nextCursor =
+      pageSource.length > limit && lastPost
+        ? `${lastPost.createdAt}|${lastPost.id}`
+        : null;
+
+    const pagePayload = await Promise.all(
+      page.map(async (post) => {
         const comments = await store.listPostComments(post.id);
         return mapPost(post, comments.length);
       }),
     );
-
-    res.json(payload);
+    res.json({posts: pagePayload, nextCursor});
   });
 
   app.post("/v1/posts", requireAuth, async (req, res) => {

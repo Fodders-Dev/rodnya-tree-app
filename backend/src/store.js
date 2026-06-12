@@ -15961,9 +15961,18 @@ class FileStore {
         }
         return true;
       })
-      .sort((left, right) =>
-        String(right.createdAt || "").localeCompare(String(left.createdAt || "")),
-      )
+      .sort((left, right) => {
+        // S2: tie-break по id — стабильный порядок при равных createdAt
+        // обязателен для курсорной пагинации (иначе пост на границе
+        // страницы может выпасть или задвоиться).
+        const byCreatedAt = String(right.createdAt || "").localeCompare(
+          String(left.createdAt || ""),
+        );
+        if (byCreatedAt !== 0) {
+          return byCreatedAt;
+        }
+        return String(right.id || "").localeCompare(String(left.id || ""));
+      })
       .map((entry) => attachPostReactions(db, entry));
   }
 
