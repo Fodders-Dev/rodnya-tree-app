@@ -3,11 +3,33 @@ import '../../models/post.dart';
 import '../../models/comment.dart';
 import '../../models/reaction_summary.dart';
 
+/// S3: страница ленты для курсорной пагинации (S2).
+class PostsPage {
+  const PostsPage({required this.posts, this.nextCursor});
+
+  final List<Post> posts;
+
+  /// null — лента закончилась.
+  final String? nextCursor;
+}
+
 abstract class PostServiceInterface {
   /// Fetch posts for a specific tree, author, or globally.
   /// [onlyBranches] if true, fetches only posts scoped to specific branches.
   Future<List<Post>> getPosts(
       {String? treeId, String? authorId, bool onlyBranches = false});
+
+  /// S3: страница ленты (S2-курсор: limit + before). Дефолтная
+  /// реализация — фолбэк на [getPosts] одной «бесконечной» страницей,
+  /// чтобы старые адаптеры и тестовые фейки работали без правок.
+  Future<PostsPage> getPostsPage({
+    String? treeId,
+    int limit = 20,
+    String? before,
+  }) async {
+    final posts = await getPosts(treeId: treeId);
+    return PostsPage(posts: posts, nextCursor: null);
+  }
 
   /// Create a new family post.
   /// [images] optional attachments for the post.

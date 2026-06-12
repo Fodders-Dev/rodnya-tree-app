@@ -52,6 +52,57 @@ class CustomApiPostService implements PostServiceInterface {
     }
   }
 
+  /// S3: страница ленты через S2-курсор. Старый бэк без пагинации
+  /// вернёт массив — честно отдаём его одной страницей без курсора.
+  @override
+  Future<PostsPage> getPostsPage({
+    String? treeId,
+    int limit = 20,
+    String? before,
+  }) async {
+    final queryParams = <String, String>{
+      'limit': '$limit',
+      if (treeId != null) 'treeId': treeId,
+      if (before != null && before.isNotEmpty) 'before': before,
+    };
+
+    try {
+      final decoded = await _requestDynamic(
+        method: 'GET',
+        path: '/v1/posts',
+        queryParams: queryParams,
+      );
+      if (decoded is List) {
+        // Старый бэк (без S2) — прежний формат.
+        return PostsPage(
+          posts: decoded
+              .whereType<Map<String, dynamic>>()
+              .map(Post.fromJson)
+              .toList(),
+          nextCursor: null,
+        );
+      }
+      if (decoded is Map<String, dynamic>) {
+        final rawPosts = decoded['posts'];
+        return PostsPage(
+          posts: rawPosts is List
+              ? rawPosts
+                  .whereType<Map<String, dynamic>>()
+                  .map(Post.fromJson)
+                  .toList()
+              : const <Post>[],
+          nextCursor: decoded['nextCursor']?.toString(),
+        );
+      }
+      return const PostsPage(posts: <Post>[], nextCursor: null);
+    } on CustomApiPostException catch (error) {
+      if (error.statusCode == 404) {
+        return const PostsPage(posts: <Post>[], nextCursor: null);
+      }
+      rethrow;
+    }
+  }
+
   @override
   Future<Post> createPost({
     required String treeId,
@@ -231,6 +282,33 @@ class CustomApiPostService implements PostServiceInterface {
         return _handleResponse(retryResponse);
       }
       rethrow;
+    }
+  }
+
+  /// S3: сырой decoded-ответ — пагинированный GET /v1/posts может
+  /// вернуть и массив (старый бэк), и {posts, nextCursor}.
+  Future<dynamic> _requestDynamic({
+    required String method,
+    required String path,
+    Map<String, String>? queryParams,
+  }) async {
+    final response = await _sendRequest(
+      method: method,
+      path: path,
+      queryParams: queryParams,
+    );
+    try {
+      return _handleResponse(response);
+    } on CustomApiPostException catch (error) {
+      if (!await _shouldRefreshAndRetry(error)) {
+        rethrow;
+      }
+      final retryResponse = await _sendRequest(
+        method: method,
+        path: path,
+        queryParams: queryParams,
+      );
+      return _handleResponse(retryResponse);
     }
   }
 

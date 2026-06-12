@@ -135,6 +135,16 @@ class _FakePostService implements PostServiceInterface {
     return data;
   }
 
+  // S3: фолбэк-семантика старого бэка — всё одной страницей.
+  @override
+  Future<PostsPage> getPostsPage({
+    String? treeId,
+    int limit = 20,
+    String? before,
+  }) async {
+    return PostsPage(posts: await getPosts(treeId: treeId), nextCursor: null);
+  }
+
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

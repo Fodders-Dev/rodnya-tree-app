@@ -858,6 +858,15 @@ class PendingBackendPostService implements PostServiceInterface {
   }
 
   @override
+  Future<PostsPage> getPostsPage({
+    String? treeId,
+    int limit = 20,
+    String? before,
+  }) async {
+    return const PostsPage(posts: <Post>[], nextCursor: null);
+  }
+
+  @override
   Future<Post> createPost({
     required String treeId,
     required String content,

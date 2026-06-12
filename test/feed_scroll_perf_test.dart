@@ -89,6 +89,60 @@ class _FakePostService implements PostServiceInterface {
   }) async =>
       posts;
 
+  // Сторож остаётся жёстким: все 200 постов одной страницей (сценарий
+  // старого бэка без пагинации) — виртуализация обязана вывозить.
+  @override
+  Future<PostsPage> getPostsPage({
+    String? treeId,
+    int limit = 20,
+    String? before,
+  }) async =>
+      PostsPage(posts: posts, nextCursor: null);
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+/// S2/S3 прод-профиль: бэк отдаёт страницами по [limit] с курсором.
+class _PaginatedFakePostService implements PostServiceInterface {
+  _PaginatedFakePostService(this.posts);
+
+  final List<Post> posts;
+  int pageRequests = 0;
+
+  @override
+  Future<List<Post>> getPosts({
+    String? treeId,
+    String? authorId,
+    bool onlyBranches = false,
+  }) async =>
+      posts;
+
+  @override
+  Future<PostsPage> getPostsPage({
+    String? treeId,
+    int limit = 20,
+    String? before,
+  }) async {
+    pageRequests += 1;
+    var source = posts;
+    if (before != null && before.isNotEmpty) {
+      final separator = before.lastIndexOf('|');
+      final beforeId = separator == -1 ? '' : before.substring(separator + 1);
+      final index = posts.indexWhere((post) => post.id == beforeId);
+      source = index == -1 ? posts : posts.sublist(index + 1);
+    }
+    final page = source.take(limit).toList(growable: false);
+    final hasMore = source.length > limit;
+    final last = page.isEmpty ? null : page.last;
+    return PostsPage(
+      posts: page,
+      nextCursor: hasMore && last != null
+          ? '${last.createdAt.toIso8601String()}|${last.id}'
+          : null,
+    );
+  }
+
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
@@ -218,6 +272,53 @@ void main() {
     );
 
     // Дошли глубоко в ленту, ничего не упало.
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      '[perf] прод-профиль: страницы по 20, докрутка тянет следующие (S2/S3)',
+      (tester) async {
+    tester.view.physicalSize = const Size(412, 892);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final paginated = _PaginatedFakePostService(_syntheticPosts(200));
+    await getIt.unregister<PostServiceInterface>();
+    getIt.registerSingleton<PostServiceInterface>(paginated);
+
+    final treeProvider = TreeProvider();
+    await treeProvider.selectTree('tree-1', 'Тестовое дерево');
+
+    final buildWatch = Stopwatch()..start();
+    await tester.pumpWidget(
+      ChangeNotifierProvider<TreeProvider>.value(
+        value: treeProvider,
+        child: const MaterialApp(home: HomeScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    buildWatch.stop();
+
+    // Холодный старт — РОВНО одна страница, не вся лента.
+    expect(paginated.pageRequests, 1);
+
+    final scrollable = find.byType(Scrollable).first;
+    final scrollWatch = Stopwatch()..start();
+    for (var i = 0; i < 30; i++) {
+      await tester.fling(scrollable, const Offset(0, -600), 2500);
+      await tester.pumpAndSettle();
+    }
+    scrollWatch.stop();
+
+    debugPrint(
+      '[perf] feed.first-build-paged: ${buildWatch.elapsedMilliseconds}ms',
+    );
+    debugPrint(
+      '[perf] feed.scroll-30-flings-paged: ${scrollWatch.elapsedMilliseconds}ms',
+    );
+
+    // Докрутка реально тянула следующие страницы.
+    expect(paginated.pageRequests, greaterThan(1));
     expect(tester.takeException(), isNull);
   });
 }

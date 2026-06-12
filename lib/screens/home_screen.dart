@@ -113,6 +113,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool _showComposeFab = false;
   // S1: холодная лента замеряется один раз за жизнь экрана.
   bool _coldFeedTraced = false;
+  // S3: курсорная пагинация (S2). Первая страница — _feedPageSize
+  // постов; докрутка подтягивает следующую. nextCursor == null —
+  // лента закончилась (или старый бэк отдал всё разом).
+  static const int _feedPageSize = 20;
+  String? _feedNextCursor;
+  bool _isLoadingMorePosts = false;
   static const double _composeFabScrollThreshold = 200.0;
 
   // E (Week 7 §6): first-launch coach-mark tour anchored on real home
@@ -212,6 +218,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final show = _feedScrollController.offset > _composeFabScrollThreshold;
     if (show != _showComposeFab && mounted) {
       setState(() => _showComposeFab = show);
+    }
+    // S3: докрутка к низу (за 600dp до конца) — тянем следующую
+    // страницу. Гард от повторов внутри _loadMorePosts.
+    final position = _feedScrollController.position;
+    if (position.maxScrollExtent - position.pixels < 600) {
+      unawaited(_loadMorePosts());
     }
   }
 
@@ -574,7 +586,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       }
     }
     try {
-      final posts = await _postService.getPosts(treeId: branchId);
+      // S3: первая страница через S2-курсор (старый бэк вернёт всё
+      // разом — page.nextCursor будет null, поведение прежнее).
+      final page = await _postService.getPostsPage(
+        treeId: branchId,
+        limit: _feedPageSize,
+      );
+      final posts = page.posts;
       // Race guard: another _loadPosts may have started while this
       // network call was in flight (user tapped a different chip).
       // Only commit if we're still the latest load for this branch.
@@ -585,6 +603,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       unawaited(cache?.write(cacheKey, posts));
       setState(() {
         _posts = posts;
+        _feedNextCursor = page.nextCursor;
         _isLoadingPosts = false;
         _postsUnavailable = false;
       });
@@ -666,17 +685,42 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   /// createdAt). When there are no gatherings AND no polls the post list
   /// is returned verbatim — the server already orders posts newest-first,
   /// so we don't re-sort (keeps the post-only feed byte-identical).
+  // S3: мерж-сортировка ленты кэшируется по identity исходных списков —
+  // каждый rebuild раньше пересобирал и пересортировывал все entries
+  // (на 200 постах это заметно в кадре). Источники всегда присваиваются
+  // НОВЫМИ списками, так что identity-проверка корректна.
+  List<_HomeFeedEntry>? _feedEntriesCache;
+  List<Post>? _feedEntriesCachePosts;
+  List<Gathering>? _feedEntriesCacheGatherings;
+  List<Poll>? _feedEntriesCachePolls;
+
   List<_HomeFeedEntry> get _feedEntries {
+    final cached = _feedEntriesCache;
+    if (cached != null &&
+        identical(_feedEntriesCachePosts, _posts) &&
+        identical(_feedEntriesCacheGatherings, _gatherings) &&
+        identical(_feedEntriesCachePolls, _polls)) {
+      return cached;
+    }
     final postEntries = [
       for (final post in _visiblePosts) _HomeFeedEntry.post(post),
     ];
-    if (_gatherings.isEmpty && _polls.isEmpty) return postEntries;
-    final entries = <_HomeFeedEntry>[
-      ...postEntries,
-      for (final gathering in _gatherings) _HomeFeedEntry.gathering(gathering),
-      for (final poll in _polls) _HomeFeedEntry.poll(poll),
-    ];
-    entries.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    List<_HomeFeedEntry> entries;
+    if (_gatherings.isEmpty && _polls.isEmpty) {
+      entries = postEntries;
+    } else {
+      entries = <_HomeFeedEntry>[
+        ...postEntries,
+        for (final gathering in _gatherings)
+          _HomeFeedEntry.gathering(gathering),
+        for (final poll in _polls) _HomeFeedEntry.poll(poll),
+      ];
+      entries.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    }
+    _feedEntriesCache = entries;
+    _feedEntriesCachePosts = _posts;
+    _feedEntriesCacheGatherings = _gatherings;
+    _feedEntriesCachePolls = _polls;
     return entries;
   }
 
@@ -701,6 +745,42 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       }
     } catch (_) {
       // Non-fatal — leave the signal unknown.
+    }
+  }
+
+  /// S3: подгрузка следующей страницы при докрутке. Идемпотентна —
+  /// повторные срабатывания скролла во время загрузки игнорируются.
+  Future<void> _loadMorePosts() async {
+    final cursor = _feedNextCursor;
+    if (cursor == null || _isLoadingMorePosts || _isLoadingPosts) {
+      return;
+    }
+    final branchId = _selectedFeedBranchId;
+    _isLoadingMorePosts = true;
+    try {
+      final page = await _postService.getPostsPage(
+        treeId: branchId,
+        limit: _feedPageSize,
+        before: cursor,
+      );
+      if (!mounted || _selectedFeedBranchId != branchId) {
+        return;
+      }
+      // Дедуп по id: realtime-рефреш мог уже подмешать часть страницы.
+      final existingIds = _posts.map((post) => post.id).toSet();
+      final fresh = page.posts
+          .where((post) => !existingIds.contains(post.id))
+          .toList(growable: false);
+      setState(() {
+        _posts = [..._posts, ...fresh];
+        _feedNextCursor = page.nextCursor;
+      });
+    } catch (error) {
+      debugPrint('Ошибка подгрузки ленты: $error');
+      // Без снэкбара: докрутка — фоновая операция, ретрай по следующему
+      // скроллу.
+    } finally {
+      _isLoadingMorePosts = false;
     }
   }
 
@@ -1070,6 +1150,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 1180),
         child: CustomScrollView(
+          // S3: общий контроллер с narrow-лентой (раскладки
+          // взаимоисключающие) — докрутка тянет следующую страницу и
+          // на wide, где живёт владелец с web-десктопа.
+          controller: _feedScrollController,
           slivers: [
             const SliverToBoxAdapter(child: OnboardingResumeBanner()),
             const SliverToBoxAdapter(child: BatteryOptimizationCard()),
