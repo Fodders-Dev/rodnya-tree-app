@@ -15,7 +15,7 @@ function registerAuthSessionRoutes(
   },
 ) {
   app.post("/v1/auth/register", async (req, res) => {
-    const {email, password, displayName} = req.body || {};
+    const {email, password, displayName, consentDocVersion} = req.body || {};
 
     if (!email || !password || !displayName) {
       res.status(400).json({message: "Нужны email, password и displayName"});
@@ -90,6 +90,10 @@ function registerAuthSessionRoutes(
         email: trimmedEmail,
         password: passwordValue,
         displayName: trimmedDisplayName,
+        // Согласие с Соглашением/ПДн: клиент шлёт версию документов,
+        // момент фиксирует сервер (аддитивно — старые клиенты без поля).
+        consentDocVersion:
+          typeof consentDocVersion === "string" ? consentDocVersion : null,
       });
       const deviceContext = readDeviceContext(req);
       const sessionTokens = await store.createSession(user.id, deviceContext);

@@ -26,10 +26,13 @@ abstract class AuthServiceInterface {
   /// overrides + persists.
   Future<void> markOnboardingSkipped() async {}
 
+  /// [consentDocVersion] — версия Соглашения/Политики, принятая
+  /// чекбоксом при регистрации (бэк пишет consentAt/consentDocVersion).
   Future<Object?> registerWithEmail({
     required String email,
     required String password,
     required String name,
+    String? consentDocVersion,
   });
 
   Future<Object?> loginWithEmail(String email, String password);

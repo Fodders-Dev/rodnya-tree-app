@@ -587,3 +587,53 @@ test("OAuth callback receives device context via query-param fallback (Telegram-
     await stopServer(ctx);
   }
 });
+
+test("регистрация пишет consentAt/consentDocVersion; без поля — null", async () => {
+  const ctx = await startServer();
+  try {
+    // Новый клиент: чекбокс отправляет версию документов.
+    const withConsent = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "consent@rodnya.app",
+        password: "secret123",
+        displayName: "Согласный",
+        consentDocVersion: "terms-2026-06-12",
+      }),
+    });
+    assert.equal(withConsent.status, 201);
+    const withConsentBody = await withConsent.json();
+
+    // Старый клиент (1.0.2 в поле): поля нет — регистрация работает.
+    const legacy = await fetch(`${ctx.baseUrl}/v1/auth/register`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({
+        email: "legacy@rodnya.app",
+        password: "secret123",
+        displayName: "Старый клиент",
+      }),
+    });
+    assert.equal(legacy.status, 201);
+    const legacyBody = await legacy.json();
+
+    const db = JSON.parse(
+      await fs.readFile(path.join(ctx.tempDir, "dev-db.json"), "utf8"),
+    );
+    const consentedUser = db.users.find(
+      (user) => user.id === withConsentBody.user.id,
+    );
+    assert.equal(consentedUser.consentDocVersion, "terms-2026-06-12");
+    assert.ok(
+      consentedUser.consentAt,
+      "момент согласия фиксируется сервером",
+    );
+
+    const legacyUser = db.users.find((user) => user.id === legacyBody.user.id);
+    assert.equal(legacyUser.consentDocVersion, null);
+    assert.equal(legacyUser.consentAt, null);
+  } finally {
+    await stopServer(ctx);
+  }
+});

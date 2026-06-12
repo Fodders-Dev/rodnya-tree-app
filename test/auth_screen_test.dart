@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get_it/get_it.dart';
@@ -5,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:rodnya/backend/interfaces/auth_service_interface.dart';
 import 'package:rodnya/backend/models/auth_providers_availability.dart';
 import 'package:rodnya/screens/auth_screen.dart';
+import 'package:rodnya/screens/privacy_policy_screen.dart';
 import 'package:rodnya/services/app_status_service.dart';
 
 class _FakeAuthService implements AuthServiceInterface {
@@ -205,6 +207,79 @@ void main() {
     expect(find.text('Новый аккаунт'), findsOneWidget);
     expect(find.text('Имя'), findsOneWidget);
     expect(find.text('Создать аккаунт'), findsWidgets);
+  });
+
+  testWidgets(
+      'согласие: чекбокс гейтит «Создать аккаунт», ссылка открывает /terms',
+      (tester) async {
+    // Мобильная раскладка — единственная форма с auth-submit ключом.
+    await tester.binding.setSurfaceSize(const Size(390, 1100));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final router = GoRouter(
+      initialLocation: '/auth',
+      routes: [
+        GoRoute(path: '/auth', builder: (context, state) => const AuthScreen()),
+        GoRoute(
+          path: '/terms',
+          builder: (context, state) => const TermsOfUseScreen(),
+        ),
+        GoRoute(
+          path: '/privacy',
+          builder: (context, state) => const PrivacyPolicyScreen(),
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.pumpAndSettle();
+
+    // В режиме входа чекбокса нет, кнопка живая.
+    expect(find.byKey(const Key('auth-consent-toggle')), findsNothing);
+
+    // Таб «Регистрация» переключает форму.
+    await tester.tap(find.text('Регистрация'));
+    await tester.pumpAndSettle();
+
+    // Режим регистрации: чекбокс есть, кнопка неактивна без отметки.
+    await tester.ensureVisible(find.byKey(const Key('auth-consent-toggle')));
+    expect(find.textContaining('Я принимаю'), findsOneWidget);
+    final submitBefore = tester.widget<FilledButton>(
+      find.byKey(const Key('auth-submit')),
+    );
+    expect(submitBefore.onPressed, isNull,
+        reason: 'без согласия регистрация заблокирована');
+
+    // Отметка — кнопка оживает. Целимся в сам Checkbox: центр строки
+    // занят tap-ссылками на документы.
+    await tester.tap(find.byType(Checkbox));
+    await tester.pumpAndSettle();
+    final submitAfter = tester.widget<FilledButton>(
+      find.byKey(const Key('auth-submit')),
+    );
+    expect(submitAfter.onPressed, isNotNull);
+
+    // Ссылка в тексте согласия ведёт на /terms — экран соглашения
+    // открывается (10 разделов, заголовок совпадает).
+    final richText = tester.widget<Text>(
+      find
+          .descendant(
+            of: find.byKey(const Key('auth-consent-toggle')),
+            matching: find.byType(Text),
+          )
+          .first,
+    );
+    // Тапаем по координате начала ссылки «Пользовательское соглашение» —
+    // надёжнее через recognizer напрямую: ищем span и дергаем onTap.
+    final span = richText.textSpan! as TextSpan;
+    final termsSpan = span.children!
+        .whereType<TextSpan>()
+        .firstWhere((s) => s.text == 'Пользовательское соглашение');
+    (termsSpan.recognizer! as TapGestureRecognizer).onTap!();
+    await tester.pumpAndSettle();
+
+    expect(find.text('1. Общие положения'), findsOneWidget);
+    expect(find.text('7. Соблюдение законодательства РФ'), findsOneWidget);
   });
 
   testWidgets('AuthScreen keeps login form first on mobile layouts',

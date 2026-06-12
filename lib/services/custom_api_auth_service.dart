@@ -455,6 +455,7 @@ class CustomApiAuthService implements AuthServiceInterface {
     required String email,
     required String password,
     required String name,
+    String? consentDocVersion,
   }) {
     return _authenticate(
       path: '/v1/auth/register',
@@ -462,6 +463,8 @@ class CustomApiAuthService implements AuthServiceInterface {
         'email': email,
         'password': password,
         'displayName': name,
+        if (consentDocVersion != null && consentDocVersion.isNotEmpty)
+          'consentDocVersion': consentDocVersion,
       },
     );
   }

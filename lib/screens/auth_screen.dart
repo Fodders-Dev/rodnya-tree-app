@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
@@ -24,6 +25,7 @@ import '../widgets/glass_panel.dart';
 import '../widgets/google_account_confirm_dialog.dart';
 import '../widgets/google_sign_in_action.dart';
 import '../widgets/offline_indicator.dart';
+import 'privacy_policy_screen.dart' show kLegalDocsVersion;
 
 class AuthScreen extends StatefulWidget {
   const AuthScreen({
@@ -48,6 +50,15 @@ class _AuthScreenState extends State<AuthScreen> {
 
   bool _isLogin = true;
   bool _isLoading = false;
+  // Согласие при регистрации: обязательный чекбокс — без него кнопка
+  // «Создать аккаунт» неактивна; версия документов уходит на бэк.
+  bool _acceptedTerms = false;
+  late final TapGestureRecognizer _termsLinkRecognizer =
+      TapGestureRecognizer()
+        ..onTap = () => GoRouter.of(context).push('/terms');
+  late final TapGestureRecognizer _privacyLinkRecognizer =
+      TapGestureRecognizer()
+        ..onTap = () => GoRouter.of(context).push('/privacy');
   bool _isGoogleLoading = false;
   bool _isTelegramLoading = false;
   bool _isVkLoading = false;
@@ -205,6 +216,8 @@ class _AuthScreenState extends State<AuthScreen> {
     _appLinkSubscription?.cancel();
     _emailFocusNode.dispose();
     _nameFocusNode.dispose();
+    _termsLinkRecognizer.dispose();
+    _privacyLinkRecognizer.dispose();
     super.dispose();
   }
 
@@ -236,6 +249,9 @@ class _AuthScreenState extends State<AuthScreen> {
           email: _emailController.text.trim(),
           password: _passwordController.text,
           name: _nameController.text.trim(),
+          // Чекбокс обязателен (кнопка без него неактивна) — фиксируем
+          // версию принятых документов; момент ставит бэк.
+          consentDocVersion: kLegalDocsVersion,
         );
       }
 
@@ -1663,9 +1679,82 @@ class _AuthScreenState extends State<AuthScreen> {
                   return null;
                 },
               ),
+              if (!_isLogin) ...[
+                const SizedBox(height: 12),
+                // Обязательное согласие (тексты — docs/legal/SOGLASIE_PDN.md):
+                // вся строка — тап-цель чекбокса, ссылки открывают документы.
+                InkWell(
+                  key: const Key('auth-consent-toggle'),
+                  borderRadius: BorderRadius.circular(12),
+                  onTap: () =>
+                      setState(() => _acceptedTerms = !_acceptedTerms),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        SizedBox(
+                          width: 32,
+                          height: 32,
+                          child: Checkbox(
+                            value: _acceptedTerms,
+                            onChanged: (checked) => setState(
+                              () => _acceptedTerms = checked ?? false,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Padding(
+                            padding: const EdgeInsets.only(top: 6),
+                            child: Text.rich(
+                              TextSpan(
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: secondaryTextColor,
+                                  height: 1.35,
+                                ),
+                                children: [
+                                  const TextSpan(text: 'Я принимаю '),
+                                  TextSpan(
+                                    text: 'Пользовательское соглашение',
+                                    style: TextStyle(
+                                      color: theme.colorScheme.primary,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                    recognizer: _termsLinkRecognizer,
+                                  ),
+                                  const TextSpan(text: ' и даю '),
+                                  TextSpan(
+                                    text:
+                                        'согласие на обработку моих персональных данных',
+                                    style: TextStyle(
+                                      color: theme.colorScheme.primary,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                    recognizer: _privacyLinkRecognizer,
+                                  ),
+                                  const TextSpan(
+                                    text:
+                                        ' в соответствии с Политикой конфиденциальности.',
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
               const SizedBox(height: 20),
               FilledButton(
-                onPressed: _isLoading || _isAnySocialLoading ? null : _submit,
+                key: const Key('auth-submit'),
+                onPressed: _isLoading ||
+                        _isAnySocialLoading ||
+                        (!_isLogin && !_acceptedTerms)
+                    ? null
+                    : _submit,
                 style: FilledButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 16),
                 ),
@@ -1804,6 +1893,9 @@ class _AuthScreenState extends State<AuthScreen> {
                 ),
               ],
               const SizedBox(height: 8),
+              // При регистрации согласие — явный чекбокс выше; пассивная
+              // строка остаётся только для входа.
+              if (_isLogin)
               Wrap(
                 alignment: WrapAlignment.center,
                 crossAxisAlignment: WrapCrossAlignment.center,

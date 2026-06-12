@@ -80,6 +80,7 @@ class _FakeAuthService implements AuthServiceInterface {
     required String email,
     required String password,
     required String name,
+    String? consentDocVersion,
   }) {
     throw UnimplementedError();
   }

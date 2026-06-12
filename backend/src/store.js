@@ -6514,6 +6514,9 @@ class FileStore {
     displayName,
     authIdentity = null,
     photoUrl = null,
+    // Согласие при регистрации: версия документов, которую пользователь
+    // принял чекбоксом (аддитивно — старые клиенты не шлют, поле null).
+    consentDocVersion = null,
   }) {
     const db = await this._read();
     const normalizedEmail = String(email || "").trim().toLowerCase();
@@ -6547,6 +6550,8 @@ class FileStore {
       authIdentities.push(normalizedAuthIdentity);
     }
 
+    const normalizedConsentVersion =
+      normalizeNullableString(consentDocVersion);
     const user = {
       id: userId,
       identityId: null,
@@ -6557,6 +6562,9 @@ class FileStore {
       authIdentities,
       createdAt,
       updatedAt: createdAt,
+      // Факт согласия с Соглашением/ПДн: когда и какая версия документов.
+      consentAt: normalizedConsentVersion ? createdAt : null,
+      consentDocVersion: normalizedConsentVersion,
       profile: {
         id: userId,
         email: normalizedEmail,
