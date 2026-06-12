@@ -10,6 +10,7 @@ import 'package:rodnya/models/chat_details.dart';
 import 'package:rodnya/models/chat_message.dart';
 import 'package:rodnya/models/chat_preview.dart';
 import 'package:rodnya/models/chat_send_progress.dart';
+import 'package:rodnya/services/app_status_service.dart';
 import 'package:rodnya/services/chat_send_queue.dart';
 import 'package:rodnya/services/custom_api_auth_service.dart';
 
@@ -102,6 +103,53 @@ void main() {
     );
     expect(queue.messagesFor('chat-1').single.status,
         ChatPendingMessageStatus.sent);
+  });
+
+  test(
+      'S4: авиарежим — офлайн в очередь, онлайн доставляет ровно один раз '
+      'с тем же clientMessageId', () async {
+    final appStatus = AppStatusService();
+    addTearDown(appStatus.dispose);
+    appStatus.debugSetOffline(true);
+
+    final chatService = _FakeChatService()
+      ..nextError = const CustomApiException('Сеть недоступна');
+    final queue = ChatSendQueue.memory(
+      chatService: chatService,
+      appStatusService: appStatus,
+    );
+    addTearDown(queue.dispose);
+
+    // Офлайн: сообщение падает в очередь как failed.
+    final message = await queue.enqueue(
+      chatId: 'chat-1',
+      senderId: 'user-1',
+      text: 'Из самолёта',
+    );
+    await _waitUntil(
+      () =>
+          queue.messagesFor('chat-1').single.status ==
+          ChatPendingMessageStatus.failed,
+    );
+    expect(chatService.sentRequests, hasLength(1));
+
+    // Самолёт сел: связь вернулась → авторетрай без действий пользователя.
+    chatService.nextError = null;
+    appStatus.debugSetOffline(false);
+    await _waitUntil(
+      () =>
+          queue.messagesFor('chat-1').single.status ==
+          ChatPendingMessageStatus.sent,
+    );
+
+    // Доставлено одной успешной попыткой, оба захода — с ОДНИМ
+    // clientMessageId: бэк-дедуп (store.sendMessage) схлопнет повтор,
+    // если ACK первой попытки потерялся по дороге.
+    expect(chatService.sentRequests, hasLength(2));
+    expect(
+      chatService.sentRequests.map((request) => request.clientMessageId).toSet(),
+      {message.localId},
+    );
   });
 
   test('ChatSendQueue persists failed queue entries in Hive', () async {

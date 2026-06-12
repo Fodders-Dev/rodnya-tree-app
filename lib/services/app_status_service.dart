@@ -149,6 +149,15 @@ class AppStatusService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// S4: тест-хук авиарежима — прогоняет тот же путь, что и реальный
+  /// connectivity-stream.
+  @visibleForTesting
+  void debugSetOffline(bool offline) {
+    _applyConnectivityState(
+      offline ? ConnectivityResult.none : ConnectivityResult.wifi,
+    );
+  }
+
   void _applyConnectivityState(dynamic rawValue) {
     final results = rawValue is List<ConnectivityResult>
         ? rawValue
