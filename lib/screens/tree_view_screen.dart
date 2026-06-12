@@ -1057,6 +1057,11 @@ class _TreeViewScreenState extends State<TreeViewScreen>
   /// overlay future-positive empty-state banner above tree canvas.
   /// Banner stacked, не replaces canvas — user still sees own tree
   /// behind banner; CTAs route к share-invite либо discover screen.
+  /// Сессионная память крестика: карточка-заглушка висит ПОВЕРХ канваса
+  /// и без дисмисса запирала просмотр дерева (жалоба владельца).
+  /// Вернётся после перезапуска приложения — как onboarding-баннер.
+  static bool _extendedEmptyDismissedThisSession = false;
+
   Widget _maybeOverlayExtendedEmptyState(
     ExtendedNetworkController ctrl,
     Widget body,
@@ -1065,7 +1070,8 @@ class _TreeViewScreenState extends State<TreeViewScreen>
     final showBanner = ctrl.isCapable &&
         ctrl.mode == ExtendedNetworkMode.extended &&
         slice != null &&
-        slice.ownerMap.isEmpty;
+        slice.ownerMap.isEmpty &&
+        !_extendedEmptyDismissedThisSession;
     if (!showBanner) return body;
     return Stack(
       children: [
@@ -1080,6 +1086,12 @@ class _TreeViewScreenState extends State<TreeViewScreen>
             child: ExtendedNetworkEmptyState(
               onShareInvitation: _handleShareInvitation,
               onFindRelatives: () => context.push('/discover/relatives'),
+              onDismiss: () => setState(
+                () => _extendedEmptyDismissedThisSession = true,
+              ),
+              // Главный «выход»: на телефоне тумблер «Моё дерево|Все»
+              // спрятан в фильтрах — даём прямой путь назад.
+              onBackToMine: () => ctrl.setMode(ExtendedNetworkMode.mine),
             ),
           ),
         ),
@@ -1093,7 +1105,8 @@ class _TreeViewScreenState extends State<TreeViewScreen>
   /// link к конкретному personId; pick'ить relative requires UI.
   /// Cheaper UX: send user туда where invite flow already polished.
   void _handleShareInvitation() {
-    context.push('/relatives');
+    // Прямой современный роут (legacy /relatives живёт только редиректом).
+    context.push('/family?view=list');
   }
 
   Widget _buildTreeTopbar({

@@ -62,5 +62,73 @@ void main() {
       await tester.pumpAndSettle();
       expect(findCalls, 1);
     });
+
+    // Фикс «карточка запирает дерево»: крестик (сессионный дисмисс) и
+    // «Показать моё дерево» (выход из режима «Все»). Оба опциональны —
+    // без колбэков карточка остаётся прежней.
+    testWidgets('крестик ≥44dp и зовёт onDismiss', (tester) async {
+      var dismissed = false;
+      await tester.pumpWidget(
+        _wrap(
+          SingleChildScrollView(
+            child: ExtendedNetworkEmptyState(
+              onShareInvitation: () {},
+              onFindRelatives: () {},
+              onDismiss: () => dismissed = true,
+            ),
+          ),
+        ),
+      );
+
+      final dismiss = find.byKey(const Key('extended-empty-dismiss'));
+      expect(dismiss, findsOneWidget);
+      final box = tester.getSize(
+        find.ancestor(of: dismiss, matching: find.byType(SizedBox)).first,
+      );
+      expect(box.width, greaterThanOrEqualTo(44));
+      expect(box.height, greaterThanOrEqualTo(44));
+
+      await tester.tap(dismiss);
+      expect(dismissed, isTrue);
+    });
+
+    testWidgets('«Показать моё дерево» зовёт onBackToMine', (tester) async {
+      var backToMine = false;
+      await tester.pumpWidget(
+        _wrap(
+          SingleChildScrollView(
+            child: ExtendedNetworkEmptyState(
+              onShareInvitation: () {},
+              onFindRelatives: () {},
+              onBackToMine: () => backToMine = true,
+            ),
+          ),
+        ),
+      );
+
+      await tester
+          .tap(find.byKey(const Key('extended-empty-back-to-mine')));
+      expect(backToMine, isTrue);
+    });
+
+    testWidgets('без новых колбэков — ни крестика, ни кнопки',
+        (tester) async {
+      await tester.pumpWidget(
+        _wrap(
+          ExtendedNetworkEmptyState(
+            onShareInvitation: () {},
+            onFindRelatives: () {},
+          ),
+        ),
+      );
+      expect(
+        find.byKey(const Key('extended-empty-dismiss')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const Key('extended-empty-back-to-mine')),
+        findsNothing,
+      );
+    });
   });
 }

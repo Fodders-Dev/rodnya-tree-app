@@ -19,10 +19,20 @@ class ExtendedNetworkEmptyState extends StatelessWidget {
     super.key,
     required this.onShareInvitation,
     required this.onFindRelatives,
+    this.onDismiss,
+    this.onBackToMine,
   });
 
   final VoidCallback onShareInvitation;
   final VoidCallback onFindRelatives;
+
+  /// Закрыть карточку (владелец решает, помнить ли выбор). Карточка
+  /// висит ПОВЕРХ канваса — без крестика она запирала просмотр дерева.
+  final VoidCallback? onDismiss;
+
+  /// Выйти из режима «Все» обратно к своему дереву — главный «выход»,
+  /// который на телефоне иначе спрятан в фильтрах.
+  final VoidCallback? onBackToMine;
 
   @override
   Widget build(BuildContext context) {
@@ -41,6 +51,25 @@ class ExtendedNetworkEmptyState extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
+          if (onDismiss != null)
+            Align(
+              alignment: Alignment.topRight,
+              child: SizedBox(
+                width: 44,
+                height: 44,
+                child: IconButton(
+                  key: const Key('extended-empty-dismiss'),
+                  tooltip: 'Скрыть',
+                  padding: EdgeInsets.zero,
+                  onPressed: onDismiss,
+                  icon: Icon(
+                    Icons.close_rounded,
+                    size: 22,
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            ),
           Icon(
             Icons.diversity_3_rounded,
             size: 44,
@@ -83,6 +112,14 @@ class ExtendedNetworkEmptyState extends StatelessWidget {
               ),
             ],
           ),
+          if (onBackToMine != null) ...[
+            const SizedBox(height: 6),
+            TextButton(
+              key: const Key('extended-empty-back-to-mine'),
+              onPressed: onBackToMine,
+              child: const Text('Показать моё дерево'),
+            ),
+          ],
         ],
       ),
     );
