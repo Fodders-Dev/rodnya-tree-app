@@ -126,7 +126,10 @@ class CustomApiRealtimeService {
         _runtimeConfig = runtimeConfig,
         _channelFactory = channelFactory ?? WebSocketChannel.connect,
         _baseReconnectDelay = reconnectDelay ?? const Duration(seconds: 1),
-        _maxReconnectDelay = maxReconnectDelay ?? const Duration(seconds: 30),
+        // S5: cap 8с (был 30с) — чат должен возвращаться к жизни
+        // по-телеграмовски быстро; джиттер 0.75–1.25 уже защищает
+        // бэк от синхронного стада реконнектов.
+        _maxReconnectDelay = maxReconnectDelay ?? const Duration(seconds: 8),
         _reconnectJitterFactor =
             reconnectJitterFactor ?? _createReconnectJitterFactor(Random()),
         _reconnectTimerFactory = reconnectTimerFactory ??

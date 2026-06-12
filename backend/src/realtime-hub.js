@@ -19,11 +19,29 @@ class RealtimeHub {
   /// сообщения, которое получатель прямо сейчас читает в открытом
   /// окне чата — иначе на телефоне раздаётся buzz из шторки в тот
   /// момент когда сообщение и так уже видно на экране.
+  ///
+  /// S5: запись протухает (idle > 60с). Свёрнутое приложение держит WS,
+  /// но клиентский heartbeat (chat.active.set раз в ~30с) замерзает
+  /// вместе с таймерами — флажок гаснет, и пуши снова доходят.
   isUserActiveInChat(userId, chatId) {
     if (!userId || !chatId) return false;
     const chats = this.userActiveChats.get(userId);
     if (!chats) return false;
-    return chats.has(String(chatId));
+    const touchedAt = chats.get(String(chatId));
+    if (touchedAt === undefined) return false;
+    if (Date.now() - touchedAt > RealtimeHub.ACTIVE_CHAT_TTL_MS) {
+      // Ленивое протухание — чистим по факту обращения.
+      chats.delete(String(chatId));
+      if (chats.size === 0) {
+        this.userActiveChats.delete(userId);
+      }
+      return false;
+    }
+    return true;
+  }
+
+  static get ACTIVE_CHAT_TTL_MS() {
+    return 60_000;
   }
 
   _scheduleSessionTouch(token, {userId = null} = {}) {
@@ -247,11 +265,14 @@ class RealtimeHub {
               ? delivery.deliveredTo
               : changedUserIds,
           };
-          for (const participantId of chat.participantIds) {
-            if (!participantId || participantId === excludedUserId) {
-              continue;
-            }
-            this.publishToUser(participantId, deliveredPayload);
+          // S5: галочки «доставлено» видны только на СВОИХ бабблах —
+          // delivered-событие нужно одному отправителю, а не всем N
+          // участникам. Было 2×N publish на сообщение (created+delivered
+          // каждому), стало N+1: changedUserIds уже собраны батчем в
+          // один payload.
+          const senderId = String(payload?.message?.senderId || "").trim();
+          if (senderId && senderId !== excludedUserId) {
+            this.publishToUser(senderId, deliveredPayload);
           }
         }
       }
@@ -424,10 +445,11 @@ class RealtimeHub {
     if (!chatId) return;
     let chats = this.userActiveChats.get(userId);
     if (!chats) {
-      chats = new Set();
+      // S5: Map<chatId, lastTouchedMs> вместо Set — активность протухает.
+      chats = new Map();
       this.userActiveChats.set(userId, chats);
     }
-    chats.add(chatId);
+    chats.set(chatId, Date.now());
   }
 
   _handleActiveChatClear(userId, payload) {

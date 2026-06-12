@@ -157,6 +157,10 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _ownsSendQueue = false;
   // S1: открытие чата до первого кадра с сообщениями.
   PerfTrace? _chatOpenTrace;
+  // S5: heartbeat активного чата (сервер протухает запись через 60с).
+  Timer? _activeChatHeartbeat;
+  // S5: видимый статус соединения — «Подключение…» в шапке при разрыве.
+  bool _isRealtimeReconnecting = false;
   final Set<String> _reportedSendFailureIds = <String>{};
   final Set<String> _handledVoiceSendIds = <String>{};
   Timer? _draftSaveTimer;
@@ -308,6 +312,7 @@ class _ChatScreenState extends State<ChatScreen> {
       );
     }
     _draftSaveTimer?.cancel();
+    _activeChatHeartbeat?.cancel();
     _pinnedMessageHighlightTimer?.cancel();
     _serverSearchDebounce?.cancel();
     _floatingHeaderHideTimer?.cancel();
@@ -908,6 +913,16 @@ class _ChatScreenState extends State<ChatScreen> {
       // того как WS-doставка успевала, и на телефоне раздавался buzz
       // даже при открытом окне чата.
       unawaited(_realtimeService?.setActiveChat(resolvedChatId));
+      // S5: heartbeat активности раз в 30с — серверная запись протухает
+      // через 60с idle. Свёрнутое приложение замораживает таймер →
+      // флажок гаснет → пуши снова доходят (раньше открытый-но-свёрнутый
+      // чат глушил их бесконечно).
+      _activeChatHeartbeat?.cancel();
+      final heartbeatChatId = resolvedChatId;
+      _activeChatHeartbeat = Timer.periodic(
+        const Duration(seconds: 30),
+        (_) => unawaited(_realtimeService?.setActiveChat(heartbeatChatId)),
+      );
 
       // Очищаем шторку от прошлых нотификаций этого чата — юзер
       // зашёл сам, читать он начнёт прямо сейчас.
@@ -2309,10 +2324,25 @@ class _ChatScreenState extends State<ChatScreen> {
 
     if (event.type == 'connection.ready') {
       setState(() {
+        _isRealtimeReconnecting = false;
         _onlineUserIds
           ..clear()
           ..addAll(event.onlineUserIds);
       });
+      // S5: после реконнекта серверный флажок активности мог протухнуть
+      // — переобъявляем сразу, не дожидаясь heartbeat-тика.
+      if (currentChatId != null && currentChatId.isNotEmpty) {
+        unawaited(_realtimeService?.setActiveChat(currentChatId));
+      }
+      return;
+    }
+
+    // S5: разрыв WS — честный статус «Подключение…» в шапке, как в
+    // Telegram, вместо тихо замершего чата.
+    if (event.type == 'connection.disconnected') {
+      if (!_isRealtimeReconnecting) {
+        setState(() => _isRealtimeReconnecting = true);
+      }
       return;
     }
 
@@ -3016,6 +3046,11 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   String? _presenceSubtitle(ChatDetails? details) {
+    // S5: разрыв WS перекрывает presence — пока соединение не вернётся,
+    // «в сети» всё равно может врать.
+    if (_isRealtimeReconnecting) {
+      return 'Подключение…';
+    }
     final otherParticipantIds = _otherParticipantIds(details);
     if (otherParticipantIds.isEmpty) {
       return null;

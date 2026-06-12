@@ -42,17 +42,18 @@ void main() {
       realtimeService.debugBackoffDelayForFailureCount(4),
       const Duration(seconds: 8),
     );
+    // S5: cap 8с — чат возвращается к жизни по-телеграмовски быстро.
     expect(
       realtimeService.debugBackoffDelayForFailureCount(5),
-      const Duration(seconds: 16),
+      const Duration(seconds: 8),
     );
     expect(
       realtimeService.debugBackoffDelayForFailureCount(6),
-      const Duration(seconds: 30),
+      const Duration(seconds: 8),
     );
     expect(
       realtimeService.debugBackoffDelayForFailureCount(7),
-      const Duration(seconds: 30),
+      const Duration(seconds: 8),
     );
 
     await realtimeService.dispose();
