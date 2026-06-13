@@ -8,6 +8,12 @@ import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
+// U6: маркер «источник установки определить не удалось». Должен
+// СОВПАДАТЬ с kInstallerSourceUnavailable в app_update_service.dart —
+// тогда Flutter одинаково fail-close'ит и при сломанном канале, и при
+// внутренней ошибке нативного резолвера.
+private const val INSTALLER_SOURCE_UNAVAILABLE = "__installer_source_unavailable__"
+
 class MainActivity: FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -68,15 +74,20 @@ class MainActivity: FlutterActivity() {
                 @Suppress("DEPRECATION")
                 packageManager.getInstallerPackageName(packageName)
             }
-            // Само-инсталлер (== наш package) — деградировавший кейс,
-            // трактуем как sideload (null).
-            if (installer.isNullOrEmpty() || installer == packageName) {
-                null
-            } else {
-                installer
+            when {
+                // Честное отсутствие инсталлера — реальный sideload.
+                installer.isNullOrEmpty() -> null
+                // Само-инсталлер (== наш package) — деградировавший кейс,
+                // fail-closed (не sideload-дефолт).
+                installer == packageName -> INSTALLER_SOURCE_UNAVAILABLE
+                else -> installer
             }
         } catch (_: Throwable) {
-            null
+            // U6: внутренняя ошибка резолвера → fail-closed тем же
+            // маркером (Flutter трактует как «источник неизвестен»),
+            // а не null — иначе апдейтер мог бы активироваться в
+            // магазинной сборке при сбое натива.
+            INSTALLER_SOURCE_UNAVAILABLE
         }
     }
 

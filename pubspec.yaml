@@ -60,6 +60,7 @@ dependencies:
   # Добавляем зависимости для локального хранилища и синхронизации
   idb_shim: ^2.6.0  # Возвращаем версию, где должны быть нужные функции
   connectivity_plus: ^7.0.0  # Для отслеживания состояния подключения
+  crypto: ^3.0.0  # SHA-256 целостность скачанного APK (OTA-апдейтер)
   shared_preferences: ^2.5.3  # Добавляем обратно для ThemeProvider
   # Android Keystore-backed storage for auth tokens. SharedPreferences
   # plaintext-stores everything; secure_storage wraps EncryptedSharedPreferences

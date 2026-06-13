@@ -26,7 +26,19 @@ function registerAppUpdateRoutes(app, {config}) {
       allowedSchemes: ["https"],
     });
 
-    if (versionCode <= 0 || !apkGuard.ok) {
+    // U6: enforceSafeUrl проверяет схему, но не структуру URL —
+    // дополнительно требуем корректный URL с непустым host (иначе
+    // "https:///x" прошёл бы). Невалидный → фича выключена.
+    let apkHasHost = false;
+    if (apkGuard.ok) {
+      try {
+        apkHasHost = Boolean(new URL(apkGuard.value).hostname);
+      } catch (_) {
+        apkHasHost = false;
+      }
+    }
+
+    if (versionCode <= 0 || !apkGuard.ok || !apkHasHost) {
       res.status(204).end();
       return;
     }
@@ -37,6 +49,8 @@ function registerAppUpdateRoutes(app, {config}) {
       apkUrl: apkGuard.value,
       minVersionCode: finiteInt(latest.minVersionCode),
       notes: String(latest.notes || "").trim() || null,
+      // U6: hex SHA-256 (или null) — клиент сверяет перед установкой.
+      sha256: String(latest.sha256 || "").trim() || null,
     });
   });
 }

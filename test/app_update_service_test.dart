@@ -1,12 +1,16 @@
-// U4: юнит-тесты OTA-апдейтера sideload-сборок.
+// U4/U6: юнит-тесты OTA-апдейтера sideload-сборок.
 //   • парсинг ответа /v1/app/latest;
 //   • сравнение версий (newer/equal/older/mandatory);
 //   • выключенное состояние (204 / пустой конфиг);
 //   • ⚠️ гейт источника — магазинная установка глушит апдейтер
-//     (мокается), sideload — активирует.
+//     (мокается), sideload — активирует;
+//   • U6: целостность скачанного APK (размер/sha256), очистка частичного
+//     файла, fail-closed на нативный sentinel.
 
 import 'dart:convert';
+import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -352,6 +356,199 @@ void main() {
 
       expect(service.downloadProgress.stage, AppUpdateDownloadStage.failed);
       expect(service.downloadProgress.error, isNotNull);
+      service.dispose();
+    });
+  });
+
+  group('U6: натив-sentinel fail-closed', () {
+    test('источник = kInstallerSourceUnavailable → none (как при ошибке)', () async {
+      // Натив на внутренней ошибке возвращает этот маркер вместо null —
+      // Dart одинаково fail-close'ит и на ошибке канала, и на ошибке
+      // натива.
+      final service = _buildService(
+        latestJson: _payload(versionCode: 99),
+        installer: kInstallerSourceUnavailable,
+      );
+      await service.checkForUpdate();
+      expect(service.state.availability, AppUpdateAvailability.none);
+      service.dispose();
+    });
+  });
+
+  group('U6: mandatory-гейт на уровне сервиса', () {
+    test('магазинный installer глушит даже mandatory (none, не блок-экран)',
+        () async {
+      // current(10) < minVersionCode(90) — была бы mandatory, но установка
+      // из RuStore → обновляет магазин, наш сервис молчит на УРОВНЕ
+      // состояния (не только в виджете).
+      final service = _buildService(
+        latestJson: _payload(versionCode: 99, minVersionCode: 90),
+        currentVersionCode: 10,
+        installer: 'ru.vk.store',
+      );
+      await service.checkForUpdate();
+      expect(service.state.availability, AppUpdateAvailability.none);
+      service.dispose();
+    });
+  });
+
+  group('U6: целостность скачивания (реальный installer)', () {
+    late Directory tempDir;
+
+    setUp(() async {
+      tempDir = await Directory.systemTemp.createTemp('rodnya_apk_test');
+    });
+
+    tearDown(() async {
+      try {
+        await tempDir.delete(recursive: true);
+      } catch (_) {}
+    });
+
+    List<File> apkFiles() => tempDir
+        .listSync()
+        .whereType<File>()
+        .where((f) => f.path.contains('rodnya-update-'))
+        .toList();
+
+    Future<AppUpdateService> build({
+      required List<int> apkBytes,
+      int? apkContentLength,
+      int apkStatus = 200,
+      String? sha256Hex,
+      required List<String> openedPaths,
+    }) async {
+      final client = MockClient.streaming((request, bodyStream) async {
+        final path = request.url.path;
+        if (path == '/v1/app/latest') {
+          final body = utf8.encode(jsonEncode({
+            'versionCode': 99,
+            'apkUrl': 'https://s3.example/rodnya.apk',
+            if (sha256Hex != null) 'sha256': sha256Hex,
+          }));
+          return http.StreamedResponse(
+            Stream.fromIterable([body]),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+        if (path.endsWith('.apk')) {
+          return http.StreamedResponse(
+            Stream.fromIterable([apkBytes]),
+            apkStatus,
+            contentLength: apkContentLength ?? apkBytes.length,
+          );
+        }
+        return http.StreamedResponse(const Stream.empty(), 404);
+      });
+      final service = AppUpdateService(
+        apiBaseUrl: 'https://api.example.test',
+        httpClient: client,
+        buildSnapshotProvider: () async => const AppBuildSnapshot(
+          versionCode: 40,
+          packageName: 'com.ahjkuio.rodnya_family_app',
+        ),
+        installerSourceProvider: () async => null,
+        isWeb: false,
+        platform: TargetPlatform.android,
+        downloadDirectoryProvider: () async => tempDir,
+        installerOpener: (path) async => openedPaths.add(path),
+      );
+      await service.checkForUpdate();
+      return service;
+    }
+
+    test('успех (без sha) → installer открыт, файл скачан', () async {
+      final opened = <String>[];
+      final service = await build(
+        apkBytes: List<int>.generate(64, (i) => i),
+        openedPaths: opened,
+      );
+      await service.downloadAndInstall();
+
+      expect(service.downloadProgress.stage, AppUpdateDownloadStage.idle);
+      expect(opened, hasLength(1));
+      expect(apkFiles(), hasLength(1)); // скачанный APK остаётся для установки
+      service.dispose();
+    });
+
+    test('размер не сошёлся с Content-Length → отмена + частичный удалён',
+        () async {
+      final opened = <String>[];
+      final service = await build(
+        apkBytes: List<int>.generate(64, (i) => i),
+        apkContentLength: 999, // сервер «обещал» больше, чем пришло
+        openedPaths: opened,
+      );
+      await service.downloadAndInstall();
+
+      expect(service.downloadProgress.stage, AppUpdateDownloadStage.failed);
+      expect(opened, isEmpty); // неполный файл НЕ открыт
+      expect(apkFiles(), isEmpty); // частичный файл удалён
+      service.dispose();
+    });
+
+    test('http-ошибка (500) → отмена + частичный файл не остаётся', () async {
+      final opened = <String>[];
+      final service = await build(
+        apkBytes: List<int>.generate(64, (i) => i),
+        apkStatus: 500,
+        openedPaths: opened,
+      );
+      await service.downloadAndInstall();
+
+      expect(service.downloadProgress.stage, AppUpdateDownloadStage.failed);
+      expect(opened, isEmpty);
+      expect(apkFiles(), isEmpty);
+      service.dispose();
+    });
+
+    test('sha256 совпал → installer открыт', () async {
+      final bytes = List<int>.generate(128, (i) => (i * 7) % 256);
+      final hash = sha256.convert(bytes).toString();
+      final opened = <String>[];
+      final service = await build(
+        apkBytes: bytes,
+        sha256Hex: hash,
+        openedPaths: opened,
+      );
+      await service.downloadAndInstall();
+
+      expect(service.downloadProgress.stage, AppUpdateDownloadStage.idle);
+      expect(opened, hasLength(1));
+      service.dispose();
+    });
+
+    test('sha256 не совпал → отмена + файл удалён, installer НЕ открыт',
+        () async {
+      final bytes = List<int>.generate(128, (i) => (i * 7) % 256);
+      final opened = <String>[];
+      final service = await build(
+        apkBytes: bytes,
+        sha256Hex: 'deadbeef' * 8, // заведомо неверный хэш
+        openedPaths: opened,
+      );
+      await service.downloadAndInstall();
+
+      expect(service.downloadProgress.stage, AppUpdateDownloadStage.failed);
+      expect(opened, isEmpty);
+      expect(apkFiles(), isEmpty);
+      service.dispose();
+    });
+
+    test('sha256 регистронезависим (UPPERCASE expected) → открыт', () async {
+      final bytes = List<int>.generate(32, (i) => i);
+      final hash = sha256.convert(bytes).toString().toUpperCase();
+      final opened = <String>[];
+      final service = await build(
+        apkBytes: bytes,
+        sha256Hex: hash,
+        openedPaths: opened,
+      );
+      await service.downloadAndInstall();
+
+      expect(service.downloadProgress.stage, AppUpdateDownloadStage.idle);
+      expect(opened, hasLength(1));
       service.dispose();
     });
   });

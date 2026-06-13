@@ -67,9 +67,68 @@ test("включённая фича: отдаёт версию, apkUrl, minVersi
       apkUrl: "https://s3.ru-msk.example/rodnya/rodnya-1.0.3.apk",
       minVersionCode: 40,
       notes: "Чинят чаты и ленту",
+      sha256: null,
     });
   } finally {
     await shutdown(ctx);
+  }
+});
+
+test("U6: sha256 отдаётся когда задан; пусто → null", async () => {
+  const ctx = await startTestServer({
+    latestAndroidUpdate: {
+      versionCode: 42,
+      versionName: "1.0.3",
+      apkUrl: "https://s3.ru-msk.example/rodnya/rodnya.apk",
+      minVersionCode: 0,
+      notes: "",
+      sha256: "b".repeat(64),
+    },
+  });
+  try {
+    const res = await fetch(`${ctx.baseUrl}/v1/app/latest`);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.sha256, "b".repeat(64));
+  } finally {
+    await shutdown(ctx);
+  }
+
+  const ctx2 = await startTestServer({
+    latestAndroidUpdate: {
+      versionCode: 42,
+      apkUrl: "https://s3.ru-msk.example/rodnya/rodnya.apk",
+      sha256: "",
+    },
+  });
+  try {
+    const res = await fetch(`${ctx2.baseUrl}/v1/app/latest`);
+    const body = await res.json();
+    assert.equal(body.sha256, null);
+  } finally {
+    await shutdown(ctx2);
+  }
+});
+
+test("U6: apkUrl без host (схема ок, но URL не парсится/пустой host) → 204", async () => {
+  // Голый "https://" проходит проверку схемы в enforceSafeUrl, но не
+  // является корректным URL с host — должно дать 204, а не отдать мусор.
+  for (const badUrl of ["https://", "https://  "]) {
+    const ctx = await startTestServer({
+      latestAndroidUpdate: {
+        versionCode: 42,
+        versionName: "1.0.3",
+        apkUrl: badUrl,
+        minVersionCode: 0,
+        notes: "",
+      },
+    });
+    try {
+      const res = await fetch(`${ctx.baseUrl}/v1/app/latest`);
+      assert.equal(res.status, 204, `url=${JSON.stringify(badUrl)}`);
+    } finally {
+      await shutdown(ctx);
+    }
   }
 });
 

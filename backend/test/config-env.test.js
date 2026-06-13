@@ -27,6 +27,7 @@ test("createConfig читает OTA-апдейтер из env (точные им
     "RODNYA_LATEST_ANDROID_APK_URL",
     "RODNYA_MIN_ANDROID_VERSION_CODE",
     "RODNYA_LATEST_ANDROID_NOTES",
+    "RODNYA_LATEST_ANDROID_APK_SHA256",
   ];
   const previous = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
   process.env.RODNYA_LATEST_ANDROID_VERSION_CODE = "42";
@@ -35,6 +36,7 @@ test("createConfig читает OTA-апдейтер из env (точные им
     "https://s3.ru-msk.example/rodnya/rodnya-1.0.3.apk";
   process.env.RODNYA_MIN_ANDROID_VERSION_CODE = "40";
   process.env.RODNYA_LATEST_ANDROID_NOTES = "Чинят чаты";
+  process.env.RODNYA_LATEST_ANDROID_APK_SHA256 = "a".repeat(64);
 
   try {
     const config = createConfig();
@@ -44,6 +46,7 @@ test("createConfig читает OTA-апдейтер из env (точные им
       apkUrl: "https://s3.ru-msk.example/rodnya/rodnya-1.0.3.apk",
       minVersionCode: 40,
       notes: "Чинят чаты",
+      sha256: "a".repeat(64),
     });
   } finally {
     for (const k of keys) {
@@ -63,6 +66,7 @@ test("createConfig без OTA-env: versionCode/minVersionCode = 0, строки 
     "RODNYA_LATEST_ANDROID_APK_URL",
     "RODNYA_MIN_ANDROID_VERSION_CODE",
     "RODNYA_LATEST_ANDROID_NOTES",
+    "RODNYA_LATEST_ANDROID_APK_SHA256",
   ];
   const previous = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
   for (const k of keys) {

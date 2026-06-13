@@ -247,6 +247,11 @@ function createConfig() {
     "RODNYA_MIN_ANDROID_VERSION_CODE",
   );
   const latestAndroidNotes = readEnvAlias("RODNYA_LATEST_ANDROID_NOTES");
+  // U6: опц. hex SHA-256 APK — клиент сверяет целостность перед
+  // установкой. Пусто → проверка пропускается (обратная совместимость).
+  const latestAndroidApkSha256 = readEnvAlias(
+    "RODNYA_LATEST_ANDROID_APK_SHA256",
+  );
 
   return {
     port: Number(process.env.PORT || 8080),
@@ -363,6 +368,7 @@ function createConfig() {
       apkUrl: latestAndroidApkUrl,
       minVersionCode: minAndroidVersionCode,
       notes: latestAndroidNotes,
+      sha256: latestAndroidApkSha256,
     },
   };
 }

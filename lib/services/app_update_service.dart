@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
@@ -91,6 +92,7 @@ class AppLatestVersion {
     this.versionName,
     this.minVersionCode = 0,
     this.notes,
+    this.sha256,
   });
 
   final int versionCode;
@@ -98,6 +100,11 @@ class AppLatestVersion {
   final String? versionName;
   final int minVersionCode;
   final String? notes;
+
+  /// U6: hex SHA-256 ожидаемого APK (опц.). Если задан — клиент сверяет
+  /// хэш скачанного файла ДО установки; пусто → проверка пропускается
+  /// (обратная совместимость со старым бэком).
+  final String? sha256;
 
   /// Парсит ответ /v1/app/latest. Возвращает null, если фича выключена
   /// или ответ некорректен (нет versionCode/apkUrl) — клиент молчит.
@@ -117,6 +124,7 @@ class AppLatestVersion {
     }
     final versionName = (json['versionName'] as Object?)?.toString().trim();
     final notes = (json['notes'] as Object?)?.toString().trim();
+    final sha256Hex = (json['sha256'] as Object?)?.toString().trim();
     return AppLatestVersion(
       versionCode: versionCode,
       apkUrl: apkUrl,
@@ -124,6 +132,7 @@ class AppLatestVersion {
           versionName == null || versionName.isEmpty ? null : versionName,
       minVersionCode: _asInt(json['minVersionCode']) ?? 0,
       notes: notes == null || notes.isEmpty ? null : notes,
+      sha256: sha256Hex == null || sha256Hex.isEmpty ? null : sha256Hex,
     );
   }
 
@@ -177,6 +186,8 @@ class AppUpdateService extends ChangeNotifier {
     Future<AppBuildSnapshot> Function()? buildSnapshotProvider,
     Future<String?> Function()? installerSourceProvider,
     AppUpdateInstaller? updateInstaller,
+    Future<Directory> Function()? downloadDirectoryProvider,
+    Future<void> Function(String path)? installerOpener,
     bool isWeb = kIsWeb,
     TargetPlatform? platform,
   })  : _apiBaseUrl = apiBaseUrl,
@@ -188,6 +199,9 @@ class AppUpdateService extends ChangeNotifier {
             buildSnapshotProvider ?? _defaultBuildSnapshot,
         _installerSourceProvider =
             installerSourceProvider ?? _defaultInstallerSource,
+        _downloadDirectoryProvider =
+            downloadDirectoryProvider ?? getTemporaryDirectory,
+        _installerOpener = installerOpener ?? _defaultOpenInstaller,
         _isWeb = isWeb,
         _platform = platform ?? defaultTargetPlatform {
     _updateInstaller = updateInstaller ?? _defaultUpdateInstaller;
@@ -201,6 +215,8 @@ class AppUpdateService extends ChangeNotifier {
   bool _disposed = false;
   final Future<AppBuildSnapshot> Function() _buildSnapshotProvider;
   final Future<String?> Function() _installerSourceProvider;
+  final Future<Directory> Function() _downloadDirectoryProvider;
+  final Future<void> Function(String path) _installerOpener;
   late final AppUpdateInstaller _updateInstaller;
   final bool _isWeb;
   final TargetPlatform _platform;
@@ -407,33 +423,90 @@ class AppUpdateService extends ChangeNotifier {
     }
   }
 
+  static Future<void> _defaultOpenInstaller(String path) async {
+    // Системный установщик. FileProvider предоставляет open_filex
+    // (authority ${applicationId}.fileProvider...) и сам ставит
+    // FLAG_GRANT_READ_URI_PERMISSION; APK той же релиз-подписью ставится
+    // поверх (in-place update).
+    await OpenFilex.open(path);
+  }
+
   Future<void> _defaultUpdateInstaller(
     AppLatestVersion latest,
     void Function(double? fraction) onProgress,
   ) async {
-    final dir = await getTemporaryDirectory();
-    final file = File(p.join(dir.path, 'rodnya-update.apk'));
-    final request = http.Request('GET', Uri.parse(latest.apkUrl));
-    final response = await _httpClient.send(request);
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw http.ClientException('APK download failed: ${response.statusCode}');
-    }
-    final total = response.contentLength ?? 0;
-    var received = 0;
-    final sink = file.openWrite();
+    final dir = await _downloadDirectoryProvider();
+    // U6: уникальное имя на попытку — старый частичный файл не мешает и
+    // open_filex не прочитает недописанный с прошлого раза.
+    final file = File(p.join(
+      dir.path,
+      'rodnya-update-${DateTime.now().microsecondsSinceEpoch}.apk',
+    ));
     try {
-      await for (final chunk in response.stream) {
-        sink.add(chunk);
-        received += chunk.length;
-        onProgress(total > 0 ? received / total : null);
+      final request = http.Request('GET', Uri.parse(latest.apkUrl));
+      final response = await _httpClient.send(request);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw http.ClientException(
+          'APK download failed: ${response.statusCode}',
+        );
       }
-    } finally {
-      await sink.close();
+      final total = response.contentLength ?? 0;
+      var received = 0;
+      // Считаем sha256 на лету (без второго прохода по файлу).
+      Digest? digest;
+      final hashOutput = ChunkedConversionSink<Digest>.withCallback(
+        (digests) => digest = digests.single,
+      );
+      final hashInput = sha256.startChunkedConversion(hashOutput);
+      final sink = file.openWrite();
+      try {
+        await for (final chunk in response.stream) {
+          sink.add(chunk);
+          hashInput.add(chunk);
+          received += chunk.length;
+          onProgress(total > 0 ? received / total : null);
+        }
+      } finally {
+        await sink.close();
+        hashInput.close();
+      }
+
+      // U6: целостность ДО установки.
+      // 1. Размер: если сервер сообщил Content-Length — скачали ровно
+      //    столько; иначе файл неполный, не открываем.
+      if (total > 0 && received != total) {
+        throw const FormatException('incomplete APK download: size mismatch');
+      }
+      if (received <= 0) {
+        throw const FormatException('empty APK download');
+      }
+      // 2. SHA-256: если бэк отдал хэш — сверяем. Пусто → пропускаем
+      //    (обратная совместимость).
+      final expected = latest.sha256;
+      if (expected != null && expected.isNotEmpty) {
+        final actual = digest?.toString() ?? '';
+        if (actual.toLowerCase() != expected.toLowerCase()) {
+          throw const FormatException('APK sha256 mismatch');
+        }
+      }
+
+      await _installerOpener(file.path);
+    } catch (_) {
+      // Чистим частичный/повреждённый файл — он не должен остаться в
+      // кэше и быть случайно открытым.
+      await _safeDelete(file);
+      rethrow;
     }
-    // Открываем системный установщик. FileProvider предоставляет
-    // open_filex (authority ${applicationId}.fileProvider...); APK той
-    // же релиз-подписью ставится поверх (in-place update).
-    await OpenFilex.open(file.path);
+  }
+
+  static Future<void> _safeDelete(File file) async {
+    try {
+      if (await file.exists()) {
+        await file.delete();
+      }
+    } catch (_) {
+      // best-effort
+    }
   }
 
   @override

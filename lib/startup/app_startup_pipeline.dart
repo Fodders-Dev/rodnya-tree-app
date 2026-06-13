@@ -45,7 +45,18 @@ class AppStartupPipeline {
       if (task.phase != phase) {
         continue;
       }
-      await task.run(context);
+      // U6: каждый таск изолирован (M4-паттерн) — бросок одного НЕ
+      // отменяет остальные таски фазы. Без этого сбой раннего lazy-таска
+      // (например RuStore-warmup) отменял бы проверку OTA-обновления,
+      // зарегистрированную позже в той же featureLazy-фазе.
+      try {
+        await task.run(context);
+      } catch (error, stackTrace) {
+        debugPrint(
+          '[startup] таск "${task.label}" (${phase.name}) упал: $error',
+        );
+        debugPrintStack(stackTrace: stackTrace, label: task.label);
+      }
     }
   }
 }
