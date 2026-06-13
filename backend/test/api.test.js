@@ -5407,12 +5407,18 @@ test("cross-tree merge proposals expose only safe previews and require reviewer 
       "birthYear",
       "contextLabel",
       "name",
+      "ownership",
     ]);
     assert.deepEqual(Object.keys(proposal.personB).sort(), [
       "birthYear",
       "contextLabel",
       "name",
+      "ownership",
     ]);
+    // A-copy: бейдж владельца — карточка Алисы «своя», вторая «чужая».
+    // Безопасно: ownership — это own/shared/other, без сырых id/деревьев.
+    assert.equal(proposal.personA.ownership, "own");
+    assert.equal(proposal.personB.ownership, "other");
     assert.equal(proposal.personA.photoUrl, undefined);
     assert.equal(proposal.personA.birthDate, undefined);
     assert.equal(proposal.personA.treeId, undefined);

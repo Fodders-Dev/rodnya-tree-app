@@ -3,11 +3,26 @@ class MergePersonPreview {
     required this.name,
     this.birthYear,
     this.contextLabel,
+    this.ownership = 'other',
   });
 
   final String name;
   final String? birthYear;
   final String? contextLabel;
+
+  /// A-copy: чья карточка — 'own' (ваша), 'shared' (общая) либо 'other'.
+  /// Старый бэк без поля → 'other'.
+  final String ownership;
+
+  bool get isOwn => ownership == 'own';
+  bool get isShared => ownership == 'shared';
+
+  /// Бейдж владельца: «Ваша карточка» / «Общая» / «Карточка <имя>».
+  String get ownershipBadge {
+    if (isOwn) return 'Ваша карточка';
+    if (isShared) return 'Общая';
+    return 'Карточка: $name';
+  }
 
   factory MergePersonPreview.fromJson(Map<String, dynamic> json) {
     return MergePersonPreview(
@@ -18,6 +33,11 @@ class MergePersonPreview {
       contextLabel: json['contextLabel']?.toString().trim().isNotEmpty == true
           ? json['contextLabel'].toString().trim()
           : null,
+      ownership: json['ownership']?.toString() == 'own'
+          ? 'own'
+          : json['ownership']?.toString() == 'shared'
+              ? 'shared'
+              : 'other',
     );
   }
 }

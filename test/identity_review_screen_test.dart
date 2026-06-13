@@ -229,6 +229,33 @@ void main() {
     expect(identityService.reviewedProposalAccepted, isFalse);
   });
 
+  testWidgets(
+      'A-copy: плашка-успокоение + бейджи владельца на карточках сравнения',
+      (tester) async {
+    getIt.registerSingleton<IdentityServiceInterface>(
+      _FakeIdentityService(proposals: [_ownershipProposal()]),
+    );
+
+    await tester.pumpWidget(
+      const MaterialApp(home: IdentityReviewScreen()),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    // Явное успокоение перед кнопками: не замена, обратимо.
+    expect(
+      find.textContaining('Обе карточки сохранятся'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('объединение можно отменить'),
+      findsOneWidget,
+    );
+    // Бейджи владельца: «Ваша карточка» для own, «Карточка: <имя>» для other.
+    expect(find.text('Ваша карточка'), findsOneWidget);
+    expect(find.text('Карточка: Пётр Иванович'), findsOneWidget);
+  });
+
   testWidgets('IdentityReviewScreen keeps polished empty state',
       (tester) async {
     getIt.registerSingleton<IdentityServiceInterface>(_FakeIdentityService());
@@ -359,6 +386,32 @@ MergeProposal _awaitingProposalWithReviewers() {
       MergeReviewer(userId: 'user-1', displayName: 'Артём', isViewer: true),
       MergeReviewer(userId: 'user-2', displayName: 'Наталья'),
     ],
+    createdAt: DateTime(2026, 5, 1),
+  );
+}
+
+MergeProposal _ownershipProposal() {
+  return MergeProposal(
+    id: 'proposal-own',
+    status: 'pending',
+    matchScore: 0.82,
+    confidence: 'high',
+    reasons: const ['Совпадает имя'],
+    personA: const MergePersonPreview(
+      name: 'Иван Петров',
+      birthYear: '1950',
+      contextLabel: 'Доступное семейное дерево',
+      ownership: 'own',
+    ),
+    personB: const MergePersonPreview(
+      name: 'Пётр Иванович',
+      birthYear: '1950',
+      contextLabel: 'Контекст скрыт настройками',
+      ownership: 'other',
+    ),
+    requiredReviewCount: 2,
+    reviewCount: 0,
+    awaitingMyDecision: true,
     createdAt: DateTime(2026, 5, 1),
   );
 }

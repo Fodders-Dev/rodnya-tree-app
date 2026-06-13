@@ -766,6 +766,10 @@ class _MergeProposalComparisonCard extends StatelessWidget {
           const SizedBox(height: 12),
           _ComparisonTable(rows: rows),
           const SizedBox(height: 14),
+          // A-copy: явная плашка-успокоение перед кнопками — объединение
+          // не удаляет данные и обратимо.
+          const _MergeReassurance(),
+          const SizedBox(height: 10),
           const _PrivacyNote(
             message:
                 'После объединения будут связаны только доступные вам ветки и карточки. Приватные заметки, чужие комментарии, точные даты и внутренние id не раскрываются.',
@@ -979,6 +983,10 @@ class _PersonCompareCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // A-copy: бейдж владельца — видно, что ничего чужого не
+            // поглощается («Ваша карточка» / «Общая» / «Карточка <имя>»).
+            _OwnershipBadge(person: person, accent: accent),
+            const SizedBox(height: 10),
             Container(
               width: 44,
               height: 44,
@@ -1039,6 +1047,38 @@ class _PersonCompareCard extends StatelessWidget {
         .map((word) => String.fromCharCode(word.runes.first).toUpperCase())
         .join();
     return value.isEmpty ? '?' : value;
+  }
+}
+
+class _OwnershipBadge extends StatelessWidget {
+  const _OwnershipBadge({required this.person, required this.accent});
+
+  final MergePersonPreview person;
+  final Color accent;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final tokens = _tokens(context);
+    final highlighted = person.isOwn || person.isShared;
+    final color = highlighted ? accent : tokens.inkMuted;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+      ),
+      child: Text(
+        person.ownershipBadge,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: theme.textTheme.labelSmall?.copyWith(
+          color: color,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+    );
   }
 }
 
@@ -1463,6 +1503,48 @@ class _PrivacyNote extends StatelessWidget {
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: tokens.inkSecondary,
                   height: 1.4,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// A-copy: успокаивающая плашка прямо над кнопками слияния. Главный
+/// страх 50+ — «объединю и потеряю/заменю свою карточку». Текст явно
+/// говорит: обе карточки сохранятся, это не замена, действие обратимо.
+class _MergeReassurance extends StatelessWidget {
+  const _MergeReassurance();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final tokens = _tokens(context);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: tokens.accent.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(tokens.radiusSm),
+        border: Border.all(color: tokens.accent.withValues(alpha: 0.30)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.merge_type_rounded,
+                color: tokens.accentStrong, size: 18),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Обе карточки сохранятся и объединятся в общий профиль. '
+                'Это не замена — данные не удаляются, объединение можно отменить.',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: tokens.inkSecondary,
+                  height: 1.4,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
             ),

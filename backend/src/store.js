@@ -4646,11 +4646,14 @@ function extractBirthYear(value) {
   return normalized ? normalized.slice(0, 4) : null;
 }
 
-function safeMergePersonPreview(person, {contextLabel = null} = {}) {
+function safeMergePersonPreview(person, {contextLabel = null, ownership = "other"} = {}) {
   return {
     name: String(person?.name || "Без имени").trim() || "Без имени",
     birthYear: normalizedBirthYear(person?.birthDate),
     contextLabel: normalizeNullableString(contextLabel),
+    // A-copy: чья это карточка — для бейджа «Ваша / Общая / Карточка
+    // <имя>», чтобы зритель видел, что ничего чужого не поглощается.
+    ownership: ownership === "own" || ownership === "shared" ? ownership : "other",
   };
 }
 
@@ -10275,6 +10278,27 @@ class FileStore {
     return "Другое приватное дерево";
   }
 
+  /// A-copy: чья карточка для зрителя — «own» (ваша/в вашем дереве),
+  /// «shared» (уже общая — identity связана с несколькими) либо «other».
+  _mergePersonOwnership(db, person, viewerUserId) {
+    if (!person) return "other";
+    const normalizedViewer = normalizeNullableString(viewerUserId);
+    if (
+      normalizedViewer &&
+      personStewardUserIds(db, person).includes(normalizedViewer)
+    ) {
+      return "own";
+    }
+    const identityId = normalizeNullableString(person.identityId);
+    if (identityId) {
+      const linkedCount = db.persons.filter(
+        (entry) => entry.identityId === identityId,
+      ).length;
+      if (linkedCount > 1) return "shared";
+    }
+    return "other";
+  }
+
   _mergeProposalView(db, proposal, viewerUserId = null) {
     const fromPerson = db.persons.find(
       (person) => person.id === proposal.fromPersonId,
@@ -10324,6 +10348,7 @@ class FileStore {
           fromPerson,
           viewerUserId,
         ),
+        ownership: this._mergePersonOwnership(db, fromPerson, viewerUserId),
       }),
       personB: safeMergePersonPreview(candidatePerson, {
         contextLabel: this._mergeProposalPersonContext(
@@ -10331,6 +10356,7 @@ class FileStore {
           candidatePerson,
           viewerUserId,
         ),
+        ownership: this._mergePersonOwnership(db, candidatePerson, viewerUserId),
       }),
       requiredReviewCount: reviewerIds.length,
       reviewCount: reviews.filter((entry) => entry.decision === "accepted")

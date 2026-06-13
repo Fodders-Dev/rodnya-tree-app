@@ -867,7 +867,8 @@ extension _HomeScreenSections on _HomeScreenState {
     final message = unavailable
         ? 'Откройте раздел проверки или обновите экран позже.'
         : _pendingIdentityReviewCount == 1
-            ? 'Проверьте возможное совпадение, прежде чем объединять данные.'
+            ? 'Возможно, это один человек в двух деревьях. Можно объединить — '
+                'карточки не пропадут.'
             : '$_pendingIdentityReviewCount совпадений и запросов ждут решения.';
 
     return Semantics(

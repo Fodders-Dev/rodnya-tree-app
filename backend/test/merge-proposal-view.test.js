@@ -109,6 +109,26 @@ test("view: до голоса awaitingMyDecision=true и поимённые ре
   assert.equal(other.decision, null);
 });
 
+test("view: ownership — своя карточка own, чужая other (A-copy бейдж)", async () => {
+  const store = await seededStore();
+
+  // Зритель user-a — стюард tree-a (его p-a), tree-b чужое.
+  const forA = (await store.listPendingMergeProposalsForUser("user-a")).find(
+    (entry) => entry.id === "mp-1",
+  );
+  assert.ok(forA);
+  assert.equal(forA.personA.ownership, "own"); // p-a в его дереве
+  assert.equal(forA.personB.ownership, "other"); // p-b в чужом
+
+  // Симметрично для user-b — теперь своя карточка вторая.
+  const forB = (await store.listPendingMergeProposalsForUser("user-b")).find(
+    (entry) => entry.id === "mp-1",
+  );
+  assert.ok(forB);
+  assert.equal(forB.personA.ownership, "other");
+  assert.equal(forB.personB.ownership, "own");
+});
+
 test("view: после голоса myDecision=accepted, awaitingMyDecision=false, статус по-прежнему pending", async () => {
   const store = await seededStore();
 
