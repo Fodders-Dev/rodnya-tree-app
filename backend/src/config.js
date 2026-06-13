@@ -230,6 +230,24 @@ function createConfig() {
     readEnvAlias("RODNYA_UNISENDER_API_BASE_URL") ||
     "https://go2.unisender.ru/ru/transactional/api/v1";
 
+  // OTA self-update for sideloaded APK builds (раздача через Telegram,
+  // вне магазина). Источник — env, минимум движущихся частей. Фича
+  // выключена, пока оператор не задал versionCode + apkUrl: тогда
+  // /v1/app/latest отвечает 204 и клиент молчит.
+  const latestAndroidVersionCode = readEnvNumber(
+    0,
+    "RODNYA_LATEST_ANDROID_VERSION_CODE",
+  );
+  const latestAndroidVersionName = readEnvAlias(
+    "RODNYA_LATEST_ANDROID_VERSION_NAME",
+  );
+  const latestAndroidApkUrl = readEnvAlias("RODNYA_LATEST_ANDROID_APK_URL");
+  const minAndroidVersionCode = readEnvNumber(
+    0,
+    "RODNYA_MIN_ANDROID_VERSION_CODE",
+  );
+  const latestAndroidNotes = readEnvAlias("RODNYA_LATEST_ANDROID_NOTES");
+
   return {
     port: Number(process.env.PORT || 8080),
     corsOrigin: readEnvAlias("RODNYA_BACKEND_CORS_ORIGIN") || "*",
@@ -338,6 +356,14 @@ function createConfig() {
     hardDeleteMaxPerRun,
     hardDeleteAuditRetentionDays,
     hardDeleteTimeoutMs,
+    // OTA-апдейтер sideload-сборок: значения отдаёт GET /v1/app/latest.
+    latestAndroidUpdate: {
+      versionCode: latestAndroidVersionCode,
+      versionName: latestAndroidVersionName,
+      apkUrl: latestAndroidApkUrl,
+      minVersionCode: minAndroidVersionCode,
+      notes: latestAndroidNotes,
+    },
   };
 }
 

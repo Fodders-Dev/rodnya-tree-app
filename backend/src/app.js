@@ -28,6 +28,7 @@ const {createEmailSender} = require("./email-sender");
 const {createOperationalStatus} = require("./operational-status");
 const {InMemoryRateLimitBackend} = require("./rate-limit-backends");
 const {registerAdminRoutes} = require("./routes/admin-routes");
+const {registerAppUpdateRoutes} = require("./routes/app-update-routes");
 const {registerAuthSessionRoutes} = require("./routes/auth-session-routes");
 const {
   registerAuthenticatedMediaRoutes,
@@ -653,6 +654,8 @@ function createApp({
   // such as like/view/read actions. Accept it and let handlers validate fields.
   app.use(express.json({limit: "50mb", strict: false}));
   registerPublicMediaRoutes(app, {mediaStorage: resolvedMediaStorage});
+  // U1: публичный эндпоинт версии для OTA-апдейтера sideload-сборок.
+  registerAppUpdateRoutes(app, {config});
   // async because the rate-limit backend's `incr` returns a Promise
   // (mandatory for the Redis-backed implementation; the in-memory
   // default still resolves synchronously). Express forwards thrown
