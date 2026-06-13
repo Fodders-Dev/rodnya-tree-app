@@ -40,6 +40,7 @@ import '../utils/url_utils.dart';
 import '../widgets/app_backdrop.dart';
 import '../widgets/app_update_ui.dart';
 import '../widgets/main_navigation_bar.dart';
+import '../widgets/notification_permission_banner.dart';
 import '../widgets/offline_indicator.dart';
 import 'app_router_guards.dart';
 import 'app_router_shared.dart';
@@ -89,6 +90,9 @@ class AppShellRouteModule {
                 // U2: ненавязчивый баннер «Доступно обновление» (sideload
                 // OTA). Молчит, если апдейтер не применим/выключен.
                 const AppUpdateBanner(),
+                // N2: first-run CTA «Включить уведомления» (web). Молчит,
+                // если permission уже решён/закрыт/неприменимо.
+                const NotificationPermissionBanner(),
                 Expanded(child: navigationShell),
               ],
             );

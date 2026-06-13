@@ -23,6 +23,14 @@ abstract class BrowserNotificationBridge {
   bool get isPushSupported;
   BrowserNotificationPermissionStatus get permissionStatus;
 
+  /// N3: iOS Safari/WebKit на вебе. На iOS web-push работает ТОЛЬКО в
+  /// установленном PWA (standalone, Safari 16.4+). На native/стабе false.
+  bool get isIosWeb;
+
+  /// Приложение запущено как установленный PWA (display-mode: standalone
+  /// либо navigator.standalone). На native/стабе false.
+  bool get isStandalone;
+
   Future<BrowserNotificationPermissionStatus> requestPermission({
     bool prompt = true,
   });

@@ -72,8 +72,10 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     GenericNotificationCallback? onGenericNotification,
     BrowserNotificationBridge? browserNotificationBridge,
     AndroidIncomingCallService? androidIncomingCallService,
+    bool isWeb = kIsWeb,
   })  : _plugin = plugin,
         _preferences = preferences,
+        _isWeb = isWeb,
         _authService = authService,
         _runtimeConfig = runtimeConfig,
         _realtimeService = realtimeService,
@@ -99,6 +101,10 @@ class CustomApiNotificationService implements NotificationServiceInterface {
       'custom_api_registered_browser_push_device_id_v1';
   static const String _registeredBrowserPushTokenStorageKey =
       'custom_api_registered_browser_push_token_v1';
+  // N2: пользователь закрыл/ответил на first-run CTA «включить
+  // уведомления» — больше не показываем баннер в этой и будущих сессиях.
+  static const String _notificationCtaDismissedStorageKey =
+      'custom_api_notification_cta_dismissed_v1';
 
   static Future<CustomApiNotificationService> create({
     FlutterLocalNotificationsPlugin? plugin,
@@ -114,11 +120,13 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     GenericNotificationCallback? onGenericNotification,
     BrowserNotificationBridge? browserNotificationBridge,
     AndroidIncomingCallService? androidIncomingCallService,
+    bool isWeb = kIsWeb,
   }) async {
     return CustomApiNotificationService._(
       plugin: plugin ?? FlutterLocalNotificationsPlugin(),
       preferences: preferences ?? await SharedPreferences.getInstance(),
       authService: authService,
+      isWeb: isWeb,
       runtimeConfig: runtimeConfig,
       realtimeService: realtimeService,
       rustoreService: rustoreService,
@@ -145,6 +153,10 @@ class CustomApiNotificationService implements NotificationServiceInterface {
   final GenericNotificationCallback? _onGenericNotification;
   final AndroidIncomingCallService? _androidIncomingCallService;
   final BrowserNotificationBridge _browserNotificationBridge;
+  // Веб-сборка (инъектируемо для VM-тестов state-логики). Native ветка
+  // уведомлений (flutter_local_notifications) и веб-ветка (permission +
+  // push-подписка) расходятся именно здесь.
+  final bool _isWeb;
   final ChatNotificationSettingsStore _chatNotificationSettingsStore =
       const SharedPreferencesChatNotificationSettingsStore();
 
@@ -507,6 +519,64 @@ class CustomApiNotificationService implements NotificationServiceInterface {
   BrowserNotificationPermissionStatus get browserPermissionStatus =>
       _browserNotificationBridge.permissionStatus;
 
+  // ── N1/N3: состояние = реальный permission, не флаг ──────────────────
+
+  /// iOS Safari вне установленного PWA: web-push недоступен в принципе,
+  /// запрашивать разрешение бессмысленно — нужен «добавьте на Домой».
+  bool get _isIosWebNonStandalone =>
+      _isWeb &&
+      _browserNotificationBridge.isIosWeb &&
+      !_browserNotificationBridge.isStandalone;
+
+  /// Web-push на этом клиенте невозможен: браузер не поддерживает, либо
+  /// iOS-Safari вне PWA. (На native — всегда false.)
+  bool get browserPushUnsupported {
+    if (!_isWeb) return false;
+    return !_browserNotificationBridge.isSupported ||
+        !_browserNotificationBridge.isPushSupported ||
+        _isIosWebNonStandalone;
+  }
+
+  /// Нужно явно (по жесту) запросить разрешение — показать CTA. Только
+  /// когда запрос имеет смысл: web, фича включена в prefs, поддерживается,
+  /// не iOS-вне-PWA, и текущий permission == default.
+  bool get needsBrowserPermission =>
+      _isWeb &&
+      _notificationsEnabled &&
+      !browserPushUnsupported &&
+      _browserNotificationBridge.permissionStatus ==
+          BrowserNotificationPermissionStatus.defaultState;
+
+  /// iOS-Safari вне PWA при включённой фиче: вместо запроса — подсказка
+  /// «добавьте «Родню» на экран „Домой“».
+  bool get iosNeedsStandaloneForPush =>
+      _isIosWebNonStandalone && _notificationsEnabled;
+
+  /// Эффективно «уведомления работают» — основа для UI «Включены».
+  /// На web требует granted; на native — просто prefs-флаг.
+  bool get notificationsEffectivelyOn {
+    if (!_isWeb) return _notificationsEnabled;
+    return _notificationsEnabled &&
+        _browserNotificationBridge.permissionStatus ==
+            BrowserNotificationPermissionStatus.granted;
+  }
+
+  // ── N2: first-run CTA «включить уведомления» ─────────────────────────
+
+  bool get isNotificationCtaDismissed =>
+      _preferences.getBool(_notificationCtaDismissedStorageKey) ?? false;
+
+  /// Показывать ли ненавязчивый баннер с CTA. Сам баннер по
+  /// [iosNeedsStandaloneForPush] решает: запрос разрешения или
+  /// «добавьте на Домой».
+  bool get shouldShowPermissionCta =>
+      !isNotificationCtaDismissed &&
+      (needsBrowserPermission || iosNeedsStandaloneForPush);
+
+  Future<void> dismissNotificationCta() async {
+    await _preferences.setBool(_notificationCtaDismissedStorageKey, true);
+  }
+
   Future<int> refreshUnreadNotificationsCount() async {
     final authService = _authService;
     final runtimeConfig = _runtimeConfig;
@@ -646,11 +716,11 @@ class CustomApiNotificationService implements NotificationServiceInterface {
     bool enabled, {
     bool promptForBrowserPermission = false,
   }) async {
-    if (!enabled && kIsWeb) {
+    if (!enabled && _isWeb) {
       await _unregisterBrowserPushDevice();
     }
 
-    if (enabled && kIsWeb) {
+    if (enabled && _isWeb) {
       final permission = await _browserNotificationBridge.requestPermission(
         prompt: promptForBrowserPermission,
       );
@@ -663,7 +733,7 @@ class CustomApiNotificationService implements NotificationServiceInterface {
 
     _notificationsEnabled = enabled;
     await _preferences.setBool(_notificationsEnabledStorageKey, enabled);
-    if (enabled && kIsWeb) {
+    if (enabled && _isWeb) {
       final hasActiveSession = await _registerPushDevicesSafely(
         registerRemoteDevice: false,
       );

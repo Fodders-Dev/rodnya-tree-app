@@ -181,6 +181,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _toggleNotifications(bool value) async {
     final notificationService = _customNotificationService;
+
+    // N3: на iOS-Safari вне установленного PWA запрашивать разрешение
+    // бессмысленно (Safari молча проигнорирует) — подсказываем установку.
+    if (value &&
+        (notificationService?.iosNeedsStandaloneForPush ?? false)) {
+      _showMessage(
+        'Чтобы получать уведомления, добавьте «Родню» на экран «Домой» '
+        '(меню «Поделиться» → «На экран „Домой“»).',
+      );
+      return;
+    }
+
     var nextValue = value;
 
     try {
@@ -1579,16 +1591,35 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// «разрешите в настройках телефона» instead of a misleading
   /// «Выключены» (Screen 7.5).
   Widget _buildNotificationsRow() {
-    final permission = _customNotificationService?.browserPermissionStatus;
+    final service = _customNotificationService;
+    final permission = service?.browserPermissionStatus;
     final osDenied =
         permission == BrowserNotificationPermissionStatus.denied;
+    // N1: «включено» = реальное состояние, а не дефолтный prefs-флаг. На
+    // web требует granted; тумблер не показывает ON, пока не granted.
+    final effectivelyOn =
+        service?.notificationsEffectivelyOn ?? _notificationsEnabled;
+    final needsPermission = service?.needsBrowserPermission ?? false;
+    final iosAddToHome = service?.iosNeedsStandaloneForPush ?? false;
+
+    final String subtitle;
+    if (osDenied) {
+      subtitle = 'Разрешите уведомления в настройках браузера';
+    } else if (iosAddToHome) {
+      // N3: на iOS без установленного PWA запрос бессмысленен.
+      subtitle = 'Добавьте «Родню» на экран «Домой», чтобы получать уведомления';
+    } else if (needsPermission) {
+      // N1: default — НЕ «Включены», а явный CTA (тап тумблера = жест).
+      subtitle = 'Нажмите, чтобы включить уведомления';
+    } else {
+      subtitle = effectivelyOn ? 'Включены' : 'Выключены';
+    }
+
     return _buildSwitchRow(
       icon: Icons.notifications_outlined,
       title: 'Уведомления',
-      subtitle: osDenied
-          ? 'Разрешите уведомления в настройках телефона'
-          : (_notificationsEnabled ? 'Включены' : 'Выключены'),
-      value: _notificationsEnabled,
+      subtitle: subtitle,
+      value: effectivelyOn,
       onChanged: _toggleNotifications,
     );
   }

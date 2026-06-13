@@ -18,6 +18,37 @@ class _HtmlBrowserNotificationBridge implements BrowserNotificationBridge {
       js_util.hasProperty(html.window.navigator, 'serviceWorker');
 
   @override
+  bool get isIosWeb {
+    final ua = html.window.navigator.userAgent.toLowerCase();
+    if (ua.contains('iphone') ||
+        ua.contains('ipad') ||
+        ua.contains('ipod')) {
+      return true;
+    }
+    // iPadOS 13+ маскируется под десктопный Mac — отличаем по тач-вводу.
+    final isMac = ua.contains('macintosh');
+    final maxTouchPoints = html.window.navigator.maxTouchPoints ?? 0;
+    return isMac && maxTouchPoints > 1;
+  }
+
+  @override
+  bool get isStandalone {
+    // navigator.standalone — legacy iOS Safari флаг установленного PWA.
+    final navStandalone =
+        js_util.getProperty<Object?>(html.window.navigator, 'standalone');
+    if (navStandalone == true) {
+      return true;
+    }
+    try {
+      return html.window
+          .matchMedia('(display-mode: standalone)')
+          .matches;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  @override
   BrowserNotificationPermissionStatus get permissionStatus =>
       _permissionFromRaw(html.Notification.permission ?? 'default');
 

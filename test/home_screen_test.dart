@@ -204,6 +204,12 @@ class _FakeBrowserNotificationBridge implements BrowserNotificationBridge {
   bool get isPushSupported => true;
 
   @override
+  bool get isIosWeb => false;
+
+  @override
+  bool get isStandalone => false;
+
+  @override
   BrowserNotificationPermissionStatus get permissionStatus =>
       permissionStatusValue;
 

@@ -8,6 +8,12 @@ class _StubBrowserNotificationBridge implements BrowserNotificationBridge {
   bool get isPushSupported => false;
 
   @override
+  bool get isIosWeb => false;
+
+  @override
+  bool get isStandalone => false;
+
+  @override
   BrowserNotificationPermissionStatus get permissionStatus =>
       BrowserNotificationPermissionStatus.unsupported;
 
