@@ -694,6 +694,11 @@ class PendingBackendChatService implements ChatServiceInterface {
   }
 
   @override
+  Future<void> leaveGroup(String chatId) {
+    throw UnsupportedError(_pendingProviderMessage('chat'));
+  }
+
+  @override
   Future<List<ChatMessageSearchResult>> searchMessages({
     required String query,
     String? chatId,

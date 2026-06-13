@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get_it/get_it.dart';
+import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:rodnya/backend/interfaces/chat_service_interface.dart';
@@ -208,6 +209,7 @@ class _FakeChatService implements ChatServiceInterface {
   final List<String> searchQueries = <String>[];
   String? lastSearchChatId;
   int? lastSearchLimit;
+  String? leftChatId;
   ChatDetails details = const ChatDetails(
     chatId: 'chat-group-1',
     type: 'group',
@@ -350,6 +352,11 @@ class _FakeChatService implements ChatServiceInterface {
     required String participantId,
   }) async =>
       details;
+
+  @override
+  Future<void> leaveGroup(String chatId) async {
+    leftChatId = chatId;
+  }
 
   @override
   Future<void> editChatMessage({
@@ -965,6 +972,82 @@ void main() {
       ),
       findsOneWidget,
     );
+  });
+
+  testWidgets(
+      'G2: групповой чат показывает «Покинуть чат» и вызывает leaveGroup',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(800, 1600));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final chatService = _FakeChatService();
+    getIt.registerSingleton<ChatServiceInterface>(chatService);
+
+    final treeProvider = TreeProvider();
+    treeProvider.selectTree(
+      'tree-1',
+      'Семья Кузнецовых',
+      treeKind: TreeKind.family,
+    );
+    final router = GoRouter(
+      initialLocation: '/chat',
+      routes: [
+        GoRoute(
+          path: '/chat',
+          builder: (context, state) => const ChatScreen(
+            chatId: 'chat-group-1',
+            title: 'Семья Кузнецовых',
+            chatType: 'group',
+            initialChatDetails: ChatDetails(
+              chatId: 'chat-group-1',
+              type: 'group',
+              title: 'Семья Кузнецовых',
+              participantIds: ['user-1', 'user-2', 'user-3'],
+              participants: [
+                ChatParticipantSummary(userId: 'user-1', displayName: 'Артем'),
+                ChatParticipantSummary(userId: 'user-2', displayName: 'Андрей'),
+                ChatParticipantSummary(userId: 'user-3', displayName: 'Дарья'),
+              ],
+              branchRoots: [],
+              treeId: 'tree-1',
+            ),
+          ),
+        ),
+        GoRoute(
+          path: '/chats',
+          builder: (context, state) => const Text('chats-list'),
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<TreeProvider>.value(
+        value: treeProvider,
+        child: MaterialApp.router(routerConfig: router),
+      ),
+    );
+    chatService.emitMessages(const <ChatMessage>[]);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('О чате'));
+    await tester.pumpAndSettle();
+
+    final leaveButton = find.byKey(const Key('chat-info-leave-group'));
+    await tester.scrollUntilVisible(
+      leaveButton,
+      250,
+      scrollable: find.byType(Scrollable).last,
+    );
+    await tester.tap(leaveButton);
+    await tester.pumpAndSettle();
+
+    // Подтверждение выхода.
+    expect(find.text('Выйти'), findsOneWidget);
+    await tester.tap(find.text('Выйти'));
+    await tester.pumpAndSettle();
+
+    expect(chatService.leftChatId, 'chat-group-1');
+    expect(find.text('chats-list'), findsOneWidget);
   });
 
   testWidgets('ChatScreen exposes group call actions for group chat',

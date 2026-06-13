@@ -2993,6 +2993,20 @@ class _ChatScreenState extends State<ChatScreen> {
           });
           return updatedDetails;
         },
+        onLeaveGroup: () async {
+          // G2: выходим из группы. После выхода чат недоступен — закрываем
+          // шит и уходим к списку чатов; realtime-событие уберёт его из
+          // списка у нас и обновит состав у остальных. Navigator/роутер
+          // захватываем до await (контекст после него использовать нельзя).
+          final navigator = Navigator.of(context);
+          final router = GoRouter.of(context);
+          await _chatService.leaveGroup(details.chatId);
+          if (!mounted) {
+            return;
+          }
+          navigator.pop(); // закрыть шит
+          router.go('/chats');
+        },
         onOpenSearch: () {
           Navigator.of(context).pop();
           _openSearch();
@@ -6979,6 +6993,7 @@ class _ChatInfoSheet extends StatefulWidget {
     required this.onRename,
     required this.onAddParticipants,
     required this.onRemoveParticipant,
+    required this.onLeaveGroup,
     required this.onOpenSearch,
     required this.onNotificationLevelChanged,
     required this.onAutoDeleteChanged,
@@ -6998,6 +7013,7 @@ class _ChatInfoSheet extends StatefulWidget {
   final Future<ChatDetails> Function(List<String> participantIds)
       onAddParticipants;
   final Future<ChatDetails> Function(String participantId) onRemoveParticipant;
+  final Future<void> Function() onLeaveGroup;
   final VoidCallback onOpenSearch;
   final Future<void> Function(ChatNotificationLevel level)
       onNotificationLevelChanged;
@@ -7412,11 +7428,77 @@ class _ChatInfoSheetState extends State<_ChatInfoSheet> {
                   }).toList(),
                 ),
               ),
+              // G2: самовыход из группы. Доступен только в обычном
+              // групповом чате (как и кнопка «убрать»); личные/branch не
+              // покидают этим путём.
+              if (_details.isEditableGroup) ...[
+                const SizedBox(height: 18),
+                OutlinedButton.icon(
+                  key: const Key('chat-info-leave-group'),
+                  onPressed: _isSaving ? null : _leaveGroup,
+                  icon: const Icon(Icons.logout_rounded),
+                  label: const Text('Покинуть чат'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: theme.colorScheme.error,
+                    side: BorderSide(
+                      color: theme.colorScheme.error.withValues(alpha: 0.5),
+                    ),
+                    minimumSize: const Size.fromHeight(48),
+                  ),
+                ),
+              ],
             ],
           ),
         ),
       ),
     );
+  }
+
+  Future<void> _leaveGroup() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Покинуть чат'),
+        content: const Text(
+          'Вы выйдете из этого группового чата. Чтобы вернуться, кто-то из '
+          'участников должен добавить вас снова.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Выйти'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || confirmed != true) {
+      return;
+    }
+
+    setState(() {
+      _isSaving = true;
+    });
+    try {
+      await widget.onLeaveGroup();
+      // Успех: вызывающий закрывает шит и уводит к списку чатов — здесь
+      // больше ничего делать не нужно (виджет уже размонтирован).
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isSaving = false;
+      });
+      showAppSnackBar(
+        context,
+        'Не удалось покинуть чат.',
+        isError: true,
+      );
+    }
   }
 
   Future<void> _setNotificationLevel(ChatNotificationLevel level) async {

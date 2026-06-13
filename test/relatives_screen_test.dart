@@ -164,6 +164,9 @@ class _FakeChatService implements ChatServiceInterface {
       getChatDetails(chatId);
 
   @override
+  Future<void> leaveGroup(String chatId) async {}
+
+  @override
   Future<void> editChatMessage({
     required String chatId,
     required String messageId,

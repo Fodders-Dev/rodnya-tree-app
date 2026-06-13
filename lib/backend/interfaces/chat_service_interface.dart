@@ -84,6 +84,13 @@ abstract class ChatServiceInterface {
     throw UnsupportedError('removeGroupParticipant is not supported');
   }
 
+  /// G2: самовыход из группового чата. Возвращает void — вышедший
+  /// теряет доступ и не должен парсить состав, который уже не его.
+  /// Дефолт-бросок: реализуют только сервисы, поддерживающие группы.
+  Future<void> leaveGroup(String chatId) {
+    throw UnsupportedError('leaveGroup is not supported');
+  }
+
   Future<void> editChatMessage({
     required String chatId,
     required String messageId,

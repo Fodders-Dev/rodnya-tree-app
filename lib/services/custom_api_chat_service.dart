@@ -659,6 +659,17 @@ class CustomApiChatService
     });
   }
 
+  @override
+  Future<void> leaveGroup(String chatId) async {
+    // G2: участник убирает СЕБЯ — сервер берёт его из auth, тела/пути с id
+    // не нужно. Ответ (обновлённый состав) игнорируем: вышедший к нему
+    // уже не имеет доступа.
+    await _requestJson(
+      method: 'POST',
+      path: '/v1/chats/$chatId/leave',
+    );
+  }
+
   Future<List<ChatPreview>> _fetchChatPreviews() async {
     final response = await _requestJson(
       method: 'GET',
