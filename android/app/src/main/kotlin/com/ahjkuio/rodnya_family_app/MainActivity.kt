@@ -29,6 +29,19 @@ class MainActivity: FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+        // U3: гейт источника установки для OTA-самообновления (U2).
+        // Возвращает packageName инсталлера или null при sideload —
+        // апдейтер работает только при sideload (не магазин).
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "rodnya/apk_updater"
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "getInstallerPackageName" ->
+                    result.success(resolveInstallerPackageName())
+                else -> result.notImplemented()
+            }
+        }
         RodnyaTelecomBridge.configure(this, flutterEngine)
         RodnyaCallForegroundBridge.configure(this, flutterEngine)
     }
@@ -38,6 +51,26 @@ class MainActivity: FlutterActivity() {
         setIntent(intent)
         RodnyaTelecomBridge.handleIntent(this, intent)
         RodnyaCallForegroundBridge.handleIntent(this, intent)
+    }
+
+    /**
+     * U3: packageName магазина-инсталлера, либо null при sideload.
+     * API 30+ — InstallSourceInfo.installingPackageName (старый
+     * getInstallerPackageName с API 30 deprecated). Любая ошибка →
+     * null (трактуется на стороне Flutter как sideload).
+     */
+    private fun resolveInstallerPackageName(): String? {
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                packageManager.getInstallSourceInfo(packageName)
+                    .installingPackageName
+            } else {
+                @Suppress("DEPRECATION")
+                packageManager.getInstallerPackageName(packageName)
+            }
+        } catch (_: Throwable) {
+            null
+        }
     }
 
     private fun enterRodnyaPictureInPicture(width: Int, height: Int): Boolean {

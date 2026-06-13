@@ -26,6 +26,12 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
     <!-- Разрешение WAKE_LOCK может помочь для надежности фоновых задач -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- U3: OTA-самообновление sideload-сборок (раздача через Telegram,
+         вне магазина). Нужно для запуска системного установщика на
+         скачанный APK. Уровень normal, на API <26 игнорируется.
+         FileProvider для content://-доступа к APK предоставляет
+         open_filex (authority ${applicationId}.fileProvider...). -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- Foreground service для активного звонка (Bug A audit 2026-05-22):
          Android 14+ требует FOREGROUND_SERVICE + foregroundServiceType
          декларацию, иначе mic capture revokes когда screen blank / app
