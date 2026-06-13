@@ -20,6 +20,7 @@ import 'package:rodnya/providers/tree_provider.dart';
 import 'package:rodnya/screens/family_screen.dart';
 import 'package:rodnya/screens/relatives_screen.dart';
 import 'package:rodnya/services/app_status_service.dart';
+import 'package:rodnya/theme/app_theme.dart';
 import 'package:rodnya/widgets/main_navigation_bar.dart';
 import 'package:rodnya/services/local_storage_service.dart';
 import 'package:provider/provider.dart';
@@ -437,6 +438,15 @@ void main() {
 
   testWidgets('RelativesScreen показывает точные роли и быстрый чат',
       (tester) async {
+    // A-list: список теперь резервирует нижний инсет под плавающий
+    // нав-бар (~84dp вместо 12dp). На дефолтных 600dp это сдвигало
+    // прокрутку настолько, что строка отца уходила из дерева виджетов к
+    // моменту проверки её тултипа. Берём телефонную высоту, где и отец, и
+    // жена видны одновременно — проверка остаётся прежней.
+    tester.view.physicalSize = const Size(800, 1200);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
     await pumpRelativesScreen(tester);
 
     expect(find.text('Кузнецов Андрей Анатольевич'), findsOneWidget);
@@ -468,6 +478,28 @@ void main() {
       ).first,
     );
     expect(find.text('Нужно пригласить'), findsOneWidget);
+  });
+
+  testWidgets(
+      'A-list: список «Семья» имеет нижний инсет под плавающий нав-бар',
+      (tester) async {
+    tester.view.physicalSize = const Size(800, 1200);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await pumpRelativesScreen(tester);
+
+    final listFinder = find.byKey(const ValueKey('relatives_tree-1'));
+    expect(listFinder, findsOneWidget);
+    final padding = tester.widget<ListView>(listFinder).padding as EdgeInsets;
+    // Тот же инсет, что у FAB: высота полосы + max(safe,14) + зазор.
+    // В тесте safe-bottom=0 → срабатывает пол 14dp.
+    expect(
+      padding.bottom,
+      AppTheme.bottomNavContentHeight + 14.0 + 8.0,
+    );
+    // Защита от регресса к старым 12dp.
+    expect(padding.bottom, greaterThan(60));
   });
 
   testWidgets(

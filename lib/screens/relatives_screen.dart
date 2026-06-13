@@ -1315,7 +1315,11 @@ class _RelativesScreenState extends State<RelativesScreen> {
 
     return ListView.builder(
       key: key,
-      padding: const EdgeInsets.only(top: 4, bottom: 12),
+      // Нижний инсет под плавающий нав-бар — как у FAB (тот же
+      // AppTheme.bottomNavInset). Один список обслуживает «В приложении»,
+      // «Нужно пригласить» и результаты поиска (общий flatList), так что
+      // инсет покрывает все три скролла вкладки «Семья».
+      padding: EdgeInsets.only(top: 4, bottom: AppTheme.bottomNavInset(context)),
       itemCount: flatList.length,
       itemBuilder: (context, index) {
         final item = flatList[index];
