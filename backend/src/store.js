@@ -18230,6 +18230,41 @@ class FileStore {
     return structuredClone(chat);
   }
 
+  // G2: самовыход из группового чата. Отдельный метод (не reuse
+  // removeGroupParticipant) намеренно: у remove есть пол в 3 участника
+  // — нельзя ужать группу ниже жизнеспособной. Но ПОКИНУТЬ юзер обязан
+  // мочь всегда (Telegram-паритет), поэтому здесь пола нет: убираем
+  // звонящего из любого размера. Возвращает: null — чат не найден,
+  // false — это не group-чат, undefined — звонящего нет в участниках,
+  // иначе обновлённый чат.
+  async leaveGroupChat(chatId, userId) {
+    const db = await this._read();
+    const chat = this._findStoredChat(db, chatId);
+    if (!chat) {
+      return null;
+    }
+    if (chat.type !== "group") {
+      return false;
+    }
+
+    const normalizedUserId = String(userId || "").trim();
+    if (!normalizedUserId) {
+      return undefined;
+    }
+
+    const currentParticipantIds = normalizeParticipantIds(chat.participantIds || []);
+    if (!currentParticipantIds.includes(normalizedUserId)) {
+      return undefined;
+    }
+
+    chat.participantIds = currentParticipantIds.filter((entry) => {
+      return entry !== normalizedUserId;
+    });
+    chat.updatedAt = nowIso();
+    await this._write(db);
+    return structuredClone(chat);
+  }
+
   async createBranchChat({
     treeId,
     branchRootPersonIds,

@@ -634,6 +634,66 @@ function registerChatRoutes(
     },
   );
 
+  // G2: самовыход из группового чата. Участник убирает СЕБЯ — поэтому
+  // POST (а не DELETE /participants/:id, который позволяет убрать любого);
+  // звонящий берётся из auth, лишний путь-параметр не нужен, и это
+  // закрывает дыру «любой может убрать любого». Realtime шлём объединению
+  // before+after id, чтобы и ушедший получил chat.updated и убрал чат из
+  // списка, и оставшиеся увидели уменьшившийся состав.
+  app.post("/v1/chats/:chatId/leave", requireAuth, async (req, res) => {
+    const chat = await requireChatAccess(req, res, req.params.chatId);
+    if (!chat) {
+      return;
+    }
+    const resolvedChatId = chat.id;
+
+    const updatedChat = await store.leaveGroupChat(
+      resolvedChatId,
+      req.auth.user.id,
+    );
+    if (updatedChat === false) {
+      res.status(400).json({message: "Покинуть можно только групповой чат"});
+      return;
+    }
+    if (updatedChat === undefined) {
+      res.status(400).json({message: "Вы не состоите в этом чате"});
+      return;
+    }
+    if (!updatedChat) {
+      res.status(404).json({message: "Чат не найден"});
+      return;
+    }
+
+    const details = await store.getChatDetails(updatedChat.id);
+    if (!details) {
+      res.status(404).json({message: "Чат не найден"});
+      return;
+    }
+    const mappedChat = mapChatRecord(details.chat);
+    const affectedParticipantIds = new Set([
+      ...(chat.participantIds || []).map((entry) => String(entry || "").trim()),
+      ...(details.chat.participantIds || []).map((entry) =>
+        String(entry || "").trim(),
+      ),
+    ]);
+    for (const participantId of affectedParticipantIds) {
+      if (!participantId) {
+        continue;
+      }
+      realtimeHub?.publishToUser(participantId, {
+        type: "chat.updated",
+        chatId: details.chat.id,
+        chat: mappedChat,
+      });
+    }
+
+    res.json({
+      chat: mappedChat,
+      participants: details.participants.map(mapChatParticipant),
+      branchRoots: details.branchRoots.map(mapChatBranchRoot),
+    });
+  });
+
   app.get("/v1/chats/:chatId/messages", requireAuth, async (req, res) => {
     const chat = await requireChatAccess(req, res, req.params.chatId);
     if (!chat) {

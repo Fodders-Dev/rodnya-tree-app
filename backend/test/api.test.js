@@ -9402,6 +9402,59 @@ test("group chat details and participant management work for ordinary groups", a
     assert.ok(
       reducedPayload.participants.every((participant) => participant.userId !== cara.user.id),
     );
+
+    // G2: участник сам выходит из группы (POST /leave). Сейчас в чате
+    // alice, bob, dan (cara удалена). Выходит bob.
+    const leaveResponse = await fetch(
+      `${ctx.baseUrl}/v1/chats/${createdPayload.chatId}/leave`,
+      {
+        method: "POST",
+        headers: {authorization: `Bearer ${bob.accessToken}`},
+      },
+    );
+    assert.equal(leaveResponse.status, 200);
+    const leftPayload = await leaveResponse.json();
+    assert.equal(leftPayload.participants.length, 2);
+    assert.ok(
+      leftPayload.participants.every((participant) => participant.userId !== bob.user.id),
+      "вышедший участник исчезает из состава",
+    );
+
+    // Вышедший теряет доступ к чату.
+    const bobAfterLeaveResponse = await fetch(
+      `${ctx.baseUrl}/v1/chats/${createdPayload.chatId}`,
+      {headers: {authorization: `Bearer ${bob.accessToken}`}},
+    );
+    assert.equal(bobAfterLeaveResponse.status, 403);
+
+    // G2: выход разрешён и НИЖЕ пола remove (3). Сейчас alice, dan (2).
+    // dan выходит → остаётся alice (1). remove такого не позволил бы.
+    const danLeaveResponse = await fetch(
+      `${ctx.baseUrl}/v1/chats/${createdPayload.chatId}/leave`,
+      {
+        method: "POST",
+        headers: {authorization: `Bearer ${dan.accessToken}`},
+      },
+    );
+    assert.equal(danLeaveResponse.status, 200);
+    const danLeftPayload = await danLeaveResponse.json();
+    assert.equal(danLeftPayload.participants.length, 1);
+    assert.equal(danLeftPayload.participants[0].userId, alice.user.id);
+
+    // Покинуть личный чат нельзя (только групповой).
+    const directChat = await createDirectChat(
+      ctx,
+      alice.accessToken,
+      cara.user.id,
+    );
+    const directLeaveResponse = await fetch(
+      `${ctx.baseUrl}/v1/chats/${directChat.id}/leave`,
+      {
+        method: "POST",
+        headers: {authorization: `Bearer ${alice.accessToken}`},
+      },
+    );
+    assert.equal(directLeaveResponse.status, 400);
   } finally {
     await stopTestServer(ctx);
   }
