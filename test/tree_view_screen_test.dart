@@ -496,6 +496,9 @@ void main() {
 
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
+    // A-CTA: dismiss гида статичен на сессию — сбрасываем между тестами,
+    // иначе одно закрытие протекло бы в соседние кейсы.
+    TreeViewScreen.debugResetGuidedCtaDismissal();
     await getIt.reset();
     getIt.registerSingleton<AuthServiceInterface>(_FakeAuthService());
     getIt.registerSingleton<ChatServiceInterface>(_FakeChatService());
@@ -606,6 +609,61 @@ void main() {
       familyService.requestedTreeIds.where((id) => id == 'tree-1').length,
       greaterThanOrEqualTo(2),
     );
+  });
+
+  testWidgets(
+      'A-CTA: dismiss гида скрывает его и переживает пересоздание экрана (сессия)',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final familyService = _FakeFamilyTreeService(); // пустое дерево
+    getIt.registerSingleton<FamilyTreeServiceInterface>(familyService);
+    final treeProvider = TreeProvider();
+    await treeProvider.selectTree('tree-1', 'Тест');
+
+    GoRouter buildRouter() => GoRouter(
+          initialLocation: '/tree/view/tree-1?name=%D0%A2%D0%B5%D1%81%D1%82',
+          routes: [
+            GoRoute(
+              path: '/tree/view/:treeId',
+              builder: (context, state) => TreeViewScreen(
+                routeTreeId: state.pathParameters['treeId'],
+                routeTreeName: state.uri.queryParameters['name'],
+              ),
+            ),
+          ],
+        );
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<TreeProvider>.value(
+        value: treeProvider,
+        child: MaterialApp.router(routerConfig: buildRouter()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Гид виден, крестик присутствует.
+    expect(find.byKey(const Key('empty-tree-cta-mama')), findsOneWidget);
+    expect(find.byKey(const Key('empty-tree-cta-dismiss')), findsOneWidget);
+
+    // Закрываем гид.
+    await tester.tap(find.byKey(const Key('empty-tree-cta-dismiss')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('empty-tree-cta-mama')), findsNothing);
+
+    // Пересоздаём экран с нуля (новый стейт) — гид НЕ возвращается,
+    // потому что dismiss запомнен на сессию.
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(
+      ChangeNotifierProvider<TreeProvider>.value(
+        value: treeProvider,
+        child: MaterialApp.router(routerConfig: buildRouter()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('empty-tree-cta-mama')), findsNothing);
   });
 
   testWidgets('компактный tree view не забивает экран длинной шапкой',

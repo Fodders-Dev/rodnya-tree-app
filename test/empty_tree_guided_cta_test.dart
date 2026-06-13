@@ -189,6 +189,65 @@ void main() {
     },
   );
 
+  testWidgets('A-CTA: onDismiss=null → крестика нет', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: EmptyTreeGuidedCta(
+            hasSelfPerson: true,
+            onAddRelative: (_, __) {},
+            onAddOther: () {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('empty-tree-cta-dismiss')), findsNothing);
+  });
+
+  testWidgets('A-CTA: onDismiss задан → крестик есть и вызывает колбэк',
+      (tester) async {
+    var dismissCount = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: EmptyTreeGuidedCta(
+            hasSelfPerson: true,
+            onAddRelative: (_, __) {},
+            onAddOther: () {},
+            onDismiss: () => dismissCount++,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('empty-tree-cta-dismiss')), findsOneWidget);
+    // CTAs всё ещё на месте — крестик не ломает основной контент.
+    expect(find.byKey(const Key('empty-tree-cta-mama')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('empty-tree-cta-dismiss')));
+    await tester.pumpAndSettle();
+    expect(dismissCount, 1);
+  });
+
+  testWidgets('A-CTA: viewerMode игнорирует onDismiss (нечего скрывать)',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: EmptyTreeGuidedCta(
+            hasSelfPerson: false,
+            viewerMode: true,
+            onAddRelative: (_, __) {},
+            onAddOther: () {},
+            onDismiss: () {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('empty-tree-cta-dismiss')), findsNothing);
+  });
+
   testWidgets('header copy + sub-copy differ between hasSelfPerson states',
       (tester) async {
     await tester.pumpWidget(

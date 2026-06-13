@@ -119,6 +119,12 @@ class TreeViewScreen extends StatefulWidget {
     this.routeTreeName,
   });
 
+  /// A-CTA: сброс session-dismiss гида между тестами.
+  @visibleForTesting
+  static void debugResetGuidedCtaDismissal() {
+    _TreeViewScreenState._guidedCtaDismissedThisSession = false;
+  }
+
   @override
   State<TreeViewScreen> createState() => _TreeViewScreenState();
 }
@@ -136,6 +142,10 @@ class _TreeViewScreenState extends State<TreeViewScreen>
   // Map<String, dynamic> _graphData = {'nodes': [], 'edges': []}; // Больше не нужно
   bool _isLoading = true;
   String _errorMessage = '';
+  // A-CTA: пользователь закрыл блокирующий гид «добавь близких». Static —
+  // переживает пересоздание экрана в рамках сессии, сбрасывается рестартом.
+  // Закрыт → показываем канвас с FAB вместо гида.
+  static bool _guidedCtaDismissedThisSession = false;
   bool _isEditMode = false; // <<< Добавляем состояние режима редактирования
   // Multi-select mode for bulk operations on the canvas — entered
   // via the toolbar action, exited explicitly by the user (or auto-
@@ -975,12 +985,15 @@ class _TreeViewScreenState extends State<TreeViewScreen>
             // Phase B polish C: «Не бойся сломать» reassurance, overlaid at
             // the top (same pattern as the extended empty-state banner).
             // Dismissible + persisted — disappears once the user closes it.
-            const Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
-              child: DontFearBreakingBanner(),
-            ),
+            // A-CTA: но не поверх онбординг-гида пустого дерева — там он
+            // бессмыслен и перекрывал крестик «скрыть» и шапку гида.
+            if (!_isGuidedCtaActive)
+              const Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: DontFearBreakingBanner(),
+              ),
           ],
         ),
       ),
@@ -2197,6 +2210,29 @@ class _TreeViewScreenState extends State<TreeViewScreen>
 
   Future<void> _showPersonHistorySheet(FamilyPerson person) {
     return _showTreeHistorySheet(person: person);
+  }
+
+  /// A-CTA: пользователь закрыл блокирующий гид — на сессию. Канвас с
+  /// FAB остаётся доступен; гид не вернётся до перезапуска.
+  void _dismissGuidedCta() {
+    if (_guidedCtaDismissedThisSession) return;
+    setState(() => _guidedCtaDismissedThisSession = true);
+  }
+
+  /// A-CTA: занимает ли тело экрана онбординг-гид пустого/только-себя
+  /// дерева. Пока он показан, баннер «Не бойся сломать» прятать — он
+  /// (а) бессмыслен (ломать ещё нечего) и (б) перекрывал собой верх гида
+  /// вместе с крестиком «скрыть». Зеркалит ветки в [_buildTreeBody].
+  bool get _isGuidedCtaActive {
+    if (_guidedCtaDismissedThisSession) return false;
+    if (_isLoading) return false;
+    if (_errorMessage.isNotEmpty) return false;
+    final isEmptyTree = _relativesData.isEmpty && _relationsData.isEmpty;
+    if (isEmptyTree) return true;
+    final selfPerson = _findSelfPerson();
+    return _relativesData.length == 1 &&
+        selfPerson != null &&
+        !_isFriendsTree;
   }
 
   Future<void> _navigateToAddRelative(String treeId) async {

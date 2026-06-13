@@ -24,7 +24,11 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
         // observation. Also surfaces guided CTA когда tree has только
         // self person (canvas с tiny lone card в empty space — audit's
         // primary complaint).
-        if (isEmptyTree) {
+        // A-CTA: блокирующий гид показываем только пока юзер его не
+        // закрыл. После dismiss — обычный канвас с FAB «Добавить».
+        final showGuidedCta = !_TreeViewScreenState._guidedCtaDismissedThisSession;
+
+        if (isEmptyTree && showGuidedCta) {
           if (_isFriendsTree) {
             // Friends tree (Круг) — relation-first CTAs don't apply
             // (no «mama/papa» concept). Keep original single-button state.
@@ -59,6 +63,7 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
               gender: gender,
             ),
             onAddOther: () => _navigateToAddRelative(selectedTreeId),
+            onDismiss: _dismissGuidedCta,
           );
         }
 
@@ -66,7 +71,7 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
         final treeHasOnlySelf = _relativesData.length == 1 &&
             selfPerson != null &&
             !_isFriendsTree;
-        if (treeHasOnlySelf) {
+        if (treeHasOnlySelf && showGuidedCta) {
           return EmptyTreeGuidedCta(
             hasSelfPerson: true,
             viewerMode: _isViewerOnly,
@@ -78,6 +83,7 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
               contextPersonId: selfPerson.id,
             ),
             onAddOther: () => _navigateToAddRelative(selectedTreeId),
+            onDismiss: _dismissGuidedCta,
           );
         }
 

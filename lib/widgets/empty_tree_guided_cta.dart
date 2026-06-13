@@ -33,6 +33,7 @@ class EmptyTreeGuidedCta extends StatelessWidget {
     required this.onAddOther,
     this.hasSelfPerson = false,
     this.viewerMode = false,
+    this.onDismiss,
   });
 
   /// Invoked when one of the 4 primary CTAs tapped.
@@ -55,6 +56,11 @@ class EmptyTreeGuidedCta extends StatelessWidget {
   /// чтобы viewer не тыкал в кнопки которые отвалятся с 403.
   final bool viewerMode;
 
+  /// A-CTA: закрыть гид (×). Когда задан — в правом верхнем углу
+  /// появляется крестик; вызывающий запоминает dismiss на сессию и
+  /// показывает обычный канвас. null → крестика нет.
+  final VoidCallback? onDismiss;
+
   @override
   Widget build(BuildContext context) {
     if (viewerMode) {
@@ -65,7 +71,7 @@ class EmptyTreeGuidedCta extends StatelessWidget {
     // (test viewports often 600px tall; production phones similar).
     // Pure Center+Column overflows when keyboard либо other chrome
     // shrinks the viewport. Scrollable центрирует контент via Align.
-    return SingleChildScrollView(
+    final Widget content = SingleChildScrollView(
       child: Align(
         alignment: Alignment.topCenter,
         child: ConstrainedBox(
@@ -152,6 +158,29 @@ class EmptyTreeGuidedCta extends StatelessWidget {
         ),
       ),
     ),
+    );
+
+    final dismiss = onDismiss;
+    if (dismiss == null) {
+      return content;
+    }
+    // A-CTA: крестик в правом верхнем углу — закрыть гид (≥44dp).
+    return Stack(
+      children: [
+        content,
+        Positioned(
+          top: 4,
+          right: 4,
+          child: IconButton(
+            key: const Key('empty-tree-cta-dismiss'),
+            icon: const Icon(Icons.close_rounded, size: 20),
+            tooltip: 'Скрыть',
+            color: theme.colorScheme.onSurfaceVariant,
+            constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+            onPressed: dismiss,
+          ),
+        ),
+      ],
     );
   }
 }
