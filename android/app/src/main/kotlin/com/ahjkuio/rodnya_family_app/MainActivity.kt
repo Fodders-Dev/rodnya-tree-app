@@ -61,12 +61,19 @@ class MainActivity: FlutterActivity() {
      */
     private fun resolveInstallerPackageName(): String? {
         return try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val installer = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 packageManager.getInstallSourceInfo(packageName)
                     .installingPackageName
             } else {
                 @Suppress("DEPRECATION")
                 packageManager.getInstallerPackageName(packageName)
+            }
+            // Само-инсталлер (== наш package) — деградировавший кейс,
+            // трактуем как sideload (null).
+            if (installer.isNullOrEmpty() || installer == packageName) {
+                null
+            } else {
+                installer
             }
         } catch (_: Throwable) {
             null

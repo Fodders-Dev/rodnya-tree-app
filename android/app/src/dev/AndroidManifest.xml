@@ -1,4 +1,11 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <!-- Defense-in-depth: dev-сборка (.dev package) никогда не должна
+         self-update'иться через sideload — вырезаем разрешение из
+         merged-манифеста на этапе сборки (помимо Dart-гейта по .dev). -->
+    <uses-permission
+        android:name="android.permission.REQUEST_INSTALL_PACKAGES"
+        tools:node="remove" />
     <application>
         <meta-data
             android:name="ru.rustore.sdk.ApplicationId"

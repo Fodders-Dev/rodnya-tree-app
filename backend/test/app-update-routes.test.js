@@ -144,6 +144,44 @@ test("конфиг вовсе не задан — 204 (не падает)", asyn
   }
 });
 
+test("http apkUrl отвергается (только https) → 204", async () => {
+  const ctx = await startTestServer({
+    latestAndroidUpdate: {
+      versionCode: 42,
+      versionName: "1.0.3",
+      apkUrl: "http://insecure.example/rodnya.apk",
+      minVersionCode: 0,
+      notes: "",
+    },
+  });
+  try {
+    const res = await fetch(`${ctx.baseUrl}/v1/app/latest`);
+    assert.equal(res.status, 204);
+  } finally {
+    await shutdown(ctx);
+  }
+});
+
+test("нефинитный minVersionCode (Infinity) не утекает — приходит 0", async () => {
+  const ctx = await startTestServer({
+    latestAndroidUpdate: {
+      versionCode: 42,
+      versionName: "1.0.3",
+      apkUrl: "https://s3.ru-msk.example/rodnya/rodnya.apk",
+      minVersionCode: Infinity,
+      notes: "",
+    },
+  });
+  try {
+    const res = await fetch(`${ctx.baseUrl}/v1/app/latest`);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.minVersionCode, 0);
+  } finally {
+    await shutdown(ctx);
+  }
+});
+
 test("эндпоинт публичный — работает без Authorization", async () => {
   const ctx = await startTestServer({
     latestAndroidUpdate: {

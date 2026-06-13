@@ -252,13 +252,56 @@ void main() {
       service.dispose();
     });
 
-    test('ошибка нативного гейта → безопасный sideload-дефолт (optional)', () async {
+    test('ошибка определения источника → fail-closed (none), не sideload', () async {
+      // Хардинг: если источник установки определить нельзя (канал
+      // упал), НЕ самообновляемся — иначе можно активироваться внутри
+      // магазинной сборки при сломанном гейте.
       final service = _buildService(
         latestJson: _payload(versionCode: 99),
         installerThrows: true,
       );
       await service.checkForUpdate();
-      expect(service.state.availability, AppUpdateAvailability.optional);
+      expect(service.state.availability, AppUpdateAvailability.none);
+      service.dispose();
+    });
+
+    test('RuStore-семейство по префиксу (ru.rustore.installer) → none', () async {
+      final service = _buildService(
+        latestJson: _payload(versionCode: 99),
+        installer: 'ru.rustore.installer',
+      );
+      await service.checkForUpdate();
+      expect(service.state.availability, AppUpdateAvailability.none);
+      service.dispose();
+    });
+  });
+
+  group('https-only apkUrl', () {
+    test('http-ссылка → tryParse null (фича выключена)', () {
+      final parsed = AppLatestVersion.tryParse({
+        'versionCode': 42,
+        'apkUrl': 'http://insecure.example/rodnya.apk',
+      });
+      expect(parsed, isNull);
+    });
+
+    test('https-ссылка парсится', () {
+      final parsed = AppLatestVersion.tryParse({
+        'versionCode': 42,
+        'apkUrl': 'https://secure.example/rodnya.apk',
+      });
+      expect(parsed, isNotNull);
+    });
+
+    test('http apkUrl от бэка → состояние none', () async {
+      final service = _buildService(
+        latestJson: {
+          'versionCode': 99,
+          'apkUrl': 'http://insecure.example/rodnya.apk',
+        },
+      );
+      await service.checkForUpdate();
+      expect(service.state.availability, AppUpdateAvailability.none);
       service.dispose();
     });
   });

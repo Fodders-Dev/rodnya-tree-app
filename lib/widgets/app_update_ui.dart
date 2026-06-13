@@ -244,18 +244,15 @@ class _AppUpdateActions extends StatelessWidget {
             child: LinearProgressIndicator(
               key: const Key('app-update-progress'),
               minHeight: 8,
-              value: download.stage == AppUpdateDownloadStage.opening
-                  ? null
-                  : fraction,
+              // null (неизвестная длина) → неопределённый индикатор.
+              value: fraction,
             ),
           ),
           const SizedBox(height: 8),
           Text(
-            download.stage == AppUpdateDownloadStage.opening
-                ? 'Открываем установщик…'
-                : percent == null
-                    ? 'Скачиваем обновление…'
-                    : 'Скачиваем обновление… $percent%',
+            percent == null
+                ? 'Скачиваем обновление…'
+                : 'Скачиваем обновление… $percent%',
             style: theme.textTheme.bodySmall?.copyWith(
               color: tokens.inkSecondary,
             ),

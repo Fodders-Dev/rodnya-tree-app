@@ -24,10 +24,14 @@ import 'package:path_provider/path_provider.dart';
 /// (installer null/неизвестный) и только на Android.
 
 /// Известные магазинные инсталлеры. Установка любым из них → апдейтер
-/// молчит (магазин обновит сам).
+/// молчит (магазин обновит сам). RuStore-семейство дополнительно
+/// ловится по префиксу (см. [_isStoreInstaller]) — package id RuStore
+/// исторически менялся.
 const Set<String> kStoreInstallerPackages = <String>{
-  'ru.vk.store', // RuStore
+  'ru.vk.store', // RuStore (актуальный)
   'ru.rustore.app',
+  'ru.rustore.installer',
+  'com.rustore',
   'com.android.vending', // Google Play
   'com.huawei.appmarket', // AppGallery
   'com.sec.android.app.samsungapps', // Galaxy Store
@@ -35,6 +39,13 @@ const Set<String> kStoreInstallerPackages = <String>{
   'com.heytap.market', // OPPO / realme
   'com.amazon.venezia', // Amazon Appstore
 };
+
+/// Сентинел: источник установки определить не удалось (нативный канал
+/// недоступен/ошибка). Трактуется как fail-closed — апдейтер НЕ
+/// активируется, чтобы случайно не самообновиться внутри магазинной
+/// сборки, если гейт сломался. Реальный sideload даёт native-null
+/// (не сентинел) и апдейтер работает штатно.
+const String kInstallerSourceUnavailable = '__installer_source_unavailable__';
 
 enum AppUpdateAvailability {
   /// Апдейтер неприменим: не Android / web / магазинная установка /
@@ -49,7 +60,7 @@ enum AppUpdateAvailability {
   mandatory,
 }
 
-enum AppUpdateDownloadStage { idle, downloading, opening, failed }
+enum AppUpdateDownloadStage { idle, downloading, failed }
 
 @immutable
 class AppUpdateDownloadProgress {
@@ -69,9 +80,7 @@ class AppUpdateDownloadProgress {
   static const AppUpdateDownloadProgress idle =
       AppUpdateDownloadProgress(stage: AppUpdateDownloadStage.idle);
 
-  bool get isBusy =>
-      stage == AppUpdateDownloadStage.downloading ||
-      stage == AppUpdateDownloadStage.opening;
+  bool get isBusy => stage == AppUpdateDownloadStage.downloading;
 }
 
 @immutable
@@ -97,6 +106,13 @@ class AppLatestVersion {
     final versionCode = _asInt(json['versionCode']);
     final apkUrl = (json['apkUrl'] as Object?)?.toString().trim() ?? '';
     if (versionCode == null || versionCode <= 0 || apkUrl.isEmpty) {
+      return null;
+    }
+    // Хардинг: APK скачивается и ставится — только https, иначе
+    // cleartext-загрузку можно подменить (MITM). Невалидную ссылку
+    // трактуем как «фича выключена».
+    final apkUri = Uri.tryParse(apkUrl);
+    if (apkUri == null || apkUri.scheme.toLowerCase() != 'https') {
       return null;
     }
     final versionName = (json['versionName'] as Object?)?.toString().trim();
@@ -165,6 +181,9 @@ class AppUpdateService extends ChangeNotifier {
     TargetPlatform? platform,
   })  : _apiBaseUrl = apiBaseUrl,
         _httpClient = httpClient ?? http.Client(),
+        // Закрываем клиент в dispose только если создали его сами —
+        // инъектированным (DI-singleton / тестовый) владеет вызывающий.
+        _ownsHttpClient = httpClient == null,
         _buildSnapshotProvider =
             buildSnapshotProvider ?? _defaultBuildSnapshot,
         _installerSourceProvider =
@@ -178,6 +197,8 @@ class AppUpdateService extends ChangeNotifier {
 
   final String _apiBaseUrl;
   final http.Client _httpClient;
+  final bool _ownsHttpClient;
+  bool _disposed = false;
   final Future<AppBuildSnapshot> Function() _buildSnapshotProvider;
   final Future<String?> Function() _installerSourceProvider;
   late final AppUpdateInstaller _updateInstaller;
@@ -204,6 +225,13 @@ class AppUpdateService extends ChangeNotifier {
   void dismissOptionalForSession() {
     if (_optionalDismissedThisSession) return;
     _optionalDismissedThisSession = true;
+    _safeNotify();
+  }
+
+  /// notifyListeners только если сервис ещё жив — длинные async-цепочки
+  /// (HTTP, скачивание) могут завершиться уже после dispose().
+  void _safeNotify() {
+    if (_disposed) return;
     notifyListeners();
   }
 
@@ -215,7 +243,7 @@ class AppUpdateService extends ChangeNotifier {
     } catch (_) {
       _state = AppUpdateState.none;
     }
-    notifyListeners();
+    _safeNotify();
   }
 
   Future<AppUpdateState> _resolveState() async {
@@ -234,11 +262,18 @@ class AppUpdateService extends ChangeNotifier {
     if (build.packageName.endsWith('.dev')) {
       return AppUpdateState.none;
     }
-    // 3. ⚠️ Гейт источника: магазинная установка → апдейтер молчит.
-    final installer = (await _safeInstallerSource())?.trim().toLowerCase();
-    if (installer != null &&
-        installer.isNotEmpty &&
-        kStoreInstallerPackages.contains(installer)) {
+    // 3. ⚠️ Гейт источника установки.
+    final installerRaw = await _safeInstallerSource();
+    // Источник не определён (канал недоступен/ошибка) — fail-closed:
+    // не самообновляемся, чтобы не активироваться в магазинной сборке
+    // при сломанном гейте. Реальный sideload даёт native-null.
+    if (installerRaw == kInstallerSourceUnavailable) {
+      return AppUpdateState.none;
+    }
+    final installer = installerRaw?.trim().toLowerCase() ?? '';
+    if (installer.isNotEmpty && _isStoreInstaller(installer)) {
+      // Магазинная установка → обновляет магазин (для RuStore —
+      // flutter_rustore_update), наш апдейтер молчит.
       return AppUpdateState.none;
     }
     // 4. Спросить бэк. 204 / ошибка / непарсибельно → фича выключена.
@@ -268,8 +303,19 @@ class AppUpdateService extends ChangeNotifier {
     try {
       return await _installerSourceProvider();
     } catch (_) {
-      return null;
+      // Ошибка определения источника → fail-closed (не sideload-дефолт).
+      return kInstallerSourceUnavailable;
     }
+  }
+
+  /// Магазинный ли инсталлер. Помимо явного списка ловим RuStore-семейство
+  /// по префиксу (package id RuStore исторически менялся). [installer]
+  /// уже в нижнем регистре.
+  bool _isStoreInstaller(String installer) {
+    if (kStoreInstallerPackages.contains(installer)) return true;
+    return installer.startsWith('ru.rustore') ||
+        installer.startsWith('ru.vk.store') ||
+        installer.startsWith('com.rustore');
   }
 
   Future<AppLatestVersion?> _fetchLatest() async {
@@ -288,7 +334,10 @@ class AppUpdateService extends ChangeNotifier {
         return null;
       }
       return AppLatestVersion.tryParse(jsonDecode(response.body));
-    } catch (_) {
+    } catch (error) {
+      // Молча выключаем фичу, но оставляем след — обычно это
+      // misconfig бэка/прокси (HTML вместо JSON), который иначе не виден.
+      debugPrint('[app-update] не удалось получить версию: $error');
       return null;
     }
   }
@@ -306,13 +355,21 @@ class AppUpdateService extends ChangeNotifier {
       fraction: 0,
     ));
     try {
+      // Таймаут, чтобы зависший аплоад/OpenFilex не запер isBusy навсегда
+      // (иначе кнопка «Обновить» молча игнорит повторные тапы). Щедрый —
+      // большой APK на слабой сети качается долго.
       await _updateInstaller(latest, (fraction) {
         _setDownload(AppUpdateDownloadProgress(
           stage: AppUpdateDownloadStage.downloading,
           fraction: fraction,
         ));
-      });
+      }).timeout(const Duration(minutes: 5));
       _setDownload(AppUpdateDownloadProgress.idle);
+    } on TimeoutException {
+      _setDownload(const AppUpdateDownloadProgress(
+        stage: AppUpdateDownloadStage.failed,
+        error: 'Загрузка заняла слишком долго. Попробуйте ещё раз.',
+      ));
     } catch (_) {
       _setDownload(const AppUpdateDownloadProgress(
         stage: AppUpdateDownloadStage.failed,
@@ -323,7 +380,7 @@ class AppUpdateService extends ChangeNotifier {
 
   void _setDownload(AppUpdateDownloadProgress next) {
     _download = next;
-    notifyListeners();
+    _safeNotify();
   }
 
   // ── Дефолтные провайдеры (прод) ──────────────────────────────────
@@ -340,11 +397,13 @@ class AppUpdateService extends ChangeNotifier {
     try {
       return await _channel.invokeMethod<String?>('getInstallerPackageName');
     } on MissingPluginException {
-      // Нативный обработчик ещё не подключён (тесты / до U3) — трактуем
-      // как sideload (безопасный дефолт для sideload-сборки).
-      return null;
+      // Нативный обработчик не подключён (тесты / сломанная сборка) —
+      // источник неизвестен. Fail-closed (см. kInstallerSourceUnavailable):
+      // в проде канал всегда есть (U3), так что это не трогает реальный
+      // sideload, где native возвращает null.
+      return kInstallerSourceUnavailable;
     } catch (_) {
-      return null;
+      return kInstallerSourceUnavailable;
     }
   }
 
@@ -379,7 +438,10 @@ class AppUpdateService extends ChangeNotifier {
 
   @override
   void dispose() {
-    _httpClient.close();
+    _disposed = true;
+    if (_ownsHttpClient) {
+      _httpClient.close();
+    }
     super.dispose();
   }
 }
