@@ -22,7 +22,12 @@ class _VoicePlayerWidget extends StatefulWidget {
 }
 
 class _VoicePlayerWidgetState extends State<_VoicePlayerWidget> {
-  late final AudioPlayer _player;
+  // C1: плеер создаём ЛЕНИВО — только при первом воспроизведении.
+  // Раньше initState спавнил AudioPlayer на КАЖДОЕ голосовое в чате
+  // (десятки плагин-инстансов на один скролл) и трогал плагин при
+  // простом рендере. Теперь рендер бабла бесплатен, плеер появляется
+  // по тапу Play.
+  AudioPlayer? _player;
   PlayerState _playerState = PlayerState.stopped;
   Duration _duration = Duration.zero;
   Duration _position = Duration.zero;
@@ -43,18 +48,27 @@ class _VoicePlayerWidgetState extends State<_VoicePlayerWidget> {
   @override
   void initState() {
     super.initState();
-    _player = AudioPlayer();
     _duration = widget.initialDuration ?? Duration.zero;
-    _stateSub = _player.onPlayerStateChanged.listen((s) {
+  }
+
+  /// C1: создать плеер и подписки один раз — на первом Play.
+  AudioPlayer _ensurePlayer() {
+    final existing = _player;
+    if (existing != null) {
+      return existing;
+    }
+    final player = AudioPlayer();
+    _player = player;
+    _stateSub = player.onPlayerStateChanged.listen((s) {
       if (mounted) setState(() => _playerState = s);
     });
-    _durationSub = _player.onDurationChanged.listen((d) {
+    _durationSub = player.onDurationChanged.listen((d) {
       if (mounted) setState(() => _duration = d);
     });
-    _posSub = _player.onPositionChanged.listen((p) {
+    _posSub = player.onPositionChanged.listen((p) {
       if (mounted) setState(() => _position = p);
     });
-    _compSub = _player.onPlayerComplete.listen((_) {
+    _compSub = player.onPlayerComplete.listen((_) {
       if (mounted) {
         setState(() {
           _playerState = PlayerState.stopped;
@@ -67,11 +81,12 @@ class _VoicePlayerWidgetState extends State<_VoicePlayerWidget> {
         _pauseActive = null;
       }
     });
+    return player;
   }
 
   void _pauseSelf() {
     if (mounted && _playerState == PlayerState.playing) {
-      unawaited(_player.pause());
+      unawaited(_player?.pause());
     }
   }
 
@@ -84,7 +99,7 @@ class _VoicePlayerWidgetState extends State<_VoicePlayerWidget> {
     _durationSub?.cancel();
     _posSub?.cancel();
     _compSub?.cancel();
-    _player.dispose();
+    _player?.dispose();
     super.dispose();
   }
 
@@ -99,19 +114,20 @@ class _VoicePlayerWidgetState extends State<_VoicePlayerWidget> {
       }
       _pauseActive = _pauseSelf;
 
+      final player = _ensurePlayer();
       if (widget.url != null) {
-        await _player.play(UrlSource(widget.url!));
+        await player.play(UrlSource(widget.url!));
       } else if (widget.path != null) {
-        await _player.play(DeviceFileSource(widget.path!));
+        await player.play(DeviceFileSource(widget.path!));
       }
-      await _player.setPlaybackRate(_playbackRate);
+      await player.setPlaybackRate(_playbackRate);
     } catch (e) {
       debugPrint('Error playing audio: $e');
     }
   }
 
   Future<void> _pause() async {
-    await _player.pause();
+    await _player?.pause();
   }
 
   Future<void> _cyclePlaybackRate() async {
@@ -120,7 +136,8 @@ class _VoicePlayerWidgetState extends State<_VoicePlayerWidget> {
     final nextRate = rates[(currentIndex + 1) % rates.length];
     setState(() => _playbackRate = nextRate);
     try {
-      await _player.setPlaybackRate(nextRate);
+      // Если плеер ещё не создан — скорость применится при первом Play.
+      await _player?.setPlaybackRate(nextRate);
     } catch (e) {
       debugPrint('Error changing audio speed: $e');
     }
@@ -227,7 +244,9 @@ class _VoicePlayerWidgetState extends State<_VoicePlayerWidget> {
                     onSeekFraction: totalDuration.inMilliseconds <= 0
                         ? null
                         : (fraction) {
-                            _player.seek(
+                            // Сик имеет смысл только когда плеер уже создан
+                            // (после первого Play); иначе игнорируем.
+                            _player?.seek(
                               Duration(
                                 milliseconds:
                                     (totalDuration.inMilliseconds * fraction)

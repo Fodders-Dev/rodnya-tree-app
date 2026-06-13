@@ -1860,6 +1860,60 @@ void main() {
     expect(find.text('Второй документ'), findsAtLeastNWidgets(1));
   });
 
+  testWidgets(
+      'C1: записанное голосовое рендерится как voice-player, не как файл-тайл',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(900, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final chatService = _FakeChatService();
+    getIt.registerSingleton<ChatServiceInterface>(chatService);
+
+    await tester.pumpWidget(
+      buildChatApp(
+        ChatScreen(
+          chatId: 'chat-1',
+          title: 'Тестовый чат',
+          draftStore: _MemoryChatDraftStore(),
+        ),
+      ),
+    );
+
+    chatService.emitMessages([
+      ChatMessage(
+        id: 'm-voice-1',
+        chatId: 'chat-1',
+        senderId: 'other-user',
+        text: '',
+        timestamp: DateTime(2026, 4, 8, 9, 25),
+        isRead: false,
+        participants: const ['user-1', 'other-user'],
+        senderName: 'Анастасия<3',
+        attachments: const [
+          ChatAttachment(
+            type: ChatAttachmentType.audio,
+            presentation: ChatAttachmentPresentation.voiceNote,
+            url: 'https://example.com/voice_note_5s_1.m4a',
+            fileName: 'voice_note_5s_1.m4a',
+            durationMs: 5000,
+            waveform: [0.2, 0.6, 0.9, 0.4, 0.7],
+          ),
+        ],
+      ),
+    ]);
+    await tester.pumpAndSettle();
+
+    // Бабл — это voice-player (его уникальный tooltip), а не файл-тайл
+    // с именем voice_note_*.m4a, который при тапе уходил бы в исключённый
+    // для аудио просмотрщик.
+    expect(
+      find.byTooltip('Воспроизвести голосовое сообщение'),
+      findsOneWidget,
+    );
+    expect(find.text('voice_note_5s_1.m4a'), findsNothing);
+    // Ленивый плеер: простой рендер бабла не трогает плагин audioplayers.
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('ChatScreen forwards selected messages as a batch',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(900, 1000));
