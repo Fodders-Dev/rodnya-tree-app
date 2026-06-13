@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
@@ -44,9 +45,16 @@ class ChatRecordingPreview {
 class ChatRecordingController extends ChangeNotifier {
   ChatRecordingController({
     AudioRecorder? recorder,
-  }) : _recorder = recorder ?? AudioRecorder();
+    Future<bool> Function()? permissionRequester,
+  })  : _recorder = recorder ?? AudioRecorder(),
+        _permissionRequester = permissionRequester;
 
   final AudioRecorder _recorder;
+
+  /// C1/тестируемость: запрос разрешения на микрофон вынесен в инъекцию.
+  /// В проде null → штатная логика (web: recorder.hasPermission, native:
+  /// permission_handler). В тестах подменяется, чтобы не дёргать каналы.
+  final Future<bool> Function()? _permissionRequester;
 
   Timer? _ticker;
   StreamSubscription? _amplitudeSub;
@@ -54,6 +62,10 @@ class ChatRecordingController extends ChangeNotifier {
   int _durationSeconds = 0;
   String? _errorText;
   ChatRecordingPreview? _preview;
+  // C1: путь идущей записи — чтобы отмена/ошибка могли удалить temp-файл
+  // (record.cancel() не везде надёжно подчищает, плюс старт может упасть
+  // уже после создания пути).
+  String? _activeRecordingPath;
   final List<double> _amplitudeSamples = <double>[];
 
   ChatRecordingState get state => _state;
@@ -69,7 +81,11 @@ class ChatRecordingController extends ChangeNotifier {
       _state == ChatRecordingState.locked;
 
   Future<void> start() async {
-    if (isRecordingActive) {
+    // C1: гард не только на активную запись, но и на время запроса
+    // разрешения — повторный тап/двойной вызов не должен запрашивать
+    // микрофон второй раз и стартовать вторую запись.
+    if (isRecordingActive ||
+        _state == ChatRecordingState.requestingPermission) {
       return;
     }
 
@@ -88,10 +104,24 @@ class ChatRecordingController extends ChangeNotifier {
     _preview = null;
     _amplitudeSamples.clear();
     _durationSeconds = 0;
-    await _recorder.start(
-      const RecordConfig(),
-      path: resolvedPath,
-    );
+    _activeRecordingPath = resolvedPath;
+    // C1: старт рекордера в try/catch — иначе исключение оставляло
+    // контроллер навсегда в requestingPermission (бар «запрашиваю…» висел,
+    // запись не шла). На ошибке — чистим частичный файл и в idle.
+    try {
+      await _recorder.start(
+        const RecordConfig(),
+        path: resolvedPath,
+      );
+    } catch (error) {
+      debugPrint('ChatRecordingController.start failed: $error');
+      await _safeCancelRecorder();
+      await _deleteRecordingFile(_activeRecordingPath);
+      _activeRecordingPath = null;
+      _errorText = 'Не удалось начать запись.';
+      _setState(ChatRecordingState.idle);
+      return;
+    }
     _amplitudeSub?.cancel();
     _amplitudeSub = _recorder
         .onAmplitudeChanged(const Duration(milliseconds: 120))
@@ -107,6 +137,7 @@ class ChatRecordingController extends ChangeNotifier {
       _durationSeconds += 1;
       notifyListeners();
     });
+    // C1: надёжно переводим в recording — пульсирующий бар обязан появиться.
     _setState(ChatRecordingState.recording);
   }
 
@@ -129,6 +160,9 @@ class ChatRecordingController extends ChangeNotifier {
     final recordedDuration = _durationSeconds;
     _durationSeconds = 0;
     if (recordedPath == null || recordedPath.isEmpty || recordedDuration <= 0) {
+      // C1: пустая/нулевая запись — удаляем огрызок temp-файла, не копим.
+      await _deleteRecordingFile(recordedPath ?? _activeRecordingPath);
+      _activeRecordingPath = null;
       _preview = null;
       _setState(ChatRecordingState.idle);
       return;
@@ -156,6 +190,9 @@ class ChatRecordingController extends ChangeNotifier {
       durationSeconds: recordedDuration,
       waveform: waveform,
     );
+    // Файл теперь принадлежит preview — за его удаление отвечают
+    // discardPreview/cancelCurrent, а не logic очистки активной записи.
+    _activeRecordingPath = null;
     _amplitudeSamples.clear();
     _setState(ChatRecordingState.preview);
   }
@@ -165,8 +202,13 @@ class ChatRecordingController extends ChangeNotifier {
     await _amplitudeSub?.cancel();
     _amplitudeSub = null;
     if (isRecordingActive) {
-      await _recorder.cancel();
+      await _safeCancelRecorder();
     }
+    // C1: после отмены чистим и temp-файл идущей записи, и возможный
+    // preview-файл — отменённые/переписанные голосовые не должны копиться.
+    await _deleteRecordingFile(_activeRecordingPath);
+    await _deleteRecordingFile(_preview?.path);
+    _activeRecordingPath = null;
     _durationSeconds = 0;
     _preview = null;
     _amplitudeSamples.clear();
@@ -175,6 +217,10 @@ class ChatRecordingController extends ChangeNotifier {
   }
 
   void discardPreview() {
+    // C1: preview отброшен (re-record / удаление вложения) — temp-файл
+    // больше не нужен, удаляем фоном (best-effort).
+    unawaited(_deleteRecordingFile(_preview?.path));
+    _activeRecordingPath = null;
     _preview = null;
     _errorText = null;
     _amplitudeSamples.clear();
@@ -205,6 +251,10 @@ class ChatRecordingController extends ChangeNotifier {
   }
 
   Future<bool> _requestMicrophonePermission() async {
+    final injected = _permissionRequester;
+    if (injected != null) {
+      return injected();
+    }
     if (kIsWeb) {
       return _recorder.hasPermission();
     }
@@ -223,6 +273,36 @@ class ChatRecordingController extends ChangeNotifier {
       directory.path,
       'voice_note_${DateTime.now().millisecondsSinceEpoch}.m4a',
     );
+  }
+
+  /// C1: отмена рекордера не должна ронять остальную очистку (на части
+  /// платформ cancel() кидает, если запись уже остановлена).
+  Future<void> _safeCancelRecorder() async {
+    try {
+      await _recorder.cancel();
+    } catch (_) {
+      // best-effort
+    }
+  }
+
+  /// C1: удалить temp-файл записи. На web файловой системы нет
+  /// (record пишет в blob) — путь там фиктивный, пропускаем.
+  Future<void> _deleteRecordingFile(String? filePath) async {
+    if (kIsWeb) {
+      return;
+    }
+    final target = filePath?.trim() ?? '';
+    if (target.isEmpty) {
+      return;
+    }
+    try {
+      final file = File(target);
+      if (await file.exists()) {
+        await file.delete();
+      }
+    } catch (_) {
+      // невозможность удалить temp некритична
+    }
   }
 
   void _setState(ChatRecordingState nextState) {
