@@ -30,6 +30,7 @@ import 'services/call_coordinator_service.dart';
 import 'services/invitation_service.dart';
 import 'startup/startup_failure_policy.dart';
 import 'startup/app_warmup_coordinator.dart';
+import 'widgets/app_update_ui.dart';
 import 'widgets/call_runtime_host.dart';
 import 'widgets/startup_failure_view.dart';
 import 'utils/e2e_state_bridge.dart';
@@ -605,6 +606,10 @@ class _MyAppState extends State<MyApp> {
         if (GetIt.I.isRegistered<CallCoordinatorService>()) {
           wrapped = CallRuntimeHost(child: wrapped);
         }
+        // U2: блокирующий экран «Нужно обновить» при несовместимой старой
+        // версии sideload-сборки. Оборачивает всё приложение (как
+        // CallRuntimeHost) — не трогает go_router-роуты.
+        wrapped = AppUpdateGate(child: wrapped);
         return wrapped;
       },
     );

@@ -37,6 +37,7 @@ import '../providers/tree_provider.dart';
 import '../startup/app_startup_pipeline.dart';
 import '../startup/app_warmup_coordinator.dart';
 import 'app_status_service.dart';
+import 'app_update_service.dart';
 import 'android_incoming_call_service.dart';
 import 'audio_route_service.dart';
 import 'chat_message_cache.dart';
@@ -388,6 +389,14 @@ class AppStartupService implements AppStartupServiceInterface {
     await treeProvider.loadInitialTree();
     _registerOrReplaceSingleton<TreeProvider>(treeProvider);
 
+    // U2: OTA-апдейтер sideload-сборок. Сервис сам гейтит контекст
+    // (только Android + sideload, не магазин/.dev) и молчит, если фича
+    // на бэке выключена; проверка дёргается в featureLazy ниже.
+    final appUpdateService = AppUpdateService(
+      apiBaseUrl: runtimeConfig.apiBaseUrl,
+    );
+    _registerOrReplaceSingleton<AppUpdateService>(appUpdateService);
+
     final startupPipeline = AppStartupPipeline(
       tasks: <StartupPhaseTask>[
         StartupPhaseTask(
@@ -409,6 +418,20 @@ class AppStartupService implements AppStartupServiceInterface {
           phase: StartupPhase.featureLazy,
           label: 'notifications-initialize',
           run: (_) => customApiNotificationService.initialize(),
+        ),
+        // U2: проверка OTA-обновления sideload-сборки. checkForUpdate
+        // не бросает (внутренний try/catch + graceful), но оборачиваем
+        // тоже — M4-паттерн: фоновая фича не должна валить warmup.
+        StartupPhaseTask(
+          phase: StartupPhase.featureLazy,
+          label: 'app-update-check',
+          run: (_) async {
+            try {
+              await appUpdateService.checkForUpdate();
+            } catch (_) {
+              // Апдейтер — best-effort; молчим при любой ошибке.
+            }
+          },
         ),
         StartupPhaseTask(
           phase: StartupPhase.authenticatedDeferred,

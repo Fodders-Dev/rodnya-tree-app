@@ -38,6 +38,7 @@ import '../services/custom_api_notification_service.dart';
 import '../theme/app_theme.dart';
 import '../utils/url_utils.dart';
 import '../widgets/app_backdrop.dart';
+import '../widgets/app_update_ui.dart';
 import '../widgets/main_navigation_bar.dart';
 import '../widgets/offline_indicator.dart';
 import 'app_router_guards.dart';
@@ -85,6 +86,9 @@ class AppShellRouteModule {
             Widget bodyContent = Column(
               children: <Widget>[
                 OfflineIndicator(),
+                // U2: ненавязчивый баннер «Доступно обновление» (sideload
+                // OTA). Молчит, если апдейтер не применим/выключен.
+                const AppUpdateBanner(),
                 Expanded(child: navigationShell),
               ],
             );
