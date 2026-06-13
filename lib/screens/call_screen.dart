@@ -508,12 +508,26 @@ class _CallScreenState extends State<CallScreen> {
     return publication?.track;
   }
 
-  List<VideoTrack?> get _remoteVideoTracks {
-    return _remoteParticipants.map((participant) {
+  // G1: тайлы группового звонка несут не только трек, но и ИМЯ участника.
+  // Раньше пайплайн отдавал плитке только `VideoTrack?` + индекс, поэтому
+  // подпись могла быть лишь «Участник N». Имя берём из LiveKit-токена
+  // (participant.name, мы кладём туда displayName на бэке), фолбэк —
+  // identity, затем «Участник N».
+  List<_RemoteTileData> get _remoteTiles {
+    final participants = _remoteParticipants;
+    final tiles = <_RemoteTileData>[];
+    for (var index = 0; index < participants.length; index++) {
+      final participant = participants[index];
       final publication = participant.videoTrackPublications
           .firstWhereOrNull((entry) => entry.source == TrackSource.camera);
-      return publication?.track;
-    }).toList();
+      final label = resolveRemoteParticipantLabel(
+        name: participant.name,
+        identity: participant.identity,
+        index: index,
+      );
+      tiles.add(_RemoteTileData(track: publication?.track, label: label));
+    }
+    return tiles;
   }
 
   VideoTrack? get _localVideoTrack {
@@ -672,7 +686,7 @@ class _CallScreenState extends State<CallScreen> {
   @override
   Widget build(BuildContext context) {
     final remoteVideoTrack = _remoteVideoTrack;
-    final remoteVideoTracks = _remoteVideoTracks;
+    final remoteTiles = _remoteTiles;
     final localVideoTrack = _localVideoTrack;
     final hasConnectedRoom = widget.coordinator.room != null;
     final showPermissionSettingsCta = _resolvedCall.state == CallState.active &&
@@ -701,7 +715,7 @@ class _CallScreenState extends State<CallScreen> {
                   ? _CallStage(
                       isGroupCall: _isGroupCall,
                       remoteVideoTrack: remoteVideoTrack,
-                      remoteVideoTracks: remoteVideoTracks,
+                      remoteTiles: remoteTiles,
                       fallbackAvatar: _buildAvatar(),
                     )
                   : _LocalFullStage(
@@ -1118,18 +1132,18 @@ class _CallStage extends StatelessWidget {
   const _CallStage({
     required this.isGroupCall,
     required this.remoteVideoTrack,
-    required this.remoteVideoTracks,
+    required this.remoteTiles,
     required this.fallbackAvatar,
   });
 
   final bool isGroupCall;
   final VideoTrack? remoteVideoTrack;
-  final List<VideoTrack?> remoteVideoTracks;
+  final List<_RemoteTileData> remoteTiles;
   final Widget fallbackAvatar;
 
   @override
   Widget build(BuildContext context) {
-    if (isGroupCall && remoteVideoTracks.length > 1) {
+    if (isGroupCall && remoteTiles.length > 1) {
       // Adaptive grid: scales the column count and aspect ratio so 3,
       // 4, 5+ participants all fit visibly. Was hard-coded to 2-col +
       // 0.88 aspect with `NeverScrollableScrollPhysics`, which dropped
@@ -1137,7 +1151,7 @@ class _CallStage extends StatelessWidget {
       // Bottom padding tightened from 220 → 160 to claw back vertical
       // room for the bigger grids. We keep scrolling enabled when
       // we'd otherwise overflow.
-      final count = remoteVideoTracks.length;
+      final count = remoteTiles.length;
       final crossAxisCount = count <= 2
           ? 1
           : count <= 4
@@ -1169,8 +1183,7 @@ class _CallStage extends StatelessWidget {
               ),
               itemCount: count,
               itemBuilder: (context, index) => _RemoteVideoTile(
-                track: remoteVideoTracks[index],
-                index: index,
+                tile: remoteTiles[index],
               ),
             ),
           ),
@@ -1204,17 +1217,43 @@ class _CallStage extends StatelessWidget {
   );
 }
 
-class _RemoteVideoTile extends StatelessWidget {
-  const _RemoteVideoTile({
-    required this.track,
-    required this.index,
-  });
+class _RemoteTileData {
+  const _RemoteTileData({required this.track, required this.label});
 
   final VideoTrack? track;
-  final int index;
+  final String label;
+}
+
+/// G1: подпись плитки участника группового звонка — имя, иначе identity,
+/// иначе позиционный фолбэк «Участник N». Вынесено для юнит-тестов
+/// (без мока LiveKit Room).
+@visibleForTesting
+String resolveRemoteParticipantLabel({
+  required String name,
+  required String identity,
+  required int index,
+}) {
+  final trimmedName = name.trim();
+  if (trimmedName.isNotEmpty) {
+    return trimmedName;
+  }
+  final trimmedIdentity = identity.trim();
+  if (trimmedIdentity.isNotEmpty) {
+    return trimmedIdentity;
+  }
+  return 'Участник ${index + 1}';
+}
+
+class _RemoteVideoTile extends StatelessWidget {
+  const _RemoteVideoTile({
+    required this.tile,
+  });
+
+  final _RemoteTileData tile;
 
   @override
   Widget build(BuildContext context) {
+    final track = tile.track;
     return ClipRRect(
       borderRadius: BorderRadius.circular(18),
       child: DecoratedBox(
@@ -1227,7 +1266,7 @@ class _RemoteVideoTile extends StatelessWidget {
           children: [
             if (track != null)
               VideoTrackRenderer(
-                track!,
+                track,
                 fit: VideoViewFit.cover,
               )
             else
@@ -1250,7 +1289,9 @@ class _RemoteVideoTile extends StatelessWidget {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                   child: Text(
-                    'Участник ${index + 1}',
+                    tile.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.labelSmall?.copyWith(
                           color: Colors.white,
                           fontWeight: FontWeight.w700,

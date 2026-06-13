@@ -406,6 +406,37 @@ void main() {
     expect(find.byType(CallScreen), findsNothing);
     expect(find.text('open'), findsOneWidget);
   });
+
+  group('G1: подпись плитки участника группового звонка', () {
+    test('показывает имя участника, когда оно есть', () {
+      expect(
+        resolveRemoteParticipantLabel(
+          name: 'Наталья',
+          identity: 'user-42',
+          index: 0,
+        ),
+        'Наталья',
+      );
+    });
+
+    test('фолбэк на identity, когда имя пустое', () {
+      expect(
+        resolveRemoteParticipantLabel(
+          name: '   ',
+          identity: 'user-42',
+          index: 1,
+        ),
+        'user-42',
+      );
+    });
+
+    test('фолбэк на «Участник N», когда нет ни имени, ни identity', () {
+      expect(
+        resolveRemoteParticipantLabel(name: '', identity: '', index: 2),
+        'Участник 3',
+      );
+    });
+  });
 }
 
 CallInvite _buildCall({

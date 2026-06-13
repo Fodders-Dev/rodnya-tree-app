@@ -2884,7 +2884,10 @@ function createApp({
       return;
     }
     if (call === false) {
-      res.status(400).json({message: "Пока поддерживаются только личные звонки"});
+      // Групповые/branch-звонки поддержаны (store.createCallInvite их
+      // принимает) — этот путь остаётся только для настоящих ошибок
+      // валидации участников, поэтому сообщение общее.
+      res.status(400).json({message: "Не удалось создать звонок"});
       return;
     }
     if (call === "BUSY") {
