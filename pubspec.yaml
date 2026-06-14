@@ -170,6 +170,8 @@ dev_dependencies:
   # объявляем транзитивные интерфейсы, которые импортирует тест).
   path_provider_platform_interface: ^2.1.2
   plugin_platform_interface: ^2.1.8
+  # C2: мок video_player в виджет-тесте inline-кружка.
+  video_player_platform_interface: ^6.7.0
   # Добавляем генератор иконок
   flutter_launcher_icons: ^0.14.3
 

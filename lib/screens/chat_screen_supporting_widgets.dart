@@ -1068,6 +1068,8 @@ class _LocalMediaTile extends StatelessWidget {
                 _durationFromAttachmentName(file.name)!),
         label: 'Кружок',
         onTap: onTap,
+        videoSource: file.path,
+        isRemoteSource: false,
       );
     }
     if (kind == _ChatAttachmentKind.image) {
@@ -1121,6 +1123,8 @@ class _RemoteMediaTile extends StatelessWidget {
               ),
         label: 'Кружок',
         onTap: onTap,
+        videoSource: attachment.url,
+        isRemoteSource: true,
       );
     }
     if (kind == _ChatAttachmentKind.image) {
@@ -1180,12 +1184,14 @@ class _RemoteMediaTile extends StatelessWidget {
   }
 }
 
-class _VideoNoteTile extends StatelessWidget {
+class _VideoNoteTile extends StatefulWidget {
   const _VideoNoteTile({
     required this.label,
     this.previewUrl,
     this.durationLabel,
     this.onTap,
+    this.videoSource,
+    this.isRemoteSource = false,
   });
 
   // Telegram chat круглые видео сидят на ~200px iOS / 180dp Android.
@@ -1197,30 +1203,75 @@ class _VideoNoteTile extends StatelessWidget {
   final String? durationLabel;
   final VoidCallback? onTap;
 
+  /// C2: источник видео (remote URL либо локальный путь) для inline-
+  /// проигрывания кружка прямо в бабле. Когда задан — тап играет на месте
+  /// (как Telegram), без перехода в просмотрщик. Когда null — поведение
+  /// прежнее: тап зовёт [onTap].
+  final String? videoSource;
+  final bool isRemoteSource;
+
+  @override
+  State<_VideoNoteTile> createState() => _VideoNoteTileState();
+}
+
+class _VideoNoteTileState extends State<_VideoNoteTile> {
+  bool _playing = false;
+
+  bool get _canPlayInline =>
+      widget.videoSource != null && widget.videoSource!.trim().isNotEmpty;
+
+  void _handleTap() {
+    if (_canPlayInline) {
+      setState(() => _playing = true);
+    } else {
+      widget.onTap?.call();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    // C2: после тапа кружок играет на месте — переиспользуем
+    // _VideoNotePlayer (авто-плей, луп, tap = звук), сжатый до размера
+    // бабла. Просмотрщик не открываем.
+    if (_playing && _canPlayInline) {
+      return Semantics(
+        label: widget.label,
+        child: SizedBox(
+          width: _VideoNoteTile._diameter,
+          height: _VideoNoteTile._diameter,
+          child: _VideoNotePlayer(
+            key: const Key('video-note-inline-player'),
+            source: widget.videoSource!,
+            isRemoteSource: widget.isRemoteSource,
+            posterUrl: widget.previewUrl,
+            diameter: _VideoNoteTile._diameter,
+          ),
+        ),
+      );
+    }
     return Semantics(
-      label: label,
-      button: onTap != null,
+      label: widget.label,
+      button: true,
       // SizedBox обязателен: Stack(fit: StackFit.expand) внутри Wrap
       // получает unbounded constraints и валит layout с null-check'ом.
       // Раньше это рушило весь чат в момент когда в сообщении появлялся
       // кружок. Размер впихнут в сам тайл, чтобы новые callers не
       // забыли обернуть.
       child: SizedBox(
-        width: _diameter,
-        height: _diameter,
+        width: _VideoNoteTile._diameter,
+        height: _VideoNoteTile._diameter,
         child: ClipOval(
           child: Material(
             color: Colors.transparent,
             child: InkWell(
-              onTap: onTap,
+              onTap: _handleTap,
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  if (previewUrl != null && previewUrl!.trim().isNotEmpty)
+                  if (widget.previewUrl != null &&
+                      widget.previewUrl!.trim().isNotEmpty)
                     _AttachmentImage(
-                      url: previewUrl,
+                      url: widget.previewUrl,
                       fit: BoxFit.cover,
                     ),
                   DecoratedBox(
@@ -1251,7 +1302,8 @@ class _VideoNoteTile extends StatelessWidget {
                       ),
                     ),
                   ),
-                  if (durationLabel != null && durationLabel!.isNotEmpty)
+                  if (widget.durationLabel != null &&
+                      widget.durationLabel!.isNotEmpty)
                     Positioned(
                       right: 10,
                       bottom: 10,
@@ -1266,7 +1318,7 @@ class _VideoNoteTile extends StatelessWidget {
                             vertical: 4,
                           ),
                           child: Text(
-                            durationLabel!,
+                            widget.durationLabel!,
                             style: Theme.of(context)
                                 .textTheme
                                 .labelSmall
@@ -2679,14 +2731,20 @@ class _AttachmentVideoPlayerState extends State<_AttachmentVideoPlayer> {
 /// header (download icon at top-right).
 class _VideoNotePlayer extends StatefulWidget {
   const _VideoNotePlayer({
+    super.key,
     required this.source,
     required this.isRemoteSource,
     this.posterUrl,
+    this.diameter = 320,
   });
 
   final String source;
   final bool isRemoteSource;
   final String? posterUrl;
+
+  /// C2: диаметр круга. 320 — полноэкранный просмотрщик; ~168 — inline в
+  /// бабле (играем кружок на месте, как в Telegram).
+  final double diameter;
 
   @override
   State<_VideoNotePlayer> createState() => _VideoNotePlayerState();
@@ -2749,8 +2807,8 @@ class _VideoNotePlayerState extends State<_VideoNotePlayer> {
           return Center(
             child: ClipOval(
               child: Container(
-                width: 320,
-                height: 320,
+                width: widget.diameter,
+                height: widget.diameter,
                 color: Colors.black,
                 child: Stack(
                   alignment: Alignment.center,
@@ -2776,8 +2834,8 @@ class _VideoNotePlayerState extends State<_VideoNotePlayer> {
             behavior: HitTestBehavior.opaque,
             onTap: _toggleMute,
             child: SizedBox(
-              width: 320,
-              height: 320,
+              width: widget.diameter,
+              height: widget.diameter,
               child: ClipOval(
                 child: Stack(
                   alignment: Alignment.center,

@@ -8693,6 +8693,8 @@ class _ChatBubble extends StatelessWidget {
                             Duration(milliseconds: attachment.durationMs!),
                           ),
                     label: 'Кружок',
+                    videoSource: attachment.url,
+                    isRemoteSource: true,
                     onTap: onOpenRemoteAttachment == null
                         ? null
                         : () => onOpenRemoteAttachment!(
@@ -8756,6 +8758,8 @@ class _ChatBubble extends StatelessWidget {
                                 _durationFromAttachmentName(file.name)!,
                               ),
                     label: 'Кружок',
+                    videoSource: file.path,
+                    isRemoteSource: false,
                     onTap: onOpenLocalAttachment == null
                         ? null
                         : () => onOpenLocalAttachment!(localAttachments, file),

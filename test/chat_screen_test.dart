@@ -13,6 +13,7 @@ import 'package:path_provider_platform_interface/path_provider_platform_interfac
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import 'package:record/record.dart';
 import 'package:rodnya/controllers/chat_recording_controller.dart';
+import 'package:video_player_platform_interface/video_player_platform_interface.dart';
 import 'package:rodnya/backend/interfaces/chat_service_interface.dart';
 import 'package:rodnya/backend/interfaces/call_service_interface.dart';
 import 'package:rodnya/backend/interfaces/safety_service_interface.dart';
@@ -2060,6 +2061,67 @@ void main() {
     await tester.pump();
   });
 
+  testWidgets(
+      'C2: тап по кружку играет видео inline, не открывая просмотрщик',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(900, 1200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    VideoPlayerPlatform.instance = _FakeVideoPlayerPlatform();
+
+    final chatService = _FakeChatService();
+    getIt.registerSingleton<ChatServiceInterface>(chatService);
+
+    await tester.pumpWidget(
+      buildChatApp(
+        ChatScreen(
+          chatId: 'chat-1',
+          title: 'Тестовый чат',
+          draftStore: _MemoryChatDraftStore(),
+        ),
+      ),
+    );
+
+    chatService.emitMessages([
+      ChatMessage(
+        id: 'm-note-1',
+        chatId: 'chat-1',
+        senderId: 'other-user',
+        text: '',
+        timestamp: DateTime(2026, 4, 8, 9, 30),
+        isRead: false,
+        participants: const ['user-1', 'other-user'],
+        senderName: 'Анастасия<3',
+        attachments: const [
+          ChatAttachment(
+            type: ChatAttachmentType.video,
+            presentation: ChatAttachmentPresentation.videoNote,
+            url: 'https://example.com/video_note_3s_1.mp4',
+            fileName: 'video_note_3s_1.mp4',
+            thumbnailUrl: 'https://example.com/thumb.jpg',
+            durationMs: 3000,
+          ),
+        ],
+      ),
+    ]);
+    await tester.pumpAndSettle();
+
+    // До тапа — статичная превью-кнопка кружка, инлайн-плеера ещё нет.
+    expect(find.byIcon(Icons.play_arrow_rounded), findsOneWidget);
+    expect(find.byKey(const Key('video-note-inline-player')), findsNothing);
+
+    // Тап играет на месте: появляется инлайн-плеер, просмотрщик НЕ
+    // открывается (pumpAndSettle нельзя — у плеера бесконечный спиннер).
+    await tester.tap(find.byIcon(Icons.play_arrow_rounded));
+    await tester.pump();
+
+    expect(find.byKey(const Key('video-note-inline-player')), findsOneWidget);
+    // Превью-кнопка ушла (кружок переключился в плеер), и нет иконок
+    // просмотрщика (внешнее открытие / скачивание).
+    expect(find.byIcon(Icons.play_arrow_rounded), findsNothing);
+    expect(find.byIcon(Icons.open_in_new), findsNothing);
+    expect(find.byIcon(Icons.file_download_outlined), findsNothing);
+  });
+
   testWidgets('ChatScreen forwards selected messages as a batch',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(900, 1000));
@@ -2342,4 +2404,56 @@ class _FakeBarPathProvider extends PathProviderPlatform
 
   @override
   Future<String?> getTemporaryPath() async => tempPath;
+}
+
+/// C2: минимальный фейк video_player для inline-кружка. initialize()
+/// остаётся в «загрузке» (videoEventsFor не эмитит) — этого хватает,
+/// чтобы _VideoNotePlayer отрисовался без падения на плагине; тест
+/// проверяет именно подмену перехода в просмотрщик на inline-плеер.
+class _FakeVideoPlayerPlatform extends VideoPlayerPlatform
+    with MockPlatformInterfaceMixin {
+  final StreamController<VideoEvent> _events =
+      StreamController<VideoEvent>.broadcast();
+
+  @override
+  Future<void> init() async {}
+
+  @override
+  Future<void> dispose(int playerId) async {}
+
+  @override
+  Future<int?> create(DataSource dataSource) async => 1;
+
+  @override
+  Future<int?> createWithOptions(VideoCreationOptions options) async => 1;
+
+  @override
+  Stream<VideoEvent> videoEventsFor(int playerId) => _events.stream;
+
+  @override
+  Widget buildView(int playerId) => const SizedBox.shrink();
+
+  @override
+  Future<void> setLooping(int playerId, bool looping) async {}
+
+  @override
+  Future<void> play(int playerId) async {}
+
+  @override
+  Future<void> pause(int playerId) async {}
+
+  @override
+  Future<void> setVolume(int playerId, double volume) async {}
+
+  @override
+  Future<void> setPlaybackSpeed(int playerId, double speed) async {}
+
+  @override
+  Future<void> seekTo(int playerId, Duration position) async {}
+
+  @override
+  Future<Duration> getPosition(int playerId) async => Duration.zero;
+
+  @override
+  Future<void> setMixWithOthers(bool mixWithOthers) async {}
 }
