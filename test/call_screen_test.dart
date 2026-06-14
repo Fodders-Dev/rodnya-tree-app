@@ -77,6 +77,10 @@ void main() {
       (tester) async {
     final selectedRoutes = <String>[];
     final audioRoutes = AudioRouteService(
+      // CA1: тест инъектит selectAudioRoute (LiveKit-путь) — на android
+      // (платформа теста) без этого создался бы реальный NativeCallAudio
+      // и selectRoute ушёл бы в натив мимо инъекции.
+      enableNativeAudio: false,
       initialRoutes: const <AudioRouteOption>[
         AudioRouteOption(
           id: 'speaker',
@@ -486,6 +490,7 @@ class _FakeCallCoordinator extends CallCoordinatorService {
             : cameraDevicesValue.first.deviceId,
         _audioRouteService = audioRouteServiceValue ??
             AudioRouteService(
+              enableNativeAudio: false,
               initialRoutes: const <AudioRouteOption>[
                 AudioRouteOption(
                   id: 'speaker',

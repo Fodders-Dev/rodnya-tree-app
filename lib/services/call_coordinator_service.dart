@@ -1064,7 +1064,10 @@ class CallCoordinatorService extends ChangeNotifier
       if (reconnect) {
         _showReconnectRestoredBannerForMoment();
       }
-      await _audioRouteService.attachRoom(room);
+      // CA1 FR3: дефолт маршрута на коннекте — ушной для аудио, динамик
+      // для видео; применяется внутри attachRoom (даже без сохранённой
+      // преференции).
+      await _audioRouteService.attachRoom(room, isVideo: call.mediaMode.isVideo);
       await refreshInputDevices();
       await _applyCallPreferences(room, call);
     } catch (error) {

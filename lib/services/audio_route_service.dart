@@ -4,6 +4,8 @@ import 'package:collection/collection.dart';
 import 'package:flutter/foundation.dart';
 import 'package:livekit_client/livekit_client.dart';
 
+import 'native_call_audio.dart';
+
 enum AudioRouteType {
   speaker,
   earpiece,
@@ -42,11 +44,21 @@ class AudioRouteService extends ChangeNotifier {
     List<AudioRouteOption>? initialRoutes,
     String? initialSelectedRouteId,
     bool? isMobilePlatform,
+    // CA1: нативный аудиороутер (Android). Инъекция — для тестов; в
+    // тестах передавай enableNativeAudio:false, чтобы остаться на
+    // LiveKit-пути (тестовая платформа = android и иначе создался бы
+    // реальный MethodChannel).
+    CallAudioRouter? nativeAudio,
+    bool? enableNativeAudio,
   })  : _enumerateAudioOutputs =
             enumerateAudioOutputs ?? _defaultEnumerateAudioOutputs,
         _selectAudioRoute = selectAudioRoute ?? _selectLiveKitRoute,
         _deviceChanges = deviceChanges,
-        _isMobilePlatform = isMobilePlatform ?? _defaultIsMobilePlatform {
+        _isMobilePlatform = isMobilePlatform ?? _defaultIsMobilePlatform,
+        _nativeAudio = nativeAudio ??
+            ((enableNativeAudio ?? _defaultUseNativeAudio)
+                ? NativeCallAudio()
+                : null) {
     if (initialRoutes != null && initialRoutes.isNotEmpty) {
       _routes = List<AudioRouteOption>.unmodifiable(initialRoutes);
       _selectedRouteId = initialSelectedRouteId ?? initialRoutes.first.id;
@@ -57,14 +69,26 @@ class AudioRouteService extends ChangeNotifier {
   final AudioRouteSelector _selectAudioRoute;
   final Stream<List<MediaDevice>>? _deviceChanges;
   final bool _isMobilePlatform;
+  final CallAudioRouter? _nativeAudio;
 
   Room? _room;
   StreamSubscription<List<MediaDevice>>? _deviceChangesSubscription;
+  StreamSubscription<void>? _nativeDeviceSubscription;
   List<AudioRouteOption> _routes = const <AudioRouteOption>[];
   String? _selectedRouteId;
   bool _isRefreshing = false;
   bool _isSelecting = false;
   String? _errorMessage;
+  // CA1 (ревью D): сериализация attachRoom — чтобы attachRoom(null) на
+  // завершении и attachRoom(room) на параллельном коннекте не переплелись
+  // на await native.stop()/start() и не оставили аудиосессию в
+  // неконсистентном режиме (нет звука / утечка подписки).
+  Future<void> _attachQueue = Future<void>.value();
+  // CA1 (ревью E): коалесинг — не терять последний запрос, если событие
+  // пришло во время уже идущей операции (иначе переключатель «залипает»
+  // на устаревшем устройстве).
+  bool _refreshPending = false;
+  AudioRouteOption? _pendingSelectRoute;
 
   List<AudioRouteOption> get routes => _routes;
   String? get selectedRouteId => _selectedRouteId;
@@ -76,19 +100,41 @@ class AudioRouteService extends ChangeNotifier {
         (route) => route.id == _selectedRouteId,
       );
 
-  Future<void> attachRoom(Room? room) async {
+  Future<void> attachRoom(Room? room, {bool isVideo = false}) {
+    // CA1 (ревью D): прогоняем через очередь, чтобы соседние attach не
+    // переплелись на своих await'ах (native start/stop, отписки).
+    final next =
+        _attachQueue.then((_) => _attachRoomLocked(room, isVideo: isVideo));
+    _attachQueue = next.catchError((_) {});
+    return next;
+  }
+
+  Future<void> _attachRoomLocked(Room? room, {bool isVideo = false}) async {
     if (identical(_room, room)) {
       return;
     }
     _room = room;
     await _deviceChangesSubscription?.cancel();
     _deviceChangesSubscription = null;
+    await _nativeDeviceSubscription?.cancel();
+    _nativeDeviceSubscription = null;
     if (room == null) {
+      // FR1: звонок завершён — отпускаем фокус, чистим маршрут, mode.
+      await _nativeAudio?.stop();
       _routes = const <AudioRouteOption>[];
       _selectedRouteId = null;
       _errorMessage = null;
       notifyListeners();
       return;
+    }
+    final native = _nativeAudio;
+    if (native != null) {
+      // FR1: режим связи + аудиофокус на старте звонка.
+      await native.start();
+      // FR5: реальные смены аудиоустройств (BT/провод) → пересобрать.
+      _nativeDeviceSubscription = native.deviceChanges.listen((_) {
+        unawaited(refreshRoutes());
+      });
     }
     final deviceChanges =
         _deviceChanges ?? Hardware.instance.onDeviceChange.stream;
@@ -96,22 +142,44 @@ class AudioRouteService extends ChangeNotifier {
       unawaited(refreshRoutes());
     });
     await refreshRoutes();
+    // FR3: применить дефолтный маршрут на коннекте даже без сохранённой
+    // преференции — ушной для аудио, динамик для видео (Telegram-поведение).
+    // Это и есть причина «на ушном тишина» на первом звонке.
+    if (native != null) {
+      final defaultId = isVideo ? 'speaker' : 'earpiece';
+      final defaultOption =
+          _routes.firstWhereOrNull((route) => route.id == defaultId);
+      if (defaultOption != null) {
+        await selectRoute(defaultOption);
+      }
+    }
   }
 
   Future<void> refreshRoutes() async {
     if (_isRefreshing) {
+      // CA1 (ревью E): не теряем событие — перезапустимся после текущего
+      // прохода, чтобы итоговое состояние устройств всегда отразилось.
+      _refreshPending = true;
       return;
     }
     _isRefreshing = true;
+    _refreshPending = false;
     _errorMessage = null;
     notifyListeners();
 
     try {
       final devices = await _enumerateAudioOutputs();
       final nextRoutes = _buildRoutes(devices);
-      final currentId = _resolveSelectedRouteId(nextRoutes);
       _routes = List<AudioRouteOption>.unmodifiable(nextRoutes);
-      _selectedRouteId = currentId;
+      // FR5: если есть нативный роутер — выбранный маршрут берём из
+      // ФАКТИЧЕСКОГО устройства, а не из локального стейта.
+      final native = _nativeAudio;
+      final actual = native == null ? null : await native.currentRoute();
+      if (actual != null && nextRoutes.any((route) => route.id == actual)) {
+        _selectedRouteId = actual;
+      } else {
+        _selectedRouteId = _resolveSelectedRouteId(nextRoutes);
+      }
     } catch (_) {
       _errorMessage = 'Не удалось обновить список аудиовыходов.';
       if (_routes.isEmpty) {
@@ -121,11 +189,18 @@ class AudioRouteService extends ChangeNotifier {
     } finally {
       _isRefreshing = false;
       notifyListeners();
+      if (_refreshPending) {
+        _refreshPending = false;
+        unawaited(refreshRoutes());
+      }
     }
   }
 
   Future<void> selectRoute(AudioRouteOption option) async {
     if (_isSelecting) {
+      // CA1 (ревью E): быстрый второй тап не теряем — применим последний
+      // выбранный маршрут после завершения текущего переключения.
+      _pendingSelectRoute = option;
       return;
     }
     _isSelecting = true;
@@ -133,13 +208,35 @@ class AudioRouteService extends ChangeNotifier {
     notifyListeners();
 
     try {
-      await _selectAudioRoute(option, _room);
-      _selectedRouteId = option.id;
+      final native = _nativeAudio;
+      if (native != null) {
+        // FR2: маршрутизация нативом (setCommunicationDevice).
+        final ok = await native.setRoute(option.id);
+        // FR5: отражаем ФАКТ устройства, на сбое не врём об успехе.
+        final actual = await native.currentRoute();
+        if (actual != null) {
+          _selectedRouteId = actual;
+        } else if (ok) {
+          _selectedRouteId = option.id;
+        } else {
+          _errorMessage = 'Не удалось переключить аудиовыход.';
+        }
+      } else {
+        await _selectAudioRoute(option, _room);
+        _selectedRouteId = option.id;
+      }
     } catch (_) {
       _errorMessage = 'Не удалось переключить аудиовыход.';
     } finally {
       _isSelecting = false;
       notifyListeners();
+      // CA1 (ревью E): отложенный тап применяем, если он отличается от
+      // фактически выбранного сейчас маршрута.
+      final pending = _pendingSelectRoute;
+      _pendingSelectRoute = null;
+      if (pending != null && pending.id != _selectedRouteId) {
+        unawaited(selectRoute(pending));
+      }
     }
   }
 
@@ -293,9 +390,17 @@ class AudioRouteService extends ChangeNotifier {
         defaultTargetPlatform == TargetPlatform.iOS;
   }
 
+  // CA1: нативный аудиороутинг только на Android (там сломан
+  // setSpeakerphoneOn-путь). iOS/web остаются на LiveKit.
+  static bool get _defaultUseNativeAudio {
+    return !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+  }
+
   @override
   void dispose() {
     unawaited(_deviceChangesSubscription?.cancel());
+    unawaited(_nativeDeviceSubscription?.cancel());
+    _nativeAudio?.dispose();
     super.dispose();
   }
 }

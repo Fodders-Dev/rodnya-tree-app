@@ -358,7 +358,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _chooseDefaultAudioOutput() async {
-    final audioRouteService = AudioRouteService();
+    // CA1 (ревью A): этому пикеру нужен только СПИСОК маршрутов — он не
+    // ведёт звонок. Без enableNativeAudio:false он на Android создал бы
+    // второй NativeCallAudio на общем канале rodnya/call_audio, перехватил
+    // бы обработчик у живого синглтона звонка, а на dispose снял бы его
+    // совсем — и внутризвонковое отражение смены устройств (FR5) сломалось
+    // бы до конца сессии. Перечисление маршрутов идёт через LiveKit.
+    final audioRouteService = AudioRouteService(enableNativeAudio: false);
     final choices = <_CallSettingsChoice>[
       const _CallSettingsChoice(
         id: null,

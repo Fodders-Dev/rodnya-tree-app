@@ -3,11 +3,13 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:livekit_client/livekit_client.dart';
 import 'package:rodnya/services/audio_route_service.dart';
+import 'package:rodnya/services/native_call_audio.dart';
 
 void main() {
   test('AudioRouteService builds mobile routes from fallback and devices',
       () async {
     final service = AudioRouteService(
+      enableNativeAudio: false,
       isMobilePlatform: true,
       enumerateAudioOutputs: () async => const <MediaDevice>[
         MediaDevice('bluetooth', 'AirPods', 'audiooutput', null),
@@ -34,6 +36,7 @@ void main() {
   test('AudioRouteService selects route through injected selector', () async {
     final selectedIds = <String>[];
     final service = AudioRouteService(
+      enableNativeAudio: false,
       isMobilePlatform: true,
       enumerateAudioOutputs: () async => const <MediaDevice>[],
       selectAudioRoute: (option, _) async {
@@ -54,6 +57,7 @@ void main() {
     final controller = StreamController<List<MediaDevice>>();
     var devices = const <MediaDevice>[];
     final service = AudioRouteService(
+      enableNativeAudio: false,
       isMobilePlatform: false,
       enumerateAudioOutputs: () async => devices,
       selectAudioRoute: (_, __) async {},
@@ -75,6 +79,181 @@ void main() {
     expect(service.routes.map((route) => route.id), ['default-output']);
     expect(service.routes.single.label, 'Системный');
   });
+
+  // CA1: нативный аудиороутинг (Android).
+  test('CA1 FR1+FR3: аудиозвонок стартует натив и дефолтит на ушной',
+      (() async {
+    final native = _FakeCallAudioRouter();
+    final service = AudioRouteService(
+      isMobilePlatform: true,
+      nativeAudio: native,
+      enumerateAudioOutputs: () async => const <MediaDevice>[],
+      deviceChanges: const Stream<List<MediaDevice>>.empty(),
+    );
+    addTearDown(service.dispose);
+
+    await service.attachRoom(_FakeRoom(), isVideo: false);
+
+    expect(native.calls, contains('start')); // FR1
+    expect(native.calls, contains('setRoute:earpiece')); // FR3 default
+    expect(service.selectedRouteId, 'earpiece');
+
+    await service.attachRoom(null);
+    expect(native.calls, contains('stop')); // FR1 teardown
+  }));
+
+  test('CA1 FR3: видеозвонок дефолтит на динамик', (() async {
+    final native = _FakeCallAudioRouter();
+    final service = AudioRouteService(
+      isMobilePlatform: true,
+      nativeAudio: native,
+      enumerateAudioOutputs: () async => const <MediaDevice>[],
+      deviceChanges: const Stream<List<MediaDevice>>.empty(),
+    );
+    addTearDown(service.dispose);
+
+    await service.attachRoom(_FakeRoom(), isVideo: true);
+
+    expect(native.calls, contains('setRoute:speaker'));
+    expect(service.selectedRouteId, 'speaker');
+  }));
+
+  test('CA1 FR5: выбранный маршрут отражает ФАКТ устройства, не запрос',
+      (() async {
+    final native = _FakeCallAudioRouter()
+      ..updateCurrentOnSetRoute = false
+      ..current = 'speaker'; // система не переключилась на запрошенное
+    final service = AudioRouteService(
+      isMobilePlatform: true,
+      nativeAudio: native,
+      enumerateAudioOutputs: () async => const <MediaDevice>[],
+      deviceChanges: const Stream<List<MediaDevice>>.empty(),
+    );
+    addTearDown(service.dispose);
+    await service.attachRoom(_FakeRoom(), isVideo: true);
+
+    await service.selectRoute(
+      service.routes.firstWhere((route) => route.id == 'earpiece'),
+    );
+
+    // Запросили earpiece, но факт — speaker: UI показывает реальность.
+    expect(native.calls, contains('setRoute:earpiece'));
+    expect(service.selectedRouteId, 'speaker');
+  }));
+
+  test('CA1 FR5: сбой переключения не показывает ложный успех', (() async {
+    final native = _FakeCallAudioRouter()
+      ..setRouteResult = false
+      ..current = null;
+    final service = AudioRouteService(
+      isMobilePlatform: true,
+      nativeAudio: native,
+      enumerateAudioOutputs: () async => const <MediaDevice>[],
+      deviceChanges: const Stream<List<MediaDevice>>.empty(),
+    );
+    addTearDown(service.dispose);
+    await service.attachRoom(_FakeRoom(), isVideo: false);
+    final before = service.selectedRouteId;
+
+    await service.selectRoute(
+      service.routes.firstWhere((route) => route.id == 'speaker'),
+    );
+
+    expect(service.errorMessage, isNotNull);
+    expect(service.selectedRouteId, before); // не «speaker»
+  }));
+
+  test('CA1 ревью D: attach сериализован — start завершается до stop',
+      (() async {
+    final native = _FakeCallAudioRouter();
+    final service = AudioRouteService(
+      isMobilePlatform: true,
+      nativeAudio: native,
+      enumerateAudioOutputs: () async => const <MediaDevice>[],
+      deviceChanges: const Stream<List<MediaDevice>>.empty(),
+    );
+    addTearDown(service.dispose);
+
+    // Коннект и завершение «впритык», без await первого — очередь должна
+    // прогнать attach(room) целиком, и только потом attach(null).
+    final attach = service.attachRoom(_FakeRoom(), isVideo: false);
+    final detach = service.attachRoom(null);
+    await Future.wait<void>(<Future<void>>[attach, detach]);
+
+    final startIdx = native.calls.indexOf('start');
+    final stopIdx = native.calls.indexOf('stop');
+    expect(startIdx, isNonNegative);
+    expect(stopIdx, isNonNegative);
+    expect(startIdx, lessThan(stopIdx)); // не переплелись
+    expect(native.calls.last, 'stop');
+  }));
+
+  test('CA1 ревью E: быстрый второй тап коалесится в последний маршрут',
+      (() async {
+    final native = _FakeCallAudioRouter();
+    final service = AudioRouteService(
+      isMobilePlatform: true,
+      nativeAudio: native,
+      enumerateAudioOutputs: () async => const <MediaDevice>[],
+      deviceChanges: const Stream<List<MediaDevice>>.empty(),
+    );
+    addTearDown(service.dispose);
+    await service.attachRoom(_FakeRoom(), isVideo: true); // дефолт — speaker
+    native.calls.clear();
+
+    final speaker = service.routes.firstWhere((route) => route.id == 'speaker');
+    final earpiece =
+        service.routes.firstWhere((route) => route.id == 'earpiece');
+    // Два тапа подряд: второй приходит, пока идёт первый → откладывается.
+    final first = service.selectRoute(speaker);
+    final second = service.selectRoute(earpiece);
+    await Future.wait<void>(<Future<void>>[first, second]);
+    // Дать отложенному повтору отработать (unawaited в finally).
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(native.calls, contains('setRoute:earpiece'));
+    expect(service.selectedRouteId, 'earpiece'); // победил последний тап
+  }));
 }
 
 class _FakeRoom extends Fake implements Room {}
+
+class _FakeCallAudioRouter implements CallAudioRouter {
+  bool setRouteResult = true;
+  bool updateCurrentOnSetRoute = true;
+  String? current;
+  final List<String> calls = <String>[];
+  final StreamController<void> _changes = StreamController<void>.broadcast();
+
+  @override
+  Stream<void> get deviceChanges => _changes.stream;
+
+  @override
+  Future<void> start() async {
+    calls.add('start');
+  }
+
+  @override
+  Future<void> stop() async {
+    calls.add('stop');
+  }
+
+  @override
+  Future<bool> setRoute(String routeId) async {
+    calls.add('setRoute:$routeId');
+    if (setRouteResult && updateCurrentOnSetRoute) {
+      current = routeId;
+    }
+    return setRouteResult;
+  }
+
+  @override
+  Future<String?> currentRoute() async => current;
+
+  @override
+  void dispose() {
+    calls.add('dispose');
+    unawaited(_changes.close());
+  }
+}

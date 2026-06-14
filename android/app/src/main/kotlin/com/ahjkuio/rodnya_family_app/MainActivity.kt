@@ -50,6 +50,9 @@ class MainActivity: FlutterActivity() {
         }
         RodnyaTelecomBridge.configure(this, flutterEngine)
         RodnyaCallForegroundBridge.configure(this, flutterEngine)
+        // CA1: нативный аудиороутинг звонка (ушной/динамик/BT) —
+        // setCommunicationDevice вместо депрекейтнутого setSpeakerphoneOn.
+        RodnyaCallAudioBridge.configure(this, flutterEngine)
     }
 
     override fun onNewIntent(intent: Intent) {
