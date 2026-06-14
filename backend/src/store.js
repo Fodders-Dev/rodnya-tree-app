@@ -14831,6 +14831,10 @@ class FileStore {
     // Набор с 2+ родителями пропускается — без дублей и без поломки.
     const completeCoParenting = () => {
       const groupsBySetId = new Map();
+      // Все родители каждого ребёнка по ВСЕМ наборам — чтобы не
+      // перелинковать того, кто уже записан родителем в ДРУГОМ наборе
+      // (например, явно как отчим/step): такого не трогаем.
+      const parentsByChildAll = new Map();
       for (const entry of treeRelations) {
         const setId = normalizeNullableString(entry.parentSetId);
         const parentId = parentIdFromRelation(entry);
@@ -14844,9 +14848,25 @@ class FileStore {
           groupsBySetId.set(setId, group);
         }
         group.parentIds.add(parentId);
+        let allParents = parentsByChildAll.get(childId);
+        if (!allParents) {
+          allParents = new Set();
+          parentsByChildAll.set(childId, allParents);
+        }
+        allParents.add(parentId);
       }
       for (const [setId, group] of groupsBySetId) {
         if (group.parentIds.size !== 1) {
+          continue;
+        }
+        // Достраиваем со-родительство ТОЛЬКО для биологических наборов.
+        // Adoptive/foster/guardian/step — это персональный статус, он не
+        // распространяется через брак (иначе супруг приёмной матери стал
+        // бы «приёмным» родителем ребёнка). normalizeParentSetType
+        // схлопывает пустое/мусор в "biological", так что набор без типа
+        // считается биологическим (системный дефолт для parent→child).
+        if (normalizeParentSetType(group.template.parentSetType) !==
+            "biological") {
           continue;
         }
         const soleParentId = group.parentIds.values().next().value;
@@ -14855,7 +14875,11 @@ class FileStore {
           continue;
         }
         const partnerId = currentPartners[0];
-        if (group.parentIds.has(partnerId)) {
+        // Партнёр уже родитель этого ребёнка в ЛЮБОМ наборе (в т.ч.
+        // намеренно как step) — не дублируем и не перезаписываем его набор.
+        const allParentsOfChild =
+          parentsByChildAll.get(group.childId) || new Set();
+        if (allParentsOfChild.has(partnerId)) {
           continue;
         }
         upsertRawRelation({
@@ -14865,7 +14889,7 @@ class FileStore {
           rightToLeft: "child",
           trackChange: false,
           rawParentSetId: setId,
-          rawParentSetType: normalizeParentSetType(group.template.parentSetType),
+          rawParentSetType: "biological",
           rawIsPrimaryParentSet: group.template.isPrimaryParentSet !== false,
           rawUnionId: null,
           rawUnionType: null,

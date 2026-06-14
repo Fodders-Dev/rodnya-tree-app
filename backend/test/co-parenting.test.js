@@ -203,6 +203,80 @@ test("B3 (d): past/divorced союз НЕ достраивает второго 
     "бывший супруг не должен авто-стать родителем");
 });
 
+test("B3 (f): явный step-родитель не перезаписывается в biological", async () => {
+  const {store} = await seededStore();
+  const motherId = await makePerson(store, "Мать", "female");
+  const stepId = await makePerson(store, "Отчим", "male");
+  const childId = await makePerson(store, "Ребёнок", "female");
+
+  // Биологическая мать.
+  await store.upsertRelation({
+    treeId: "tree-a",
+    person1Id: motherId,
+    person2Id: childId,
+    relation1to2: "parent",
+    relation2to1: "child",
+  });
+  // Отчим ЯВНО записан как step-родитель (отдельный набор).
+  await store.upsertRelation({
+    treeId: "tree-a",
+    person1Id: stepId,
+    person2Id: childId,
+    relation1to2: "parent",
+    relation2to1: "child",
+    parentSetType: "step",
+  });
+  // Брак матери и отчима — триггерит со-родительство.
+  await store.upsertRelation({
+    treeId: "tree-a",
+    person1Id: motherId,
+    person2Id: stepId,
+    relation1to2: "spouse",
+    relation2to1: "spouse",
+  });
+
+  const relations = await store.listRelations("tree-a");
+  const stepEdge = relations.find(
+    (relation) =>
+      (relation.person1Id === stepId &&
+        relation.person2Id === childId &&
+        relation.relation1to2 === "parent") ||
+      (relation.person1Id === childId &&
+        relation.person2Id === stepId &&
+        relation.relation2to1 === "parent"),
+  );
+  assert.ok(stepEdge, "явная step-связь должна сохраниться");
+  assert.equal(stepEdge.parentSetType, "step",
+    "step-статус не должен схлопнуться в biological");
+});
+
+test("B3 (g): супруг приёмной матери НЕ достраивается (adoptive не идёт через брак)", async () => {
+  const {store} = await seededStore();
+  const momId = await makePerson(store, "Приёмная мать", "female");
+  const husbandId = await makePerson(store, "Муж", "male");
+  const childId = await makePerson(store, "Ребёнок", "female");
+
+  await store.upsertRelation({
+    treeId: "tree-a",
+    person1Id: momId,
+    person2Id: childId,
+    relation1to2: "parent",
+    relation2to1: "child",
+    parentSetType: "adoptive",
+  });
+  await store.upsertRelation({
+    treeId: "tree-a",
+    person1Id: momId,
+    person2Id: husbandId,
+    relation1to2: "spouse",
+    relation2to1: "spouse",
+  });
+
+  const parents = parentIdsOf(await store.listRelations("tree-a"), childId);
+  assert.deepEqual([...parents], [momId],
+    "супруг приёмной матери не должен авто-стать родителем ребёнка");
+});
+
 test("B3 (e): у ребёнка уже 2 родителя — не дублируется и не ломается", async () => {
   const {store} = await seededStore();
   const motherId = await makePerson(store, "Мать", "female");
