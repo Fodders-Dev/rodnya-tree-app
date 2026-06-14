@@ -1,5 +1,33 @@
 part of 'chat_screen.dart';
 
+/// C2c: единый реестр «один inline-медиаплеер за раз» — голосовые бабблы
+/// и видео-кружки. Старт любого паузит предыдущий активный (как в
+/// Telegram: новое голосовое глушит играющий кружок и наоборот). Раньше
+/// реестр был только у голосовых (_VoicePlayerWidgetState), а видео его
+/// не переиспользовало — два кружка играли разом с зацикленным звуком.
+class _InlineMediaPlayback {
+  _InlineMediaPlayback._();
+
+  static VoidCallback? _activePause;
+
+  /// Сделать [pauseSelf] активным плеером, поставив предыдущего на паузу.
+  static void activate(VoidCallback pauseSelf) {
+    final previous = _activePause;
+    if (previous != null && !identical(previous, pauseSelf)) {
+      previous();
+    }
+    _activePause = pauseSelf;
+  }
+
+  /// Снять регистрацию (complete / pause / dispose), если активны были мы
+  /// — чтобы следующий старт не дёргал устаревший колбэк.
+  static void resign(VoidCallback pauseSelf) {
+    if (identical(_activePause, pauseSelf)) {
+      _activePause = null;
+    }
+  }
+}
+
 class _VoicePlayerWidget extends StatefulWidget {
   const _VoicePlayerWidget({
     this.url,
@@ -38,12 +66,9 @@ class _VoicePlayerWidgetState extends State<_VoicePlayerWidget> {
   StreamSubscription? _posSub;
   StreamSubscription? _compSub;
 
-  // One-at-a-time global playback. Without this, tapping multiple
-  // voice bubbles plays them all simultaneously — TG / iOS / WA all
-  // pause the previous voice when a new one starts. We track the
-  // currently-playing widget's pause callback in a static field so
-  // the next _play() in any voice widget can call it before starting.
-  static VoidCallback? _pauseActive;
+  // C2c: one-at-a-time playback теперь в общем реестре
+  // [_InlineMediaPlayback] (голос + видео-кружки), не в локальном
+  // статике — старт голосового паузит играющий кружок и наоборот.
 
   @override
   void initState() {
@@ -77,9 +102,7 @@ class _VoicePlayerWidgetState extends State<_VoicePlayerWidget> {
       }
       // Clear the global pointer if we were the active one — keeps
       // a stale callback from being invoked by the next bubble.
-      if (identical(_pauseActive, _pauseSelf)) {
-        _pauseActive = null;
-      }
+      _InlineMediaPlayback.resign(_pauseSelf);
     });
     return player;
   }
@@ -92,9 +115,7 @@ class _VoicePlayerWidgetState extends State<_VoicePlayerWidget> {
 
   @override
   void dispose() {
-    if (identical(_pauseActive, _pauseSelf)) {
-      _pauseActive = null;
-    }
+    _InlineMediaPlayback.resign(_pauseSelf);
     _stateSub?.cancel();
     _durationSub?.cancel();
     _posSub?.cancel();
@@ -105,14 +126,9 @@ class _VoicePlayerWidgetState extends State<_VoicePlayerWidget> {
 
   Future<void> _play() async {
     try {
-      // Stop whichever voice bubble is currently playing across the
-      // app. Without this the tapped bubble overlaps the previous one
-      // and the user hears two voices at once.
-      final previousPause = _pauseActive;
-      if (previousPause != null && !identical(previousPause, _pauseSelf)) {
-        previousPause();
-      }
-      _pauseActive = _pauseSelf;
+      // C2c: паузим любой другой играющий inline-медиаплеер (голос или
+      // видео-кружок) перед стартом — иначе две дорожки звучат разом.
+      _InlineMediaPlayback.activate(_pauseSelf);
 
       final player = _ensurePlayer();
       if (widget.url != null) {
@@ -2758,22 +2774,62 @@ class _VideoNotePlayerState extends State<_VideoNotePlayer> {
   @override
   void initState() {
     super.initState();
+    final controller = _createController();
+    _controller = controller;
+    _initializeFuture = _startPlayback(controller);
+  }
+
+  VideoPlayerController _createController() {
     final uri = _videoSourceUri(widget.source);
     final controller = widget.isRemoteSource
         ? VideoPlayerController.networkUrl(uri)
         : VideoPlayerController.contentUri(uri);
-    _controller = controller;
     controller.addListener(_handleUpdate);
-    _initializeFuture = controller.initialize().then((_) async {
+    return controller;
+  }
+
+  Future<void> _startPlayback(VideoPlayerController controller) {
+    // FR3: ошибка initialize() (битый файл / недоступный URL / кодек)
+    // долетит до FutureBuilder.snapshot.hasError → error-UI вместо
+    // вечного спиннера. .then не выполнится, activate/play пропускаются.
+    return controller.initialize().then((_) async {
       if (!mounted) return;
       await controller.setLooping(true);
       await controller.setVolume(1);
+      // C2c: один inline-плеер за раз — паузим другой кружок/голосовое.
+      _InlineMediaPlayback.activate(_pauseSelf);
       await controller.play();
     });
   }
 
+  Future<void> _retry() async {
+    final old = _controller;
+    old?.removeListener(_handleUpdate);
+    unawaited(old?.dispose());
+    final controller = _createController();
+    setState(() {
+      _controller = controller;
+      _initializeFuture = _startPlayback(controller);
+    });
+  }
+
+  /// C2c: пауза этого кружка по требованию реестра one-at-a-time.
+  void _pauseSelf() {
+    final controller = _controller;
+    if (controller != null &&
+        controller.value.isInitialized &&
+        controller.value.isPlaying) {
+      unawaited(controller.pause());
+    }
+  }
+
   @override
   void dispose() {
+    // FR2: кружок ушёл с экрана / размонтирован → снимаем регистрацию в
+    // реестре и диспоузим контроллер, что останавливает зацикленное
+    // видео. Слушателя снимаем ПЕРЕД dispose, чтобы pause/teardown не
+    // дёрнул setState в фазе билда (краш «setState during build»).
+    _InlineMediaPlayback.resign(_pauseSelf);
     _controller?.removeListener(_handleUpdate);
     _controller?.dispose();
     super.dispose();
@@ -2794,6 +2850,51 @@ class _VideoNotePlayerState extends State<_VideoNotePlayer> {
     setState(() => _isMuted = next);
   }
 
+  /// FR3: круг-плейсхолдер при сбое инициализации видео. Тап — повтор
+  /// загрузки (а не мёртвый чёрный круг). Постер, если есть, остаётся
+  /// фоном.
+  Widget _buildErrorCircle(BuildContext context) {
+    return Center(
+      child: GestureDetector(
+        key: const Key('video-note-error'),
+        behavior: HitTestBehavior.opaque,
+        onTap: _retry,
+        child: ClipOval(
+          child: Container(
+            width: widget.diameter,
+            height: widget.diameter,
+            color: Colors.black,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                if (widget.posterUrl != null && widget.posterUrl!.isNotEmpty)
+                  Opacity(
+                    opacity: 0.4,
+                    child: _AttachmentImage(
+                      url: widget.posterUrl,
+                      fit: BoxFit.cover,
+                    ),
+                  ),
+                const Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.refresh_rounded, color: Colors.white, size: 32),
+                    SizedBox(height: 4),
+                    Text(
+                      'Не удалось\nзагрузить',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.white, fontSize: 11),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final controller = _controller;
@@ -2803,6 +2904,11 @@ class _VideoNotePlayerState extends State<_VideoNotePlayer> {
     return FutureBuilder<void>(
       future: _initializeFuture,
       builder: (context, snapshot) {
+        // FR3: сбой инициализации — показываем affordance ошибки с
+        // повтором, а не чёрный круг / вечный спиннер без onTap.
+        if (snapshot.hasError) {
+          return _buildErrorCircle(context);
+        }
         if (snapshot.connectionState != ConnectionState.done) {
           return Center(
             child: ClipOval(

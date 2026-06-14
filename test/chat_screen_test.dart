@@ -2115,11 +2115,148 @@ void main() {
     await tester.pump();
 
     expect(find.byKey(const Key('video-note-inline-player')), findsOneWidget);
-    // Превью-кнопка ушла (кружок переключился в плеер), и нет иконок
-    // просмотрщика (внешнее открытие / скачивание).
+    // Превью-кнопка ушла (кружок переключился в плеер), и просмотрщик не
+    // открылся. open_in_new — безусловная иконка вьюера (в отличие от
+    // download, который зависит от supportsChatAttachmentDownload), так
+    // что её отсутствие — надёжный признак, что перехода во вьюер не было.
     expect(find.byIcon(Icons.play_arrow_rounded), findsNothing);
     expect(find.byIcon(Icons.open_in_new), findsNothing);
-    expect(find.byIcon(Icons.file_download_outlined), findsNothing);
+  });
+
+  testWidgets(
+      'C2c: сбой инициализации кружка показывает error-affordance, не спиннер',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(900, 1200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    VideoPlayerPlatform.instance = _FakeVideoPlayerPlatform(failInit: true);
+
+    final chatService = _FakeChatService();
+    getIt.registerSingleton<ChatServiceInterface>(chatService);
+
+    await tester.pumpWidget(
+      buildChatApp(
+        ChatScreen(
+          chatId: 'chat-1',
+          title: 'Тестовый чат',
+          draftStore: _MemoryChatDraftStore(),
+        ),
+      ),
+    );
+    chatService.emitMessages([
+      ChatMessage(
+        id: 'm-note-err',
+        chatId: 'chat-1',
+        senderId: 'other-user',
+        text: '',
+        timestamp: DateTime(2026, 4, 8, 9, 31),
+        isRead: false,
+        participants: const ['user-1', 'other-user'],
+        senderName: 'Анастасия<3',
+        attachments: const [
+          ChatAttachment(
+            type: ChatAttachmentType.video,
+            presentation: ChatAttachmentPresentation.videoNote,
+            url: 'https://example.com/broken.mp4',
+            fileName: 'video_note_broken.mp4',
+            thumbnailUrl: 'https://example.com/thumb.jpg',
+            durationMs: 3000,
+          ),
+        ],
+      ),
+    ]);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.play_arrow_rounded));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.pump(const Duration(milliseconds: 50));
+
+    // Affordance ошибки (с повтором по тапу), а не вечный спиннер.
+    expect(find.byKey(const Key('video-note-error')), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+  });
+
+  testWidgets(
+      'C2c: тап по второму кружку ставит первый на паузу (one-at-a-time)',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(900, 1400));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final platform = _FakeVideoPlayerPlatform(completeInit: true);
+    VideoPlayerPlatform.instance = platform;
+
+    final chatService = _FakeChatService();
+    getIt.registerSingleton<ChatServiceInterface>(chatService);
+
+    await tester.pumpWidget(
+      buildChatApp(
+        ChatScreen(
+          chatId: 'chat-1',
+          title: 'Тестовый чат',
+          draftStore: _MemoryChatDraftStore(),
+        ),
+      ),
+    );
+    chatService.emitMessages([
+      ChatMessage(
+        id: 'm-notes-two',
+        chatId: 'chat-1',
+        senderId: 'other-user',
+        text: '',
+        timestamp: DateTime(2026, 4, 8, 9, 32),
+        isRead: false,
+        participants: const ['user-1', 'other-user'],
+        senderName: 'Анастасия<3',
+        attachments: const [
+          ChatAttachment(
+            type: ChatAttachmentType.video,
+            presentation: ChatAttachmentPresentation.videoNote,
+            url: 'https://example.com/note_a.mp4',
+            fileName: 'video_note_a.mp4',
+            thumbnailUrl: 'https://example.com/a.jpg',
+            durationMs: 3000,
+          ),
+          ChatAttachment(
+            type: ChatAttachmentType.video,
+            presentation: ChatAttachmentPresentation.videoNote,
+            url: 'https://example.com/note_b.mp4',
+            fileName: 'video_note_b.mp4',
+            thumbnailUrl: 'https://example.com/b.jpg',
+            durationMs: 3000,
+          ),
+        ],
+      ),
+    ]);
+    await tester.pumpAndSettle();
+
+    // Два кружка-превью.
+    expect(find.byIcon(Icons.play_arrow_rounded), findsNWidgets(2));
+
+    // Тап по первому → играет (player 1). pumpAndSettle нельзя — у
+    // играющего video_player крутится таймер позиции; гоняем кадры руками.
+    await tester.tap(find.byIcon(Icons.play_arrow_rounded).first);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.pump(const Duration(milliseconds: 50));
+
+    // Остался один превью-кружок (второй) — первый уже в плеере.
+    expect(find.byIcon(Icons.play_arrow_rounded), findsOneWidget);
+
+    // Тап по второму → играет (player 2), реестр паузит первого.
+    await tester.tap(find.byIcon(Icons.play_arrow_rounded));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(platform.calls, contains('play:1'));
+    expect(platform.calls, contains('play:2'));
+    // Ключевое: первый кружок поставлен на паузу ПОСЛЕ того, как заиграл
+    // (это и есть one-at-a-time от реестра; video_player ещё дёргает
+    // pause в собственном setup, поэтому проверяем именно порядок).
+    final play1Index = platform.calls.indexOf('play:1');
+    final pause1AfterPlay = platform.calls.lastIndexOf('pause:1');
+    expect(play1Index, isNonNegative);
+    expect(pause1AfterPlay, greaterThan(play1Index),
+        reason: 'старт второго кружка обязан поставить первый на паузу');
   });
 
   testWidgets('ChatScreen forwards selected messages as a batch',
@@ -2412,23 +2549,62 @@ class _FakeBarPathProvider extends PathProviderPlatform
 /// проверяет именно подмену перехода в просмотрщик на inline-плеер.
 class _FakeVideoPlayerPlatform extends VideoPlayerPlatform
     with MockPlatformInterfaceMixin {
-  final StreamController<VideoEvent> _events =
-      StreamController<VideoEvent>.broadcast();
+  _FakeVideoPlayerPlatform({this.completeInit = false, this.failInit = false});
+
+  /// Эмитить ли событие initialized (тогда initialize() завершится и
+  /// пойдёт цепочка .then → activate/play). Для теста one-at-a-time.
+  final bool completeInit;
+
+  /// Кидать ли на create — initialize() зареджектится → error-UI.
+  final bool failInit;
+
+  int _nextId = 0;
+  final Map<int, StreamController<VideoEvent>> _events = {};
+
+  /// Лог вызовов play/pause по playerId — для проверки one-at-a-time.
+  final List<String> calls = <String>[];
+
+  Future<int?> _create() async {
+    if (failInit) {
+      throw PlatformException(code: 'init', message: 'boom');
+    }
+    final id = ++_nextId;
+    _events[id] = StreamController<VideoEvent>.broadcast();
+    return id;
+  }
 
   @override
   Future<void> init() async {}
 
   @override
-  Future<void> dispose(int playerId) async {}
+  Future<void> dispose(int playerId) async {
+    await _events[playerId]?.close();
+    _events.remove(playerId);
+  }
 
   @override
-  Future<int?> create(DataSource dataSource) async => 1;
+  Future<int?> create(DataSource dataSource) => _create();
 
   @override
-  Future<int?> createWithOptions(VideoCreationOptions options) async => 1;
+  Future<int?> createWithOptions(VideoCreationOptions options) => _create();
 
   @override
-  Stream<VideoEvent> videoEventsFor(int playerId) => _events.stream;
+  Stream<VideoEvent> videoEventsFor(int playerId) {
+    final controller =
+        _events[playerId] ??= StreamController<VideoEvent>.broadcast();
+    if (completeInit) {
+      scheduleMicrotask(() {
+        if (!controller.isClosed) {
+          controller.add(VideoEvent(
+            eventType: VideoEventType.initialized,
+            duration: const Duration(seconds: 3),
+            size: const Size(320, 320),
+          ));
+        }
+      });
+    }
+    return controller.stream;
+  }
 
   @override
   Widget buildView(int playerId) => const SizedBox.shrink();
@@ -2437,10 +2613,14 @@ class _FakeVideoPlayerPlatform extends VideoPlayerPlatform
   Future<void> setLooping(int playerId, bool looping) async {}
 
   @override
-  Future<void> play(int playerId) async {}
+  Future<void> play(int playerId) async {
+    calls.add('play:$playerId');
+  }
 
   @override
-  Future<void> pause(int playerId) async {}
+  Future<void> pause(int playerId) async {
+    calls.add('pause:$playerId');
+  }
 
   @override
   Future<void> setVolume(int playerId, double volume) async {}
