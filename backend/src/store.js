@@ -14791,38 +14791,69 @@ class FileStore {
       rightToLeft: normalizedRelation2to1,
     });
 
-    if (normalizedParentId && normalizedChildId && resolvedParentSetId) {
-      const groupParentIds = new Set(
-        treeRelations
-          .filter((entry) => entry.parentSetId === resolvedParentSetId)
-          .map((entry) => parentIdFromRelation(entry))
-          .filter(Boolean),
-      );
-      if (groupParentIds.size === 1) {
-        const soleParentId = Array.from(groupParentIds)[0];
-        const currentPartners = getCurrentUnionPartners(soleParentId);
-        if (currentPartners.length === 1) {
-          const partnerId = currentPartners[0];
-          if (!groupParentIds.has(partnerId)) {
-            upsertRawRelation({
-              leftId: partnerId,
-              rightId: normalizedChildId,
-              leftToRight: "parent",
-              rightToLeft: "child",
-              trackChange: false,
-              rawParentSetId: resolvedParentSetId,
-              rawParentSetType: resolvedParentSetType,
-              rawIsPrimaryParentSet: resolvedIsPrimaryParentSet,
-              rawUnionId: null,
-              rawUnionType: null,
-              rawUnionStatus: null,
-              rawMarriageDate: undefined,
-              rawDivorceDate: undefined,
-            });
-          }
+    // B3 (со-родительство): достраиваем второго родителя ребёнку.
+    // Раньше это триггерило ТОЛЬКО создание ребра parent→child и только
+    // для его набора — если супруг добавлялся ПОЗЖЕ привязки к ребёнку
+    // (или брак создавался после), со-родительство не достраивалось: муж
+    // оставался «Родня по браку», без линии отец→ребёнок. Теперь —
+    // идемпотентный проход по ВСЕМ наборам-родителям дерева на каждой
+    // мутации связей:
+    //   • FR1: брак, созданный после привязки к ребёнку, достраивает
+    //     второго родителя (и наоборот — порядок не важен);
+    //   • FR2: предсуществующие деревья само-лечатся при следующей
+    //     мутации (не write-on-read — мы внутри createRelation).
+    // Гарды СТРОГО прежние, чтобы не залинковать отчима, где второй супруг
+    // намеренно не родитель: набор с РОВНО ОДНИМ родителем; у него РОВНО
+    // ОДИН текущий супруг/партнёр (getCurrentUnionPartners берёт только
+    // current → past/divorced не триггерят); супруг ещё не родитель.
+    // Набор с 2+ родителями пропускается — без дублей и без поломки.
+    const completeCoParenting = () => {
+      const groupsBySetId = new Map();
+      for (const entry of treeRelations) {
+        const setId = normalizeNullableString(entry.parentSetId);
+        const parentId = parentIdFromRelation(entry);
+        const childId = childIdFromRelation(entry);
+        if (!setId || !parentId || !childId) {
+          continue;
         }
+        let group = groupsBySetId.get(setId);
+        if (!group) {
+          group = {childId, parentIds: new Set(), template: entry};
+          groupsBySetId.set(setId, group);
+        }
+        group.parentIds.add(parentId);
       }
-    }
+      for (const [setId, group] of groupsBySetId) {
+        if (group.parentIds.size !== 1) {
+          continue;
+        }
+        const soleParentId = group.parentIds.values().next().value;
+        const currentPartners = getCurrentUnionPartners(soleParentId);
+        if (currentPartners.length !== 1) {
+          continue;
+        }
+        const partnerId = currentPartners[0];
+        if (group.parentIds.has(partnerId)) {
+          continue;
+        }
+        upsertRawRelation({
+          leftId: partnerId,
+          rightId: group.childId,
+          leftToRight: "parent",
+          rightToLeft: "child",
+          trackChange: false,
+          rawParentSetId: setId,
+          rawParentSetType: normalizeParentSetType(group.template.parentSetType),
+          rawIsPrimaryParentSet: group.template.isPrimaryParentSet !== false,
+          rawUnionId: null,
+          rawUnionType: null,
+          rawUnionStatus: null,
+          rawMarriageDate: undefined,
+          rawDivorceDate: undefined,
+        });
+      }
+    };
+    completeCoParenting();
 
     if (
       normalizedRelation1to2 === "sibling" &&

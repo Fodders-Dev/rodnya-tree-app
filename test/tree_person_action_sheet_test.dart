@@ -202,6 +202,80 @@ void main() {
     },
   );
 
+  // B3 (FR3): «Добавить второго родителя» tile tests.
+  testWidgets('B3: onAddSecondParent null → пункта второго родителя нет',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: TreePersonActionSheet(
+            person: _samplePerson(),
+            onOpenProfile: () {},
+            onEdit: () {},
+            onAddRelative: () {},
+            onConnect: () {},
+            onDelete: () {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const Key('tree-action-add-second-parent')),
+      findsNothing,
+    );
+  });
+
+  testWidgets(
+      'B3: onAddSecondParent задан → пункт есть и вызывает колбэк',
+      (tester) async {
+    var calls = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: TreePersonActionSheet(
+            person: _samplePerson(),
+            onOpenProfile: () {},
+            onEdit: () {},
+            onAddRelative: () {},
+            onConnect: () {},
+            onDelete: () {},
+            onAddSecondParent: () => calls++,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Добавить второго родителя'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('tree-action-add-second-parent')));
+    await tester.pumpAndSettle();
+    expect(calls, 1);
+  });
+
+  testWidgets('B3: в viewerMode пункта второго родителя нет', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: TreePersonActionSheet(
+            person: _samplePerson(),
+            viewerMode: true,
+            onOpenProfile: () {},
+            onEdit: () {},
+            onAddRelative: () {},
+            onConnect: () {},
+            onDelete: () {},
+            onAddSecondParent: () {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const Key('tree-action-add-second-parent')),
+      findsNothing,
+    );
+  });
+
   // Ship FE7 (2026-05-26): hide-toggle tile tests.
   testWidgets('FE7: onToggleHide null → hide tile not rendered',
       (tester) async {

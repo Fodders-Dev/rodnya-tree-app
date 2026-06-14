@@ -1433,9 +1433,45 @@ class _TreeViewScreenState extends State<TreeViewScreen>
     final viewerPersonId = _graphSnapshot?.viewerPersonId;
     final canToggleHide = semyaContext != null && person.id != viewerPersonId;
     final isCurrentlyHidden = _hiddenPersonIds.contains(person.id);
+    // B3 (FR3): «Добавить второго родителя» — контекстный пункт, видимый
+    // только когда у узла РОВНО один родитель. Ведёт в add-флоу с
+    // предвыбранным недостающим полом (если пол существующего известен),
+    // чтобы достроить пару (а бэк свяжет супруга автоматически).
+    final parentIds = <String>{};
+    for (final relation in _relationsData) {
+      if (relation.person2Id == person.id &&
+          relation.relation1to2 == RelationType.parent) {
+        parentIds.add(relation.person1Id);
+      } else if (relation.person1Id == person.id &&
+          relation.relation2to1 == RelationType.parent) {
+        parentIds.add(relation.person2Id);
+      }
+    }
+    VoidCallback? onAddSecondParent;
+    if (!_isViewerOnly && parentIds.length == 1) {
+      FamilyPerson? existingParent;
+      for (final candidate in _treePeople) {
+        if (candidate.id == parentIds.first) {
+          existingParent = candidate;
+          break;
+        }
+      }
+      final missingGender = existingParent?.gender == Gender.female
+          ? Gender.male
+          : existingParent?.gender == Gender.male
+              ? Gender.female
+              : null;
+      onAddSecondParent = () => _navigateToAddRelativeWithHint(
+            treeId,
+            relation: RelationType.parent,
+            gender: missingGender,
+            contextPersonId: person.id,
+          );
+    }
     showTreePersonActionSheet(
       context,
       person: person,
+      onAddSecondParent: onAddSecondParent,
       // Ship FE4 (2026-05-26): viewer-role gating — only «Открыть профиль»
       // tile surfaces, editorial actions hidden. Backend independently
       // rejects mutations с 403; UI gate just keeps виду cleaner.

@@ -30,6 +30,7 @@ Future<void> showTreePersonActionSheet(
   bool viewerMode = false,
   VoidCallback? onToggleHide,
   bool isHidden = false,
+  VoidCallback? onAddSecondParent,
 }) async {
   await showModalBottomSheet<void>(
     context: context,
@@ -39,6 +40,12 @@ Future<void> showTreePersonActionSheet(
       person: person,
       viewerMode: viewerMode,
       isHidden: isHidden,
+      onAddSecondParent: onAddSecondParent == null
+          ? null
+          : () {
+              Navigator.of(sheetContext).pop();
+              onAddSecondParent();
+            },
       onOpenProfile: () {
         Navigator.of(sheetContext).pop();
         onOpenProfile();
@@ -81,6 +88,7 @@ class TreePersonActionSheet extends StatelessWidget {
     this.viewerMode = false,
     this.onToggleHide,
     this.isHidden = false,
+    this.onAddSecondParent,
   });
 
   final FamilyPerson person;
@@ -89,6 +97,12 @@ class TreePersonActionSheet extends StatelessWidget {
   final VoidCallback onAddRelative;
   final VoidCallback onConnect;
   final VoidCallback onDelete;
+
+  /// B3 (FR3): явный путь добавить ВТОРОГО родителя ребёнку с одним
+  /// родителем. Не null только когда у узла ровно один родитель — тогда
+  /// в шите появляется «Добавить второго родителя» (ведёт в add-флоу с
+  /// предвыбранным недостающим полом). null → пункта нет.
+  final VoidCallback? onAddSecondParent;
 
   /// Ship FE4 (2026-05-26): viewer-role gating. When `true`, only
   /// «Открыть профиль» tile renders — editorial actions (edit / add /
@@ -205,6 +219,15 @@ class TreePersonActionSheet extends StatelessWidget {
                 label: 'Добавить родственника',
                 onTap: onAddRelative,
               ),
+              // B3 (FR3): контекстный пункт — виден только когда у узла
+              // ровно один родитель, делает добавление второго очевидным.
+              if (onAddSecondParent != null)
+                _ActionTile(
+                  key: const Key('tree-action-add-second-parent'),
+                  icon: Icons.family_restroom_rounded,
+                  label: 'Добавить второго родителя',
+                  onTap: onAddSecondParent!,
+                ),
               _ActionTile(
                 key: const Key('tree-action-connect'),
                 icon: Icons.link_rounded,
