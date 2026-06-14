@@ -1434,9 +1434,13 @@ class _TreeViewScreenState extends State<TreeViewScreen>
     final canToggleHide = semyaContext != null && person.id != viewerPersonId;
     final isCurrentlyHidden = _hiddenPersonIds.contains(person.id);
     // B3 (FR3): «Добавить второго родителя» — контекстный пункт, видимый
-    // только когда у узла РОВНО один родитель. Ведёт в add-флоу с
-    // предвыбранным недостающим полом (если пол существующего известен),
-    // чтобы достроить пару (а бэк свяжет супруга автоматически).
+    // только когда у узла РОВНО один родитель. Ведёт в add-флоу
+    // (relation: parent, contextPersonId — этот ребёнок) с предвыбранным
+    // недостающим полом: пользователь ЯВНО привязывает второго родителя
+    // ребром parent→child. Это безопасный путь — после редизайна B3 бэк
+    // больше НЕ авто-связывает супруга на браке/backfill (корраптило
+    // сводные семьи), так что ручное добавление — единственный путь для
+    // повторных браков и починки старых деревьев.
     final parentIds = <String>{};
     for (final relation in _relationsData) {
       if (relation.person2Id == person.id &&

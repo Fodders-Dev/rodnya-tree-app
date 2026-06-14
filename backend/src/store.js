@@ -14620,6 +14620,31 @@ class FileStore {
       return Array.from(partnerIds);
     };
 
+    // Текущие СУПРУГИ/ПАРТНЁРЫ (романтический союз) — для со-родительства.
+    // В отличие от getCurrentUnionPartners, исключает friend/other/single:
+    // друг/прочий не должен становиться родителем ребёнка (ревью B3 FR2).
+    // past/divorced уже отсечены isCurrentUnionRelation (только current).
+    const getCurrentSpousePartnerIds = (personId) => {
+      const partnerIds = new Set();
+      for (const relation of treeRelations) {
+        if (!isCurrentUnionRelation(relation)) {
+          continue;
+        }
+        const unionType = normalizeUnionType(relation.unionType, {
+          relationType: relation.relation1to2 || relation.relation2to1,
+        });
+        if (unionType !== "spouse" && unionType !== "partner") {
+          continue;
+        }
+        if (relation.person1Id === personId) {
+          partnerIds.add(relation.person2Id);
+        } else if (relation.person2Id === personId) {
+          partnerIds.add(relation.person1Id);
+        }
+      }
+      return Array.from(partnerIds);
+    };
+
     const normalizedParentId =
       normalizedRelation1to2 === "parent" || normalizedRelation2to1 === "child"
         ? person1Id
@@ -14813,93 +14838,66 @@ class FileStore {
       rightToLeft: normalizedRelation2to1,
     });
 
-    // B3 (со-родительство): достраиваем второго родителя ребёнку.
-    // Раньше это триггерило ТОЛЬКО создание ребра parent→child и только
-    // для его набора — если супруг добавлялся ПОЗЖЕ привязки к ребёнку
-    // (или брак создавался после), со-родительство не достраивалось: муж
-    // оставался «Родня по браку», без линии отец→ребёнок. Теперь —
-    // идемпотентный проход по ВСЕМ наборам-родителям дерева на каждой
-    // мутации связей:
-    //   • FR1: брак, созданный после привязки к ребёнку, достраивает
-    //     второго родителя (и наоборот — порядок не важен);
-    //   • FR2: предсуществующие деревья само-лечатся при следующей
-    //     мутации (не write-on-read — мы внутри createRelation).
-    // Гарды СТРОГО прежние, чтобы не залинковать отчима, где второй супруг
-    // намеренно не родитель: набор с РОВНО ОДНИМ родителем; у него РОВНО
-    // ОДИН текущий супруг/партнёр (getCurrentUnionPartners берёт только
-    // current → past/divorced не триггерят); супруг ещё не родитель.
-    // Набор с 2+ родителями пропускается — без дублей и без поломки.
-    const completeCoParenting = () => {
-      const groupsBySetId = new Map();
-      // Все родители каждого ребёнка по ВСЕМ наборам — чтобы не
-      // перелинковать того, кто уже записан родителем в ДРУГОМ наборе
-      // (например, явно как отчим/step): такого не трогаем.
-      const parentsByChildAll = new Map();
-      for (const entry of treeRelations) {
-        const setId = normalizeNullableString(entry.parentSetId);
-        const parentId = parentIdFromRelation(entry);
-        const childId = childIdFromRelation(entry);
-        if (!setId || !parentId || !childId) {
-          continue;
+    // B3 (со-родительство, УЗКО — ревью B3): достраиваем второго родителя
+    // ТОЛЬКО при явном создании ребра parent→child (мы сейчас внутри его
+    // создания) и ТОЛЬКО для набора ЭТОГО ребёнка. НЕ на браке, НЕ задним
+    // числом, НЕ по всему дереву.
+    //
+    // Почему так: данные НЕ отличают «нуклеарная семья сложилась после
+    // ребёнка» от «родитель женился повторно на постороннем ребёнку».
+    // Прежняя широкая автоматика (срабатывание на браке + tree-wide
+    // backfill существующих деревьев) из-за этого корраптила сводные
+    // семьи — молча записывала отчима (и даже 'friend'-союз) биологическим
+    // родителем ребёнка из ПРОШЛОГО союза. Остальные кейсы (брак после
+    // привязки к ребёнку, починка старого дерева) закрываются ручным UI
+    // «Добавить второго родителя» — это безопасно (явный выбор человека).
+    //
+    // Гарды: набор с РОВНО ОДНИМ родителем (только что добавленным); набор
+    // биологический (приёмный/опекунский статус персональный, через брак не
+    // распространяется); у родителя РОВНО ОДИН текущий СУПРУГ/ПАРТНЁР
+    // (романтический союз; friend/other/single и past/divorced исключены —
+    // FR2); партнёр ещё не родитель этого ребёнка ни в одном наборе.
+    if (normalizedParentId && normalizedChildId && resolvedParentSetId) {
+      const groupParentIds = new Set(
+        treeRelations
+          .filter((entry) => entry.parentSetId === resolvedParentSetId)
+          .map((entry) => parentIdFromRelation(entry))
+          .filter(Boolean),
+      );
+      const isBiologicalSet =
+        normalizeParentSetType(resolvedParentSetType) === "biological";
+      if (groupParentIds.size === 1 && isBiologicalSet) {
+        const soleParentId = groupParentIds.values().next().value;
+        const currentPartners = getCurrentSpousePartnerIds(soleParentId);
+        if (currentPartners.length === 1) {
+          const partnerId = currentPartners[0];
+          // Партнёр уже родитель этого ребёнка в ЛЮБОМ наборе (в т.ч.
+          // намеренно как отчим/step) — не дублируем и не перезаписываем.
+          const partnerAlreadyParent = treeRelations.some(
+            (entry) =>
+              childIdFromRelation(entry) === normalizedChildId &&
+              parentIdFromRelation(entry) === partnerId,
+          );
+          if (!partnerAlreadyParent) {
+            upsertRawRelation({
+              leftId: partnerId,
+              rightId: normalizedChildId,
+              leftToRight: "parent",
+              rightToLeft: "child",
+              trackChange: false,
+              rawParentSetId: resolvedParentSetId,
+              rawParentSetType: resolvedParentSetType,
+              rawIsPrimaryParentSet: resolvedIsPrimaryParentSet,
+              rawUnionId: null,
+              rawUnionType: null,
+              rawUnionStatus: null,
+              rawMarriageDate: undefined,
+              rawDivorceDate: undefined,
+            });
+          }
         }
-        let group = groupsBySetId.get(setId);
-        if (!group) {
-          group = {childId, parentIds: new Set(), template: entry};
-          groupsBySetId.set(setId, group);
-        }
-        group.parentIds.add(parentId);
-        let allParents = parentsByChildAll.get(childId);
-        if (!allParents) {
-          allParents = new Set();
-          parentsByChildAll.set(childId, allParents);
-        }
-        allParents.add(parentId);
       }
-      for (const [setId, group] of groupsBySetId) {
-        if (group.parentIds.size !== 1) {
-          continue;
-        }
-        // Достраиваем со-родительство ТОЛЬКО для биологических наборов.
-        // Adoptive/foster/guardian/step — это персональный статус, он не
-        // распространяется через брак (иначе супруг приёмной матери стал
-        // бы «приёмным» родителем ребёнка). normalizeParentSetType
-        // схлопывает пустое/мусор в "biological", так что набор без типа
-        // считается биологическим (системный дефолт для parent→child).
-        if (normalizeParentSetType(group.template.parentSetType) !==
-            "biological") {
-          continue;
-        }
-        const soleParentId = group.parentIds.values().next().value;
-        const currentPartners = getCurrentUnionPartners(soleParentId);
-        if (currentPartners.length !== 1) {
-          continue;
-        }
-        const partnerId = currentPartners[0];
-        // Партнёр уже родитель этого ребёнка в ЛЮБОМ наборе (в т.ч.
-        // намеренно как step) — не дублируем и не перезаписываем его набор.
-        const allParentsOfChild =
-          parentsByChildAll.get(group.childId) || new Set();
-        if (allParentsOfChild.has(partnerId)) {
-          continue;
-        }
-        upsertRawRelation({
-          leftId: partnerId,
-          rightId: group.childId,
-          leftToRight: "parent",
-          rightToLeft: "child",
-          trackChange: false,
-          rawParentSetId: setId,
-          rawParentSetType: "biological",
-          rawIsPrimaryParentSet: group.template.isPrimaryParentSet !== false,
-          rawUnionId: null,
-          rawUnionType: null,
-          rawUnionStatus: null,
-          rawMarriageDate: undefined,
-          rawDivorceDate: undefined,
-        });
-      }
-    };
-    completeCoParenting();
+    }
 
     if (
       normalizedRelation1to2 === "sibling" &&
