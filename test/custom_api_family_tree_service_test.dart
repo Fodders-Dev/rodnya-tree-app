@@ -1011,6 +1011,18 @@ void main() {
                   'name': 'Елена Смирнова',
                   'gender': 'female',
                 },
+                {
+                  'id': 'ex-wife',
+                  'treeId': 'tree-graph',
+                  'name': 'Ольга Бывшая',
+                  'gender': 'female',
+                },
+                {
+                  'id': 'ex-partner',
+                  'treeId': 'tree-graph',
+                  'name': 'Игорь Бывший',
+                  'gender': 'male',
+                },
               ],
               'relations': const [],
               'familyUnits': const [],
@@ -1072,6 +1084,22 @@ void main() {
                   'alternatePathCount': 0,
                   'pathSummary': 'in-law',
                   'primaryPathPersonIds': ['viewer-person', 'sister-in-law'],
+                },
+                {
+                  'personId': 'ex-wife',
+                  'primaryRelationLabel': 'Бывшая жена',
+                  'isBlood': false,
+                  'alternatePathCount': 0,
+                  'pathSummary': 'union',
+                  'primaryPathPersonIds': ['viewer-person', 'ex-wife'],
+                },
+                {
+                  'personId': 'ex-partner',
+                  'primaryRelationLabel': 'Бывший партнёр',
+                  'isBlood': false,
+                  'alternatePathCount': 0,
+                  'pathSummary': 'union',
+                  'primaryPathPersonIds': ['viewer-person', 'ex-partner'],
                 },
               ],
             },
@@ -1143,6 +1171,17 @@ void main() {
     expect(
       await treeService.getRelationToUser('tree-graph', 'sister-in-law'),
       RelationType.siblingInLaw,
+    );
+    // B2: гендерные метки бывшего союза должны резолвиться обратно в
+    // союзный тип (а не в RelationType.other), иначе редактирование
+    // экс-супруга предвыбирало бы «другое».
+    expect(
+      await treeService.getRelationToUser('tree-graph', 'ex-wife'),
+      RelationType.ex_spouse,
+    );
+    expect(
+      await treeService.getRelationToUser('tree-graph', 'ex-partner'),
+      RelationType.ex_partner,
     );
   });
 

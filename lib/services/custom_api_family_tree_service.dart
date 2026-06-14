@@ -1835,12 +1835,26 @@ class CustomApiFamilyTreeService
         normalizedLabel.contains('падчер')) {
       return RelationType.stepchild;
     }
+    // B2: бывший союз. Метки графа теперь гендерные («Бывший муж»/
+    // «Бывшая жена»/«Бывший партнёр»/«Бывшая партнёрша»), проверяем ДО
+    // текущих spouse/partner, иначе «Бывший супруг» ошибочно попал бы в
+    // spouse. 'партн' ловит и е, и ё.
+    if (normalizedLabel.contains('бывш')) {
+      if (normalizedLabel.contains('партн')) {
+        return RelationType.ex_partner;
+      }
+      if (normalizedLabel.contains('супруг') ||
+          normalizedLabel.contains('муж') ||
+          normalizedLabel.contains('жен')) {
+        return RelationType.ex_spouse;
+      }
+    }
     if (normalizedLabel.contains('супруг') ||
-        normalizedLabel == 'муж' ||
-        normalizedLabel == 'жена') {
+        normalizedLabel.contains('муж') ||
+        normalizedLabel.contains('жен')) {
       return RelationType.spouse;
     }
-    if (normalizedLabel.contains('партнер')) {
+    if (normalizedLabel.contains('партн')) {
       return RelationType.partner;
     }
     if (normalizedLabel.contains('тесть') ||
