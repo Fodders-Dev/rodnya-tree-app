@@ -132,6 +132,10 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
   // F2: сложные семьи — дата развода для бывших союзов.
   DateTime? _divorceDate;
   bool _showDivorceDateField = false;
+  // B2: статус союза в узловом add-флоу для spouse/partner — «Вместе»
+  // (current, дефолт) либо «Расстались» (past). Тип в пикере остаётся
+  // примитивным; бывший статус — свойство союза, а не отдельный тип.
+  bool _unionStatusIsPast = false;
   Gender? _selectedGender;
   RelationType? _selectedRelationType;
   RelationType? _initialRelationType;
@@ -761,6 +765,11 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
                   isConfirmed: true,
                   marriageDate: isUnionRelation ? _marriageDate : null,
                   divorceDate: isUnionRelation ? _divorceDate : null,
+                  // B2: «Расстались» → past (для spouse/partner). Иначе
+                  // null → бэк решает по типу/дате (ex_* остаётся past).
+                  unionStatus: isUnionRelation && _unionStatusIsPast
+                      ? 'past'
+                      : null,
                   customRelationLabel1to2: customLabels?.relation1to2,
                   customRelationLabel2to1: customLabels?.relation2to1,
                 );
@@ -896,6 +905,10 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
                 isConfirmed: true,
                 marriageDate: isUnionRelation ? _marriageDate : null,
                 divorceDate: isUnionRelation ? _divorceDate : null,
+                // B2: «Расстались» → past (для spouse/partner). Иначе null
+                // → бэк решает по типу/дате (ex_* остаётся past).
+                unionStatus:
+                    isUnionRelation && _unionStatusIsPast ? 'past' : null,
                 customRelationLabel1to2: customLabels?.relation1to2,
                 customRelationLabel2to1: customLabels?.relation2to1,
               );
@@ -1011,6 +1024,7 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
     _marriageDate = null;
     _divorceDate = null;
     _showDivorceDateField = false;
+    _unionStatusIsPast = false;
     _selectedGender = null;
     for (final draft in _importantEventDrafts) {
       draft.dispose();

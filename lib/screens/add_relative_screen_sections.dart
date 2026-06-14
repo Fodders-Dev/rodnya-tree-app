@@ -1173,8 +1173,72 @@ extension _AddRelativeScreenSections on _AddRelativeScreenState {
               fontStyle: FontStyle.italic,
             ),
           ),
+          // B2: для союзных связей (супруг/партнёр) — статус союза прямо в
+          // узловом флоу, чтобы можно было добавить БЫВШЕГО супруга/
+          // партнёра любому узлу, не плодя типы в пикере.
+          if (relationType == RelationType.spouse ||
+              relationType == RelationType.partner)
+            _buildUnionStatusSelector(),
         ],
       ),
+    );
+  }
+
+  /// B2: «Вместе» (current, дефолт) / «Расстались» (past) + необязательная
+  /// дата окончания. Пишем в существующее поле unionStatus — новых полей
+  /// не вводим. Виден только для союзных связей.
+  Widget _buildUnionStatusSelector() {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 16),
+        Text(
+          'Статус союза',
+          style: theme.textTheme.titleSmall?.copyWith(
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: ChoiceChip(
+                key: const Key('union-status-together'),
+                label: const Text('Вместе'),
+                selected: !_unionStatusIsPast,
+                onSelected: (_) =>
+                    _updateSectionState(() => _unionStatusIsPast = false),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: ChoiceChip(
+                key: const Key('union-status-separated'),
+                label: const Text('Расстались'),
+                selected: _unionStatusIsPast,
+                onSelected: (_) =>
+                    _updateSectionState(() => _unionStatusIsPast = true),
+              ),
+            ),
+          ],
+        ),
+        if (_unionStatusIsPast) ...[
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            key: const Key('union-divorce-date'),
+            onPressed: _pickDivorceDate,
+            icon: const Icon(Icons.event_outlined),
+            label: Text(
+              _divorceDate == null
+                  ? 'Дата расставания (необязательно)'
+                  : 'Расстались: ${_divorceDate!.day.toString().padLeft(2, '0')}.'
+                      '${_divorceDate!.month.toString().padLeft(2, '0')}.'
+                      '${_divorceDate!.year}',
+            ),
+          ),
+        ],
+      ],
     );
   }
 

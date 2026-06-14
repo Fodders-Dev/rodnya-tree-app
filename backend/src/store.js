@@ -2397,9 +2397,20 @@ function describeDirectRelationLabel({
   relationType,
   gender = "unknown",
   parentSetType = "biological",
+  unionStatus = null,
 }) {
-  const normalizedRelationType = String(relationType || "").trim().toLowerCase();
+  let normalizedRelationType = String(relationType || "").trim().toLowerCase();
   const normalizedParentSetType = normalizeParentSetType(parentSetType);
+  // B2: статус союза 'past' на примитивном spouse/partner → метка
+  // бывшего союза (тип в пикере остаётся текущим; «бывший» — свойство
+  // союза). ex_spouse/ex_partner и так попадут в нужную ветку switch.
+  if (String(unionStatus || "").trim().toLowerCase() === "past") {
+    if (normalizedRelationType === "spouse") {
+      normalizedRelationType = "ex_spouse";
+    } else if (normalizedRelationType === "partner") {
+      normalizedRelationType = "ex_partner";
+    }
+  }
 
   if (normalizedRelationType === "parent") {
     if (normalizedParentSetType === "adoptive") {
@@ -2465,9 +2476,17 @@ function describeDirectRelationLabel({
     case "partner":
       return "Партнер";
     case "ex_spouse":
-      return "Бывший супруг";
+      return genderAwareWord(gender, {
+        male: "Бывший муж",
+        female: "Бывшая жена",
+        neutral: "Бывший супруг",
+      });
     case "ex_partner":
-      return "Бывший партнер";
+      return genderAwareWord(gender, {
+        male: "Бывший партнёр",
+        female: "Бывшая партнёрша",
+        neutral: "Бывший партнёр",
+      });
     case "friend":
       return "Друг";
     case "stepparent":
@@ -4424,11 +4443,14 @@ function computeViewerKinships(treeId, persons = [], relations = [], viewerPerso
               relationType,
               gender: person.gender,
               parentSetType: directRelation.parentSetType,
+              unionStatus: directRelation.unionStatus,
             })
           : describeDirectRelationLabel({
               relationType,
               gender: person.gender,
               parentSetType: directRelation.parentSetType,
+              // B2: бывший союз → метка «бывший муж/жена» вместо текущей.
+              unionStatus: directRelation.unionStatus,
             });
         isBlood = isBloodDirectRelationType(
           relationType,

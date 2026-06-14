@@ -87,6 +87,41 @@ class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
     return Future.value('person-1');
   }
 
+  // B2: захват аргументов createRelation для проверки unionStatus.
+  bool createRelationCalled = false;
+  String? lastCreateUnionStatus;
+  RelationType? lastCreateRelationType;
+
+  @override
+  Future<FamilyRelation> createRelation({
+    required String treeId,
+    required String person1Id,
+    required String person2Id,
+    required RelationType relation1to2,
+    bool isConfirmed = true,
+    DateTime? marriageDate,
+    DateTime? divorceDate,
+    String? customRelationLabel1to2,
+    String? customRelationLabel2to1,
+    String? unionStatus,
+  }) async {
+    createRelationCalled = true;
+    lastCreateUnionStatus = unionStatus;
+    lastCreateRelationType = relation1to2;
+    return FamilyRelation(
+      id: 'rel-1',
+      treeId: treeId,
+      person1Id: person1Id,
+      person2Id: person2Id,
+      relation1to2: relation1to2,
+      relation2to1: relation1to2,
+      isConfirmed: isConfirmed,
+      createdAt: DateTime(2024, 1, 1),
+      marriageDate: marriageDate,
+      divorceDate: divorceDate,
+    );
+  }
+
   @override
   Future<RelationType> getRelationToUser(
       String treeId, String relativeId) async {
@@ -556,6 +591,156 @@ void main() {
     expect(find.text('Дата свадьбы'), findsOneWidget);
     expect(find.byKey(const Key('divorce-date-field')), findsOneWidget);
     expect(find.byKey(const Key('divorce-date-add')), findsNothing);
+  });
+
+  testWidgets(
+      'B2: для spouse на узле виден селектор статуса союза (Вместе/Расстались)',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(900, 1600));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final relatedPerson = FamilyPerson(
+      id: 'person-1',
+      treeId: 'tree-1',
+      name: 'Петрова Анна',
+      gender: Gender.female,
+      isAlive: true,
+      createdAt: DateTime(2024, 1, 1),
+      updatedAt: DateTime(2024, 1, 1),
+    );
+    final router = GoRouter(
+      routes: [
+        GoRoute(
+          path: '/add',
+          builder: (context, state) => AddRelativeScreen(
+            treeId: 'tree-1',
+            relatedTo: relatedPerson,
+            predefinedRelation: RelationType.spouse,
+            routeExtra: state.extra as Map<String, dynamic>?,
+            routeQueryParameters: state.uri.queryParameters,
+          ),
+        ),
+      ],
+      initialLocation: '/add',
+    );
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('union-status-together')), findsOneWidget);
+    expect(find.byKey(const Key('union-status-separated')), findsOneWidget);
+    // По умолчанию «Расстались» не выбрано — дата окончания скрыта.
+    expect(find.byKey(const Key('union-divorce-date')), findsNothing);
+  });
+
+  testWidgets('B2: для не-союзной связи (ребёнок) селектора статуса нет',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(900, 1600));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final relatedPerson = FamilyPerson(
+      id: 'person-1',
+      treeId: 'tree-1',
+      name: 'Петрова Анна',
+      gender: Gender.female,
+      isAlive: true,
+      createdAt: DateTime(2024, 1, 1),
+      updatedAt: DateTime(2024, 1, 1),
+    );
+    final router = GoRouter(
+      routes: [
+        GoRoute(
+          path: '/add',
+          builder: (context, state) => AddRelativeScreen(
+            treeId: 'tree-1',
+            relatedTo: relatedPerson,
+            predefinedRelation: RelationType.child,
+            routeExtra: state.extra as Map<String, dynamic>?,
+            routeQueryParameters: state.uri.queryParameters,
+          ),
+        ),
+      ],
+      initialLocation: '/add',
+    );
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('union-status-together')), findsNothing);
+    expect(find.byKey(const Key('union-status-separated')), findsNothing);
+  });
+
+  testWidgets(
+      'B2: spouse + «Расстались» → createRelation с unionStatus=past',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(900, 1600));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final familyService = _FakeFamilyTreeService();
+    await getIt.reset();
+    getIt.registerSingleton<AuthServiceInterface>(_FakeAuthService());
+    getIt.registerSingleton<FamilyTreeServiceInterface>(familyService);
+    getIt.registerSingleton<ProfileServiceInterface>(_FakeProfileService());
+    getIt.registerSingleton<StorageServiceInterface>(_FakeStorageService());
+
+    // Якорь с id, отличным от того, что вернёт addRelative ('person-1'),
+    // иначе newPersonId == person2Id и связь не создаётся.
+    final relatedPerson = FamilyPerson(
+      id: 'person-anchor',
+      treeId: 'tree-1',
+      name: 'Петрова Анна',
+      gender: Gender.female,
+      isAlive: true,
+      createdAt: DateTime(2024, 1, 1),
+      updatedAt: DateTime(2024, 1, 1),
+    );
+    // Корневой маршрут нужен, чтобы пост-сейв pop() формы имел куда
+    // вернуться (иначе go_router падает «popped the last page»).
+    final router = GoRouter(
+      initialLocation: '/',
+      routes: [
+        GoRoute(
+          path: '/',
+          builder: (context, state) => Scaffold(
+            body: Builder(
+              builder: (ctx) => Center(
+                child: ElevatedButton(
+                  onPressed: () => ctx.push('/add'),
+                  child: const Text('go'),
+                ),
+              ),
+            ),
+          ),
+        ),
+        GoRoute(
+          path: '/add',
+          builder: (context, state) => AddRelativeScreen(
+            treeId: 'tree-1',
+            relatedTo: relatedPerson,
+            predefinedRelation: RelationType.spouse,
+            routeExtra: state.extra as Map<String, dynamic>?,
+            routeQueryParameters: state.uri.queryParameters,
+          ),
+        ),
+      ],
+    );
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('go'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('union-status-separated')));
+    await tester.pumpAndSettle();
+    // Поле даты окончания появляется при «Расстались».
+    expect(find.byKey(const Key('union-divorce-date')), findsOneWidget);
+
+    // Обязательны и Фамилия (поле 0), и Имя (поле 1).
+    await tester.enterText(find.byType(TextFormField).at(0), 'Петров');
+    await tester.enterText(find.byType(TextFormField).at(1), 'Иван');
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const Key('add-relative-submit')));
+    await tester.tap(find.byKey(const Key('add-relative-submit')));
+    await tester.pumpAndSettle();
+
+    expect(familyService.createRelationCalled, isTrue);
+    expect(familyService.lastCreateRelationType, RelationType.spouse);
+    expect(familyService.lastCreateUnionStatus, 'past');
   });
 
   testWidgets(

@@ -357,6 +357,7 @@ class PendingBackendFamilyTreeService implements FamilyTreeServiceInterface {
     DateTime? divorceDate,
     String? customRelationLabel1to2,
     String? customRelationLabel2to1,
+    String? unionStatus,
   }) {
     throw UnsupportedError(_pendingProviderMessage('tree'));
   }

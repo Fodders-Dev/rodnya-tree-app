@@ -775,6 +775,7 @@ class CustomApiFamilyTreeService
     DateTime? divorceDate,
     String? customRelationLabel1to2,
     String? customRelationLabel2to1,
+    String? unionStatus,
   }) async {
     final resolvedPerson1Id = await _resolvePersonIdForTree(treeId, person1Id);
     final resolvedPerson2Id = await _resolvePersonIdForTree(treeId, person2Id);
@@ -798,6 +799,8 @@ class CustomApiFamilyTreeService
         'isConfirmed': isConfirmed,
         if (marriageDate != null) 'marriageDate': marriageDate,
         if (divorceDate != null) 'divorceDate': divorceDate,
+        if (unionStatus != null && unionStatus.trim().isNotEmpty)
+          'unionStatus': unionStatus.trim(),
         if (customRelationLabel1to2 != null &&
             customRelationLabel1to2.trim().isNotEmpty)
           'customRelationLabel1to2': customRelationLabel1to2.trim(),

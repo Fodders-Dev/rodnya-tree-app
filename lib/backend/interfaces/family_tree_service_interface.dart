@@ -53,6 +53,10 @@ abstract class FamilyTreeServiceInterface {
     DateTime? divorceDate,
     String? customRelationLabel1to2,
     String? customRelationLabel2to1,
+    // B2: статус союза ('current'/'past') — текущий/бывший супруг·партнёр
+    // как свойство СОЮЗА (тип в пикере остаётся примитивным spouse/partner).
+    // null → бэк решает по типу/дате развода (обратная совместимость).
+    String? unionStatus,
   });
 
   /// Snip a relation between two persons. Mirrors the existing method
