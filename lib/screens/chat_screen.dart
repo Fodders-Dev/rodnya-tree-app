@@ -83,6 +83,7 @@ class ChatScreen extends StatefulWidget {
     this.notificationSettingsStore,
     this.autoDeleteStore,
     this.initialChatDetails,
+    this.recordingController,
   }) : assert(
           (chatId != null && chatId != '') ||
               (otherUserId != null && otherUserId != ''),
@@ -102,6 +103,11 @@ class ChatScreen extends StatefulWidget {
   final ChatNotificationSettingsStore? notificationSettingsStore;
   final ChatAutoDeleteStore? autoDeleteStore;
   final ChatDetails? initialChatDetails;
+
+  /// C2/тестируемость: позволяет внедрить контроллер записи (с фейковым
+  /// рекордером) — тогда recording-бар и его живую волну можно проверить
+  /// виджет-тестом. В проде null → создаётся свой.
+  final ChatRecordingController? recordingController;
 
   bool get isGroup => chatType == 'group' || chatType == 'branch';
 
@@ -181,8 +187,8 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _browserContextMenuWasEnabled = false;
   bool _isDirectChatBlocked = false;
   String? _directChatBlockedLabel;
-  final ChatRecordingController _recordingController =
-      ChatRecordingController();
+  late final ChatRecordingController _recordingController;
+  late final bool _ownsRecordingController;
   ChatTimelineController? _timelineController;
   ChatDraftStore get _draftStore =>
       widget.draftStore ??
@@ -263,6 +269,9 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
+    _recordingController =
+        widget.recordingController ?? ChatRecordingController();
+    _ownsRecordingController = widget.recordingController == null;
     _chatOpenTrace = PerfTrace('chat.open-to-messages');
     _ownsSendQueue = !GetIt.I.isRegistered<ChatSendQueue>();
     _sendQueue = _ownsSendQueue
@@ -337,7 +346,9 @@ class _ChatScreenState extends State<ChatScreen> {
     _attachmentsController.removeListener(_handleAttachmentsChanged);
     _attachmentsController.dispose();
     _recordingController.removeListener(_handleRecordingControllerChanged);
-    _recordingController.dispose();
+    if (_ownsRecordingController) {
+      _recordingController.dispose();
+    }
     if (_ownsSendQueue) {
       _sendQueue.dispose();
     }
@@ -436,20 +447,33 @@ class _ChatScreenState extends State<ChatScreen> {
     unawaited(BrowserContextMenu.enableContextMenu());
   }
 
+  ChatRecordingState? _lastRecordingState;
+
   void _handleRecordingControllerChanged() {
     if (!mounted) {
       return;
     }
 
+    // C2: живая волна шлёт notify каждые ~120мс. Состав вложений и
+    // composer↔бар свап нужны только на СМЕНЕ состояния — amplitude-only
+    // нотификации пропускаем, чтобы не дёргать весь экран setState'ом.
+    // Сам recording-бар перерисовывает волну/таймер через свой
+    // AnimatedBuilder на том же контроллере.
+    final state = _recordingController.state;
+    if (state == _lastRecordingState) {
+      return;
+    }
+    _lastRecordingState = state;
+
     final previewFile = _recordingController.previewFile;
-    final shouldKeepPreview =
-        _recordingController.state == ChatRecordingState.preview ||
-            _recordingController.state == ChatRecordingState.failed;
+    final shouldKeepPreview = state == ChatRecordingState.preview ||
+        state == ChatRecordingState.failed;
 
     _attachmentsController.removeWhere(_isRecordedVoiceAttachment);
     if (shouldKeepPreview && previewFile != null) {
       _attachmentsController.replaceAll(<XFile>[previewFile]);
     }
+    setState(() {});
   }
 
   bool _isRecordedVoiceAttachment(XFile file) {
@@ -557,11 +581,17 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     if (details.offsetFromOrigin.dx <= -_recordingCancelThreshold) {
+      // C2: тактильный фидбек на слайд-влево (отмена).
+      HapticFeedback.mediumImpact();
       await _cancelRecording();
       return;
     }
 
     if (details.offsetFromOrigin.dy <= -_recordingLockThreshold) {
+      // C2: тактильный фидбек на слайд-вверх (фиксация). Метод
+      // выходит выше, если состояние уже не recording, поэтому фидбек
+      // срабатывает ровно один раз — на переходе в locked.
+      HapticFeedback.mediumImpact();
       _recordingController.lock();
     }
   }
@@ -1476,6 +1506,11 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     try {
       await _recordingController.start();
+      // C2: тактильный фидбек, когда запись реально пошла (после выдачи
+      // разрешения) — как в Telegram.
+      if (_recordingController.state == ChatRecordingState.recording) {
+        HapticFeedback.lightImpact();
+      }
     } catch (error) {
       debugPrint('Error starting recording: $error');
       if (mounted) {
@@ -3252,15 +3287,14 @@ class _ChatScreenState extends State<ChatScreen> {
 
   /// Compact inline recording bar shown while the user is holding the mic.
   /// Replaces the entire input area — no popups, no panels — pure Telegram style.
+  ///
+  /// C2: бар перерисовывается через AnimatedBuilder на самом контроллере,
+  /// так что живая волна (по амплитуде, ~120мс) и таймер обновляются без
+  /// setState всего экрана. Слушатель экрана при этом пропускает
+  /// amplitude-only нотификации.
   Widget _buildActiveRecordingInputBar() {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final minutes =
-        (_recordingController.durationSeconds ~/ 60).toString().padLeft(2, '0');
-    final seconds =
-        (_recordingController.durationSeconds % 60).toString().padLeft(2, '0');
+    final scheme = Theme.of(context).colorScheme;
     final recColor = scheme.error;
-
     return Padding(
       padding: EdgeInsets.fromLTRB(
         8,
@@ -3271,44 +3305,72 @@ class _ChatScreenState extends State<ChatScreen> {
       child: GlassPanel(
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
         borderRadius: BorderRadius.circular(28),
-        child: Row(
-          children: [
-            // Cancel swipe hint (left side)
-            IconButton(
-              onPressed: _cancelRecording,
-              tooltip: 'Отменить',
-              icon: Icon(Icons.close_rounded, color: recColor),
-            ),
-            // Pulsing dot
-            _PulsingDot(color: recColor),
-            const SizedBox(width: 8),
-            // Timer
-            Text(
-              '$minutes:$seconds',
-              style: theme.textTheme.titleSmall?.copyWith(
-                fontWeight: FontWeight.w800,
-                color: recColor,
-                fontFeatures: const [FontFeature.tabularFigures()],
-              ),
-            ),
-            const SizedBox(width: 10),
-            // Hint
-            Expanded(
-              child: Text(
-                '← отмена  ↑ фиксация',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: scheme.onSurfaceVariant,
+        child: AnimatedBuilder(
+          animation: _recordingController,
+          builder: (context, _) {
+            final theme = Theme.of(context);
+            final minutes = (_recordingController.durationSeconds ~/ 60)
+                .toString()
+                .padLeft(2, '0');
+            final seconds = (_recordingController.durationSeconds % 60)
+                .toString()
+                .padLeft(2, '0');
+            final waveform = _recordingController.liveWaveform;
+            return Row(
+              children: [
+                // Cancel
+                IconButton(
+                  onPressed: _cancelRecording,
+                  tooltip: 'Отменить',
+                  icon: Icon(Icons.close_rounded, color: recColor),
                 ),
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            // Mic button — same gesture recogniser keeps recording alive.
-            GestureDetector(
-              onLongPressMoveUpdate: _handleRecordingLongPressMoveUpdate,
-              onLongPressEnd: _handleRecordingLongPressEnd,
-              child: _PulsingMicButton(color: recColor),
-            ),
-          ],
+                _PulsingDot(color: recColor),
+                const SizedBox(width: 8),
+                // C2: крупный таймер моноширинными цифрами.
+                Text(
+                  '$minutes:$seconds',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w800,
+                    color: recColor,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+                const SizedBox(width: 10),
+                // C2: живая волна по амплитуде вместо статичной подсказки.
+                // Когда замеров ещё нет — компактная подсказка про жесты.
+                Expanded(
+                  child: waveform.isEmpty
+                      ? Text(
+                          '← отмена  ↑ фиксация',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: scheme.onSurfaceVariant,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        )
+                      : SizedBox(
+                          height: 28,
+                          child: CustomPaint(
+                            key: const Key('recording-live-waveform'),
+                            painter: _VoiceWaveformPainter(
+                              waveform: waveform,
+                              progress: 1.0,
+                              activeColor: recColor,
+                              inactiveColor: recColor.withValues(alpha: 0.30),
+                            ),
+                            size: Size.infinite,
+                          ),
+                        ),
+                ),
+                const SizedBox(width: 6),
+                // Mic button — same gesture recogniser keeps recording alive.
+                GestureDetector(
+                  onLongPressMoveUpdate: _handleRecordingLongPressMoveUpdate,
+                  onLongPressEnd: _handleRecordingLongPressEnd,
+                  child: _PulsingMicButton(color: recColor),
+                ),
+              ],
+            );
+          },
         ),
       ),
     );

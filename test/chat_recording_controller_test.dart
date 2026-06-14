@@ -64,6 +64,11 @@ class _FakeRecorder implements AudioRecorder {
   @override
   Stream<Amplitude> onAmplitudeChanged(Duration interval) => _amp.stream;
 
+  // C2: тест толкает «живые» амплитуды в поток рекордера.
+  void pushAmplitude(double current) {
+    _amp.add(Amplitude(current: current, max: 0));
+  }
+
   @override
   Future<void> dispose() async {
     await _amp.close();
@@ -150,6 +155,58 @@ void main() {
     expect(controller.errorText, isNotNull);
     // Рекордер пытались отменить в рамках очистки.
     expect(recorder.cancelCalls, 1);
+  });
+
+  test('C2: liveWaveform наполняется по амплитуде и шлёт notify', () async {
+    final recorder = _FakeRecorder();
+    final controller = ChatRecordingController(
+      recorder: recorder,
+      permissionRequester: () async => true,
+    );
+    addTearDown(controller.dispose);
+
+    await controller.start();
+    expect(controller.state, ChatRecordingState.recording);
+    expect(controller.liveWaveform, isEmpty);
+
+    var notifies = 0;
+    controller.addListener(() => notifies++);
+
+    recorder.pushAmplitude(-12);
+    recorder.pushAmplitude(-6);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(controller.liveWaveform.length, 2);
+    expect(
+      controller.liveWaveform.every((value) => value >= 0 && value <= 1),
+      isTrue,
+    );
+    expect(notifies, greaterThanOrEqualTo(2),
+        reason: 'каждая амплитуда должна перерисовывать живую волну');
+
+    await controller.cancelCurrent();
+  });
+
+  test('C2: liveWaveform держит скользящее окно последних замеров', () async {
+    final recorder = _FakeRecorder();
+    final controller = ChatRecordingController(
+      recorder: recorder,
+      permissionRequester: () async => true,
+    );
+    addTearDown(controller.dispose);
+
+    await controller.start();
+    for (var i = 0; i < ChatRecordingController.liveWaveformBins + 15; i++) {
+      recorder.pushAmplitude(-10);
+    }
+    await Future<void>.delayed(Duration.zero);
+
+    expect(
+      controller.liveWaveform.length,
+      ChatRecordingController.liveWaveformBins,
+    );
+
+    await controller.cancelCurrent();
   });
 
   test('cancelCurrent() удаляет временный файл записи', () async {

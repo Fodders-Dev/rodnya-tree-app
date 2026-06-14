@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -8,6 +9,10 @@ import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/date_symbol_data_local.dart';
+import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
+import 'package:plugin_platform_interface/plugin_platform_interface.dart';
+import 'package:record/record.dart';
+import 'package:rodnya/controllers/chat_recording_controller.dart';
 import 'package:rodnya/backend/interfaces/chat_service_interface.dart';
 import 'package:rodnya/backend/interfaces/call_service_interface.dart';
 import 'package:rodnya/backend/interfaces/safety_service_interface.dart';
@@ -1997,6 +2002,64 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('C2: recording-бар показывает живую волну по амплитуде',
+      (tester) async {
+    final tempDir = Directory.systemTemp.createTempSync('chat_bar_test');
+    addTearDown(() {
+      if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+    });
+    PathProviderPlatform.instance = _FakeBarPathProvider(tempDir.path);
+
+    final chatService = _FakeChatService();
+    getIt.registerSingleton<ChatServiceInterface>(chatService);
+
+    final recorder = _FakeRecorderForBar();
+    final recordingController = ChatRecordingController(
+      recorder: recorder,
+      permissionRequester: () async => true,
+    );
+    addTearDown(recordingController.dispose);
+
+    await tester.pumpWidget(
+      buildChatApp(
+        ChatScreen(
+          chatId: 'chat-1',
+          title: 'Тестовый чат',
+          draftStore: _MemoryChatDraftStore(),
+          recordingController: recordingController,
+        ),
+      ),
+    );
+    chatService.emitMessages(const <ChatMessage>[]);
+    await tester.pumpAndSettle();
+
+    // Запускаем запись напрямую через внедрённый контроллер. start()
+    // делает реальный async (path_provider/File) — в testWidgets его надо
+    // гонять через runAsync, иначе он не завершится. pumpAndSettle нельзя
+    // — пульсация бара бесконечная.
+    await tester.runAsync(() => recordingController.start());
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    // Пока замеров нет — показывается подсказка про жесты.
+    expect(find.text('← отмена  ↑ фиксация'), findsOneWidget);
+    expect(find.byKey(const Key('recording-live-waveform')), findsNothing);
+
+    // Пришли амплитуды → бар рисует живую волну.
+    await tester.runAsync(() async {
+      recorder.pushAmplitude(-10);
+      recorder.pushAmplitude(-4);
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    });
+    await tester.pump();
+
+    expect(find.byKey(const Key('recording-live-waveform')), findsOneWidget);
+    expect(find.text('← отмена  ↑ фиксация'), findsNothing);
+
+    await tester.runAsync(() => recordingController.cancelCurrent());
+    await tester.pump();
+  });
+
   testWidgets('ChatScreen forwards selected messages as a batch',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(900, 1000));
@@ -2239,4 +2302,44 @@ void main() {
     expect(find.text('Список блокировок'), findsOneWidget);
     expect(find.text('Сообщение...'), findsNothing);
   });
+}
+
+/// C2: фейковый рекордер для виджет-теста живой волны recording-бара.
+class _FakeRecorderForBar implements AudioRecorder {
+  final StreamController<Amplitude> _amp =
+      StreamController<Amplitude>.broadcast();
+
+  @override
+  Future<void> start(RecordConfig config, {required String path}) async {}
+
+  @override
+  Future<String?> stop() async => null;
+
+  @override
+  Future<void> cancel() async {}
+
+  @override
+  Stream<Amplitude> onAmplitudeChanged(Duration interval) => _amp.stream;
+
+  @override
+  Future<void> dispose() async {
+    await _amp.close();
+  }
+
+  void pushAmplitude(double current) {
+    _amp.add(Amplitude(current: current, max: 0));
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _FakeBarPathProvider extends PathProviderPlatform
+    with MockPlatformInterfaceMixin {
+  _FakeBarPathProvider(this.tempPath);
+
+  final String tempPath;
+
+  @override
+  Future<String?> getTemporaryPath() async => tempPath;
 }

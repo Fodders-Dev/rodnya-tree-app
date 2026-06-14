@@ -76,6 +76,21 @@ class ChatRecordingController extends ChangeNotifier {
   int get previewDurationSeconds => _preview?.durationSeconds ?? 0;
   List<double> get previewWaveform =>
       List<double>.unmodifiable(_preview?.waveform ?? const <double>[]);
+
+  /// C2: «живая» волна для recording-бара — последние [liveWaveformBins]
+  /// нормализованных амплитуд (скользящее окно, как в Telegram). Пусто,
+  /// пока не пришло ни одного замера.
+  static const int liveWaveformBins = 40;
+  List<double> get liveWaveform {
+    final length = _amplitudeSamples.length;
+    if (length <= liveWaveformBins) {
+      return List<double>.unmodifiable(_amplitudeSamples);
+    }
+    return List<double>.unmodifiable(
+      _amplitudeSamples.sublist(length - liveWaveformBins),
+    );
+  }
+
   bool get isRecordingActive =>
       _state == ChatRecordingState.recording ||
       _state == ChatRecordingState.locked;
@@ -130,6 +145,10 @@ class ChatRecordingController extends ChangeNotifier {
       if (_amplitudeSamples.length > 600) {
         _amplitudeSamples.removeRange(0, _amplitudeSamples.length - 600);
       }
+      // C2: уведомляем, чтобы recording-бар перерисовал живую волну.
+      // Слушатель экрана игнорирует amplitude-only нотификации (состояние
+      // не меняется) — перерисовывается только сам бар через AnimatedBuilder.
+      notifyListeners();
     });
 
     _ticker?.cancel();
