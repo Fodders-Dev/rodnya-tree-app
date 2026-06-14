@@ -2259,6 +2259,77 @@ void main() {
         reason: 'старт второго кружка обязан поставить первый на паузу');
   });
 
+  testWidgets(
+      'C2c: после dispose первого кружка реестр чист — второй играет без ошибки',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(900, 1400));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    VideoPlayerPlatform.instance = _FakeVideoPlayerPlatform(completeInit: true);
+
+    final chatService = _FakeChatService();
+    getIt.registerSingleton<ChatServiceInterface>(chatService);
+
+    await tester.pumpWidget(
+      buildChatApp(
+        ChatScreen(
+          chatId: 'chat-1',
+          title: 'Тестовый чат',
+          draftStore: _MemoryChatDraftStore(),
+        ),
+      ),
+    );
+
+    ChatMessage videoNoteMessage(String id, String url, int minute) =>
+        ChatMessage(
+          id: id,
+          chatId: 'chat-1',
+          senderId: 'other-user',
+          text: '',
+          timestamp: DateTime(2026, 4, 8, 9, minute),
+          isRead: false,
+          participants: const ['user-1', 'other-user'],
+          senderName: 'Анастасия<3',
+          attachments: [
+            ChatAttachment(
+              type: ChatAttachmentType.video,
+              presentation: ChatAttachmentPresentation.videoNote,
+              url: url,
+              fileName: '${id}_note.mp4',
+              thumbnailUrl: 'https://example.com/$id.jpg',
+              durationMs: 3000,
+            ),
+          ],
+        );
+
+    final noteA = videoNoteMessage('m-a', 'https://example.com/a.mp4', 30);
+    final noteB = videoNoteMessage('m-b', 'https://example.com/b.mp4', 31);
+    chatService.emitMessages([noteA, noteB]);
+    await tester.pumpAndSettle();
+
+    // Играем A (player 1).
+    await tester.tap(find.byIcon(Icons.play_arrow_rounded).first);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.pump(const Duration(milliseconds: 50));
+
+    // Убираем сообщение A → его кружок размонтируется (dispose → resign
+    // чистит реестр; до фикса identical-over-tear-off реестр оставлял
+    // ссылку на disposed-контроллер).
+    chatService.emitMessages([noteB]);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    // Играем B — стейл-колбэк к disposed A не должен сорвать запуск.
+    await tester.tap(find.byIcon(Icons.play_arrow_rounded).first);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(tester.takeException(), isNull);
+    expect(find.byKey(const Key('video-note-error')), findsNothing);
+    expect(find.byKey(const Key('video-note-inline-player')), findsOneWidget);
+  });
+
   testWidgets('ChatScreen forwards selected messages as a batch',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(900, 1000));

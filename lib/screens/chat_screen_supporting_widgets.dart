@@ -8,21 +8,29 @@ part of 'chat_screen.dart';
 class _InlineMediaPlayback {
   _InlineMediaPlayback._();
 
+  // Ключуем по ВЛАДЕЛЬЦУ (State-инстансу), а НЕ по колбэку: tear-off
+  // метода (`_pauseSelf`) при каждом обращении — новый объект, и
+  // identical() над ними всегда false → реестр бы не очищался и копил
+  // ссылку на уже-disposed-плеер. State-инстанс стабилен, identical
+  // работает корректно.
+  static Object? _activeOwner;
   static VoidCallback? _activePause;
 
-  /// Сделать [pauseSelf] активным плеером, поставив предыдущего на паузу.
-  static void activate(VoidCallback pauseSelf) {
-    final previous = _activePause;
-    if (previous != null && !identical(previous, pauseSelf)) {
-      previous();
+  /// Сделать [owner] активным плеером, поставив предыдущего на паузу.
+  static void activate(Object owner, VoidCallback pauseSelf) {
+    final previousPause = _activePause;
+    if (previousPause != null && !identical(_activeOwner, owner)) {
+      previousPause();
     }
+    _activeOwner = owner;
     _activePause = pauseSelf;
   }
 
   /// Снять регистрацию (complete / pause / dispose), если активны были мы
   /// — чтобы следующий старт не дёргал устаревший колбэк.
-  static void resign(VoidCallback pauseSelf) {
-    if (identical(_activePause, pauseSelf)) {
+  static void resign(Object owner) {
+    if (identical(_activeOwner, owner)) {
+      _activeOwner = null;
       _activePause = null;
     }
   }
@@ -102,7 +110,7 @@ class _VoicePlayerWidgetState extends State<_VoicePlayerWidget> {
       }
       // Clear the global pointer if we were the active one — keeps
       // a stale callback from being invoked by the next bubble.
-      _InlineMediaPlayback.resign(_pauseSelf);
+      _InlineMediaPlayback.resign(this);
     });
     return player;
   }
@@ -115,7 +123,7 @@ class _VoicePlayerWidgetState extends State<_VoicePlayerWidget> {
 
   @override
   void dispose() {
-    _InlineMediaPlayback.resign(_pauseSelf);
+    _InlineMediaPlayback.resign(this);
     _stateSub?.cancel();
     _durationSub?.cancel();
     _posSub?.cancel();
@@ -128,7 +136,7 @@ class _VoicePlayerWidgetState extends State<_VoicePlayerWidget> {
     try {
       // C2c: паузим любой другой играющий inline-медиаплеер (голос или
       // видео-кружок) перед стартом — иначе две дорожки звучат разом.
-      _InlineMediaPlayback.activate(_pauseSelf);
+      _InlineMediaPlayback.activate(this, _pauseSelf);
 
       final player = _ensurePlayer();
       if (widget.url != null) {
@@ -2797,7 +2805,7 @@ class _VideoNotePlayerState extends State<_VideoNotePlayer> {
       await controller.setLooping(true);
       await controller.setVolume(1);
       // C2c: один inline-плеер за раз — паузим другой кружок/голосовое.
-      _InlineMediaPlayback.activate(_pauseSelf);
+      _InlineMediaPlayback.activate(this, _pauseSelf);
       await controller.play();
     });
   }
@@ -2814,7 +2822,12 @@ class _VideoNotePlayerState extends State<_VideoNotePlayer> {
   }
 
   /// C2c: пауза этого кружка по требованию реестра one-at-a-time.
+  /// mounted-гард + null'нутый после dispose контроллер — защита от
+  /// вызова на уже-disposed-плеере (pause() на нём кидает в debug/profile).
   void _pauseSelf() {
+    if (!mounted) {
+      return;
+    }
     final controller = _controller;
     if (controller != null &&
         controller.value.isInitialized &&
@@ -2829,9 +2842,11 @@ class _VideoNotePlayerState extends State<_VideoNotePlayer> {
     // реестре и диспоузим контроллер, что останавливает зацикленное
     // видео. Слушателя снимаем ПЕРЕД dispose, чтобы pause/teardown не
     // дёрнул setState в фазе билда (краш «setState during build»).
-    _InlineMediaPlayback.resign(_pauseSelf);
-    _controller?.removeListener(_handleUpdate);
-    _controller?.dispose();
+    _InlineMediaPlayback.resign(this);
+    final controller = _controller;
+    _controller = null;
+    controller?.removeListener(_handleUpdate);
+    controller?.dispose();
     super.dispose();
   }
 
