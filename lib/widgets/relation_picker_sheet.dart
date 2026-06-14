@@ -36,14 +36,20 @@ class RelationPickerResult {
 /// relation. Returns null если sheet dismissed без selection.
 /// Separated из navigation wrapper чтобы tests can verify picker
 /// behavior без needing GoRouter scaffolding.
+/// [anchorName] — имя узла, ОТ которого добавляем (node-anchored add).
+/// Когда задано: заголовок «Кто это для {anchorName}?» и пикер
+/// показывает ТОЛЬКО примитивы (Мама/Папа/Ребёнок/Супруг·Партнёр/
+/// Брат·Сестра) — остальные родства граф выводит сам, сложные типы не
+/// предлагаем. Когда null (FAB/seed-флоу) — прежний полный список.
 Future<RelationPickerResult?> showRelationPickerSheet(
-  BuildContext context,
-) async {
+  BuildContext context, {
+  String? anchorName,
+}) async {
   return showModalBottomSheet<RelationPickerResult>(
     context: context,
     isScrollControlled: true,
     showDragHandle: true,
-    builder: (sheetCtx) => const _RelationPickerSheet(),
+    builder: (sheetCtx) => _RelationPickerSheet(anchorName: anchorName),
   );
 }
 
@@ -58,8 +64,9 @@ Future<dynamic> showRelationPickerAndNavigateAdd(
   BuildContext context, {
   required String treeId,
   String? contextPersonId,
+  String? anchorName,
 }) async {
-  final pick = await showRelationPickerSheet(context);
+  final pick = await showRelationPickerSheet(context, anchorName: anchorName);
   if (pick == null) return null;
   if (!context.mounted) return null;
   final extras = <String, dynamic>{
@@ -75,7 +82,10 @@ Future<dynamic> showRelationPickerAndNavigateAdd(
 }
 
 class _RelationPickerSheet extends StatefulWidget {
-  const _RelationPickerSheet();
+  const _RelationPickerSheet({this.anchorName});
+
+  /// Имя узла-якоря (node-anchored add). null → FAB/seed-флоу.
+  final String? anchorName;
 
   @override
   State<_RelationPickerSheet> createState() => _RelationPickerSheetState();
@@ -84,9 +94,20 @@ class _RelationPickerSheet extends StatefulWidget {
 class _RelationPickerSheetState extends State<_RelationPickerSheet> {
   bool _expanded = false;
 
+  String? get _anchorName {
+    final raw = widget.anchorName?.trim();
+    return (raw == null || raw.isEmpty) ? null : raw;
+  }
+
+  /// Node-anchored: показываем только примитивы относительно узла.
+  /// Сложные родства (бабушка, тётя, ин-ло, кузены, бывшие, сводные)
+  /// граф выводит сам из примитивов — здесь их не предлагаем.
+  bool get _isNodeAnchored => _anchorName != null;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final anchor = _anchorName;
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
@@ -98,16 +119,19 @@ class _RelationPickerSheetState extends State<_RelationPickerSheet> {
               Padding(
                 padding: const EdgeInsets.fromLTRB(4, 8, 4, 4),
                 child: Text(
-                  'Кем приходится?',
+                  anchor != null ? 'Кто это для $anchor?' : 'Кем приходится?',
                   style: theme.textTheme.titleLarge?.copyWith(
                     fontWeight: FontWeight.w800,
                   ),
                 ),
               ),
-              const Padding(
-                padding: EdgeInsets.fromLTRB(4, 0, 4, 12),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(4, 0, 4, 12),
                 child: Text(
-                  'Выбери связь — потом заполнишь имя и дату.',
+                  anchor != null
+                      ? 'Выбери связь относительно $anchor. Остальные '
+                          'родства дерево выведет само.'
+                      : 'Выбери связь — потом заполнишь имя и дату.',
                 ),
               ),
               // Primary CTAs (mirror EmptyTreeGuidedCta).
@@ -153,90 +177,98 @@ class _RelationPickerSheetState extends State<_RelationPickerSheet> {
                 label: 'Брат / Сестра',
                 onTap: () => _pick(context, RelationType.sibling, null),
               ),
-              const SizedBox(height: 8),
-              _PrimaryTile(
-                key: const Key('relation-picker-grandparent'),
-                icon: Icons.elderly_outlined,
-                label: 'Дедушка / Бабушка',
-                onTap: () => _pick(context, RelationType.grandparent, null),
-              ),
-              const SizedBox(height: 12),
-              // Expand secondary relations.
-              if (!_expanded)
-                TextButton.icon(
-                  key: const Key('relation-picker-other-expand'),
-                  icon: const Icon(Icons.add_rounded),
-                  label: const Text('Другой родственник'),
-                  onPressed: () => setState(() => _expanded = true),
-                )
-              else ...[
-                const Divider(),
-                _SecondaryTile(
-                  keyName: 'aunt',
-                  label: 'Тётя',
-                  onTap: () => _pick(context, RelationType.aunt, Gender.female),
+              // Node-anchored: только примитивы выше. Бабушка/тётя/
+              // ин-ло/кузены/бывшие/сводные граф выведет сам — здесь их
+              // не показываем (а в seed/FAB-флоу оставляем как было).
+              if (!_isNodeAnchored) ...[
+                const SizedBox(height: 8),
+                _PrimaryTile(
+                  key: const Key('relation-picker-grandparent'),
+                  icon: Icons.elderly_outlined,
+                  label: 'Дедушка / Бабушка',
+                  onTap: () => _pick(context, RelationType.grandparent, null),
                 ),
-                _SecondaryTile(
-                  keyName: 'uncle',
-                  label: 'Дядя',
-                  onTap: () => _pick(context, RelationType.uncle, Gender.male),
-                ),
-                _SecondaryTile(
-                  keyName: 'nephew',
-                  label: 'Племянник',
-                  onTap: () =>
-                      _pick(context, RelationType.nephew, Gender.male),
-                ),
-                _SecondaryTile(
-                  keyName: 'niece',
-                  label: 'Племянница',
-                  onTap: () =>
-                      _pick(context, RelationType.niece, Gender.female),
-                ),
-                _SecondaryTile(
-                  keyName: 'cousin',
-                  label: 'Кузен / Кузина',
-                  onTap: () => _pick(context, RelationType.cousin, null),
-                ),
-                _SecondaryTile(
-                  keyName: 'great-grandparent',
-                  label: 'Прадед / Прабабка',
-                  onTap: () =>
-                      _pick(context, RelationType.greatGrandparent, null),
-                ),
-                _SecondaryTile(
-                  keyName: 'parent-in-law',
-                  label: 'Тесть / Тёща / Свёкр / Свекровь',
-                  onTap: () => _pick(context, RelationType.parentInLaw, null),
-                ),
-                _SecondaryTile(
-                  keyName: 'sibling-in-law',
-                  label: 'Деверь / Золовка / Шурин',
-                  onTap: () => _pick(context, RelationType.siblingInLaw, null),
-                ),
-                // F2: сложные семьи — бывшие союзы и сводные дети.
-                _SecondaryTile(
-                  keyName: 'ex-spouse',
-                  label: 'Бывший муж / жена',
-                  onTap: () => _pick(context, RelationType.ex_spouse, null),
-                ),
-                _SecondaryTile(
-                  keyName: 'unmarried-partner',
-                  label: 'Партнёр (без брака)',
-                  onTap: () => _pick(context, RelationType.partner, null),
-                ),
-                _SecondaryTile(
-                  keyName: 'stepchild',
-                  label: 'Сводный ребёнок',
-                  onTap: () => _pick(context, RelationType.stepchild, null),
-                ),
-                _SecondaryTile(
-                  keyName: 'other',
-                  label: 'Другое родство — заполню сам',
-                  trailing: const Icon(Icons.edit_outlined, size: 18),
-                  onTap: () =>
-                      Navigator.of(context).pop(const RelationPickerResult()),
-                ),
+                const SizedBox(height: 12),
+                // Expand secondary relations.
+                if (!_expanded)
+                  TextButton.icon(
+                    key: const Key('relation-picker-other-expand'),
+                    icon: const Icon(Icons.add_rounded),
+                    label: const Text('Другой родственник'),
+                    onPressed: () => setState(() => _expanded = true),
+                  )
+                else ...[
+                  const Divider(),
+                  _SecondaryTile(
+                    keyName: 'aunt',
+                    label: 'Тётя',
+                    onTap: () =>
+                        _pick(context, RelationType.aunt, Gender.female),
+                  ),
+                  _SecondaryTile(
+                    keyName: 'uncle',
+                    label: 'Дядя',
+                    onTap: () =>
+                        _pick(context, RelationType.uncle, Gender.male),
+                  ),
+                  _SecondaryTile(
+                    keyName: 'nephew',
+                    label: 'Племянник',
+                    onTap: () =>
+                        _pick(context, RelationType.nephew, Gender.male),
+                  ),
+                  _SecondaryTile(
+                    keyName: 'niece',
+                    label: 'Племянница',
+                    onTap: () =>
+                        _pick(context, RelationType.niece, Gender.female),
+                  ),
+                  _SecondaryTile(
+                    keyName: 'cousin',
+                    label: 'Кузен / Кузина',
+                    onTap: () => _pick(context, RelationType.cousin, null),
+                  ),
+                  _SecondaryTile(
+                    keyName: 'great-grandparent',
+                    label: 'Прадед / Прабабка',
+                    onTap: () =>
+                        _pick(context, RelationType.greatGrandparent, null),
+                  ),
+                  _SecondaryTile(
+                    keyName: 'parent-in-law',
+                    label: 'Тесть / Тёща / Свёкр / Свекровь',
+                    onTap: () => _pick(context, RelationType.parentInLaw, null),
+                  ),
+                  _SecondaryTile(
+                    keyName: 'sibling-in-law',
+                    label: 'Деверь / Золовка / Шурин',
+                    onTap: () =>
+                        _pick(context, RelationType.siblingInLaw, null),
+                  ),
+                  // F2: сложные семьи — бывшие союзы и сводные дети.
+                  _SecondaryTile(
+                    keyName: 'ex-spouse',
+                    label: 'Бывший муж / жена',
+                    onTap: () => _pick(context, RelationType.ex_spouse, null),
+                  ),
+                  _SecondaryTile(
+                    keyName: 'unmarried-partner',
+                    label: 'Партнёр (без брака)',
+                    onTap: () => _pick(context, RelationType.partner, null),
+                  ),
+                  _SecondaryTile(
+                    keyName: 'stepchild',
+                    label: 'Сводный ребёнок',
+                    onTap: () => _pick(context, RelationType.stepchild, null),
+                  ),
+                  _SecondaryTile(
+                    keyName: 'other',
+                    label: 'Другое родство — заполню сам',
+                    trailing: const Icon(Icons.edit_outlined, size: 18),
+                    onTap: () =>
+                        Navigator.of(context).pop(const RelationPickerResult()),
+                  ),
+                ],
               ],
             ],
           ),
@@ -246,7 +278,8 @@ class _RelationPickerSheetState extends State<_RelationPickerSheet> {
   }
 
   void _pick(BuildContext ctx, RelationType type, Gender? gender) {
-    Navigator.of(ctx).pop(RelationPickerResult(relationType: type, gender: gender));
+    Navigator.of(ctx)
+        .pop(RelationPickerResult(relationType: type, gender: gender));
   }
 }
 

@@ -20,7 +20,7 @@ import 'package:rodnya/widgets/relation_picker_sheet.dart';
 /// context.push на top — tested indirectly through wire-up sites.
 RelationPickerResult? capturedResult;
 
-Future<void> _openSheet(WidgetTester tester) async {
+Future<void> _openSheet(WidgetTester tester, {String? anchorName}) async {
   capturedResult = null;
   await tester.pumpWidget(
     MaterialApp(
@@ -29,7 +29,8 @@ Future<void> _openSheet(WidgetTester tester) async {
           builder: (ctx) => Center(
             child: ElevatedButton(
               onPressed: () async {
-                capturedResult = await showRelationPickerSheet(ctx);
+                capturedResult =
+                    await showRelationPickerSheet(ctx, anchorName: anchorName);
               },
               child: const Text('open'),
             ),
@@ -147,6 +148,45 @@ void main() {
     expect(capturedResult, isNotNull);
     expect(capturedResult?.relationType, isNull);
     expect(capturedResult?.gender, isNull);
+  });
+
+  testWidgets(
+      'B: node-anchored показывает заголовок «Кто это для X?» и только примитивы',
+      (tester) async {
+    await _openSheet(tester, anchorName: 'Анна Петрова');
+    expect(find.text('Кто это для Анна Петрова?'), findsOneWidget);
+    expect(find.text('Кем приходится?'), findsNothing);
+    // Только 4 примитива относительно узла.
+    expect(find.text('Мама'), findsOneWidget);
+    expect(find.text('Папа'), findsOneWidget);
+    expect(find.text('Ребёнок'), findsOneWidget);
+    expect(find.text('Супруг / Партнёр'), findsOneWidget);
+    expect(find.text('Брат / Сестра'), findsOneWidget);
+    // Сложные/выводимые типы НЕ показываем — граф выведет сам.
+    expect(find.text('Дедушка / Бабушка'), findsNothing);
+    expect(find.text('Другой родственник'), findsNothing);
+    expect(
+      find.byKey(const Key('relation-picker-other-expand')),
+      findsNothing,
+    );
+    expect(find.text('Другое родство — заполню сам'), findsNothing);
+  });
+
+  testWidgets('B: node-anchored «Мама» по-прежнему отдаёт parent + female',
+      (tester) async {
+    await _openSheet(tester, anchorName: 'Анна Петрова');
+    await tester.tap(find.byKey(const Key('relation-picker-mama')));
+    await tester.pumpAndSettle();
+    expect(capturedResult?.relationType, RelationType.parent);
+    expect(capturedResult?.gender, Gender.female);
+  });
+
+  testWidgets('B: пустой anchorName трактуется как FAB-режим (полный список)',
+      (tester) async {
+    await _openSheet(tester, anchorName: '   ');
+    expect(find.text('Кем приходится?'), findsOneWidget);
+    expect(find.text('Дедушка / Бабушка'), findsOneWidget);
+    expect(find.text('Другой родственник'), findsOneWidget);
   });
 
   testWidgets('dismiss sheet без выбора returns null', (tester) async {

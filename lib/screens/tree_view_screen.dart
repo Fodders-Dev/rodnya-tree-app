@@ -1461,6 +1461,7 @@ class _TreeViewScreenState extends State<TreeViewScreen>
           context,
           treeId: treeId,
           contextPersonId: person.id,
+          anchorName: person.name,
         ).then((result) {
           if (!mounted) return;
           if (result == true ||

@@ -10677,6 +10677,65 @@ test("tree graph snapshot marks direct grandparent relations as blood relatives"
   assert.equal(descriptorsByPersonId.get(grandmotherId)?.isBlood, true);
 });
 
+test("B: «мама узла X» выводится как Бабушка через цепочку родитель-родителя", () => {
+  // Node-anchored add даёт ТОЛЬКО примитивы: «Мама» для узла X создаёт
+  // обычный parent-relation между новым человеком и X — БЕЗ явного типа
+  // grandparent. Граф обязан сам вывести «Бабушка» к зрителю по цепочке
+  // зритель →(parent) мать →(parent) её мать. Это и есть контракт, на
+  // который опирается пикер от узла (см. relation_picker_sheet).
+  const treeId = "tree-derived-grandparent-chain";
+  const viewerPersonId = "viewer-person";
+  const motherId = "mother-person";
+  const grandmotherId = "grandmother-person";
+
+  const snapshot = buildTreeGraphSnapshot({
+    treeId,
+    viewerPersonId,
+    persons: [
+      {id: viewerPersonId, treeId, name: "Артем Кузнецов", gender: "male"},
+      {id: motherId, treeId, name: "Наталья Кузнецова", gender: "female"},
+      {id: grandmotherId, treeId, name: "Лидия Мочалкина", gender: "female"},
+    ],
+    relations: [
+      // Зритель ← мать (примитив parent).
+      {
+        id: "mother-rel",
+        treeId,
+        person1Id: motherId,
+        person2Id: viewerPersonId,
+        relation1to2: "parent",
+        relation2to1: "child",
+        isConfirmed: true,
+      },
+      // «Мама узла Наталья» — родитель матери, тоже примитив parent.
+      {
+        id: "grandmother-rel",
+        treeId,
+        person1Id: grandmotherId,
+        person2Id: motherId,
+        relation1to2: "parent",
+        relation2to1: "child",
+        isConfirmed: true,
+      },
+    ],
+  });
+
+  const descriptorsByPersonId = new Map(
+    snapshot.viewerDescriptors.map((descriptor) => [
+      descriptor.personId,
+      descriptor,
+    ]),
+  );
+
+  assert.equal(descriptorsByPersonId.get(motherId)?.primaryRelationLabel, "Мать");
+  // Ключевое: бабушка ВЫВЕДЕНА из двух parent-связей, а не задана явно.
+  assert.equal(
+    descriptorsByPersonId.get(grandmotherId)?.primaryRelationLabel,
+    "Бабушка",
+  );
+  assert.equal(descriptorsByPersonId.get(grandmotherId)?.isBlood, true);
+});
+
 test("graph warnings detect multiple primary parent sets for one child", () => {
   const treeId = "tree-multi-primary-parent-sets";
   const childId = "child-person";
