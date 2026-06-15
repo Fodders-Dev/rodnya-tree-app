@@ -256,6 +256,17 @@ class _ChatScreenState extends State<ChatScreen> {
   static const double _recordingLockThreshold = 52;
   static const double _recordingCancelThreshold = 72;
 
+  // C3a/V1 (ревью): персистентный pointer-трекинг press-hold. Цикл записи
+  // (move/lock/cancel/release) ведём raw-Listener'ом на СТАБИЛЬНОМ слое над
+  // AnimatedSwitcher'ом композер↔бар. Иначе при ребилде (старт записи меняет
+  // поддерево) LongPress-recognizer композера размонтируется, а recognizer
+  // in-bar мика не видел pointer-down → onLongPressEnd не приходил на lift,
+  // и запись не завершалась. Listener остаётся в hit-тесте указателя с
+  // момента down, поэтому надёжно получает move/up несмотря на ребилд.
+  int? _recordingPointerId;
+  Offset? _recordingPointerOrigin;
+  int? _lastPointerDownId;
+
   /// Telegram-style toggle for the composer's primary action button.
   /// Tap flips between voice (false) and kruzhok / video-note (true);
   /// long-press starts the corresponding recording flow. Was hard-
@@ -569,36 +580,65 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  Future<void> _handleRecordingLongPressStart(LongPressStartDetails _) async {
+  Future<void> _handleRecordingLongPressStart(LongPressStartDetails details) async {
+    // C3a/V1: «застолбим» указатель этого press-hold за записью. Сам цикл
+    // (move/release) дальше ведёт персистентный Listener — см.
+    // _handleRecordingPointerMove/Up. Origin берём из деталей long-press.
+    _recordingPointerId = _lastPointerDownId;
+    _recordingPointerOrigin = details.globalPosition;
     await _startRecording();
   }
 
-  Future<void> _handleRecordingLongPressMoveUpdate(
-    LongPressMoveUpdateDetails details,
-  ) async {
+  /// C3a/V1: смещение указателя относительно точки старта — слайд-влево
+  /// отменяет, слайд-вверх фиксирует (hands-free). Работает на raw-указателе
+  /// со стабильного слоя, поэтому не зависит от ребилда композер↔бар.
+  void _handleRecordingPointerMove(PointerMoveEvent event) {
+    if (_recordingPointerId == null || event.pointer != _recordingPointerId) {
+      return;
+    }
     if (_recordingController.state != ChatRecordingState.recording) {
       return;
     }
+    final origin = _recordingPointerOrigin;
+    if (origin == null) {
+      return;
+    }
+    final dx = event.position.dx - origin.dx;
+    final dy = event.position.dy - origin.dy;
 
-    if (details.offsetFromOrigin.dx <= -_recordingCancelThreshold) {
+    if (dx <= -_recordingCancelThreshold) {
       // C2: тактильный фидбек на слайд-влево (отмена).
       HapticFeedback.mediumImpact();
-      await _cancelRecording();
+      // Указатель больше не ведёт запись — отпускание не должно отправить.
+      _recordingPointerId = null;
+      _recordingPointerOrigin = null;
+      unawaited(_cancelRecording());
       return;
     }
 
-    if (details.offsetFromOrigin.dy <= -_recordingLockThreshold) {
-      // C2: тактильный фидбек на слайд-вверх (фиксация). Метод
-      // выходит выше, если состояние уже не recording, поэтому фидбек
-      // срабатывает ровно один раз — на переходе в locked.
+    if (dy <= -_recordingLockThreshold) {
+      // C2: тактильный фидбек на слайд-вверх (фиксация). FR2: порог 52px —
+      // осознанный заметный свайп, обычное отпускание (указатель почти на
+      // месте) его не достигает, поэтому ложного lock на lift нет.
       HapticFeedback.mediumImpact();
       _recordingController.lock();
+      // Зафиксировано (hands-free): отпускание пальца больше НЕ завершает —
+      // отправка/отмена идут кнопками locked-бара.
+      _recordingPointerId = null;
+      _recordingPointerOrigin = null;
     }
   }
 
-  Future<void> _handleRecordingLongPressEnd(LongPressEndDetails _) async {
+  /// C3a/V1 (FR1): надёжный конец press-hold — отпускание/отмена указателя
+  /// завершают и отправляют запись, даже после ребилда композер→бар.
+  void _handleRecordingPointerUp(PointerEvent event) {
+    if (_recordingPointerId == null || event.pointer != _recordingPointerId) {
+      return;
+    }
+    _recordingPointerId = null;
+    _recordingPointerOrigin = null;
     if (_recordingController.state == ChatRecordingState.recording) {
-      await _stopAndSendRecording();
+      unawaited(_stopAndSendRecording());
     }
   }
 
@@ -3362,12 +3402,11 @@ class _ChatScreenState extends State<ChatScreen> {
                         ),
                 ),
                 const SizedBox(width: 6),
-                // Mic button — same gesture recogniser keeps recording alive.
-                GestureDetector(
-                  onLongPressMoveUpdate: _handleRecordingLongPressMoveUpdate,
-                  onLongPressEnd: _handleRecordingLongPressEnd,
-                  child: _PulsingMicButton(color: recColor),
-                ),
+                // C3a/V1: чисто визуальная мик-кнопка. Жест press-hold ведёт
+                // персистентный Listener над композером (см.
+                // _buildMessageInputArea) — отдельный recognizer тут не видел
+                // pointer-down и не получал onLongPressEnd на lift.
+                _PulsingMicButton(color: recColor),
               ],
             );
           },
@@ -4099,31 +4138,41 @@ class _ChatScreenState extends State<ChatScreen> {
     // in over the composer (220ms easeOutCubic) instead of appearing
     // as a hard cut. Same on the way back when recording stops.
     final isRecording = recordingState == ChatRecordingState.recording;
-    return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 220),
-      switchInCurve: Curves.easeOutCubic,
-      switchOutCurve: Curves.easeInCubic,
-      transitionBuilder: (child, animation) {
-        return FadeTransition(
-          opacity: animation,
-          child: SlideTransition(
-            position: Tween<Offset>(
-              begin: const Offset(0, 0.08),
-              end: Offset.zero,
-            ).animate(animation),
-            child: child,
-          ),
-        );
-      },
-      child: isRecording
-          ? KeyedSubtree(
-              key: const ValueKey('composer-recording'),
-              child: _buildActiveRecordingInputBar(),
-            )
-          : KeyedSubtree(
-              key: const ValueKey('composer-idle'),
-              child: _buildIdleComposer(canSend, isLockedRecording),
+    // C3a/V1: персистентный Listener над AnimatedSwitcher'ом владеет циклом
+    // press-hold (move/release) независимо от ребилда композер↔бар — иначе
+    // на старте записи поддерево пересобирается и onLongPressEnd не приходит
+    // на отпускание пальца.
+    return Listener(
+      onPointerDown: (event) => _lastPointerDownId = event.pointer,
+      onPointerMove: _handleRecordingPointerMove,
+      onPointerUp: _handleRecordingPointerUp,
+      onPointerCancel: _handleRecordingPointerUp,
+      child: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 220),
+        switchInCurve: Curves.easeOutCubic,
+        switchOutCurve: Curves.easeInCubic,
+        transitionBuilder: (child, animation) {
+          return FadeTransition(
+            opacity: animation,
+            child: SlideTransition(
+              position: Tween<Offset>(
+                begin: const Offset(0, 0.08),
+                end: Offset.zero,
+              ).animate(animation),
+              child: child,
             ),
+          );
+        },
+        child: isRecording
+            ? KeyedSubtree(
+                key: const ValueKey('composer-recording'),
+                child: _buildActiveRecordingInputBar(),
+              )
+            : KeyedSubtree(
+                key: const ValueKey('composer-idle'),
+                child: _buildIdleComposer(canSend, isLockedRecording),
+              ),
+      ),
     );
   }
 
@@ -4614,12 +4663,9 @@ class _ChatScreenState extends State<ChatScreen> {
           _handleRecordingLongPressStart(details);
         }
       },
-      onLongPressMoveUpdate: _voiceModeIsKruzhok
-          ? null
-          : _handleRecordingLongPressMoveUpdate,
-      onLongPressEnd: _voiceModeIsKruzhok
-          ? null
-          : _handleRecordingLongPressEnd,
+      // C3a/V1: move/release голосовой записи ведёт персистентный Listener
+      // над композером (см. _buildMessageInputArea), а не этот recognizer —
+      // он размонтируется при появлении recording-бара.
       // User-reported on Samsung: «зажатием не записывается, появляется
       // только облачко 'зажмите для голосового' и всё». На ПК
       // мышью работало, на телефоне — нет.
