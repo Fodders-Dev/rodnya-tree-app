@@ -18,7 +18,7 @@ function registerChatRoutes(
     mapChatParticipant,
     mapChatBranchRoot,
     realtimeHub,
-    emergencyChatPreviewResponseCap = 3,
+    emergencyChatPreviewResponseCap = 200,
   },
 ) {
   function normalizeMessagePageLimit(query) {

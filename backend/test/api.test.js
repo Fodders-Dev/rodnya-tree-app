@@ -8804,7 +8804,7 @@ test("chat preview list applies the limit query parameter", async () => {
   }
 });
 
-test("chat preview list applies the emergency response cap", async () => {
+test("chat preview list returns all chats up to the requested limit (no low cap)", async () => {
   const ctx = await startTestServer();
 
   try {
@@ -8871,10 +8871,12 @@ test("chat preview list applies the emergency response cap", async () => {
     });
     assert.equal(chatsResponse.status, 200);
     const chatsPayload = await chatsResponse.json();
-    assert.equal(chatsPayload.chats.length, 3);
-    assert.equal(chatsPayload.hasMore, true);
+    // Регресс (баг «вижу 3 из 4»): 4 беседы при limit=10 должны вернуться
+    // ВСЕ — кап больше не режет список до 3.
+    assert.equal(chatsPayload.chats.length, 4);
+    assert.equal(chatsPayload.hasMore, false);
     assert.equal(chatsPayload.requestedLimit, 10);
-    assert.equal(chatsPayload.appliedLimit, 3);
+    assert.equal(chatsPayload.appliedLimit, 10);
   } finally {
     await stopTestServer(ctx);
   }

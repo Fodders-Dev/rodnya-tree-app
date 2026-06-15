@@ -89,7 +89,10 @@ const {registerVkAuthRoutes} = require("./routes/vk-auth-routes");
 const {normalizeAttachmentWaveform} = require("./chat-utils");
 
 const DEFAULT_CALL_INVITE_TIMEOUT_MS = 30_000;
-const EMERGENCY_CHAT_PREVIEW_RESPONSE_CAP = 3;
+// Потолок размера страницы GET /v1/chats. requestedLimit и так
+// зажат в [1,200]; это — понижаемый «рычаг» на случай инцидента.
+// Был ошибочно оставлен на 3 → у всех список чатов резался до 3 бесед.
+const EMERGENCY_CHAT_PREVIEW_RESPONSE_CAP = 200;
 
 function createApp({
   store,
