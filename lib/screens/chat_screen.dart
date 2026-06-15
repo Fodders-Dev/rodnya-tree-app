@@ -5,6 +5,7 @@ import 'dart:ui';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get_it/get_it.dart';
@@ -265,7 +266,15 @@ class _ChatScreenState extends State<ChatScreen> {
   // момента down, поэтому надёжно получает move/up несмотря на ребилд.
   int? _recordingPointerId;
   Offset? _recordingPointerOrigin;
-  int? _lastPointerDownId;
+  // FX1/C3a (ревью): id пальца, опущенного именно НА микрофон (локальный
+  // Listener вокруг мик-кнопки). Запись привязываем к нему, а НЕ к любому
+  // pointer-down в зоне композера — иначе второе касание TextField во время
+  // long-press перебивало бы привязку и реальное отпускание не завершало
+  // запись (stuck-recording).
+  int? _micPointerId;
+  // FX1/C3a FR3: палец отпущен, пока шёл старт (диалог разрешения микрофона)
+  // — не оставляем осиротевшую запись без пальца и без Send.
+  bool _recordingPointerReleased = false;
 
   // C3d/V2 (ревью FR8): запись кружка инлайн-оверлеем поверх чата (чат
   // виден), вместо отдельного fullscreen-роута. true → оверлей-рекордер
@@ -586,12 +595,29 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _handleRecordingLongPressStart(LongPressStartDetails details) async {
-    // C3a/V1: «застолбим» указатель этого press-hold за записью. Сам цикл
-    // (move/release) дальше ведёт персистентный Listener — см.
-    // _handleRecordingPointerMove/Up. Origin берём из деталей long-press.
-    _recordingPointerId = _lastPointerDownId;
+    // FX1/C3a FR1: привязываем запись к пальцу, опущенному именно НА микрофон
+    // (_micPointerId от локального Listener'а мик-кнопки), а не к любому
+    // pointer-down в композере. Сам цикл move/release дальше ведёт
+    // персистентный Listener — см. _handleRecordingPointer*.
+    final micPointer = _micPointerId;
+    if (micPointer == null) {
+      // Нет валидного down на микрофоне — не стартуем (FR3-страховка).
+      return;
+    }
+    _recordingPointerId = micPointer;
     _recordingPointerOrigin = details.globalPosition;
+    _recordingPointerReleased = false;
     await _startRecording();
+    // FX1/C3a FR3: палец отпустили, пока шёл старт (диалог разрешения) —
+    // не оставляем осиротевшую запись без пальца: отменяем (discard).
+    if (_recordingPointerReleased) {
+      _recordingPointerId = null;
+      _recordingPointerOrigin = null;
+      _recordingPointerReleased = false;
+      if (_recordingController.state == ChatRecordingState.recording) {
+        unawaited(_cancelRecording());
+      }
+    }
   }
 
   /// C3a/V1: смещение указателя относительно точки старта — слайд-влево
@@ -634,17 +660,36 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  /// C3a/V1 (FR1): надёжный конец press-hold — отпускание/отмена указателя
-  /// завершают и отправляют запись, даже после ребилда композер→бар.
-  void _handleRecordingPointerUp(PointerEvent event) {
+  /// C3a/V1 (FR1): надёжный конец press-hold — отпускание пальца завершает
+  /// и ОТПРАВЛЯЕТ запись, даже после ребилда композер→бар.
+  void _handleRecordingPointerUp(PointerUpEvent event) {
     if (_recordingPointerId == null || event.pointer != _recordingPointerId) {
       return;
     }
-    _recordingPointerId = null;
-    _recordingPointerOrigin = null;
     if (_recordingController.state == ChatRecordingState.recording) {
+      _recordingPointerId = null;
+      _recordingPointerOrigin = null;
       unawaited(_stopAndSendRecording());
+      return;
     }
+    // FX1/C3a FR3: запись ещё не активна (идёт старт/диалог разрешения), а
+    // палец уже отпущен — помечаем, чтобы старт отменил осиротевшую запись.
+    _recordingPointerReleased = true;
+  }
+
+  /// FX1/C3a FR2: прерванный жест (систему перехватили / pointer cancel) —
+  /// это НЕ отправка. Отменяем запись (discard), а не шлём голосовое.
+  void _handleRecordingPointerCancel(PointerCancelEvent event) {
+    if (_recordingPointerId == null || event.pointer != _recordingPointerId) {
+      return;
+    }
+    if (_recordingController.state == ChatRecordingState.recording) {
+      _recordingPointerId = null;
+      _recordingPointerOrigin = null;
+      unawaited(_cancelRecording());
+      return;
+    }
+    _recordingPointerReleased = true;
   }
 
   void _bindTimelineController(String chatId) {
@@ -4179,10 +4224,13 @@ class _ChatScreenState extends State<ChatScreen> {
     // на старте записи поддерево пересобирается и onLongPressEnd не приходит
     // на отпускание пальца.
     return Listener(
-      onPointerDown: (event) => _lastPointerDownId = event.pointer,
+      // FX1/C3a FR1: этот композер-wide Listener ВЛАДЕЕТ только move/up/cancel
+      // уже-захваченного recording-pointer (id ставит локальный Listener
+      // мик-кнопки), но сам его НЕ назначает — иначе второе касание зоны
+      // ввода перебивало бы привязку.
       onPointerMove: _handleRecordingPointerMove,
       onPointerUp: _handleRecordingPointerUp,
-      onPointerCancel: _handleRecordingPointerUp,
+      onPointerCancel: _handleRecordingPointerCancel,
       child: AnimatedSwitcher(
         duration: const Duration(milliseconds: 220),
         switchInCurve: Curves.easeOutCubic,
@@ -4717,26 +4765,43 @@ class _ChatScreenState extends State<ChatScreen> {
       // прочитают тот же текст подсказки, но никаких gesture
       // recognizer-ов на child больше нет — long-press идёт нашему
       // GestureDetector'у напрямую.
-      child: Semantics(
-        button: true,
-        label: isKruzhokMode ? 'Кружочек' : 'Голосовое сообщение',
-        hint: isKruzhokMode
-            ? 'Зажмите для кружочка, тап чтобы переключить на голосовое'
-            : 'Зажмите для голосового, тап чтобы переключить на кружочек',
-        child: Container(
-          width: 48,
-          height: 48,
-          decoration: BoxDecoration(
-            color: scheme.primary,
-            shape: BoxShape.circle,
-          ),
-          child: Icon(
-            recordingState == ChatRecordingState.recording
-                ? Icons.lock_open_rounded
-                : (isKruzhokMode
-                    ? Icons.videocam_outlined
-                    : Icons.mic_none_rounded),
-            color: scheme.onPrimary,
+      // FX1/C3a FR1: локальный Listener фиксирует id пальца, опущенного
+      // именно НА микрофон — запись привяжется к нему, а не к чужому касанию
+      // зоны ввода. Move/up уже-захваченного пальца ведёт композер-wide
+      // Listener (он переживает ребилд композер→бар).
+      child: Listener(
+        onPointerDown: (event) => _micPointerId = event.pointer,
+        onPointerUp: (event) {
+          if (event.pointer == _micPointerId) {
+            _micPointerId = null;
+          }
+        },
+        onPointerCancel: (event) {
+          if (event.pointer == _micPointerId) {
+            _micPointerId = null;
+          }
+        },
+        child: Semantics(
+          button: true,
+          label: isKruzhokMode ? 'Кружочек' : 'Голосовое сообщение',
+          hint: isKruzhokMode
+              ? 'Зажмите для кружочка, тап чтобы переключить на голосовое'
+              : 'Зажмите для голосового, тап чтобы переключить на кружочек',
+          child: Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color: scheme.primary,
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              recordingState == ChatRecordingState.recording
+                  ? Icons.lock_open_rounded
+                  : (isKruzhokMode
+                      ? Icons.videocam_outlined
+                      : Icons.mic_none_rounded),
+              color: scheme.onPrimary,
+            ),
           ),
         ),
       ),
