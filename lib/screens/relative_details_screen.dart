@@ -1951,6 +1951,24 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
     }
   }
 
+  // Друзья-полиш FR1: копия приглашения зависит от вида дерева карточки.
+  // Берём тот же источник, что и резолвер контекста (_resolvePersonContext) —
+  // availableTrees, — но матчим по фактическому дереву карточки
+  // (_currentTreeId), а не по «выбранному», т.к. карточка может быть из
+  // другого дерева. Дефолт — семья (false), если дерево вдруг не в списке.
+  bool _isCurrentTreeFriends() {
+    try {
+      final trees =
+          Provider.of<TreeProvider>(context, listen: false).availableTrees;
+      for (final tree in trees) {
+        if (tree.id == _currentTreeId) return tree.isFriendsTree;
+      }
+    } catch (_) {
+      // Нет TreeProvider в scope — трактуем как семейное дерево.
+    }
+    return false;
+  }
+
   Future<void> _generateAndShareInviteLink() async {
     if (_person == null || _currentTreeId == null) return;
 
@@ -1965,12 +1983,14 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
       );
 
       if (mounted) {
+        final isFriendsTree = _isCurrentTreeFriends();
         await showInviteShareSheet(
           context,
           inviteUrl: inviteUrl,
-          message:
-              'Присоединяйтесь к нашему семейному древу в Родне! ${inviteUrl.toString()}',
-          subject: 'Приглашение в Родню',
+          message: isFriendsTree
+              ? 'Присоединяйтесь к нашему кругу друзей в Родне! ${inviteUrl.toString()}'
+              : 'Присоединяйтесь к нашему семейному древу в Родне! ${inviteUrl.toString()}',
+          subject: isFriendsTree ? 'Приглашение в круг друзей' : 'Приглашение в Родню',
         );
       }
     } catch (e) {

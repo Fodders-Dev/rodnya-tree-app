@@ -93,11 +93,18 @@ function registerTreeInvitationRoutes(
         return;
       }
 
+      // Друзья-полиш FR1: копия пуша зависит от вида дерева. tree.kind
+      // приходит из store.findTree (raw record) — "friends" для круга.
+      const isFriendsTree = tree.kind === "friends";
       await createAndDispatchNotification({
         userId: targetUserId,
         type: "tree_invitation",
-        title: "Приглашение в семейное дерево",
-        body: `Вас пригласили в дерево «${tree.name}»`,
+        title: isFriendsTree
+          ? "Приглашение в круг друзей"
+          : "Приглашение в семейное дерево",
+        body: isFriendsTree
+          ? `Вас пригласили в круг «${tree.name}»`
+          : `Вас пригласили в дерево «${tree.name}»`,
         data: {
           invitationId: invitation.id,
           treeId: tree.id,
@@ -142,11 +149,14 @@ function registerTreeInvitationRoutes(
       }
 
       if (result.accepted && result.invitation.addedBy) {
+        const acceptedFriendsTree = result.tree.kind === "friends";
         await createAndDispatchNotification({
           userId: result.invitation.addedBy,
           type: "tree_invitation_accepted",
           title: "Приглашение принято",
-          body: `Пользователь принял приглашение в дерево «${result.tree.name}»`,
+          body: acceptedFriendsTree
+            ? `Пользователь принял приглашение в круг «${result.tree.name}»`
+            : `Пользователь принял приглашение в дерево «${result.tree.name}»`,
           data: {
             treeId: result.tree.id,
             treeName: result.tree.name,
