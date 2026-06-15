@@ -2778,6 +2778,9 @@ class _VideoNotePlayerState extends State<_VideoNotePlayer> {
   VideoPlayerController? _controller;
   Future<void>? _initializeFuture;
   bool _isMuted = false;
+  // V3 (ревью FR7): идёт перемотка по кольцу — на это время ведём позицию
+  // от пальца, а тап не должен трактоваться как play/pause.
+  bool _isScrubbing = false;
 
   @override
   void initState() {
@@ -2802,7 +2805,8 @@ class _VideoNotePlayerState extends State<_VideoNotePlayer> {
     // вечного спиннера. .then не выполнится, activate/play пропускаются.
     return controller.initialize().then((_) async {
       if (!mounted) return;
-      await controller.setLooping(true);
+      // V3 (ревью FR5): НЕ форсим луп — кружок играет один раз, тап =
+      // play/pause (как в Telegram). Звук включён, мьют — вторичным контролом.
       await controller.setVolume(1);
       // C2c: один inline-плеер за раз — паузим другой кружок/голосовое.
       _InlineMediaPlayback.activate(this, _pauseSelf);
@@ -2863,6 +2867,68 @@ class _VideoNotePlayerState extends State<_VideoNotePlayer> {
     await controller.setVolume(next ? 0 : 1);
     if (!mounted) return;
     setState(() => _isMuted = next);
+  }
+
+  /// V3 (ревью FR5): основной тап = play/pause (как в Telegram). По концу
+  /// (без лупа) тап перезапускает с начала. Старт игры заявляет себя в
+  /// one-at-a-time реестре, чтобы заглушить другой играющий кружок/голос.
+  Future<void> _togglePlayPause() async {
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) return;
+    final value = controller.value;
+    HapticFeedback.selectionClick();
+    if (value.isPlaying) {
+      await controller.pause();
+      return;
+    }
+    if (value.duration > Duration.zero && value.position >= value.duration) {
+      await controller.seekTo(Duration.zero);
+    }
+    _InlineMediaPlayback.activate(this, _pauseSelf);
+    await controller.play();
+  }
+
+  /// V3 (ревью FR7): доля длительности из точки касания — угол вокруг центра
+  /// кружка (0 — наверху/12 часов, по часовой стрелке).
+  double _seekFractionFromLocal(Offset local) {
+    final radius = widget.diameter / 2;
+    final dx = local.dx - radius;
+    final dy = local.dy - radius;
+    var angle = math.atan2(dx, -dy);
+    if (angle < 0) angle += 2 * math.pi;
+    return (angle / (2 * math.pi)).clamp(0.0, 1.0);
+  }
+
+  void _seekToLocal(Offset local) {
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) return;
+    final duration = controller.value.duration;
+    if (duration <= Duration.zero) return;
+    final fraction = _seekFractionFromLocal(local);
+    unawaited(controller.seekTo(duration * fraction));
+  }
+
+  void _onSeekStart(DragStartDetails details) {
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) return;
+    _isScrubbing = true;
+    _seekToLocal(details.localPosition);
+  }
+
+  void _onSeekUpdate(DragUpdateDetails details) {
+    if (!_isScrubbing) return;
+    _seekToLocal(details.localPosition);
+  }
+
+  void _onSeekEnd(DragEndDetails details) {
+    _isScrubbing = false;
+  }
+
+  /// FR6: доля проигранного (0..1) для кольца прогресса.
+  double _playbackFraction(VideoPlayerController controller) {
+    final total = controller.value.duration.inMilliseconds;
+    if (total <= 0) return 0;
+    return (controller.value.position.inMilliseconds / total).clamp(0.0, 1.0);
   }
 
   /// FR3: круг-плейсхолдер при сбое инициализации видео. Тап — повтор
@@ -2950,89 +3016,95 @@ class _VideoNotePlayerState extends State<_VideoNotePlayer> {
         // независимо от исходного aspect ratio: video note по
         // протоколу TG всегда квадратный, но даже если бэкенд отдаст
         // 16:9, мы аккуратно центрируем + кропаем.
+        final progress = _playbackFraction(controller);
+        final isPlaying = controller.value.isPlaying;
         return Center(
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
-            onTap: _toggleMute,
+            // FR5: тап — play/pause. FR7: пан вокруг кружка — перемотка по
+            // кольцу. Тап vs пан разводит gesture-арена по порогу движения.
+            onTap: _togglePlayPause,
+            onPanStart: _onSeekStart,
+            onPanUpdate: _onSeekUpdate,
+            onPanEnd: _onSeekEnd,
             child: SizedBox(
               width: widget.diameter,
               height: widget.diameter,
-              child: ClipOval(
-                child: Stack(
-                  alignment: Alignment.center,
-                  fit: StackFit.expand,
-                  children: [
-                    FittedBox(
-                      fit: BoxFit.cover,
-                      child: SizedBox(
-                        width: controller.value.size.width <= 0
-                            ? 320
-                            : controller.value.size.width,
-                        height: controller.value.size.height <= 0
-                            ? 320
-                            : controller.value.size.height,
-                        child: VideoPlayer(controller),
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  ClipOval(
+                    child: SizedBox(
+                      width: widget.diameter,
+                      height: widget.diameter,
+                      child: FittedBox(
+                        fit: BoxFit.cover,
+                        child: SizedBox(
+                          width: controller.value.size.width <= 0
+                              ? 320
+                              : controller.value.size.width,
+                          height: controller.value.size.height <= 0
+                              ? 320
+                              : controller.value.size.height,
+                          child: VideoPlayer(controller),
+                        ),
                       ),
                     ),
-                    // Subtle bottom dim so the volume hint reads.
-                    Positioned(
-                      left: 0,
-                      right: 0,
-                      bottom: 0,
-                      height: 56,
-                      child: IgnorePointer(
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              begin: Alignment.topCenter,
-                              end: Alignment.bottomCenter,
-                              colors: [
-                                Colors.transparent,
-                                Colors.black.withValues(alpha: 0.4),
-                              ],
-                            ),
+                  ),
+                  // FR6: кольцо прогресса по окружности кружка.
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: CustomPaint(
+                        painter: _VideoNoteProgressRingPainter(
+                          progress: progress,
+                          color: Colors.white,
+                          trackColor: Colors.white.withValues(alpha: 0.28),
+                        ),
+                      ),
+                    ),
+                  ),
+                  // FR5: центральный индикатор play, когда на паузе.
+                  if (!isPlaying)
+                    IgnorePointer(
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.32),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Padding(
+                          padding: EdgeInsets.all(10),
+                          child: Icon(
+                            Icons.play_circle_fill_rounded,
+                            color: Colors.white,
+                            size: 34,
                           ),
                         ),
                       ),
                     ),
-                    Positioned(
-                      bottom: 14,
-                      child: AnimatedOpacity(
-                        opacity: _isMuted ? 1.0 : 0.0,
-                        duration: const Duration(milliseconds: 220),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 6,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.black.withValues(alpha: 0.55),
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                          child: const Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                Icons.volume_off_rounded,
-                                color: Colors.white,
-                                size: 14,
-                              ),
-                              SizedBox(width: 6),
-                              Text(
-                                'Без звука',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ],
-                          ),
+                  // FR5: мьют — вторичный мелкий контрол (динамик) в углу.
+                  Positioned(
+                    right: widget.diameter * 0.10,
+                    bottom: widget.diameter * 0.10,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: _toggleMute,
+                      child: Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.55),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          _isMuted
+                              ? Icons.volume_off_rounded
+                              : Icons.volume_up_rounded,
+                          color: Colors.white,
+                          size: 16,
                         ),
                       ),
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -3047,6 +3119,58 @@ class _VideoNotePlayerState extends State<_VideoNotePlayer> {
       return parsed;
     }
     return Uri.file(value);
+  }
+}
+
+/// V3 (ревью FR6): кольцо прогресса по окружности видео-кружка. Дуга от
+/// 12 часов по часовой стрелке, синхронна controller.position (репейнт на
+/// каждом тике слушателя плеера).
+class _VideoNoteProgressRingPainter extends CustomPainter {
+  _VideoNoteProgressRingPainter({
+    required this.progress,
+    required this.color,
+    required this.trackColor,
+  });
+
+  static const double stroke = 3;
+
+  final double progress;
+  final Color color;
+  final Color trackColor;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = (math.min(size.width, size.height) - stroke) / 2;
+    if (radius <= 0) return;
+    final track = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = stroke
+      ..color = trackColor
+      ..strokeCap = StrokeCap.round;
+    canvas.drawCircle(center, radius, track);
+
+    final clamped = progress.clamp(0.0, 1.0);
+    if (clamped <= 0) return;
+    final arc = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = stroke
+      ..color = color
+      ..strokeCap = StrokeCap.round;
+    canvas.drawArc(
+      Rect.fromCircle(center: center, radius: radius),
+      -math.pi / 2,
+      clamped * 2 * math.pi,
+      false,
+      arc,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _VideoNoteProgressRingPainter oldDelegate) {
+    return oldDelegate.progress != progress ||
+        oldDelegate.color != color ||
+        oldDelegate.trackColor != trackColor;
   }
 }
 
