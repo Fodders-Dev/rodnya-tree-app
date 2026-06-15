@@ -156,8 +156,13 @@ extension _AddRelativeScreenSections on _AddRelativeScreenState {
 
     final bool isPastUnion =
         type == RelationType.ex_spouse || type == RelationType.ex_partner;
-    final bool showDivorceField =
-        isPastUnion || _showDivorceDateField || _divorceDate != null;
+    // B2 (ревью FR7): в узловом флоу для ТЕКУЩИХ союзов (spouse/partner)
+    // дату расставания вводит селектор статуса союза
+    // (_buildUnionStatusSelector). Чтобы не было ДВУХ входов для одной
+    // даты — здесь поле даты развода не рисуем (оставляем только свадьбу).
+    final bool statusSelectorOwnsSeparation = _isUnionStatusSelectorShown;
+    final bool showDivorceField = !statusSelectorOwnsSeparation &&
+        (isPastUnion || _showDivorceDateField || _divorceDate != null);
 
     return [
       const SizedBox(height: 16),
@@ -177,38 +182,40 @@ extension _AddRelativeScreenSections on _AddRelativeScreenState {
           ),
         ),
       ),
-      const SizedBox(height: 16),
-      if (showDivorceField)
-        InkWell(
-          key: const Key('divorce-date-field'),
-          onTap: _pickDivorceDate,
-          child: InputDecorator(
-            decoration: const InputDecoration(
-              labelText: 'Дата развода',
-              border: OutlineInputBorder(),
-              prefixIcon: Icon(Icons.heart_broken_outlined),
+      if (!statusSelectorOwnsSeparation) ...[
+        const SizedBox(height: 16),
+        if (showDivorceField)
+          InkWell(
+            key: const Key('divorce-date-field'),
+            onTap: _pickDivorceDate,
+            child: InputDecorator(
+              decoration: const InputDecoration(
+                labelText: 'Дата развода',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.heart_broken_outlined),
+              ),
+              child: Text(
+                _divorceDate != null
+                    ? DateFormat('dd.MM.yyyy').format(_divorceDate!)
+                    : 'Не указано',
+              ),
             ),
-            child: Text(
-              _divorceDate != null
-                  ? DateFormat('dd.MM.yyyy').format(_divorceDate!)
-                  : 'Не указано',
+          )
+        else
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              key: const Key('divorce-date-add'),
+              onPressed: () {
+                _updateSectionState(() {
+                  _showDivorceDateField = true;
+                });
+              },
+              icon: const Icon(Icons.add, size: 18),
+              label: const Text('Дата развода'),
             ),
           ),
-        )
-      else
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton.icon(
-            key: const Key('divorce-date-add'),
-            onPressed: () {
-              _updateSectionState(() {
-                _showDivorceDateField = true;
-              });
-            },
-            icon: const Icon(Icons.add, size: 18),
-            label: const Text('Дата развода'),
-          ),
-        ),
+      ],
     ];
   }
 
@@ -1175,10 +1182,10 @@ extension _AddRelativeScreenSections on _AddRelativeScreenState {
           ),
           // B2: для союзных связей (супруг/партнёр) — статус союза прямо в
           // узловом флоу, чтобы можно было добавить БЫВШЕГО супруга/
-          // партнёра любому узлу, не плодя типы в пикере.
-          if (relationType == RelationType.spouse ||
-              relationType == RelationType.partner)
-            _buildUnionStatusSelector(),
+          // партнёра любому узлу, не плодя типы в пикере. Условие держим в
+          // общем геттере — им же гасим дубль даты развода в блоке дат
+          // союза (ревью FR7).
+          if (_isUnionStatusSelectorShown) _buildUnionStatusSelector(),
         ],
       ),
     );
@@ -1207,8 +1214,14 @@ extension _AddRelativeScreenSections on _AddRelativeScreenState {
                 key: const Key('union-status-together'),
                 label: const Text('Вместе'),
                 selected: !_unionStatusIsPast,
-                onSelected: (_) =>
-                    _updateSectionState(() => _unionStatusIsPast = false),
+                onSelected: (_) => _updateSectionState(() {
+                  // B2 (ревью FR6): возврат в «Вместе» сбрасывает дату
+                  // расставания и статус — иначе остаточная дата заставит
+                  // бэк нормализовать unionStatus в 'past' и записать
+                  // текущего супруга бывшим.
+                  _unionStatusIsPast = false;
+                  _divorceDate = null;
+                }),
               ),
             ),
             const SizedBox(width: 8),

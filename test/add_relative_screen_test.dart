@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
@@ -91,6 +92,7 @@ class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
   bool createRelationCalled = false;
   String? lastCreateUnionStatus;
   RelationType? lastCreateRelationType;
+  DateTime? lastCreateDivorceDate;
 
   @override
   Future<FamilyRelation> createRelation({
@@ -108,6 +110,7 @@ class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
     createRelationCalled = true;
     lastCreateUnionStatus = unionStatus;
     lastCreateRelationType = relation1to2;
+    lastCreateDivorceDate = divorceDate;
     return FamilyRelation(
       id: 'rel-1',
       treeId: treeId,
@@ -540,12 +543,11 @@ void main() {
     expect(find.text('Дата свадьбы'), findsOneWidget);
     expect(find.text('Попадёт в семейный календарь'), findsOneWidget);
 
-    // F2: для текущего брака дата развода спрятана за «+ Дата развода».
+    // B2 (ревью FR7): для текущего союза на узле дату расставания вводит
+    // селектор статуса союза (Вместе/Расстались) выше — поэтому в блоке дат
+    // союза дубля «Дата развода» больше нет (ни поля, ни кнопки-добавления).
+    expect(find.byKey(const Key('divorce-date-add')), findsNothing);
     expect(find.byKey(const Key('divorce-date-field')), findsNothing);
-    await tester.ensureVisible(find.byKey(const Key('divorce-date-add')));
-    await tester.tap(find.byKey(const Key('divorce-date-add')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('divorce-date-field')), findsOneWidget);
   });
 
   testWidgets(
@@ -741,6 +743,100 @@ void main() {
     expect(familyService.createRelationCalled, isTrue);
     expect(familyService.lastCreateRelationType, RelationType.spouse);
     expect(familyService.lastCreateUnionStatus, 'past');
+  });
+
+  testWidgets(
+      'B2 (ревью FR6): «Расстались»→«Вместе» сбрасывает дату — союз сохраняется текущим',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(900, 1600));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final familyService = _FakeFamilyTreeService();
+    await getIt.reset();
+    getIt.registerSingleton<AuthServiceInterface>(_FakeAuthService());
+    getIt.registerSingleton<FamilyTreeServiceInterface>(familyService);
+    getIt.registerSingleton<ProfileServiceInterface>(_FakeProfileService());
+    getIt.registerSingleton<StorageServiceInterface>(_FakeStorageService());
+
+    final relatedPerson = FamilyPerson(
+      id: 'person-anchor',
+      treeId: 'tree-1',
+      name: 'Петрова Анна',
+      gender: Gender.female,
+      isAlive: true,
+      createdAt: DateTime(2024, 1, 1),
+      updatedAt: DateTime(2024, 1, 1),
+    );
+    final router = GoRouter(
+      initialLocation: '/',
+      routes: [
+        GoRoute(
+          path: '/',
+          builder: (context, state) => Scaffold(
+            body: Builder(
+              builder: (ctx) => Center(
+                child: ElevatedButton(
+                  onPressed: () => ctx.push('/add'),
+                  child: const Text('go'),
+                ),
+              ),
+            ),
+          ),
+        ),
+        GoRoute(
+          path: '/add',
+          builder: (context, state) => AddRelativeScreen(
+            treeId: 'tree-1',
+            relatedTo: relatedPerson,
+            predefinedRelation: RelationType.spouse,
+            routeExtra: state.extra as Map<String, dynamic>?,
+            routeQueryParameters: state.uri.queryParameters,
+          ),
+        ),
+      ],
+    );
+    await tester.pumpWidget(MaterialApp.router(
+      routerConfig: router,
+      // showDatePicker форсит ru-локаль внутри, поэтому нужны ru-делегаты
+      // материал-локализаций (иначе диалог падает «No MaterialLocalizations»).
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      supportedLocales: const [Locale('ru', 'RU'), Locale('en', 'US')],
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('go'));
+    await tester.pumpAndSettle();
+
+    // Расстались → выбрать дату расставания (принимаем дату по умолчанию).
+    await tester.tap(find.byKey(const Key('union-status-separated')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const Key('union-divorce-date')));
+    await tester.tap(find.byKey(const Key('union-divorce-date')));
+    await tester.pumpAndSettle();
+    // Диалог даты идёт в ru-локали (форсится в _pickDivorceDate) → «ОК».
+    await tester.tap(find.text('ОК'));
+    await tester.pumpAndSettle();
+
+    // Передумали — вернулись в «Вместе»: дата расставания должна сброситься.
+    await tester.tap(find.byKey(const Key('union-status-together')));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextFormField).at(0), 'Петров');
+    await tester.enterText(find.byType(TextFormField).at(1), 'Иван');
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const Key('add-relative-submit')));
+    await tester.tap(find.byKey(const Key('add-relative-submit')));
+    await tester.pumpAndSettle();
+
+    expect(familyService.createRelationCalled, isTrue);
+    expect(familyService.lastCreateRelationType, RelationType.spouse);
+    expect(familyService.lastCreateUnionStatus, isNot('past'),
+        reason: 'после возврата в «Вместе» союз не должен быть past');
+    expect(familyService.lastCreateDivorceDate, isNull,
+        reason: 'дата расставания должна сброситься при возврате в «Вместе»');
   });
 
   testWidgets(

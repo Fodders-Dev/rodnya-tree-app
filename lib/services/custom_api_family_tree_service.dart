@@ -1827,6 +1827,18 @@ class CustomApiFamilyTreeService
     if (normalizedLabel.isEmpty) {
       return RelationType.other;
     }
+    // B2 (ревью FR5): союз распознаём по ОТДЕЛЬНОМУ СЛОВУ, а не подстроке.
+    // Иначе genitive-форма «жены»/«мужа» в притяжательных метках («Семья
+    // жены») ложно совпадала бы с прямым супругом.
+    final labelWords = normalizedLabel
+        .split(RegExp(r'[^а-яёa-z]+'))
+        .where((word) => word.isNotEmpty)
+        .toSet();
+    bool isDirectSpouseWord() =>
+        labelWords.contains('муж') ||
+        labelWords.contains('жена') ||
+        labelWords.contains('супруг') ||
+        labelWords.contains('супруга');
     if (normalizedLabel.contains('отчим') ||
         normalizedLabel.contains('мачех')) {
       return RelationType.stepparent;
@@ -1835,23 +1847,41 @@ class CustomApiFamilyTreeService
         normalizedLabel.contains('падчер')) {
       return RelationType.stepchild;
     }
-    // B2: бывший союз. Метки графа теперь гендерные («Бывший муж»/
-    // «Бывшая жена»/«Бывший партнёр»/«Бывшая партнёрша»), проверяем ДО
-    // текущих spouse/partner, иначе «Бывший супруг» ошибочно попал бы в
-    // spouse. 'партн' ловит и е, и ё.
+    // B2: бывший союз. Метки графа гендерные («Бывший муж»/«Бывшая жена»/
+    // «Бывший партнёр»/«Бывшая партнёрша»), проверяем ДО текущих spouse/
+    // partner, иначе «Бывший супруг» попал бы в spouse. Супруга ловим
+    // словом (не подстрокой); 'партн' ловит и е, и ё.
     if (normalizedLabel.contains('бывш')) {
       if (normalizedLabel.contains('партн')) {
         return RelationType.ex_partner;
       }
-      if (normalizedLabel.contains('супруг') ||
-          normalizedLabel.contains('муж') ||
-          normalizedLabel.contains('жен')) {
+      if (isDirectSpouseWord()) {
         return RelationType.ex_spouse;
       }
     }
-    if (normalizedLabel.contains('супруг') ||
-        normalizedLabel.contains('муж') ||
-        normalizedLabel.contains('жен')) {
+    // B2 (ревью FR5): притяжательные in-law метки backend строит как
+    // «<родство> <супруг-в-родительном>» (Родитель жены, Родня мужа, Брат
+    // супруга). Genitive «жены/мужа/супруга/супруги» — это НЕ сам супруг,
+    // поэтому ловим их ДО ветки spouse, иначе «Родитель жены»/«Родня мужа»
+    // ошибочно уходили бы в spouse.
+    final mentionsSpousePossessive = normalizedLabel.contains('жены') ||
+        normalizedLabel.contains('мужа') ||
+        normalizedLabel.contains('супруга') ||
+        normalizedLabel.contains('супруги');
+    if (mentionsSpousePossessive) {
+      if (normalizedLabel.contains('родител')) {
+        // Родитель/Родительница жены/мужа/супруга → тесть/тёща-класс.
+        return RelationType.parentInLaw;
+      }
+      if (normalizedLabel.contains('родн') ||
+          normalizedLabel.contains('брат') ||
+          normalizedLabel.contains('сестр') ||
+          normalizedLabel.contains('сиблинг')) {
+        // Родня жены/мужа, Брат/Сестра/Сиблинг супруга → родня супруга.
+        return RelationType.siblingInLaw;
+      }
+    }
+    if (isDirectSpouseWord()) {
       return RelationType.spouse;
     }
     if (normalizedLabel.contains('партн')) {

@@ -365,6 +365,18 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
       widget.predefinedRelation ??
       _selectedRelationType;
 
+  // B2 (ревью FR7): фиксированный тип связи узлового флоу (без учёта
+  // выбора в редактируемой карточке). По нему решаем, показан ли селектор
+  // статуса союза (Вместе/Расстались) — он владеет датой расставания,
+  // поэтому блок дат союза не должен дублировать «Дата развода».
+  RelationType? get _fixedRelationType =>
+      _contextRelationType ?? widget.predefinedRelation;
+
+  bool get _isUnionStatusSelectorShown =>
+      _anchorPerson != null &&
+      (_fixedRelationType == RelationType.spouse ||
+          _fixedRelationType == RelationType.partner);
+
   bool get _canUseQuickAddLoop => _isQuickAddMode && _isContextualAdd;
 
   bool get _isAdvancedMode => _editorMode == _RelativeEditorMode.advanced;

@@ -1023,6 +1023,36 @@ void main() {
                   'name': 'Игорь Бывший',
                   'gender': 'male',
                 },
+                {
+                  'id': 'parent-in-law-wife',
+                  'treeId': 'tree-graph',
+                  'name': 'Борис Тестов',
+                  'gender': 'male',
+                },
+                {
+                  'id': 'sibling-in-law-husb',
+                  'treeId': 'tree-graph',
+                  'name': 'Олег Тестов',
+                  'gender': 'male',
+                },
+                {
+                  'id': 'bro-of-spouse',
+                  'treeId': 'tree-graph',
+                  'name': 'Пётр Тестов',
+                  'gender': 'male',
+                },
+                {
+                  'id': 'direct-wife',
+                  'treeId': 'tree-graph',
+                  'name': 'Мария Тестова',
+                  'gender': 'female',
+                },
+                {
+                  'id': 'direct-parent',
+                  'treeId': 'tree-graph',
+                  'name': 'Нина Тестова',
+                  'gender': 'female',
+                },
               ],
               'relations': const [],
               'familyUnits': const [],
@@ -1100,6 +1130,52 @@ void main() {
                   'alternatePathCount': 0,
                   'pathSummary': 'union',
                   'primaryPathPersonIds': ['viewer-person', 'ex-partner'],
+                },
+                {
+                  'personId': 'parent-in-law-wife',
+                  'primaryRelationLabel': 'Родитель жены',
+                  'isBlood': false,
+                  'alternatePathCount': 0,
+                  'pathSummary': 'in-law',
+                  'primaryPathPersonIds': [
+                    'viewer-person',
+                    'parent-in-law-wife',
+                  ],
+                },
+                {
+                  'personId': 'sibling-in-law-husb',
+                  'primaryRelationLabel': 'Родня мужа',
+                  'isBlood': false,
+                  'alternatePathCount': 0,
+                  'pathSummary': 'in-law',
+                  'primaryPathPersonIds': [
+                    'viewer-person',
+                    'sibling-in-law-husb',
+                  ],
+                },
+                {
+                  'personId': 'bro-of-spouse',
+                  'primaryRelationLabel': 'Брат супруга',
+                  'isBlood': false,
+                  'alternatePathCount': 0,
+                  'pathSummary': 'in-law',
+                  'primaryPathPersonIds': ['viewer-person', 'bro-of-spouse'],
+                },
+                {
+                  'personId': 'direct-wife',
+                  'primaryRelationLabel': 'Жена',
+                  'isBlood': false,
+                  'alternatePathCount': 0,
+                  'pathSummary': 'union',
+                  'primaryPathPersonIds': ['viewer-person', 'direct-wife'],
+                },
+                {
+                  'personId': 'direct-parent',
+                  'primaryRelationLabel': 'Родитель',
+                  'isBlood': true,
+                  'alternatePathCount': 0,
+                  'pathSummary': 'blood',
+                  'primaryPathPersonIds': ['viewer-person', 'direct-parent'],
                 },
               ],
             },
@@ -1182,6 +1258,32 @@ void main() {
     expect(
       await treeService.getRelationToUser('tree-graph', 'ex-partner'),
       RelationType.ex_partner,
+    );
+    // B2 (ревью FR5): притяжательные in-law метки НЕ должны мапиться в
+    // spouse — genitive «жены»/«мужа»/«супруга» это не сам супруг.
+    expect(
+      await treeService.getRelationToUser('tree-graph', 'parent-in-law-wife'),
+      RelationType.parentInLaw,
+      reason: '«Родитель жены» — тесть/тёща, не супруг',
+    );
+    expect(
+      await treeService.getRelationToUser('tree-graph', 'sibling-in-law-husb'),
+      RelationType.siblingInLaw,
+      reason: '«Родня мужа» — родня супруга, не супруг',
+    );
+    expect(
+      await treeService.getRelationToUser('tree-graph', 'bro-of-spouse'),
+      RelationType.siblingInLaw,
+      reason: '«Брат супруга» — родня супруга, не супруг',
+    );
+    // Регресс: прямые метки союза/родителя по-прежнему резолвятся.
+    expect(
+      await treeService.getRelationToUser('tree-graph', 'direct-wife'),
+      RelationType.spouse,
+    );
+    expect(
+      await treeService.getRelationToUser('tree-graph', 'direct-parent'),
+      RelationType.parent,
     );
   });
 
