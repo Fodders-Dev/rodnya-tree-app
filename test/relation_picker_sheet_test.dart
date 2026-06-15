@@ -10,6 +10,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:rodnya/models/family_person.dart';
 import 'package:rodnya/models/family_relation.dart';
 import 'package:rodnya/widgets/relation_picker_sheet.dart';
@@ -196,5 +197,61 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Кем приходится?'), findsNothing);
     expect(capturedResult, isNull);
+  });
+
+  testWidgets(
+      'regression: showRelationPickerAndNavigateAdd шлёт extra-ключ '
+      '«relationType» (+ contextPersonId), а не «predefinedRelation» — '
+      'иначе AddRelativeScreen отбрасывает якорь и цепляет к self',
+      (tester) async {
+    Map<String, dynamic>? capturedExtra;
+    final router = GoRouter(
+      initialLocation: '/',
+      routes: [
+        GoRoute(
+          path: '/',
+          builder: (ctx, st) => Scaffold(
+            body: Center(
+              child: ElevatedButton(
+                onPressed: () => showRelationPickerAndNavigateAdd(
+                  ctx,
+                  treeId: 'tree-1',
+                  contextPersonId: 'person-anchor',
+                  anchorName: 'Анна Петрова',
+                ),
+                child: const Text('open'),
+              ),
+            ),
+          ),
+        ),
+        GoRoute(
+          path: '/relatives/add/:treeId',
+          builder: (ctx, st) {
+            capturedExtra = st.extra as Map<String, dynamic>?;
+            return const Scaffold(body: Text('add-form'));
+          },
+        ),
+      ],
+    );
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    // node-anchored пикер — примитивы видны сразу.
+    await tester.tap(find.text('Супруг / Партнёр'));
+    await tester.pumpAndSettle();
+
+    expect(capturedExtra, isNotNull,
+        reason: 'навигация в /relatives/add должна была произойти');
+    expect(capturedExtra!['contextPersonId'], 'person-anchor');
+    // КЛЮЧ: AddRelativeScreen.initState читает extra['relationType'].
+    expect(
+      capturedExtra!.containsKey('relationType'),
+      isTrue,
+      reason: 'без ключа relationType contextPersonId отбрасывается → '
+          'add-to-self вместо node-anchored',
+    );
+    expect(capturedExtra!['relationType'], RelationType.spouse);
+    // Старый (битый) мёртвый ключ не должен возвращаться.
+    expect(capturedExtra!.containsKey('predefinedRelation'), isFalse);
   });
 }

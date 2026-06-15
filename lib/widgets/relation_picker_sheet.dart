@@ -12,9 +12,9 @@
 // shipped relation-first для empty-tree state. Этот sheet extracts
 // same idea для non-empty entry points.
 //
-// AddRelativeScreen already supports `predefinedRelation` + extras
-// (per Ship 11 wiring). Этот sheet just shims the navigation —
-// no AddRelativeScreen refactor.
+// AddRelativeScreen reads `relationType` + `contextPersonId` extras
+// (see its initState) — NOT `predefinedRelation`. Этот sheet just
+// shims the navigation — no AddRelativeScreen refactor.
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -72,7 +72,7 @@ Future<dynamic> showRelationPickerAndNavigateAdd(
   final extras = <String, dynamic>{
     if (contextPersonId != null) 'contextPersonId': contextPersonId,
     'quickAddMode': true,
-    if (pick.relationType != null) 'predefinedRelation': pick.relationType,
+    if (pick.relationType != null) 'relationType': pick.relationType,
     if (pick.gender != null) 'prefilledGender': pick.gender,
   };
   return context.push<dynamic>(
