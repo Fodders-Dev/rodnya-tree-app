@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:get_it/get_it.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:video_player/video_player.dart';
+import 'package:video_thumbnail/video_thumbnail.dart';
 
 import '../backend/backend_runtime_config.dart';
 import '../backend/interfaces/chat_service_interface.dart';
@@ -1649,6 +1651,13 @@ class CustomApiChatService
           attachment,
           attachmentType,
         );
+        // V4 (ревью FR3): для исходящего видео генерим постер (первый кадр)
+        // и грузим его — thumbnailUrl уезжает в сообщении, поэтому превью
+        // видят и отправитель, и получатель. Best-effort: нет постера →
+        // остаётся тёмная плитка с play-иконкой.
+        final thumbnailUrl = attachmentType == ChatAttachmentType.video
+            ? await _buildVideoPosterUrl(attachment, storageService, userId)
+            : null;
         uploadedAttachments.add(
           ChatAttachment(
             type: attachmentType,
@@ -1661,6 +1670,7 @@ class CustomApiChatService
             waveform: metadata.waveform,
             width: metadata.width,
             height: metadata.height,
+            thumbnailUrl: thumbnailUrl,
           ),
         );
       }
@@ -1673,6 +1683,39 @@ class CustomApiChatService
       );
     }
     return uploadedAttachments;
+  }
+
+  /// V4 (ревью FR3): постер (первый кадр) локального видео → загруженный URL.
+  /// Только не-web (video_thumbnail — нативный MediaMetadataRetriever на
+  /// Android). Любой сбой → null: получим тёмную плитку с play-иконкой, но
+  /// отправку видео не ломаем.
+  Future<String?> _buildVideoPosterUrl(
+    XFile attachment,
+    StorageServiceInterface storageService,
+    String userId,
+  ) async {
+    if (kIsWeb) {
+      return null;
+    }
+    try {
+      final bytes = await VideoThumbnail.thumbnailData(
+        video: attachment.path,
+        imageFormat: ImageFormat.JPEG,
+        maxWidth: 720,
+        quality: 70,
+      );
+      if (bytes == null || bytes.isEmpty) {
+        return null;
+      }
+      final poster = XFile.fromData(
+        bytes,
+        name: 'poster_${attachment.name}.jpg',
+        mimeType: 'image/jpeg',
+      );
+      return await storageService.uploadImage(poster, 'chat-media/$userId');
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<_UploadedAttachmentMetadata> _buildAttachmentMetadata(

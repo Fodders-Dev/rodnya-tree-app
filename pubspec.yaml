@@ -123,6 +123,10 @@ dependencies:
   # dep + the spike screen get reverted (no «впечатай сам» костыль).
   speech_to_text: ^7.0.0
   video_player: ^2.9.2
+  # V4 (ревью): постер (первый кадр) для исходящих видео — MediaMetadataRetriever
+  # на Android. Постер грузится вместе с видео и едет в thumbnailUrl сообщения,
+  # поэтому виден и отправителю, и получателю.
+  video_thumbnail: ^0.5.3
   # Telegram-style in-app кружок recording. The OS native camera UI
   # (image_picker.pickVideo) felt detached — the user described it as
   # "файл отдельный". We only use it on mobile; web stays on the
