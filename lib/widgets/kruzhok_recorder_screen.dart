@@ -260,10 +260,24 @@ class _KruzhokRecorderScreenState extends State<KruzhokRecorderScreen> {
     if (widget.embedded) {
       // V2: отмена инлайн-записи — останавливаем камеру (файл выбрасываем),
       // оверлей закрывает родитель по onCancelled.
+      _ticker?.cancel();
       if (_isRecording) {
-        _ticker?.cancel();
         _isRecording = false;
-        unawaited(_controller?.stopVideoRecording());
+        // FR5 (ревью C3d): сперва ДОЖДЁМСЯ остановки записи и только потом
+        // сигналим родителю закрыть оверлей (он диспознет контроллер) —
+        // иначе stopVideoRecording гонится с dispose (латентный async).
+        final controller = _controller;
+        unawaited(() async {
+          try {
+            await controller?.stopVideoRecording();
+          } catch (_) {
+            // Отмена — файл не нужен, ошибку глотаем.
+          }
+          if (mounted) {
+            widget.onCancelled?.call();
+          }
+        }());
+        return;
       }
       widget.onCancelled?.call();
       return;
@@ -317,32 +331,43 @@ class _KruzhokRecorderScreenState extends State<KruzhokRecorderScreen> {
   /// (круглое превью + кольцо + кнопка). Камера инициализируется сразу,
   /// оверлей появляется мгновенно (без push-анимации роута).
   Widget _buildEmbedded() {
-    return Material(
-      type: MaterialType.transparency,
-      child: Stack(
-        children: [
-          ModalBarrier(
-            color: Colors.black.withValues(alpha: 0.72),
-            dismissible: false,
-          ),
-          SafeArea(
-            child: FutureBuilder<void>(
-              future: _initialization,
-              builder: (context, snapshot) {
-                if (_initError != null) {
-                  return _buildError();
-                }
-                if (snapshot.connectionState != ConnectionState.done ||
-                    _controller == null) {
-                  return const Center(
-                    child: CircularProgressIndicator(color: Colors.white),
-                  );
-                }
-                return _buildRecorderUI();
-              },
+    return PopScope(
+      // FR4 (ревью C3d): системный Back при открытом оверлее закрывает
+      // ТОЛЬКО оверлей (стоп + освобождение камеры через _cancel), а не
+      // поппит весь чат и не теряет запись молча.
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) {
+          _cancel();
+        }
+      },
+      child: Material(
+        type: MaterialType.transparency,
+        child: Stack(
+          children: [
+            ModalBarrier(
+              color: Colors.black.withValues(alpha: 0.72),
+              dismissible: false,
             ),
-          ),
-        ],
+            SafeArea(
+              child: FutureBuilder<void>(
+                future: _initialization,
+                builder: (context, snapshot) {
+                  if (_initError != null) {
+                    return _buildError();
+                  }
+                  if (snapshot.connectionState != ConnectionState.done ||
+                      _controller == null) {
+                    return const Center(
+                      child: CircularProgressIndicator(color: Colors.white),
+                    );
+                  }
+                  return _buildRecorderUI();
+                },
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
