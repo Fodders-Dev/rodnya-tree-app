@@ -267,6 +267,11 @@ class _ChatScreenState extends State<ChatScreen> {
   Offset? _recordingPointerOrigin;
   int? _lastPointerDownId;
 
+  // C3d/V2 (ревью FR8): запись кружка инлайн-оверлеем поверх чата (чат
+  // виден), вместо отдельного fullscreen-роута. true → оверлей-рекордер
+  // в Stack тела чата.
+  bool _showInlineKruzhok = false;
+
   /// Telegram-style toggle for the composer's primary action button.
   /// Tap flips between voice (false) and kruzhok / video-note (true);
   /// long-press starts the corresponding recording flow. Was hard-
@@ -1311,29 +1316,10 @@ class _ChatScreenState extends State<ChatScreen> {
     )) {
       _attachmentsController.clear();
     }
-    try {
-      final picked = await KruzhokRecorderScreen.show(context);
-      if (picked == null || !mounted) return;
-      final size = await picked.length();
-      if (size > 50 * 1024 * 1024) {
-        if (mounted) {
-          showAppSnackBar(
-            context,
-            'Видео слишком большое (макс. 50 МБ).',
-            isError: true,
-          );
-        }
-        return;
-      }
-      _attachmentsController.replaceAll(<XFile>[picked]);
-    } catch (_) {
-      if (!mounted) return;
-      showAppSnackBar(
-        context,
-        'Не удалось подготовить кружок.',
-        isError: true,
-      );
-    }
+    // C3d/V2 (FR8): запись кружка инлайн-оверлеем — чат остаётся виден,
+    // без fullscreen-роута и его лага; камера стартует сразу. Результат/
+    // отмена прилетают в _onInlineKruzhokCaptured/_onInlineKruzhokCancel.
+    setState(() => _showInlineKruzhok = true);
   }
 
   Future<void> _pickGenericFile() async {
@@ -3320,9 +3306,59 @@ class _ChatScreenState extends State<ChatScreen> {
       listenable: _selectionController,
       builder: (context, _) => Scaffold(
         appBar: _buildChatAppBar(context),
-        body: _buildChatBody(context),
+        body: Stack(
+          children: [
+            _buildChatBody(context),
+            // C3d/V2 (FR8): инлайн-рекордер кружка поверх чата — чат виден за
+            // затемнением, без отдельного экрана и его лага.
+            if (_showInlineKruzhok)
+              Positioned.fill(
+                child: KruzhokRecorderScreen(
+                  embedded: true,
+                  onCaptured: _onInlineKruzhokCaptured,
+                  onCancelled: _onInlineKruzhokCancel,
+                ),
+              ),
+          ],
+        ),
       ),
     );
+  }
+
+  /// C3d/V2 (FR8): кружок записан инлайн-оверлеем — прячем оверлей и кладём
+  /// результат во вложения (та же проверка размера, что и у роутового пути).
+  Future<void> _onInlineKruzhokCaptured(XFile picked) async {
+    if (mounted) {
+      setState(() => _showInlineKruzhok = false);
+    }
+    try {
+      final size = await picked.length();
+      if (size > 50 * 1024 * 1024) {
+        if (mounted) {
+          showAppSnackBar(
+            context,
+            'Видео слишком большое (макс. 50 МБ).',
+            isError: true,
+          );
+        }
+        return;
+      }
+      _attachmentsController.replaceAll(<XFile>[picked]);
+    } catch (_) {
+      if (mounted) {
+        showAppSnackBar(
+          context,
+          'Не удалось подготовить кружок.',
+          isError: true,
+        );
+      }
+    }
+  }
+
+  void _onInlineKruzhokCancel() {
+    if (mounted) {
+      setState(() => _showInlineKruzhok = false);
+    }
   }
 
   /// Compact inline recording bar shown while the user is holding the mic.

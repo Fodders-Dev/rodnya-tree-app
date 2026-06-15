@@ -27,7 +27,18 @@ class KruzhokRecorderScreen extends StatefulWidget {
     this.filenamePrefix = 'video_note',
     this.titleLabel = 'Кружок',
     this.idleHint = 'Нажмите, чтобы начать запись · до 60 сек',
+    this.embedded = false,
+    this.onCaptured,
+    this.onCancelled,
   });
+
+  /// V2 (ревью FR8): встроенный режим — виджет рендерится ОВЕРЛЕЕМ над чатом
+  /// (а не отдельным fullscreen-роутом), чат виден за затемнением, камера
+  /// стартует сразу. В этом режиме результат/отмена идут через колбэки
+  /// [onCaptured]/[onCancelled], а НЕ через Navigator.pop.
+  final bool embedded;
+  final ValueChanged<XFile>? onCaptured;
+  final VoidCallback? onCancelled;
 
   /// Whether to clip the live preview to a circle (true = кружок,
   /// false = rectangular for stories).
@@ -47,18 +58,6 @@ class KruzhokRecorderScreen extends StatefulWidget {
 
   /// One-line hint shown under the record button while idle.
   final String idleHint;
-
-  /// Push the recorder above the current screen and resolve to the
-  /// captured XFile. Defaults match the chat кружок (round, 60s,
-  /// video_note prefix).
-  static Future<XFile?> show(BuildContext context) {
-    return Navigator.of(context, rootNavigator: true).push<XFile>(
-      MaterialPageRoute<XFile>(
-        fullscreenDialog: true,
-        builder: (_) => const KruzhokRecorderScreen(),
-      ),
-    );
-  }
 
   /// Story-flavoured version: rectangular preview, 60s cap, filename
   /// prefixed `story_video_` so the upload path can tag it correctly.
@@ -216,7 +215,12 @@ class _KruzhokRecorderScreenState extends State<KruzhokRecorderScreen> {
       // tile.
       final renamed = await _renameToVideoNote(raw);
       if (!mounted) return;
-      Navigator.of(context).pop(renamed);
+      if (widget.embedded) {
+        // V2: отдаём кружок чату колбэком — оверлей закроет родитель.
+        widget.onCaptured?.call(renamed);
+      } else {
+        Navigator.of(context).pop(renamed);
+      }
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -253,6 +257,17 @@ class _KruzhokRecorderScreenState extends State<KruzhokRecorderScreen> {
   }
 
   void _cancel() {
+    if (widget.embedded) {
+      // V2: отмена инлайн-записи — останавливаем камеру (файл выбрасываем),
+      // оверлей закрывает родитель по onCancelled.
+      if (_isRecording) {
+        _ticker?.cancel();
+        _isRecording = false;
+        unawaited(_controller?.stopVideoRecording());
+      }
+      widget.onCancelled?.call();
+      return;
+    }
     if (_isRecording) {
       _stopRecording().then((_) {
         if (mounted) Navigator.of(context).pop();
@@ -264,6 +279,9 @@ class _KruzhokRecorderScreenState extends State<KruzhokRecorderScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.embedded) {
+      return _buildEmbedded();
+    }
     return PopScope(
       canPop: !_isRecording,
       onPopInvokedWithResult: (didPop, _) async {
@@ -294,6 +312,41 @@ class _KruzhokRecorderScreenState extends State<KruzhokRecorderScreen> {
     );
   }
 
+  /// V2 (ревью FR8): инлайн-оверлей над чатом. Затемняем фон ModalBarrier'ом
+  /// (чат виден, но не кликается во время записи), сверху — та же UI записи
+  /// (круглое превью + кольцо + кнопка). Камера инициализируется сразу,
+  /// оверлей появляется мгновенно (без push-анимации роута).
+  Widget _buildEmbedded() {
+    return Material(
+      type: MaterialType.transparency,
+      child: Stack(
+        children: [
+          ModalBarrier(
+            color: Colors.black.withValues(alpha: 0.72),
+            dismissible: false,
+          ),
+          SafeArea(
+            child: FutureBuilder<void>(
+              future: _initialization,
+              builder: (context, snapshot) {
+                if (_initError != null) {
+                  return _buildError();
+                }
+                if (snapshot.connectionState != ConnectionState.done ||
+                    _controller == null) {
+                  return const Center(
+                    child: CircularProgressIndicator(color: Colors.white),
+                  );
+                }
+                return _buildRecorderUI();
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildError() {
     return Padding(
       padding: const EdgeInsets.all(24),
@@ -310,7 +363,9 @@ class _KruzhokRecorderScreenState extends State<KruzhokRecorderScreen> {
           ),
           const SizedBox(height: 24),
           FilledButton(
-            onPressed: () => Navigator.of(context).pop(),
+            // V2: в embedded — закрыть оверлей через onCancelled, а не
+            // Navigator.pop (иначе закрылся бы сам чат).
+            onPressed: _cancel,
             child: const Text('Закрыть'),
           ),
         ],
