@@ -1,0 +1,160 @@
+name: Release Android APK (OTA)
+
+# Одна кнопка для OTA-релиза: собирает подписанный rustore-release APK,
+# заливает его на статик-папку сервера, переключает backend /v1/app/latest
+# на новую версию (env + рестарт) и проверяет. После разовой настройки
+# (см. ниже) каждый релиз — это просто «Run workflow».
+#
+# ── РАЗОВАЯ НАСТРОЙКА: секреты (Settings → Secrets and variables → Actions) ──
+#   RELEASE_KEYSTORE_BASE64 — base64 файла android/KEYS/my-release-key.jks
+#       git-bash/Linux:  base64 -w0 android/KEYS/my-release-key.jks > ks.b64
+#       PowerShell:      [Convert]::ToBase64String([IO.File]::ReadAllBytes("android\KEYS\my-release-key.jks")) > ks.b64
+#       → содержимое ks.b64 вставить в секрет.
+#   RELEASE_STORE_PASSWORD — пароль хранилища (как в release-signing.properties)
+#   RELEASE_KEY_ALIAS      — обычно my-key-alias
+#   RELEASE_KEY_PASSWORD   — пароль ключа
+#   APK_REMOTE_DIR         — папка на сервере, которую nginx отдаёт статикой,
+#                            например /opt/rodnya/static/dl (НЕ внутри веб-рута,
+#                            иначе веб-деплой её снесёт)
+#   APK_PUBLIC_URL_BASE    — публичная https-база этой папки,
+#                            например https://rodnya-tree.ru/dl
+#   (переиспользуются существующие: SERVER_SSH_KEY, SERVER_HOST, SERVER_USERNAME)
+#
+# ── РАЗОВАЯ НАСТРОЙКА: сервер ──
+#   1) nginx: location /dl/ { alias /opt/rodnya/static/dl/; }  (или root),
+#      типы .apk = application/vnd.android.package-archive. Путь вне веб-релиза.
+#   2) установить deploy/ota/set_android_update.sh в
+#      /usr/local/bin/rodnya-set-android-update (chmod 755) и разрешить
+#      деплой-пользователю sudo без пароля ТОЛЬКО на него (visudo):
+#        <SERVER_USERNAME> ALL=(root) NOPASSWD: /usr/local/bin/rodnya-set-android-update
+
+on:
+  workflow_dispatch:
+    inputs:
+      notes:
+        description: "Текст для in-app баннера обновления"
+        required: false
+        default: "Улучшения и исправления"
+      mandatory:
+        description: "Принудительное обновление (блок старых версий)?"
+        type: boolean
+        required: false
+        default: false
+
+concurrency:
+  group: android-ota-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Restore release keystore
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          mkdir -p android/KEYS
+          printenv RELEASE_KEYSTORE_BASE64 | base64 -d > android/KEYS/my-release-key.jks
+          umask 077
+          cat > android/release-signing.properties <<EOF
+          storeFile=../KEYS/my-release-key.jks
+          storePassword=${RELEASE_STORE_PASSWORD}
+          keyAlias=${RELEASE_KEY_ALIAS}
+          keyPassword=${RELEASE_KEY_PASSWORD}
+          EOF
+
+      - name: Build rustore-release APK
+        run: flutter build apk --flavor rustore --release
+
+      - name: Compute version + sha256
+        id: meta
+        run: |
+          set -euo pipefail
+          ver=$(grep -E '^version:' pubspec.yaml | awk '{print $2}')
+          name="${ver%%+*}"
+          code="${ver##*+}"
+          apk=build/app/outputs/flutter-apk/app-rustore-release.apk
+          sha=$(sha256sum "$apk" | awk '{print $1}')
+          file="rodnya-${name}-${code}.apk"
+          {
+            echo "name=$name"
+            echo "code=$code"
+            echo "sha=$sha"
+            echo "file=$file"
+            echo "apk=$apk"
+          } >> "$GITHUB_OUTPUT"
+          echo "Release ${name}+${code}  sha256=${sha}  file=${file}"
+
+      - name: Setup SSH key
+        env:
+          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+        run: |
+          set +x
+          mkdir -p ~/.ssh
+          printenv SERVER_SSH_KEY > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "$SERVER_HOST" >> ~/.ssh/known_hosts
+
+      - name: Upload APK to server
+        env:
+          SERVER_USERNAME: ${{ secrets.SERVER_USERNAME }}
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          APK_REMOTE_DIR: ${{ secrets.APK_REMOTE_DIR }}
+        run: |
+          set -euo pipefail
+          scp -i ~/.ssh/id_ed25519 "${{ steps.meta.outputs.apk }}" \
+            "$SERVER_USERNAME@$SERVER_HOST:${APK_REMOTE_DIR}/${{ steps.meta.outputs.file }}"
+
+      - name: Point backend at the new release (env + restart)
+        env:
+          SERVER_USERNAME: ${{ secrets.SERVER_USERNAME }}
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          APK_PUBLIC_URL_BASE: ${{ secrets.APK_PUBLIC_URL_BASE }}
+          NOTES: ${{ inputs.notes }}
+          MANDATORY: ${{ inputs.mandatory }}
+        run: |
+          set -euo pipefail
+          url="${APK_PUBLIC_URL_BASE}/${{ steps.meta.outputs.file }}"
+          min="0"
+          if [ "$MANDATORY" = "true" ]; then min="${{ steps.meta.outputs.code }}"; fi
+          # NOTES может содержать пробелы — везём base64, помощник раскодирует.
+          notes_b64=$(printf '%s' "$NOTES" | base64 -w0)
+          ssh -i ~/.ssh/id_ed25519 "$SERVER_USERNAME@$SERVER_HOST" \
+            sudo -n /usr/local/bin/rodnya-set-android-update \
+            "${{ steps.meta.outputs.code }}" \
+            "${{ steps.meta.outputs.name }}" \
+            "$url" \
+            "${{ steps.meta.outputs.sha }}" \
+            "$notes_b64" \
+            "$min"
+
+      - name: Verify OTA endpoint + APK reachable
+        env:
+          APK_PUBLIC_URL_BASE: ${{ secrets.APK_PUBLIC_URL_BASE }}
+        run: |
+          set -euo pipefail
+          url="${APK_PUBLIC_URL_BASE}/${{ steps.meta.outputs.file }}"
+          echo "== APK HEAD =="
+          curl -fsSI "$url" | head -n 6
+          echo "== /v1/app/latest =="
+          body=$(curl -fsS https://api.rodnya-tree.ru/v1/app/latest)
+          echo "$body"
+          echo "$body" | grep -q "${{ steps.meta.outputs.code }}" \
+            || { echo "::error::endpoint не отражает versionCode ${{ steps.meta.outputs.code }}"; exit 1; }
+          echo "OK: OTA указывает на ${{ steps.meta.outputs.name }}+${{ steps.meta.outputs.code }}"
