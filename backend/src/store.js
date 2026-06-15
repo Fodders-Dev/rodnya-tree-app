@@ -5643,72 +5643,12 @@ function dummyVerifyForTimingParity(password) {
   });
 }
 
-/**
- * Walk the in-memory DB and persist any parent-child links that
- * buildDisplayTreeRelations() would infer at display time.
- *
- * This is called synchronously inside upsertRelation(), before _write(), so
- * every time a relation is saved the inferred sibling-parent corrections are
- * also stored as real records.  The result: the display layer no longer needs
- * to infer anything, and no warnings are emitted.
- *
- * @param {object} db  — live db object (mutated in place)
- * @param {string} treeId
- */
-function _materializeInferredParentLinks(db, treeId) {
-  const treeRelations = db.relations.filter((r) => r.treeId === treeId);
-
-  // Run the same inference logic used at display time.
-  const displayRelations = buildDisplayTreeRelations(treeId, treeRelations);
-  const newlyInferred = displayRelations.filter(
-    (r) => r.inferredDisplayOnly === true,
-  );
-
-  if (newlyInferred.length === 0) return;
-
-  // Build a quick lookup for existing relations in this tree.
-  const existingPairs = new Set(
-    treeRelations.map((r) =>
-      [String(r.person1Id || ""), String(r.person2Id || "")].sort().join(":"),
-    ),
-  );
-
-  const timestamp = nowIso();
-  for (const inferred of newlyInferred) {
-    const p1 = String(inferred.person1Id || "").trim();
-    const p2 = String(inferred.person2Id || "").trim();
-    if (!p1 || !p2) continue;
-
-    const pairKey = [p1, p2].sort().join(":");
-    if (existingPairs.has(pairKey)) continue; // already stored
-
-    const newRelation = {
-      id: crypto.randomUUID(),
-      treeId,
-      person1Id: p1,
-      person2Id: p2,
-      relation1to2: inferred.relation1to2 || "parent",
-      relation2to1: inferred.relation2to1 || "child",
-      isConfirmed: true,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      createdBy: null,            // auto-inferred, no actor
-      parentSetId: inferred.parentSetId || null,
-      parentSetType: inferred.parentSetType || "biological",
-      isPrimaryParentSet: inferred.isPrimaryParentSet !== false,
-      unionId: null,
-      unionType: null,
-      unionStatus: null,
-      marriageDate: null,
-      divorceDate: null,
-      customRelationLabel1to2: null,
-      customRelationLabel2to1: null,
-    };
-
-    db.relations.push(newRelation);
-    existingPairs.add(pairKey); // prevent duplicates within this batch
-  }
-}
+// B3 (ревью): _materializeInferredParentLinks УДАЛЁН. Он персистил
+// sibling-выведенные родительские связи как реальные biological-записи на
+// каждой мутации (по всем деревьям), используя любой союз (friend/ex/past)
+// мимо B3-гардов — это корраптило сводные семьи (записывало постороннего
+// биологическим родителем ребёнка из прошлого союза). Вывод остаётся
+// display-only в buildDisplayTreeRelations; как факт его не фиксируем.
 
 function insertDescendingLimited(items, entry, compareEntries, limit) {
   if (!Number.isFinite(limit) || limit <= 0) {
@@ -14831,6 +14771,17 @@ class FileStore {
       return relation;
     };
 
+    // B3 (ревью F3): со-родительство достраиваем ТОЛЬКО при создании НОВОГО
+    // ребра parent→child. upsertRawRelation матчит по ПАРЕ и обновляет запись
+    // на месте — без этой проверки повторное сохранение существующего ребра
+    // (idempotent re-POST, правка дат/типа, подтверждение) ретро-линковало бы
+    // супруга, появившегося ПОСЛЕ привязки к ребёнку (та же P0-коррапт).
+    const mainEdgeExistedBefore = treeRelations.some(
+      (entry) =>
+        (entry.person1Id === person1Id && entry.person2Id === person2Id) ||
+        (entry.person1Id === person2Id && entry.person2Id === person1Id),
+    );
+
     const relation = upsertRawRelation({
       leftId: person1Id,
       rightId: person2Id,
@@ -14856,8 +14807,14 @@ class FileStore {
     // биологический (приёмный/опекунский статус персональный, через брак не
     // распространяется); у родителя РОВНО ОДИН текущий СУПРУГ/ПАРТНЁР
     // (романтический союз; friend/other/single и past/divorced исключены —
-    // FR2); партнёр ещё не родитель этого ребёнка ни в одном наборе.
-    if (normalizedParentId && normalizedChildId && resolvedParentSetId) {
+    // FR2); партнёр ещё не родитель этого ребёнка ни в одном наборе; и ребро
+    // parent→child создано ВПЕРВЫЕ (ревью F3 — не на повторном upsert'е).
+    if (
+      !mainEdgeExistedBefore &&
+      normalizedParentId &&
+      normalizedChildId &&
+      resolvedParentSetId
+    ) {
       const groupParentIds = new Set(
         treeRelations
           .filter((entry) => entry.parentSetId === resolvedParentSetId)
@@ -14952,12 +14909,14 @@ class FileStore {
       }
     }
 
-    // Materialise any sibling-inferred parent links that aren't yet in the DB.
-    // buildDisplayTreeRelations() computes these at display time; we persist
-    // them here so they become permanent, searchable relations and so the
-    // warning block (removed above) is never needed in the first place.
-    _materializeInferredParentLinks(db, treeId);
-
+    // B3 (ревью): НЕ материализуем (не персистим) выведенные sibling-родители.
+    // Прежде _materializeInferredParentLinks писал их РЕАЛЬНЫМИ biological-
+    // записями на КАЖДОЙ мутации, по ВСЕМ деревьям, используя anyUnionParters
+    // (любой союз — friend/ex/past), мимо всех B3-гардов: это молча записывало
+    // постороннего человека биологическим родителем ребёнка из прошлого союза
+    // (та же P0-коррапт сводных семей, второй путь). buildDisplayTreeRelations
+    // по-прежнему ВЫВОДИТ их display-only для отрисовки — но мы их не
+    // фиксируем как факт (FR4: существующие деревья не правим автоматически).
     const tree = db.trees.find((entry) => entry.id === treeId);
     if (tree) {
       tree.updatedAt = nowIso();
