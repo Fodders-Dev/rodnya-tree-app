@@ -120,6 +120,8 @@ class AudioRouteService extends ChangeNotifier {
     _nativeDeviceSubscription = null;
     if (room == null) {
       // FR1: звонок завершён — отпускаем фокус, чистим маршрут, mode.
+      // FR-E: гасим отложенный тап, чтобы он не применился после stop.
+      _pendingSelectRoute = null;
       await _nativeAudio?.stop();
       _routes = const <AudioRouteOption>[];
       _selectedRouteId = null;
@@ -210,6 +212,14 @@ class AudioRouteService extends ChangeNotifier {
     try {
       final native = _nativeAudio;
       if (native != null) {
+        // FR-E (ревью CA1): звонок уже завершён (room отвязан, бридж
+        // остановлен) → НЕ применяем маршрут. Иначе отложенный/коалесцированный
+        // selectRoute выстрелил бы нативным setRoute уже ПОСЛЕ stop() и заново
+        // поднял mode для законченного звонка, испортив следующий. _room
+        // обнуляется синхронно в _attachRoomLocked до await stop().
+        if (_room == null) {
+          return;
+        }
         // FR2: маршрутизация нативом (setCommunicationDevice).
         final ok = await native.setRoute(option.id);
         // FR5: отражаем ФАКТ устройства, на сбое не врём об успехе.

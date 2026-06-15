@@ -43,7 +43,6 @@ object RodnyaCallAudioBridge {
     private var channel: MethodChannel? = null
     private var audioManager: AudioManager? = null
     private var focusRequest: AudioFocusRequest? = null
-    private var previousMode: Int = AudioManager.MODE_NORMAL
     private var active = false
     private var deviceCallback: AudioDeviceCallback? = null
 
@@ -70,7 +69,6 @@ object RodnyaCallAudioBridge {
                         result.success(applyRoute(route))
                     }
                     "currentRoute" -> result.success(currentRoute())
-                    "availableRoutes" -> result.success(availableRoutes())
                     else -> result.notImplemented()
                 }
             } catch (t: Throwable) {
@@ -85,12 +83,11 @@ object RodnyaCallAudioBridge {
         if (active) {
             // Идемпотентность (ревью C): повторный start() без stop() не
             // должен запрашивать новый аудиофокус (утечка прежнего, т.к.
-            // focusRequest перезаписался бы без abandon) и перезаписывать
-            // previousMode. Достаточно подтвердить режим связи.
+            // focusRequest перезаписался бы без abandon). Достаточно
+            // подтвердить режим связи.
             am.mode = AudioManager.MODE_IN_COMMUNICATION
             return
         }
-        previousMode = am.mode
         am.mode = AudioManager.MODE_IN_COMMUNICATION
         requestFocus(am)
         registerDeviceCallback(am)
@@ -100,6 +97,11 @@ object RodnyaCallAudioBridge {
     /** FR1/FR2: на завершении — отпустить фокус, очистить маршрут, mode. */
     private fun stopCallAudio() {
         val am = audioManager ?: return
+        // Идемпотентность (ревью CA1/FR-B): нечего сворачивать, если звонок
+        // не активен — иначе teardown по lifecycle затирал бы чужой mode.
+        if (!active) {
+            return
+        }
         unregisterDeviceCallback(am)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             try {
@@ -118,18 +120,45 @@ object RodnyaCallAudioBridge {
             }
         }
         abandonFocus(am)
-        am.mode = previousMode
+        // FR-D (ревью CA1): детерминированно возвращаем NORMAL, а не
+        // «сохранённый» previousMode — при сосуществовании с WebRTC он мог
+        // выставить IN_COMMUNICATION ДО нас, и восстановление такого
+        // «грязного» режима оставило бы телефон в режиме связи после звонка
+        // (ломая системный звук и следующий звонок). Корректное состояние
+        // после завершения — MODE_NORMAL.
+        am.mode = AudioManager.MODE_NORMAL
         active = false
     }
 
+    /**
+     * FR-B (ревью CA1): гарантированный teardown на нативном lifecycle
+     * (cleanUpFlutterEngine / onDestroy) — на случай, когда Dart НЕ прислал
+     * stop (смерть Activity/движка, краш, любой не-happy-path). Без этого
+     * телефон застревал бы в MODE_IN_COMMUNICATION с утечкой аудиофокуса и
+     * AudioDeviceCallback → ломается системный звук и следующий звонок.
+     * Идемпотентно с обычным stop (stopCallAudio() сам no-op при !active).
+     */
+    fun teardown() {
+        try {
+            stopCallAudio()
+        } catch (_: Throwable) {
+            // best-effort: teardown на пути lifecycle не должен бросать.
+        }
+        channel?.setMethodCallHandler(null)
+        channel = null
+    }
+
     private fun requestFocus(am: AudioManager) {
+        // FR-A (ревью CA1): TRANSIENT (exclusive), а НЕ TRANSIENT_MAY_DUCK —
+        // на время звонка фоновая музыка/видео должны ставиться на ПАУЗУ, а
+        // не играть приглушённо (эталон — Telegram).
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val attributes = AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
                 .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                 .build()
             val request = AudioFocusRequest.Builder(
-                AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK,
+                AudioManager.AUDIOFOCUS_GAIN_TRANSIENT,
             )
                 .setAudioAttributes(attributes)
                 .setOnAudioFocusChangeListener { }
@@ -141,7 +170,7 @@ object RodnyaCallAudioBridge {
             am.requestAudioFocus(
                 null,
                 AudioManager.STREAM_VOICE_CALL,
-                AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK,
+                AudioManager.AUDIOFOCUS_GAIN_TRANSIENT,
             )
         }
     }
@@ -258,26 +287,6 @@ object RodnyaCallAudioBridge {
             am.isWiredHeadsetOn -> ROUTE_WIRED
             else -> ROUTE_EARPIECE
         }
-    }
-
-    /** FR5: какие маршруты реально доступны сейчас (есть устройство). */
-    private fun availableRoutes(): List<String> {
-        val am = audioManager ?: return listOf(ROUTE_EARPIECE, ROUTE_SPEAKER)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val routes = LinkedHashSet<String>()
-            for (device in am.availableCommunicationDevices) {
-                routeForDeviceType(device.type)?.let { routes.add(it) }
-            }
-            // Ушной/динамик присутствуют всегда.
-            routes.add(ROUTE_EARPIECE)
-            routes.add(ROUTE_SPEAKER)
-            return routes.toList()
-        }
-        val routes = mutableListOf(ROUTE_EARPIECE, ROUTE_SPEAKER)
-        @Suppress("DEPRECATION")
-        if (am.isWiredHeadsetOn) routes.add(ROUTE_WIRED)
-        if (am.isBluetoothScoAvailableOffCall) routes.add(ROUTE_BLUETOOTH)
-        return routes
     }
 
     private fun routeForDeviceType(type: Int?): String? {

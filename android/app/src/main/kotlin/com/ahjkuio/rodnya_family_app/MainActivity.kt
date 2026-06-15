@@ -55,6 +55,16 @@ class MainActivity: FlutterActivity() {
         RodnyaCallAudioBridge.configure(this, flutterEngine)
     }
 
+    // CA1 FR-B (ревью): гарантированный teardown аудиотракта при отвязке
+    // движка (смерть Activity/движка), даже если Dart не успел прислать stop.
+    // Без этого телефон застревал бы в MODE_IN_COMMUNICATION с утечкой
+    // фокуса/коллбэка. Не вызывается на смене конфигурации (движок живёт),
+    // поэтому не рвёт аудио активного звонка при повороте экрана.
+    override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        RodnyaCallAudioBridge.teardown()
+        super.cleanUpFlutterEngine(flutterEngine)
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)

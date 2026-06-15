@@ -82,15 +82,6 @@ class NativeCallAudio implements CallAudioRouter {
     return _invoke<String?>('currentRoute');
   }
 
-  /// FR5: маршруты, реально доступные сейчас.
-  Future<List<String>> availableRoutes() async {
-    final raw = await _invoke<List<dynamic>>('availableRoutes');
-    if (raw == null) {
-      return const <String>[];
-    }
-    return raw.map((entry) => entry.toString()).toList(growable: false);
-  }
-
   Future<T?> _invoke<T>(String method, [Map<String, dynamic>? args]) async {
     try {
       return await _channel.invokeMethod<T>(method, args);

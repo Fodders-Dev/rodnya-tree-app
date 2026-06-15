@@ -215,6 +215,31 @@ void main() {
     expect(native.calls, contains('setRoute:earpiece'));
     expect(service.selectedRouteId, 'earpiece'); // победил последний тап
   }));
+
+  test('CA1 ревью FR-E: selectRoute после stop (detach) не применяет маршрут',
+      (() async {
+    final native = _FakeCallAudioRouter();
+    final service = AudioRouteService(
+      isMobilePlatform: true,
+      nativeAudio: native,
+      enumerateAudioOutputs: () async => const <MediaDevice>[],
+      deviceChanges: const Stream<List<MediaDevice>>.empty(),
+    );
+    addTearDown(service.dispose);
+    await service.attachRoom(_FakeRoom(), isVideo: false);
+    final earpiece =
+        service.routes.firstWhere((route) => route.id == 'earpiece');
+
+    await service.attachRoom(null); // завершение звонка → stop
+    native.calls.clear();
+
+    // Отложенный/коалесцированный тап уже после stop — должен игнорироваться,
+    // иначе нативный setRoute заново поднимет mode для законченного звонка.
+    await service.selectRoute(earpiece);
+
+    expect(native.calls, isNot(contains('setRoute:earpiece')),
+        reason: 'после stop маршрут не применяется (бридж остановлен)');
+  }));
 }
 
 class _FakeRoom extends Fake implements Room {}
