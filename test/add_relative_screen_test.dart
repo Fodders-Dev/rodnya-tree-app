@@ -840,6 +840,121 @@ void main() {
   });
 
   testWidgets(
+      'B2 (ревью F4): dropdown ex_spouse→spouse сбрасывает дату — текущий супруг не уходит как past',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(900, 1700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final familyService = _FakeFamilyTreeService();
+    await getIt.reset();
+    getIt.registerSingleton<AuthServiceInterface>(_FakeAuthService());
+    getIt.registerSingleton<FamilyTreeServiceInterface>(familyService);
+    getIt.registerSingleton<ProfileServiceInterface>(_FakeProfileService());
+    getIt.registerSingleton<StorageServiceInterface>(_FakeStorageService());
+
+    // Якорь женского пола, БЕЗ predefinedRelation → редактируемый dropdown
+    // связи. Пол нового предзаполнится мужским (противоположный) → метки
+    // детерминированы: ex_spouse = «Бывший супруг(а)», spouse = «Муж».
+    final relatedPerson = FamilyPerson(
+      id: 'person-anchor',
+      treeId: 'tree-1',
+      name: 'Петрова Анна',
+      gender: Gender.female,
+      isAlive: true,
+      createdAt: DateTime(2024, 1, 1),
+      updatedAt: DateTime(2024, 1, 1),
+    );
+    final router = GoRouter(
+      initialLocation: '/',
+      routes: [
+        GoRoute(
+          path: '/',
+          builder: (context, state) => Scaffold(
+            body: Builder(
+              builder: (ctx) => Center(
+                child: ElevatedButton(
+                  onPressed: () => ctx.push('/add'),
+                  child: const Text('go'),
+                ),
+              ),
+            ),
+          ),
+        ),
+        GoRoute(
+          path: '/add',
+          builder: (context, state) => AddRelativeScreen(
+            treeId: 'tree-1',
+            relatedTo: relatedPerson,
+            routeExtra: state.extra as Map<String, dynamic>?,
+            routeQueryParameters: state.uri.queryParameters,
+          ),
+        ),
+      ],
+    );
+    await tester.pumpWidget(MaterialApp.router(
+      routerConfig: router,
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      supportedLocales: const [Locale('ru', 'RU'), Locale('en', 'US')],
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('go'));
+    await tester.pumpAndSettle();
+
+    // Расширенный режим (там поля дат союза).
+    await tester.scrollUntilVisible(
+      find.text('Показать'),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(find.text('Показать'));
+    await tester.pumpAndSettle();
+
+    // Выбрать «Бывший супруг(а)» в dropdown связи.
+    await tester.ensureVisible(
+      find.byType(DropdownButtonFormField<RelationType>),
+    );
+    await tester.tap(find.byType(DropdownButtonFormField<RelationType>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Бывший супруг(а)').last);
+    await tester.pumpAndSettle();
+
+    // Для ex-супруга поле даты развода видно сразу — выбрать дату.
+    await tester.ensureVisible(find.byKey(const Key('divorce-date-field')));
+    await tester.tap(find.byKey(const Key('divorce-date-field')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('ОК'));
+    await tester.pumpAndSettle();
+
+    // Передумали — переключаем dropdown на текущего супруга («Муж»).
+    await tester.ensureVisible(
+      find.byType(DropdownButtonFormField<RelationType>),
+    );
+    await tester.tap(find.byType(DropdownButtonFormField<RelationType>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Муж').last);
+    await tester.pumpAndSettle();
+
+    // Фамилия + Имя, сохранить.
+    await tester.enterText(find.byType(TextFormField).at(0), 'Петров');
+    await tester.enterText(find.byType(TextFormField).at(1), 'Иван');
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const Key('add-relative-submit')));
+    await tester.tap(find.byKey(const Key('add-relative-submit')));
+    await tester.pumpAndSettle();
+
+    expect(familyService.createRelationCalled, isTrue);
+    expect(familyService.lastCreateRelationType, RelationType.spouse);
+    expect(familyService.lastCreateUnionStatus, isNot('past'),
+        reason: 'после переключения ex→текущий супруг не должен быть past');
+    expect(familyService.lastCreateDivorceDate, isNull,
+        reason: 'смена ex_spouse→spouse должна сбросить дату развода');
+  });
+
+  testWidgets(
       'поддерживает query-параметры для открытия add-relative из e2e deep link',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(900, 1400));

@@ -377,6 +377,20 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
       (_fixedRelationType == RelationType.spouse ||
           _fixedRelationType == RelationType.partner);
 
+  // B2 (ревью F4): при смене типа связи на НЕ-прошлый союз сбрасываем
+  // остаточную дату/статус расставания — иначе после переключения
+  // ex_spouse→spouse они «прилипают» и бэк запишет текущего супруга бывшим.
+  // Вызывать внутри setState/_updateSectionState.
+  void _clearStaleSeparationOnTypeChange(RelationType? newType) {
+    if (newType == RelationType.ex_spouse ||
+        newType == RelationType.ex_partner) {
+      return;
+    }
+    _divorceDate = null;
+    _showDivorceDateField = false;
+    _unionStatusIsPast = false;
+  }
+
   bool get _canUseQuickAddLoop => _isQuickAddMode && _isContextualAdd;
 
   bool get _isAdvancedMode => _editorMode == _RelativeEditorMode.advanced;
@@ -769,6 +783,14 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
                         _selectedRelationType == RelationType.partner ||
                         _selectedRelationType == RelationType.ex_spouse ||
                         _selectedRelationType == RelationType.ex_partner;
+                // B2 (ревью F4): дату развода шлём ТОЛЬКО для реально прошлого
+                // союза (тип ex_* ИЛИ «Расстались»). Иначе устаревшая дата
+                // (например после переключения dropdown ex→текущий) заставила
+                // бы бэк записать ТЕКУЩЕГО супруга бывшим.
+                final isPastUnion =
+                    _selectedRelationType == RelationType.ex_spouse ||
+                        _selectedRelationType == RelationType.ex_partner ||
+                        _unionStatusIsPast;
                 final updatedRelation = await _familyService.createRelation(
                   treeId: widget.treeId,
                   person1Id: widget.person!.id,
@@ -776,7 +798,7 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
                   relation1to2: _selectedRelationType!,
                   isConfirmed: true,
                   marriageDate: isUnionRelation ? _marriageDate : null,
-                  divorceDate: isUnionRelation ? _divorceDate : null,
+                  divorceDate: isPastUnion ? _divorceDate : null,
                   // B2: «Расстались» → past (для spouse/partner). Иначе
                   // null → бэк решает по типу/дате (ex_* остаётся past).
                   unionStatus: isUnionRelation && _unionStatusIsPast
@@ -909,6 +931,12 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
                   relationType == RelationType.partner ||
                   relationType == RelationType.ex_spouse ||
                   relationType == RelationType.ex_partner;
+              // B2 (ревью F4): дату развода шлём ТОЛЬКО для реально прошлого
+              // союза (тип ex_* ИЛИ «Расстались») — иначе устаревшая дата
+              // записала бы текущего супруга бывшим.
+              final isPastUnion = relationType == RelationType.ex_spouse ||
+                  relationType == RelationType.ex_partner ||
+                  _unionStatusIsPast;
               final mainRelation = await _familyService.createRelation(
                 treeId: widget.treeId,
                 person1Id: newPersonId,
@@ -916,7 +944,7 @@ class _AddRelativeScreenState extends State<AddRelativeScreen> {
                 relation1to2: relationType,
                 isConfirmed: true,
                 marriageDate: isUnionRelation ? _marriageDate : null,
-                divorceDate: isUnionRelation ? _divorceDate : null,
+                divorceDate: isPastUnion ? _divorceDate : null,
                 // B2: «Расстались» → past (для spouse/partner). Иначе null
                 // → бэк решает по типу/дате (ex_* остаётся past).
                 unionStatus:

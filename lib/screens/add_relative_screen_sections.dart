@@ -1042,6 +1042,7 @@ extension _AddRelativeScreenSections on _AddRelativeScreenState {
                 onChanged: (newValue) {
                   _updateSectionState(() {
                     _selectedRelationType = newValue;
+                    _clearStaleSeparationOnTypeChange(newValue);
                     // Предзаполняем пол нового на основе связи с пользователем
                     // Создаем временный объект FamilyPerson для текущего пользователя
                     final currentUserAsPerson = FamilyPerson(
@@ -1391,6 +1392,7 @@ extension _AddRelativeScreenSections on _AddRelativeScreenState {
             onChanged: (newValue) {
               _updateSectionState(() {
                 _selectedRelationType = newValue;
+                _clearStaleSeparationOnTypeChange(newValue);
                 _prefillGenderBasedOnRelation(anchorPerson, newValue);
               });
             },
