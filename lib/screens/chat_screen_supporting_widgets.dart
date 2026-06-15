@@ -1255,8 +1255,9 @@ class _VideoNoteTileState extends State<_VideoNoteTile> {
   @override
   Widget build(BuildContext context) {
     // C2: после тапа кружок играет на месте — переиспользуем
-    // _VideoNotePlayer (авто-плей, луп, tap = звук), сжатый до размера
-    // бабла. Просмотрщик не открываем.
+    // _VideoNotePlayer (V3: авто-плей, tap = play/pause, кольцо прогресса +
+    // перемотка, мьют вторичной кнопкой), сжатый до размера бабла.
+    // Просмотрщик не открываем.
     if (_playing && _canPlayInline) {
       return Semantics(
         label: widget.label,
@@ -2071,9 +2072,9 @@ class _AttachmentViewerPage extends StatelessWidget {
         if (source == null || source.trim().isEmpty) {
           content = _AttachmentViewerPlaceholder(item: item);
         } else if (item.isVideoNote) {
-          // Кружочки рисуем как у TG: круглый плеер, авто-плей, tap
-          // переключает звук, луп. Без полосы перемотки и громкости —
-          // именно так юзеры ожидают воспроизведения video note.
+          // Кружочки рисуем как у TG: круглый плеер, авто-плей, tap =
+          // play/pause, кольцо прогресса по окружности + перемотка по нему,
+          // мьют вторичной кнопкой (V3).
           content = _VideoNotePlayer(
             source: source,
             isRemoteSource: item.isRemote,
@@ -2748,11 +2749,11 @@ class _AttachmentVideoPlayerState extends State<_AttachmentVideoPlayer> {
   }
 }
 
-/// Telegram-style circular video-note (кружок) player. Auto-plays on
-/// open with sound on, loops forever, tap toggles mute. No seek bar,
-/// no volume slider, no save button — those don't make sense for a
-/// 60-second video note. Save is still available from the dialog
-/// header (download icon at top-right).
+/// Telegram-style circular video-note (кружок) player. Auto-plays on open
+/// with sound on (V3): tap = play/pause (no force-loop), a progress ring
+/// runs round the circle, drag along the ring seeks, and mute is a small
+/// secondary speaker control. Save is available from the dialog header
+/// (download icon at top-right).
 class _VideoNotePlayer extends StatefulWidget {
   const _VideoNotePlayer({
     super.key,
@@ -2899,6 +2900,18 @@ class _VideoNotePlayerState extends State<_VideoNotePlayer> {
     return (angle / (2 * math.pi)).clamp(0.0, 1.0);
   }
 
+  /// FR6 (ревью C3c): касание попало в полосу КОЛЬЦА (наружные ~40% радиуса).
+  /// Только такой drag захватывается под перемотку; центр оставляем скроллу
+  /// ленты / свайпу PageView.
+  bool _isOnSeekRing(Offset local) {
+    final radius = widget.diameter / 2;
+    if (radius <= 0) return false;
+    final dx = local.dx - radius;
+    final dy = local.dy - radius;
+    final distance = math.sqrt(dx * dx + dy * dy);
+    return distance >= radius * 0.6 && distance <= radius * 1.15;
+  }
+
   void _seekToLocal(Offset local) {
     final controller = _controller;
     if (controller == null || !controller.value.isInitialized) return;
@@ -3019,14 +3032,28 @@ class _VideoNotePlayerState extends State<_VideoNotePlayer> {
         final progress = _playbackFraction(controller);
         final isPlaying = controller.value.isPlaying;
         return Center(
-          child: GestureDetector(
+          child: RawGestureDetector(
             behavior: HitTestBehavior.opaque,
-            // FR5: тап — play/pause. FR7: пан вокруг кружка — перемотка по
-            // кольцу. Тап vs пан разводит gesture-арена по порогу движения.
-            onTap: _togglePlayPause,
-            onPanStart: _onSeekStart,
-            onPanUpdate: _onSeekUpdate,
-            onPanEnd: _onSeekEnd,
+            // FR5: тап — play/pause. FR6 (ревью C3c): перемотку ведёт
+            // кастомный pan-recognizer, который заявляет жест в арене ТОЛЬКО
+            // для drag'а ПО кольцу (старт у края). Drag из центра/мимо кольца
+            // не захватывается → уступает вертикальному скроллу ленты чата и
+            // горизонтальному свайпу PageView-просмотрщика.
+            gestures: <Type, GestureRecognizerFactory>{
+              TapGestureRecognizer:
+                  GestureRecognizerFactoryWithHandlers<TapGestureRecognizer>(
+                () => TapGestureRecognizer(),
+                (recognizer) => recognizer.onTap = _togglePlayPause,
+              ),
+              _RingPanGestureRecognizer: GestureRecognizerFactoryWithHandlers<
+                  _RingPanGestureRecognizer>(
+                () => _RingPanGestureRecognizer(isOnRing: _isOnSeekRing),
+                (recognizer) => recognizer
+                  ..onStart = _onSeekStart
+                  ..onUpdate = _onSeekUpdate
+                  ..onEnd = _onSeekEnd,
+              ),
+            },
             child: SizedBox(
               width: widget.diameter,
               height: widget.diameter,
@@ -3171,6 +3198,25 @@ class _VideoNoteProgressRingPainter extends CustomPainter {
     return oldDelegate.progress != progress ||
         oldDelegate.color != color ||
         oldDelegate.trackColor != trackColor;
+  }
+}
+
+/// FR6 (ревью C3c): pan-recognizer перемотки кружка, который ВХОДИТ в арену
+/// жестов только если касание началось в полосе кольца ([isOnRing]). Иначе
+/// указатель ему не выдаётся — и жест достаётся родителю (вертикальный скролл
+/// ленты чата / горизонтальный свайп PageView-просмотрщика), а не крадётся.
+class _RingPanGestureRecognizer extends PanGestureRecognizer {
+  _RingPanGestureRecognizer({required this.isOnRing});
+
+  final bool Function(Offset localPosition) isOnRing;
+
+  @override
+  void addAllowedPointer(PointerDownEvent event) {
+    // Не на кольце — не претендуем на жест: указатель не трекается, жест
+    // достаётся родителю (скролл ленты / свайп PageView), а не крадётся.
+    if (isOnRing(event.localPosition)) {
+      super.addAllowedPointer(event);
+    }
   }
 }
 
