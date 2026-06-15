@@ -113,10 +113,17 @@ class TreeViewScreen extends StatefulWidget {
   final String? routeTreeId;
   final String? routeTreeName;
 
+  /// UX-T1 FR1: на телефоне переключатель «Список/Дерево» переезжает в
+  /// компактный icon-сегмент внутри топ-бара дерева (вместо отдельной полосы
+  /// над канвасом). Колбэк просит родителя (FamilyScreen) показать список.
+  /// null → сегмент не рисуем (например, отдельный роут /tree без шелла).
+  final VoidCallback? onSwitchToList;
+
   const TreeViewScreen({
     super.key,
     this.routeTreeId,
     this.routeTreeName,
+    this.onSwitchToList,
   });
 
   /// A-CTA: сброс session-dismiss гида между тестами.
@@ -1122,6 +1129,65 @@ class _TreeViewScreenState extends State<TreeViewScreen>
     context.push('/family?view=list');
   }
 
+  /// UX-T1 FR1: компактный icon-сегмент [Список | Дерево] для топ-бара на
+  /// телефоне. Дерево — текущий (выделен), тап по «Список» зовёт
+  /// onSwitchToList (FamilyScreen переключит вкладку). Заменяет и отдельную
+  /// полосу-тумблер, и дублирующее слово «Дерево» в заголовке.
+  Widget _buildCompactViewSegment(RodnyaDesignTokens tokens) {
+    Widget seg({
+      required IconData icon,
+      required bool selected,
+      required VoidCallback? onTap,
+      required String tooltip,
+    }) {
+      return Tooltip(
+        message: tooltip,
+        child: Material(
+          color: selected ? tokens.accent : Colors.transparent,
+          borderRadius: BorderRadius.circular(9),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(9),
+            onTap: onTap,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              child: Icon(
+                icon,
+                size: 18,
+                color: selected ? tokens.accentInk : tokens.inkMuted,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(3),
+      decoration: BoxDecoration(
+        color: tokens.surfaceStrong,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: tokens.surfaceLine),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          seg(
+            icon: Icons.people_outline_rounded,
+            selected: false,
+            onTap: widget.onSwitchToList,
+            tooltip: 'Список',
+          ),
+          seg(
+            icon: Icons.account_tree_outlined,
+            selected: true,
+            onTap: null,
+            tooltip: _isFriendsTree ? 'Круг' : 'Дерево',
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildTreeTopbar({
     required ThemeData theme,
     required RodnyaDesignTokens tokens,
@@ -1133,6 +1199,9 @@ class _TreeViewScreenState extends State<TreeViewScreen>
     // renders), so dropping the topbar's per-frame blur matters
     // even more here than on lighter screens.
     final useBlur = defaultTargetPlatform != TargetPlatform.android;
+    // UX-T1 FR1: на телефоне (<1180) топ-бар несёт компактный icon-сегмент
+    // Список/Дерево вместо дублирующего слова «Дерево»; десктоп не трогаем.
+    final isPhone = MediaQuery.of(context).size.width < 1180;
     final body = Container(
       decoration: BoxDecoration(
         color: tokens.surface.withValues(
@@ -1160,17 +1229,24 @@ class _TreeViewScreenState extends State<TreeViewScreen>
                   tooltip: 'К списку деревьев',
                   onPressed: () => context.go('/tree?selector=1'),
                 ),
-                Text(
-                  _isFriendsTree ? 'Круг' : 'Дерево',
-                  style: AppTheme.serif(
-                    color: tokens.ink,
-                    fontSize: 22,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: -0.22,
+                // UX-T1 FR1: на телефоне — компактный icon-сегмент Список/
+                // Дерево (переключатель переехал сюда из отдельной полосы);
+                // слово «Дерево» не дублируем — идентичность несёт
+                // treeName-пилюля. На десктопе оставляем serif-заголовок.
+                if (isPhone && widget.onSwitchToList != null)
+                  _buildCompactViewSegment(tokens)
+                else
+                  Text(
+                    _isFriendsTree ? 'Круг' : 'Дерево',
+                    style: AppTheme.serif(
+                      color: tokens.ink,
+                      fontSize: 22,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: -0.22,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
                 if (treeName != null && treeName.isNotEmpty) ...[
                   const SizedBox(width: 8),
                   Expanded(

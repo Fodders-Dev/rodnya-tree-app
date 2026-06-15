@@ -707,11 +707,13 @@ void main() {
       findsNothing,
     );
     expect(find.text('Граф готов к просмотру'), findsNothing);
-    // The dedicated "+" pill in the topbar was removed (it duplicated the
-    // toolbar's emphasized green circle below). The toolbar copy now
-    // carries tooltip "Добавить из панели дерева".
+    // UX-T1 FR2: на телефоне единственная кнопка добавления — extended-FAB
+    // «Добавить» (дубль-кнопку из тулбара убрали). «•••» — на месте.
     expect(
-        find.byTooltip('Добавить из панели дерева'), findsOneWidget);
+      find.widgetWithText(FloatingActionButton, 'Добавить'),
+      findsOneWidget,
+    );
+    expect(find.byTooltip('Добавить из панели дерева'), findsNothing);
     expect(find.byTooltip('Действия дерева'), findsOneWidget);
   });
 
@@ -807,10 +809,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(tester.takeException(), isNull);
-    // The add-person action (in the body toolbar) stays reachable.
-    expect(find.byTooltip('Добавить из панели дерева'), findsOneWidget);
-    // 2d (Q4): и подписанный extended-FAB «Добавить» виден в виде Дерева —
-    // вход в добавление больше не прячется за icon-only кнопкой.
+    // UX-T1 FR2: на телефоне дубль-кнопку добавления из тулбара убрали —
+    // вход в добавление только через подписанный extended-FAB «Добавить».
+    expect(find.byTooltip('Добавить из панели дерева'), findsNothing);
     expect(
       find.widgetWithText(FloatingActionButton, 'Добавить'),
       findsOneWidget,

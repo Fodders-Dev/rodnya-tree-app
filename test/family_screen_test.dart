@@ -62,6 +62,15 @@ void main() {
 
   testWidgets('the visited tree stays mounted after toggling back to list',
       (tester) async {
+    // UX-T1 FR1: на телефоне в режиме «Дерево» шелл-полоса переключателя
+    // скрыта (тумблер переехал в топ-бар дерева). Этот тест про keep-alive
+    // IndexedStack (ширинонезависимо) и переключается через шелл-тумблер,
+    // поэтому гоним на desktop-ширине (>=1180), где полоса видна всегда.
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.binding.setSurfaceSize(const Size(1280, 1024));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
     await tester.pumpWidget(_host());
 
     await tester.tap(find.byKey(const Key('family-view-tree')));

@@ -405,18 +405,24 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
               ),
             ),
           ),
-          SizedBox(width: compact ? 8 : 10),
-          _buildTreeToolbarIconButton(
-            icon: Icons.person_add_alt_1_outlined,
-            tooltip: _isFriendsTree
-                ? 'Добавить из панели круга'
-                : 'Добавить из панели дерева',
-            // Чанк C: тот же флоу, что у FAB (семья → пикер «Кем
-            // приходится?», круг → форма) — два верхних входа больше не
-            // расходятся.
-            onPressed: () => _startAddRelativeFlow(selectedTreeId),
-            emphasized: true,
-          ),
+          // UX-T1 FR2: на телефоне (compact) единственная кнопка добавления —
+          // FAB «Добавить» (Telegram-стиль). Дубль-кнопку из тулбара убираем
+          // (оба входа звали один _startAddRelativeFlow). На десктопе
+          // (!compact) тулбар-кнопку оставляем как есть.
+          if (!compact) ...[
+            const SizedBox(width: 10),
+            _buildTreeToolbarIconButton(
+              icon: Icons.person_add_alt_1_outlined,
+              tooltip: _isFriendsTree
+                  ? 'Добавить из панели круга'
+                  : 'Добавить из панели дерева',
+              // Чанк C: тот же флоу, что у FAB (семья → пикер «Кем
+              // приходится?», круг → форма) — два верхних входа больше не
+              // расходятся.
+              onPressed: () => _startAddRelativeFlow(selectedTreeId),
+              emphasized: true,
+            ),
+          ],
           // Selection mode toggle — top-level visible icon instead
           // of buried in the «...» overflow. This is the user's
           // primary tool for slicing the tree («выделить мамину
@@ -1477,12 +1483,17 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
                 identityConflictCounts: _identityConflictCounts,
                 onShowIdentityConflicts:
                     _handleShowIdentityConflictsForPerson,
-                // Reserve vertical space for the floating chrome stacked
-                // above the canvas — toolbar (~60) + context column
-                // (up to ~210) on mobile compact, much less on desktop
-                // where the sidebar lives in its own column.
+                // UX-T1 FR3: на телефоне резерв отражает РЕАЛЬНУЮ высоту
+                // хрома над канвасом. По умолчанию контекст-колонка свёрнута
+                // (_compactChromeCollapsed=true) → над канвасом только
+                // плавающий тулбар (~120 c отступом), а не устаревшие 290
+                // (они зарезервированы под раскрытую колонку). Это и есть
+                // canvas-first: дерево фитится в >=85% высоты. При раскрытии
+                // колонки резерв снова ~290. Десктоп (>=1180) — 96, не трогаем.
                 viewportReservedTop:
-                    MediaQuery.of(context).size.width < 1180 ? 290 : 96,
+                    MediaQuery.of(context).size.width >= 1180
+                        ? 96
+                        : (_compactChromeCollapsed ? 120 : 290),
                 viewportReservedBottom: 120,
                 // Edit actions live in the bottom sheet now — suppress
                 // the floating inline panel so we don't have two action

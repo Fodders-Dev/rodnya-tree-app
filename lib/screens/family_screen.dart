@@ -108,7 +108,10 @@ class _FamilyScreenState extends State<FamilyScreen> {
       widget.listBuilder?.call(context) ?? const RelativesScreen();
 
   Widget _treeChild() =>
-      widget.treeBuilder?.call(context) ?? const TreeViewScreen();
+      widget.treeBuilder?.call(context) ??
+      // UX-T1 FR1: даём дереву колбэк, чтобы его компактный icon-сегмент
+      // мог вернуть пользователя к списку (переключатель переехал в топ-бар).
+      TreeViewScreen(onSwitchToList: () => _select(FamilyView.list));
 
   @override
   Widget build(BuildContext context) {
@@ -116,12 +119,19 @@ class _FamilyScreenState extends State<FamilyScreen> {
       _treeVisited = true;
     }
 
+    // UX-T1 FR1: на телефоне в режиме «Дерево» переключатель Список/Дерево
+    // живёт в топ-баре дерева (компактный icon-сегмент), поэтому отдельную
+    // полосу-тумблер над канвасом НЕ рисуем — минус один ряд хрома. В списке
+    // и на десктопе (>=1180) полоса остаётся как есть.
+    final isPhone = MediaQuery.of(context).size.width < 1180;
+    final showToggleBar = !(isPhone && _view == FamilyView.tree);
     return Column(
       children: [
-        _FamilyViewToggle(
-          view: _view,
-          onChanged: _select,
-        ),
+        if (showToggleBar)
+          _FamilyViewToggle(
+            view: _view,
+            onChanged: _select,
+          ),
         Expanded(
           child: IndexedStack(
             index: _view == FamilyView.list ? 0 : 1,
