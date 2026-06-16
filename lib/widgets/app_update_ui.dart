@@ -44,65 +44,78 @@ class AppUpdateBanner extends StatelessWidget {
         final tokens = _tokensOf(context);
         final download = service.downloadProgress;
 
-        return Padding(
-          padding: const EdgeInsets.fromLTRB(14, 8, 14, 0),
-          child: Material(
-            key: const Key('app-update-banner'),
-            color: tokens.surfaceStrong.withValues(alpha: isDark ? 0.92 : 0.96),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(tokens.radiusMd),
-              side: BorderSide(
-                color: theme.colorScheme.primary.withValues(alpha: 0.45),
+        // FX-A: баннер — самый верхний видимый элемент шелла (под ним
+        // навигейшн-скрин со своим AppBar), поэтому без верхнего инсета он
+        // налезал на статус-бар. Обновление доступно только онлайн, значит
+        // OfflineIndicator выше скрыт → SafeArea(top) здесь даёт ровно
+        // нужный отступ без двойного инсета. Боковые/нижний не трогаем —
+        // их держит внутренний Padding и шелл.
+        return SafeArea(
+          top: true,
+          bottom: false,
+          left: false,
+          right: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 8, 14, 0),
+            child: Material(
+              key: const Key('app-update-banner'),
+              color:
+                  tokens.surfaceStrong.withValues(alpha: isDark ? 0.92 : 0.96),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(tokens.radiusMd),
+                side: BorderSide(
+                  color: theme.colorScheme.primary.withValues(alpha: 0.45),
+                ),
               ),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.system_update_rounded,
-                        size: 22,
-                        color: theme.colorScheme.primary,
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          'Доступно обновление',
-                          style: theme.textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.w800,
-                            color: tokens.ink,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.system_update_rounded,
+                          size: 22,
+                          color: theme.colorScheme.primary,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            'Доступно обновление',
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w800,
+                              color: tokens.ink,
+                            ),
                           ),
                         ),
-                      ),
-                      if (latest.versionName != null)
-                        Text(
-                          'версия ${latest.versionName}',
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: tokens.inkSecondary,
+                        if (latest.versionName != null)
+                          Text(
+                            'версия ${latest.versionName}',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: tokens.inkSecondary,
+                            ),
                           ),
+                      ],
+                    ),
+                    if (latest.notes != null) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        latest.notes!,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: tokens.inkSecondary,
+                          height: 1.35,
                         ),
+                      ),
                     ],
-                  ),
-                  if (latest.notes != null) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      latest.notes!,
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: tokens.inkSecondary,
-                        height: 1.35,
-                      ),
+                    const SizedBox(height: 12),
+                    _AppUpdateActions(
+                      service: service,
+                      download: download,
+                      showLater: true,
                     ),
                   ],
-                  const SizedBox(height: 12),
-                  _AppUpdateActions(
-                    service: service,
-                    download: download,
-                    showLater: true,
-                  ),
-                ],
+                ),
               ),
             ),
           ),

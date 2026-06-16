@@ -70,6 +70,15 @@ Widget _hostBanner() => MaterialApp(
       home: const Scaffold(body: AppUpdateBanner()),
     );
 
+// FX-A: симулируем верхний инсет статус-бара, чтобы проверить SafeArea.
+Widget _hostBannerWithTopInset(double topInset) => MaterialApp(
+      theme: AppTheme.lightTheme,
+      home: MediaQuery(
+        data: MediaQueryData(padding: EdgeInsets.only(top: topInset)),
+        child: const Scaffold(body: AppUpdateBanner()),
+      ),
+    );
+
 Widget _hostGate() => MaterialApp(
       theme: AppTheme.lightTheme,
       home: const AppUpdateGate(
@@ -102,6 +111,24 @@ void main() {
     expect(find.text('Чинят чаты и ленту'), findsOneWidget);
     expect(find.byKey(const Key('app-update-install-button')), findsOneWidget);
     expect(find.byKey(const Key('app-update-later-button')), findsOneWidget);
+  });
+
+  testWidgets('FX-A: баннер не налезает на статус-бар (SafeArea сверху)',
+      (tester) async {
+    const topInset = 40.0;
+    await _registerService(
+      latestJson: _payload(versionCode: 42),
+      currentVersionCode: 40,
+    );
+
+    await tester.pumpWidget(_hostBannerWithTopInset(topInset));
+    await tester.pump();
+
+    expect(find.byKey(const Key('app-update-banner')), findsOneWidget);
+    // Верх баннера должен быть НИЖЕ инсета статус-бара (раньше был ~8 —
+    // налезал на статус-бар).
+    final top = tester.getTopLeft(find.byKey(const Key('app-update-banner'))).dy;
+    expect(top, greaterThanOrEqualTo(topInset));
   });
 
   testWidgets('«Позже» дисмиссит баннер на сессию', (tester) async {
