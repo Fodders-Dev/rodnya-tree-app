@@ -365,8 +365,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         // зрителя — проголосовал → баннер погас, даже если консенсус
         // других ответственных ещё не собран.
         _pendingIdentityReviewCount =
-            proposals.where((p) => p.awaitingMyDecision).length +
-                claims.length;
+            proposals.where((p) => p.awaitingMyDecision).length + claims.length;
         _identityReviewsUnavailable = false;
       });
     } catch (error) {
@@ -835,7 +834,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
               child: FloatingActionButton(
                 key: const Key('compose-fab'),
-                onPressed: () => context.push('/post/create'),
+                // FX-C: через общий _openCreatePost (как teaser/меню/«+») —
+                // он await'ит push и обновляет ленту при возврате (pop true),
+                // иначе свой пост появлялся в ленте с задержкой. Раньше FAB
+                // делал fire-and-forget push без рефреша.
+                onPressed: () => _openCreatePost(),
                 backgroundColor: tokens.accent,
                 foregroundColor: tokens.accentInk,
                 elevation: 4,
