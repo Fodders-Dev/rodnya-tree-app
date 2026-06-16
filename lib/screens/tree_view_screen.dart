@@ -68,6 +68,12 @@ enum _TreeToolbarAction {
   openHistory,
   openChats,
   createPost,
+  // UX-T1.2 FR-c: вторичные контролы (undo/redo/поиск/фильтры) на телефоне
+  // переезжают сюда, в overflow «•••», вместо постоянных пилюль топ-бара.
+  undo,
+  redo,
+  openSearch,
+  openFilters,
   toggleEditMode,
   toggleSelectionMode,
   openBranchChat,
@@ -1250,22 +1256,35 @@ class _TreeViewScreenState extends State<TreeViewScreen>
                 if (treeName != null && treeName.isNotEmpty) ...[
                   const SizedBox(width: 8),
                   Expanded(
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: tokens.accentSoft,
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                      child: Text(
-                        treeName,
-                        style: AppTheme.sans(
-                          color: tokens.accent,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
+                    // UX-T1.2 FR-a: на телефоне тап по названию дерева тоже
+                    // раскрывает/сворачивает панель статов (наряду с handle) —
+                    // «тап по названию разворачивает». На десктопе панель —
+                    // постоянный сайдбар, поэтому тап не вешаем.
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: isPhone
+                          ? () => _updateSectionState(() {
+                                _compactChromeCollapsed =
+                                    !_compactChromeCollapsed;
+                              })
+                          : null,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: tokens.accentSoft,
+                          borderRadius: BorderRadius.circular(999),
                         ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                        child: Text(
+                          treeName,
+                          style: AppTheme.sans(
+                            color: tokens.accent,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
                     ),
                   ),
@@ -1286,24 +1305,29 @@ class _TreeViewScreenState extends State<TreeViewScreen>
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                _TreeTopbarPill(
-                  tokens: tokens,
-                  tooltip: 'Выбрать дерево',
-                  onTap: () => context.go('/tree?selector=1'),
-                  child: Icon(
-                    Icons.account_tree_outlined,
-                    size: 19,
-                    color: tokens.ink,
+                // UX-T1.2 FR-c: на телефоне (<1180) пилюлю «Выбрать дерево»
+                // не дублируем — стрелка «назад» уже ведёт в селектор
+                // деревьев. На десктопе оставляем как было.
+                if (!isPhone)
+                  _TreeTopbarPill(
+                    tokens: tokens,
+                    tooltip: 'Выбрать дерево',
+                    onTap: () => context.go('/tree?selector=1'),
+                    child: Icon(
+                      Icons.account_tree_outlined,
+                      size: 19,
+                      color: tokens.ink,
+                    ),
                   ),
-                ),
-                // Undo / redo пилюли — всегда видны (disabled если
-                // стек пуст), чтобы юзер сразу понимал что эта
-                // функциональность есть в дереве. Без визуала
-                // пользователь жаловался «нет кнопок возвратов».
+                // Undo / redo пилюли — на десктопе всегда видны (disabled
+                // если стек пуст), чтобы юзер сразу понимал что эта
+                // функциональность есть. На телефоне (UX-T1.2 FR-c) они
+                // переехали в overflow «•••» ради минимального хрома.
                 // ListenableBuilder подписан на TreeMutationHistory,
                 // перерисовывается на push/pop стека (enabled state
                 // меняется в реальном времени).
-                if (selectedTreeId != null &&
+                if (!isPhone &&
+                    selectedTreeId != null &&
                     GetIt.I.isRegistered<TreeMutationHistory>())
                   ListenableBuilder(
                     listenable: GetIt.I<TreeMutationHistory>(),
@@ -1362,14 +1386,21 @@ class _TreeViewScreenState extends State<TreeViewScreen>
                     child: const ExtendedNetworkToggle(),
                   ),
                 ],
-                if (selectedTreeId != null && _shouldShowSearchButton()) ...[
+                // UX-T1.2 FR-c: поиск/фильтры расширенной сети — вторичные,
+                // на телефоне живут в «•••» (см. _buildTreeToolbarMenuItems),
+                // отдельные пилюли показываем только на десктопе.
+                if (!isPhone &&
+                    selectedTreeId != null &&
+                    _shouldShowSearchButton()) ...[
                   const SizedBox(width: 4),
                   _ExtendedSearchButton(
                     tokens: tokens,
                     onTap: () => _openSearchSheet(),
                   ),
                 ],
-                if (selectedTreeId != null && _shouldShowFiltersButton()) ...[
+                if (!isPhone &&
+                    selectedTreeId != null &&
+                    _shouldShowFiltersButton()) ...[
                   const SizedBox(width: 4),
                   ChangeNotifierProvider<ExtendedNetworkController>.value(
                     value: _extendedNetworkController!,
@@ -1385,7 +1416,8 @@ class _TreeViewScreenState extends State<TreeViewScreen>
                     tooltip: 'Действия дерева',
                     onSelected: (action) =>
                         _handleTreeToolbarAction(selectedTreeId, action),
-                    itemBuilder: (context) => _buildTreeToolbarMenuItems(),
+                    itemBuilder: (context) =>
+                        _buildTreeToolbarMenuItems(isPhone: isPhone),
                     child: Container(
                       width: 38,
                       height: 38,
@@ -1439,6 +1471,18 @@ class _TreeViewScreenState extends State<TreeViewScreen>
         return;
       case _TreeToolbarAction.createPost:
         context.push('/post/create');
+        return;
+      case _TreeToolbarAction.undo:
+        unawaited(_performUndo());
+        return;
+      case _TreeToolbarAction.redo:
+        unawaited(_performRedo());
+        return;
+      case _TreeToolbarAction.openSearch:
+        await _openSearchSheet();
+        return;
+      case _TreeToolbarAction.openFilters:
+        await _openFilterSheet();
         return;
       case _TreeToolbarAction.toggleEditMode:
         if (!mounted) {

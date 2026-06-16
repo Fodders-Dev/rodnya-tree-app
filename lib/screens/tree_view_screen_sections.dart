@@ -113,7 +113,6 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
         final topToolbar = _buildTreeTopToolbar(
           selectedTreeId: selectedTreeId,
           branchRootPerson: branchRootPerson,
-          warnings: treeWarnings,
           compact: isCompact,
         );
 
@@ -191,6 +190,10 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     topToolbar,
+                    // UX-T1.2 FR-b: видимый handle (как у нижнего листа) —
+                    // раскрытие хрома больше не прячется за неочевидным
+                    // шевроном; подпись со счётчиком намекает, что там детали.
+                    if (isCompact) _buildTreeChromeHandle(),
                     AnimatedSize(
                       duration: const Duration(milliseconds: 240),
                       curve: Curves.easeOutCubic,
@@ -304,10 +307,85 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
     );
   }
 
+  /// UX-T1.2 FR-b: дискаверабилити-handle компактного хрома. Вместо
+  /// неочевидного шеврона — видимый «потяни за деталями» в стиле drag-handle
+  /// нижнего листа: грип-полоска + подпись (FR-a: единственный счётчик-тизер
+  /// статов) + шеврон. Тап разворачивает hero-панель (единственный дом
+  /// статов) и обратно.
+  Widget _buildTreeChromeHandle() {
+    final theme = Theme.of(context);
+    final tokens = theme.extension<RodnyaDesignTokens>() ??
+        (theme.brightness == Brightness.dark
+            ? RodnyaDesignTokens.dark
+            : RodnyaDesignTokens.light);
+    final collapsed = _compactChromeCollapsed;
+    final peopleCount = _relativesData.length;
+    final peopleLabel =
+        peopleCount == 1 ? '1 человек' : '$peopleCount людей';
+    final label = collapsed ? '$peopleLabel · подробнее' : 'Свернуть';
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Center(
+        child: Material(
+          color: tokens.surfaceStrong.withValues(alpha: 0.94),
+          borderRadius: BorderRadius.circular(16),
+          child: InkWell(
+            key: const Key('tree-chrome-handle'),
+            borderRadius: BorderRadius.circular(16),
+            onTap: () {
+              _updateSectionState(() {
+                _compactChromeCollapsed = !_compactChromeCollapsed;
+              });
+            },
+            child: Padding(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Грип-полоска — узнаваемый «потяни меня» нижнего листа.
+                  Container(
+                    width: 30,
+                    height: 3,
+                    decoration: BoxDecoration(
+                      color: tokens.inkMuted.withValues(alpha: 0.5),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                  ),
+                  const SizedBox(height: 5),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        label,
+                        style: theme.textTheme.labelMedium?.copyWith(
+                          color: tokens.inkSecondary,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Icon(
+                        collapsed
+                            ? Icons.expand_more_rounded
+                            : Icons.expand_less_rounded,
+                        size: 16,
+                        color: tokens.inkSecondary,
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildTreeTopToolbar({
     required String selectedTreeId,
     required FamilyPerson? branchRootPerson,
-    required List<TreeGraphWarning> warnings,
     required bool compact,
   }) {
     final theme = Theme.of(context);
@@ -317,14 +395,12 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
             : RodnyaDesignTokens.light);
     final accent =
         _isFriendsTree ? const Color(0xFF0F9D8A) : tokens.accentStrong;
-    final generationCount = _graphSnapshot?.generationRows.length ?? 0;
 
-    // On compact (mobile) widths the sidebar is collapsed into a 200ish-px
-    // scrollable strip — keep the stat pills in the toolbar so the user
-    // can see counts at a glance. On desktop (`!compact`) the sidebar
-    // shows the canonical "Карта рода" stats card right next to the tree,
-    // so the toolbar duplicates would just be visual noise.
-    final showStatPills = compact;
+    // UX-T1.2 FR-a: пилюли-статы (люди·связи·поколения·флаги) больше не
+    // маячат в тулбаре — это был второй дом статов в дополнение к hero-
+    // панели. Единственный дом теперь — hero-панель, которая раскрывается
+    // по тапу (handle снизу / название дерева). Тулбар несёт только
+    // контекст: чип-фильтр ветки + бейдж семьи.
 
     return GlassPanel(
       padding: EdgeInsets.symmetric(
@@ -371,36 +447,6 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
                           : null,
                     ),
                   ),
-                  if (showStatPills) ...[
-                    SizedBox(width: compact ? 8 : 10),
-                    _buildTreeToolbarStat(
-                      icon: Icons.people_outline,
-                      label: '${_relativesData.length}',
-                      tooltip: 'Люди',
-                      accent: accent,
-                    ),
-                    const SizedBox(width: 6),
-                    _buildTreeToolbarStat(
-                      icon: Icons.alt_route_outlined,
-                      label: '${_relationsData.length}',
-                      tooltip: 'Связи',
-                      accent: accent,
-                    ),
-                    const SizedBox(width: 6),
-                    _buildTreeToolbarStat(
-                      icon: Icons.layers_outlined,
-                      label: generationCount == 0 ? '-' : '$generationCount',
-                      tooltip: 'Поколения',
-                      accent: accent,
-                    ),
-                    const SizedBox(width: 6),
-                    _buildTreeToolbarStat(
-                      icon: Icons.flag_outlined,
-                      label: '${warnings.length}',
-                      tooltip: 'Ждут проверки',
-                      accent: warnings.isEmpty ? accent : tokens.warm,
-                    ),
-                  ],
                 ],
               ),
             ),
@@ -458,40 +504,29 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
                 });
               },
             ),
-          _buildTreeToolbarIconButton(
-            icon: _isEditMode ? Icons.visibility_outlined : Icons.open_with,
-            tooltip:
-                _isEditMode ? 'Вернуться к просмотру' : 'Расставить карточки',
-            onPressed: () {
-              _updateSectionState(() {
-                _isEditMode = !_isEditMode;
-                if (!_isEditMode) {
-                  _selectedEditPersonId = null;
-                } else if (_isSelectionMode) {
-                  _isSelectionMode = false;
-                  _selectedPersonIds.clear();
-                }
-              });
-            },
-          ),
-          // Compact chrome toggle — only shown on phone widths so the
-          // user can pull the tree-info / quick-actions panel down when
-          // they need it, hide it again to give the canvas the whole
-          // viewport. Chevron flips direction with state.
-          if (compact)
+          // UX-T1.2 FR-c: «Расставить карточки» (репозиция) — вторичное
+          // действие; на телефоне живёт в overflow «•••» (toggleEditMode),
+          // на десктопе остаётся видимой кнопкой тулбара.
+          if (!compact)
             _buildTreeToolbarIconButton(
-              icon: _compactChromeCollapsed
-                  ? Icons.expand_more_rounded
-                  : Icons.expand_less_rounded,
-              tooltip: _compactChromeCollapsed
-                  ? 'Показать панель дерева'
-                  : 'Свернуть панель дерева',
+              icon: _isEditMode ? Icons.visibility_outlined : Icons.open_with,
+              tooltip:
+                  _isEditMode ? 'Вернуться к просмотру' : 'Расставить карточки',
               onPressed: () {
                 _updateSectionState(() {
-                  _compactChromeCollapsed = !_compactChromeCollapsed;
+                  _isEditMode = !_isEditMode;
+                  if (!_isEditMode) {
+                    _selectedEditPersonId = null;
+                  } else if (_isSelectionMode) {
+                    _isSelectionMode = false;
+                    _selectedPersonIds.clear();
+                  }
                 });
               },
             ),
+          // UX-T1.2 FR-b: раскрытие компактного хрома больше не прячется за
+          // незаметным шевроном в тулбаре — на телефоне его заменил видимый
+          // handle с подписью под тулбаром (см. _buildTreeChromeHandle).
         ],
       ),
     );
@@ -567,45 +602,6 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
               ],
             ),
           ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTreeToolbarStat({
-    required IconData icon,
-    required String label,
-    required String tooltip,
-    required Color accent,
-  }) {
-    final theme = Theme.of(context);
-    final tokens = theme.extension<RodnyaDesignTokens>() ??
-        (theme.brightness == Brightness.dark
-            ? RodnyaDesignTokens.dark
-            : RodnyaDesignTokens.light);
-
-    return Tooltip(
-      message: tooltip,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        decoration: BoxDecoration(
-          color: tokens.surface.withValues(alpha: 0.92),
-          borderRadius: tokens.chipRadius,
-          border: Border.all(color: tokens.surfaceLine),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 15, color: accent),
-            const SizedBox(width: 6),
-            Text(
-              label,
-              style: theme.textTheme.labelLarge?.copyWith(
-                color: tokens.ink,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ],
         ),
       ),
     );
@@ -2262,9 +2258,51 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
     );
   }
 
-  List<PopupMenuEntry<_TreeToolbarAction>> _buildTreeToolbarMenuItems() {
+  List<PopupMenuEntry<_TreeToolbarAction>> _buildTreeToolbarMenuItems({
+    bool isPhone = false,
+  }) {
     final branchRootPerson = _findBranchRootPerson();
-    final items = <PopupMenuEntry<_TreeToolbarAction>>[
+    final items = <PopupMenuEntry<_TreeToolbarAction>>[];
+
+    // UX-T1.2 FR-c: на телефоне вторичные контролы (undo/redo/поиск/фильтры)
+    // переехали из постоянных пилюль топ-бара сюда, в overflow «•••».
+    // На десктопе они остаются видимыми пилюлями, поэтому здесь их не дублируем.
+    if (isPhone) {
+      if (GetIt.I.isRegistered<TreeMutationHistory>()) {
+        final history = GetIt.I<TreeMutationHistory>();
+        items.add(_buildTreeToolbarMenuItem(
+          value: _TreeToolbarAction.undo,
+          icon: Icons.undo_rounded,
+          label: 'Отменить',
+          enabled: history.canUndo,
+        ));
+        items.add(_buildTreeToolbarMenuItem(
+          value: _TreeToolbarAction.redo,
+          icon: Icons.redo_rounded,
+          label: 'Повторить',
+          enabled: history.canRedo,
+        ));
+      }
+      if (_shouldShowSearchButton()) {
+        items.add(_buildTreeToolbarMenuItem(
+          value: _TreeToolbarAction.openSearch,
+          icon: Icons.search_rounded,
+          label: 'Поиск в расширенной сети',
+        ));
+      }
+      if (_shouldShowFiltersButton()) {
+        items.add(_buildTreeToolbarMenuItem(
+          value: _TreeToolbarAction.openFilters,
+          icon: Icons.tune_rounded,
+          label: 'Фильтры расширенной сети',
+        ));
+      }
+      if (items.isNotEmpty) {
+        items.add(const PopupMenuDivider());
+      }
+    }
+
+    items.addAll([
       _buildTreeToolbarMenuItem(
         value: _TreeToolbarAction.refresh,
         icon: Icons.refresh,
@@ -2301,7 +2339,7 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
             ? 'Выйти из режима выбора'
             : 'Выбрать несколько человек',
       ),
-    ];
+    ]);
 
     if (branchRootPerson != null) {
       items.add(
@@ -2359,9 +2397,11 @@ extension _TreeViewScreenSections on _TreeViewScreenState {
     required _TreeToolbarAction value,
     required IconData icon,
     required String label,
+    bool enabled = true,
   }) {
     return PopupMenuItem<_TreeToolbarAction>(
       value: value,
+      enabled: enabled,
       child: Row(
         children: [
           Icon(icon, size: 18),

@@ -321,6 +321,16 @@ GoRouter _buildRouter() {
   );
 }
 
+// UX-T1.2 FR-c: на телефонной ширине поиск расширенной сети переехал из
+// отдельной пилюли в overflow-меню «•••». Тесты ходят через меню, а не по
+// ширине прячут кнопку. Открываем «•••» и жмём пункт поиска.
+Future<void> _openExtendedSearch(WidgetTester tester) async {
+  await tester.tap(find.byTooltip('Действия дерева'));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('Поиск в расширенной сети').last);
+  await tester.pumpAndSettle();
+}
+
 void main() {
   final getIt = GetIt.instance;
 
@@ -338,7 +348,7 @@ void main() {
   });
 
   testWidgets(
-      'extended mode → slice fetched + topbar shows search button',
+      'extended mode → slice fetched + поиск/фильтры доступны в overflow «•••»',
       (tester) async {
     await _bootstrapExtendedMode(tester);
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -355,10 +365,13 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // Topbar shows mode toggle + search button когда extended +
-    // slice non-empty.
-    expect(find.byTooltip('Поиск в расширенной сети'), findsOneWidget);
-    expect(find.byTooltip('Фильтры расширенной сети'), findsOneWidget);
+    // UX-T1.2 FR-c: на телефонной ширине поиск/фильтры расширенной сети —
+    // вторичные, живут в overflow «•••», а не отдельными пилюлями. Открываем
+    // меню и проверяем, что оба пункта доступны.
+    await tester.tap(find.byTooltip('Действия дерева'));
+    await tester.pumpAndSettle();
+    expect(find.text('Поиск в расширенной сети'), findsOneWidget);
+    expect(find.text('Фильтры расширенной сети'), findsOneWidget);
   });
 
   testWidgets(
@@ -379,8 +392,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('Поиск в расширенной сети'));
-    await tester.pumpAndSettle();
+    await _openExtendedSearch(tester);
 
     expect(find.text('Поиск в расширенной сети'), findsOneWidget);
     // Slice has 2 persons.
@@ -415,8 +427,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('Поиск в расширенной сети'));
-    await tester.pumpAndSettle();
+    await _openExtendedSearch(tester);
 
     await tester.tap(find.text('Степа Чужой'));
     await tester.pumpAndSettle();
@@ -452,8 +463,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('Поиск в расширенной сети'));
-    await tester.pumpAndSettle();
+    await _openExtendedSearch(tester);
     await tester.tap(find.text('Степа Чужой'));
     await tester.pumpAndSettle();
 
@@ -483,8 +493,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('Поиск в расширенной сети'));
-    await tester.pumpAndSettle();
+    await _openExtendedSearch(tester);
     await tester.tap(find.text('Степа Чужой'));
     await tester.pumpAndSettle();
 
@@ -514,8 +523,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('Поиск в расширенной сети'));
-    await tester.pumpAndSettle();
+    await _openExtendedSearch(tester);
     await tester.tap(find.text('Иван Свой'));
     await tester.pumpAndSettle();
 

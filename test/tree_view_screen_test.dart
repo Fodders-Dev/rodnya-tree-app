@@ -720,17 +720,17 @@ void main() {
   testWidgets(
       'topbar trailing actions live in a horizontal scroll (no overflow)',
       (tester) async {
-    // Bug 1 fix: the trailing action controls (switcher / undo / redo /
-    // «⋮») are wrapped in a horizontal SingleChildScrollView, so the
-    // topbar Row can never overflow — it scrolls instead. We assert the
-    // wrapper is present + actions reachable at a phone width. Behavioural
-    // «no RenderFlex overflow at any width» follows structurally from the
-    // scroll wrap (a scrollable child has unbounded main-axis extent).
+    // Bug 1 fix: the trailing action controls are wrapped in a horizontal
+    // SingleChildScrollView, so the topbar Row can never overflow — it
+    // scrolls instead. We assert the wrapper is present + actions reachable
+    // at a phone width. Behavioural «no RenderFlex overflow at any width»
+    // follows structurally from the scroll wrap (a scrollable child has
+    // unbounded main-axis extent).
     //
-    // Registering TreeMutationHistory renders the undo/redo pills so the
-    // wrapper genuinely holds the full trailing set. Width 390 (iPhone-
-    // class) keeps the unrelated body toolbar — which has its own ~22px
-    // overflow below ~382px, flagged separately — out of this assertion.
+    // UX-T1.2 FR-c: на телефоне (390 — iPhone-class) вторичные контролы
+    // (undo/redo/поиск/фильтры) переехали в overflow «•••», в топ-баре
+    // остаются switcher + «•••». TreeMutationHistory всё равно регистрируем —
+    // undo/redo теперь пункты меню, но топ-бар по-прежнему скроллируемый.
     await tester.binding.setSurfaceSize(const Size(390, 844));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
@@ -774,11 +774,12 @@ void main() {
   testWidgets(
       'body tree toolbar не overflow\'ит на 360dp (branch chip Flexible)',
       (tester) async {
-    // The body toolbar (branch filter chip + семя badge + stat pills +
-    // action icons) overflowed ~22px past the icons at 360dp because the
-    // branch chip was a fixed maxWidth-128 element. With it wrapped in
-    // Flexible, the informational cluster yields and the Row fits. This
-    // test pumps at the S20 FE width and asserts no RenderFlex overflow.
+    // The body toolbar (branch filter chip + семя badge + action icons)
+    // overflowed ~22px past the icons at 360dp because the branch chip was a
+    // fixed maxWidth-128 element. With it wrapped in Flexible, the
+    // informational cluster yields and the Row fits. This test pumps at the
+    // S20 FE width and asserts no RenderFlex overflow. (UX-T1.2 FR-a: stat
+    // pills больше не в тулбаре — статы переехали в раскрываемую hero-панель.)
     await tester.binding.setSurfaceSize(const Size(360, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
@@ -816,6 +817,55 @@ void main() {
       find.widgetWithText(FloatingActionButton, 'Добавить'),
       findsOneWidget,
     );
+  });
+
+  testWidgets(
+      'UX-T1.2: компактный handle виден и раскрывает панель статов по тапу',
+      (tester) async {
+    // Телефонная ширина (<720 → isCompact): хром плавает над канвасом.
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final familyService = _FakeFamilyTreeService()..showFirstPerson = true;
+    getIt.registerSingleton<FamilyTreeServiceInterface>(familyService);
+    final treeProvider = TreeProvider();
+    await treeProvider.selectTree('tree-1', 'Тест');
+
+    final router = GoRouter(
+      initialLocation: '/tree/view/tree-1?name=%D0%A2%D0%B5%D1%81%D1%82',
+      routes: [
+        GoRoute(
+          path: '/tree/view/:treeId',
+          builder: (context, state) => TreeViewScreen(
+            routeTreeId: state.pathParameters['treeId'],
+            routeTreeName: state.uri.queryParameters['name'],
+          ),
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<TreeProvider>.value(
+        value: treeProvider,
+        child: MaterialApp.router(routerConfig: router),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // FR-b: вместо неочевидного шеврона — видимый handle с подписью-тизером
+    // (одним счётчиком статов), чтобы юзер понимал, что там детали.
+    expect(find.byKey(const Key('tree-chrome-handle')), findsOneWidget);
+    expect(find.textContaining('подробнее'), findsOneWidget);
+
+    // FR-a: статы/быстрые действия не маячат — «Расставить» (из панели
+    // быстрых действий) скрыто, пока хром свёрнут.
+    expect(find.text('Расставить'), findsNothing);
+
+    // Тап по handle раскрывает единственный дом статов/действий.
+    await tester.tap(find.byKey(const Key('tree-chrome-handle')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Расставить'), findsOneWidget);
   });
 
   testWidgets(
