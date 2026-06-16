@@ -195,8 +195,7 @@ class AppUpdateService extends ChangeNotifier {
         // Закрываем клиент в dispose только если создали его сами —
         // инъектированным (DI-singleton / тестовый) владеет вызывающий.
         _ownsHttpClient = httpClient == null,
-        _buildSnapshotProvider =
-            buildSnapshotProvider ?? _defaultBuildSnapshot,
+        _buildSnapshotProvider = buildSnapshotProvider ?? _defaultBuildSnapshot,
         _installerSourceProvider =
             installerSourceProvider ?? _defaultInstallerSource,
         _downloadDirectoryProvider =
@@ -436,6 +435,23 @@ class AppUpdateService extends ChangeNotifier {
     void Function(double? fraction) onProgress,
   ) async {
     final dir = await _downloadDirectoryProvider();
+
+    // FX-B: APK большой (≈140 МБ). Если пользователь закрыл системный
+    // диалог установки и снова жмёт «Обновить», заново качать незачем —
+    // валидный файл уже лежит в temp. Переиспользуем его, когда бэк дал
+    // sha256 (без хэша доверять кэшу нельзя — нечем подтвердить, что это
+    // тот самый APK, тогда качаем заново). Скан заодно чистит наши
+    // частичные/устаревшие .apk, чтобы temp не разрастался.
+    final expectedSha = latest.sha256;
+    if (expectedSha != null && expectedSha.isNotEmpty) {
+      final cached = await _findCachedApk(dir, expectedSha);
+      if (cached != null) {
+        onProgress(1.0);
+        await _installerOpener(cached);
+        return;
+      }
+    }
+
     // U6: уникальное имя на попытку — старый частичный файл не мешает и
     // open_filex не прочитает недописанный с прошлого раза.
     final file = File(p.join(
@@ -506,6 +522,55 @@ class AppUpdateService extends ChangeNotifier {
       }
     } catch (_) {
       // best-effort
+    }
+  }
+
+  /// FX-B: ищет в [dir] уже скачанный валидный APK с хэшем [expectedSha].
+  /// Трогает только НАШИ файлы (`rodnya-update-*.apk`), чужой temp не
+  /// нам чистить. Несовпавшие наши кандидаты (частичные/битые/от прошлой
+  /// версии) и лишние дубликаты удаляет — кэш самоочищается на смене
+  /// версии. Возвращает путь к валидному файлу либо null. Скан best-effort:
+  /// любая ошибка → null (просто скачаем заново).
+  static Future<String?> _findCachedApk(
+    Directory dir,
+    String expectedSha,
+  ) async {
+    final expected = expectedSha.toLowerCase();
+    String? hit;
+    try {
+      final entries = await dir.list(followLinks: false).toList();
+      for (final entry in entries) {
+        if (entry is! File) continue;
+        final name = p.basename(entry.path);
+        if (!name.startsWith('rodnya-update-') || !name.endsWith('.apk')) {
+          continue;
+        }
+        if (hit != null) {
+          // Валидный уже найден — остальные наши кандидаты лишние.
+          await _safeDelete(entry);
+          continue;
+        }
+        final actual = await _hashFile(entry);
+        if (actual != null && actual == expected) {
+          hit = entry.path;
+        } else {
+          await _safeDelete(entry);
+        }
+      }
+    } catch (_) {
+      return null;
+    }
+    return hit;
+  }
+
+  /// Потоковый sha256 файла (не грузим весь APK в память). hex в нижнем
+  /// регистре; null при ошибке чтения.
+  static Future<String?> _hashFile(File file) async {
+    try {
+      final digest = await sha256.bind(file.openRead()).single;
+      return digest.toString().toLowerCase();
+    } catch (_) {
+      return null;
     }
   }
 

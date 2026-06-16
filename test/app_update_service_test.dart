@@ -15,6 +15,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:path/path.dart' as p;
 import 'package:rodnya/services/app_update_service.dart';
 
 http.Client _latestClient(Map<String, dynamic>? latestJson) {
@@ -548,6 +549,146 @@ void main() {
       await service.downloadAndInstall();
 
       expect(service.downloadProgress.stage, AppUpdateDownloadStage.idle);
+      expect(opened, hasLength(1));
+      service.dispose();
+    });
+  });
+
+  group('FX-B: кэш скачанного APK', () {
+    late Directory tempDir;
+
+    setUp(() async {
+      tempDir = await Directory.systemTemp.createTemp('rodnya_apk_cache_test');
+    });
+
+    tearDown(() async {
+      try {
+        await tempDir.delete(recursive: true);
+      } catch (_) {}
+    });
+
+    List<File> apkFiles() => tempDir
+        .listSync()
+        .whereType<File>()
+        .where((f) => f.path.contains('rodnya-update-'))
+        .toList();
+
+    File writeCached(String name, List<int> bytes) {
+      final file = File(p.join(tempDir.path, name));
+      file.writeAsBytesSync(bytes);
+      return file;
+    }
+
+    // servedBytes — то, что отдаст сеть, если дело дойдёт до загрузки;
+    // onApkHit считает обращения к .apk (0 ⇒ переиспользовали кэш).
+    Future<AppUpdateService> build({
+      required List<int> servedBytes,
+      String? sha256Hex,
+      required List<String> openedPaths,
+      required void Function() onApkHit,
+    }) async {
+      final client = MockClient.streaming((request, bodyStream) async {
+        final path = request.url.path;
+        if (path == '/v1/app/latest') {
+          final body = utf8.encode(jsonEncode({
+            'versionCode': 99,
+            'apkUrl': 'https://s3.example/rodnya.apk',
+            if (sha256Hex != null) 'sha256': sha256Hex,
+          }));
+          return http.StreamedResponse(
+            Stream.fromIterable([body]),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+        if (path.endsWith('.apk')) {
+          onApkHit();
+          return http.StreamedResponse(
+            Stream.fromIterable([servedBytes]),
+            200,
+            contentLength: servedBytes.length,
+          );
+        }
+        return http.StreamedResponse(const Stream.empty(), 404);
+      });
+      final service = AppUpdateService(
+        apiBaseUrl: 'https://api.example.test',
+        httpClient: client,
+        buildSnapshotProvider: () async => const AppBuildSnapshot(
+          versionCode: 40,
+          packageName: 'com.ahjkuio.rodnya_family_app',
+        ),
+        installerSourceProvider: () async => null,
+        isWeb: false,
+        platform: TargetPlatform.android,
+        downloadDirectoryProvider: () async => tempDir,
+        installerOpener: (path) async => openedPaths.add(path),
+      );
+      await service.checkForUpdate();
+      return service;
+    }
+
+    test('валидный APK в кэше → переиспользуем, без повторной загрузки',
+        () async {
+      final bytes = List<int>.generate(256, (i) => (i * 3) % 256);
+      final hash = sha256.convert(bytes).toString();
+      final cached = writeCached('rodnya-update-cached.apk', bytes);
+      var apkHits = 0;
+      final opened = <String>[];
+      final service = await build(
+        servedBytes: const [1, 2, 3], // не должно скачаться
+        sha256Hex: hash,
+        openedPaths: opened,
+        onApkHit: () => apkHits++,
+      );
+      await service.downloadAndInstall();
+
+      expect(apkHits, 0); // сеть за APK не дёргали
+      expect(opened, [cached.path]); // открыли именно кэш
+      expect(cached.existsSync(), isTrue); // кэш остался для повторного запуска
+      expect(service.downloadProgress.stage, AppUpdateDownloadStage.idle);
+      service.dispose();
+    });
+
+    test('битый кандидат в кэше → удаляется, качаем заново', () async {
+      final freshBytes = List<int>.generate(200, (i) => (i * 5) % 256);
+      final freshHash = sha256.convert(freshBytes).toString();
+      // Кандидат с НЕ тем содержимым (частичный/от старой версии).
+      final stale = writeCached('rodnya-update-stale.apk', const [9, 9, 9, 9]);
+      var apkHits = 0;
+      final opened = <String>[];
+      final service = await build(
+        servedBytes: freshBytes,
+        sha256Hex: freshHash,
+        openedPaths: opened,
+        onApkHit: () => apkHits++,
+      );
+      await service.downloadAndInstall();
+
+      expect(apkHits, 1); // скачали заново
+      expect(stale.existsSync(), isFalse); // битый кандидат вычищен
+      expect(opened, hasLength(1));
+      expect(opened.single, isNot(stale.path)); // открыт свежескачанный
+      expect(apkFiles(), hasLength(1)); // в кэше только валидный
+      expect(service.downloadProgress.stage, AppUpdateDownloadStage.idle);
+      service.dispose();
+    });
+
+    test('без sha кэшу доверять нельзя → всегда качаем', () async {
+      // Кладём «валидный по виду» файл, но бэк не дал sha → проверить
+      // нечем, поэтому переиспользовать нельзя.
+      writeCached('rodnya-update-unverifiable.apk', const [1, 2, 3, 4]);
+      var apkHits = 0;
+      final opened = <String>[];
+      final service = await build(
+        servedBytes: List<int>.generate(64, (i) => i),
+        sha256Hex: null,
+        openedPaths: opened,
+        onApkHit: () => apkHits++,
+      );
+      await service.downloadAndInstall();
+
+      expect(apkHits, 1); // скачали, кэш проигнорирован
       expect(opened, hasLength(1));
       service.dispose();
     });
