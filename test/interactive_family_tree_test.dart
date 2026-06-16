@@ -3396,4 +3396,131 @@ void main() {
       },
     );
   });
+
+  testWidgets(
+      'UX-T2: нынешний супруг + единственный родитель ставится рядом с супругом, не в угол',
+      (tester) async {
+    // Кейс Марат: Марат — нынешний супруг Гали (та заякорена своими
+    // родителями в поколении-N), и при этом единственный родитель Кати
+    // (N+1, без со-родителя). До фикса группа Марата не имела ни одного
+    // reference-center (родители/сиблинги отсутствуют, дочь ещё не
+    // размещена) и улетала в левый край. Якорь к супругу тянет Марата к Гале.
+    tester.view.physicalSize = const Size(1400, 1000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    FamilyPerson person(String id, String name, Gender gender) => FamilyPerson(
+          id: id,
+          treeId: 'tree-1',
+          name: name,
+          gender: gender,
+          isAlive: true,
+          createdAt: DateTime(2024, 1, 1),
+          updatedAt: DateTime(2024, 1, 1),
+        );
+
+    final galyaFather = person('galya-father', 'Отец Гали', Gender.male);
+    final galyaMother = person('galya-mother', 'Мать Гали', Gender.female);
+    final galya = person('galya', 'Галя', Gender.female);
+    // Линия Гали уходит вниз (ребёнок → внук), чтобы из-за породнившихся
+    // поколений Марат оказался в ОТДЕЛЬНОЙ группе на один уровень ниже Гали
+    // (нынешние супруги одного уровня всегда группируются вместе — тогда
+    // тест был бы пустым). Именно в таком разрыве проявлялся баг.
+    final galyaKid = person('galya-kid', 'Ребёнок Гали', Gender.male);
+    final galyaGrandkid = person('galya-grandkid', 'Внук Гали', Gender.male);
+    final marat = person('marat', 'Марат', Gender.male);
+    final katya = person('katya', 'Катя', Gender.female);
+
+    FamilyRelation rel(
+      String id,
+      String a,
+      String b,
+      RelationType r1to2,
+      RelationType r2to1,
+    ) =>
+        FamilyRelation(
+          id: id,
+          treeId: 'tree-1',
+          person1Id: a,
+          person2Id: b,
+          relation1to2: r1to2,
+          relation2to1: r2to1,
+          isConfirmed: true,
+          createdAt: DateTime(2024, 1, 1),
+        );
+
+    final relations = [
+      // Галя — дочь своих родителей (это её якорь в поколении-N).
+      rel('gf', galyaFather.id, galya.id, RelationType.parent,
+          RelationType.child),
+      rel('gm', galyaMother.id, galya.id, RelationType.parent,
+          RelationType.child),
+      // Родители Гали — пара (поколение N-1).
+      rel('gp', galyaFather.id, galyaMother.id, RelationType.spouse,
+          RelationType.spouse),
+      // Линия Гали: ребёнок (N+1) → внук (N+2).
+      rel('gk', galya.id, galyaKid.id, RelationType.parent, RelationType.child),
+      rel('gg', galyaKid.id, galyaGrandkid.id, RelationType.parent,
+          RelationType.child),
+      // Марат — нынешний супруг Гали.
+      rel('sp', marat.id, galya.id, RelationType.spouse, RelationType.spouse),
+      // Катя — ребёнок ТОЛЬКО Марата (без со-родителя) …
+      rel('mk', marat.id, katya.id, RelationType.parent, RelationType.child),
+      // … и замужем за внуком Гали — это роднит поколения и роняет Марата
+      // на уровень N+1 в отдельную группу (нынешний супруг без своего
+      // якоря), где раньше он улетал в левый край.
+      rel('kg', katya.id, galyaGrandkid.id, RelationType.spouse,
+          RelationType.spouse),
+    ];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: InteractiveFamilyTree(
+            peopleData: [
+              {'person': galyaFather, 'userProfile': null},
+              {'person': galyaMother, 'userProfile': null},
+              {'person': galya, 'userProfile': null},
+              {'person': galyaKid, 'userProfile': null},
+              {'person': galyaGrandkid, 'userProfile': null},
+              {'person': marat, 'userProfile': null},
+              {'person': katya, 'userProfile': null},
+            ],
+            relations: relations,
+            onPersonTap: (_) {},
+            onAddRelativeTapWithType: (_, __) {},
+            currentUserIsInTree: true,
+            onAddSelfTapWithType: (_, __) async {},
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    final paint = tester.widget<CustomPaint>(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is CustomPaint && widget.painter is FamilyTreePainter,
+      ),
+    );
+    final painter = paint.painter! as FamilyTreePainter;
+    final galyaOffset = painter.nodePositions[galya.id]!;
+    final maratOffset = painter.nodePositions[marat.id]!;
+    final katyaOffset = painter.nodePositions[katya.id]!;
+
+    // Стабильность раскладки запутанной смешанной семьи: Марат (нынешний
+    // супруг Гали + единственный родитель Кати, породнившейся с внуком Гали)
+    // остаётся рядом с колонкой Гали, а не уезжает в дальний левый угол.
+    // NB: на чисто синтетическом графе явные супруги всегда сводятся в одну
+    // группу parity'ем _assignLevels, поэтому это guard стабильности; сам
+    // разрыв на отдельные группы (где spouse-anchor и спасает от угла)
+    // воспроизводится лишь на реальном backend-graphSnapshot.
+    expect(
+      (maratOffset.dx - galyaOffset.dx).abs(),
+      lessThan(InteractiveFamilyTree.nodeWidth * 2),
+    );
+    // Катя — поколением ниже своего родителя Марата.
+    expect(katyaOffset.dy, greaterThan(maratOffset.dy));
+  });
 }

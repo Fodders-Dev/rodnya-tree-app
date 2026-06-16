@@ -3392,6 +3392,7 @@ class _TreeLayoutEngine {
               childToParents: childToParents,
               parentToChildren: parentToChildren,
               siblingsByPerson: siblingsByPerson,
+              spousesByPerson: spousesByPerson,
             );
             final rightDesired = _desiredCenterForGroup(
               group: right,
@@ -3399,6 +3400,7 @@ class _TreeLayoutEngine {
               childToParents: childToParents,
               parentToChildren: parentToChildren,
               siblingsByPerson: siblingsByPerson,
+              spousesByPerson: spousesByPerson,
             );
             if (leftDesired != null && rightDesired != null) {
               final centerCompare = leftDesired.compareTo(rightDesired);
@@ -3437,6 +3439,7 @@ class _TreeLayoutEngine {
             childToParents: childToParents,
             parentToChildren: parentToChildren,
             siblingsByPerson: siblingsByPerson,
+            spousesByPerson: spousesByPerson,
           );
           final groupWidth = _groupWidth(group.memberIds.length);
           final requestedLeft = requestedCenter == null
@@ -4004,6 +4007,7 @@ class _TreeLayoutEngine {
     required Map<String, Set<String>> childToParents,
     required Map<String, Set<String>> parentToChildren,
     required Map<String, Set<String>> siblingsByPerson,
+    required Map<String, Set<String>> spousesByPerson,
   }) {
     final referenceCenters = <double>[];
     for (final memberId in group.memberIds) {
@@ -4023,6 +4027,18 @@ class _TreeLayoutEngine {
         final childPosition = positions[childId];
         if (childPosition != null) {
           referenceCenters.add(childPosition.dx);
+        }
+      }
+      // UX-T2: якорим группу к уже-размещённому супругу. Без этого нынешний
+      // супруг (узел поколения-N), который при этом единственный родитель
+      // ребёнка из N+1 без со-родителя, не имел ни одного reference-center
+      // (родители/сиблинги/дети ещё/не размещены) и улетал в левый край.
+      // Спутник из того же group ещё не размещён (positions[...] == null) —
+      // тянет только реально расставленный супруг из соседней группы.
+      for (final spouseId in spousesByPerson[memberId] ?? const <String>{}) {
+        final spousePosition = positions[spouseId];
+        if (spousePosition != null) {
+          referenceCenters.add(spousePosition.dx);
         }
       }
     }
