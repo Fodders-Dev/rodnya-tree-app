@@ -991,6 +991,39 @@ void main() {
   );
 
   testWidgets(
+    'RelativeDetailsScreen открывает вопросы историй по initialAction story',
+    (tester) async {
+      tester.view.physicalSize = const Size(1400, 2600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final treeProvider = TreeProvider();
+      await treeProvider.selectTree('tree-1', 'Семья Кузнецовых');
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider<TreeProvider>.value(
+          value: treeProvider,
+          child: const MaterialApp(
+            home: RelativeDetailsScreen(
+              personId: 'grandmother',
+              initialAction: 'story',
+            ),
+          ),
+        ),
+      );
+
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      expect(find.text('Спросить историю'), findsWidgets);
+      expect(
+        find.text('Что ты хочешь, чтобы дети и внуки помнили?'),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
     'RelativeDetailsScreen показывает дополнительные наборы родителей',
     (tester) async {
       tester.view.physicalSize = const Size(1400, 2000);

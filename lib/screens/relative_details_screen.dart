@@ -594,6 +594,18 @@ class _RelativeDetailsScreenState extends State<RelativeDetailsScreen> {
           handler = _showRelationManagementSheet;
         }
         break;
+      case 'story':
+      case 'askstory':
+      case 'ask_story':
+        final person = _person;
+        if (person != null) {
+          handler = () => _askFamilyStory(
+                name: person.displayName,
+                relation: _getDirectRelationLabel(),
+                gender: person.gender.name,
+              );
+        }
+        break;
     }
 
     if (handler == null) {

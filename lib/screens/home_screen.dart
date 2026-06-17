@@ -12,6 +12,7 @@ import 'package:go_router/go_router.dart';
 import '../providers/tree_provider.dart';
 import '../services/event_service.dart';
 import '../models/app_event.dart';
+import '../models/family_connection_prompt.dart';
 import '../models/family_tree.dart';
 
 import '../widgets/battery_optimization_card.dart';
@@ -45,6 +46,7 @@ import '../services/custom_api_notification_service.dart';
 import '../utils/e2e_state_bridge.dart';
 import '../utils/image_decode.dart';
 import '../utils/perf_log.dart';
+import '../utils/relative_details_route.dart';
 
 part 'home_screen_sections.dart';
 
@@ -81,6 +83,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   List<Gathering> _gatherings = const [];
   List<Poll> _polls = const [];
   List<Story> _stories = [];
+  FamilyConnectionPrompt? _familyConnectionPrompt;
   String? _selectedEventCategoryFilter;
   bool _isLoadingEvents = true;
   bool _isLoadingPosts = false;
@@ -185,6 +188,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       // branch. They can narrow via the chip strip if they want.
       _loadPosts(branchId: null);
       if (_currentTreeId != null) {
+        _loadFamilyConnectionPrompt(_currentTreeId!);
         _loadStories(_currentTreeId!);
         _loadEvents(_currentTreeId!);
       } else {
@@ -324,6 +328,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _currentTreeId = newTreeId;
       _loadIdentityReviewSummary();
       if (_currentTreeId != null) {
+        _loadFamilyConnectionPrompt(_currentTreeId!);
         _loadStories(_currentTreeId!);
         _loadEvents(_currentTreeId!);
         // The feed is intentionally NOT reloaded on branch change —
@@ -334,6 +339,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         setState(() {
           _isLoadingStories = false;
           _isLoadingEvents = false;
+          _familyConnectionPrompt = null;
           _stories = [];
           _upcomingEvents = [];
           _selectedEventCategoryFilter = null;
@@ -435,6 +441,37 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       if (mounted) {
         setState(() {
           _isLoadingEvents = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _loadFamilyConnectionPrompt(String treeId) async {
+    if (!mounted) return;
+    if (_treeProviderInstance?.selectedTreeKind == TreeKind.friends) {
+      setState(() {
+        _familyConnectionPrompt = null;
+      });
+      return;
+    }
+
+    try {
+      final relatives = await _familyTreeService.getRelatives(treeId);
+      if (!mounted || _currentTreeId != treeId) {
+        return;
+      }
+      final prompt = FamilyConnectionPromptSelector.select(
+        relatives: relatives,
+        currentUserId: _authService.currentUserId,
+      );
+      setState(() {
+        _familyConnectionPrompt = prompt;
+      });
+    } catch (error) {
+      debugPrint('Ошибка загрузки family connection prompt: $error');
+      if (mounted && _currentTreeId == treeId) {
+        setState(() {
+          _familyConnectionPrompt = null;
         });
       }
     }
@@ -858,6 +895,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           await _loadPosts(branchId: _selectedFeedBranchId);
           if (_currentTreeId != null) {
             await Future.wait([
+              _loadFamilyConnectionPrompt(_currentTreeId!),
               _loadStories(_currentTreeId!),
               _loadEvents(_currentTreeId!),
             ]);

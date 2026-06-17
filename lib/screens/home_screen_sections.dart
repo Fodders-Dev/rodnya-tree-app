@@ -199,6 +199,7 @@ extension _HomeScreenSections on _HomeScreenState {
         // BranchDigestStrip widget + backend wiring stay parked for
         // a possible later re-introduction in a different shape.
         _buildStoriesSection(),
+        _buildFamilyConnectionPromptCard(),
         // Разгрузка первого вьюпорта (2a): композер сразу после сторис,
         // под ним — строка хабов [Альбом | ближайшее событие] вместо
         // прежней пары «карточка альбома + рельс событий» (~48+~130dp).
@@ -294,6 +295,7 @@ extension _HomeScreenSections on _HomeScreenState {
         // юзер просил полностью снять блок. Backend wiring и сам
         // BranchDigestStrip widget остаются на случай если позже
         // вернёмся к этой идее в другом форм-факторе.
+        _buildFamilyConnectionPromptCard(),
         Padding(
           padding: const EdgeInsets.fromLTRB(18, 6, 18, 12),
           child: _buildComposeTeaser(),
@@ -690,6 +692,18 @@ extension _HomeScreenSections on _HomeScreenState {
     await _loadPosts(branchId: _selectedFeedBranchId);
   }
 
+  Future<void> _openFamilyConnectionPrompt(
+    FamilyConnectionPrompt prompt, {
+    bool askStory = true,
+  }) async {
+    final route = relativeDetailsRoute(
+      prompt.person.id,
+      treeId: _currentTreeId ?? prompt.person.treeId,
+      action: askStory ? 'story' : null,
+    );
+    await context.push(route);
+  }
+
   Future<void> _openCreatePost({String? action}) async {
     // [action] is forwarded to the composer as a query string so the
     // photo / video icons on the teaser actually do something
@@ -1034,6 +1048,150 @@ extension _HomeScreenSections on _HomeScreenState {
     );
   }
 
+  Widget _buildFamilyConnectionPromptCard() {
+    final prompt = _familyConnectionPrompt;
+    if (prompt == null) {
+      return const SizedBox.shrink();
+    }
+
+    final theme = Theme.of(context);
+    final tokens = AppTheme.tokensOf(context);
+    final person = prompt.person;
+    final photoUrl = person.primaryPhotoUrl;
+
+    Widget avatar() {
+      final fallback = Center(
+        child: Text(
+          person.initials,
+          style: AppTheme.sans(
+            color: tokens.accentInk,
+            fontSize: 16,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      );
+      return Container(
+        width: 48,
+        height: 48,
+        decoration: BoxDecoration(
+          gradient: photoUrl == null || photoUrl.isEmpty
+              ? tokens.accentGradient
+              : null,
+          shape: BoxShape.circle,
+          border: Border.all(
+            color: tokens.surfaceStrong.withValues(alpha: 0.9),
+            width: 2,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: tokens.accent.withValues(alpha: 0.12),
+              blurRadius: 14,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: photoUrl != null && photoUrl.isNotEmpty
+            ? CachedNetworkImage(
+                imageUrl: photoUrl,
+                fit: BoxFit.cover,
+                memCacheWidth: decodeCacheWidth(context, 96),
+                placeholder: (_, __) => fallback,
+                errorWidget: (_, __, ___) => fallback,
+              )
+            : fallback,
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(18, 8, 18, 8),
+      child: GlassPanel(
+        key: const Key('home-family-connection-prompt'),
+        padding: const EdgeInsets.fromLTRB(14, 13, 14, 14),
+        borderRadius: BorderRadius.circular(20),
+        color: tokens.warmSoft.withValues(alpha: 0.72),
+        borderColor: tokens.accent.withValues(alpha: 0.14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                avatar(),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Сегодня для семьи',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppTheme.sans(
+                          color: tokens.accent,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        prompt.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontFamily: 'Lora',
+                          color: tokens.ink,
+                          fontWeight: FontWeight.w800,
+                          height: 1.16,
+                          letterSpacing: 0,
+                        ),
+                      ),
+                      const SizedBox(height: 5),
+                      Text(
+                        prompt.message,
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppTheme.sans(
+                          color: tokens.inkMuted,
+                          fontSize: 12.8,
+                          fontWeight: FontWeight.w500,
+                          height: 1.32,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                FilledButton.icon(
+                  key: const Key('family-connection-ask-story'),
+                  onPressed: () => _openFamilyConnectionPrompt(prompt),
+                  icon: const Icon(Icons.question_answer_outlined, size: 18),
+                  label: Text(prompt.ctaLabel),
+                ),
+                TextButton.icon(
+                  key: const Key('family-connection-open-card'),
+                  onPressed: () => _openFamilyConnectionPrompt(
+                    prompt,
+                    askStory: false,
+                  ),
+                  icon: const Icon(Icons.person_outline_rounded, size: 18),
+                  label: const Text('Карточка'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   /// Один слим-тайл строки хабов: иконка в мягкой плашке + заголовок +
   /// подпись + шеврон, ~56dp высоты (тап-таргет ≥44dp целиком).
   Widget _buildHubTile({
@@ -1242,35 +1400,35 @@ extension _HomeScreenSections on _HomeScreenState {
     return Padding(
       padding: const EdgeInsets.fromLTRB(18, 0, 18, 10),
       child: SizedBox(
-          // 2c: 44dp — полный тап-таргет для чипов веток (было 36 +
-          // shrinkWrap, т.е. реальный хит ~32dp).
-          height: 44,
-          child: ListView.separated(
-            scrollDirection: Axis.horizontal,
-            itemCount: entries.length,
-            separatorBuilder: (_, __) => const SizedBox(width: 8),
-            itemBuilder: (context, index) {
-              final entry = entries[index];
-              final selected = _selectedFeedBranchId == entry.id;
-              return Semantics(
-                button: true,
+        // 2c: 44dp — полный тап-таргет для чипов веток (было 36 +
+        // shrinkWrap, т.е. реальный хит ~32dp).
+        height: 44,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          itemCount: entries.length,
+          separatorBuilder: (_, __) => const SizedBox(width: 8),
+          itemBuilder: (context, index) {
+            final entry = entries[index];
+            final selected = _selectedFeedBranchId == entry.id;
+            return Semantics(
+              button: true,
+              selected: selected,
+              label: 'home-feed-branch-${entry.id ?? 'all'}',
+              child: ChoiceChip(
+                label: Text(entry.label),
                 selected: selected,
-                label: 'home-feed-branch-${entry.id ?? 'all'}',
-                child: ChoiceChip(
-                  label: Text(entry.label),
-                  selected: selected,
-                  avatar: entry.id == null
-                      ? Icon(
-                          Icons.all_inclusive,
-                          size: 16,
-                          color: theme.colorScheme.primary,
-                        )
-                      : null,
-                  onSelected: (_) => _selectFeedBranch(entry.id),
-                ),
-              );
-            },
-          ),
+                avatar: entry.id == null
+                    ? Icon(
+                        Icons.all_inclusive,
+                        size: 16,
+                        color: theme.colorScheme.primary,
+                      )
+                    : null,
+                onSelected: (_) => _selectFeedBranch(entry.id),
+              ),
+            );
+          },
+        ),
       ),
     );
   }

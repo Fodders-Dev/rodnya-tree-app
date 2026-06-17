@@ -885,6 +885,75 @@ void main() {
   );
 
   testWidgets(
+    'HomeScreen показывает семейный вопрос дня и ведёт в ask-story route',
+    (tester) async {
+      tester.view.physicalSize = const Size(900, 1600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
+      await getIt.unregister<FamilyTreeServiceInterface>();
+      getIt.registerSingleton<FamilyTreeServiceInterface>(
+        _FakeFamilyTreeService(
+          relativesOverride: [
+            FamilyPerson(
+              id: 'grandmother',
+              treeId: 'tree-1',
+              userId: 'anna-user',
+              name: 'Петрова Анна',
+              relation: 'бабушка',
+              gender: Gender.female,
+              birthDate: DateTime(1945, 5, 3),
+              isAlive: true,
+              createdAt: DateTime(2024, 1, 1),
+              updatedAt: DateTime(2024, 1, 1),
+            ),
+          ],
+        ),
+      );
+
+      final treeProvider = TreeProvider();
+      await treeProvider.selectTree('tree-1', 'Тестовое дерево');
+      final router = GoRouter(
+        initialLocation: '/',
+        routes: [
+          GoRoute(
+            path: '/',
+            builder: (context, state) =>
+                ChangeNotifierProvider<TreeProvider>.value(
+              value: treeProvider,
+              child: const HomeScreen(),
+            ),
+          ),
+          GoRoute(
+            path: '/relative/details/:personId',
+            builder: (context, state) => Scaffold(
+              body: Text(
+                'details ${state.pathParameters['personId']} '
+                '${state.uri.queryParameters['action']}',
+              ),
+            ),
+          ),
+        ],
+      );
+
+      await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('home-family-connection-prompt')),
+          findsOneWidget);
+      expect(find.text('Спросить, пока можно услышать'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('family-connection-ask-story')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('details grandmother story'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
     'HomeScreen пустая лента без родни → CTA «Добавить родственника» (P4)',
     (tester) async {
       tester.view.physicalSize = const Size(900, 1600);
