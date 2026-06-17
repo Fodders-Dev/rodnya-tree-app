@@ -2937,14 +2937,25 @@ function createApp({
       });
     }
 
+    const originatedSessionId = String(call.originatedBySessionId || "").trim();
     for (const participantId of call.participantIds || []) {
-      realtimeHub?.publishToUser(participantId, ({sessionPublicId}) => ({
-        type: "call.invite.created",
-        call: mapCallRecord(call, {
-          viewerUserId: participantId,
-          viewerSessionId: sessionPublicId,
-        }),
-      }));
+      realtimeHub?.publishToUser(participantId, ({sessionPublicId}) => {
+        const viewerSessionId = String(sessionPublicId || "").trim();
+        if (
+          participantId === call.initiatorId &&
+          originatedSessionId &&
+          viewerSessionId !== originatedSessionId
+        ) {
+          return null;
+        }
+        return {
+          type: "call.invite.created",
+          call: mapCallRecord(call, {
+            viewerUserId: participantId,
+            viewerSessionId,
+          }),
+        };
+      });
     }
 
     logCallEvent("invite.created", call, {

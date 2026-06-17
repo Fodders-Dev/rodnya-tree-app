@@ -164,6 +164,7 @@ class CallCoordinatorService extends ChangeNotifier
   bool _joinedOnAnotherDevice = false;
   String? _lastIncomingVibrationCallId;
   final Set<String> _visibleCallScreenIds = <String>{};
+  final Set<String> _locallyStartedCallIds = <String>{};
   // Caller display names captured from VKPNS push payloads, keyed
   // by callId. Push delivery beats the realtime hydrate (the push
   // arrives before the GET /v1/calls/:id response lands), so we
@@ -241,6 +242,14 @@ class CallCoordinatorService extends ChangeNotifier
       return false;
     }
     return _visibleCallScreenIds.contains(callId);
+  }
+
+  bool isLocallyStartedCall(String? callId) {
+    final normalizedCallId = callId?.trim();
+    if (normalizedCallId == null || normalizedCallId.isEmpty) {
+      return false;
+    }
+    return _locallyStartedCallIds.contains(normalizedCallId);
   }
 
   void setCallScreenVisible(
@@ -453,6 +462,10 @@ class CallCoordinatorService extends ChangeNotifier
       mediaMode: mediaMode,
       participantIds: participantIds,
     );
+    final normalizedCallId = invite.id.trim();
+    if (normalizedCallId.isNotEmpty) {
+      _locallyStartedCallIds.add(normalizedCallId);
+    }
     await _applyCall(invite);
     return invite;
   }
@@ -669,11 +682,9 @@ class CallCoordinatorService extends ChangeNotifier
     final currentCall = _currentCall;
     if (nextCall == null) {
       if (currentCall != null) {
-        unawaited(_androidIncomingCallService?.dismissCall(currentCall.id));
+        _dismissNativeIncomingCall(currentCall.id);
         _pushCallerNames.remove(currentCall.id);
-        if (_lastNativeIncomingCallId == currentCall.id) {
-          _lastNativeIncomingCallId = null;
-        }
+        _locallyStartedCallIds.remove(currentCall.id);
       }
       _cancelRingingRecovery();
       _cancelActiveCallRecovery();
@@ -691,9 +702,13 @@ class CallCoordinatorService extends ChangeNotifier
       _lastIncomingVibrationCallId = null;
       _clearConnectionQualityState();
       notifyListeners();
-      await _stopForegroundService();
+      await _stopForegroundService(force: true);
       await _disposeRoom();
       return;
+    }
+
+    if (nextCall.state.isTerminal) {
+      _locallyStartedCallIds.remove(nextCall.id);
     }
 
     if (_shouldIgnoreCallSnapshot(nextCall)) {
@@ -704,11 +719,9 @@ class CallCoordinatorService extends ChangeNotifier
       if (currentCall == null || currentCall.id != nextCall.id) {
         return;
       }
-      unawaited(_androidIncomingCallService?.dismissCall(nextCall.id));
+      _dismissNativeIncomingCall(nextCall.id);
       _pushCallerNames.remove(nextCall.id);
-      if (_lastNativeIncomingCallId == nextCall.id) {
-        _lastNativeIncomingCallId = null;
-      }
+      _locallyStartedCallIds.remove(nextCall.id);
       _cancelRingingRecovery();
       _cancelActiveCallRecovery();
       _currentCall = null;
@@ -725,7 +738,7 @@ class CallCoordinatorService extends ChangeNotifier
       _lastIncomingVibrationCallId = null;
       _clearConnectionQualityState();
       notifyListeners();
-      await _stopForegroundService();
+      await _stopForegroundService(force: true);
       await _disposeRoom();
       return;
     }
@@ -752,6 +765,10 @@ class CallCoordinatorService extends ChangeNotifier
       // создаст дубль.
       unawaited(_maybeShowNativeIncomingCall(nextCall));
     } else {
+      if (currentCall?.id == nextCall.id &&
+          currentCall?.state == CallState.ringing) {
+        _dismissNativeIncomingCall(nextCall.id);
+      }
       _cancelRingingRecovery();
       if (_lastIncomingVibrationCallId == nextCall.id) {
         _lastIncomingVibrationCallId = null;
@@ -794,7 +811,7 @@ class CallCoordinatorService extends ChangeNotifier
         _connectionError = null;
         _clearReconnectRestoredBanner();
         notifyListeners();
-        await _stopForegroundService();
+        await _stopForegroundService(force: true);
         await _disposeRoom();
         return;
       }
@@ -818,7 +835,7 @@ class CallCoordinatorService extends ChangeNotifier
     }
 
     if (previousCallId != null && previousCallId != nextCall.id) {
-      await _stopForegroundService();
+      await _stopForegroundService(force: true);
       await _disposeRoom();
     }
   }
@@ -1327,14 +1344,14 @@ class CallCoordinatorService extends ChangeNotifier
     }
   }
 
-  /// Останавливает foreground service. No-op если он не был
-  /// запущен этим coordinator instance (защищает tests/idle path
-  /// от phantom stop invocations).
-  Future<void> _stopForegroundService() async {
+  /// Останавливает foreground service. По умолчанию no-op если он не был
+  /// запущен этим coordinator instance; cleanup paths pass [force], чтобы
+  /// погасить возможный Android service, переживший Dart-state race/restart.
+  Future<void> _stopForegroundService({bool force = false}) async {
     final service = _callForegroundService;
     final callId = _foregroundServiceCallId;
     _foregroundServiceCallId = null;
-    if (service == null || !service.isSupported || callId == null) {
+    if (service == null || !service.isSupported || (!force && callId == null)) {
       return;
     }
     await service.stop();
@@ -1601,6 +1618,17 @@ class CallCoordinatorService extends ChangeNotifier
     }
   }
 
+  void _dismissNativeIncomingCall(String callId) {
+    final normalizedCallId = callId.trim();
+    if (normalizedCallId.isEmpty) {
+      return;
+    }
+    unawaited(_androidIncomingCallService?.dismissCall(normalizedCallId));
+    if (_lastNativeIncomingCallId == normalizedCallId) {
+      _lastNativeIncomingCallId = null;
+    }
+  }
+
   static Future<void> _switchLiveKitCameraPosition(
     LocalVideoTrack track,
     CameraPosition position,
@@ -1800,6 +1828,12 @@ class CallCoordinatorService extends ChangeNotifier
   }
 
   Future<void> reset() async {
+    final activeCall = _currentCall;
+    if (activeCall != null) {
+      _dismissNativeIncomingCall(activeCall.id);
+      _pushCallerNames.remove(activeCall.id);
+      _locallyStartedCallIds.remove(activeCall.id);
+    }
     _cancelRingingRecovery();
     _cancelActiveCallRecovery();
     _currentCall = null;
@@ -1817,7 +1851,8 @@ class CallCoordinatorService extends ChangeNotifier
     _hasSeenRemoteParticipant = false;
     _joinedOnAnotherDevice = false;
     _lastIncomingVibrationCallId = null;
-    await _stopForegroundService();
+    _locallyStartedCallIds.clear();
+    await _stopForegroundService(force: true);
     await _disposeRoom();
     notifyListeners();
   }
@@ -1840,13 +1875,17 @@ class CallCoordinatorService extends ChangeNotifier
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    final activeCall = _currentCall;
+    if (activeCall != null) {
+      _dismissNativeIncomingCall(activeCall.id);
+    }
     _cancelRingingRecovery();
     _cancelActiveCallRecovery();
     _clearReconnectRestoredBanner();
     unawaited(_callEventsSubscription?.cancel());
     unawaited(_realtimeSubscription?.cancel());
     unawaited(_pushSubscription?.cancel());
-    unawaited(_stopForegroundService());
+    unawaited(_stopForegroundService(force: true));
     unawaited(_disposeRoom());
     super.dispose();
   }

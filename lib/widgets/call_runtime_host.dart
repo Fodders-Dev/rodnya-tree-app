@@ -150,6 +150,11 @@ class _CallRuntimeHostState extends State<CallRuntimeHost>
     if (call.state != CallState.ringing && call.state != CallState.active) {
       return false;
     }
+    if (call.state == CallState.ringing &&
+        !_isIncoming(call) &&
+        !_coordinator.isLocallyStartedCall(call.id)) {
+      return false;
+    }
     if (call.joinedOnAnotherDevice) {
       return false;
     }
@@ -177,13 +182,13 @@ class _CallRuntimeHostState extends State<CallRuntimeHost>
         _suppressedCallId == call.id) {
       return false;
     }
-    // Auto-pop the full CallScreen ONLY for incoming-ringing calls —
-    // those need an immediate answer/decline UI. Active calls (already
-    // accepted, e.g. resumed from background or accepted on another
-    // device) should land in the floating pip instead so the user can
-    // choose to restore. The accept flow (ringing → active mid-screen)
-    // is already protected via _isPresentingCallScreen above.
-    return call.state == CallState.ringing;
+    // Auto-pop the full CallScreen only for calls this device must
+    // handle immediately: incoming ringing calls, or an outgoing call
+    // started from this exact app session. The same account can be open
+    // on another phone/browser; those sessions may observe the call via
+    // realtime/resync but must not hijack their UI.
+    return call.state == CallState.ringing &&
+        (_isIncoming(call) || _coordinator.isLocallyStartedCall(call.id));
   }
 
   Future<void> _openCallScreen(

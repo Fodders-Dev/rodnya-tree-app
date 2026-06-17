@@ -177,6 +177,72 @@ void main() {
   );
 
   test(
+    'CallCoordinatorService tracks only calls started by this app session',
+    () async {
+      final service = _CountingCallService(
+        activeCall: _buildCall(state: CallState.ringing),
+      );
+      final coordinator = CallCoordinatorService(callService: service);
+
+      await coordinator.ensureRuntimeReady();
+
+      final startedCall = await coordinator.startCall(
+        chatId: 'chat-1',
+        mediaMode: CallMediaMode.audio,
+      );
+
+      expect(coordinator.isLocallyStartedCall(startedCall.id), isTrue);
+
+      await coordinator.activateCall(
+        startedCall.copyWith(
+          state: CallState.cancelled,
+          updatedAt: DateTime(2026, 4, 20, 10, 2),
+          endedAt: DateTime(2026, 4, 20, 10, 2),
+          endedReason: 'cancelled',
+        ),
+      );
+
+      expect(coordinator.isLocallyStartedCall(startedCall.id), isFalse);
+
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      coordinator.dispose();
+    },
+  );
+
+  test(
+    'CallCoordinatorService dismisses native incoming UI when call is answered elsewhere',
+    () async {
+      final incomingCall = _buildCall(state: CallState.ringing);
+      final service = _CountingCallService(activeCall: null);
+      final androidCalls = _FakeAndroidIncomingCallService(null);
+      final coordinator = CallCoordinatorService(
+        callService: service,
+        androidIncomingCallService: androidCalls,
+      );
+
+      await coordinator.ensureRuntimeReady();
+
+      await coordinator.activateCall(incomingCall);
+      await Future<void>.delayed(Duration.zero);
+      androidCalls.dismissedCallIds.clear();
+
+      await coordinator.activateCall(
+        incomingCall.copyWith(
+          state: CallState.active,
+          joinedOnAnotherDevice: true,
+          updatedAt: DateTime(2026, 4, 20, 10, 2),
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(androidCalls.dismissedCallIds, contains(incomingCall.id));
+
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      coordinator.dispose();
+    },
+  );
+
+  test(
     'CallCoordinatorService Fix A: un-mute updates microphoneEnabled '
     'через debugApplyMediaSync mirror того что _publishLocalMicrophone '
     'success path should leave',
@@ -933,6 +999,11 @@ class _FakeAndroidIncomingCallService extends AndroidIncomingCallService {
   final AndroidCallAction? action;
   int registerPhoneAccountCalls = 0;
   int consumePendingActionCalls = 0;
+  final List<String> shownCallIds = <String>[];
+  final List<String> dismissedCallIds = <String>[];
+
+  @override
+  bool get isSupported => true;
 
   @override
   Future<bool> registerPhoneAccount() async {
@@ -944,5 +1015,22 @@ class _FakeAndroidIncomingCallService extends AndroidIncomingCallService {
   Future<AndroidCallAction?> consumePendingAction() async {
     consumePendingActionCalls += 1;
     return action;
+  }
+
+  @override
+  Future<bool> showIncomingCall({
+    required String callId,
+    required String callerName,
+    required bool isVideo,
+    String? chatId,
+  }) async {
+    shownCallIds.add(callId);
+    return true;
+  }
+
+  @override
+  Future<bool> dismissCall(String callId) async {
+    dismissedCallIds.add(callId);
+    return true;
   }
 }

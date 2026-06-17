@@ -410,6 +410,7 @@ class AudioRouteService extends ChangeNotifier {
   void dispose() {
     unawaited(_deviceChangesSubscription?.cancel());
     unawaited(_nativeDeviceSubscription?.cancel());
+    unawaited(_nativeAudio?.stop());
     _nativeAudio?.dispose();
     super.dispose();
   }

@@ -102,6 +102,24 @@ void main() {
     expect(native.calls, contains('stop')); // FR1 teardown
   }));
 
+  test('CA1 teardown: dispose останавливает нативный аудиорежим', (() async {
+    final native = _FakeCallAudioRouter();
+    final service = AudioRouteService(
+      isMobilePlatform: true,
+      nativeAudio: native,
+      enumerateAudioOutputs: () async => const <MediaDevice>[],
+      deviceChanges: const Stream<List<MediaDevice>>.empty(),
+    );
+
+    await service.attachRoom(_FakeRoom(), isVideo: false);
+    native.calls.clear();
+
+    service.dispose();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(native.calls.take(2), ['stop', 'dispose']);
+  }));
+
   test('CA1 FR3: видеозвонок дефолтит на динамик', (() async {
     final native = _FakeCallAudioRouter();
     final service = AudioRouteService(

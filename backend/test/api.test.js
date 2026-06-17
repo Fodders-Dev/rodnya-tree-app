@@ -147,6 +147,16 @@ async function registerTestUser(ctx, email, displayName) {
   return response.json();
 }
 
+async function loginTestUser(ctx, email, password = "secret123") {
+  const response = await fetch(`${ctx.baseUrl}/v1/auth/login`, {
+    method: "POST",
+    headers: {"content-type": "application/json"},
+    body: JSON.stringify({email, password}),
+  });
+  assert.equal(response.status, 200);
+  return response.json();
+}
+
 async function registerPushDevice(ctx, accessToken, device) {
   const response = await fetch(`${ctx.baseUrl}/v1/push/devices`, {
     method: "POST",
@@ -13323,6 +13333,111 @@ test("incoming call push uses high-priority metadata for WebPush and RuStore", a
     assert.equal(rustoreClientPayload.event, "incoming_call");
     assert.equal(rustoreClientPayload.data.callId, startedCall.call.id);
   } finally {
+    await stopTestServer(ctx);
+  }
+});
+
+test("outgoing call invite realtime is scoped to the initiating session", async () => {
+  const ctx = await startConfiguredTestServer({
+    liveKitService: createFakeLiveKitService(),
+  });
+
+  const waitFor = async (predicate, timeoutMs = 3000) => {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      const result = predicate();
+      if (result) {
+        return result;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    throw new Error("Timed out waiting for realtime call event");
+  };
+
+  const sockets = [];
+  const connectRealtime = async (accessToken) => {
+    const socket = new WebSocket(
+      `${ctx.wsBaseUrl}/v1/realtime?accessToken=${accessToken}`,
+    );
+    sockets.push(socket);
+    const events = [];
+    socket.addEventListener("message", (event) => {
+      events.push(JSON.parse(String(event.data)));
+    });
+    await new Promise((resolve, reject) => {
+      socket.addEventListener("open", resolve, {once: true});
+      socket.addEventListener("error", reject, {once: true});
+    });
+    await waitFor(() => events.find((item) => item.type === "connection.ready"));
+    events.length = 0;
+    return events;
+  };
+
+  try {
+    const caller = await registerTestUser(
+      ctx,
+      "call-scope-caller@rodnya.app",
+      "Caller Scope",
+    );
+    const callerSecondSession = await loginTestUser(
+      ctx,
+      "call-scope-caller@rodnya.app",
+    );
+    const recipient = await registerTestUser(
+      ctx,
+      "call-scope-recipient@rodnya.app",
+      "Recipient Scope",
+    );
+
+    const callerPrimaryEvents = await connectRealtime(caller.accessToken);
+    const callerSecondaryEvents = await connectRealtime(
+      callerSecondSession.accessToken,
+    );
+    const recipientEvents = await connectRealtime(recipient.accessToken);
+
+    const chat = await createDirectChat(
+      ctx,
+      caller.accessToken,
+      recipient.user.id,
+    );
+    const startedCall = await startDirectCall(
+      ctx,
+      caller.accessToken,
+      chat.id,
+      "audio",
+    );
+
+    assert.equal(startedCall.call.state, "ringing");
+
+    await waitFor(() =>
+      callerPrimaryEvents.find(
+        (item) =>
+          item.type === "call.invite.created" &&
+          item.call?.id === startedCall.call.id,
+      ),
+    );
+    await waitFor(() =>
+      recipientEvents.find(
+        (item) =>
+          item.type === "call.invite.created" &&
+          item.call?.id === startedCall.call.id,
+      ),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    assert.equal(
+      callerSecondaryEvents.some(
+        (item) =>
+          item.type === "call.invite.created" &&
+          item.call?.id === startedCall.call.id,
+      ),
+      false,
+      "secondary caller session must not auto-open an outgoing call",
+    );
+  } finally {
+    for (const socket of sockets) {
+      socket.close();
+    }
     await stopTestServer(ctx);
   }
 });

@@ -51,6 +51,71 @@ void main() {
   );
 
   testWidgets(
+    'CallRuntimeHost ignores outgoing ringing calls started on another device',
+    (tester) async {
+      final coordinator = _HostFakeCallCoordinator();
+      GetIt.I.registerSingleton<CallCoordinatorService>(coordinator);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          navigatorKey: rootNavigatorKey,
+          home: const CallRuntimeHost(
+            child: Scaffold(
+              body: Center(child: Text('home')),
+            ),
+          ),
+        ),
+      );
+
+      coordinator.setCall(
+        _buildCall(
+          state: CallState.ringing,
+          initiatorId: 'user-1',
+          recipientId: 'user-2',
+        ),
+      );
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      expect(find.byType(CallScreen), findsNothing);
+      expect(find.byType(CallFloatingPip), findsNothing);
+      expect(find.text('home'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'CallRuntimeHost opens locally-started outgoing ringing calls',
+    (tester) async {
+      final coordinator = _HostFakeCallCoordinator();
+      GetIt.I.registerSingleton<CallCoordinatorService>(coordinator);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          navigatorKey: rootNavigatorKey,
+          home: const CallRuntimeHost(
+            child: Scaffold(
+              body: Center(child: Text('home')),
+            ),
+          ),
+        ),
+      );
+
+      final outgoingCall = _buildCall(
+        state: CallState.ringing,
+        initiatorId: 'user-1',
+        recipientId: 'user-2',
+      );
+      coordinator.markLocallyStarted(outgoingCall.id);
+      coordinator.setCall(outgoingCall);
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      expect(find.byType(CallScreen), findsOneWidget);
+      expect(find.text('Вызываем...'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
     'CallRuntimeHost does not show banner while CallScreen is already visible',
     (tester) async {
       final coordinator = _HostFakeCallCoordinator();
@@ -200,6 +265,7 @@ class _HostFakeCallCoordinator extends CallCoordinatorService {
         );
 
   CallInvite? _currentCall;
+  final Set<String> _locallyStartedCallIds = <String>{};
   int finishCallCount = 0;
 
   @override
@@ -209,7 +275,16 @@ class _HostFakeCallCoordinator extends CallCoordinatorService {
   CallInvite? get currentCall => _currentCall;
 
   @override
+  bool isLocallyStartedCall(String? callId) {
+    return callId != null && _locallyStartedCallIds.contains(callId);
+  }
+
+  @override
   Future<void> ensureRuntimeReady() async {}
+
+  void markLocallyStarted(String callId) {
+    _locallyStartedCallIds.add(callId);
+  }
 
   void setCall(CallInvite? call) {
     _currentCall = call;
