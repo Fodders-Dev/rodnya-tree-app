@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get_it/get_it.dart';
 import 'package:rodnya/backend/interfaces/family_tree_service_interface.dart';
@@ -23,14 +25,22 @@ class _FakeLocalStorageService implements LocalStorageService {
 }
 
 class _FakeFamilyTreeService implements FamilyTreeServiceInterface {
-  _FakeFamilyTreeService(this._trees);
+  _FakeFamilyTreeService(
+    this._trees, {
+    Completer<List<FamilyTree>>? treesCompleter,
+  }) : _treesCompleter = treesCompleter;
 
   final List<FamilyTree> _trees;
+  final Completer<List<FamilyTree>>? _treesCompleter;
   int getUserTreesCalls = 0;
 
   @override
   Future<List<FamilyTree>> getUserTrees() async {
     getUserTreesCalls += 1;
+    final completer = _treesCompleter;
+    if (completer != null) {
+      return completer.future;
+    }
     return _trees;
   }
 
@@ -131,5 +141,40 @@ void main() {
 
     await provider.refreshAvailableTrees();
     expect(treeService.getUserTreesCalls, 2);
+  });
+
+  test('warm start берёт выбранное дерево из кеша до ответа backend', () async {
+    final cachedTree = _buildTree(id: 'tree-1', name: 'Кешированное дерево');
+    final freshTree = _buildTree(id: 'tree-1', name: 'Свежее дерево');
+    final treesCompleter = Completer<List<FamilyTree>>();
+    final treeService = _FakeFamilyTreeService(
+      const <FamilyTree>[],
+      treesCompleter: treesCompleter,
+    );
+
+    SharedPreferences.setMockInitialValues({
+      'selected_tree_id': cachedTree.id,
+      'selected_tree_name': cachedTree.name,
+    });
+    getIt.registerSingleton<LocalStorageService>(
+      _FakeLocalStorageService([cachedTree]),
+    );
+    getIt.registerSingleton<FamilyTreeServiceInterface>(treeService);
+
+    final provider = TreeProvider();
+    await provider.loadInitialTree();
+
+    expect(provider.selectedTreeId, cachedTree.id);
+    expect(provider.selectedTreeName, cachedTree.name);
+    expect(provider.availableTrees, [cachedTree]);
+    expect(treesCompleter.isCompleted, isFalse);
+
+    treesCompleter.complete([freshTree]);
+    await provider.refreshAvailableTrees();
+
+    expect(treeService.getUserTreesCalls, 1);
+    expect(provider.selectedTreeId, freshTree.id);
+    expect(provider.selectedTreeName, freshTree.name);
+    expect(provider.availableTrees, [freshTree]);
   });
 }
